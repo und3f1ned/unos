@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  supervisor:
+    build: ../supervisor
+    container_name: unos-supervisor
+    restart: unless-stopped
+    privileged: true
+    environment:
+      - UNOS_DB_PATH=/data/unos.db
+      - UNOS_JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+    volumes:
+      - unos-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/samba:/etc/samba
+      - type: bind
+        source: /mnt
+        target: /mnt
+        bind:
+          propagation: rshared
+    networks:
+      - unos-net
+
+  webui:
+    build: ../webui
+    container_name: unos-webui
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - supervisor
+    networks:
+      - unos-net
+
+volumes:
+  unos-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  unos-net:

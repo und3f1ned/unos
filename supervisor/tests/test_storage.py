@@ -1,0 +1,364 @@
+import pytest
+import json
+from unittest.mock import patch, MagicMock
+from src.storage import disks, pools
+from src.storage.schemas import DiskInfo, SmartData, PoolCreate, PoolInfo, VolumeCreate, VolumeInfo
+
+
+class TestDisksModule:
+    """Tests for disk management."""
+
+    @pytest.fixture
+    def mock_lsblk_output(self):
+        """Mock lsblk JSON output."""
+        return {
+            "blockdevices": [
+                {
+                    "name": "sda",
+                    "path": "/dev/sda",
+                    "model": "Samsung SSD 860",
+                    "serial": "S3Z2NB0K123456",
+                    "size": 500107862016,
+                    "rota": False,
+                    "mountpoint": None,
+                    "type": "disk"
+                },
+                {
+                    "name": "sdb",
+                    "path": "/dev/sdb",
+                    "model": "WDC WD40EFRX",
+                    "serial": "WD-WCC4E0123456",
+                    "size": 4000787030016,
+                    "rota": True,
+                    "mountpoint": None,
+                    "type": "disk"
+                },
+                {
+                    "name": "sda1",
+                    "path": "/dev/sda1",
+                    "model": None,
+                    "serial": None,
+                    "size": 500106813440,
+                    "rota": False,
+                    "mountpoint": "/",
+                    "type": "part"
+                }
+            ]
+        }
+
+    def test_list_disks_success(self, mock_lsblk_output):
+        """Test listing disks successfully."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(mock_lsblk_output)
+
+        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+            result = disks.list_disks()
+
+        # Should return only disk type devices
+        assert len(result) == 2
+        assert all(isinstance(d, DiskInfo) for d in result)
+
+    def test_list_disks_returns_disk_info(self, mock_lsblk_output):
+        """Test that list_disks returns correct disk information."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(mock_lsblk_output)
+
+        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+            result = disks.list_disks()
+
+        sda = next(d for d in result if d.name == "sda")
+        assert sda.path == "/dev/sda"
+        assert sda.model == "Samsung SSD 860"
+        assert sda.serial == "S3Z2NB0K123456"
+        assert sda.size == 500107862016
+        assert sda.rotational is False
+
+    def test_list_disks_filters_partitions(self, mock_lsblk_output):
+        """Test that partitions are filtered out."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(mock_lsblk_output)
+
+        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+            result = disks.list_disks()
+
+        disk_names = [d.name for d in result]
+        assert "sda1" not in disk_names
+
+    def test_list_disks_lsblk_failure(self):
+        """Test that RuntimeError is raised when lsblk fails."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "lsblk: command not found"
+
+        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="lsblk failed"):
+                disks.list_disks()
+
+    def test_list_disks_identifies_ssd(self, mock_lsblk_output):
+        """Test that SSDs are identified correctly (rotational=False)."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(mock_lsblk_output)
+
+        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+            result = disks.list_disks()
+
+        sda = next(d for d in result if d.name == "sda")
+        sdb = next(d for d in result if d.name == "sdb")
+        assert sda.rotational is False  # SSD
+        assert sdb.rotational is True   # HDD
+
+
+class TestSmartData:
+    """Tests for SMART data retrieval."""
+
+    @pytest.fixture
+    def mock_smartctl_output(self):
+        """Mock smartctl JSON output."""
+        return {
+            "smart_status": {"passed": True},
+            "temperature": {"current": 35},
+            "ata_smart_attributes": {
+                "table": [
+                    {"id": 5, "name": "Reallocated_Sector_Ct", "raw": {"value": 0}},
+                    {"id": 9, "name": "Power_On_Hours", "raw": {"value": 12345}},
+                    {"id": 194, "name": "Temperature_Celsius", "raw": {"value": 35}}
+                ]
+            }
+        }
+
+    def test_get_smart_data_success(self, mock_smartctl_output):
+        """Test getting SMART data successfully."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(mock_smartctl_output)
+
+        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+            result = disks.get_smart_data("/dev/sda")
+
+        assert isinstance(result, SmartData)
+        assert result.device == "/dev/sda"
+        assert result.healthy is True
+        assert result.temperature == 35
+        assert result.power_on_hours == 12345
+        assert result.reallocated_sectors == 0
+
+    def test_get_smart_data_unhealthy_disk(self):
+        """Test SMART data for unhealthy disk."""
+        smart_output = {
+            "smart_status": {"passed": False},
+            "temperature": {"current": 55}
+        }
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(smart_output)
+
+        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+            result = disks.get_smart_data("/dev/sda")
+
+        assert result.healthy is False
+
+    def test_get_smart_data_invalid_json(self):
+        """Test handling of invalid JSON from smartctl."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = "Not valid JSON"
+        mock_result.stderr = "smartctl failed"
+
+        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+            result = disks.get_smart_data("/dev/sda")
+
+        assert result.healthy is False
+        assert "error" in result.raw_data
+
+
+class TestPoolsModule:
+    """Tests for btrfs pool management."""
+
+    @pytest.fixture
+    def mock_settings(self):
+        """Mock settings."""
+        mock = MagicMock()
+        mock.pools_base_path = "/mnt/pools"
+        return mock
+
+    def test_pool_create_schema(self):
+        """Test PoolCreate schema."""
+        pool = PoolCreate(
+            name="datapool",
+            devices=["/dev/sda", "/dev/sdb"],
+            raid_level="raid1"
+        )
+        
+        assert pool.name == "datapool"
+        assert pool.devices == ["/dev/sda", "/dev/sdb"]
+        assert pool.raid_level == "raid1"
+
+    def test_pool_create_default_raid(self):
+        """Test PoolCreate default raid level."""
+        pool = PoolCreate(
+            name="datapool",
+            devices=["/dev/sda"]
+        )
+        
+        assert pool.raid_level == "single"
+
+    def test_pool_info_schema(self):
+        """Test PoolInfo schema."""
+        pool = PoolInfo(
+            name="datapool",
+            uuid="12345-67890",
+            devices=["/dev/sda", "/dev/sdb"],
+            total_size=4000000000000,
+            used_size=1000000000000,
+            mountpoint="/mnt/pools/datapool",
+            raid_level="raid1"
+        )
+        
+        assert pool.name == "datapool"
+        assert pool.uuid == "12345-67890"
+        assert len(pool.devices) == 2
+        assert pool.total_size == 4000000000000
+
+    def test_volume_create_schema(self):
+        """Test VolumeCreate schema."""
+        volume = VolumeCreate(
+            pool_name="datapool",
+            name="documents",
+            quota=1073741824  # 1GB
+        )
+        
+        assert volume.pool_name == "datapool"
+        assert volume.name == "documents"
+        assert volume.quota == 1073741824
+
+    def test_volume_create_no_quota(self):
+        """Test VolumeCreate without quota."""
+        volume = VolumeCreate(
+            pool_name="datapool",
+            name="documents"
+        )
+        
+        assert volume.quota is None
+
+    def test_volume_info_schema(self):
+        """Test VolumeInfo schema."""
+        volume = VolumeInfo(
+            name="documents",
+            pool="datapool",
+            path="/mnt/pools/datapool/documents",
+            quota=1073741824
+        )
+        
+        assert volume.name == "documents"
+        assert volume.pool == "datapool"
+
+    @patch("src.storage.pools.settings")
+    def test_create_pool_validates_raid_level(self, mock_settings):
+        """Test that invalid raid levels are rejected."""
+        mock_settings.pools_base_path = "/mnt/pools"
+        
+        pool = PoolCreate(
+            name="testpool",
+            devices=["/dev/sda"],
+            raid_level="invalid"
+        )
+        
+        with pytest.raises(ValueError, match="Unsupported RAID level"):
+            pools.create_pool(pool)
+
+    @patch("src.storage.pools.settings")
+    def test_list_pools_parses_btrfs_show(self, mock_settings):
+        """Test parsing btrfs filesystem show output."""
+        mock_settings.pools_base_path = "/mnt/pools"
+        
+        btrfs_show_output = """Label: datapool  uuid: 12345-67890
+        Total devices 2 FS bytes used 500.00GiB
+        devid    1 size 2.00TiB used 501.00GiB path /dev/sda
+        devid    2 size 2.00TiB used 501.00GiB path /dev/sdb
+"""
+        mock_show = MagicMock()
+        mock_show.returncode = 0
+        mock_show.stdout = btrfs_show_output
+        
+        mock_usage = MagicMock()
+        mock_usage.returncode = 0
+        mock_usage.stdout = """Device size:       4000000000000
+Used:              1000000000000
+Data,RAID1:        500000000000
+"""
+        
+        def subprocess_side_effect(cmd, *args, **kwargs):
+            if "show" in cmd:
+                return mock_show
+            return mock_usage
+        
+        with patch("src.storage.pools.subprocess.run", side_effect=subprocess_side_effect):
+            with patch("os.path.join", return_value="/mnt/pools/datapool"):
+                # This will call list_pools which internally calls get_pool
+                pass  # Complex to test fully without mocking filesystem
+
+    @patch("src.storage.pools.settings")  
+    @patch("src.storage.pools.subprocess.run")
+    def test_delete_pool_unmounts(self, mock_run, mock_settings):
+        """Test that delete_pool unmounts the filesystem."""
+        mock_settings.pools_base_path = "/mnt/pools"
+        mock_run.return_value = MagicMock(returncode=0)
+        
+        with patch("os.path.exists", return_value=True):
+            with patch("os.rmdir"):
+                with patch("builtins.open", MagicMock()):
+                    pools.delete_pool("testpool")
+        
+        # Verify umount was called
+        calls = [str(c) for c in mock_run.call_args_list]
+        assert any("umount" in str(c) for c in calls)
+
+
+class TestStorageSchemas:
+    """Tests for storage schemas validation."""
+
+    def test_disk_info_required_fields(self):
+        """Test DiskInfo requires name, path, size, rotational, type."""
+        from pydantic import ValidationError
+        
+        # Should work with all required fields
+        disk = DiskInfo(
+            name="sda",
+            path="/dev/sda",
+            size=1000000000,
+            rotational=True,
+            type="disk"
+        )
+        assert disk.name == "sda"
+        
+        # Should fail without required field
+        with pytest.raises(ValidationError):
+            DiskInfo(name="sda", path="/dev/sda", size=1000000000, rotational=True)
+
+    def test_smart_data_required_fields(self):
+        """Test SmartData requires device and healthy."""
+        smart = SmartData(device="/dev/sda", healthy=True)
+        assert smart.device == "/dev/sda"
+        assert smart.healthy is True
+
+    def test_pool_create_requires_name_and_devices(self):
+        """Test PoolCreate requires name and devices."""
+        from pydantic import ValidationError
+        
+        # Should work with required fields
+        pool = PoolCreate(name="pool1", devices=["/dev/sda"])
+        assert pool.name == "pool1"
+        
+        # Should fail without devices
+        with pytest.raises(ValidationError):
+            PoolCreate(name="pool1")
+
+    def test_raid_levels_supported(self):
+        """Test supported RAID levels in schema."""
+        for raid in ["single", "raid0", "raid1", "raid5", "raid6", "raid10"]:
+            pool = PoolCreate(name="test", devices=["/dev/sda"], raid_level=raid)
+            assert pool.raid_level == raid

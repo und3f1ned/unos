@@ -1,0 +1,55 @@
+from pydantic import BaseModel
+from enum import Enum
+from typing import Optional
+
+
+class TaskType(str, Enum):
+    SNAPSHOT = "snapshot"
+    SCRUB = "scrub"
+    SMART_TEST = "smart_test"
+    BACKUP = "backup"
+    CUSTOM = "custom"
+
+
+class ScheduleFrequency(str, Enum):
+    HOURLY = "hourly"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    CUSTOM = "custom"
+
+
+class ScheduledTask(BaseModel):
+    id: Optional[str] = None
+    name: str
+    task_type: TaskType
+    enabled: bool = True
+    frequency: ScheduleFrequency
+    cron_expression: Optional[str] = None  # For custom frequency
+    hour: int = 0  # 0-23
+    minute: int = 0  # 0-59
+    day_of_week: Optional[int] = None  # 0-6 for weekly
+    day_of_month: Optional[int] = None  # 1-31 for monthly
+
+    # Task-specific config
+    target_pool: Optional[str] = None  # For snapshot/scrub
+    target_disk: Optional[str] = None  # For SMART test
+    command: Optional[str] = None  # For custom tasks
+
+    # Retention
+    keep_count: Optional[int] = None  # For snapshots - how many to keep
+
+    last_run: Optional[str] = None
+    next_run: Optional[str] = None
+    last_status: Optional[str] = None
+
+
+class TaskRun(BaseModel):
+    id: str
+    task_id: str
+    task_name: str
+    started_at: str
+    finished_at: Optional[str] = None
+    status: str  # running, success, failed
+    output: Optional[str] = None
+    error: Optional[str] = None

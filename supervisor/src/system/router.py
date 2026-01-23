@@ -1,0 +1,291 @@
+import platform
+import subprocess
+import psutil
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from ..auth.utils import verify_token
+
+router = APIRouter(prefix="/system", tags=["system"])
+
+
+class SystemInfo(BaseModel):
+    hostname: str
+    kernel: str
+    os: str
+    architecture: str
+    uptime: float
+
+
+class SystemStats(BaseModel):
+    cpu_percent: float
+    cpu_count: int
+    memory_total: int
+    memory_used: int
+    memory_percent: float
+    disk_total: int
+    disk_used: int
+    disk_percent: float
+    network_sent: int
+    network_recv: int
+    temperatures: dict
+
+
+@router.get("/info", response_model=SystemInfo)
+async def get_system_info(_=Depends(verify_token)):
+    return SystemInfo(
+        hostname=platform.node(),
+        kernel=platform.release(),
+        os=platform.system(),
+        architecture=platform.machine(),
+        uptime=psutil.boot_time(),
+    )
+
+
+@router.get("/stats", response_model=SystemStats)
+async def get_system_stats(_=Depends(verify_token)):
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+    network = psutil.net_io_counters()
+
+    temps = {}
+    try:
+        sensors = psutil.sensors_temperatures()
+        for name, entries in sensors.items():
+            if entries:
+                temps[name] = entries[0].current
+    except Exception:
+        pass
+
+    return SystemStats(
+        cpu_percent=psutil.cpu_percent(interval=0.1),
+        cpu_count=psutil.cpu_count(),
+        memory_total=memory.total,
+        memory_used=memory.used,
+        memory_percent=memory.percent,
+        disk_total=disk.total,
+        disk_used=disk.used,
+        disk_percent=disk.percent,
+        network_sent=network.bytes_sent,
+        network_recv=network.bytes_recv,
+        temperatures=temps,
+    )
+
+
+class NetworkInterface(BaseModel):
+    name: str
+    ip_address: str | None
+    mac_address: str | None
+    speed: int | None
+    is_up: bool
+
+
+class HostnameUpdate(BaseModel):
+    hostname: str
+
+
+class TimezoneUpdate(BaseModel):
+    timezone: str
+
+
+@router.get("/network", response_model=list[NetworkInterface])
+async def get_network_interfaces(_=Depends(verify_token)):
+    """Get network interface information."""
+    interfaces = []
+    addrs = psutil.net_if_addrs()
+    stats = psutil.net_if_stats()
+
+    for name, addr_list in addrs.items():
+        if name == 'lo':
+            continue
+
+        ip_addr = None
+        mac_addr = None
+        for addr in addr_list:
+            if addr.family.name == 'AF_INET':
+                ip_addr = addr.address
+            elif addr.family.name == 'AF_PACKET':
+                mac_addr = addr.address
+
+        stat = stats.get(name)
+        interfaces.append(NetworkInterface(
+            name=name,
+            ip_address=ip_addr,
+            mac_address=mac_addr,
+            speed=stat.speed if stat else None,
+            is_up=stat.isup if stat else False
+        ))
+
+    return interfaces
+
+
+@router.get("/timezone")
+async def get_timezone(_=Depends(verify_token)):
+    """Get current timezone."""
+    try:
+        result = subprocess.run(
+            ["timedatectl", "show", "--property=Timezone", "--value"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            return {"timezone": result.stdout.strip()}
+    except Exception:
+        pass
+    return {"timezone": "Unknown"}
+
+
+@router.get("/timezones")
+async def list_timezones(_=Depends(verify_token)):
+    """List available timezones."""
+    try:
+        result = subprocess.run(
+            ["timedatectl", "list-timezones"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            return {"timezones": result.stdout.strip().split('\n')}
+    except Exception:
+        pass
+    return {"timezones": []}
+
+
+@router.put("/timezone")
+async def set_timezone(data: TimezoneUpdate, _=Depends(verify_token)):
+    """Set system timezone."""
+    result = subprocess.run(
+        ["timedatectl", "set-timezone", data.timezone],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise HTTPException(500, detail=f"Failed to set timezone: {result.stderr}")
+    return {"status": "ok", "timezone": data.timezone}
+
+
+@router.put("/hostname")
+async def set_hostname(data: HostnameUpdate, _=Depends(verify_token)):
+    """Set system hostname."""
+    result = subprocess.run(
+        ["hostnamectl", "set-hostname", data.hostname],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise HTTPException(500, detail=f"Failed to set hostname: {result.stderr}")
+    return {"status": "ok", "hostname": data.hostname}
+
+
+@router.post("/reboot")
+async def reboot_system(_=Depends(verify_token)):
+    """Reboot the system."""
+    subprocess.Popen(["shutdown", "-r", "+1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"status": "ok", "message": "System will reboot in 1 minute"}
+
+
+@router.post("/shutdown")
+async def shutdown_system(_=Depends(verify_token)):
+    """Shutdown the system."""
+    subprocess.Popen(["shutdown", "-h", "+1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"status": "ok", "message": "System will shutdown in 1 minute"}
+
+
+@router.post("/cancel-shutdown")
+async def cancel_shutdown(_=Depends(verify_token)):
+    """Cancel pending shutdown/reboot."""
+    subprocess.run(["shutdown", "-c"], capture_output=True)
+    return {"status": "ok", "message": "Shutdown cancelled"}
+
+
+class PCIeDevice(BaseModel):
+    slot: str
+    class_name: str
+    vendor: str
+    device: str
+    revision: str | None = None
+    driver: str | None = None
+
+
+@router.get("/pcie", response_model=list[PCIeDevice])
+async def get_pcie_devices(_=Depends(verify_token)):
+    """Get PCIe device information."""
+    devices = []
+    try:
+        # Get basic device list
+        result = subprocess.run(
+            ["lspci", "-vmm"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            return devices
+
+        # Parse lspci output
+        current_device = {}
+        for line in result.stdout.split('\n'):
+            line = line.strip()
+            if not line:
+                if current_device:
+                    devices.append(PCIeDevice(
+                        slot=current_device.get('Slot', ''),
+                        class_name=current_device.get('Class', ''),
+                        vendor=current_device.get('Vendor', ''),
+                        device=current_device.get('Device', ''),
+                        revision=current_device.get('Rev'),
+                        driver=current_device.get('Driver')
+                    ))
+                    current_device = {}
+                continue
+
+            if ':' in line:
+                key, _, value = line.partition(':')
+                current_device[key.strip()] = value.strip()
+
+        # Add last device if exists
+        if current_device:
+            devices.append(PCIeDevice(
+                slot=current_device.get('Slot', ''),
+                class_name=current_device.get('Class', ''),
+                vendor=current_device.get('Vendor', ''),
+                device=current_device.get('Device', ''),
+                revision=current_device.get('Rev'),
+                driver=current_device.get('Driver')
+            ))
+
+    except Exception:
+        pass
+
+    return devices
+
+
+class TemperatureSensor(BaseModel):
+    label: str
+    current: float
+    high: float | None = None
+    critical: float | None = None
+
+
+class TemperatureGroup(BaseModel):
+    name: str
+    sensors: list[TemperatureSensor]
+
+
+@router.get("/temperatures", response_model=list[TemperatureGroup])
+async def get_temperatures(_=Depends(verify_token)):
+    """Get detailed temperature sensor information."""
+    groups = []
+    try:
+        sensors = psutil.sensors_temperatures()
+        for name, entries in sensors.items():
+            sensor_list = []
+            for entry in entries:
+                sensor_list.append(TemperatureSensor(
+                    label=entry.label or f"Sensor {len(sensor_list)}",
+                    current=entry.current,
+                    high=entry.high if entry.high and entry.high > 0 else None,
+                    critical=entry.critical if entry.critical and entry.critical > 0 else None
+                ))
+            if sensor_list:
+                groups.append(TemperatureGroup(
+                    name=name,
+                    sensors=sensor_list
+                ))
+    except Exception:
+        pass
+
+    return groups
