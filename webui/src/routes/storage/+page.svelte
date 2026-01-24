@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { getDisks, getPools, createPool, deletePool, type Disk, type Pool } from '$lib/api/storage';
-  import { HardDrive, Database, Plus, Trash2, X, AlertTriangle } from 'lucide-svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { getDisks, getPools, createPool, deletePool, startScrub, getScrubStatus, cancelScrub, type Disk, type Pool, type ScrubStatus } from '$lib/api/storage';
+  import { HardDrive, Database, Plus, Trash2, X, AlertTriangle, RefreshCw, CheckCircle, XCircle, Loader2 } from 'lucide-svelte';
 
   let disks: Disk[] = [];
   let pools: Pool[] = [];
@@ -24,8 +24,18 @@
   let deleteConfirmName = '';
   let deleting = false;
 
+  // Scrub state
+  let scrubStatuses: Record<string, ScrubStatus> = {};
+  let scrubPollingIntervals: Record<string, ReturnType<typeof setInterval>> = {};
+  let startingScrub: Record<string, boolean> = {};
+
   onMount(async () => {
     await loadData();
+  });
+
+  onDestroy(() => {
+    // Clean up polling intervals
+    Object.values(scrubPollingIntervals).forEach(interval => clearInterval(interval));
   });
 
   async function loadData() {
@@ -33,11 +43,101 @@
     error = '';
     try {
       [disks, pools] = await Promise.all([getDisks(), getPools()]);
+      // Load scrub status for each pool
+      await loadScrubStatuses();
     } catch (e: any) {
       error = e.message;
     } finally {
       loading = false;
     }
+  }
+
+  async function loadScrubStatuses() {
+    for (const pool of pools) {
+      try {
+        const status = await getScrubStatus(pool.name);
+        scrubStatuses[pool.name] = status;
+        scrubStatuses = scrubStatuses; // Trigger reactivity
+
+        // If scrub is running, start polling
+        if (status.status === 'running') {
+          startScrubPolling(pool.name);
+        }
+      } catch {
+        // Ignore errors for individual pool status
+      }
+    }
+  }
+
+  function startScrubPolling(poolName: string) {
+    // Don't start if already polling
+    if (scrubPollingIntervals[poolName]) return;
+
+    scrubPollingIntervals[poolName] = setInterval(async () => {
+      try {
+        const status = await getScrubStatus(poolName);
+        scrubStatuses[poolName] = status;
+        scrubStatuses = scrubStatuses;
+
+        // Stop polling if scrub is no longer running
+        if (status.status !== 'running') {
+          clearInterval(scrubPollingIntervals[poolName]);
+          delete scrubPollingIntervals[poolName];
+        }
+      } catch {
+        // Stop polling on error
+        clearInterval(scrubPollingIntervals[poolName]);
+        delete scrubPollingIntervals[poolName];
+      }
+    }, 2000);
+  }
+
+  async function handleStartScrub(poolName: string) {
+    startingScrub[poolName] = true;
+    startingScrub = startingScrub;
+    error = '';
+
+    try {
+      const status = await startScrub(poolName);
+      scrubStatuses[poolName] = status;
+      scrubStatuses = scrubStatuses;
+      startScrubPolling(poolName);
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      startingScrub[poolName] = false;
+      startingScrub = startingScrub;
+    }
+  }
+
+  async function handleCancelScrub(poolName: string) {
+    try {
+      const status = await cancelScrub(poolName);
+      scrubStatuses[poolName] = status;
+      scrubStatuses = scrubStatuses;
+
+      // Stop polling
+      if (scrubPollingIntervals[poolName]) {
+        clearInterval(scrubPollingIntervals[poolName]);
+        delete scrubPollingIntervals[poolName];
+      }
+    } catch (e: any) {
+      error = e.message;
+    }
+  }
+
+  function formatDuration(seconds: number): string {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  function getScrubProgress(status: ScrubStatus): number {
+    if (!status.bytes_scrubbed || !status.total_bytes || status.total_bytes === 0) {
+      return 0;
+    }
+    return (status.bytes_scrubbed / status.total_bytes) * 100;
   }
 
   function formatBytes(bytes: number): string {
@@ -198,16 +298,43 @@
       {:else}
         <div class="space-y-4">
           {#each pools as pool}
+            {@const scrubStatus = scrubStatuses[pool.name]}
             <div class="bg-slate-700/50 rounded-lg p-4">
               <div class="flex items-center justify-between mb-2">
                 <h3 class="font-semibold">{pool.name}</h3>
-                <button
-                  on:click={() => openDeleteModal(pool)}
-                  class="p-2 text-red-400 hover:text-red-300 transition-colors"
-                  title="Delete pool"
-                >
-                  <Trash2 class="w-4 h-4" />
-                </button>
+                <div class="flex items-center gap-2">
+                  {#if scrubStatus?.status === 'running'}
+                    <button
+                      on:click={() => handleCancelScrub(pool.name)}
+                      class="flex items-center gap-1 px-3 py-1.5 text-sm bg-orange-600 hover:bg-orange-700 rounded-lg transition-colors"
+                      title="Cancel scrub"
+                    >
+                      <XCircle class="w-4 h-4" />
+                      Cancel Scrub
+                    </button>
+                  {:else}
+                    <button
+                      on:click={() => handleStartScrub(pool.name)}
+                      disabled={startingScrub[pool.name]}
+                      class="flex items-center gap-1 px-3 py-1.5 text-sm bg-slate-600 hover:bg-slate-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg transition-colors"
+                      title="Start data integrity check"
+                    >
+                      {#if startingScrub[pool.name]}
+                        <Loader2 class="w-4 h-4 animate-spin" />
+                      {:else}
+                        <RefreshCw class="w-4 h-4" />
+                      {/if}
+                      Scrub
+                    </button>
+                  {/if}
+                  <button
+                    on:click={() => openDeleteModal(pool)}
+                    class="p-2 text-red-400 hover:text-red-300 transition-colors"
+                    title="Delete pool"
+                  >
+                    <Trash2 class="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
               <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -235,6 +362,59 @@
                     class="h-full bg-blue-500 transition-all"
                     style="width: {(pool.used_size / pool.total_size * 100).toFixed(1)}%"
                   ></div>
+                </div>
+              {/if}
+
+              <!-- Scrub Status -->
+              {#if scrubStatus}
+                <div class="mt-3 pt-3 border-t border-slate-600">
+                  {#if scrubStatus.status === 'running'}
+                    <div class="space-y-2">
+                      <div class="flex items-center justify-between text-sm">
+                        <span class="flex items-center gap-2 text-blue-400">
+                          <Loader2 class="w-4 h-4 animate-spin" />
+                          Scrub in progress
+                        </span>
+                        <span class="text-slate-400">
+                          {#if scrubStatus.duration}
+                            {formatDuration(scrubStatus.duration)}
+                          {/if}
+                        </span>
+                      </div>
+                      {#if scrubStatus.total_bytes && scrubStatus.bytes_scrubbed}
+                        <div class="h-2 bg-slate-600 rounded-full overflow-hidden">
+                          <div
+                            class="h-full bg-blue-500 transition-all"
+                            style="width: {getScrubProgress(scrubStatus).toFixed(1)}%"
+                          ></div>
+                        </div>
+                        <div class="flex justify-between text-xs text-slate-400">
+                          <span>{formatBytes(scrubStatus.bytes_scrubbed)} / {formatBytes(scrubStatus.total_bytes)}</span>
+                          <span>{getScrubProgress(scrubStatus).toFixed(1)}%</span>
+                          {#if scrubStatus.rate}
+                            <span>{formatBytes(scrubStatus.rate)}/s</span>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  {:else if scrubStatus.status === 'finished' || scrubStatus.status === 'aborted'}
+                    <div class="flex items-center justify-between text-sm">
+                      <span class="flex items-center gap-2 {scrubStatus.errors > 0 ? 'text-red-400' : 'text-green-400'}">
+                        {#if scrubStatus.errors > 0}
+                          <XCircle class="w-4 h-4" />
+                          Last scrub: {scrubStatus.errors} error(s)
+                        {:else}
+                          <CheckCircle class="w-4 h-4" />
+                          Last scrub: No errors
+                        {/if}
+                      </span>
+                      <span class="text-slate-400 text-xs">
+                        {#if scrubStatus.last_run}
+                          {scrubStatus.last_run}
+                        {/if}
+                      </span>
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </div>

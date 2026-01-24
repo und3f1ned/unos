@@ -49,3 +49,14 @@ class VolumeInfo(BaseModel):
     path: str
     used: int | None = None
     quota: int | None = None
+
+
+class ScrubStatus(BaseModel):
+    pool: str
+    status: str  # "running", "finished", "aborted", "idle"
+    duration: float | None = None  # seconds
+    bytes_scrubbed: int | None = None
+    total_bytes: int | None = None
+    rate: int | None = None  # bytes per second
+    errors: int = 0
+    last_run: str | None = None  # datetime string of last scrub

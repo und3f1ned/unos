@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from ..auth.utils import verify_token
-from .schemas import DiskInfo, SmartData, PoolCreate, PoolInfo, VolumeCreate, VolumeInfo
+from .schemas import DiskInfo, SmartData, PoolCreate, PoolInfo, VolumeCreate, VolumeInfo, ScrubStatus
 from . import disks, pools
 
 router = APIRouter(prefix="/storage", tags=["storage"])
@@ -86,5 +86,32 @@ async def delete_volume_endpoint(pool_name: str, volume_name: str, _=Depends(ver
     try:
         pools.delete_volume(pool_name, volume_name)
         return {"status": "deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/pools/{name}/scrub", response_model=ScrubStatus)
+async def start_scrub_endpoint(name: str, _=Depends(verify_token)):
+    """Start a scrub on a pool."""
+    try:
+        return pools.start_scrub(name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pools/{name}/scrub", response_model=ScrubStatus)
+async def get_scrub_status_endpoint(name: str, _=Depends(verify_token)):
+    """Get scrub status for a pool."""
+    try:
+        return pools.get_scrub_status(name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/pools/{name}/scrub", response_model=ScrubStatus)
+async def cancel_scrub_endpoint(name: str, _=Depends(verify_token)):
+    """Cancel a running scrub on a pool."""
+    try:
+        return pools.cancel_scrub(name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

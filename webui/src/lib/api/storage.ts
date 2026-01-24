@@ -49,6 +49,17 @@ export interface VolumeCreate {
   quota: number | null;
 }
 
+export interface ScrubStatus {
+  pool: string;
+  status: 'running' | 'finished' | 'aborted' | 'idle';
+  duration: number | null;
+  bytes_scrubbed: number | null;
+  total_bytes: number | null;
+  rate: number | null;
+  errors: number;
+  last_run: string | null;
+}
+
 export async function getDisks(): Promise<Disk[]> {
   return api.get<Disk[]>('/storage/disks');
 }
@@ -83,4 +94,16 @@ export async function createVolume(poolName: string, volume: VolumeCreate): Prom
 
 export async function deleteVolume(poolName: string, volumeName: string): Promise<void> {
   return api.delete(`/storage/pools/${poolName}/volumes/${volumeName}`);
+}
+
+export async function startScrub(poolName: string): Promise<ScrubStatus> {
+  return api.post<ScrubStatus>(`/storage/pools/${poolName}/scrub`, {});
+}
+
+export async function getScrubStatus(poolName: string): Promise<ScrubStatus> {
+  return api.get<ScrubStatus>(`/storage/pools/${poolName}/scrub`);
+}
+
+export async function cancelScrub(poolName: string): Promise<ScrubStatus> {
+  return api.delete<ScrubStatus>(`/storage/pools/${poolName}/scrub`);
 }
