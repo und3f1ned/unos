@@ -16,13 +16,15 @@
     Package,
     FolderOpen,
     Users,
-    Wrench
+    Wrench,
+    Archive
   } from "lucide-svelte";
 
   // Base navigation items (always visible)
   const baseNavItems = [
     { href: "/", icon: LayoutDashboard, label: "Dashboard" },
     { href: "/storage", icon: HardDrive, label: "Storage" },
+    { href: "/snapshots", icon: Archive, label: "Snapshots" },
     { href: "/shares", icon: Share2, label: "Shares" },
     { href: "/files", icon: FolderOpen, label: "Files" },
     { href: "/containers", icon: Container, label: "Containers" },
@@ -36,8 +38,8 @@
   ];
 
   // Reactive nav items based on user role
-  $: navItems = $user?.is_admin 
-    ? [...baseNavItems.slice(0, 6), ...adminNavItems, baseNavItems[6]]
+  $: navItems = $user?.is_admin
+    ? [...baseNavItems.slice(0, 7), ...adminNavItems, baseNavItems[7]]
     : baseNavItems;
 
   onMount(async () => {
