@@ -118,6 +118,12 @@ def _share_to_config(share: SmbShareInfo) -> str:
     if share.valid_users:
         users_str = ", ".join(share.valid_users)
         lines.append(f"   valid users = {users_str}")
+    # For guest-writable shares, force file ownership and permissions
+    if share.guest_ok and not share.readonly:
+        lines.append("   force user = nobody")
+        lines.append("   force group = nogroup")
+        lines.append("   create mask = 0666")
+        lines.append("   directory mask = 0777")
     lines.append("")
     return "\n".join(lines)
 
@@ -150,6 +156,10 @@ def create_share(share: SmbShareCreate) -> SmbShareInfo:
 
     # Create directory if needed
     os.makedirs(share.path, exist_ok=True)
+
+    # Set directory permissions for guest-writable shares
+    if share.guest_ok and not share.readonly:
+        os.chmod(share.path, 0o777)
 
     share_info = SmbShareInfo(
         name=share.name,
@@ -185,6 +195,11 @@ def update_share(name: str, share: SmbShareCreate) -> SmbShareInfo:
         guest_ok=share.guest_ok,
         valid_users=share.valid_users,
     )
+
+    # Update directory permissions for guest-writable shares
+    if os.path.exists(share.path):
+        if share.guest_ok and not share.readonly:
+            os.chmod(share.path, 0o777)
 
     # If name changed, remove old and add new
     if name != share.name:
