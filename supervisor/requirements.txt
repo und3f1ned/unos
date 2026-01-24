@@ -16,3 +16,5 @@ pytest==8.0.0
 pytest-asyncio==0.23.0
 httpx==0.26.0
 croniter==6.0.0
+pyotp==2.9.0
+nut2==2.1.1

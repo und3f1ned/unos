@@ -1191,3 +1191,26 @@ APP_CATALOG: list[AppTemplate] = [
             VolumeMapping(host="/var/log", container="/var/log", readonly=True),
         ],
     ),
+]
+
+
+def get_app_by_id(app_id: str) -> AppTemplate | None:
+    """Get an app template by its ID."""
+    for app in APP_CATALOG:
+        if app.id == app_id:
+            return app
+    return None
+
+
+def get_apps_by_category(category: AppCategory) -> list[AppTemplate]:
+    """Get all apps in a specific category."""
+    return [app for app in APP_CATALOG if app.category == category]
+
+
+def search_apps(query: str) -> list[AppTemplate]:
+    """Search apps by name or description."""
+    query_lower = query.lower()
+    return [
+        app for app in APP_CATALOG
+        if query_lower in app.name.lower() or query_lower in app.description.lower()
+    ]

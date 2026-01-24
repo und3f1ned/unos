@@ -1,11 +1,41 @@
 import platform
 import subprocess
+import json
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from ..auth.utils import verify_token
 
 router = APIRouter(prefix="/system", tags=["system"])
+
+
+def get_distro_name() -> str:
+    """Get the Linux distribution name from the host's /etc/os-release."""
+    # Try host's os-release first (mounted at /host/os-release)
+    for path in ["/host/os-release", "/etc/os-release"]:
+        try:
+            with open(path, "r") as f:
+                for line in f:
+                    if line.startswith("PRETTY_NAME="):
+                        # Remove PRETTY_NAME=" and trailing "
+                        name = line.strip().split("=", 1)[1].strip('"')
+                        return name
+        except Exception:
+            continue
+    # Fallback to platform.system()
+    return platform.system()
+
+
+def get_host_hostname() -> str:
+    """Get the host's hostname."""
+    # Try host's hostname first (mounted at /host/hostname)
+    try:
+        with open("/host/hostname", "r") as f:
+            return f.read().strip()
+    except Exception:
+        pass
+    # Fallback to platform.node()
+    return platform.node()
 
 
 class SystemInfo(BaseModel):
@@ -33,9 +63,9 @@ class SystemStats(BaseModel):
 @router.get("/info", response_model=SystemInfo)
 async def get_system_info(_=Depends(verify_token)):
     return SystemInfo(
-        hostname=platform.node(),
+        hostname=get_host_hostname(),
         kernel=platform.release(),
-        os=platform.system(),
+        os=get_distro_name(),
         architecture=platform.machine(),
         uptime=psutil.boot_time(),
     )
@@ -87,34 +117,81 @@ class TimezoneUpdate(BaseModel):
     timezone: str
 
 
+def get_host_network_interfaces() -> list[dict]:
+    """Get network interfaces from the host's network namespace."""
+    try:
+        # Use nsenter to access host's network namespace (PID 1 is host's init when pid=host)
+        result = subprocess.run(
+            ["nsenter", "--target", "1", "--net", "ip", "-j", "addr", "show"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+    except Exception:
+        pass
+    return []
+
+
+def get_interface_speed(ifname: str) -> int | None:
+    """Get interface speed from the host using ethtool."""
+    try:
+        result = subprocess.run(
+            ["nsenter", "--target", "1", "--net", "ethtool", ifname],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                if 'Speed:' in line:
+                    # Parse speed like "1000Mb/s" or "10000Mb/s"
+                    speed_str = line.split(':')[1].strip()
+                    if 'Mb/s' in speed_str:
+                        return int(speed_str.replace('Mb/s', ''))
+                    elif 'Gb/s' in speed_str:
+                        return int(float(speed_str.replace('Gb/s', '')) * 1000)
+    except Exception:
+        pass
+    return None
+
+
 @router.get("/network", response_model=list[NetworkInterface])
 async def get_network_interfaces(_=Depends(verify_token)):
-    """Get network interface information."""
+    """Get network interface information from the host."""
     interfaces = []
-    addrs = psutil.net_if_addrs()
-    stats = psutil.net_if_stats()
-
-    for name, addr_list in addrs.items():
-        if name == 'lo':
+    
+    # Get interfaces from host's network namespace
+    host_interfaces = get_host_network_interfaces()
+    
+    for iface in host_interfaces:
+        name = iface.get("ifname", "")
+        
+        # Skip loopback, docker, and veth interfaces
+        if name in ("lo", "docker0", "dummy0") or name.startswith("veth") or name.startswith("br-"):
             continue
-
+        
+        # Get IPv4 address
         ip_addr = None
-        mac_addr = None
-        for addr in addr_list:
-            if addr.family.name == 'AF_INET':
-                ip_addr = addr.address
-            elif addr.family.name == 'AF_PACKET':
-                mac_addr = addr.address
-
-        stat = stats.get(name)
+        for addr in iface.get("addr_info", []):
+            if addr.get("family") == "inet" and addr.get("scope") == "global":
+                ip_addr = addr.get("local")
+                break
+        
+        # Get MAC address
+        mac_addr = iface.get("address")
+        
+        # Get operational state
+        is_up = iface.get("operstate", "").upper() == "UP"
+        
+        # Get speed
+        speed = get_interface_speed(name) if is_up else None
+        
         interfaces.append(NetworkInterface(
             name=name,
             ip_address=ip_addr,
             mac_address=mac_addr,
-            speed=stat.speed if stat else None,
-            is_up=stat.isup if stat else False
+            speed=speed,
+            is_up=is_up
         ))
-
+    
     return interfaces
 
 
