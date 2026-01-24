@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { getSystemInfo, type SystemInfo } from '$lib/api/system';
-  import { user } from '$lib/stores/auth';
-  import { Server, User, Shield } from 'lucide-svelte';
+  import { onMount } from "svelte";
+  import { getSystemInfo, type SystemInfo } from "$lib/api/system";
+  import { user } from "$lib/stores/auth";
+  import { Server, User } from "lucide-svelte";
 
   let systemInfo: SystemInfo | null = null;
   let loading = true;
@@ -11,7 +11,7 @@
     try {
       systemInfo = await getSystemInfo();
     } catch (e) {
-      console.error('Failed to load system info:', e);
+      console.error("Failed to load system info:", e);
     } finally {
       loading = false;
     }
@@ -23,9 +23,9 @@
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
-    if (days > 0) return days + 'd ' + hours + 'h ' + mins + 'm';
-    if (hours > 0) return hours + 'h ' + mins + 'm';
-    return mins + 'm';
+    if (days > 0) return days + "d " + hours + "h " + mins + "m";
+    if (hours > 0) return hours + "h " + mins + "m";
+    return mins + "m";
   }
 </script>
 
@@ -104,45 +104,5 @@
     {:else}
       <p class="text-slate-500">Not logged in</p>
     {/if}
-  </div>
-
-  <!-- Security -->
-  <div class="bg-slate-800 rounded-lg p-4">
-    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-      <Shield class="w-5 h-5" />
-      Security
-    </h3>
-
-    <div class="space-y-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <p class="font-medium">Two-Factor Authentication</p>
-          <p class="text-sm text-slate-400">Add an extra layer of security</p>
-        </div>
-        <span class="px-3 py-1 bg-slate-700 text-slate-400 rounded-lg text-sm">
-          Coming Soon
-        </span>
-      </div>
-
-      <div class="flex items-center justify-between">
-        <div>
-          <p class="font-medium">Firewall</p>
-          <p class="text-sm text-slate-400">Configure network firewall rules</p>
-        </div>
-        <span class="px-3 py-1 bg-slate-700 text-slate-400 rounded-lg text-sm">
-          Coming Soon
-        </span>
-      </div>
-
-      <div class="flex items-center justify-between">
-        <div>
-          <p class="font-medium">SSL/TLS Certificates</p>
-          <p class="text-sm text-slate-400">Manage HTTPS certificates</p>
-        </div>
-        <span class="px-3 py-1 bg-slate-700 text-slate-400 rounded-lg text-sm">
-          Coming Soon
-        </span>
-      </div>
-    </div>
   </div>
 </div>
