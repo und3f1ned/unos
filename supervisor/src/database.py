@@ -22,5 +22,9 @@ async def get_db():
 
 
 async def init_db():
+    # Import models to ensure they're registered with Base
+    from .auth.models import User  # noqa: F401
+    from .security.models import LoginAttempt  # noqa: F401
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
