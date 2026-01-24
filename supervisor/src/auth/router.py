@@ -1,9 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+import pyotp
 from ..database import get_db
 from .models import User
-from .schemas import UserCreate, UserResponse, Token, LoginRequest, PasswordChange, UserUpdate
+from .schemas import (
+    UserCreate, UserResponse, Token, LoginRequest, PasswordChange,
+    UserUpdate, TOTPSetupResponse, TOTPVerifyRequest, TOTPEnableRequest
+)
 from .utils import hash_password, verify_password, create_access_token, verify_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -42,8 +46,20 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Incorrect username or password",
         )
 
+    # Check if 2FA is enabled
+    if user.totp_enabled:
+        if not request.totp_code:
+            return Token(access_token="", requires_totp=True)
+
+        totp = pyotp.TOTP(user.totp_secret)
+        if not totp.verify(request.totp_code):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid 2FA code",
+            )
+
     access_token = create_access_token(data={"sub": user.username})
-    return Token(access_token=access_token)
+    return Token(access_token=access_token, requires_totp=False)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -65,7 +81,7 @@ async def change_password(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Change current user's password."""
+    """Change current user password."""
     if not verify_password(data.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
@@ -74,7 +90,79 @@ async def change_password(
     return {"status": "ok", "message": "Password changed successfully"}
 
 
-# User management (admin only)
+# ==================== TOTP 2FA Endpoints ====================
+
+@router.post("/totp/setup", response_model=TOTPSetupResponse)
+async def setup_totp(
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate TOTP secret for 2FA setup."""
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="2FA is already enabled")
+
+    secret = pyotp.random_base32()
+    current_user.totp_secret = secret
+    await db.commit()
+
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=current_user.username, issuer_name="UNOS")
+
+    return TOTPSetupResponse(secret=secret, qr_uri=uri)
+
+
+@router.post("/totp/enable")
+async def enable_totp(
+    request: TOTPEnableRequest,
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """Enable 2FA after verifying TOTP code."""
+    if not current_user.totp_secret:
+        raise HTTPException(status_code=400, detail="Run /totp/setup first")
+
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="2FA is already enabled")
+
+    totp = pyotp.TOTP(current_user.totp_secret)
+    if not totp.verify(request.code):
+        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+    current_user.totp_enabled = True
+    await db.commit()
+
+    return {"status": "ok", "message": "2FA enabled successfully"}
+
+
+@router.post("/totp/disable")
+async def disable_totp(
+    request: TOTPVerifyRequest,
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """Disable 2FA."""
+    if not current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="2FA is not enabled")
+
+    totp = pyotp.TOTP(current_user.totp_secret)
+    if not totp.verify(request.code):
+        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+    current_user.totp_enabled = False
+    current_user.totp_secret = None
+    await db.commit()
+
+    return {"status": "ok", "message": "2FA disabled successfully"}
+
+
+@router.get("/totp/status")
+async def totp_status(current_user: User = Depends(verify_token)):
+    """Check if 2FA is enabled for current user."""
+    return {"enabled": current_user.totp_enabled}
+
+
+# ==================== User Management (admin only) ====================
+
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
     current_user: User = Depends(verify_token),
@@ -98,7 +186,6 @@ async def create_user(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    # Check if username exists
     result = await db.execute(select(User).where(User.username == user.username))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Username already exists")

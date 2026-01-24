@@ -12,3 +12,6 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
+    # TOTP 2FA fields
+    totp_secret = Column(String, nullable=True)
+    totp_enabled = Column(Boolean, default=False)
