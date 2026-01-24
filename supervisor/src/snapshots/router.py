@@ -66,7 +66,14 @@ async def list_snapshots(subvolume: str | None = None, _: dict = Depends(verify_
             created = ""
             for line in stdout.split("\n"):
                 if "Creation time:" in line:
-                    created = line.split(":", 1)[1].strip()
+                    raw_date = line.split(":", 1)[1].strip()
+                    # Convert btrfs date format to ISO format
+                    # e.g., "2025-01-24 12:49:31 +0000" -> "2025-01-24T12:49:31+00:00"
+                    try:
+                        dt = datetime.strptime(raw_date[:19], "%Y-%m-%d %H:%M:%S")
+                        created = dt.isoformat()
+                    except ValueError:
+                        created = raw_date
                     break
 
             stdout, _, _ = run_cmd(["du", "-sh", str(snap)])
