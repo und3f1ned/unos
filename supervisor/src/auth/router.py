@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import pyotp
@@ -9,6 +9,7 @@ from .schemas import (
     UserUpdate, TOTPSetupResponse, TOTPVerifyRequest, TOTPEnableRequest
 )
 from .utils import hash_password, verify_password, create_access_token, verify_token
+from ..security.router import record_login_attempt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -36,11 +37,20 @@ async def setup_admin(user: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.username == request.username))
+async def login(
+    login_request: LoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(User).where(User.username == login_request.username))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(request.password, user.hashed_password):
+    if not user or not verify_password(login_request.password, user.hashed_password):
+        # Record failed login attempt
+        await record_login_attempt(
+            db, login_request.username, False, request,
+            failure_reason="Incorrect username or password"
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -48,15 +58,23 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     # Check if 2FA is enabled
     if user.totp_enabled:
-        if not request.totp_code:
+        if not login_request.totp_code:
             return Token(access_token="", requires_totp=True)
 
         totp = pyotp.TOTP(user.totp_secret)
-        if not totp.verify(request.totp_code):
+        if not totp.verify(login_request.totp_code):
+            # Record failed 2FA attempt
+            await record_login_attempt(
+                db, login_request.username, False, request,
+                failure_reason="Invalid 2FA code"
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid 2FA code",
             )
+
+    # Record successful login
+    await record_login_attempt(db, login_request.username, True, request)
 
     access_token = create_access_token(data={"sub": user.username})
     return Token(access_token=access_token, requires_totp=False)

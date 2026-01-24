@@ -16,6 +16,7 @@ from .power.router import router as power_router
 from .network.router import router as network_router
 from .logs.router import router as logs_router
 from .health.router import router as health_router
+from .security.router import router as security_router
 from .monitor.router import router as monitor_router
 from .backup.router import router as backup_router
 from .websocket.events import router as ws_router
@@ -58,6 +59,7 @@ app.include_router(logs_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(monitor_router, prefix="/api/v1")
 app.include_router(backup_router, prefix="/api/v1")
+app.include_router(security_router, prefix="/api/v1")
 app.include_router(ws_router)
 
 

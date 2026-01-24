@@ -33,6 +33,7 @@ secrets.env
 # Logs
 *.log
 logs/
+!supervisor/src/logs/
 
 # OS files
 .DS_Store
