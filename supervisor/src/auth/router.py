@@ -1,3 +1,5 @@
+import json
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -10,12 +12,17 @@ from ..audit.schemas import AuditAction, AuditSeverity
 
 # Rate limiter for auth endpoints
 limiter = Limiter(key_func=get_remote_address)
-from .models import User
+from .models import User, APIToken
 from .schemas import (
     UserCreate, UserResponse, Token, LoginRequest, PasswordChange,
-    UserUpdate, TOTPSetupResponse, TOTPVerifyRequest, TOTPEnableRequest
+    UserUpdate, TOTPSetupResponse, TOTPVerifyRequest, TOTPEnableRequest,
+    APITokenCreate, APITokenResponse, APITokenCreated,
+    RecoveryCodesResponse, RecoveryCodeVerify
 )
-from .utils import hash_password, verify_password, create_access_token, verify_token
+from .utils import (
+    hash_password, verify_password, create_access_token, verify_token,
+    generate_api_token, generate_recovery_codes, verify_recovery_code
+)
 from ..security.router import record_login_attempt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -333,3 +340,202 @@ async def delete_user(
     )
 
     return {"status": "ok", "message": "User deleted"}
+
+
+# ==================== API Token Management ====================
+
+@router.get("/tokens", response_model=list[APITokenResponse])
+async def list_api_tokens(
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all API tokens for current user."""
+    result = await db.execute(
+        select(APIToken).where(APIToken.user_id == current_user.id)
+    )
+    return result.scalars().all()
+
+
+@router.post("/tokens", response_model=APITokenCreated)
+async def create_api_token(
+    request: Request,
+    data: APITokenCreate,
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new API token. The full token is only shown once!"""
+    # Generate the token
+    full_token, token_hash = generate_api_token()
+    token_prefix = full_token[:12]  # Show first 12 chars for identification
+
+    # Calculate expiration if specified
+    expires_at = None
+    if data.expires_in_days:
+        expires_at = datetime.utcnow() + timedelta(days=data.expires_in_days)
+
+    # Create the token
+    api_token = APIToken(
+        name=data.name,
+        token_hash=token_hash,
+        token_prefix=token_prefix,
+        user_id=current_user.id,
+        permissions=data.permissions,
+        expires_at=expires_at
+    )
+    db.add(api_token)
+    await db.commit()
+    await db.refresh(api_token)
+
+    # Audit log
+    await log_action(
+        action=AuditAction.OTHER,
+        request=request,
+        user=current_user,
+        resource_type="api_token",
+        resource_id=data.name,
+        details=f"Created API token: {data.name}"
+    )
+
+    return APITokenCreated(
+        id=api_token.id,
+        name=api_token.name,
+        token=full_token,
+        token_prefix=token_prefix,
+        permissions=api_token.permissions,
+        expires_at=expires_at
+    )
+
+
+@router.delete("/tokens/{token_id}")
+async def delete_api_token(
+    request: Request,
+    token_id: int,
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete an API token."""
+    result = await db.execute(
+        select(APIToken).where(
+            APIToken.id == token_id,
+            APIToken.user_id == current_user.id
+        )
+    )
+    api_token = result.scalar_one_or_none()
+
+    if not api_token:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    token_name = api_token.name
+    await db.delete(api_token)
+    await db.commit()
+
+    # Audit log
+    await log_action(
+        action=AuditAction.OTHER,
+        request=request,
+        user=current_user,
+        resource_type="api_token",
+        resource_id=token_name,
+        details=f"Deleted API token: {token_name}"
+    )
+
+    return {"status": "ok", "message": "Token deleted"}
+
+
+@router.post("/tokens/{token_id}/toggle")
+async def toggle_api_token(
+    token_id: int,
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """Enable or disable an API token."""
+    result = await db.execute(
+        select(APIToken).where(
+            APIToken.id == token_id,
+            APIToken.user_id == current_user.id
+        )
+    )
+    api_token = result.scalar_one_or_none()
+
+    if not api_token:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    api_token.is_active = not api_token.is_active
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "is_active": api_token.is_active,
+        "message": f"Token {'enabled' if api_token.is_active else 'disabled'}"
+    }
+
+
+# ==================== 2FA Recovery Codes ====================
+
+@router.post("/recovery-codes/generate", response_model=RecoveryCodesResponse)
+async def generate_new_recovery_codes(
+    request: Request,
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate new recovery codes. Replaces any existing codes."""
+    if not current_user.totp_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="2FA must be enabled before generating recovery codes"
+        )
+
+    # Generate new codes
+    plain_codes, hashed_codes = generate_recovery_codes(10)
+
+    # Store hashed codes
+    current_user.recovery_codes = json.dumps(hashed_codes)
+    await db.commit()
+
+    # Audit log
+    await log_action(
+        action=AuditAction.OTHER,
+        request=request,
+        user=current_user,
+        resource_type="recovery_codes",
+        details="Generated new 2FA recovery codes",
+        severity=AuditSeverity.WARNING
+    )
+
+    return RecoveryCodesResponse(codes=plain_codes)
+
+
+@router.get("/recovery-codes/status")
+async def recovery_codes_status(
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    """Check how many recovery codes are remaining."""
+    if not current_user.recovery_codes:
+        return {"remaining": 0, "generated": False}
+
+    try:
+        codes = json.loads(current_user.recovery_codes)
+        # Count non-null entries (used codes are set to null)
+        remaining = len([c for c in codes if c is not None])
+        return {"remaining": remaining, "generated": True}
+    except json.JSONDecodeError:
+        return {"remaining": 0, "generated": False}
+
+
+@router.post("/recovery-codes/verify")
+async def verify_recovery_code_endpoint(
+    request: Request,
+    data: RecoveryCodeVerify,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Use a recovery code to log in when 2FA device is unavailable.
+    This endpoint is for login, not for authenticated users.
+    """
+    # This is similar to login but uses recovery code instead of TOTP
+    # For simplicity, we'll require username in a header or the code format includes it
+    raise HTTPException(
+        status_code=501,
+        detail="Recovery code login should be done via /login endpoint with recovery_code field"
+    )

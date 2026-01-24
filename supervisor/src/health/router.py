@@ -102,6 +102,247 @@ _raid_monitor_running = False
 _raid_monitor_task: Optional[asyncio.Task] = None
 RAID_CHECK_INTERVAL = 300  # Check every 5 minutes
 RAID_STATUS_FILE = "/data/raid_status.json"
+SMART_HISTORY_FILE = "/data/smart_history.json"
+SMART_CHECK_INTERVAL = 3600  # Check SMART every hour
+
+# Critical SMART attributes to track for trends
+CRITICAL_ATTRIBUTES = {
+    5: "Reallocated_Sector_Ct",
+    187: "Reported_Uncorrect",
+    188: "Command_Timeout",
+    197: "Current_Pending_Sector",
+    198: "Offline_Uncorrectable",
+    199: "UDMA_CRC_Error_Count",
+}
+
+# SMART trend monitoring state
+_smart_monitor_running = False
+_smart_monitor_task: Optional[asyncio.Task] = None
+
+
+class SmartHistoryEntry(BaseModel):
+    timestamp: str
+    device: str
+    serial: str
+    attributes: dict[int, int]  # attr_id -> raw_value
+    temperature: Optional[int] = None
+    power_on_hours: Optional[int] = None
+
+
+class SmartTrendAlert(BaseModel):
+    device: str
+    serial: str
+    model: str
+    attribute_name: str
+    attribute_id: int
+    current_value: int
+    previous_value: int
+    change: int
+    severity: str  # warning, critical
+    message: str
+    recommendation: str
+
+
+def load_smart_history() -> dict[str, list[dict]]:
+    """Load SMART history from file."""
+    path = Path(SMART_HISTORY_FILE)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
+def save_smart_history(history: dict[str, list[dict]]):
+    """Save SMART history to file."""
+    path = Path(SMART_HISTORY_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Keep only last 30 days of data per disk (720 entries at hourly checks)
+    for serial in history:
+        history[serial] = history[serial][-720:]
+    path.write_text(json.dumps(history, indent=2))
+
+
+def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
+    """Collect current SMART data for trend tracking."""
+    try:
+        result = subprocess.run(
+            ["smartctl", "-j", "-a", device],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode not in [0, 4]:  # 4 = SMART error but data available
+            return None
+
+        data = json.loads(result.stdout)
+        serial = data.get("serial_number", "unknown")
+
+        # Extract critical attributes
+        attributes = {}
+        ata_attrs = data.get("ata_smart_attributes", {}).get("table", [])
+        for attr in ata_attrs:
+            attr_id = attr.get("id", 0)
+            if attr_id in CRITICAL_ATTRIBUTES:
+                raw = attr.get("raw", {}).get("value", 0)
+                try:
+                    attributes[attr_id] = int(raw)
+                except (ValueError, TypeError):
+                    attributes[attr_id] = 0
+
+        # Temperature
+        temperature = None
+        temp_data = data.get("temperature", {})
+        if "current" in temp_data:
+            temperature = temp_data["current"]
+
+        # Power on hours
+        power_on_hours = None
+        for attr in ata_attrs:
+            if attr.get("name") == "Power_On_Hours":
+                try:
+                    power_on_hours = int(attr.get("raw", {}).get("value", 0))
+                except (ValueError, TypeError):
+                    pass
+
+        return SmartHistoryEntry(
+            timestamp=datetime.now().isoformat(),
+            device=device,
+            serial=serial,
+            attributes=attributes,
+            temperature=temperature,
+            power_on_hours=power_on_hours
+        )
+    except Exception:
+        return None
+
+
+def analyze_smart_trends(serial: str, history: list[dict]) -> list[SmartTrendAlert]:
+    """Analyze SMART history for concerning trends."""
+    alerts = []
+
+    if len(history) < 2:
+        return alerts
+
+    # Get latest and compare with oldest in window
+    latest = history[-1]
+    # Compare with 24 hours ago if available, otherwise oldest
+    compare_idx = max(0, len(history) - 24)
+    compare = history[compare_idx]
+
+    device = latest.get("device", "unknown")
+
+    for attr_id, attr_name in CRITICAL_ATTRIBUTES.items():
+        current = latest.get("attributes", {}).get(str(attr_id), 0)
+        previous = compare.get("attributes", {}).get(str(attr_id), 0)
+
+        if current > previous:
+            change = current - previous
+
+            # Determine severity based on attribute and change rate
+            severity = "warning"
+            if attr_id in [5, 197, 198]:  # Critical sector issues
+                if change > 10:
+                    severity = "critical"
+            elif change > 100:
+                severity = "critical"
+
+            # Generate recommendation
+            if attr_id == 5:
+                recommendation = "Disk is reallocating bad sectors. Consider replacing soon."
+            elif attr_id == 197:
+                recommendation = "Pending sectors detected. Run extended SMART test."
+            elif attr_id == 198:
+                recommendation = "Uncorrectable sectors found. Backup data immediately."
+            elif attr_id == 199:
+                recommendation = "Cable or connection issues detected. Check SATA cable."
+            else:
+                recommendation = "Monitor closely and consider replacement if trend continues."
+
+            alerts.append(SmartTrendAlert(
+                device=device,
+                serial=serial,
+                model="",  # Filled in later
+                attribute_name=attr_name,
+                attribute_id=attr_id,
+                current_value=current,
+                previous_value=previous,
+                change=change,
+                severity=severity,
+                message=f"{attr_name} increased by {change} (from {previous} to {current})",
+                recommendation=recommendation
+            ))
+
+    return alerts
+
+
+async def send_smart_alert(alert: SmartTrendAlert):
+    """Send notification about SMART trend issue."""
+    event = NotificationEvent(
+        type=NotificationType.ERROR if alert.severity == "critical" else NotificationType.WARNING,
+        title=f"Disk Health Warning: {alert.device}",
+        message=f"{alert.message}\n\nRecommendation: {alert.recommendation}",
+        timestamp=datetime.now().isoformat()
+    )
+
+    configs = load_notification_configs()
+    for config in configs:
+        if not config.enabled:
+            continue
+        try:
+            if config.channel == NotificationChannel.EMAIL and config.email_config:
+                await send_email(config.email_config, event)
+            elif config.channel == NotificationChannel.TELEGRAM and config.telegram_config:
+                await send_telegram(config.telegram_config, event)
+        except Exception:
+            pass
+
+
+async def smart_monitor_loop():
+    """Background loop for SMART trend monitoring."""
+    global _smart_monitor_running
+
+    while _smart_monitor_running:
+        try:
+            # Get list of disks
+            result = subprocess.run(
+                ["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                history = load_smart_history()
+
+                for dev in data.get("blockdevices", []):
+                    if dev.get("type") != "disk":
+                        continue
+                    name = dev.get("name", "")
+                    mountpoint = dev.get("mountpoint")
+                    children = dev.get("children", [])
+
+                    if _is_system_disk(name, mountpoint, children):
+                        continue
+
+                    device_path = f"/dev/{name}"
+                    snapshot = collect_smart_snapshot(device_path)
+
+                    if snapshot:
+                        serial = snapshot.serial
+                        if serial not in history:
+                            history[serial] = []
+
+                        history[serial].append(snapshot.model_dump())
+
+                        # Analyze trends
+                        alerts = analyze_smart_trends(serial, history[serial])
+                        for alert in alerts:
+                            await send_smart_alert(alert)
+
+                save_smart_history(history)
+
+        except Exception as e:
+            print(f"SMART monitor error: {e}")
+
+        await asyncio.sleep(SMART_CHECK_INTERVAL)
 
 
 def parse_btrfs_device_stats(pool_path: str) -> list[RaidDeviceStats]:
@@ -669,18 +910,149 @@ async def get_raid_monitor_status(_: dict = Depends(verify_token)):
     }
 
 
+# ==================== SMART Trend Monitoring ====================
+
+@router.get("/smart/history/{serial}")
+async def get_smart_history(serial: str, _: dict = Depends(verify_token)):
+    """Get SMART history for a specific disk by serial number."""
+    history = load_smart_history()
+    if serial not in history:
+        raise HTTPException(404, f"No history found for serial: {serial}")
+
+    entries = history[serial]
+    return {
+        "serial": serial,
+        "entries": len(entries),
+        "oldest": entries[0]["timestamp"] if entries else None,
+        "newest": entries[-1]["timestamp"] if entries else None,
+        "data": entries[-168:]  # Last week of hourly data
+    }
+
+
+@router.get("/smart/trends")
+async def get_smart_trends(_: dict = Depends(verify_token)):
+    """Get current SMART trend analysis for all disks."""
+    history = load_smart_history()
+    all_alerts = []
+
+    for serial, entries in history.items():
+        alerts = analyze_smart_trends(serial, entries)
+        all_alerts.extend([a.model_dump() for a in alerts])
+
+    return {
+        "disks_tracked": len(history),
+        "alerts": all_alerts,
+        "critical_count": len([a for a in all_alerts if a["severity"] == "critical"]),
+        "warning_count": len([a for a in all_alerts if a["severity"] == "warning"])
+    }
+
+
+@router.get("/smart/predictions")
+async def get_disk_predictions(_: dict = Depends(verify_token)):
+    """Get disk failure predictions based on SMART trends."""
+    history = load_smart_history()
+    predictions = []
+
+    for serial, entries in history.items():
+        if len(entries) < 24:  # Need at least a day of data
+            continue
+
+        latest = entries[-1]
+        device = latest.get("device", "unknown")
+
+        # Calculate trend scores for critical attributes
+        risk_score = 0
+        risk_factors = []
+
+        for attr_id, attr_name in CRITICAL_ATTRIBUTES.items():
+            # Get values over time
+            values = [e.get("attributes", {}).get(str(attr_id), 0) for e in entries]
+            if not values:
+                continue
+
+            current = values[-1]
+            first = values[0]
+
+            # Check if attribute is increasing
+            if current > first:
+                increase_rate = (current - first) / len(values)  # per hour
+
+                if attr_id in [5, 197, 198]:  # Critical sector issues
+                    if current > 0:
+                        risk_score += 30
+                        risk_factors.append(f"{attr_name}: {current} (was {first})")
+                    if increase_rate > 0.1:
+                        risk_score += 20
+                        risk_factors.append(f"{attr_name} increasing rapidly")
+                elif current > 100:
+                    risk_score += 10
+                    risk_factors.append(f"{attr_name}: {current}")
+
+        # Determine health status
+        if risk_score >= 50:
+            status = "replace_soon"
+            recommendation = "Disk showing signs of failure. Replace within 30 days."
+        elif risk_score >= 30:
+            status = "monitor_closely"
+            recommendation = "Disk health degrading. Monitor daily and prepare replacement."
+        elif risk_score >= 10:
+            status = "watch"
+            recommendation = "Minor issues detected. Continue monitoring."
+        else:
+            status = "healthy"
+            recommendation = "No concerning trends detected."
+
+        predictions.append({
+            "serial": serial,
+            "device": device,
+            "risk_score": min(risk_score, 100),
+            "status": status,
+            "risk_factors": risk_factors,
+            "recommendation": recommendation,
+            "data_points": len(entries)
+        })
+
+    # Sort by risk score descending
+    predictions.sort(key=lambda x: x["risk_score"], reverse=True)
+
+    return {"predictions": predictions}
+
+
+@router.get("/smart-monitor/status")
+async def get_smart_monitor_status(_: dict = Depends(verify_token)):
+    """Get SMART trend monitor status."""
+    history = load_smart_history()
+    return {
+        "running": _smart_monitor_running,
+        "check_interval_seconds": SMART_CHECK_INTERVAL,
+        "disks_tracked": len(history),
+        "total_data_points": sum(len(v) for v in history.values())
+    }
+
+
 @router.on_event("startup")
-async def start_raid_monitor():
-    """Start the RAID health monitor on app startup."""
+async def start_health_monitors():
+    """Start health monitors on app startup."""
     global _raid_monitor_running, _raid_monitor_task
+    global _smart_monitor_running, _smart_monitor_task
+
     _raid_monitor_running = True
     _raid_monitor_task = asyncio.create_task(raid_monitor_loop())
 
+    _smart_monitor_running = True
+    _smart_monitor_task = asyncio.create_task(smart_monitor_loop())
+
 
 @router.on_event("shutdown")
-async def stop_raid_monitor():
-    """Stop the RAID health monitor on app shutdown."""
+async def stop_health_monitors():
+    """Stop health monitors on app shutdown."""
     global _raid_monitor_running, _raid_monitor_task
+    global _smart_monitor_running, _smart_monitor_task
+
     _raid_monitor_running = False
     if _raid_monitor_task:
         _raid_monitor_task.cancel()
+
+    _smart_monitor_running = False
+    if _smart_monitor_task:
+        _smart_monitor_task.cancel()
