@@ -414,6 +414,34 @@ Future consideration for:
 
 ---
 
+## Implementation Status
+
+### Completed (Phase 1)
+- [x] Rate limiting on login endpoint (5/min)
+- [x] Snapshot retention cleanup (keep_count works)
+- [x] Scheduled backup task type with retention
+- [x] RAID health monitoring with background checks
+- [x] Backup encryption (AES-256-GCM)
+- [x] UPS monitoring integration (NUT)
+- [x] Audit logging for admin actions
+
+### Completed (Phase 2)
+- [x] SMART trend tracking with predictive alerts
+- [x] API tokens for automation
+- [x] Consolidated system health endpoint
+- [x] Prometheus metrics endpoint
+- [x] Webhook notifications (generic, Discord, Slack)
+- [x] 2FA recovery codes
+
+### Remaining
+- [ ] Per-user share permissions (ACLs)
+- [ ] Disk spindown management
+- [ ] Container resource limits
+- [ ] Network bonding/VLANs
+- [ ] Database migrations (Alembic)
+
+---
+
 ## Conclusion
 
 UNOS has a solid foundation with modern architecture and comprehensive feature set. The recommended improvements focus on:
