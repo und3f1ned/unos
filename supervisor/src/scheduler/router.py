@@ -99,6 +99,128 @@ def get_next_run(task: ScheduledTask) -> str:
         return ""
 
 
+async def create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
+    """Create a scheduled backup and optionally cleanup old ones."""
+    import tarfile
+    import tempfile
+    import shutil
+    import os
+
+    BACKUP_DIR = Path("/data/backups")
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_name = f"auto_backup_{timestamp}.tar.gz"
+    backup_path = BACKUP_DIR / backup_name
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+
+            # Create manifest
+            manifest = {
+                "version": "1.0",
+                "created": datetime.now().isoformat(),
+                "hostname": os.uname().nodename,
+                "type": "scheduled"
+            }
+
+            manifest_path = tmpdir_path / "manifest.json"
+            with open(manifest_path, "w") as f:
+                json.dump(manifest, f, indent=2)
+
+            # Backup database
+            db_path = Path("/data/unos.db")
+            if db_path.exists():
+                shutil.copy2(db_path, tmpdir_path / "unos.db")
+
+            # Backup SMB config
+            smb_conf = Path("/etc/samba/smb.conf")
+            if smb_conf.exists():
+                shutil.copy2(smb_conf, tmpdir_path / "smb.conf")
+
+            # Backup fstab
+            fstab = Path("/etc/fstab")
+            if fstab.exists():
+                shutil.copy2(fstab, tmpdir_path / "fstab")
+
+            # Backup scheduled tasks
+            tasks_file = Path(TASKS_FILE)
+            if tasks_file.exists():
+                shutil.copy2(tasks_file, tmpdir_path / "scheduled_tasks.json")
+
+            # Create tarball
+            with tarfile.open(backup_path, "w:gz") as tar:
+                for item in tmpdir_path.iterdir():
+                    tar.add(item, arcname=item.name)
+
+        # Cleanup old auto backups if keep_count is set
+        cleanup_msg = ""
+        if keep_count and keep_count > 0:
+            auto_backups = sorted(
+                [f for f in BACKUP_DIR.glob("auto_backup_*.tar.gz")],
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+            deleted = 0
+            for old_backup in auto_backups[keep_count:]:
+                old_backup.unlink()
+                deleted += 1
+            if deleted > 0:
+                cleanup_msg = f" Cleaned up {deleted} old backup(s)."
+
+        return True, f"Backup {backup_name} created.{cleanup_msg}"
+
+    except Exception as e:
+        return False, f"Backup failed: {str(e)}"
+
+
+async def cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
+    """Remove old auto-created snapshots, keeping only the most recent ones."""
+    snapshots_dir = Path(f"/mnt/pools/{pool_name}/.snapshots")
+    if not snapshots_dir.exists():
+        return ""
+
+    # Get all auto-created snapshots (prefixed with "auto_")
+    auto_snapshots = []
+    for snap in snapshots_dir.iterdir():
+        if snap.is_dir() and snap.name.startswith("auto_"):
+            # Get creation time from btrfs
+            result = subprocess.run(
+                ["btrfs", "subvolume", "show", str(snap)],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                created = None
+                for line in result.stdout.split("\n"):
+                    if "Creation time:" in line:
+                        raw_date = line.split(":", 1)[1].strip()
+                        try:
+                            created = datetime.strptime(raw_date[:19], "%Y-%m-%d %H:%M:%S")
+                        except ValueError:
+                            created = datetime.min
+                        break
+                if created:
+                    auto_snapshots.append((snap, created))
+
+    # Sort by creation time (newest first)
+    auto_snapshots.sort(key=lambda x: x[1], reverse=True)
+
+    # Delete snapshots beyond keep_count
+    deleted_count = 0
+    for snap, _ in auto_snapshots[keep_count:]:
+        result = subprocess.run(
+            ["btrfs", "subvolume", "delete", str(snap)],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            deleted_count += 1
+
+    if deleted_count > 0:
+        return f"Cleaned up {deleted_count} old snapshot(s)"
+    return ""
+
+
 async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
     """Execute a scheduled task."""
     try:
@@ -115,10 +237,15 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             )
             if result.returncode != 0:
                 return False, result.stderr
+
             # Cleanup old snapshots if keep_count is set
-            if task.keep_count:
-                # List and delete old snapshots
-                pass
+            if task.keep_count and task.keep_count > 0:
+                cleanup_result = await cleanup_old_snapshots(
+                    task.target_pool, task.keep_count
+                )
+                if cleanup_result:
+                    return True, f"Snapshot {name} created. {cleanup_result}"
+
             return True, f"Snapshot {name} created"
 
         elif task.task_type == TaskType.SCRUB:
@@ -142,6 +269,11 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             if result.returncode != 0:
                 return False, result.stderr
             return True, "SMART test started"
+
+        elif task.task_type == TaskType.BACKUP:
+            # Create automated backup
+            backup_result = await create_scheduled_backup(task.keep_count)
+            return backup_result
 
         elif task.task_type == TaskType.CUSTOM:
             if not task.command:

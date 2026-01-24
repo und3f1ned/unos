@@ -2,7 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import pyotp
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from ..database import get_db
+from ..audit.router import log_action
+from ..audit.schemas import AuditAction, AuditSeverity
+
+# Rate limiter for auth endpoints
+limiter = Limiter(key_func=get_remote_address)
 from .models import User
 from .schemas import (
     UserCreate, UserResponse, Token, LoginRequest, PasswordChange,
@@ -15,7 +22,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/setup", response_model=UserResponse)
-async def setup_admin(user: UserCreate, db: AsyncSession = Depends(get_db)):
+@limiter.limit("3/minute")  # Limit setup attempts
+async def setup_admin(request: Request, user: UserCreate, db: AsyncSession = Depends(get_db)):
     """Create initial admin user. Only works if no users exist."""
     result = await db.execute(select(func.count()).select_from(User))
     count = result.scalar()
@@ -37,9 +45,10 @@ async def setup_admin(user: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
+@limiter.limit("5/minute")  # 5 login attempts per minute per IP
 async def login(
-    login_request: LoginRequest,
     request: Request,
+    login_request: LoginRequest,
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(User).where(User.username == login_request.username))
@@ -50,6 +59,15 @@ async def login(
         await record_login_attempt(
             db, login_request.username, False, request,
             failure_reason="Incorrect username or password"
+        )
+        # Audit log
+        await log_action(
+            action=AuditAction.LOGIN_FAILED,
+            request=request,
+            username=login_request.username,
+            details="Incorrect username or password",
+            success=False,
+            severity=AuditSeverity.WARNING
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -75,6 +93,14 @@ async def login(
 
     # Record successful login
     await record_login_attempt(db, login_request.username, True, request)
+
+    # Audit log
+    await log_action(
+        action=AuditAction.LOGIN_SUCCESS,
+        request=request,
+        username=user.username,
+        success=True
+    )
 
     access_token = create_access_token(data={"sub": user.username})
     return Token(access_token=access_token, requires_totp=False)
@@ -196,6 +222,7 @@ async def list_users(
 
 @router.post("/users", response_model=UserResponse)
 async def create_user(
+    request: Request,
     user: UserCreate,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
@@ -216,11 +243,23 @@ async def create_user(
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
+
+    # Audit log
+    await log_action(
+        action=AuditAction.USER_CREATED,
+        request=request,
+        user=current_user,
+        resource_type="user",
+        resource_id=user.username,
+        details=f"Created new user: {user.username}"
+    )
+
     return db_user
 
 
 @router.put("/users/{user_id}", response_model=UserResponse)
 async def update_user(
+    request: Request,
     user_id: int,
     data: UserUpdate,
     current_user: User = Depends(verify_token),
@@ -235,18 +274,33 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    changes = []
     if data.is_admin is not None:
         user.is_admin = data.is_admin
+        changes.append(f"is_admin={data.is_admin}")
     if data.password:
         user.hashed_password = hash_password(data.password)
+        changes.append("password changed")
 
     await db.commit()
     await db.refresh(user)
+
+    # Audit log
+    await log_action(
+        action=AuditAction.USER_UPDATED,
+        request=request,
+        user=current_user,
+        resource_type="user",
+        resource_id=user.username,
+        details=f"Updated user {user.username}: {', '.join(changes)}"
+    )
+
     return user
 
 
 @router.delete("/users/{user_id}")
 async def delete_user(
+    request: Request,
     user_id: int,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
@@ -263,6 +317,19 @@ async def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    deleted_username = user.username
     await db.delete(user)
     await db.commit()
+
+    # Audit log
+    await log_action(
+        action=AuditAction.USER_DELETED,
+        request=request,
+        user=current_user,
+        resource_type="user",
+        resource_id=deleted_username,
+        details=f"Deleted user: {deleted_username}",
+        severity=AuditSeverity.WARNING
+    )
+
     return {"status": "ok", "message": "User deleted"}
