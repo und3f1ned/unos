@@ -31,6 +31,7 @@ class TelegramConfig(BaseModel):
 
 class NotificationConfig(BaseModel):
     id: str | None = None
+    name: str = ""
     enabled: bool = True
     channel: NotificationChannel
     email_config: EmailConfig | None = None
