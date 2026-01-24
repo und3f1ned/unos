@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import {
     getUsers,
     createUser,
     updateUser,
     deleteUser,
-    changePassword,
     type User
   } from "$lib/api/auth";
   import { user as currentUser } from "$lib/stores/auth";
@@ -15,7 +15,6 @@
     Shield,
     ShieldOff,
     Trash2,
-    Key,
     RefreshCw,
     Edit,
     X
@@ -30,7 +29,6 @@
   let showCreateModal = false;
   let showEditModal = false;
   let showDeleteModal = false;
-  let showPasswordModal = false;
 
   // Form data
   let newUsername = "";
@@ -40,13 +38,20 @@
   let editPassword = "";
   let editIsAdmin = false;
   let deletingUser: User | null = null;
-  let currentPassword = "";
-  let newOwnPassword = "";
-  let confirmOwnPassword = "";
 
   onMount(async () => {
+    // Redirect non-admin users
+    if (!$currentUser?.is_admin) {
+      goto("/");
+      return;
+    }
     await loadUsers();
   });
+
+  // Also watch for user changes (in case they navigate here before user loads)
+  $: if ($currentUser !== null && !$currentUser.is_admin) {
+    goto("/");
+  }
 
   async function loadUsers() {
     loading = true;
@@ -84,7 +89,7 @@
     error = "";
     try {
       await createUser({ username: newUsername, password: newPassword });
-      success = `User "${newUsername}" created successfully`;
+      success = "User \"" + newUsername + "\" created successfully";
       setTimeout(() => success = "", 3000);
       showCreateModal = false;
       await loadUsers();
@@ -123,7 +128,7 @@
       }
 
       await updateUser(editingUser.id, data);
-      success = `User "${editingUser.username}" updated successfully`;
+      success = "User \"" + editingUser.username + "\" updated successfully";
       setTimeout(() => success = "", 3000);
       showEditModal = false;
       await loadUsers();
@@ -143,47 +148,12 @@
     error = "";
     try {
       await deleteUser(deletingUser.id);
-      success = `User "${deletingUser.username}" deleted successfully`;
+      success = "User \"" + deletingUser.username + "\" deleted successfully";
       setTimeout(() => success = "", 3000);
       showDeleteModal = false;
       await loadUsers();
     } catch (e) {
       error = e instanceof Error ? e.message : "Failed to delete user";
-    }
-  }
-
-  function openPasswordModal() {
-    currentPassword = "";
-    newOwnPassword = "";
-    confirmOwnPassword = "";
-    showPasswordModal = true;
-  }
-
-  async function handleChangePassword() {
-    if (!currentPassword || !newOwnPassword) {
-      error = "Please fill in all fields";
-      return;
-    }
-    if (newOwnPassword !== confirmOwnPassword) {
-      error = "New passwords do not match";
-      return;
-    }
-    if (newOwnPassword.length < 6) {
-      error = "Password must be at least 6 characters";
-      return;
-    }
-
-    error = "";
-    try {
-      await changePassword({
-        current_password: currentPassword,
-        new_password: newOwnPassword
-      });
-      success = "Password changed successfully";
-      setTimeout(() => success = "", 3000);
-      showPasswordModal = false;
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Failed to change password";
     }
   }
 
@@ -193,26 +163,19 @@
   }
 </script>
 
+<!-- Only render content if user is admin -->
+{#if $currentUser?.is_admin}
 <div class="space-y-6">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">User Management</h1>
-    <div class="flex gap-2">
-      <button
-        on:click={openPasswordModal}
-        class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-      >
-        <Key class="w-4 h-4" />
-        Change My Password
-      </button>
-      <button
-        on:click={loadUsers}
-        class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-        disabled={loading}
-      >
-        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-        Refresh
-      </button>
-    </div>
+    <button
+      on:click={loadUsers}
+      class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+      disabled={loading}
+    >
+      <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
+      Refresh
+    </button>
   </div>
 
   {#if error}
@@ -257,6 +220,7 @@
               <tr class="text-left text-slate-400 border-b border-slate-700">
                 <th class="pb-3">Username</th>
                 <th class="pb-3">Role</th>
+                <th class="pb-3">2FA</th>
                 <th class="pb-3">Created</th>
                 <th class="pb-3 text-right">Actions</th>
               </tr>
@@ -283,6 +247,13 @@
                         <ShieldOff class="w-4 h-4" />
                         User
                       </span>
+                    {/if}
+                  </td>
+                  <td class="py-3">
+                    {#if user.totp_enabled}
+                      <span class="text-green-400 text-sm">Enabled</span>
+                    {:else}
+                      <span class="text-slate-500 text-sm">Disabled</span>
                     {/if}
                   </td>
                   <td class="py-3 text-slate-400">
@@ -345,27 +316,30 @@
 
       <div class="space-y-4">
         <div>
-          <label class="block text-sm text-slate-400 mb-1">Username</label>
+          <label for="newUsername" class="block text-sm text-slate-400 mb-1">Username</label>
           <input
             type="text"
+            id="newUsername"
             bind:value={newUsername}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             placeholder="Enter username"
           />
         </div>
         <div>
-          <label class="block text-sm text-slate-400 mb-1">Password</label>
+          <label for="newPassword" class="block text-sm text-slate-400 mb-1">Password</label>
           <input
             type="password"
+            id="newPassword"
             bind:value={newPassword}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             placeholder="Enter password"
           />
         </div>
         <div>
-          <label class="block text-sm text-slate-400 mb-1">Confirm Password</label>
+          <label for="confirmPassword" class="block text-sm text-slate-400 mb-1">Confirm Password</label>
           <input
             type="password"
+            id="confirmPassword"
             bind:value={confirmPassword}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             placeholder="Confirm password"
@@ -407,7 +381,7 @@
 
       <div class="space-y-4">
         <div>
-          <label class="flex items-center gap-3">
+          <label class="flex items-center gap-3 cursor-pointer">
             <input
               type="checkbox"
               bind:checked={editIsAdmin}
@@ -417,9 +391,10 @@
           </label>
         </div>
         <div>
-          <label class="block text-sm text-slate-400 mb-1">New Password (leave blank to keep current)</label>
+          <label for="editPassword" class="block text-sm text-slate-400 mb-1">New Password (leave blank to keep current)</label>
           <input
             type="password"
+            id="editPassword"
             bind:value={editPassword}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             placeholder="Enter new password"
@@ -470,65 +445,4 @@
     </div>
   </div>
 {/if}
-
-<!-- Change Password Modal -->
-{#if showPasswordModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-xl font-semibold flex items-center gap-2">
-          <Key class="w-5 h-5" />
-          Change Password
-        </h3>
-        <button on:click={() => showPasswordModal = false} class="text-slate-400 hover:text-white">
-          <X class="w-5 h-5" />
-        </button>
-      </div>
-
-      <div class="space-y-4">
-        <div>
-          <label class="block text-sm text-slate-400 mb-1">Current Password</label>
-          <input
-            type="password"
-            bind:value={currentPassword}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="Enter current password"
-          />
-        </div>
-        <div>
-          <label class="block text-sm text-slate-400 mb-1">New Password</label>
-          <input
-            type="password"
-            bind:value={newOwnPassword}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="Enter new password"
-          />
-        </div>
-        <div>
-          <label class="block text-sm text-slate-400 mb-1">Confirm New Password</label>
-          <input
-            type="password"
-            bind:value={confirmOwnPassword}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="Confirm new password"
-          />
-        </div>
-      </div>
-
-      <div class="flex justify-end gap-3 mt-6">
-        <button
-          on:click={() => showPasswordModal = false}
-          class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          on:click={handleChangePassword}
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
-        >
-          Change Password
-        </button>
-      </div>
-    </div>
-  </div>
 {/if}

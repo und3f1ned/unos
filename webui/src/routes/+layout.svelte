@@ -19,17 +19,26 @@
     Wrench
   } from "lucide-svelte";
 
-  // Consolidated navigation - fewer items, grouped logically
-  const navItems = [
+  // Base navigation items (always visible)
+  const baseNavItems = [
     { href: "/", icon: LayoutDashboard, label: "Dashboard" },
     { href: "/storage", icon: HardDrive, label: "Storage" },
     { href: "/shares", icon: Share2, label: "Shares" },
     { href: "/files", icon: FolderOpen, label: "Files" },
     { href: "/containers", icon: Container, label: "Containers" },
     { href: "/apps", icon: Package, label: "App Store" },
-    { href: "/users", icon: Users, label: "Users" },
     { href: "/system", icon: Wrench, label: "System" },
   ];
+
+  // Admin-only navigation items
+  const adminNavItems = [
+    { href: "/users", icon: Users, label: "Users" },
+  ];
+
+  // Reactive nav items based on user role
+  $: navItems = $user?.is_admin 
+    ? [...baseNavItems.slice(0, 6), ...adminNavItems, baseNavItems[6]]
+    : baseNavItems;
 
   onMount(async () => {
     if (!isAuthenticated()) {
