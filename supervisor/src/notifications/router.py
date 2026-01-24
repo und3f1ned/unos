@@ -10,7 +10,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from ..auth.utils import verify_token
 from .schemas import (
     NotificationConfig, NotificationEvent, NotificationLog,
-    NotificationType, NotificationChannel, EmailConfig, TelegramConfig
+    NotificationType, NotificationChannel, EmailConfig, TelegramConfig,
+    WebhookConfig, DiscordConfig, SlackConfig
 )
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -125,6 +126,117 @@ async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tup
         return False, str(e)
 
 
+async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple[bool, str | None]:
+    """Send generic webhook notification."""
+    try:
+        # Build the body
+        if config.body_template:
+            body = config.body_template.format(
+                title=event.title,
+                message=event.message,
+                type=event.type.value,
+                timestamp=event.timestamp or datetime.now().isoformat()
+            )
+        else:
+            # Default JSON body
+            body = json.dumps({
+                "title": event.title,
+                "message": event.message,
+                "type": event.type.value,
+                "timestamp": event.timestamp or datetime.now().isoformat(),
+                "source": "UNOS NAS"
+            })
+
+        headers = {"Content-Type": config.content_type}
+        headers.update(config.headers)
+
+        async with httpx.AsyncClient() as client:
+            if config.method.upper() == "POST":
+                resp = await client.post(config.url, content=body, headers=headers, timeout=30)
+            elif config.method.upper() == "PUT":
+                resp = await client.put(config.url, content=body, headers=headers, timeout=30)
+            else:
+                return False, f"Unsupported method: {config.method}"
+
+            if resp.status_code >= 400:
+                return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+async def send_discord(config: DiscordConfig, event: NotificationEvent) -> tuple[bool, str | None]:
+    """Send Discord webhook notification."""
+    try:
+        # Discord color codes
+        colors = {
+            NotificationType.INFO: 3447003,      # Blue
+            NotificationType.WARNING: 16776960,  # Yellow
+            NotificationType.ERROR: 15158332,    # Red
+            NotificationType.SUCCESS: 3066993,   # Green
+        }
+
+        payload = {
+            "username": config.username,
+            "embeds": [{
+                "title": event.title,
+                "description": event.message,
+                "color": colors.get(event.type, 3447003),
+                "footer": {"text": "UNOS NAS"},
+                "timestamp": event.timestamp or datetime.now().isoformat()
+            }]
+        }
+
+        if config.avatar_url:
+            payload["avatar_url"] = config.avatar_url
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(config.webhook_url, json=payload, timeout=30)
+            if resp.status_code >= 400:
+                return False, f"Discord error: {resp.text[:200]}"
+
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+async def send_slack(config: SlackConfig, event: NotificationEvent) -> tuple[bool, str | None]:
+    """Send Slack webhook notification."""
+    try:
+        # Slack color codes
+        colors = {
+            NotificationType.INFO: "#36a64f",
+            NotificationType.WARNING: "#f2c744",
+            NotificationType.ERROR: "#d00000",
+            NotificationType.SUCCESS: "#2eb886",
+        }
+
+        payload = {
+            "username": config.username,
+            "icon_emoji": config.icon_emoji,
+            "attachments": [{
+                "color": colors.get(event.type, "#36a64f"),
+                "title": event.title,
+                "text": event.message,
+                "footer": "UNOS NAS",
+                "ts": int(datetime.now().timestamp())
+            }]
+        }
+
+        if config.channel:
+            payload["channel"] = config.channel
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(config.webhook_url, json=payload, timeout=30)
+            if resp.status_code >= 400:
+                return False, f"Slack error: {resp.text[:200]}"
+
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 @router.get("/configs", response_model=list[NotificationConfig])
 async def list_configs(_: dict = Depends(verify_token)):
     """List all notification configurations."""
@@ -192,6 +304,12 @@ async def test_notification(config_id: str, _: dict = Depends(verify_token)):
         success, error = await send_email(config.email_config, event)
     elif config.channel == NotificationChannel.TELEGRAM and config.telegram_config:
         success, error = await send_telegram(config.telegram_config, event)
+    elif config.channel == NotificationChannel.WEBHOOK and config.webhook_config:
+        success, error = await send_webhook(config.webhook_config, event)
+    elif config.channel == NotificationChannel.DISCORD and config.discord_config:
+        success, error = await send_discord(config.discord_config, event)
+    elif config.channel == NotificationChannel.SLACK and config.slack_config:
+        success, error = await send_slack(config.slack_config, event)
     else:
         raise HTTPException(400, "Invalid configuration")
 
@@ -235,6 +353,12 @@ async def send_notification(event: NotificationEvent, _: dict = Depends(verify_t
             success, error = await send_email(config.email_config, event)
         elif config.channel == NotificationChannel.TELEGRAM and config.telegram_config:
             success, error = await send_telegram(config.telegram_config, event)
+        elif config.channel == NotificationChannel.WEBHOOK and config.webhook_config:
+            success, error = await send_webhook(config.webhook_config, event)
+        elif config.channel == NotificationChannel.DISCORD and config.discord_config:
+            success, error = await send_discord(config.discord_config, event)
+        elif config.channel == NotificationChannel.SLACK and config.slack_config:
+            success, error = await send_slack(config.slack_config, event)
 
         log = NotificationLog(
             id=f"log_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",

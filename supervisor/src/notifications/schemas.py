@@ -12,6 +12,9 @@ class NotificationType(str, Enum):
 class NotificationChannel(str, Enum):
     EMAIL = "email"
     TELEGRAM = "telegram"
+    WEBHOOK = "webhook"
+    DISCORD = "discord"
+    SLACK = "slack"
 
 
 class EmailConfig(BaseModel):
@@ -29,6 +32,28 @@ class TelegramConfig(BaseModel):
     chat_id: str
 
 
+class WebhookConfig(BaseModel):
+    url: str
+    method: str = "POST"
+    headers: dict[str, str] = {}
+    # Template for body - uses {title}, {message}, {type}, {timestamp} placeholders
+    body_template: str | None = None
+    content_type: str = "application/json"
+
+
+class DiscordConfig(BaseModel):
+    webhook_url: str
+    username: str = "UNOS"
+    avatar_url: str | None = None
+
+
+class SlackConfig(BaseModel):
+    webhook_url: str
+    channel: str | None = None  # Optional override
+    username: str = "UNOS"
+    icon_emoji: str = ":server:"
+
+
 class NotificationConfig(BaseModel):
     id: str | None = None
     name: str = ""
@@ -36,6 +61,9 @@ class NotificationConfig(BaseModel):
     channel: NotificationChannel
     email_config: EmailConfig | None = None
     telegram_config: TelegramConfig | None = None
+    webhook_config: WebhookConfig | None = None
+    discord_config: DiscordConfig | None = None
+    slack_config: SlackConfig | None = None
     events: list[str] = []  # disk_warning, smart_error, backup_complete, etc.
 
 
