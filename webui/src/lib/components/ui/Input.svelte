@@ -1,20 +1,25 @@
 <script lang="ts">
-	export let id: string = '';
-	export let type: 'text' | 'password' | 'email' | 'number' | 'search' = 'text';
-	export let value: string = '';
-	export let placeholder: string = '';
-	export let label: string = '';
-	export let hint: string = '';
-	export let error: string = '';
+	export let id: string = "";
+	export let type: "text" | "password" | "email" | "number" | "search" = "text";
+	export let value: string = "";
+	export let placeholder: string = "";
+	export let label: string = "";
+	export let hint: string = "";
+	export let error: string = "";
 	export let required: boolean = false;
 	export let disabled: boolean = false;
-	export let autocomplete: string = '';
+	export let autocomplete: string = "";
 	export let maxlength: number | undefined = undefined;
 
 	$: inputId = id || `input-${Math.random().toString(36).slice(2, 9)}`;
+
+	function handleInput(e: Event) {
+		const target = e.target as HTMLInputElement;
+		value = target.value;
+	}
 </script>
 
-<div class={$$props.class || ''}>
+<div class={$$props.class || ""}>
 	{#if label}
 		<label for={inputId} class="form-label">
 			{label}
@@ -22,22 +27,91 @@
 		</label>
 	{/if}
 
-	<input
-		id={inputId}
-		{type}
-		bind:value
-		{placeholder}
-		{required}
-		{disabled}
-		{autocomplete}
-		{maxlength}
-		class="form-input"
-		class:border-red-500={error}
-		on:input
-		on:change
-		on:focus
-		on:blur
-	/>
+	{#if type === "text"}
+		<input
+			id={inputId}
+			type="text"
+			bind:value
+			{placeholder}
+			{required}
+			{disabled}
+			{autocomplete}
+			{maxlength}
+			class="form-input"
+			class:border-red-500={error}
+			on:input
+			on:change
+			on:focus
+			on:blur
+		/>
+	{:else if type === "password"}
+		<input
+			id={inputId}
+			type="password"
+			bind:value
+			{placeholder}
+			{required}
+			{disabled}
+			{autocomplete}
+			{maxlength}
+			class="form-input"
+			class:border-red-500={error}
+			on:input
+			on:change
+			on:focus
+			on:blur
+		/>
+	{:else if type === "email"}
+		<input
+			id={inputId}
+			type="email"
+			bind:value
+			{placeholder}
+			{required}
+			{disabled}
+			{autocomplete}
+			{maxlength}
+			class="form-input"
+			class:border-red-500={error}
+			on:input
+			on:change
+			on:focus
+			on:blur
+		/>
+	{:else if type === "number"}
+		<input
+			id={inputId}
+			type="number"
+			{value}
+			on:input={handleInput}
+			{placeholder}
+			{required}
+			{disabled}
+			{autocomplete}
+			class="form-input"
+			class:border-red-500={error}
+			on:change
+			on:focus
+			on:blur
+		/>
+	{:else if type === "search"}
+		<input
+			id={inputId}
+			type="search"
+			bind:value
+			{placeholder}
+			{required}
+			{disabled}
+			{autocomplete}
+			{maxlength}
+			class="form-input"
+			class:border-red-500={error}
+			on:input
+			on:change
+			on:focus
+			on:blur
+		/>
+	{/if}
 
 	{#if error}
 		<p class="form-error">{error}</p>

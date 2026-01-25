@@ -546,13 +546,6 @@
 					</ul>
 				</div>
 			</div>
-
-			<svelte:fragment slot="footer">
-				<Button variant="secondary" class="flex-1" on:click={closeDeleteModal}
-					>Cancel</Button
-				>
-				<Button variant="danger" class="flex-1" on:click={proceedToStep2}>Continue</Button>
-			</svelte:fragment>
 		{:else}
 			<div class="space-y-4">
 				<Alert variant="error" title="Final Confirmation">
@@ -569,8 +562,17 @@
 					autocomplete="off"
 				/>
 			</div>
+		{/if}
+	{/if}
 
-			<svelte:fragment slot="footer">
+	<svelte:fragment slot="footer">
+		{#if poolToDelete}
+			{#if deleteStep === 1}
+				<Button variant="secondary" class="flex-1" on:click={closeDeleteModal}
+					>Cancel</Button
+				>
+				<Button variant="danger" class="flex-1" on:click={proceedToStep2}>Continue</Button>
+			{:else}
 				<Button variant="secondary" class="flex-1" on:click={() => (deleteStep = 1)}>
 					Back
 				</Button>
@@ -583,7 +585,7 @@
 				>
 					Delete Pool
 				</Button>
-			</svelte:fragment>
+			{/if}
 		{/if}
-	{/if}
+	</svelte:fragment>
 </Modal>
