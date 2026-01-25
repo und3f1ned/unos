@@ -20,11 +20,7 @@
 		ExternalLink,
 		Search,
 		RefreshCw,
-		Loader2,
 		Grid3X3,
-		List,
-		Star,
-		Shield,
 		CheckCircle2,
 		Film,
 		FileText,
@@ -35,7 +31,9 @@
 		Code,
 		Lock,
 		LayoutGrid,
-		Sparkles
+		Sparkles,
+		Home,
+		Cpu
 	} from 'lucide-svelte';
 	import { Button, Card, Badge, Alert, EmptyState } from '$lib/components/ui';
 	import { AppDetailModal } from '$lib/components/apps';
@@ -54,12 +52,15 @@
 
 	const categories = [
 		{ value: '', label: 'All Apps', icon: LayoutGrid, count: 0 },
+		{ value: 'home_automation', label: 'Smart Home', icon: Home, count: 0 },
 		{ value: 'media', label: 'Media', icon: Film, count: 0 },
+		{ value: 'ai', label: 'AI & LLMs', icon: Cpu, count: 0 },
 		{ value: 'productivity', label: 'Productivity', icon: FileText, count: 0 },
 		{ value: 'download', label: 'Downloads', icon: DownloadIcon, count: 0 },
 		{ value: 'backup', label: 'Backup', icon: Database, count: 0 },
 		{ value: 'monitoring', label: 'Monitoring', icon: Activity, count: 0 },
 		{ value: 'network', label: 'Network', icon: Globe, count: 0 },
+		{ value: 'documents', label: 'Documents', icon: FileText, count: 0 },
 		{ value: 'development', label: 'Development', icon: Code, count: 0 },
 		{ value: 'security', label: 'Security', icon: Lock, count: 0 }
 	];
@@ -68,7 +69,9 @@
 	$: categoriesWithCounts = categories.map((cat) => ({
 		...cat,
 		count:
-			cat.value === '' ? catalog.length : catalog.filter((app) => app.category === cat.value).length
+			cat.value === ''
+				? catalog.length
+				: catalog.filter((app) => app.category === cat.value).length
 	}));
 
 	// Filtered catalog
@@ -81,10 +84,12 @@
 		return matchesSearch && matchesCategory;
 	});
 
-	// Featured apps (first 4 that are official or have high visibility)
+	// Featured apps - popular apps that users actually use
 	$: featuredApps = catalog
-		.filter((app) => ['plex', 'nextcloud', 'jellyfin', 'portainer'].includes(app.id))
-		.slice(0, 4);
+		.filter((app) =>
+			['homeassistant', 'frigate', 'jellyfin', 'nextcloud', 'immich', 'ollama'].includes(app.id)
+		)
+		.slice(0, 6);
 
 	onMount(async () => {
 		await refresh();
@@ -168,6 +173,7 @@
 			case 'OFFICIAL':
 				return { variant: 'success', label: 'Official' };
 			case 'LINUXSERVER':
+			case 'LINUXSERVER.IO':
 				return { variant: 'purple', label: 'LinuxServer' };
 			case 'VERIFIED':
 				return { variant: 'info', label: 'Verified' };
@@ -181,6 +187,10 @@
 			return `http://${window.location.hostname}:${app.web_port}`;
 		}
 		return null;
+	}
+
+	function formatCategory(category: string): string {
+		return category.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
 	}
 </script>
 
@@ -239,24 +249,36 @@
 		<!-- Featured Apps Section -->
 		{#if featuredApps.length > 0 && !searchQuery && !selectedCategory}
 			<Card>
-				<div class="flex items-center gap-2 mb-4">
+				<div class="flex items-center gap-2 mb-5">
 					<Sparkles class="w-5 h-5 text-yellow-400" />
-					<h2 class="section-title">Featured Apps</h2>
+					<h2 class="text-lg font-semibold">Featured Apps</h2>
 				</div>
-				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					{#each featuredApps as app}
 						{@const installedInfo = getInstalledInfo(app.id)}
 						<button
-							class="card-nested text-left hover:bg-surface-overlay transition-colors"
+							class="bg-surface-muted rounded-xl p-4 text-left hover:bg-surface-overlay transition-colors"
 							on:click={() => openDetail(app)}
 						>
-							<div class="flex items-center gap-3 mb-2">
-								<span class="text-3xl">{app.icon}</span>
+							<div class="flex items-center gap-4 mb-3">
+								<div
+									class="w-14 h-14 rounded-xl bg-surface-overlay flex items-center justify-center text-3xl flex-shrink-0"
+								>
+									{app.icon}
+								</div>
 								<div class="min-w-0 flex-1">
-									<h3 class="font-semibold truncate">{app.name}</h3>
-									{#if installedInfo}
-										<Badge variant="success" class="mt-0.5">Installed</Badge>
-									{/if}
+									<div class="flex items-center gap-2">
+										<h3 class="font-semibold text-lg truncate">{app.name}</h3>
+										{#if installedInfo}
+											<div
+												class="w-2 h-2 rounded-full flex-shrink-0 {installedInfo.status ===
+												'running'
+													? 'bg-green-500'
+													: 'bg-slate-500'}"
+											></div>
+										{/if}
+									</div>
+									<p class="text-sm text-secondary">{formatCategory(app.category)}</p>
 								</div>
 							</div>
 							<p class="text-sm text-secondary line-clamp-2">{app.description}</p>
@@ -271,28 +293,30 @@
 			<!-- Category Sidebar -->
 			<div class="lg:w-56 flex-shrink-0">
 				<Card>
-					<h3 class="font-semibold mb-3">Categories</h3>
+					<h3 class="font-semibold mb-4">Categories</h3>
 					<nav class="space-y-1">
 						{#each categoriesWithCounts as cat}
-							<button
-								class="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors
-                       {selectedCategory === cat.value
-									? 'bg-blue-600 text-white'
-									: 'text-secondary hover:text-content hover:bg-surface-overlay'}"
-								on:click={() => (selectedCategory = cat.value)}
-							>
-								<span class="flex items-center gap-2">
-									<svelte:component this={cat.icon} class="w-4 h-4" />
-									{cat.label}
-								</span>
-								<span
-									class="text-xs {selectedCategory === cat.value
-										? 'text-white/70'
-										: 'text-muted'}"
+							{#if cat.count > 0 || cat.value === ''}
+								<button
+									class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors
+									{selectedCategory === cat.value
+										? 'bg-blue-600 text-white'
+										: 'text-secondary hover:text-content hover:bg-surface-overlay'}"
+									on:click={() => (selectedCategory = cat.value)}
 								>
-									{cat.count}
-								</span>
-							</button>
+									<span class="flex items-center gap-2.5">
+										<svelte:component this={cat.icon} class="w-4 h-4" />
+										{cat.label}
+									</span>
+									<span
+										class="text-xs px-1.5 py-0.5 rounded {selectedCategory === cat.value
+											? 'bg-white/20 text-white'
+											: 'bg-surface-overlay text-muted'}"
+									>
+										{cat.count}
+									</span>
+								</button>
+							{/if}
 						{/each}
 					</nav>
 				</Card>
@@ -301,7 +325,7 @@
 			<!-- App Grid -->
 			<div class="flex-1 min-w-0">
 				<!-- Search -->
-				<div class="mb-4">
+				<div class="mb-5">
 					<div class="relative">
 						<Search
 							class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-content-muted pointer-events-none"
@@ -352,7 +376,8 @@
 											<h3 class="font-semibold truncate">{app.name}</h3>
 											{#if installedInfo}
 												<div
-													class="w-2 h-2 rounded-full {installedInfo.status === 'running'
+													class="w-2 h-2 rounded-full flex-shrink-0 {installedInfo.status ===
+													'running'
 														? 'bg-green-500'
 														: 'bg-slate-500'}"
 												></div>
@@ -360,7 +385,7 @@
 										</div>
 										<div class="flex items-center gap-2">
 											<Badge variant={source.variant} class="text-xs">{source.label}</Badge>
-											<span class="text-xs text-muted capitalize">{app.category}</span>
+											<span class="text-xs text-muted">{formatCategory(app.category)}</span>
 										</div>
 									</div>
 								</div>
@@ -447,7 +472,12 @@
 									</a>
 								{/if}
 								{#if app.status === 'running'}
-									<Button variant="warning" size="sm" icon={Square} on:click={() => handleStop(app)}>
+									<Button
+										variant="warning"
+										size="sm"
+										icon={Square}
+										on:click={() => handleStop(app)}
+									>
 										Stop
 									</Button>
 									<Button
@@ -459,11 +489,21 @@
 										Restart
 									</Button>
 								{:else}
-									<Button variant="success" size="sm" icon={Play} on:click={() => handleStart(app)}>
+									<Button
+										variant="success"
+										size="sm"
+										icon={Play}
+										on:click={() => handleStart(app)}
+									>
 										Start
 									</Button>
 								{/if}
-								<Button variant="danger" size="sm" icon={Trash2} on:click={() => handleUninstall(app)}>
+								<Button
+									variant="danger"
+									size="sm"
+									icon={Trash2}
+									on:click={() => handleUninstall(app)}
+								>
 									Uninstall
 								</Button>
 							</div>
