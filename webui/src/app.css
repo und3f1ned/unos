@@ -197,11 +197,11 @@
 	   Progress Bars
 	   ---------------------------------------- */
 	.progress-bar {
-		@apply h-2 bg-surface-overlay rounded-full overflow-hidden;
+		@apply h-2.5 bg-slate-900/60 rounded-full overflow-hidden ring-1 ring-slate-700/50;
 	}
 
 	.progress-bar-sm {
-		@apply h-1.5;
+		@apply h-1.5 ring-0;
 	}
 
 	.progress-bar-fill {
