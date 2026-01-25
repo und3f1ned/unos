@@ -1,12 +1,108 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getTasks, type ScheduledTask } from "$lib/api/scheduler";
-  import { Calendar, Clock, Play, Pause, RefreshCw } from "lucide-svelte";
+  import {
+    getTasks,
+    createTask,
+    updateTask,
+    deleteTask,
+    runTaskNow,
+    toggleTask,
+    getTaskRuns,
+    getTaskRunsForTask,
+    type ScheduledTask,
+    type TaskRun,
+    type TaskType,
+    type ScheduleFrequency,
+  } from "$lib/api/scheduler";
+  import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
+  import {
+    Calendar,
+    Clock,
+    Play,
+    Pause,
+    RefreshCw,
+    Plus,
+    Trash2,
+    Edit3,
+    History,
+    Zap,
+    CheckCircle,
+    XCircle,
+    AlertTriangle,
+    X,
+    HardDrive,
+    Database,
+    Terminal,
+    Archive,
+    Search,
+  } from "lucide-svelte";
 
+  // State
   let tasks: ScheduledTask[] = [];
+  let runs: TaskRun[] = [];
+  let pools: Pool[] = [];
+  let disks: Disk[] = [];
   let loading = true;
+  let saving = false;
+  let runningTaskId: string | null = null;
 
-  onMount(() => loadTasks());
+  // Modal state
+  let showTaskModal = false;
+  let showHistoryModal = false;
+  let editingTask: ScheduledTask | null = null;
+  let historyTaskId: string | null = null;
+  let historyTaskName: string = "";
+
+  // Form state
+  let formData: Partial<ScheduledTask> = getDefaultFormData();
+
+  const TASK_TYPES: { value: TaskType; label: string; icon: typeof Database }[] = [
+    { value: "snapshot", label: "BTRFS Snapshot", icon: Database },
+    { value: "scrub", label: "BTRFS Scrub", icon: Search },
+    { value: "smart_test", label: "SMART Test", icon: HardDrive },
+    { value: "backup", label: "System Backup", icon: Archive },
+    { value: "custom", label: "Custom Command", icon: Terminal },
+  ];
+
+  const FREQUENCIES: { value: ScheduleFrequency; label: string }[] = [
+    { value: "hourly", label: "Hourly" },
+    { value: "daily", label: "Daily" },
+    { value: "weekly", label: "Weekly" },
+    { value: "monthly", label: "Monthly" },
+    { value: "custom", label: "Custom (Cron)" },
+  ];
+
+  const DAYS_OF_WEEK = [
+    { value: 0, label: "Sunday" },
+    { value: 1, label: "Monday" },
+    { value: 2, label: "Tuesday" },
+    { value: 3, label: "Wednesday" },
+    { value: 4, label: "Thursday" },
+    { value: 5, label: "Friday" },
+    { value: 6, label: "Saturday" },
+  ];
+
+  function getDefaultFormData(): Partial<ScheduledTask> {
+    return {
+      name: "",
+      task_type: "snapshot",
+      enabled: true,
+      frequency: "daily",
+      hour: 2,
+      minute: 0,
+      day_of_week: 0,
+      day_of_month: 1,
+      cron_expression: "0 2 * * *",
+      target_pool: "",
+      target_disk: "",
+      command: "",
+      keep_count: 7,
+    };
+  }
+
+  onMount(async () => {
+    await Promise.all([loadTasks(), loadResources()]);
+  });
 
   async function loadTasks() {
     loading = true;
@@ -14,21 +110,231 @@
       const result = await getTasks();
       tasks = Array.isArray(result) ? result : [];
     } catch (e) {
-      console.error(e);
+      console.error("Failed to load tasks:", e);
       tasks = [];
     }
     loading = false;
   }
+
+  async function loadResources() {
+    try {
+      const [poolsResult, disksResult] = await Promise.all([getPools(), getDisks()]);
+      pools = poolsResult;
+      disks = disksResult.filter((d) => d.type === "disk");
+    } catch (e) {
+      console.error("Failed to load resources:", e);
+    }
+  }
+
+  async function loadHistory(taskId?: string, taskName?: string) {
+    try {
+      if (taskId) {
+        runs = await getTaskRunsForTask(taskId);
+        historyTaskId = taskId;
+        historyTaskName = taskName || "Task";
+      } else {
+        runs = await getTaskRuns();
+        historyTaskId = null;
+        historyTaskName = "All Tasks";
+      }
+    } catch (e) {
+      console.error("Failed to load history:", e);
+      runs = [];
+    }
+  }
+
+  function openCreateModal() {
+    editingTask = null;
+    formData = getDefaultFormData();
+    if (pools.length > 0) formData.target_pool = pools[0].name;
+    if (disks.length > 0) formData.target_disk = disks[0].path;
+    showTaskModal = true;
+  }
+
+  function openEditModal(task: ScheduledTask) {
+    editingTask = task;
+    formData = { ...task };
+    showTaskModal = true;
+  }
+
+  function closeTaskModal() {
+    showTaskModal = false;
+    editingTask = null;
+    formData = getDefaultFormData();
+  }
+
+  async function openHistoryModal(taskId?: string, taskName?: string) {
+    await loadHistory(taskId, taskName);
+    showHistoryModal = true;
+  }
+
+  function closeHistoryModal() {
+    showHistoryModal = false;
+    runs = [];
+    historyTaskId = null;
+  }
+
+  async function handleSaveTask() {
+    if (!formData.name?.trim()) {
+      alert("Task name is required");
+      return;
+    }
+
+    saving = true;
+    try {
+      const taskData: ScheduledTask = {
+        name: formData.name!.trim(),
+        task_type: formData.task_type as TaskType,
+        enabled: formData.enabled ?? true,
+        frequency: formData.frequency as ScheduleFrequency,
+        hour: formData.hour ?? 0,
+        minute: formData.minute ?? 0,
+        day_of_week: formData.day_of_week,
+        day_of_month: formData.day_of_month,
+        cron_expression: formData.frequency === "custom" ? formData.cron_expression : undefined,
+        target_pool: ["snapshot", "scrub"].includes(formData.task_type!) ? formData.target_pool : undefined,
+        target_disk: formData.task_type === "smart_test" ? formData.target_disk : undefined,
+        command: formData.task_type === "custom" ? formData.command : undefined,
+        keep_count: ["snapshot", "backup"].includes(formData.task_type!) ? formData.keep_count : undefined,
+      };
+
+      if (editingTask?.id) {
+        await updateTask(editingTask.id, taskData);
+      } else {
+        await createTask(taskData);
+      }
+
+      closeTaskModal();
+      await loadTasks();
+    } catch (e: any) {
+      console.error("Failed to save task:", e);
+      alert(e.message || "Failed to save task");
+    }
+    saving = false;
+  }
+
+  async function handleDeleteTask(task: ScheduledTask) {
+    if (!task.id) return;
+    if (!confirm(`Delete task "${task.name}"?`)) return;
+
+    try {
+      await deleteTask(task.id);
+      await loadTasks();
+    } catch (e: any) {
+      console.error("Failed to delete task:", e);
+      alert(e.message || "Failed to delete task");
+    }
+  }
+
+  async function handleToggleTask(task: ScheduledTask) {
+    if (!task.id) return;
+
+    try {
+      await toggleTask(task.id);
+      await loadTasks();
+    } catch (e: any) {
+      console.error("Failed to toggle task:", e);
+      alert(e.message || "Failed to toggle task");
+    }
+  }
+
+  async function handleRunNow(task: ScheduledTask) {
+    if (!task.id) return;
+
+    runningTaskId = task.id;
+    try {
+      await runTaskNow(task.id);
+      // Show brief success indicator, then reload
+      setTimeout(() => loadTasks(), 1000);
+    } catch (e: any) {
+      console.error("Failed to run task:", e);
+      alert(e.message || "Failed to run task");
+    }
+    runningTaskId = null;
+  }
+
+  function getTaskTypeLabel(type: TaskType): string {
+    return TASK_TYPES.find((t) => t.value === type)?.label || type;
+  }
+
+  function getTaskTypeIcon(type: TaskType) {
+    return TASK_TYPES.find((t) => t.value === type)?.icon || Terminal;
+  }
+
+  function getFrequencyLabel(freq: ScheduleFrequency): string {
+    return FREQUENCIES.find((f) => f.value === freq)?.label || freq;
+  }
+
+  function formatSchedule(task: ScheduledTask): string {
+    if (task.frequency === "custom" && task.cron_expression) {
+      return task.cron_expression;
+    }
+
+    const time = `${String(task.hour).padStart(2, "0")}:${String(task.minute).padStart(2, "0")}`;
+
+    switch (task.frequency) {
+      case "hourly":
+        return `Every hour at :${String(task.minute).padStart(2, "0")}`;
+      case "daily":
+        return `Daily at ${time}`;
+      case "weekly":
+        const day = DAYS_OF_WEEK.find((d) => d.value === task.day_of_week)?.label || "";
+        return `${day}s at ${time}`;
+      case "monthly":
+        return `Day ${task.day_of_month} at ${time}`;
+      default:
+        return task.frequency;
+    }
+  }
+
+  function getStatusColor(status?: string): string {
+    switch (status) {
+      case "success":
+        return "text-green-400";
+      case "failed":
+        return "text-red-400";
+      case "running":
+        return "text-yellow-400";
+      default:
+        return "text-slate-500";
+    }
+  }
+
+  function formatDuration(start: string, end?: string): string {
+    if (!end) return "Running...";
+    const ms = new Date(end).getTime() - new Date(start).getTime();
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+  }
 </script>
 
 <div class="space-y-4">
+  <!-- Header -->
   <div class="flex items-center justify-between">
     <h2 class="text-xl font-bold">Scheduled Tasks</h2>
-    <button on:click={loadTasks} class="p-2 bg-slate-700 rounded-lg hover:bg-slate-600">
-      <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-    </button>
+    <div class="flex gap-2">
+      <button
+        on:click={() => openHistoryModal()}
+        class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm"
+      >
+        <History class="w-4 h-4" />
+        History
+      </button>
+      <button on:click={loadTasks} class="p-2 bg-slate-700 rounded-lg hover:bg-slate-600" title="Refresh">
+        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
+      </button>
+      <button
+        on:click={openCreateModal}
+        class="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm"
+      >
+        <Plus class="w-4 h-4" />
+        New Task
+      </button>
+    </div>
   </div>
 
+  <!-- Task List -->
   <div class="bg-slate-800 rounded-lg p-4">
     {#if loading}
       <div class="flex justify-center py-8">
@@ -38,31 +344,406 @@
       <div class="text-center py-8 text-slate-400">
         <Calendar class="w-10 h-10 mx-auto mb-2 opacity-50" />
         <p>No scheduled tasks</p>
+        <p class="text-sm mt-1">Create a task to automate snapshots, scrubs, and more</p>
       </div>
     {:else}
       <div class="space-y-2">
         {#each tasks as task}
+          {@const TypeIcon = getTaskTypeIcon(task.task_type)}
           <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
-            <div class="flex items-center gap-3">
-              {#if task.enabled}
-                <Play class="w-5 h-5 text-green-400" />
-              {:else}
-                <Pause class="w-5 h-5 text-slate-500" />
-              {/if}
-              <div>
-                <p class="font-medium text-sm">{task.name}</p>
-                <p class="text-xs text-slate-400">{task.task_type} - {task.frequency}</p>
+            <div class="flex items-center gap-3 flex-1 min-w-0">
+              <!-- Enable/Disable Toggle -->
+              <button
+                on:click={() => handleToggleTask(task)}
+                class="p-1.5 rounded hover:bg-slate-600 transition-colors {task.enabled
+                  ? 'text-green-400'
+                  : 'text-slate-500'}"
+                title={task.enabled ? "Disable task" : "Enable task"}
+              >
+                {#if task.enabled}
+                  <Play class="w-5 h-5" />
+                {:else}
+                  <Pause class="w-5 h-5" />
+                {/if}
+              </button>
+
+              <!-- Task Info -->
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <TypeIcon class="w-4 h-4 text-blue-400 flex-shrink-0" />
+                  <p class="font-medium text-sm truncate">{task.name}</p>
+                  {#if task.last_status}
+                    <span class={getStatusColor(task.last_status)}>
+                      {#if task.last_status === "success"}
+                        <CheckCircle class="w-3.5 h-3.5" />
+                      {:else if task.last_status === "failed"}
+                        <XCircle class="w-3.5 h-3.5" />
+                      {/if}
+                    </span>
+                  {/if}
+                </div>
+                <p class="text-xs text-slate-400 truncate">
+                  {getTaskTypeLabel(task.task_type)}
+                  {#if task.target_pool}
+                    on {task.target_pool}
+                  {:else if task.target_disk}
+                    on {task.target_disk}
+                  {/if}
+                  &bull; {formatSchedule(task)}
+                </p>
               </div>
+
+              <!-- Next Run -->
+              {#if task.enabled && task.next_run}
+                <div class="hidden sm:flex flex-col items-end text-xs text-slate-500">
+                  <span class="flex items-center gap-1">
+                    <Clock class="w-3 h-3" />
+                    Next run
+                  </span>
+                  <span>{new Date(task.next_run).toLocaleString()}</span>
+                </div>
+              {/if}
             </div>
-            {#if task.next_run}
-              <span class="text-xs text-slate-500 flex items-center gap-1">
-                <Clock class="w-3 h-3" />
-                {new Date(task.next_run).toLocaleString()}
-              </span>
-            {/if}
+
+            <!-- Actions -->
+            <div class="flex items-center gap-1 ml-2">
+              <button
+                on:click={() => handleRunNow(task)}
+                disabled={runningTaskId === task.id}
+                class="p-2 text-yellow-400 hover:bg-slate-600 rounded disabled:opacity-50"
+                title="Run now"
+              >
+                {#if runningTaskId === task.id}
+                  <RefreshCw class="w-4 h-4 animate-spin" />
+                {:else}
+                  <Zap class="w-4 h-4" />
+                {/if}
+              </button>
+              <button
+                on:click={() => openHistoryModal(task.id, task.name)}
+                class="p-2 text-slate-400 hover:bg-slate-600 rounded"
+                title="View history"
+              >
+                <History class="w-4 h-4" />
+              </button>
+              <button
+                on:click={() => openEditModal(task)}
+                class="p-2 text-blue-400 hover:bg-slate-600 rounded"
+                title="Edit"
+              >
+                <Edit3 class="w-4 h-4" />
+              </button>
+              <button
+                on:click={() => handleDeleteTask(task)}
+                class="p-2 text-red-400 hover:bg-slate-600 rounded"
+                title="Delete"
+              >
+                <Trash2 class="w-4 h-4" />
+              </button>
+            </div>
           </div>
         {/each}
       </div>
     {/if}
   </div>
 </div>
+
+<!-- Create/Edit Task Modal -->
+{#if showTaskModal}
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between p-4 border-b border-slate-700">
+        <h3 class="text-lg font-bold">{editingTask ? "Edit Task" : "Create Task"}</h3>
+        <button on:click={closeTaskModal} class="p-1 hover:bg-slate-700 rounded">
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-4 space-y-4">
+        <!-- Task Name -->
+        <div>
+          <label class="block text-sm text-slate-400 mb-1">Task Name</label>
+          <input
+            type="text"
+            bind:value={formData.name}
+            placeholder="Daily snapshot"
+            class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+          />
+        </div>
+
+        <!-- Task Type -->
+        <div>
+          <label class="block text-sm text-slate-400 mb-1">Task Type</label>
+          <select
+            bind:value={formData.task_type}
+            class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+          >
+            {#each TASK_TYPES as type}
+              <option value={type.value}>{type.label}</option>
+            {/each}
+          </select>
+        </div>
+
+        <!-- Pool Selection (for snapshot/scrub) -->
+        {#if formData.task_type === "snapshot" || formData.task_type === "scrub"}
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">Target Pool</label>
+            {#if pools.length === 0}
+              <p class="text-sm text-yellow-400">No pools available. Create a pool first.</p>
+            {:else}
+              <select
+                bind:value={formData.target_pool}
+                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+              >
+                {#each pools as pool}
+                  <option value={pool.name}>{pool.name}</option>
+                {/each}
+              </select>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- Disk Selection (for smart_test) -->
+        {#if formData.task_type === "smart_test"}
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">Target Disk</label>
+            {#if disks.length === 0}
+              <p class="text-sm text-yellow-400">No disks available.</p>
+            {:else}
+              <select
+                bind:value={formData.target_disk}
+                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+              >
+                {#each disks as disk}
+                  <option value={disk.path}>{disk.path} - {disk.model || disk.name}</option>
+                {/each}
+              </select>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- Custom Command -->
+        {#if formData.task_type === "custom"}
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">Command</label>
+            <input
+              type="text"
+              bind:value={formData.command}
+              placeholder="/usr/local/bin/my-script.sh"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none font-mono text-sm"
+            />
+            <p class="text-xs text-slate-500 mt-1">Shell command to execute</p>
+          </div>
+        {/if}
+
+        <!-- Keep Count (for snapshot/backup) -->
+        {#if formData.task_type === "snapshot" || formData.task_type === "backup"}
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">Keep Count</label>
+            <input
+              type="number"
+              bind:value={formData.keep_count}
+              min="1"
+              max="100"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+            />
+            <p class="text-xs text-slate-500 mt-1">Number of {formData.task_type}s to retain</p>
+          </div>
+        {/if}
+
+        <hr class="border-slate-700" />
+
+        <!-- Schedule Frequency -->
+        <div>
+          <label class="block text-sm text-slate-400 mb-1">Frequency</label>
+          <select
+            bind:value={formData.frequency}
+            class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+          >
+            {#each FREQUENCIES as freq}
+              <option value={freq.value}>{freq.label}</option>
+            {/each}
+          </select>
+        </div>
+
+        <!-- Custom Cron Expression -->
+        {#if formData.frequency === "custom"}
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">Cron Expression</label>
+            <input
+              type="text"
+              bind:value={formData.cron_expression}
+              placeholder="0 2 * * *"
+              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+            />
+            <p class="text-xs text-slate-500 mt-1">Format: minute hour day_of_month month day_of_week</p>
+          </div>
+        {:else}
+          <!-- Time Selection -->
+          <div class="grid grid-cols-2 gap-4">
+            {#if formData.frequency !== "hourly"}
+              <div>
+                <label class="block text-sm text-slate-400 mb-1">Hour</label>
+                <select
+                  bind:value={formData.hour}
+                  class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+                >
+                  {#each Array(24) as _, i}
+                    <option value={i}>{String(i).padStart(2, "0")}:00</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
+            <div>
+              <label class="block text-sm text-slate-400 mb-1">Minute</label>
+              <select
+                bind:value={formData.minute}
+                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+              >
+                {#each [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] as m}
+                  <option value={m}>{String(m).padStart(2, "0")}</option>
+                {/each}
+              </select>
+            </div>
+          </div>
+
+          <!-- Day Selection -->
+          {#if formData.frequency === "weekly"}
+            <div>
+              <label class="block text-sm text-slate-400 mb-1">Day of Week</label>
+              <select
+                bind:value={formData.day_of_week}
+                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+              >
+                {#each DAYS_OF_WEEK as day}
+                  <option value={day.value}>{day.label}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
+
+          {#if formData.frequency === "monthly"}
+            <div>
+              <label class="block text-sm text-slate-400 mb-1">Day of Month</label>
+              <select
+                bind:value={formData.day_of_month}
+                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+              >
+                {#each Array(28) as _, i}
+                  <option value={i + 1}>{i + 1}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
+        {/if}
+
+        <!-- Enabled Toggle -->
+        <div class="flex items-center gap-3">
+          <input
+            type="checkbox"
+            id="task-enabled"
+            bind:checked={formData.enabled}
+            class="w-4 h-4 rounded bg-slate-900 border-slate-600 text-blue-500 focus:ring-blue-500"
+          />
+          <label for="task-enabled" class="text-sm">Enable task</label>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="flex gap-3 p-4 border-t border-slate-700">
+        <button on:click={closeTaskModal} class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg">
+          Cancel
+        </button>
+        <button
+          on:click={handleSaveTask}
+          disabled={saving}
+          class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg flex items-center justify-center gap-2"
+        >
+          {#if saving}
+            <RefreshCw class="w-4 h-4 animate-spin" />
+            Saving...
+          {:else}
+            {editingTask ? "Save Changes" : "Create Task"}
+          {/if}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- History Modal -->
+{#if showHistoryModal}
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between p-4 border-b border-slate-700">
+        <h3 class="text-lg font-bold">Run History: {historyTaskName}</h3>
+        <button on:click={closeHistoryModal} class="p-1 hover:bg-slate-700 rounded">
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="flex-1 overflow-y-auto p-4">
+        {#if runs.length === 0}
+          <div class="text-center py-8 text-slate-400">
+            <History class="w-10 h-10 mx-auto mb-2 opacity-50" />
+            <p>No run history</p>
+          </div>
+        {:else}
+          <div class="space-y-2">
+            {#each runs as run}
+              <div class="p-3 bg-slate-700 rounded-lg">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="flex items-center gap-2">
+                    {#if run.status === "success"}
+                      <CheckCircle class="w-4 h-4 text-green-400" />
+                    {:else if run.status === "failed"}
+                      <XCircle class="w-4 h-4 text-red-400" />
+                    {:else}
+                      <RefreshCw class="w-4 h-4 text-yellow-400 animate-spin" />
+                    {/if}
+                    <span class="font-medium text-sm">{run.task_name}</span>
+                    <span class="text-xs px-2 py-0.5 rounded {run.status === 'success'
+                      ? 'bg-green-500/20 text-green-400'
+                      : run.status === 'failed'
+                        ? 'bg-red-500/20 text-red-400'
+                        : 'bg-yellow-500/20 text-yellow-400'}">
+                      {run.status}
+                    </span>
+                  </div>
+                  <span class="text-xs text-slate-500">{formatDuration(run.started_at, run.finished_at)}</span>
+                </div>
+                <div class="text-xs text-slate-400">
+                  {new Date(run.started_at).toLocaleString()}
+                </div>
+                {#if run.error}
+                  <div class="mt-2 p-2 bg-red-500/10 rounded text-xs text-red-400 font-mono break-all">
+                    {run.error}
+                  </div>
+                {/if}
+                {#if run.output}
+                  <details class="mt-2">
+                    <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-400">View output</summary>
+                    <div class="mt-1 p-2 bg-slate-900 rounded text-xs text-slate-300 font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+                      {run.output}
+                    </div>
+                  </details>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="p-4 border-t border-slate-700">
+        <button on:click={closeHistoryModal} class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
