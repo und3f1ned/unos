@@ -6,10 +6,13 @@ export interface LogEntry {
   priority: string;
   message: string;
   source: string;
+  unit?: string;
 }
 
 export interface LogSource {
   name: string;
+  label: string;
+  description: string;
   path: string | null;
   available: boolean;
 }
@@ -32,6 +35,29 @@ export interface LogFileContent {
   lines: number;
 }
 
+export type LogPriority = "emerg" | "alert" | "crit" | "err" | "warning" | "notice" | "info" | "debug";
+
+export const PRIORITY_LEVELS: { value: LogPriority; label: string }[] = [
+  { value: "emerg", label: "Emergency" },
+  { value: "alert", label: "Alert" },
+  { value: "crit", label: "Critical" },
+  { value: "err", label: "Error" },
+  { value: "warning", label: "Warning" },
+  { value: "notice", label: "Notice" },
+  { value: "info", label: "Info" },
+  { value: "debug", label: "Debug" }
+];
+
+export const TIME_RANGES = [
+  { value: "", label: "All time" },
+  { value: "5 minutes ago", label: "Last 5 minutes" },
+  { value: "15 minutes ago", label: "Last 15 minutes" },
+  { value: "1 hour ago", label: "Last hour" },
+  { value: "6 hours ago", label: "Last 6 hours" },
+  { value: "24 hours ago", label: "Last 24 hours" },
+  { value: "7 days ago", label: "Last 7 days" }
+];
+
 export async function getLogSources(): Promise<{ sources: LogSource[] }> {
   return api.get<{ sources: LogSource[] }>("/logs/sources");
 }
@@ -40,21 +66,25 @@ export async function getLogFiles(): Promise<{ files: LogFile[] }> {
   return api.get<{ files: LogFile[] }>("/logs/files");
 }
 
-export async function getLogEntries(
-  source: string = "journal",
-  limit: number = 100,
-  priority?: string,
-  search?: string,
-  since?: string
-): Promise<LogsResponse> {
-  const params = new URLSearchParams();
-  params.append("source", source);
-  params.append("limit", limit.toString());
-  if (priority) params.append("priority", priority);
-  if (search) params.append("search", search);
-  if (since) params.append("since", since);
+export interface LogQueryParams {
+  source?: string;
+  limit?: number;
+  priority?: string;
+  search?: string;
+  since?: string;
+  unit?: string;
+}
 
-  return api.get<LogsResponse>(`/logs/entries?${params.toString()}`);
+export async function getLogEntries(params: LogQueryParams = {}): Promise<LogsResponse> {
+  const urlParams = new URLSearchParams();
+  urlParams.append("source", params.source || "journal");
+  urlParams.append("limit", (params.limit || 200).toString());
+  if (params.priority) urlParams.append("priority", params.priority);
+  if (params.search) urlParams.append("search", params.search);
+  if (params.since) urlParams.append("since", params.since);
+  if (params.unit) urlParams.append("unit", params.unit);
+
+  return api.get<LogsResponse>(`/logs/entries?${urlParams.toString()}`);
 }
 
 export async function getLogFileContent(
