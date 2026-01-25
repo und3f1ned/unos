@@ -1,283 +1,485 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import {
-    getAppCatalog,
-    getInstalledApps,
-    installApp,
-    uninstallApp,
-    startApp,
-    stopApp,
-    type AppTemplate,
-    type InstalledApp,
-  } from "$lib/api/apps";
-  import {
-    Package,
-    Download,
-    Play,
-    Square,
-    Trash2,
-    ExternalLink,
-    Search,
-    RefreshCw,
-    Loader2,
-  } from "lucide-svelte";
+	import { onMount } from 'svelte';
+	import {
+		getAppCatalog,
+		getInstalledApps,
+		uninstallApp,
+		startApp,
+		stopApp,
+		restartApp,
+		type AppTemplate,
+		type InstalledApp
+	} from '$lib/api/apps';
+	import {
+		Package,
+		Download,
+		Play,
+		Square,
+		RotateCw,
+		Trash2,
+		ExternalLink,
+		Search,
+		RefreshCw,
+		Loader2,
+		Grid3X3,
+		List,
+		Star,
+		Shield,
+		CheckCircle2,
+		Film,
+		FileText,
+		Download as DownloadIcon,
+		Database,
+		Activity,
+		Globe,
+		Code,
+		Lock,
+		LayoutGrid,
+		Sparkles
+	} from 'lucide-svelte';
+	import { Button, Card, Badge, Alert, EmptyState } from '$lib/components/ui';
+	import { AppDetailModal } from '$lib/components/apps';
 
-  let catalog: AppTemplate[] = [];
-  let installed: InstalledApp[] = [];
-  let loading = true;
-  let installing: string | null = null;
-  let searchQuery = "";
-  let selectedCategory = "";
-  let activeTab: "catalog" | "installed" = "catalog";
+	let catalog: AppTemplate[] = [];
+	let installed: InstalledApp[] = [];
+	let loading = true;
+	let error = '';
+	let searchQuery = '';
+	let selectedCategory = '';
+	let activeTab: 'catalog' | 'installed' = 'catalog';
 
-  const categories = [
-    { value: "", label: "All" },
-    { value: "media", label: "Media" },
-    { value: "productivity", label: "Productivity" },
-    { value: "download", label: "Downloads" },
-    { value: "backup", label: "Backup" },
-    { value: "monitoring", label: "Monitoring" },
-    { value: "network", label: "Network" },
-    { value: "development", label: "Development" },
-    { value: "security", label: "Security" },
-  ];
+	// Detail modal state
+	let selectedApp: AppTemplate | null = null;
+	let showDetailModal = false;
 
-  onMount(async () => {
-    await refresh();
-  });
+	const categories = [
+		{ value: '', label: 'All Apps', icon: LayoutGrid, count: 0 },
+		{ value: 'media', label: 'Media', icon: Film, count: 0 },
+		{ value: 'productivity', label: 'Productivity', icon: FileText, count: 0 },
+		{ value: 'download', label: 'Downloads', icon: DownloadIcon, count: 0 },
+		{ value: 'backup', label: 'Backup', icon: Database, count: 0 },
+		{ value: 'monitoring', label: 'Monitoring', icon: Activity, count: 0 },
+		{ value: 'network', label: 'Network', icon: Globe, count: 0 },
+		{ value: 'development', label: 'Development', icon: Code, count: 0 },
+		{ value: 'security', label: 'Security', icon: Lock, count: 0 }
+	];
 
-  async function refresh() {
-    loading = true;
-    try {
-      [catalog, installed] = await Promise.all([
-        getAppCatalog(selectedCategory || undefined, searchQuery || undefined),
-        getInstalledApps(),
-      ]);
-    } catch (e) {
-      console.error(e);
-    }
-    loading = false;
-  }
+	// Update category counts
+	$: categoriesWithCounts = categories.map((cat) => ({
+		...cat,
+		count:
+			cat.value === '' ? catalog.length : catalog.filter((app) => app.category === cat.value).length
+	}));
 
-  async function handleInstall(app: AppTemplate) {
-    installing = app.id;
-    try {
-      await installApp({ template_id: app.id });
-      await refresh();
-    } catch (e: any) {
-      alert(e.message || "Install failed");
-    }
-    installing = null;
-  }
+	// Filtered catalog
+	$: filteredCatalog = catalog.filter((app) => {
+		const matchesSearch =
+			searchQuery === '' ||
+			app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+			app.description.toLowerCase().includes(searchQuery.toLowerCase());
+		const matchesCategory = selectedCategory === '' || app.category === selectedCategory;
+		return matchesSearch && matchesCategory;
+	});
 
-  async function handleUninstall(app: InstalledApp) {
-    if (!confirm(`Uninstall ${app.name}?`)) return;
-    try {
-      await uninstallApp(app.container_id);
-      await refresh();
-    } catch (e: any) {
-      alert(e.message || "Uninstall failed");
-    }
-  }
+	// Featured apps (first 4 that are official or have high visibility)
+	$: featuredApps = catalog
+		.filter((app) => ['plex', 'nextcloud', 'jellyfin', 'portainer'].includes(app.id))
+		.slice(0, 4);
 
-  async function handleStart(app: InstalledApp) {
-    try {
-      await startApp(app.container_id);
-      await refresh();
-    } catch (e: any) {
-      alert(e.message || "Start failed");
-    }
-  }
+	onMount(async () => {
+		await refresh();
+	});
 
-  async function handleStop(app: InstalledApp) {
-    try {
-      await stopApp(app.container_id);
-      await refresh();
-    } catch (e: any) {
-      alert(e.message || "Stop failed");
-    }
-  }
+	async function refresh() {
+		loading = true;
+		error = '';
+		try {
+			[catalog, installed] = await Promise.all([getAppCatalog(), getInstalledApps()]);
+		} catch (e: any) {
+			error = e.message;
+		}
+		loading = false;
+	}
 
-  function isInstalled(appId: string): boolean {
-    return installed.some((i) => i.template_id === appId);
-  }
+	function openDetail(app: AppTemplate) {
+		selectedApp = app;
+		showDetailModal = true;
+	}
 
-  function getInstalledInfo(appId: string): InstalledApp | undefined {
-    return installed.find((i) => i.template_id === appId);
-  }
+	function closeDetail() {
+		showDetailModal = false;
+		selectedApp = null;
+	}
 
-  $: filteredCatalog = catalog;
+	async function handleInstalled() {
+		await refresh();
+	}
+
+	async function handleUninstall(app: InstalledApp) {
+		if (!confirm(`Uninstall ${app.name}? This will remove the container but keep data volumes.`))
+			return;
+		try {
+			await uninstallApp(app.container_id);
+			await refresh();
+		} catch (e: any) {
+			error = e.message || 'Uninstall failed';
+		}
+	}
+
+	async function handleStart(app: InstalledApp) {
+		try {
+			await startApp(app.container_id);
+			await refresh();
+		} catch (e: any) {
+			error = e.message || 'Start failed';
+		}
+	}
+
+	async function handleStop(app: InstalledApp) {
+		try {
+			await stopApp(app.container_id);
+			await refresh();
+		} catch (e: any) {
+			error = e.message || 'Stop failed';
+		}
+	}
+
+	async function handleRestart(app: InstalledApp) {
+		try {
+			await restartApp(app.container_id);
+			await refresh();
+		} catch (e: any) {
+			error = e.message || 'Restart failed';
+		}
+	}
+
+	function isInstalled(appId: string): boolean {
+		return installed.some((i) => i.template_id === appId);
+	}
+
+	function getInstalledInfo(appId: string): InstalledApp | undefined {
+		return installed.find((i) => i.template_id === appId);
+	}
+
+	function getSourceBadge(
+		source: string
+	): { variant: 'success' | 'info' | 'purple' | 'warning'; label: string } {
+		switch (source?.toUpperCase()) {
+			case 'OFFICIAL':
+				return { variant: 'success', label: 'Official' };
+			case 'LINUXSERVER':
+				return { variant: 'purple', label: 'LinuxServer' };
+			case 'VERIFIED':
+				return { variant: 'info', label: 'Verified' };
+			default:
+				return { variant: 'warning', label: 'Community' };
+		}
+	}
+
+	function getWebUrl(app: InstalledApp): string | null {
+		if (app.web_port) {
+			return `http://${window.location.hostname}:${app.web_port}`;
+		}
+		return null;
+	}
 </script>
 
-<div class="p-6">
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-2xl font-bold flex items-center gap-2">
-      <Package class="w-7 h-7" />
-      App Store
-    </h1>
-    <button
-      on:click={refresh}
-      class="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition"
-      disabled={loading}
-    >
-      <RefreshCw class={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-    </button>
-  </div>
+<div class="page-container">
+	<!-- Page Header -->
+	<div class="page-header">
+		<div class="flex items-center gap-3">
+			<div class="w-10 h-10 rounded-lg bg-surface-elevated flex items-center justify-center">
+				<Package class="w-5 h-5 text-info" />
+			</div>
+			<div>
+				<h1 class="page-title">App Store</h1>
+				<p class="text-sm text-secondary">
+					{catalog.length} apps available, {installed.length} installed
+				</p>
+			</div>
+		</div>
+		<Button variant="secondary" size="icon" on:click={refresh} disabled={loading}>
+			<RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
+		</Button>
+	</div>
 
-  <!-- Tabs -->
-  <div class="flex gap-4 mb-6 border-b border-slate-700">
-    <button
-      class="pb-2 px-1 {activeTab === 'catalog' ? 'border-b-2 border-blue-500 text-blue-400' : 'text-slate-400'}"
-      on:click={() => (activeTab = "catalog")}
-    >
-      Catalog ({catalog.length})
-    </button>
-    <button
-      class="pb-2 px-1 {activeTab === 'installed' ? 'border-b-2 border-blue-500 text-blue-400' : 'text-slate-400'}"
-      on:click={() => (activeTab = "installed")}
-    >
-      Installed ({installed.length})
-    </button>
-  </div>
+	{#if error}
+		<Alert variant="error">{error}</Alert>
+	{/if}
 
-  {#if activeTab === "catalog"}
-    <!-- Search & Filter -->
-    <div class="flex gap-4 mb-6">
-      <div class="relative flex-1">
-        <Search class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-        <input
-          type="text"
-          placeholder="Search apps..."
-          bind:value={searchQuery}
-          on:input={() => refresh()}
-          class="w-full pl-10 pr-4 py-2 bg-slate-800 rounded-lg border border-slate-700 focus:border-blue-500 focus:outline-none"
-        />
-      </div>
-      <select
-        bind:value={selectedCategory}
-        on:change={() => refresh()}
-        class="px-4 py-2 bg-slate-800 rounded-lg border border-slate-700 focus:border-blue-500 focus:outline-none"
-      >
-        {#each categories as cat}
-          <option value={cat.value}>{cat.label}</option>
-        {/each}
-      </select>
-    </div>
+	<!-- Tabs -->
+	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit">
+		<button
+			class="px-4 py-2 rounded-md text-sm font-medium transition-colors {activeTab === 'catalog'
+				? 'bg-blue-600 text-white'
+				: 'text-secondary hover:text-content'}"
+			on:click={() => (activeTab = 'catalog')}
+		>
+			<span class="flex items-center gap-2">
+				<Grid3X3 class="w-4 h-4" />
+				Catalog
+			</span>
+		</button>
+		<button
+			class="px-4 py-2 rounded-md text-sm font-medium transition-colors {activeTab === 'installed'
+				? 'bg-blue-600 text-white'
+				: 'text-secondary hover:text-content'}"
+			on:click={() => (activeTab = 'installed')}
+		>
+			<span class="flex items-center gap-2">
+				<CheckCircle2 class="w-4 h-4" />
+				Installed ({installed.length})
+			</span>
+		</button>
+	</div>
 
-    <!-- App Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-      {#each filteredCatalog as app}
-        {@const installedInfo = getInstalledInfo(app.id)}
-        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
-          <div class="flex items-start gap-3 mb-3">
-            <span class="text-3xl">{app.icon}</span>
-            <div class="flex-1 min-w-0">
-              <h3 class="font-semibold truncate">{app.name}</h3>
-              <p class="text-xs text-slate-400 capitalize">{app.category}</p>
-            </div>
-          </div>
-          <p class="text-sm text-slate-400 mb-4 line-clamp-2">{app.description}</p>
-          <div class="flex items-center gap-2">
-            {#if installedInfo}
-              <span
-                class="px-2 py-1 rounded text-xs {installedInfo.status === 'running' ? 'bg-green-500/20 text-green-400' : 'bg-slate-600 text-slate-300'}"
-              >
-                {installedInfo.status}
-              </span>
-              {#if installedInfo.web_port}
-                <a
-                  href="http://{window.location.hostname}:{installedInfo.web_port}"
-                  target="_blank"
-                  class="p-1.5 rounded bg-blue-600 hover:bg-blue-500"
-                >
-                  <ExternalLink class="w-4 h-4" />
-                </a>
-              {/if}
-            {:else}
-              <button
-                on:click={() => handleInstall(app)}
-                disabled={installing === app.id}
-                class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 transition"
-              >
-                {#if installing === app.id}
-                  <Loader2 class="w-4 h-4 animate-spin" />
-                  Installing...
-                {:else}
-                  <Download class="w-4 h-4" />
-                  Install
-                {/if}
-              </button>
-            {/if}
-          </div>
-        </div>
-      {/each}
-    </div>
-  {:else}
-    <!-- Installed Apps -->
-    <div class="space-y-3">
-      {#each installed as app}
-        {@const template = catalog.find((c) => c.id === app.template_id)}
-        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 flex items-center gap-4">
-          <span class="text-3xl">{template?.icon || "📦"}</span>
-          <div class="flex-1 min-w-0">
-            <h3 class="font-semibold">{app.name}</h3>
-            <p class="text-sm text-slate-400">{template?.description || app.template_id}</p>
-          </div>
-          <span
-            class="px-3 py-1 rounded-full text-sm {app.status === 'running' ? 'bg-green-500/20 text-green-400' : 'bg-slate-600 text-slate-300'}"
-          >
-            {app.status}
-          </span>
-          <div class="flex items-center gap-2">
-            {#if app.web_port}
-              <a
-                href="http://{window.location.hostname}:{app.web_port}"
-                target="_blank"
-                class="p-2 rounded-lg bg-slate-700 hover:bg-slate-600"
-                title="Open"
-              >
-                <ExternalLink class="w-5 h-5" />
-              </a>
-            {/if}
-            {#if app.status === "running"}
-              <button
-                on:click={() => handleStop(app)}
-                class="p-2 rounded-lg bg-slate-700 hover:bg-orange-600"
-                title="Stop"
-              >
-                <Square class="w-5 h-5" />
-              </button>
-            {:else}
-              <button
-                on:click={() => handleStart(app)}
-                class="p-2 rounded-lg bg-slate-700 hover:bg-green-600"
-                title="Start"
-              >
-                <Play class="w-5 h-5" />
-              </button>
-            {/if}
-            <button
-              on:click={() => handleUninstall(app)}
-              class="p-2 rounded-lg bg-slate-700 hover:bg-red-600"
-              title="Uninstall"
-            >
-              <Trash2 class="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      {/each}
-      {#if installed.length === 0}
-        <div class="text-center py-12 text-slate-400">
-          <Package class="w-12 h-12 mx-auto mb-3 opacity-50" />
-          <p>No apps installed yet</p>
-          <button
-            on:click={() => (activeTab = "catalog")}
-            class="mt-2 text-blue-400 hover:underline"
-          >
-            Browse catalog
-          </button>
-        </div>
-      {/if}
-    </div>
-  {/if}
+	{#if loading}
+		<p class="loading-text">Loading apps...</p>
+	{:else if activeTab === 'catalog'}
+		<!-- Featured Apps Section -->
+		{#if featuredApps.length > 0 && !searchQuery && !selectedCategory}
+			<Card>
+				<div class="flex items-center gap-2 mb-4">
+					<Sparkles class="w-5 h-5 text-yellow-400" />
+					<h2 class="section-title">Featured Apps</h2>
+				</div>
+				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+					{#each featuredApps as app}
+						{@const installedInfo = getInstalledInfo(app.id)}
+						<button
+							class="card-nested text-left hover:bg-surface-overlay transition-colors"
+							on:click={() => openDetail(app)}
+						>
+							<div class="flex items-center gap-3 mb-2">
+								<span class="text-3xl">{app.icon}</span>
+								<div class="min-w-0 flex-1">
+									<h3 class="font-semibold truncate">{app.name}</h3>
+									{#if installedInfo}
+										<Badge variant="success" class="mt-0.5">Installed</Badge>
+									{/if}
+								</div>
+							</div>
+							<p class="text-sm text-secondary line-clamp-2">{app.description}</p>
+						</button>
+					{/each}
+				</div>
+			</Card>
+		{/if}
+
+		<!-- Search and Categories -->
+		<div class="flex flex-col lg:flex-row gap-6">
+			<!-- Category Sidebar -->
+			<div class="lg:w-56 flex-shrink-0">
+				<Card>
+					<h3 class="font-semibold mb-3">Categories</h3>
+					<nav class="space-y-1">
+						{#each categoriesWithCounts as cat}
+							<button
+								class="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors
+                       {selectedCategory === cat.value
+									? 'bg-blue-600 text-white'
+									: 'text-secondary hover:text-content hover:bg-surface-overlay'}"
+								on:click={() => (selectedCategory = cat.value)}
+							>
+								<span class="flex items-center gap-2">
+									<svelte:component this={cat.icon} class="w-4 h-4" />
+									{cat.label}
+								</span>
+								<span
+									class="text-xs {selectedCategory === cat.value
+										? 'text-white/70'
+										: 'text-muted'}"
+								>
+									{cat.count}
+								</span>
+							</button>
+						{/each}
+					</nav>
+				</Card>
+			</div>
+
+			<!-- App Grid -->
+			<div class="flex-1 min-w-0">
+				<!-- Search -->
+				<div class="mb-4">
+					<div class="relative">
+						<Search
+							class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-content-muted pointer-events-none"
+						/>
+						<input
+							type="text"
+							placeholder="Search apps..."
+							bind:value={searchQuery}
+							class="form-input pl-10"
+						/>
+					</div>
+				</div>
+
+				{#if filteredCatalog.length === 0}
+					<EmptyState
+						icon={Package}
+						title="No apps found"
+						description="Try adjusting your search or category filter"
+					>
+						<Button
+							variant="secondary"
+							on:click={() => {
+								searchQuery = '';
+								selectedCategory = '';
+							}}>Clear Filters</Button
+						>
+					</EmptyState>
+				{:else}
+					<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+						{#each filteredCatalog as app}
+							{@const installedInfo = getInstalledInfo(app.id)}
+							{@const source = getSourceBadge((app as any).source)}
+							<div
+								class="card hover:bg-surface-overlay transition-colors cursor-pointer"
+								on:click={() => openDetail(app)}
+								role="button"
+								tabindex="0"
+								on:keypress={(e) => e.key === 'Enter' && openDetail(app)}
+							>
+								<div class="flex items-start gap-3 mb-3">
+									<div
+										class="w-12 h-12 rounded-xl bg-surface-muted flex items-center justify-center text-2xl flex-shrink-0"
+									>
+										{app.icon}
+									</div>
+									<div class="flex-1 min-w-0">
+										<div class="flex items-center gap-2 mb-0.5">
+											<h3 class="font-semibold truncate">{app.name}</h3>
+											{#if installedInfo}
+												<div
+													class="w-2 h-2 rounded-full {installedInfo.status === 'running'
+														? 'bg-green-500'
+														: 'bg-slate-500'}"
+												></div>
+											{/if}
+										</div>
+										<div class="flex items-center gap-2">
+											<Badge variant={source.variant} class="text-xs">{source.label}</Badge>
+											<span class="text-xs text-muted capitalize">{app.category}</span>
+										</div>
+									</div>
+								</div>
+								<p class="text-sm text-secondary line-clamp-2 mb-3">{app.description}</p>
+								<div class="flex items-center justify-between pt-3 border-t border-border">
+									{#if installedInfo}
+										<Badge variant={installedInfo.status === 'running' ? 'success' : 'neutral'}>
+											{installedInfo.status === 'running' ? 'Running' : 'Stopped'}
+										</Badge>
+										<div class="flex items-center gap-1">
+											{#if getWebUrl(installedInfo)}
+												<a
+													href={getWebUrl(installedInfo)}
+													target="_blank"
+													rel="noopener"
+													on:click|stopPropagation
+													class="p-1.5 rounded hover:bg-surface-muted text-info transition-colors"
+													title="Open"
+												>
+													<ExternalLink class="w-4 h-4" />
+												</a>
+											{/if}
+										</div>
+									{:else}
+										<span class="text-xs text-muted mono">{(app as any).version || ''}</span>
+										<Button variant="primary" size="sm" icon={Download}>Install</Button>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{:else}
+		<!-- Installed Apps -->
+		{#if installed.length === 0}
+			<EmptyState
+				icon={Package}
+				title="No apps installed"
+				description="Install apps from the catalog to get started"
+			>
+				<Button variant="primary" on:click={() => (activeTab = 'catalog')} icon={Download}>
+					Browse Catalog
+				</Button>
+			</EmptyState>
+		{:else}
+			<div class="space-y-4">
+				{#each installed as app}
+					{@const template = catalog.find((c) => c.id === app.template_id)}
+					<Card>
+						<div class="flex items-center gap-4">
+							<div
+								class="w-14 h-14 rounded-xl bg-surface-muted flex items-center justify-center text-3xl flex-shrink-0"
+							>
+								{template?.icon || '📦'}
+							</div>
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center gap-2 mb-1">
+									<h3 class="font-semibold text-lg">{app.name}</h3>
+									<Badge variant={app.status === 'running' ? 'success' : 'neutral'}>
+										{app.status === 'running' ? 'Running' : 'Stopped'}
+									</Badge>
+								</div>
+								<p class="text-sm text-secondary truncate">
+									{template?.description || app.template_id}
+								</p>
+								{#if app.web_port}
+									<p class="text-xs text-muted mt-1">
+										Port: <span class="mono">{app.web_port}</span>
+									</p>
+								{/if}
+							</div>
+							<div class="flex items-center gap-2">
+								{#if getWebUrl(app)}
+									<a
+										href={getWebUrl(app)}
+										target="_blank"
+										rel="noopener"
+										class="btn btn-secondary btn-md"
+									>
+										<ExternalLink class="w-4 h-4" />
+										Open
+									</a>
+								{/if}
+								{#if app.status === 'running'}
+									<Button variant="warning" size="sm" icon={Square} on:click={() => handleStop(app)}>
+										Stop
+									</Button>
+									<Button
+										variant="secondary"
+										size="sm"
+										icon={RotateCw}
+										on:click={() => handleRestart(app)}
+									>
+										Restart
+									</Button>
+								{:else}
+									<Button variant="success" size="sm" icon={Play} on:click={() => handleStart(app)}>
+										Start
+									</Button>
+								{/if}
+								<Button variant="danger" size="sm" icon={Trash2} on:click={() => handleUninstall(app)}>
+									Uninstall
+								</Button>
+							</div>
+						</div>
+					</Card>
+				{/each}
+			</div>
+		{/if}
+	{/if}
 </div>
+
+<!-- App Detail Modal -->
+<AppDetailModal
+	bind:open={showDetailModal}
+	app={selectedApp}
+	isInstalled={selectedApp ? isInstalled(selectedApp.id) : false}
+	on:close={closeDetail}
+	on:installed={handleInstalled}
+/>
