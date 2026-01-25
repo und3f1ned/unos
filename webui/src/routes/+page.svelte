@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import { Server, RefreshCw, Clock } from "lucide-svelte";
   import SystemStatsWidget from "$lib/components/widgets/SystemStatsWidget.svelte";
   import StorageWidget from "$lib/components/widgets/StorageWidget.svelte";
@@ -7,91 +7,44 @@
   import QuickActionsWidget from "$lib/components/widgets/QuickActionsWidget.svelte";
   import RecentActivityWidget from "$lib/components/widgets/RecentActivityWidget.svelte";
 
-  import { getSystemInfo, getSystemStats, type SystemInfo, type SystemStats } from "$lib/api/system";
+  import { getSystemInfo, type SystemInfo } from "$lib/api/system";
   import { getPools, type Pool } from "$lib/api/storage";
   import { getContainers, type Container } from "$lib/api/containers";
   import { getLogs, type NotificationLog } from "$lib/api/notifications";
+  import { stats, wsConnected, type WebSocketStats } from "$lib/stores/stats";
 
   let systemInfo: SystemInfo | null = null;
-  let stats: SystemStats | null = null;
   let pools: Pool[] = [];
   let containers: Container[] = [];
   let notificationLogs: NotificationLog[] = [];
   let loading = true;
   let lastUpdate: Date | null = null;
 
-  // Network rate tracking
-  let prevNetworkSent: number | null = null;
-  let prevNetworkRecv: number | null = null;
-  let prevNetworkTime: number | null = null;
-  let networkUpRate: number = 0;
-  let networkDownRate: number = 0;
-
-  let autoRefresh = true;
-  let refreshInterval: ReturnType<typeof setInterval> | null = null;
+  // Subscribe to WebSocket stats
+  let currentStats: WebSocketStats | null = null;
+  $: currentStats = $stats;
+  $: if ($stats) {
+    lastUpdate = new Date();
+  }
 
   onMount(async () => {
     await loadData();
-    if (autoRefresh) {
-      startAutoRefresh();
-    }
   });
-
-  onDestroy(() => {
-    stopAutoRefresh();
-  });
-
-  function startAutoRefresh() {
-    refreshInterval = setInterval(loadStats, 3000);
-  }
-
-  function stopAutoRefresh() {
-    if (refreshInterval) {
-      clearInterval(refreshInterval);
-      refreshInterval = null;
-    }
-  }
-
-  function calculateNetworkRates(newStats: SystemStats) {
-    const now = Date.now();
-    
-    if (prevNetworkSent !== null && prevNetworkRecv !== null && prevNetworkTime !== null) {
-      const timeDelta = (now - prevNetworkTime) / 1000; // seconds
-      if (timeDelta > 0) {
-        const sentDelta = newStats.network_sent - prevNetworkSent;
-        const recvDelta = newStats.network_recv - prevNetworkRecv;
-        
-        // Handle counter reset (e.g., after reboot)
-        if (sentDelta >= 0 && recvDelta >= 0) {
-          networkUpRate = sentDelta / timeDelta;
-          networkDownRate = recvDelta / timeDelta;
-        }
-      }
-    }
-    
-    prevNetworkSent = newStats.network_sent;
-    prevNetworkRecv = newStats.network_recv;
-    prevNetworkTime = now;
-  }
 
   async function loadData() {
     loading = true;
     try {
-      const [infoData, statsData, poolsData, containersData, logsData] = await Promise.all([
+      const [infoData, poolsData, containersData, logsData] = await Promise.all([
         getSystemInfo(),
-        getSystemStats(),
         getPools().catch(() => []),
         getContainers().catch(() => []),
         getLogs().catch(() => [])
       ]);
 
       systemInfo = infoData;
-      stats = statsData;
-      calculateNetworkRates(statsData);
       pools = Array.isArray(poolsData) ? poolsData : [];
       containers = Array.isArray(containersData) ? containersData : [];
       notificationLogs = Array.isArray(logsData) ? logsData : [];
-      lastUpdate = new Date();
     } catch (e) {
       console.error("Failed to load dashboard data:", e);
     } finally {
@@ -99,14 +52,8 @@
     }
   }
 
-  async function loadStats() {
-    try {
-      stats = await getSystemStats();
-      calculateNetworkRates(stats);
-      lastUpdate = new Date();
-    } catch (e) {
-      console.error("Failed to load stats:", e);
-    }
+  async function handleRefresh() {
+    await loadData();
   }
 
   function formatUptime(bootTime: number): string {
@@ -175,14 +122,16 @@
       </div>
     </div>
     <div class="flex items-center gap-4">
-      {#if lastUpdate}
+      {#if !$wsConnected}
+        <span class="text-xs text-yellow-500">WebSocket disconnected</span>
+      {:else if lastUpdate}
         <span class="text-xs text-slate-500 flex items-center gap-1">
           <Clock class="w-3 h-3" />
           Updated {formatTime(lastUpdate)}
         </span>
       {/if}
       <button
-        on:click={loadData}
+        on:click={handleRefresh}
         class="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
         disabled={loading}
       >
@@ -191,21 +140,21 @@
     </div>
   </div>
 
-  {#if loading && !stats}
+  {#if loading && !currentStats}
     <div class="flex items-center justify-center py-12">
       <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
     </div>
   {:else}
     <!-- System Stats -->
-    {#if stats}
+    {#if currentStats}
       <SystemStatsWidget
-        cpuPercent={stats.cpu_percent || 0}
-        memoryPercent={stats.memory_percent || 0}
-        memoryUsed={stats.memory_used || 0}
-        memoryTotal={stats.memory_total || 0}
-        networkUp={networkUpRate}
-        networkDown={networkDownRate}
-        temperature={getFirstTemperature(stats.temperatures)}
+        cpuPercent={currentStats.cpu_percent || 0}
+        memoryPercent={currentStats.memory_percent || 0}
+        memoryUsed={currentStats.memory_used || 0}
+        memoryTotal={currentStats.memory_total || 0}
+        networkUp={currentStats.network?.bytes_sent_rate || 0}
+        networkDown={currentStats.network?.bytes_recv_rate || 0}
+        temperature={getFirstTemperature(currentStats.temperatures)}
       />
     {/if}
 

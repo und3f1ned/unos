@@ -1,22 +1,26 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import {
     getInterfaces,
-    getNetworkStats,
     getDNSConfig,
     getDefaultGateway,
     getRoutes,
     getConnections,
     bringInterfaceUp,
     bringInterfaceDown,
-    formatBytes,
     type NetworkInterface,
-    type NetworkStats,
     type DNSConfig,
     type Route,
     type GatewayInfo,
     type Connection,
   } from "$lib/api/network";
+  import {
+    stats,
+    wsConnected,
+    formatBytes,
+    formatBytesPerSecond,
+    type NetworkInterface as WSNetworkInterface
+  } from "$lib/stores/stats";
   import {
     Network,
     Cable,
@@ -32,37 +36,30 @@
     PowerOff,
     ChevronDown,
     ChevronUp,
-    Layers,
     Link2,
   } from "lucide-svelte";
 
   let interfaces: NetworkInterface[] = [];
-  let stats: NetworkStats[] = [];
-  let prevStats: NetworkStats[] = [];
   let dnsConfig: DNSConfig | null = null;
   let gateway: GatewayInfo | null = null;
   let routes: Route[] = [];
   let connections: Connection[] = [];
-  
+
   let loading = true;
   let activeTab: "interfaces" | "routes" | "connections" = "interfaces";
   let expandedInterface: string | null = null;
-  let statsInterval: ReturnType<typeof setInterval>;
+
+  // Get WebSocket interface stats for rates
+  $: wsInterfaces = $stats?.network?.interfaces ?? [];
 
   onMount(() => {
     loadAll();
-    statsInterval = setInterval(loadStats, 2000);
-  });
-
-  onDestroy(() => {
-    if (statsInterval) clearInterval(statsInterval);
   });
 
   async function loadAll() {
     loading = true;
     await Promise.all([
       loadInterfaces(),
-      loadStats(),
       loadDNS(),
       loadGateway(),
       loadRoutes(),
@@ -75,16 +72,6 @@
     try {
       const result = await getInterfaces();
       interfaces = result.interfaces;
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  async function loadStats() {
-    try {
-      prevStats = [...stats];
-      const result = await getNetworkStats();
-      stats = result.stats;
     } catch (e) {
       console.error(e);
     }
@@ -124,18 +111,9 @@
     }
   }
 
-  function getSpeed(iface: string, direction: "rx" | "tx"): string {
-    const curr = stats.find((s) => s.interface === iface);
-    const prev = prevStats.find((s) => s.interface === iface);
-    if (!curr || !prev) return "0 B/s";
-    const diff = direction === "rx" 
-      ? curr.rx_bytes - prev.rx_bytes 
-      : curr.tx_bytes - prev.tx_bytes;
-    return formatBytes(Math.max(0, diff / 2)) + "/s";
-  }
-
-  function getStatFor(iface: string): NetworkStats | undefined {
-    return stats.find((s) => s.interface === iface);
+  // Get WebSocket stats for an interface
+  function getWsInterface(name: string): WSNetworkInterface | undefined {
+    return wsInterfaces.find(i => i.name === name);
   }
 
   function isUp(state: string): boolean {
@@ -167,13 +145,18 @@
       <Network class="w-6 h-6 text-blue-400" />
       Network
     </h2>
-    <button
-      on:click={loadAll}
-      class="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-      disabled={loading}
-    >
-      <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-    </button>
+    <div class="flex items-center gap-2">
+      {#if $wsConnected}
+        <span class="text-xs text-green-500">Live</span>
+      {/if}
+      <button
+        on:click={loadAll}
+        class="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+        disabled={loading}
+      >
+        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
+      </button>
+    </div>
   </div>
 
   <!-- Summary Cards -->
@@ -252,7 +235,7 @@
   {#if activeTab === "interfaces"}
     <div class="space-y-3">
       {#each interfaces as iface}
-        {@const stat = getStatFor(iface.name)}
+        {@const wsIface = getWsInterface(iface.name)}
         {@const ifaceIsUp = isUp(iface.state)}
         <div class="bg-slate-800 rounded-lg overflow-hidden">
           <!-- Interface Header -->
@@ -284,20 +267,20 @@
             </div>
 
             <div class="flex items-center gap-6">
-              <!-- Live Speed -->
-              {#if stat && ifaceIsUp}
+              <!-- Live Speed from WebSocket -->
+              {#if wsIface && ifaceIsUp}
                 <div class="flex items-center gap-4 text-sm">
                   <span class="flex items-center gap-1 text-green-400">
                     <ArrowDown class="w-3 h-3" />
-                    {getSpeed(iface.name, "rx")}
+                    {formatBytesPerSecond(wsIface.bytes_recv_rate)}
                   </span>
                   <span class="flex items-center gap-1 text-blue-400">
                     <ArrowUp class="w-3 h-3" />
-                    {getSpeed(iface.name, "tx")}
+                    {formatBytesPerSecond(wsIface.bytes_sent_rate)}
                   </span>
                 </div>
               {/if}
-              
+
               {#if expandedInterface === iface.name}
                 <ChevronUp class="w-5 h-5 text-slate-400" />
               {:else}
@@ -315,7 +298,7 @@
                   <p class="text-xs text-slate-500 mb-1">MAC Address</p>
                   <p class="text-sm font-mono">{iface.mac || "N/A"}</p>
                 </div>
-                
+
                 <!-- MTU -->
                 <div>
                   <p class="text-xs text-slate-500 mb-1">MTU</p>
@@ -341,34 +324,26 @@
                 </div>
               </div>
 
-              <!-- Traffic Stats -->
-              {#if stat}
+              <!-- Traffic Stats from WebSocket -->
+              {#if wsIface}
                 <div class="mt-4 pt-4 border-t border-slate-700">
-                  <p class="text-xs text-slate-500 mb-3">Traffic Statistics</p>
+                  <p class="text-xs text-slate-500 mb-3">Traffic Statistics (Live)</p>
                   <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <p class="text-xs text-slate-500">RX Bytes</p>
-                      <p class="text-sm text-green-400">{formatBytes(stat.rx_bytes)}</p>
+                      <p class="text-sm text-green-400">{formatBytes(wsIface.bytes_recv)}</p>
                     </div>
                     <div>
                       <p class="text-xs text-slate-500">TX Bytes</p>
-                      <p class="text-sm text-blue-400">{formatBytes(stat.tx_bytes)}</p>
+                      <p class="text-sm text-blue-400">{formatBytes(wsIface.bytes_sent)}</p>
                     </div>
                     <div>
-                      <p class="text-xs text-slate-500">RX Packets</p>
-                      <p class="text-sm">{stat.rx_packets.toLocaleString()}</p>
+                      <p class="text-xs text-slate-500">RX Rate</p>
+                      <p class="text-sm text-green-400">{formatBytesPerSecond(wsIface.bytes_recv_rate)}</p>
                     </div>
                     <div>
-                      <p class="text-xs text-slate-500">TX Packets</p>
-                      <p class="text-sm">{stat.tx_packets.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p class="text-xs text-slate-500">RX Errors</p>
-                      <p class="text-sm {stat.rx_errors > 0 ? 'text-red-400' : ''}">{stat.rx_errors}</p>
-                    </div>
-                    <div>
-                      <p class="text-xs text-slate-500">TX Errors</p>
-                      <p class="text-sm {stat.tx_errors > 0 ? 'text-red-400' : ''}">{stat.tx_errors}</p>
+                      <p class="text-xs text-slate-500">TX Rate</p>
+                      <p class="text-sm text-blue-400">{formatBytesPerSecond(wsIface.bytes_sent_rate)}</p>
                     </div>
                   </div>
                 </div>
@@ -379,8 +354,8 @@
                 <button
                   on:click|stopPropagation={() => toggleInterface(iface.name, iface.state)}
                   class="flex items-center gap-2 px-3 py-1.5 rounded text-sm transition-colors
-                    {ifaceIsUp 
-                      ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' 
+                    {ifaceIsUp
+                      ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
                       : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'}"
                 >
                   {#if ifaceIsUp}

@@ -109,8 +109,12 @@ POST   /api/v1/containers/{id}/start
 POST   /api/v1/containers/{id}/stop
 GET    /api/v1/containers/{id}/logs
 
-WS     /ws/v1/events
+WS     /ws/v1/events              # Real-time stats (use this, NOT HTTP polling!)
+WS     /ws/v1/logs/{container_id} # Container log streaming
 ```
+
+**Note:** For real-time data (system stats, network rates, processes), always use WebSocket.
+HTTP endpoints like `/api/v1/system/stats` are for initial load only, not polling.
 
 ## Coding Standards
 
@@ -163,9 +167,91 @@ export async function getDisks(): Promise<Disk[]> {
 ### Docker Container Management
 - Use docker-py via `/var/run/docker.sock`
 
-### WebSocket
-- Stats every 2 seconds (CPU, memory, network, temps)
-- Client handles reconnect
+### WebSocket Architecture (Primary Data Channel)
+
+**IMPORTANT: All real-time data MUST use WebSocket, NOT HTTP polling.**
+
+The WebSocket at `/ws/v1/events` is the primary channel for all real-time system data. Components should subscribe to the Svelte store `$lib/stores/stats.ts` instead of polling HTTP endpoints.
+
+#### WebSocket Message Structure
+
+```typescript
+// Message type
+{ type: "stats", data: WebSocketStats }
+
+// WebSocketStats contains:
+interface WebSocketStats {
+  // Basic stats (backward compatible)
+  cpu_percent: number;
+  memory_total/used/percent: number;
+  disk_total/used/percent: number;
+  network_sent/recv: number;
+  temperatures: Record<string, number>;
+
+  // Extended stats (use these!)
+  cpu: {
+    percent, per_core[], load_1/5/15, cores, threads
+  };
+  memory: {
+    total, used, free, available, percent,
+    swap_total, swap_used, swap_percent
+  };
+  network: {
+    bytes_sent/recv, bytes_sent_rate/recv_rate,
+    packets_sent/recv,
+    interfaces: [{
+      name, ipv4, speed, is_up,
+      bytes_sent/recv, bytes_sent_rate/recv_rate
+    }]
+  };
+  disk_io: {
+    read_bytes, write_bytes, read_rate, write_rate,
+    read_count, write_count,
+    disks: [{ name, read_bytes, write_bytes, ... }]
+  };
+  processes: ProcessInfo[];
+  history: { cpu[], memory[], network[], disk_io[] };
+  timestamp: string;
+}
+```
+
+#### Frontend Usage
+
+```typescript
+// In Svelte components - subscribe to store
+import { stats, wsConnected, formatBytes, formatBytesPerSecond } from '$lib/stores/stats';
+
+// Use reactive statements
+$: cpuPercent = $stats?.cpu?.percent ?? 0;
+$: networkRate = $stats?.network?.bytes_recv_rate ?? 0;
+$: interfaces = $stats?.network?.interfaces ?? [];
+
+// Show connection status
+{#if !$wsConnected}
+  <span>WebSocket disconnected</span>
+{/if}
+```
+
+#### DO NOT
+- Poll `/api/v1/system/stats` with setInterval
+- Poll `/api/v1/monitor/*` endpoints
+- Calculate network rates manually from cumulative counters
+
+#### DO
+- Subscribe to `$lib/stores/stats.ts`
+- Use derived stores: `cpuStats`, `memoryStats`, `networkStats`, `diskIOStats`, `processes`
+- Use `formatBytes()` and `formatBytesPerSecond()` from the store
+
+#### WebSocket Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/ws/v1/events` | System stats broadcast (2s interval) |
+| `/ws/v1/logs/{container_id}` | Container log streaming |
+
+#### Backend Implementation
+
+Stats are broadcast from `supervisor/src/websocket/events.py`. The `get_system_stats()` function collects all data including rate calculations.
 
 ### Authentication
 - JWT tokens, 24h expiry, Bearer header
