@@ -1123,9 +1123,618 @@ APP_CATALOG: list[AppTemplate] = [
     ),
     
     # ═══════════════════════════════════════════════════════════════════════════
+    # HOME AUTOMATION & IOT
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    AppTemplate(
+        id="homeassistant",
+        name="Home Assistant",
+        description="Open source home automation platform - control all your devices from a single interface",
+        icon="🏠",
+        category=AppCategory.HOME_AUTOMATION,
+        source=AppSource.OFFICIAL,
+        image="ghcr.io/home-assistant/home-assistant:stable",
+        version="stable",
+        website="https://www.home-assistant.io",
+        github="https://github.com/home-assistant/core",
+        documentation="https://www.home-assistant.io/docs/",
+        min_memory="1g",
+        recommended_memory="2g",
+        ports=[PortMapping(host=8123, container=8123)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/homeassistant/config", container="/config"),
+        ],
+        environment=[
+            EnvVar(name="TZ", value="UTC", description="Timezone"),
+        ],
+        privileged=True,
+        network_mode="host",
+    ),
+
+    AppTemplate(
+        id="frigate",
+        name="Frigate NVR",
+        description="AI-powered NVR with real-time object detection for security cameras",
+        icon="📹",
+        category=AppCategory.HOME_AUTOMATION,
+        source=AppSource.COMMUNITY,
+        image="ghcr.io/blakeblackshear/frigate:stable",
+        version="stable",
+        website="https://frigate.video",
+        github="https://github.com/blakeblackshear/frigate",
+        documentation="https://docs.frigate.video/",
+        min_memory="2g",
+        recommended_memory="4g",
+        ports=[
+            PortMapping(host=5000, container=5000),
+            PortMapping(host=8554, container=8554),
+            PortMapping(host=8555, container=8555),
+        ],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/frigate/config", container="/config"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/frigate/media", container="/media/frigate"),
+            VolumeMapping(host="/etc/localtime", container="/etc/localtime", readonly=True),
+        ],
+        environment=[
+            EnvVar(name="FRIGATE_RTSP_PASSWORD", value="", description="Password for RTSP streams"),
+        ],
+        privileged=True,
+    ),
+
+    AppTemplate(
+        id="scrypted",
+        name="Scrypted",
+        description="High performance home video integration platform for HomeKit, Google Home, Alexa",
+        icon="🎥",
+        category=AppCategory.HOME_AUTOMATION,
+        source=AppSource.COMMUNITY,
+        image="ghcr.io/koush/scrypted:latest",
+        version="latest",
+        website="https://scrypted.app",
+        github="https://github.com/koush/scrypted",
+        documentation="https://docs.scrypted.app/",
+        min_memory="1g",
+        recommended_memory="2g",
+        ports=[PortMapping(host=10443, container=10443)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/scrypted/volume", container="/server/volume"),
+        ],
+        network_mode="host",
+    ),
+
+    AppTemplate(
+        id="node-red",
+        name="Node-RED",
+        description="Low-code programming for event-driven applications and IoT automation",
+        icon="🔴",
+        category=AppCategory.HOME_AUTOMATION,
+        source=AppSource.OFFICIAL,
+        image="nodered/node-red:latest",
+        version="latest",
+        website="https://nodered.org",
+        github="https://github.com/node-red/node-red",
+        documentation="https://nodered.org/docs/",
+        min_memory="256m",
+        recommended_memory="512m",
+        ports=[PortMapping(host=1880, container=1880)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/nodered/data", container="/data"),
+        ],
+        environment=[
+            EnvVar(name="TZ", value="UTC"),
+        ],
+    ),
+
+    AppTemplate(
+        id="mosquitto",
+        name="Eclipse Mosquitto",
+        description="Lightweight open source MQTT message broker for IoT devices",
+        icon="🦟",
+        category=AppCategory.HOME_AUTOMATION,
+        source=AppSource.OFFICIAL,
+        image="eclipse-mosquitto:latest",
+        version="latest",
+        website="https://mosquitto.org",
+        github="https://github.com/eclipse/mosquitto",
+        documentation="https://mosquitto.org/documentation/",
+        min_memory="32m",
+        recommended_memory="128m",
+        ports=[
+            PortMapping(host=1883, container=1883),
+            PortMapping(host=9001, container=9001),
+        ],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/mosquitto/config", container="/mosquitto/config"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/mosquitto/data", container="/mosquitto/data"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/mosquitto/log", container="/mosquitto/log"),
+        ],
+    ),
+
+    AppTemplate(
+        id="zigbee2mqtt",
+        name="Zigbee2MQTT",
+        description="Bridge Zigbee devices to MQTT - control your smart home without vendor lock-in",
+        icon="📡",
+        category=AppCategory.HOME_AUTOMATION,
+        source=AppSource.COMMUNITY,
+        image="koenkk/zigbee2mqtt:latest",
+        version="latest",
+        website="https://www.zigbee2mqtt.io",
+        github="https://github.com/Koenkk/zigbee2mqtt",
+        documentation="https://www.zigbee2mqtt.io/guide/getting-started/",
+        min_memory="128m",
+        recommended_memory="256m",
+        ports=[PortMapping(host=8080, container=8080)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/zigbee2mqtt/data", container="/app/data"),
+            VolumeMapping(host="/run/udev", container="/run/udev", readonly=True),
+        ],
+        environment=[
+            EnvVar(name="TZ", value="UTC"),
+        ],
+        privileged=True,
+    ),
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # NETWORK & DNS
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    AppTemplate(
+        id="adguard-home",
+        name="AdGuard Home",
+        description="Network-wide ads & trackers blocking DNS server with parental controls",
+        icon="🛡️",
+        category=AppCategory.NETWORK,
+        source=AppSource.OFFICIAL,
+        image="adguard/adguardhome:latest",
+        version="latest",
+        website="https://adguard.com/adguard-home.html",
+        github="https://github.com/AdguardTeam/AdGuardHome",
+        documentation="https://github.com/AdguardTeam/AdGuardHome/wiki",
+        min_memory="128m",
+        recommended_memory="256m",
+        ports=[
+            PortMapping(host=3000, container=3000),
+            PortMapping(host=53, container=53),
+            PortMapping(host=53, container=53, protocol="udp"),
+        ],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/adguard/work", container="/opt/adguardhome/work"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/adguard/conf", container="/opt/adguardhome/conf"),
+        ],
+    ),
+
+    AppTemplate(
+        id="pihole",
+        name="Pi-hole",
+        description="Network-wide ad blocking via your own DNS server",
+        icon="🕳️",
+        category=AppCategory.NETWORK,
+        source=AppSource.OFFICIAL,
+        image="pihole/pihole:latest",
+        version="latest",
+        website="https://pi-hole.net",
+        github="https://github.com/pi-hole/pi-hole",
+        documentation="https://docs.pi-hole.net/",
+        min_memory="128m",
+        recommended_memory="256m",
+        ports=[
+            PortMapping(host=8053, container=80),
+            PortMapping(host=53, container=53),
+            PortMapping(host=53, container=53, protocol="udp"),
+        ],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/pihole/etc", container="/etc/pihole"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/pihole/dnsmasq", container="/etc/dnsmasq.d"),
+        ],
+        environment=[
+            EnvVar(name="TZ", value="UTC"),
+            EnvVar(name="WEBPASSWORD", value="", description="Admin password for web interface"),
+        ],
+    ),
+
+    AppTemplate(
+        id="tailscale",
+        name="Tailscale",
+        description="Zero config VPN - create a secure network between your devices",
+        icon="🔗",
+        category=AppCategory.NETWORK,
+        source=AppSource.OFFICIAL,
+        image="tailscale/tailscale:latest",
+        version="latest",
+        website="https://tailscale.com",
+        github="https://github.com/tailscale/tailscale",
+        documentation="https://tailscale.com/kb/",
+        min_memory="64m",
+        recommended_memory="128m",
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/tailscale/state", container="/var/lib/tailscale"),
+            VolumeMapping(host="/dev/net/tun", container="/dev/net/tun"),
+        ],
+        environment=[
+            EnvVar(name="TS_AUTHKEY", value="", description="Tailscale auth key from admin console", required=True),
+            EnvVar(name="TS_STATE_DIR", value="/var/lib/tailscale"),
+        ],
+        capabilities=["NET_ADMIN", "NET_RAW"],
+        network_mode="host",
+    ),
+
+    AppTemplate(
+        id="wireguard",
+        name="WireGuard",
+        description="Fast, modern, secure VPN tunnel with easy configuration",
+        icon="🔒",
+        category=AppCategory.NETWORK,
+        source=AppSource.LINUXSERVER,
+        image="lscr.io/linuxserver/wireguard:latest",
+        version="latest",
+        website="https://www.wireguard.com",
+        github="https://github.com/WireGuard/wireguard-go",
+        documentation="https://www.wireguard.com/quickstart/",
+        min_memory="64m",
+        recommended_memory="128m",
+        ports=[PortMapping(host=51820, container=51820, protocol="udp")],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/wireguard/config", container="/config"),
+            VolumeMapping(host="/lib/modules", container="/lib/modules", readonly=True),
+        ],
+        environment=[
+            EnvVar(name="PUID", value="1000"),
+            EnvVar(name="PGID", value="1000"),
+            EnvVar(name="TZ", value="UTC"),
+            EnvVar(name="SERVERURL", value="auto", description="Server URL or IP"),
+            EnvVar(name="PEERS", value="1", description="Number of peers/clients to generate"),
+        ],
+        capabilities=["NET_ADMIN", "SYS_MODULE"],
+    ),
+
+    AppTemplate(
+        id="nginx-proxy-manager",
+        name="Nginx Proxy Manager",
+        description="Easy reverse proxy with SSL certificate management via Let's Encrypt",
+        icon="🔀",
+        category=AppCategory.NETWORK,
+        source=AppSource.COMMUNITY,
+        image="jc21/nginx-proxy-manager:latest",
+        version="latest",
+        website="https://nginxproxymanager.com",
+        github="https://github.com/NginxProxyManager/nginx-proxy-manager",
+        documentation="https://nginxproxymanager.com/guide/",
+        min_memory="128m",
+        recommended_memory="256m",
+        ports=[
+            PortMapping(host=80, container=80),
+            PortMapping(host=443, container=443),
+            PortMapping(host=81, container=81),
+        ],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/npm/data", container="/data"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/npm/letsencrypt", container="/etc/letsencrypt"),
+        ],
+    ),
+
+    AppTemplate(
+        id="traefik",
+        name="Traefik",
+        description="Modern HTTP reverse proxy and load balancer with automatic HTTPS",
+        icon="🚦",
+        category=AppCategory.NETWORK,
+        source=AppSource.OFFICIAL,
+        image="traefik:v3.0",
+        version="v3.0",
+        website="https://traefik.io",
+        github="https://github.com/traefik/traefik",
+        documentation="https://doc.traefik.io/traefik/",
+        min_memory="64m",
+        recommended_memory="256m",
+        ports=[
+            PortMapping(host=80, container=80),
+            PortMapping(host=443, container=443),
+            PortMapping(host=8080, container=8080),
+        ],
+        volumes=[
+            VolumeMapping(host="/var/run/docker.sock", container="/var/run/docker.sock", readonly=True),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/traefik/config", container="/etc/traefik"),
+        ],
+    ),
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # AI & MACHINE LEARNING
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    AppTemplate(
+        id="ollama",
+        name="Ollama",
+        description="Run large language models locally - Llama, Mistral, and more",
+        icon="🦙",
+        category=AppCategory.AI,
+        source=AppSource.OFFICIAL,
+        image="ollama/ollama:latest",
+        version="latest",
+        website="https://ollama.ai",
+        github="https://github.com/ollama/ollama",
+        documentation="https://github.com/ollama/ollama/blob/main/README.md",
+        min_memory="4g",
+        recommended_memory="8g",
+        ports=[PortMapping(host=11434, container=11434)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/ollama/models", container="/root/.ollama"),
+        ],
+    ),
+
+    AppTemplate(
+        id="open-webui",
+        name="Open WebUI",
+        description="User-friendly web interface for Ollama and OpenAI-compatible APIs",
+        icon="💬",
+        category=AppCategory.AI,
+        source=AppSource.COMMUNITY,
+        image="ghcr.io/open-webui/open-webui:main",
+        version="main",
+        website="https://openwebui.com",
+        github="https://github.com/open-webui/open-webui",
+        documentation="https://docs.openwebui.com/",
+        min_memory="512m",
+        recommended_memory="1g",
+        ports=[PortMapping(host=3000, container=8080)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/open-webui/data", container="/app/backend/data"),
+        ],
+        environment=[
+            EnvVar(name="OLLAMA_BASE_URL", value="http://host.docker.internal:11434", description="Ollama API URL"),
+        ],
+    ),
+
+    AppTemplate(
+        id="localai",
+        name="LocalAI",
+        description="Self-hosted OpenAI-compatible API for running LLMs, image generation, and more",
+        icon="🤖",
+        category=AppCategory.AI,
+        source=AppSource.COMMUNITY,
+        image="localai/localai:latest-aio-cpu",
+        version="latest",
+        website="https://localai.io",
+        github="https://github.com/mudler/LocalAI",
+        documentation="https://localai.io/docs/",
+        min_memory="4g",
+        recommended_memory="8g",
+        ports=[PortMapping(host=8080, container=8080)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/localai/models", container="/models"),
+        ],
+    ),
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BACKUP & SYNC
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    AppTemplate(
+        id="duplicati",
+        name="Duplicati",
+        description="Free backup software with encryption and cloud storage support",
+        icon="💾",
+        category=AppCategory.BACKUP,
+        source=AppSource.LINUXSERVER,
+        image="lscr.io/linuxserver/duplicati:latest",
+        version="latest",
+        website="https://duplicati.com",
+        github="https://github.com/duplicati/duplicati",
+        documentation="https://duplicati.readthedocs.io/",
+        min_memory="256m",
+        recommended_memory="512m",
+        ports=[PortMapping(host=8200, container=8200)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/duplicati/config", container="/config"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/duplicati/backups", container="/backups"),
+            VolumeMapping(host="/mnt/pools/default", container="/source", readonly=True),
+        ],
+        environment=[
+            EnvVar(name="PUID", value="1000"),
+            EnvVar(name="PGID", value="1000"),
+            EnvVar(name="TZ", value="UTC"),
+        ],
+    ),
+
+    AppTemplate(
+        id="restic-rest-server",
+        name="Restic REST Server",
+        description="High-performance HTTP server for Restic backup repositories",
+        icon="🗄️",
+        category=AppCategory.BACKUP,
+        source=AppSource.OFFICIAL,
+        image="restic/rest-server:latest",
+        version="latest",
+        website="https://restic.net",
+        github="https://github.com/restic/rest-server",
+        documentation="https://restic.readthedocs.io/",
+        min_memory="64m",
+        recommended_memory="256m",
+        ports=[PortMapping(host=8000, container=8000)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/restic/data", container="/data"),
+        ],
+        environment=[
+            EnvVar(name="OPTIONS", value="--prometheus --no-auth", description="Server options"),
+        ],
+    ),
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PRODUCTIVITY - Additional Apps
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    AppTemplate(
+        id="mealie",
+        name="Mealie",
+        description="Self-hosted recipe manager and meal planner with shopping lists",
+        icon="🍽️",
+        category=AppCategory.PRODUCTIVITY,
+        source=AppSource.COMMUNITY,
+        image="ghcr.io/mealie-recipes/mealie:latest",
+        version="latest",
+        website="https://mealie.io",
+        github="https://github.com/mealie-recipes/mealie",
+        documentation="https://docs.mealie.io/",
+        min_memory="256m",
+        recommended_memory="512m",
+        ports=[PortMapping(host=9925, container=9000)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/mealie/data", container="/app/data"),
+        ],
+        environment=[
+            EnvVar(name="TZ", value="UTC"),
+            EnvVar(name="ALLOW_SIGNUP", value="true"),
+        ],
+    ),
+
+    AppTemplate(
+        id="actual-budget",
+        name="Actual Budget",
+        description="Privacy-focused personal finance app with envelope budgeting",
+        icon="💰",
+        category=AppCategory.PRODUCTIVITY,
+        source=AppSource.COMMUNITY,
+        image="actualbudget/actual-server:latest",
+        version="latest",
+        website="https://actualbudget.org",
+        github="https://github.com/actualbudget/actual",
+        documentation="https://actualbudget.org/docs/",
+        min_memory="128m",
+        recommended_memory="256m",
+        ports=[PortMapping(host=5006, container=5006)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/actual/data", container="/data"),
+        ],
+    ),
+
+    AppTemplate(
+        id="n8n",
+        name="n8n",
+        description="Workflow automation platform - connect apps and automate tasks",
+        icon="⚡",
+        category=AppCategory.PRODUCTIVITY,
+        source=AppSource.OFFICIAL,
+        image="n8nio/n8n:latest",
+        version="latest",
+        website="https://n8n.io",
+        github="https://github.com/n8n-io/n8n",
+        documentation="https://docs.n8n.io/",
+        min_memory="256m",
+        recommended_memory="1g",
+        ports=[PortMapping(host=5678, container=5678)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/n8n/data", container="/home/node/.n8n"),
+        ],
+        environment=[
+            EnvVar(name="TZ", value="UTC"),
+            EnvVar(name="GENERIC_TIMEZONE", value="UTC"),
+        ],
+    ),
+
+    AppTemplate(
+        id="linkwarden",
+        name="Linkwarden",
+        description="Collaborative bookmark manager to collect, organize and preserve webpages",
+        icon="🔖",
+        category=AppCategory.PRODUCTIVITY,
+        source=AppSource.COMMUNITY,
+        image="ghcr.io/linkwarden/linkwarden:latest",
+        version="latest",
+        website="https://linkwarden.app",
+        github="https://github.com/linkwarden/linkwarden",
+        documentation="https://docs.linkwarden.app/",
+        min_memory="256m",
+        recommended_memory="512m",
+        ports=[PortMapping(host=3000, container=3000)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/linkwarden/data", container="/data/data"),
+        ],
+        environment=[
+            EnvVar(name="NEXTAUTH_SECRET", value="", description="Secret for session encryption", required=True),
+            EnvVar(name="NEXTAUTH_URL", value="http://localhost:3000"),
+        ],
+    ),
+
+    AppTemplate(
+        id="vikunja",
+        name="Vikunja",
+        description="Open source to-do app with lists, kanban boards, and team collaboration",
+        icon="✅",
+        category=AppCategory.PRODUCTIVITY,
+        source=AppSource.COMMUNITY,
+        image="vikunja/vikunja:latest",
+        version="latest",
+        website="https://vikunja.io",
+        github="https://github.com/go-vikunja/vikunja",
+        documentation="https://vikunja.io/docs/",
+        min_memory="64m",
+        recommended_memory="256m",
+        ports=[PortMapping(host=3456, container=3456)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/vikunja/files", container="/app/vikunja/files"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/vikunja/db", container="/db"),
+        ],
+    ),
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # DEVELOPMENT
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    AppTemplate(
+        id="gitea",
+        name="Gitea",
+        description="Lightweight self-hosted Git service - fast, easy, and painless",
+        icon="🍵",
+        category=AppCategory.DEVELOPMENT,
+        source=AppSource.OFFICIAL,
+        image="gitea/gitea:latest",
+        version="latest",
+        website="https://gitea.io",
+        github="https://github.com/go-gitea/gitea",
+        documentation="https://docs.gitea.io/",
+        min_memory="256m",
+        recommended_memory="512m",
+        ports=[
+            PortMapping(host=3000, container=3000),
+            PortMapping(host=2222, container=22),
+        ],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/gitea/data", container="/data"),
+            VolumeMapping(host="/etc/timezone", container="/etc/timezone", readonly=True),
+            VolumeMapping(host="/etc/localtime", container="/etc/localtime", readonly=True),
+        ],
+    ),
+
+    AppTemplate(
+        id="code-server",
+        name="Code Server",
+        description="VS Code in the browser - full IDE accessible from anywhere",
+        icon="💻",
+        category=AppCategory.DEVELOPMENT,
+        source=AppSource.LINUXSERVER,
+        image="lscr.io/linuxserver/code-server:latest",
+        version="latest",
+        website="https://coder.com",
+        github="https://github.com/coder/code-server",
+        documentation="https://coder.com/docs/code-server",
+        min_memory="512m",
+        recommended_memory="2g",
+        ports=[PortMapping(host=8443, container=8443)],
+        volumes=[
+            VolumeMapping(host=f"{APPS_DATA_PATH}/code-server/config", container="/config"),
+        ],
+        environment=[
+            EnvVar(name="PUID", value="1000"),
+            EnvVar(name="PGID", value="1000"),
+            EnvVar(name="TZ", value="UTC"),
+            EnvVar(name="PASSWORD", value="", description="Password for web access"),
+        ],
+    ),
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # SECURITY & PRIVACY
     # ═══════════════════════════════════════════════════════════════════════════
-    
+
     AppTemplate(
         id="vaultwarden",
         name="Vaultwarden",
