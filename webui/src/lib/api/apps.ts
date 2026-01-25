@@ -28,6 +28,11 @@ export interface AppTemplate {
   image: string;
   version: string;
   website: string;
+  source?: string;
+  github?: string;
+  documentation?: string;
+  min_memory?: string;
+  recommended_memory?: string;
   ports: PortMapping[];
   volumes: VolumeMapping[];
   environment: EnvVar[];

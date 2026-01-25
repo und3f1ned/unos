@@ -357,7 +357,7 @@
 					<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 						{#each filteredCatalog as app}
 							{@const installedInfo = getInstalledInfo(app.id)}
-							{@const source = getSourceBadge((app as any).source)}
+							{@const source = getSourceBadge(app.source)}
 							<div
 								class="card hover:bg-surface-overlay transition-colors cursor-pointer"
 								on:click={() => openDetail(app)}
@@ -410,7 +410,7 @@
 											{/if}
 										</div>
 									{:else}
-										<span class="text-xs text-muted mono">{(app as any).version || ''}</span>
+										<span class="text-xs text-muted mono">{app.version || ''}</span>
 										<Button variant="primary" size="sm" icon={Download}>Install</Button>
 									{/if}
 								</div>

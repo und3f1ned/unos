@@ -32,6 +32,8 @@
 	let portOverrides: Record<number, number> = {};
 	let volumeOverrides: Record<string, string> = {};
 	let envOverrides: Record<string, string> = {};
+	$: sourceBadge = app ? getSourceBadge(app.source) : { variant: "warning" as const, label: "Unknown" };
+
 
 	$: if (app) {
 		// Reset overrides when app changes
@@ -126,17 +128,16 @@
 								{app.version}
 							</Badge>
 						{/if}
-						{@const source = getSourceBadge((app as any).source)}
-						<Badge variant={source.variant}>
+						<Badge variant={sourceBadge.variant}>
 							<Shield class="w-3 h-3 mr-1" />
-							{source.label}
+							{sourceBadge.label}
 						</Badge>
 					</div>
 				</div>
 			</div>
 
 			<!-- External Links -->
-			{#if app.website || (app as any).github || (app as any).documentation}
+			{#if app.website || app.github || app.documentation}
 				<div class="flex items-center gap-3 mt-4 pt-4 border-t border-border">
 					{#if app.website}
 						<a
@@ -149,9 +150,9 @@
 							Website
 						</a>
 					{/if}
-					{#if (app as any).github}
+					{#if app.github}
 						<a
-							href={(app as any).github}
+							href={app.github}
 							target="_blank"
 							rel="noopener"
 							class="flex items-center gap-1.5 text-sm text-secondary hover:text-content transition-colors"
@@ -160,9 +161,9 @@
 							GitHub
 						</a>
 					{/if}
-					{#if (app as any).documentation}
+					{#if app.documentation}
 						<a
-							href={(app as any).documentation}
+							href={app.documentation}
 							target="_blank"
 							rel="noopener"
 							class="flex items-center gap-1.5 text-sm text-secondary hover:text-content transition-colors"
@@ -238,20 +239,20 @@
 					</div>
 
 					<!-- Resource Recommendations -->
-					{#if (app as any).min_memory || (app as any).recommended_memory}
+					{#if app.min_memory || app.recommended_memory}
 						<div class="card-nested">
 							<h4 class="text-sm font-medium mb-3">Resource Recommendations</h4>
 							<div class="grid grid-cols-2 gap-4">
-								{#if (app as any).min_memory}
+								{#if app.min_memory}
 									<div>
 										<span class="text-secondary text-sm">Minimum Memory</span>
-										<p class="font-medium">{(app as any).min_memory}</p>
+										<p class="font-medium">{app.min_memory}</p>
 									</div>
 								{/if}
-								{#if (app as any).recommended_memory}
+								{#if app.recommended_memory}
 									<div>
 										<span class="text-secondary text-sm">Recommended Memory</span>
-										<p class="font-medium">{(app as any).recommended_memory}</p>
+										<p class="font-medium">{app.recommended_memory}</p>
 									</div>
 								{/if}
 							</div>
