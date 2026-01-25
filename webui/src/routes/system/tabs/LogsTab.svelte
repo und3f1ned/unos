@@ -8,7 +8,7 @@
     type LogEntry,
     type LogSource
   } from "$lib/api/logs";
-  import { Button, Card, Badge, Alert, EmptyState } from "$lib/components/ui";
+  import { Button, Card, Badge, Alert, EmptyState, Select } from "$lib/components/ui";
   import {
     FileText,
     Search,
@@ -37,7 +37,25 @@
   let source = "journal";
   let priority = "";
   let since = "";
-  let limit = 200;
+  let limitStr = "200";
+
+  // Options for Select components
+  const priorityOptions = [
+    { value: "", label: "All priorities" },
+    ...PRIORITY_LEVELS.map(p => ({ value: p.value, label: p.label }))
+  ];
+
+  const timeRangeOptions = TIME_RANGES.map(t => ({ value: t.value, label: t.label }));
+
+  const limitOptions = [
+    { value: "50", label: "50" },
+    { value: "100", label: "100" },
+    { value: "200", label: "200" },
+    { value: "500", label: "500" },
+    { value: "1000", label: "1000" }
+  ];
+
+  $: limit = parseInt(limitStr, 10);
   let autoRefresh = false;
   let refreshInterval: ReturnType<typeof setInterval> | null = null;
   let showFilters = true;
@@ -114,6 +132,7 @@
     priority = "";
     since = "";
     search = "";
+    limitStr = "200";
     loadLogs();
   }
 
@@ -269,49 +288,33 @@
         <!-- Filter Row -->
         <div class="flex flex-wrap items-end gap-4">
           <!-- Priority Filter -->
-          <div class="flex-1 min-w-[150px]">
-            <label class="block text-sm text-secondary mb-1">Priority Level</label>
-            <select
-              bind:value={priority}
-              on:change={handleFilterChange}
-              class="w-full px-3 py-2 bg-surface-overlay border border-border rounded-lg text-sm"
-            >
-              <option value="">All priorities</option>
-              {#each PRIORITY_LEVELS as p}
-                <option value={p.value}>{p.label}</option>
-              {/each}
-            </select>
-          </div>
+          <Select
+            class="flex-1 min-w-[150px]"
+            label="Priority Level"
+            bind:value={priority}
+            options={priorityOptions}
+            placeholder="All priorities"
+            on:change={handleFilterChange}
+          />
 
           <!-- Time Range Filter -->
-          <div class="flex-1 min-w-[150px]">
-            <label class="block text-sm text-secondary mb-1">Time Range</label>
-            <select
-              bind:value={since}
-              on:change={handleFilterChange}
-              class="w-full px-3 py-2 bg-surface-overlay border border-border rounded-lg text-sm"
-            >
-              {#each TIME_RANGES as t}
-                <option value={t.value}>{t.label}</option>
-              {/each}
-            </select>
-          </div>
+          <Select
+            class="flex-1 min-w-[150px]"
+            label="Time Range"
+            bind:value={since}
+            options={timeRangeOptions}
+            placeholder="All time"
+            on:change={handleFilterChange}
+          />
 
           <!-- Limit -->
-          <div class="w-[120px]">
-            <label class="block text-sm text-secondary mb-1">Limit</label>
-            <select
-              bind:value={limit}
-              on:change={handleFilterChange}
-              class="w-full px-3 py-2 bg-surface-overlay border border-border rounded-lg text-sm"
-            >
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
-              <option value={500}>500</option>
-              <option value={1000}>1000</option>
-            </select>
-          </div>
+          <Select
+            class="w-[120px]"
+            label="Limit"
+            bind:value={limitStr}
+            options={limitOptions}
+            on:change={handleFilterChange}
+          />
 
           <!-- Clear Filters -->
           {#if hasActiveFilters}
