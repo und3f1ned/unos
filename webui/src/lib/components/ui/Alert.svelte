@@ -1,0 +1,48 @@
+<script lang="ts">
+	import { AlertCircle, CheckCircle, AlertTriangle, Info, X } from 'lucide-svelte';
+	import { createEventDispatcher } from 'svelte';
+
+	export let variant: 'error' | 'warning' | 'success' | 'info' = 'info';
+	export let dismissible: boolean = false;
+	export let title: string = '';
+
+	const dispatch = createEventDispatcher();
+
+	const variantClasses = {
+		error: 'alert-error',
+		warning: 'alert-warning',
+		success: 'alert-success',
+		info: 'alert-info'
+	};
+
+	const icons = {
+		error: AlertCircle,
+		warning: AlertTriangle,
+		success: CheckCircle,
+		info: Info
+	};
+
+	$: Icon = icons[variant];
+</script>
+
+<div class="alert {variantClasses[variant]} {$$props.class || ''}">
+	<div class="flex items-start gap-3">
+		<Icon class="w-5 h-5 flex-shrink-0 mt-0.5" />
+		<div class="flex-1">
+			{#if title}
+				<p class="font-medium mb-1">{title}</p>
+			{/if}
+			<slot />
+		</div>
+		{#if dismissible}
+			<button
+				type="button"
+				class="flex-shrink-0 hover:opacity-70 transition-opacity"
+				on:click={() => dispatch('dismiss')}
+				aria-label="Dismiss"
+			>
+				<X class="w-4 h-4" />
+			</button>
+		{/if}
+	</div>
+</div>

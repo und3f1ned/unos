@@ -55,6 +55,8 @@ unos/
 │   │   │   ├── api/     # API client modules
 │   │   │   ├── stores/  # Svelte stores
 │   │   │   ├── components/
+│   │   │   │   ├── ui/  # Reusable UI components
+│   │   │   │   └── widgets/  # Dashboard widgets
 │   │   │   └── utils/
 │   │   └── routes/      # Pages
 │   ├── tests/
@@ -79,11 +81,296 @@ unos/
 
 ### WebUI (Frontend)
 - SvelteKit 2.x (static adapter)
-- TypeScript, TailwindCSS
+- TypeScript, TailwindCSS (with custom design tokens)
 - Lucide icons, Caddy (reverse proxy)
 
 ### Host Dependencies
 - Docker Engine, btrfs-progs, smartmontools, lm-sensors, samba
+
+---
+
+## Design System
+
+**IMPORTANT: All UI components MUST follow this design system. Consistency is mandatory.**
+
+### Color Tokens (tailwind.config.js)
+
+Use semantic color tokens instead of raw Tailwind colors:
+
+| Token | Usage | Raw Value |
+|-------|-------|-----------|
+| `surface` | Main page background | slate-900 |
+| `surface-elevated` | Cards, modals, sidebar | slate-800 |
+| `surface-overlay` | Hover states, inputs | slate-700 |
+| `surface-muted` | Subtle nested backgrounds | slate-700/50 |
+| `border` | Card/section borders | slate-700 |
+| `content` | Primary text | slate-100 |
+| `content-secondary` | Secondary text, labels | slate-400 |
+| `content-muted` | Disabled/hint text | slate-500 |
+
+**Status Colors:**
+| Token | Usage |
+|-------|-------|
+| `text-success` / `status-success` | Running, healthy, online |
+| `text-warning` / `status-warning` | Degraded, warning states |
+| `text-error` / `status-error` | Failed, errors, offline |
+| `text-info` / `status-info` | Primary actions, links |
+
+**Icon Accent Colors:**
+| Class | Usage |
+|-------|-------|
+| `icon-cpu` | CPU metrics (blue) |
+| `icon-memory` | Memory metrics (purple) |
+| `icon-network` | Network metrics (green) |
+| `icon-storage` | Storage metrics (blue) |
+| `icon-container` | Container icons (cyan) |
+| `icon-temperature` | Temperature/upload (orange) |
+
+### UI Components ($lib/components/ui/)
+
+**ALWAYS use these components instead of raw HTML:**
+
+```typescript
+import { Button, Card, Badge, Input, Select, Modal, Alert, ProgressBar, EmptyState, StatusDot } from '$lib/components/ui';
+```
+
+#### Button
+
+```svelte
+<!-- Variants: primary, secondary, danger, warning, success, ghost -->
+<!-- Sizes: sm, md, lg, icon, icon-sm -->
+<Button variant="primary" size="md" icon={Plus} loading={false}>
+  Create Pool
+</Button>
+<Button variant="danger" size="sm">Delete</Button>
+<Button variant="ghost" size="icon"><Trash2 class="w-4 h-4" /></Button>
+```
+
+#### Card
+
+```svelte
+<Card>
+  <h2 class="section-title mb-4">
+    <HardDrive class="w-5 h-5" />
+    Physical Disks
+  </h2>
+  <!-- Content -->
+</Card>
+
+<!-- Nested card for items inside a card -->
+<div class="card-nested">...</div>
+```
+
+#### Badge
+
+```svelte
+<!-- Variants: success, warning, error, info, neutral, purple, cyan, orange -->
+<Badge variant="success">Running</Badge>
+<Badge variant="warning">HDD</Badge>
+<Badge variant="error">Failed</Badge>
+```
+
+#### Modal
+
+```svelte
+<Modal
+  bind:open={showModal}
+  title="Create Pool"
+  size="lg"  <!-- sm, md, lg, xl -->
+  danger={false}
+  on:close={handleClose}
+>
+  <!-- Body content -->
+
+  <svelte:fragment slot="footer">
+    <Button variant="secondary" class="flex-1" on:click={close}>Cancel</Button>
+    <Button variant="primary" class="flex-1" on:click={submit}>Create</Button>
+  </svelte:fragment>
+</Modal>
+```
+
+#### Alert
+
+```svelte
+<!-- Variants: error, warning, success, info -->
+<Alert variant="error" title="Warning!">{message}</Alert>
+<Alert variant="success">Operation completed</Alert>
+```
+
+#### Form Elements
+
+```svelte
+<Input
+  label="Pool Name"
+  bind:value={name}
+  placeholder="data"
+  hint="Optional hint text"
+  error="Error message"
+  required
+/>
+
+<Select label="RAID Level" bind:value={level} options={[
+  { value: 'single', label: 'Single (No RAID)' },
+  { value: 'raid1', label: 'RAID 1 (Mirroring)' }
+]} />
+```
+
+#### ProgressBar
+
+```svelte
+<!-- variant: auto (changes color by value), success, warning, error, info -->
+<ProgressBar value={75} variant="auto" size="sm" />
+```
+
+#### StatusDot
+
+```svelte
+<StatusDot status="success" pulse={false} />
+```
+
+### CSS Utility Classes (app.css)
+
+**Layout:**
+```html
+<div class="page-container">  <!-- Main page wrapper with space-y-6 -->
+<div class="page-header">     <!-- Flex between title and action -->
+<h1 class="page-title">       <!-- 2xl bold -->
+<h2 class="section-title">    <!-- lg semibold with icon gap -->
+```
+
+**Cards:**
+```html
+<div class="card">           <!-- bg-surface-elevated rounded-lg p-4 -->
+<div class="card-header">    <!-- Flex between with mb-4 -->
+<div class="card-title">     <!-- font-semibold with icon gap -->
+<div class="card-nested">    <!-- bg-surface-muted for nested items -->
+```
+
+**Tables:**
+```html
+<table class="table">
+<thead class="table-header">
+<tr class="table-row">
+```
+
+**Navigation:**
+```html
+<a class="nav-item nav-item-active">  <!-- Active state -->
+<a class="nav-item nav-item-inactive"> <!-- Inactive state -->
+```
+
+**Text:**
+```html
+<span class="text-primary">     <!-- Main text color -->
+<span class="text-secondary">   <!-- Secondary/label text -->
+<span class="text-muted">       <!-- Disabled/hint text -->
+<span class="text-success">     <!-- Green status text -->
+<span class="text-warning">     <!-- Yellow status text -->
+<span class="text-error">       <!-- Red status text -->
+<span class="text-info">        <!-- Blue info text -->
+<span class="mono">             <!-- Monospace sm -->
+<span class="mono-xs">          <!-- Monospace xs -->
+```
+
+**Loading/Empty States:**
+```html
+<p class="loading-text">Loading...</p>
+<div class="empty-state">
+  <Icon class="empty-state-icon" />
+  <h3 class="empty-state-title">No data</h3>
+  <p class="empty-state-description">Description text</p>
+</div>
+```
+
+### Spacing Guidelines
+
+| Element | Class |
+|---------|-------|
+| Page padding | `p-6` (handled by layout) |
+| Card padding | `p-4` (default) |
+| Section spacing | `space-y-6` |
+| Item spacing in cards | `space-y-3` or `space-y-4` |
+| Button gaps | `gap-2` |
+| Grid gaps | `gap-4` |
+| Modal footer | `flex gap-3` |
+
+### Component Patterns
+
+**Page Structure:**
+```svelte
+<div class="page-container">
+  <div class="page-header">
+    <h1 class="page-title">Storage</h1>
+    <Button icon={Plus}>Create Pool</Button>
+  </div>
+
+  {#if error}
+    <Alert variant="error">{error}</Alert>
+  {/if}
+
+  {#if loading}
+    <p class="loading-text">Loading...</p>
+  {:else}
+    <Card>
+      <h2 class="section-title mb-4">
+        <HardDrive class="w-5 h-5" />
+        Physical Disks
+      </h2>
+      <!-- Content -->
+    </Card>
+  {/if}
+</div>
+```
+
+**Card with Actions:**
+```svelte
+<Card>
+  <div class="card-header">
+    <h3 class="card-title">
+      <Container class="w-5 h-5 icon-container" />
+      Containers
+    </h3>
+    <a href="/containers" class="text-sm text-info hover:text-blue-300">Manage →</a>
+  </div>
+  <!-- Content -->
+</Card>
+```
+
+**Nested Items:**
+```svelte
+<div class="card-nested">
+  <div class="flex items-center justify-between mb-2">
+    <h3 class="font-semibold">{pool.name}</h3>
+    <div class="flex items-center gap-2">
+      <Button variant="secondary" size="sm">Action</Button>
+    </div>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+    <div>
+      <span class="text-secondary">Label:</span>
+      <span class="ml-2">{value}</span>
+    </div>
+  </div>
+</div>
+```
+
+### DO NOT
+
+- Use raw `bg-slate-*`, `text-slate-*` colors directly. Use semantic tokens.
+- Create inline modal/alert markup. Use `<Modal>` and `<Alert>` components.
+- Use `<button>` with custom classes. Use `<Button>` component.
+- Mix different button padding styles (`px-4 py-2` vs `px-3 py-1.5`).
+- Create new styling patterns without updating this guide.
+
+### DO
+
+- Import from `$lib/components/ui` for all UI elements.
+- Use CSS utility classes from `app.css` for consistent styling.
+- Use semantic color classes (`text-success`, `icon-cpu`, `text-secondary`).
+- Use `scrollbar-thin` class for scrollable areas.
+- Follow the page/card/nested structure pattern.
+
+---
 
 ## API Endpoints
 
@@ -139,7 +426,7 @@ async def list_disks(_: dict = Depends(verify_token)):
 - Strict TypeScript
 - API client wraps fetch, handles JWT
 - Svelte stores for shared state
-- TailwindCSS, no custom CSS unless necessary
+- Use UI components from `$lib/components/ui`
 - Components in `$lib/components/`, API in `$lib/api/`
 
 ```typescript
@@ -150,7 +437,8 @@ export async function getDisks(): Promise<Disk[]> {
 
 ### Svelte Components
 - `<script lang="ts">`, props via `export let`
-- Tailwind classes directly on elements
+- Use design system components and CSS classes
+- Follow page structure patterns from Design System section
 
 ## Key Implementation Notes
 
