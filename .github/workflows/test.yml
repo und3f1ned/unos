@@ -36,11 +36,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
 
       - name: Run unit tests
         run: |
-          python -m pytest tests/ -v --tb=short --junitxml=test-results.xml
+          python -m pytest tests/ -v --tb=short --junitxml=test-results.xml --ignore=tests/mocks --ignore=tests/fixtures
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

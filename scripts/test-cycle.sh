@@ -87,11 +87,10 @@ run_unit_tests() {
         # Activate and install dependencies
         source venv/bin/activate
         pip install -q -r requirements.txt
-        pip install -q pytest pytest-asyncio httpx
 
         # Run tests
         log_info "Executing pytest..."
-        python -m pytest tests/ -v --tb=short
+        python -m pytest tests/ -v --tb=short --ignore=tests/mocks --ignore=tests/fixtures
 
         deactivate
     else
