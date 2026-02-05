@@ -4,7 +4,14 @@ from datetime import datetime
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 from src.snapshots.schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore
-from src.snapshots import router
+from src.snapshots.router import (
+    run_cmd,
+    list_subvolumes,
+    list_snapshots,
+    create_snapshot,
+    delete_snapshot,
+    restore_snapshot,
+)
 
 
 class TestSnapshotSchemas:
@@ -89,7 +96,7 @@ class TestRunCmd:
         mock_result.returncode = 0
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            stdout, stderr, rc = router.run_cmd(["echo", "test"])
+            stdout, stderr, rc = run_cmd(["echo", "test"])
 
         assert stdout == "output"
         assert stderr == ""
@@ -103,7 +110,7 @@ class TestRunCmd:
         mock_result.returncode = 1
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            stdout, stderr, rc = router.run_cmd(["false"])
+            stdout, stderr, rc = run_cmd(["false"])
 
         assert stdout == ""
         assert stderr == "error"
@@ -142,7 +149,7 @@ class TestListSubvolumes:
         mock_result.returncode = 0
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            result = await router.list_subvolumes({})
+            result = await list_subvolumes({})
 
         # Should only return pools under /mnt/pools
         assert len(result) == 2
@@ -160,7 +167,7 @@ class TestListSubvolumes:
         mock_result.returncode = 1
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            result = await router.list_subvolumes({})
+            result = await list_subvolumes({})
 
         assert result == []
 
@@ -173,7 +180,7 @@ class TestListSubvolumes:
         mock_result.returncode = 0
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            result = await router.list_subvolumes({})
+            result = await list_subvolumes({})
 
         assert result == []
 
@@ -230,7 +237,7 @@ class TestListSnapshots:
         """Test listing when no snapshots directory."""
         with patch("src.snapshots.router.Path") as mock_path:
             mock_path.return_value.iterdir.return_value = []
-            result = await router.list_snapshots(None, {})
+            result = await list_snapshots(None, {})
 
         assert result == []
 
@@ -262,7 +269,7 @@ class TestCreateSnapshot:
                 mock_snap_dir.__truediv__ = lambda x, y: MagicMock(exists=lambda: False)
                 mock_snap_dir.mkdir = MagicMock()
 
-                result = await router.create_snapshot(create_req, {})
+                result = await create_snapshot(create_req, {})
 
         assert result.name == "test_snapshot"
         assert result.subvolume == "/mnt/pools/datapool"
@@ -290,7 +297,7 @@ class TestCreateSnapshot:
                 mock_snap_dir.__truediv__ = lambda x, y: MagicMock(exists=lambda: False)
                 mock_snap_dir.mkdir = MagicMock()
 
-                result = await router.create_snapshot(create_req, {})
+                result = await create_snapshot(create_req, {})
 
         assert result.name.startswith("snap_")
 
@@ -309,7 +316,7 @@ class TestCreateSnapshot:
             mock_path.return_value = mock_subvol
 
             with pytest.raises(HTTPException) as exc_info:
-                await router.create_snapshot(create_req, {})
+                await create_snapshot(create_req, {})
 
         assert exc_info.value.status_code == 404
 
@@ -336,7 +343,7 @@ class TestCreateSnapshot:
             mock_snap_dir.mkdir = MagicMock()
 
             with pytest.raises(HTTPException) as exc_info:
-                await router.create_snapshot(create_req, {})
+                await create_snapshot(create_req, {})
 
         assert exc_info.value.status_code == 400
 
@@ -369,7 +376,7 @@ class TestCreateSnapshot:
                 mock_snap_dir.mkdir = MagicMock()
 
                 with pytest.raises(HTTPException) as exc_info:
-                    await router.create_snapshot(create_req, {})
+                    await create_snapshot(create_req, {})
 
         assert exc_info.value.status_code == 500
 
@@ -392,7 +399,7 @@ class TestDeleteSnapshot:
                 mock_path.return_value.__truediv__ = lambda x, y: mock_path.return_value
                 mock_path.return_value.exists.return_value = True
 
-                result = await router.delete_snapshot("snap_test", "/mnt/pools/datapool", {})
+                result = await delete_snapshot("snap_test", "/mnt/pools/datapool", {})
 
         assert result["status"] == "deleted"
         assert result["id"] == "snap_test"
@@ -407,7 +414,7 @@ class TestDeleteSnapshot:
             mock_path.return_value.exists.return_value = False
 
             with pytest.raises(HTTPException) as exc_info:
-                await router.delete_snapshot("nonexistent", "/mnt/pools/datapool", {})
+                await delete_snapshot("nonexistent", "/mnt/pools/datapool", {})
 
         assert exc_info.value.status_code == 404
 
@@ -427,7 +434,7 @@ class TestDeleteSnapshot:
                 mock_path.return_value.exists.return_value = True
 
                 with pytest.raises(HTTPException) as exc_info:
-                    await router.delete_snapshot("snap_test", "/mnt/pools/datapool", {})
+                    await delete_snapshot("snap_test", "/mnt/pools/datapool", {})
 
         assert exc_info.value.status_code == 500
 
@@ -455,7 +462,7 @@ class TestRestoreSnapshot:
                 mock_snap.parent.parent.__truediv__ = lambda x, y: MagicMock(__str__=lambda x: f"/mnt/pools/datapool/{y}")
                 mock_path.return_value = mock_snap
 
-                result = await router.restore_snapshot(restore_req, {})
+                result = await restore_snapshot(restore_req, {})
 
         assert result["status"] == "restored"
         assert "restore_" in result["target"]
@@ -479,7 +486,7 @@ class TestRestoreSnapshot:
                 mock_snap.exists.return_value = True
                 mock_path.return_value = mock_snap
 
-                result = await router.restore_snapshot(restore_req, {})
+                result = await restore_snapshot(restore_req, {})
 
         assert result["status"] == "restored"
 
@@ -498,7 +505,7 @@ class TestRestoreSnapshot:
             mock_path.return_value = mock_snap
 
             with pytest.raises(HTTPException) as exc_info:
-                await router.restore_snapshot(restore_req, {})
+                await restore_snapshot(restore_req, {})
 
         assert exc_info.value.status_code == 404
 
@@ -525,6 +532,6 @@ class TestRestoreSnapshot:
                 mock_path.return_value = mock_snap
 
                 with pytest.raises(HTTPException) as exc_info:
-                    await router.restore_snapshot(restore_req, {})
+                    await restore_snapshot(restore_req, {})
 
         assert exc_info.value.status_code == 500
