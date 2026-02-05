@@ -1,18 +1,14 @@
 # UNOS - Universal NAS Operating System
 
 <p align="center">
-  <img src="docs/images/logo.png" alt="UNOS Logo" width="200">
-</p>
-
-<p align="center">
-  <strong>An open-source, architecture-agnostic NAS operating system</strong>
+  <strong>A modern, open-source NAS operating system for ARM and x86 Linux systems</strong>
 </p>
 
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#documentation">Documentation</a> •
-  <a href="#screenshots">Screenshots</a> •
+  <a href="#architecture">Architecture</a> •
   <a href="#contributing">Contributing</a>
 </p>
 
@@ -20,55 +16,98 @@
 
 ## Overview
 
-UNOS (Universal NAS Operating System) transforms any Linux system into a powerful, easy-to-use Network Attached Storage server. Built with modern web technologies and designed for both ARM and x86 architectures.
+UNOS transforms any Linux system into a powerful Network Attached Storage server with a modern web interface. Built with FastAPI and SvelteKit, it provides real-time monitoring, containerized application deployment, and enterprise-grade storage management.
 
 ## Features
 
 ### Storage Management
-- **BTRFS Storage Pools** - Create, manage, and monitor BTRFS storage pools
-- **SMART Monitoring** - Real-time disk health monitoring
-- **Snapshots** - Create and restore filesystem snapshots
-- **Multiple RAID Profiles** - Support for single, RAID0, RAID1, RAID5, RAID6, RAID10
+- **BTRFS Storage Pools** - Create and manage pools with RAID 0/1/5/6/10 profiles
+- **Volume Management** - Create subvolumes within pools for organized storage
+- **SMART Monitoring** - Real-time disk health monitoring and diagnostics
+- **BTRFS Snapshots** - Create, restore, and schedule filesystem snapshots
+- **Pool Scrubbing** - Data integrity verification with scheduled scrubs
 
 ### File Sharing
-- **SMB/CIFS Shares** - Windows-compatible file sharing
-- **User Management** - Create users with different access levels
-- **Permission Control** - Fine-grained access control per share
+- **SMB/CIFS Shares** - Windows, macOS, and Linux compatible file sharing
+- **NFS Exports** - Unix/Linux native network file system
+- **Web File Browser** - Upload, download, copy, move, and manage files via browser
 
-### Docker Integration
-- **Container Management** - Start, stop, and monitor Docker containers
-- **App Store** - One-click installation of popular applications
-- **Resource Monitoring** - Track container CPU and memory usage
+### Application Platform
+- **70+ Curated Apps** - One-click installation of popular self-hosted applications
+- **Docker Management** - Full container lifecycle management (create, start, stop, logs)
+- **Image Management** - Pull, list, and remove Docker images
+- **App Categories** - Media, Downloads, Productivity, Monitoring, Home Automation, Network, AI, Security, and more
 
-### System Management
-- **Web Dashboard** - Modern, responsive web interface
-- **Real-time Monitoring** - CPU, memory, network, and temperature stats
-- **Network Configuration** - View and manage network interfaces
-- **Notifications** - Email, Discord, and Telegram alerts
-- **Scheduled Tasks** - Automate backups and maintenance
+### System Monitoring
+- **Real-time Dashboard** - Live CPU, memory, network, and disk I/O statistics via WebSocket
+- **Process Monitor** - View and manage running processes
+- **Temperature Monitoring** - Hardware temperature sensors
+- **Network Statistics** - Per-interface bandwidth monitoring with history graphs
+- **Prometheus Metrics** - `/api/v1/health/prometheus` endpoint for external monitoring
+
+### User Management & Security
+- **Multi-user Support** - Create users with admin or regular permissions
+- **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps
+- **Recovery Codes** - Backup codes for 2FA recovery
+- **API Tokens** - Generate tokens for programmatic access
+- **Audit Logging** - Track all user actions and system events
+- **Rate Limiting** - Protection against brute-force attacks
+
+### Notifications
+- **Email** - SMTP-based email alerts
+- **Telegram** - Bot notifications to chat/groups
+- **Discord** - Webhook notifications with embeds
+- **Slack** - Webhook notifications
+- **Custom Webhooks** - Generic webhook support for any service
+
+### Task Scheduler
+- **Automated Snapshots** - Schedule periodic snapshot creation with retention
+- **Scheduled Scrubs** - Automate BTRFS data integrity checks
+- **SMART Tests** - Schedule disk health tests
+- **Configuration Backups** - Automated system backup with cleanup
+- **Custom Commands** - Run any command on a schedule
+
+### Network Management
+- **Interface Management** - View and control network interfaces
+- **DNS Configuration** - View DNS servers and search domains
+- **Hostname Management** - Set system hostname
+- **Routing Table** - View network routes and gateway
+
+### Power Management
+- **Remote Control** - Reboot, shutdown, and suspend via web interface
+- **Wake-on-LAN** - Configure WoL for network interfaces
+- **UPS Monitoring** - NUT integration with auto-shutdown on low battery
+- **Scheduled Power** - Configure auto-shutdown and wake times
+
+### Backup & Recovery
+- **Configuration Backup** - Export all UNOS settings
+- **Encrypted Backups** - Optional AES-256 encryption with passphrase
+- **Restore** - Import backups to restore configuration
+
+### System Updates
+- **GitHub-based Updates** - Check and install updates from releases
+- **Rollback Support** - Revert to previous version if issues occur
+- **Update History** - Track all applied updates
 
 ## Quick Start
 
 ### One-Line Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-repo/unos/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/und3f1ned/unos/main/deploy/install.sh | sudo bash
 ```
 
 ### Manual Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/und3f1ned/unos.git /opt/unos
-
-# Run the installer
 cd /opt/unos/deploy
 sudo ./install.sh
 ```
 
 ### Access the Web Interface
 
-After installation, open your browser and navigate to:
+After installation, open your browser:
 
 ```
 http://YOUR_SERVER_IP
@@ -78,60 +117,24 @@ Default credentials:
 - **Username:** `admin`
 - **Password:** `admin`
 
-⚠️ **Important:** Change the default password immediately after first login!
+**Important:** Change the default password immediately after first login.
 
 ## System Requirements
 
-### Minimum Requirements
+### Minimum
 - **CPU:** 1 GHz dual-core (ARM64 or AMD64)
 - **RAM:** 1 GB
 - **Storage:** 8 GB for system
-- **Network:** Ethernet connection
+- **OS:** Debian 11+ or Ubuntu 22.04+
 
-### Recommended Requirements
-- **CPU:** 2 GHz quad-core or better
-- **RAM:** 4 GB or more
+### Recommended
+- **CPU:** 2 GHz quad-core
+- **RAM:** 4 GB
 - **Storage:** 16 GB SSD for system
-- **Network:** Gigabit Ethernet
 
-### Supported Operating Systems
-- Debian 11 (Bullseye) or newer
-- Ubuntu 22.04 LTS or newer
-- Raspberry Pi OS (64-bit)
-
-### Supported Architectures
+### Supported Platforms
 - x86_64 (AMD64)
 - ARM64 (AArch64)
-- ARMv7 (32-bit ARM, limited support)
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Installation Guide](docs/INSTALL.md) | Detailed installation instructions |
-| [User Guide](docs/USER_GUIDE.md) | How to use UNOS features |
-| [API Reference](docs/API.md) | REST API documentation |
-| [Development Guide](CLAUDE.md) | For developers and contributors |
-| [FAQ](docs/FAQ.md) | Frequently asked questions |
-
-## Screenshots
-
-<details>
-<summary>Click to view screenshots</summary>
-
-### Dashboard
-![Dashboard](docs/images/dashboard.png)
-
-### Storage Management
-![Storage](docs/images/storage.png)
-
-### Docker Containers
-![Containers](docs/images/containers.png)
-
-### File Browser
-![Files](docs/images/files.png)
-
-</details>
 
 ## Architecture
 
@@ -139,7 +142,7 @@ Default credentials:
 ┌─────────────────────────────────────────────────────────┐
 │  Web Browser                                            │
 └──────────────────────┬──────────────────────────────────┘
-                       │ HTTP/HTTPS
+                       │ HTTP/HTTPS + WebSocket
 ┌──────────────────────▼──────────────────────────────────┐
 │  unos-webui (SvelteKit + Caddy)                         │
 │  Port: 80/443                                           │
@@ -150,104 +153,83 @@ Default credentials:
 │  Port: 8080 (internal)                                  │
 │  SQLite: /data/unos.db                                  │
 └──────────────────────┬──────────────────────────────────┘
-                       │ Docker socket, privileged
+                       │ Docker socket, system commands
 ┌──────────────────────▼──────────────────────────────────┐
 │  Host OS (Debian/Ubuntu)                                │
-│  btrfs, samba, smartmontools, docker                    │
+│  btrfs, samba, nfs, smartmontools, docker               │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Updating UNOS
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Installation Guide](docs/INSTALL.md) | Detailed installation instructions |
+| [User Guide](docs/USER_GUIDE.md) | How to use UNOS features |
+| [Development Guide](CLAUDE.md) | Developer instructions |
+
+## Tech Stack
+
+### Backend (Supervisor)
+- Python 3.11+, FastAPI, Uvicorn
+- SQLAlchemy + aiosqlite (async SQLite)
+- python-jose (JWT), passlib (bcrypt), pyotp (2FA)
+- docker-py, psutil
+
+### Frontend (WebUI)
+- SvelteKit 2.x, TypeScript
+- TailwindCSS, Lucide Icons
+- Caddy (reverse proxy)
+
+## Updating
 
 ```bash
-# Using the update script
 sudo /opt/unos/deploy/update.sh
+```
 
-# Or manually
+Or manually:
+```bash
 cd /opt/unos
 sudo git pull
 cd deploy
-sudo docker compose build
-sudo docker compose up -d
+sudo docker compose build && sudo docker compose up -d
 ```
 
-## Uninstalling UNOS
+## Uninstalling
 
 ```bash
 sudo /opt/unos/deploy/uninstall.sh
 ```
 
-This will:
-- Stop and remove UNOS containers
-- Remove UNOS configuration files
-- **NOT** remove your storage pools or data
-
-## Tech Stack
-
-### Backend
-- Python 3.11+
-- FastAPI
-- SQLAlchemy + SQLite
-- Docker SDK
-
-### Frontend
-- SvelteKit
-- TypeScript
-- TailwindCSS
-- Lucide Icons
-
-### Infrastructure
-- Docker & Docker Compose
-- Caddy (reverse proxy)
+This removes UNOS containers and configuration but preserves your storage pools and data.
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Setup
+Contributions are welcome! See [CLAUDE.md](CLAUDE.md) for development setup and coding standards.
 
 ```bash
-# Clone the repo
-git clone https://github.com/und3f1ned/unos.git
-cd unos
-
 # Backend development
 cd supervisor
-python -m venv venv
-source venv/bin/activate
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 uvicorn src.main:app --reload --port 8080
 
 # Frontend development
 cd webui
-npm install
-npm run dev
+npm install && npm run dev
 ```
 
 ## License
 
-UNOS is released under the [MIT License](LICENSE).
+UNOS is released under the [GPL-3.0 License](LICENSE).
 
 ## Support
 
-- 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/und3f1ned/unos/issues)
-- 💬 [Discussions](https://github.com/und3f1ned/unos/discussions)
-- 📧 Email: support@unos.io
-
-## Acknowledgments
-
-UNOS is built on top of many excellent open-source projects:
-- [FastAPI](https://fastapi.tiangolo.com/)
-- [SvelteKit](https://kit.svelte.dev/)
-- [TailwindCSS](https://tailwindcss.com/)
-- [Docker](https://www.docker.com/)
-- [Caddy](https://caddyserver.com/)
-- [BTRFS](https://btrfs.wiki.kernel.org/)
-- [Samba](https://www.samba.org/)
+- [Issue Tracker](https://github.com/und3f1ned/unos/issues)
+- [Discussions](https://github.com/und3f1ned/unos/discussions)
 
 ---
 
 <p align="center">
-  Made with ❤️ by the UNOS Team
+  Built for self-hosters, by self-hosters
 </p>
