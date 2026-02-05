@@ -1,0 +1,36 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies including curl for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    btrfs-progs \
+    smartmontools \
+    gcc \
+    python3-dev \
+    iproute2 \
+    ethtool \
+    procps \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY src/ ./src/
+
+# Copy test mock layer
+COPY tests/mocks/ ./mocks/
+
+# Create test directories
+RUN mkdir -p /data /mnt/pools /etc/samba
+
+# Initialize test data
+COPY tests/fixtures/init-test-data.sh /init-test-data.sh
+RUN chmod +x /init-test-data.sh
+
+EXPOSE 8080
+
+# Use entrypoint that sets up test data before starting
+ENTRYPOINT ["/bin/bash", "-c", "/init-test-data.sh && exec uvicorn src.main:app --host 0.0.0.0 --port 8080"]

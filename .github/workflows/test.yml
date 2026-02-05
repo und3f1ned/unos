@@ -1,0 +1,210 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # Test configuration
+  TEST_URL: http://localhost:3080
+  CI: true
+
+jobs:
+  # Backend unit tests - fast, run first
+  unit-tests:
+    name: Backend Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supervisor
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: supervisor/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/ -v --tb=short --junitxml=test-results.xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: supervisor/test-results.xml
+
+  # E2E tests - requires full stack
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests  # Run after unit tests pass
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test containers
+        run: |
+          cd deploy
+          docker compose -f docker-compose.test.yml build
+
+      - name: Start test environment
+        run: |
+          cd deploy
+          docker compose -f docker-compose.test.yml up -d
+
+          # Wait for services to be healthy
+          echo "Waiting for services to start..."
+          for i in {1..60}; do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:3080/api/v1/health | grep -q "200"; then
+              echo "Services are ready!"
+              break
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 2
+          done
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: webui
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: webui
+        run: npx playwright install chromium --with-deps
+
+      - name: Run E2E tests
+        working-directory: webui
+        run: |
+          BASE_URL=http://localhost:3080 npx playwright test --reporter=html,github
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: webui/playwright-report/
+          retention-days: 30
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results
+          path: webui/test-results/
+          retention-days: 7
+
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          cd deploy
+          docker compose -f docker-compose.test.yml logs
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd deploy
+          docker compose -f docker-compose.test.yml down -v --remove-orphans
+
+  # Quick smoke test for PRs
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and start test environment
+        run: |
+          cd deploy
+          docker compose -f docker-compose.test.yml build --quiet
+          docker compose -f docker-compose.test.yml up -d
+
+          # Wait for services
+          for i in {1..60}; do
+            if curl -s http://localhost:3080/api/v1/health | grep -q "ok"; then
+              echo "Services ready!"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install and run smoke tests
+        working-directory: webui
+        run: |
+          npm ci
+          npx playwright install chromium --with-deps
+          BASE_URL=http://localhost:3080 npx playwright test auth.spec.ts api.spec.ts --reporter=list
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd deploy
+          docker compose -f docker-compose.test.yml down -v --remove-orphans
+
+  # Build validation
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build supervisor image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./supervisor
+          push: false
+          tags: unos-supervisor:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build webui image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./webui
+          push: false
+          tags: unos-webui:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
