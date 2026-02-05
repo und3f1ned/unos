@@ -76,7 +76,7 @@ For data storage, UNOS supports:
 ### Quick Install (One Command)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-repo/unos/main/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/und3f1ned/unos/main/deploy/install.sh | sudo bash
 ```
 
 This will:
@@ -91,7 +91,7 @@ This will:
 
 ```bash
 # Download installer
-curl -fsSL https://raw.githubusercontent.com/your-repo/unos/main/deploy/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/und3f1ned/unos/main/deploy/install.sh -o install.sh
 chmod +x install.sh
 
 # Custom installation directory

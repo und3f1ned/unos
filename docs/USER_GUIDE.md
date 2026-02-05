@@ -272,6 +272,39 @@ Users can change their own password:
 
 Admins can reset any user's password via **Users** page.
 
+### Two-Factor Authentication (2FA)
+
+Protect your account with TOTP-based two-factor authentication:
+
+1. Go to **Users** → **Security**
+2. Click **Enable 2FA**
+3. Scan the QR code with an authenticator app (Google Authenticator, Authy, etc.)
+4. Enter the verification code to confirm
+5. **Save your recovery codes** in a secure location
+
+To disable 2FA:
+1. Go to **Users** → **Security**
+2. Click **Disable 2FA**
+3. Enter your password and a 2FA code to confirm
+
+### API Tokens
+
+Generate tokens for programmatic access to the UNOS API:
+
+1. Go to **Users** → **API Tokens**
+2. Click **Generate Token**
+3. Enter a description (e.g., "Backup Script")
+4. Copy the token immediately (it won't be shown again)
+
+Use tokens in API requests:
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" http://your-nas/api/v1/system/info
+```
+
+To revoke a token:
+1. Go to **Users** → **API Tokens**
+2. Click the delete icon next to the token
+
 ---
 
 ## System Settings
@@ -382,10 +415,12 @@ Choose which events trigger notifications:
 ### Security
 
 1. ✅ Change default password immediately
-2. ✅ Use strong, unique passwords
-3. ✅ Keep UNOS updated
-4. ✅ Don't expose to the internet without VPN
-5. ✅ Enable HTTPS if available
+2. ✅ Enable two-factor authentication (2FA)
+3. ✅ Use strong, unique passwords
+4. ✅ Keep UNOS updated
+5. ✅ Don't expose to the internet without VPN
+6. ✅ Use API tokens instead of passwords for scripts
+7. ✅ Review audit logs periodically
 
 ### Storage
 
