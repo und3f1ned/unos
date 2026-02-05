@@ -3,6 +3,7 @@ import re
 import os
 import logging
 from ..config import get_settings
+from ..security.validators import validate_share_name, validate_share_path
 from .schemas import SmbShareCreate, SmbShareInfo
 
 logger = logging.getLogger(__name__)
@@ -144,9 +145,11 @@ def get_share(name: str) -> SmbShareInfo | None:
 
 def create_share(share: SmbShareCreate) -> SmbShareInfo:
     """Create a new SMB share."""
-    # Validate name
-    if not re.match(r"^[a-zA-Z0-9_]+$", share.name):
-        raise ValueError("Share name must be alphanumeric with underscores only")
+    # Validate share name using security validator
+    validate_share_name(share.name)
+
+    # Validate and restrict path to pools directory only
+    validated_path = validate_share_path(share.path)
 
     content = _read_smb_conf()
     shares = _parse_shares(content)
@@ -154,16 +157,16 @@ def create_share(share: SmbShareCreate) -> SmbShareInfo:
     if share.name in shares:
         raise ValueError(f"Share {share.name} already exists")
 
-    # Create directory if needed
-    os.makedirs(share.path, exist_ok=True)
+    # Create directory if needed (using validated path)
+    os.makedirs(validated_path, exist_ok=True)
 
     # Set directory permissions for guest-writable shares
     if share.guest_ok and not share.readonly:
-        os.chmod(share.path, 0o777)
+        os.chmod(validated_path, 0o777)
 
     share_info = SmbShareInfo(
         name=share.name,
-        path=share.path,
+        path=validated_path,
         comment=share.comment,
         browseable=share.browseable,
         readonly=share.readonly,
@@ -180,6 +183,12 @@ def create_share(share: SmbShareCreate) -> SmbShareInfo:
 
 def update_share(name: str, share: SmbShareCreate) -> SmbShareInfo:
     """Update an existing SMB share."""
+    # Validate new share name if changed
+    validate_share_name(share.name)
+
+    # Validate and restrict path to pools directory only
+    validated_path = validate_share_path(share.path)
+
     content = _read_smb_conf()
     shares = _parse_shares(content)
 
@@ -188,7 +197,7 @@ def update_share(name: str, share: SmbShareCreate) -> SmbShareInfo:
 
     share_info = SmbShareInfo(
         name=share.name,
-        path=share.path,
+        path=validated_path,
         comment=share.comment,
         browseable=share.browseable,
         readonly=share.readonly,
@@ -197,9 +206,9 @@ def update_share(name: str, share: SmbShareCreate) -> SmbShareInfo:
     )
 
     # Update directory permissions for guest-writable shares
-    if os.path.exists(share.path):
+    if os.path.exists(validated_path):
         if share.guest_ok and not share.readonly:
-            os.chmod(share.path, 0o777)
+            os.chmod(validated_path, 0o777)
 
     # If name changed, remove old and add new
     if name != share.name:

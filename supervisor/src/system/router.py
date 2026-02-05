@@ -5,6 +5,7 @@ import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from ..auth.utils import verify_token
+from ..security.validators import validate_hostname, validate_timezone, validate_interface_name
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -135,6 +136,8 @@ def get_host_network_interfaces() -> list[dict]:
 def get_interface_speed(ifname: str) -> int | None:
     """Get interface speed from the host using ethtool."""
     try:
+        # Validate interface name to prevent command injection
+        validate_interface_name(ifname)
         result = subprocess.run(
             ["nsenter", "--target", "1", "--net", "ethtool", ifname],
             capture_output=True, text=True, timeout=5
@@ -228,25 +231,43 @@ async def list_timezones(_=Depends(verify_token)):
 @router.put("/timezone")
 async def set_timezone(data: TimezoneUpdate, _=Depends(verify_token)):
     """Set system timezone."""
+    # Get valid timezones for validation
+    valid_tz = set()
+    try:
+        tz_result = subprocess.run(
+            ["timedatectl", "list-timezones"],
+            capture_output=True, text=True, timeout=10
+        )
+        if tz_result.returncode == 0:
+            valid_tz = set(tz_result.stdout.strip().split('\n'))
+    except Exception:
+        pass
+
+    # Validate timezone (with known valid list if available)
+    validated_tz = validate_timezone(data.timezone, valid_tz if valid_tz else None)
+
     result = subprocess.run(
-        ["timedatectl", "set-timezone", data.timezone],
+        ["timedatectl", "set-timezone", validated_tz],
         capture_output=True, text=True
     )
     if result.returncode != 0:
-        raise HTTPException(500, detail=f"Failed to set timezone: {result.stderr}")
-    return {"status": "ok", "timezone": data.timezone}
+        raise HTTPException(500, detail="Failed to set timezone")
+    return {"status": "ok", "timezone": validated_tz}
 
 
 @router.put("/hostname")
 async def set_hostname(data: HostnameUpdate, _=Depends(verify_token)):
     """Set system hostname."""
+    # Validate hostname
+    validated_hostname = validate_hostname(data.hostname)
+
     result = subprocess.run(
-        ["hostnamectl", "set-hostname", data.hostname],
+        ["hostnamectl", "set-hostname", validated_hostname],
         capture_output=True, text=True
     )
     if result.returncode != 0:
-        raise HTTPException(500, detail=f"Failed to set hostname: {result.stderr}")
-    return {"status": "ok", "hostname": data.hostname}
+        raise HTTPException(500, detail="Failed to set hostname")
+    return {"status": "ok", "hostname": validated_hostname}
 
 
 @router.post("/reboot")

@@ -1,9 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from ..auth.utils import verify_token
+from ..security.validators import sanitize_error_message
 from .schemas import SmbShareCreate, SmbShareInfo, NfsExportCreate, NfsExportInfo
 from . import smb, nfs
 from ..storage import pools
+
+# Rate limiter for shares endpoints
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/shares", tags=["shares"])
 
@@ -56,14 +62,17 @@ async def list_smb_shares(_=Depends(verify_token)):
 
 
 @router.post("/smb", response_model=SmbShareInfo)
-async def create_smb_share(share: SmbShareCreate, _=Depends(verify_token)):
+@limiter.limit("10/minute")  # Rate limit share creation
+async def create_smb_share(request: Request, share: SmbShareCreate, _=Depends(verify_token)):
     """Create a new SMB share."""
     try:
         return smb.create_share(share)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
 
 
 @router.get("/smb/{name}", response_model=SmbShareInfo)
@@ -87,7 +96,8 @@ async def update_smb_share(name: str, share: SmbShareCreate, _=Depends(verify_to
 
 
 @router.delete("/smb/{name}")
-async def delete_smb_share(name: str, _=Depends(verify_token)):
+@limiter.limit("10/minute")  # Rate limit share deletion
+async def delete_smb_share(request: Request, name: str, _=Depends(verify_token)):
     """Delete an SMB share."""
     try:
         smb.delete_share(name)
@@ -95,7 +105,7 @@ async def delete_smb_share(name: str, _=Depends(verify_token)):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
 
 
 # NFS Endpoints
