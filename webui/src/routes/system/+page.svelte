@@ -11,12 +11,14 @@
     Bell,
     Network,
     Shield,
-    ChevronRight
+    ChevronRight,
+    ArrowUpCircle
   } from "lucide-svelte";
 
   // Sub-navigation for System page
   const tabs = [
     { id: "general", icon: Settings, label: "General" },
+    { id: "updates", icon: ArrowUpCircle, label: "Updates" },
     { id: "security", icon: Shield, label: "Security" },
     { id: "monitor", icon: Gauge, label: "Resource Monitor" },
     { id: "logs", icon: FileText, label: "System Logs" },
@@ -69,6 +71,10 @@
     {#if activeTab === "general"}
       {#await import("./tabs/GeneralTab.svelte") then { default: GeneralTab }}
         <GeneralTab />
+      {/await}
+    {:else if activeTab === "updates"}
+      {#await import("./tabs/UpdateTab.svelte") then { default: UpdateTab }}
+        <UpdateTab />
       {/await}
     {:else if activeTab === "security"}
       {#await import("./tabs/SecurityTab.svelte") then { default: SecurityTab }}

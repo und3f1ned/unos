@@ -27,6 +27,7 @@ from .security.router import router as security_router
 from .monitor.router import router as monitor_router
 from .backup.router import router as backup_router
 from .audit.router import router as audit_router
+from .updates.router import router as updates_router
 from .websocket.events import router as ws_router
 
 
@@ -73,6 +74,7 @@ app.include_router(monitor_router, prefix="/api/v1")
 app.include_router(backup_router, prefix="/api/v1")
 app.include_router(security_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
+app.include_router(updates_router, prefix="/api/v1")
 app.include_router(ws_router)
 
 
