@@ -1,0 +1,84 @@
+version: '3.8'
+
+# Deviceless Test Environment
+# This compose file runs the full UNOS stack without requiring a physical device.
+# All device-dependent operations are mocked or use test fixtures.
+
+services:
+  supervisor:
+    build:
+      context: ../supervisor
+      dockerfile: Dockerfile.test
+    container_name: unos-supervisor-test
+    environment:
+      - UNOS_DB_PATH=/data/unos.db
+      - UNOS_JWT_SECRET=test-secret-key-for-testing
+      - UNOS_SMB_CONF_PATH=/data/smb.conf
+      - UNOS_NFS_EXPORTS_PATH=/data/exports
+      - UNOS_POOLS_BASE_PATH=/mnt/pools
+      - UNOS_TEST_MODE=true
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - test-data:/data
+      - test-pools:/mnt/pools
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - unos-test-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  webui:
+    build:
+      context: ../webui
+      dockerfile: Dockerfile
+    container_name: unos-webui-test
+    ports:
+      - "3080:80"
+    volumes:
+      - caddy-test-data:/data
+      - caddy-test-config:/config
+    depends_on:
+      supervisor:
+        condition: service_healthy
+    networks:
+      - unos-test-net
+
+  # Test runner service - runs Playwright tests against the stack
+  test-runner:
+    build:
+      context: ../webui
+      dockerfile: Dockerfile.test
+    container_name: unos-test-runner
+    environment:
+      - BASE_URL=http://webui
+      - CI=true
+    volumes:
+      - ../webui/tests:/app/tests:ro
+      - ../webui/playwright.config.ts:/app/playwright.config.ts:ro
+      - test-results:/app/test-results
+      - test-reports:/app/playwright-report
+    depends_on:
+      webui:
+        condition: service_started
+      supervisor:
+        condition: service_healthy
+    networks:
+      - unos-test-net
+    profiles:
+      - test
+
+volumes:
+  test-data:
+  test-pools:
+  caddy-test-data:
+  caddy-test-config:
+  test-results:
+  test-reports:
+
+networks:
+  unos-test-net:
+    driver: bridge

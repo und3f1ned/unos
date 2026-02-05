@@ -136,16 +136,20 @@ def get_ufw_status() -> tuple[bool, str, str]:
 
         for line in output.split("\n"):
             if "Default:" in line:
-                if "incoming" in line.lower():
-                    if "allow" in line.lower():
-                        default_in = "allow"
-                    elif "reject" in line.lower():
-                        default_in = "reject"
-                elif "outgoing" in line.lower():
-                    if "deny" in line.lower():
-                        default_out = "deny"
-                    elif "reject" in line.lower():
-                        default_out = "reject"
+                # Parse format: "Default: deny (incoming), allow (outgoing), disabled (routed)"
+                import re
+                # Match incoming policy
+                incoming_match = re.search(r'(\w+)\s*\(incoming\)', line.lower())
+                if incoming_match:
+                    policy = incoming_match.group(1)
+                    if policy in ('allow', 'deny', 'reject'):
+                        default_in = policy
+                # Match outgoing policy
+                outgoing_match = re.search(r'(\w+)\s*\(outgoing\)', line.lower())
+                if outgoing_match:
+                    policy = outgoing_match.group(1)
+                    if policy in ('allow', 'deny', 'reject'):
+                        default_out = policy
 
         return enabled, default_in, default_out
     except FileNotFoundError:

@@ -1,0 +1,21 @@
+# Playwright Test Runner Dockerfile
+FROM mcr.microsoft.com/playwright:v1.40.0-jammy
+
+WORKDIR /app
+
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Install Playwright browsers
+RUN npx playwright install chromium
+
+# Copy test files and configuration
+COPY tests/ ./tests/
+COPY playwright.config.ts ./
+
+# Create directories for test artifacts
+RUN mkdir -p test-results playwright-report
+
+# Default command runs all tests
+CMD ["npx", "playwright", "test", "--reporter=html"]
