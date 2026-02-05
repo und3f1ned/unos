@@ -166,6 +166,7 @@ Default credentials:
 |----------|-------------|
 | [Installation Guide](docs/INSTALL.md) | Detailed installation instructions |
 | [User Guide](docs/USER_GUIDE.md) | How to use UNOS features |
+| [Changelog](CHANGELOG.md) | Version history and release notes |
 | [Development Guide](CLAUDE.md) | Developer instructions |
 
 ## Tech Stack
