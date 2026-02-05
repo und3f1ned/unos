@@ -4,11 +4,17 @@ import os
 import asyncio
 from pathlib import Path
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from typing import Optional
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from ..auth.utils import verify_token
+from ..security.validators import validate_interface_name, sanitize_error_message
+
+# Rate limiter for power endpoints
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/power", tags=["power"])
 
@@ -265,7 +271,8 @@ async def update_power_config(config: PowerConfig, _: dict = Depends(verify_toke
 
 
 @router.post("/reboot")
-async def reboot_system(_: dict = Depends(verify_token)):
+@limiter.limit("2/minute")  # Rate limit reboot requests
+async def reboot_system(request: Request, _: dict = Depends(verify_token)):
     """Reboot the system."""
     if is_in_container():
         return {"status": "unavailable", "message": "Reboot not available in container mode. Use host system to reboot."}
@@ -284,7 +291,8 @@ async def reboot_system(_: dict = Depends(verify_token)):
 
 
 @router.post("/shutdown")
-async def shutdown_system(_: dict = Depends(verify_token)):
+@limiter.limit("2/minute")  # Rate limit shutdown requests
+async def shutdown_system(request: Request, _: dict = Depends(verify_token)):
     """Shutdown the system."""
     if is_in_container():
         return {"status": "unavailable", "message": "Shutdown not available in container mode. Use host system to shutdown."}
@@ -387,31 +395,41 @@ async def get_wol_status(_: dict = Depends(verify_token)):
 @router.post("/wol/{interface}/enable")
 async def enable_wol(interface: str, _: dict = Depends(verify_token)):
     """Enable Wake-on-LAN for an interface."""
+    # Validate interface name to prevent command injection
+    validated_interface = validate_interface_name(interface)
+
     try:
         result = subprocess.run(
-            ["ethtool", "-s", interface, "wol", "g"],
+            ["ethtool", "-s", validated_interface, "wol", "g"],
             capture_output=True, text=True
         )
         if result.returncode != 0:
-            raise HTTPException(500, f"Failed to enable WOL: {result.stderr}")
-        return {"status": "enabled", "interface": interface}
+            raise HTTPException(500, "Failed to enable WOL")
+        return {"status": "enabled", "interface": validated_interface}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, f"Failed to enable WOL: {e}")
+        raise HTTPException(500, sanitize_error_message(e))
 
 
 @router.post("/wol/{interface}/disable")
 async def disable_wol(interface: str, _: dict = Depends(verify_token)):
     """Disable Wake-on-LAN for an interface."""
+    # Validate interface name to prevent command injection
+    validated_interface = validate_interface_name(interface)
+
     try:
         result = subprocess.run(
-            ["ethtool", "-s", interface, "wol", "d"],
+            ["ethtool", "-s", validated_interface, "wol", "d"],
             capture_output=True, text=True
         )
         if result.returncode != 0:
-            raise HTTPException(500, f"Failed to disable WOL: {result.stderr}")
-        return {"status": "disabled", "interface": interface}
+            raise HTTPException(500, "Failed to disable WOL")
+        return {"status": "disabled", "interface": validated_interface}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, f"Failed to disable WOL: {e}")
+        raise HTTPException(500, sanitize_error_message(e))
 
 
 # ==================== UPS Monitoring ====================

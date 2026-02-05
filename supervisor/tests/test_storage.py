@@ -1,8 +1,10 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock
+from fastapi import HTTPException
 from src.storage import disks, pools
 from src.storage.schemas import DiskInfo, SmartData, PoolCreate, PoolInfo, VolumeCreate, VolumeInfo
+from src.security.validators import validate_disk_name, validate_pool_name, validate_device_list
 
 
 class TestDisksModule:
@@ -362,3 +364,78 @@ class TestStorageSchemas:
         for raid in ["single", "raid0", "raid1", "raid5", "raid6", "raid10"]:
             pool = PoolCreate(name="test", devices=["/dev/sda"], raid_level=raid)
             assert pool.raid_level == raid
+
+
+class TestStorageSecurityValidation:
+    """Tests for storage security validation."""
+
+    def test_disk_name_path_traversal_rejected(self):
+        """Test that disk names with path traversal are rejected."""
+        malicious_names = [
+            "../etc/passwd",
+            "sda/../../../etc/passwd",
+            "..%2f..%2fetc",
+        ]
+        for name in malicious_names:
+            with pytest.raises(HTTPException) as exc:
+                validate_disk_name(name)
+            assert exc.value.status_code == 400
+
+    def test_disk_name_valid_formats(self):
+        """Test valid disk name formats are accepted."""
+        valid_names = ["sda", "sdb1", "nvme0n1", "nvme0n1p1", "vda"]
+        for name in valid_names:
+            result = validate_disk_name(name)
+            assert result == name
+
+    def test_pool_name_injection_rejected(self):
+        """Test pool names with injection attempts are rejected."""
+        malicious_names = [
+            "pool;rm -rf /",
+            "pool|cat /etc/passwd",
+            "../etc",
+            "pool/../secret",
+        ]
+        for name in malicious_names:
+            with pytest.raises(HTTPException) as exc:
+                validate_pool_name(name)
+            assert exc.value.status_code == 400
+
+    def test_pool_name_valid_formats(self):
+        """Test valid pool name formats are accepted."""
+        valid_names = ["datapool", "my_pool", "pool-01", "Pool123"]
+        for name in valid_names:
+            result = validate_pool_name(name)
+            assert result == name
+
+    def test_device_list_validation(self):
+        """Test device list validation."""
+        # Valid devices
+        valid = ["/dev/sda", "/dev/sdb"]
+        result = validate_device_list(valid)
+        assert result == valid
+
+        # Invalid device in list
+        with pytest.raises(HTTPException):
+            validate_device_list(["/dev/sda", "/etc/passwd"])
+
+        # Empty list
+        with pytest.raises(HTTPException):
+            validate_device_list([])
+
+    @patch("src.storage.pools.settings")
+    @patch("src.storage.pools.subprocess.run")
+    def test_create_pool_validates_devices(self, mock_run, mock_settings):
+        """Test that create_pool validates device paths."""
+        mock_settings.pools_base_path = "/mnt/pools"
+
+        pool = PoolCreate(
+            name="testpool",
+            devices=["/etc/passwd"],  # Invalid device path
+            raid_level="single"
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            pools.create_pool(pool)
+        assert exc.value.status_code == 400
+        assert "device" in exc.value.detail.lower() or "/dev/" in exc.value.detail

@@ -6,6 +6,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from .database import init_db
+from .config import get_settings
 
 # Global rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -48,12 +49,26 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Configure CORS - restrict origins based on settings
+settings = get_settings()
+
+# Parse allowed origins from settings
+_cors_origins = []
+if settings.cors_allowed_origins:
+    _cors_origins = [origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()]
+
+# In debug mode, allow all origins for development convenience
+if settings.debug_mode:
+    _cors_origins = ["*"]
+
+# If no origins configured and not in debug mode, use restrictive settings
+# The API is typically accessed via Caddy reverse proxy on same origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins if _cors_origins else [],
+    allow_credentials=True if _cors_origins else False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 app.include_router(auth_router, prefix="/api/v1")

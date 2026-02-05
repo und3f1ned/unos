@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -21,6 +22,14 @@ class Settings(BaseSettings):
 
     # App catalog
     app_catalog_path: str = "/data/app-catalog.json"
+
+    # Security - CORS
+    # Comma-separated list of allowed origins. Empty means allow same-origin only.
+    # For local network NAS, typically left empty (API accessed via Caddy proxy)
+    cors_allowed_origins: str = ""
+
+    # Debug mode - enables more permissive CORS for development
+    debug_mode: bool = False
 
     class Config:
         env_prefix = "UNOS_"

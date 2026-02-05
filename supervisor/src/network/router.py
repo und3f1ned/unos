@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from ..auth.utils import verify_token
+from ..security.validators import validate_interface_name, validate_hostname, sanitize_error_message
 
 router = APIRouter(prefix="/network", tags=["network"])
 
@@ -98,10 +99,13 @@ async def get_interfaces(_: dict = Depends(verify_token)):
 @router.get("/interfaces/{name}")
 async def get_interface(name: str, _: dict = Depends(verify_token)):
     """Get details for a specific interface from the host."""
+    # Validate interface name to prevent command injection
+    validated_name = validate_interface_name(name)
+
     try:
-        result = run_host_cmd(["ip", "-j", "addr", "show", name])
+        result = run_host_cmd(["ip", "-j", "addr", "show", validated_name])
         if result.returncode != 0:
-            raise HTTPException(404, f"Interface {name} not found")
+            raise HTTPException(404, f"Interface {validated_name} not found")
 
         data = json.loads(result.stdout)
         if not data:
@@ -310,25 +314,35 @@ async def get_default_gateway(_: dict = Depends(verify_token)):
 @router.post("/interfaces/{name}/up")
 async def bring_interface_up(name: str, _: dict = Depends(verify_token)):
     """Bring a network interface up on the host."""
+    # Validate interface name to prevent command injection
+    validated_name = validate_interface_name(name)
+
     try:
-        result = run_host_cmd(["ip", "link", "set", name, "up"])
+        result = run_host_cmd(["ip", "link", "set", validated_name, "up"])
         if result.returncode != 0:
-            raise HTTPException(500, f"Failed to bring interface up: {result.stderr}")
-        return {"status": "success", "interface": name, "state": "up"}
+            raise HTTPException(500, "Failed to bring interface up")
+        return {"status": "success", "interface": validated_name, "state": "up"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, f"Failed to bring interface up: {e}")
+        raise HTTPException(500, sanitize_error_message(e))
 
 
 @router.post("/interfaces/{name}/down")
 async def bring_interface_down(name: str, _: dict = Depends(verify_token)):
     """Bring a network interface down on the host."""
+    # Validate interface name to prevent command injection
+    validated_name = validate_interface_name(name)
+
     try:
-        result = run_host_cmd(["ip", "link", "set", name, "down"])
+        result = run_host_cmd(["ip", "link", "set", validated_name, "down"])
         if result.returncode != 0:
-            raise HTTPException(500, f"Failed to bring interface down: {result.stderr}")
-        return {"status": "success", "interface": name, "state": "down"}
+            raise HTTPException(500, "Failed to bring interface down")
+        return {"status": "success", "interface": validated_name, "state": "down"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, f"Failed to bring interface down: {e}")
+        raise HTTPException(500, sanitize_error_message(e))
 
 
 @router.get("/connections")

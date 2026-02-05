@@ -2,6 +2,7 @@ import subprocess
 import os
 import re
 from ..config import get_settings
+from ..security.validators import validate_device_list, safe_path_join
 from .schemas import PoolCreate, PoolInfo, VolumeCreate, VolumeInfo, ScrubStatus
 
 settings = get_settings()
@@ -21,6 +22,9 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
     if pool.raid_level not in profile_map:
         raise ValueError(f"Unsupported RAID level: {pool.raid_level}")
 
+    # Validate device paths to prevent injection
+    validated_devices = validate_device_list(pool.devices)
+
     data_profile, meta_profile = profile_map[pool.raid_level]
 
     cmd = [
@@ -29,7 +33,7 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
         "-d", data_profile,
         "-m", meta_profile,
         "-f",
-    ] + pool.devices
+    ] + validated_devices
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
