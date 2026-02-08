@@ -239,13 +239,30 @@
 	}
 
 	const raidOptions = [
-		{ value: 'single', label: 'Single (No RAID)' },
-		{ value: 'raid0', label: 'RAID 0 (Striping)' },
-		{ value: 'raid1', label: 'RAID 1 (Mirroring)' },
-		{ value: 'raid5', label: 'RAID 5 (requires 3+ disks)' },
-		{ value: 'raid6', label: 'RAID 6 (requires 4+ disks)' },
-		{ value: 'raid10', label: 'RAID 10 (requires 4+ disks)' }
+		{ value: 'single', label: 'Single (No RAID) — 1+ disk' },
+		{ value: 'raid0', label: 'RAID 0 (Striping) — 2+ disks' },
+		{ value: 'raid1', label: 'RAID 1 (Mirror, 2 copies) — 2+ disks' },
+		{ value: 'raid1c3', label: 'RAID 1C3 (Mirror, 3 copies) — 3+ disks' },
+		{ value: 'raid1c4', label: 'RAID 1C4 (Mirror, 4 copies) — 4+ disks' },
+		{ value: 'raid10', label: 'RAID 10 (Mirrored stripes) — 4+ disks' }
 	];
+
+	const raidDescriptions: Record<string, string> = {
+		single: 'No redundancy. All space available. A single disk failure loses all data.',
+		raid0: 'Striped across disks for performance. No redundancy. Any disk failure loses all data.',
+		raid1: 'Mirrored to 2 copies. Survives 1 disk failure. 50% space efficiency.',
+		raid1c3: 'Mirrored to 3 copies. Survives 2 disk failures. 33% space efficiency.',
+		raid1c4: 'Mirrored to 4 copies. Survives 3 disk failures. 25% space efficiency.',
+		raid10: 'Striped mirrors. Survives 1 failure per mirror pair. 50% space efficiency.'
+	};
+
+	const minDevices: Record<string, number> = {
+		single: 1, raid0: 2, raid1: 2, raid1c3: 3, raid1c4: 4, raid10: 4
+	};
+
+	$: selectedRaidDescription = raidDescriptions[poolForm.raid_level] || '';
+	$: requiredDevices = minDevices[poolForm.raid_level] || 1;
+	$: hasEnoughDevices = poolForm.devices.length >= requiredDevices;
 </script>
 
 <div class="page-container">
@@ -311,6 +328,14 @@
 				Storage Pools
 			</h2>
 
+			{#if pools.some(p => p.raid_level === 'raid5' || p.raid_level === 'raid6')}
+				<Alert variant="warning" title="Unsafe RAID Configuration Detected">
+					One or more pools use BTRFS RAID5/RAID6, which has a known write-hole bug
+					that can cause data corruption on power failure. Consider backing up and
+					recreating the pool with a safe RAID level (RAID1, RAID1C3, or RAID1C4).
+				</Alert>
+			{/if}
+
 			{#if pools.length === 0}
 				<p class="text-muted">No pools configured</p>
 			{:else}
@@ -355,6 +380,9 @@
 								<div>
 									<span class="text-secondary">RAID:</span>
 									<span class="ml-2">{pool.raid_level || 'single'}</span>
+									{#if pool.raid_level === 'raid5' || pool.raid_level === 'raid6'}
+										<Badge variant="error">Unsafe</Badge>
+									{/if}
 								</div>
 								<div>
 									<span class="text-secondary">Used:</span>
@@ -457,6 +485,9 @@
 		<Input label="Pool Name" bind:value={poolForm.name} placeholder="data" required />
 
 		<Select label="RAID Level" bind:value={poolForm.raid_level} options={raidOptions} />
+		{#if selectedRaidDescription}
+			<p class="text-sm text-secondary -mt-2">{selectedRaidDescription}</p>
+		{/if}
 
 		<div>
 			<label class="form-label">Select Devices</label>
@@ -490,6 +521,12 @@
 					Selected: {poolForm.devices.length} device(s)
 				</p>
 			{/if}
+			{#if poolForm.devices.length > 0 && !hasEnoughDevices}
+				<Alert variant="warning">
+					{poolForm.raid_level.toUpperCase()} requires at least {requiredDevices} devices.
+					You have selected {poolForm.devices.length}.
+				</Alert>
+			{/if}
 		</div>
 	</form>
 
@@ -501,7 +538,7 @@
 			variant="primary"
 			class="flex-1"
 			loading={saving}
-			disabled={poolForm.devices.length === 0}
+			disabled={!poolForm.name || !hasEnoughDevices}
 			on:click={handleCreatePool}
 		>
 			Create Pool

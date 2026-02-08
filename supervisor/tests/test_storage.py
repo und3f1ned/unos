@@ -258,18 +258,71 @@ class TestPoolsModule:
         assert volume.name == "documents"
         assert volume.pool == "datapool"
 
+    def test_create_pool_validates_raid_level(self):
+        """Test that invalid raid levels are rejected at schema level."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            PoolCreate(
+                name="testpool",
+                devices=["/dev/sda"],
+                raid_level="invalid"
+            )
+
+    def test_raid5_rejected_as_unsafe(self):
+        """Test that RAID5 is rejected as unsafe (write hole bug)."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            PoolCreate(name="test", devices=["/dev/sda"], raid_level="raid5")
+
+    def test_raid6_rejected_as_unsafe(self):
+        """Test that RAID6 is rejected as unsafe (write hole bug)."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            PoolCreate(name="test", devices=["/dev/sda"], raid_level="raid6")
+
     @patch("src.storage.pools.settings")
-    def test_create_pool_validates_raid_level(self, mock_settings):
-        """Test that invalid raid levels are rejected."""
+    def test_create_pool_rejects_insufficient_devices_raid1c3(self, mock_settings):
+        """Test that raid1c3 requires at least 3 devices."""
         mock_settings.pools_base_path = "/mnt/pools"
-        
+
         pool = PoolCreate(
             name="testpool",
-            devices=["/dev/sda"],
-            raid_level="invalid"
+            devices=["/dev/sda", "/dev/sdb"],
+            raid_level="raid1c3"
         )
-        
-        with pytest.raises(ValueError, match="Unsupported RAID level"):
+
+        with pytest.raises(ValueError, match="requires at least 3 devices"):
+            pools.create_pool(pool)
+
+    @patch("src.storage.pools.settings")
+    def test_create_pool_rejects_insufficient_devices_raid1c4(self, mock_settings):
+        """Test that raid1c4 requires at least 4 devices."""
+        mock_settings.pools_base_path = "/mnt/pools"
+
+        pool = PoolCreate(
+            name="testpool",
+            devices=["/dev/sda", "/dev/sdb", "/dev/sdc"],
+            raid_level="raid1c4"
+        )
+
+        with pytest.raises(ValueError, match="requires at least 4 devices"):
+            pools.create_pool(pool)
+
+    @patch("src.storage.pools.settings")
+    def test_create_pool_rejects_insufficient_devices_raid10(self, mock_settings):
+        """Test that raid10 requires at least 4 devices."""
+        mock_settings.pools_base_path = "/mnt/pools"
+
+        pool = PoolCreate(
+            name="testpool",
+            devices=["/dev/sda", "/dev/sdb", "/dev/sdc"],
+            raid_level="raid10"
+        )
+
+        with pytest.raises(ValueError, match="requires at least 4 devices"):
             pools.create_pool(pool)
 
     @patch("src.storage.pools.settings")
@@ -360,10 +413,18 @@ class TestStorageSchemas:
             PoolCreate(name="pool1")
 
     def test_raid_levels_supported(self):
-        """Test supported RAID levels in schema."""
-        for raid in ["single", "raid0", "raid1", "raid5", "raid6", "raid10"]:
+        """Test supported (safe) RAID levels in schema."""
+        for raid in ["single", "raid0", "raid1", "raid1c3", "raid1c4", "raid10"]:
             pool = PoolCreate(name="test", devices=["/dev/sda"], raid_level=raid)
             assert pool.raid_level == raid
+
+    def test_unsafe_raid_levels_rejected(self):
+        """Test that RAID5/6 are rejected at schema level (write hole bug)."""
+        from pydantic import ValidationError
+
+        for raid in ["raid5", "raid6"]:
+            with pytest.raises(ValidationError):
+                PoolCreate(name="test", devices=["/dev/sda"], raid_level=raid)
 
 
 class TestStorageSecurityValidation:
