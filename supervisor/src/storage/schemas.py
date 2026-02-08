@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -21,10 +23,13 @@ class SmartData(BaseModel):
     raw_data: dict | None = None
 
 
+SAFE_RAID_LEVELS = ("single", "raid0", "raid1", "raid1c3", "raid1c4", "raid10")
+
+
 class PoolCreate(BaseModel):
     name: str
     devices: list[str]
-    raid_level: str = "single"  # single, raid0, raid1, raid5, raid6, raid10
+    raid_level: Literal["single", "raid0", "raid1", "raid1c3", "raid1c4", "raid10"] = "single"
 
 
 class PoolInfo(BaseModel):

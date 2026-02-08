@@ -91,11 +91,16 @@ Go to **Storage** to see:
 | Profile | Min Disks | Redundancy | Space Efficiency |
 |---------|-----------|------------|------------------|
 | Single | 1 | None | 100% |
-| RAID0 | 2 | None | 100% |
-| RAID1 | 2 | 1 disk | 50% |
-| RAID5 | 3 | 1 disk | ~67-90% |
-| RAID6 | 4 | 2 disks | ~50-80% |
-| RAID10 | 4 | 1 per pair | 50% |
+| RAID 0 | 2 | None | 100% |
+| RAID 1 | 2 | 1 disk failure | 50% |
+| RAID 1C3 | 3 | 2 disk failures | 33% |
+| RAID 1C4 | 4 | 3 disk failures | 25% |
+| RAID 10 | 4 | 1 per pair | 50% |
+
+> **Note:** BTRFS RAID5 and RAID6 are not offered because they have a known
+> "write hole" bug that can cause silent data corruption on power failure.
+> UNOS prioritizes data safety. Use RAID 1C3 (3 copies) or RAID 1C4 (4 copies)
+> for multi-disk redundancy beyond RAID 1.
 
 6. Click **Create**
 

@@ -33,7 +33,7 @@ export interface Pool {
 export interface PoolCreate {
   name: string;
   devices: string[];
-  raid_level: string;
+  raid_level: 'single' | 'raid0' | 'raid1' | 'raid1c3' | 'raid1c4' | 'raid10';
 }
 
 export interface Volume {

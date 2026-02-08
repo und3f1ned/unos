@@ -10,12 +10,14 @@ settings = get_settings()
 
 def create_pool(pool: PoolCreate) -> PoolInfo:
     """Create a new btrfs pool."""
+    # BTRFS RAID5/6 are excluded due to the write hole bug that causes
+    # silent data corruption on power failure. Use RAID1C3/C4 instead.
     profile_map = {
         "single": ("single", "single"),
         "raid0": ("raid0", "raid0"),
         "raid1": ("raid1", "raid1"),
-        "raid5": ("raid5", "raid5"),
-        "raid6": ("raid6", "raid6"),
+        "raid1c3": ("raid1c3", "raid1c3"),
+        "raid1c4": ("raid1c4", "raid1c4"),
         "raid10": ("raid10", "raid10"),
     }
 
@@ -24,6 +26,18 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
 
     # Validate device paths to prevent injection
     validated_devices = validate_device_list(pool.devices)
+
+    # Validate minimum device count for the selected RAID level
+    min_devices = {
+        "single": 1, "raid0": 2, "raid1": 2,
+        "raid1c3": 3, "raid1c4": 4, "raid10": 4,
+    }
+    required = min_devices.get(pool.raid_level, 1)
+    if len(validated_devices) < required:
+        raise ValueError(
+            f"RAID level '{pool.raid_level}' requires at least {required} devices, "
+            f"but only {len(validated_devices)} provided"
+        )
 
     data_profile, meta_profile = profile_map[pool.raid_level]
 
