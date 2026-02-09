@@ -181,7 +181,7 @@ sudo docker compose up -d
 ```bash
 sudo cat > /etc/systemd/system/unos.service << 'EOF'
 [Unit]
-Description=UNOS - Universal NAS Operating System
+Description=UNOS - Universal NAS Open Software
 Requires=docker.service
 After=docker.service
 

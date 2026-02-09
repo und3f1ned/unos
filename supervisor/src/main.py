@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="UNOS Supervisor",
-    description="Universal NAS OS Backend API",
+    description="Universal NAS Open Software Backend API",
     version="0.1.0",
     lifespan=lifespan,
 )

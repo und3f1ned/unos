@@ -1,7 +1,7 @@
-# UNOS - Universal NAS Operating System
+# UNOS - Universal NAS Open Software
 
 <p align="center">
-  <strong>A modern, open-source NAS operating system for ARM and x86 Linux systems</strong>
+  <strong>A modern, open-source NAS management platform for ARM and x86 Linux systems</strong>
 </p>
 
 <p align="center">
