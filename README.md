@@ -5,6 +5,25 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/und3f1ned/unos/releases"><img src="https://img.shields.io/github/v/release/und3f1ned/unos?style=flat-square&color=blue" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/und3f1ned/unos?style=flat-square" alt="License"></a>
+  <a href="https://github.com/und3f1ned/unos/stargazers"><img src="https://img.shields.io/github/stars/und3f1ned/unos?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/und3f1ned/unos/issues"><img src="https://img.shields.io/github/issues/und3f1ned/unos?style=flat-square" alt="Issues"></a>
+  <a href="https://github.com/und3f1ned/unos/commits/main"><img src="https://img.shields.io/github/last-commit/und3f1ned/unos?style=flat-square" alt="Last Commit"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/SvelteKit-FF3E00?style=flat-square&logo=svelte&logoColor=white" alt="SvelteKit">
+  <img src="https://img.shields.io/badge/TailwindCSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="TailwindCSS">
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/BTRFS-FF6600?style=flat-square&logo=linux&logoColor=white" alt="BTRFS">
+  <img src="https://img.shields.io/badge/ARM64-supported-green?style=flat-square" alt="ARM64">
+  <img src="https://img.shields.io/badge/AMD64-supported-green?style=flat-square" alt="AMD64">
+</p>
+
+<p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#documentation">Documentation</a> •
@@ -16,7 +35,7 @@
 
 ## Overview
 
-UNOS transforms any Linux system into a powerful Network Attached Storage server with a modern web interface. Built with FastAPI and SvelteKit, it provides real-time monitoring, containerized application deployment, and enterprise-grade storage management.
+UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a modern web interface. It installs on top of your existing Linux system as a set of Docker containers — no need to replace your OS or reflash your device. Built with FastAPI and SvelteKit, UNOS provides real-time monitoring, containerized app deployment, and BTRFS-based storage management out of the box.
 
 ## Features
 
@@ -233,4 +252,8 @@ UNOS is released under the [GPL-3.0 License](LICENSE).
 
 <p align="center">
   Built for self-hosters, by self-hosters
+</p>
+
+<p align="center">
+  <code>nas</code> · <code>self-hosted</code> · <code>homelab</code> · <code>storage</code> · <code>btrfs</code> · <code>docker</code> · <code>samba</code> · <code>nfs</code> · <code>fastapi</code> · <code>sveltekit</code> · <code>arm64</code> · <code>home-server</code> · <code>file-sharing</code> · <code>network-attached-storage</code> · <code>linux</code>
 </p>
