@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# UNOS (Universal NAS OS) Installation Script
+# UNOS (Universal NAS Open Software) Installation Script
 # https://github.com/und3f1ned/unos
 #
 # This script installs UNOS on a fresh Debian/Ubuntu system
@@ -34,7 +34,7 @@ print_header() {
     echo ""
     echo -e "${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║${NC}                    ${GREEN}UNOS Installation${NC}                      ${BLUE}║${NC}"
-    echo -e "${BLUE}║${NC}              Universal NAS Operating System              ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}               Universal NAS Open Software                ${BLUE}║${NC}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
@@ -273,7 +273,7 @@ create_systemd_service() {
     
     cat > /etc/systemd/system/unos.service << EOF
 [Unit]
-Description=UNOS - Universal NAS Operating System
+Description=UNOS - Universal NAS Open Software
 Requires=docker.service
 After=docker.service
 
