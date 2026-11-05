@@ -1,5 +1,6 @@
 import docker
 from docker.errors import NotFound, APIError
+from docker.models.containers import Container
 from ..config import get_settings
 from .schemas import ContainerInfo, ContainerCreate, ContainerState, PortMapping, ImageInfo
 
@@ -16,6 +17,9 @@ SYSTEM_IMAGES = [
     "deploy-supervisor",
     "deploy-webui",
 ]
+
+# Label of containers installed from the app catalog (see apps.router).
+UNOS_APP_LABEL = "unos.app"
 
 
 def is_system_container(name: str) -> bool:
@@ -165,11 +169,25 @@ def create_container(config: ContainerCreate) -> ContainerInfo:
     return get_container(container.short_id)
 
 
+def _check_app_start(container: Container) -> None:
+    """Run the Apps page's checks before a UNOS app starts.
+
+    HTTPException 409 if the app must not start, 500 if one of its folders
+    cannot be checked or created.
+    """
+    if UNOS_APP_LABEL in container.labels:
+        # Imported here: apps.router imports this module.
+        from ..apps.router import prepare_app_start
+
+        prepare_app_start(container)
+
+
 def start_container(container_id: str) -> ContainerInfo:
-    """Start a stopped container."""
+    """Start a stopped container; a UNOS app only if its data folders are usable."""
     client = get_client()
     try:
         container = client.containers.get(container_id)
+        _check_app_start(container)
         container.start()
         container.reload()
         return get_container(container_id)
@@ -195,10 +213,11 @@ def stop_container(container_id: str) -> ContainerInfo:
 
 
 def restart_container(container_id: str) -> ContainerInfo:
-    """Restart a container."""
+    """Restart a container; a UNOS app only if its data folders are usable."""
     client = get_client()
     try:
         container = client.containers.get(container_id)
+        _check_app_start(container)
         container.restart()
         container.reload()
         return get_container(container_id)

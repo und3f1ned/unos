@@ -1,0 +1,10 @@
+# Build context of Dockerfile and Dockerfile.test. tests/ stays in:
+# Dockerfile.test copies tests/mocks and tests/fixtures.
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+.ruff_cache
+# Created by scripts/test-cycle.sh --unit.
+venv
+.venv
+**/.env*

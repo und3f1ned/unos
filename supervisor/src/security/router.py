@@ -1,3 +1,4 @@
+import os
 import subprocess
 import json
 import re
@@ -8,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
 from ..database import get_db
-from ..auth.utils import verify_token
+from ..auth.utils import client_ip, require_admin, verify_token
 from ..auth.models import User
 from .models import LoginAttempt
 from .schemas import (
@@ -16,7 +17,8 @@ from .schemas import (
     FirewallRule, FirewallStatus, FirewallRuleCreate, FirewallAction,
     FirewallDirection, FirewallProtocol,
     Certificate, CertificateListResponse, CertificateType, CertificateStatus,
-    CertificateUpload, SelfSignedCertRequest, LetsEncryptRequest
+    CertificateUpload, SelfSignedCertRequest,
+    MAX_CERTIFICATE_NAME_LENGTH, is_dns_hostname, parse_ip_address, validate_certificate_domain,
 )
 
 router = APIRouter(prefix="/security", tags=["security"])
@@ -80,13 +82,10 @@ async def get_login_history(
 @router.delete("/login-history")
 async def clear_login_history(
     older_than_days: int = 30,
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Clear login history older than specified days. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     cutoff = datetime.now() - timedelta(days=older_than_days)
 
     from sqlalchemy import delete
@@ -202,7 +201,7 @@ def apply_ufw_rule(rule: FirewallRule, delete: bool = False) -> tuple[bool, str]
 
 
 @router.get("/firewall", response_model=FirewallStatus)
-async def get_firewall_status(_: User = Depends(verify_token)):
+async def get_firewall_status(_: User = Depends(require_admin)):
     """Get current firewall status and rules."""
     enabled, default_in, default_out = get_ufw_status()
     rules = load_firewall_rules()
@@ -216,11 +215,8 @@ async def get_firewall_status(_: User = Depends(verify_token)):
 
 
 @router.post("/firewall/enable")
-async def enable_firewall(current_user: User = Depends(verify_token)):
+async def enable_firewall(current_user: User = Depends(require_admin)):
     """Enable the firewall. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     try:
         # Enable UFW with default deny incoming
         result = subprocess.run(
@@ -240,11 +236,8 @@ async def enable_firewall(current_user: User = Depends(verify_token)):
 
 
 @router.post("/firewall/disable")
-async def disable_firewall(current_user: User = Depends(verify_token)):
+async def disable_firewall(current_user: User = Depends(require_admin)):
     """Disable the firewall. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     try:
         result = subprocess.run(
             ["ufw", "--force", "disable"],
@@ -265,12 +258,9 @@ async def disable_firewall(current_user: User = Depends(verify_token)):
 @router.post("/firewall/rules", response_model=FirewallRule)
 async def create_firewall_rule(
     rule: FirewallRuleCreate,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Create a new firewall rule. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     rules = load_firewall_rules()
 
     # Generate ID
@@ -293,12 +283,9 @@ async def create_firewall_rule(
 @router.delete("/firewall/rules/{rule_id}")
 async def delete_firewall_rule(
     rule_id: str,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Delete a firewall rule. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     rules = load_firewall_rules()
     rule_to_delete = next((r for r in rules if r.id == rule_id), None)
 
@@ -318,11 +305,8 @@ async def delete_firewall_rule(
 
 
 @router.post("/firewall/reset")
-async def reset_firewall(current_user: User = Depends(verify_token)):
+async def reset_firewall(current_user: User = Depends(require_admin)):
     """Reset firewall to default rules. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     try:
         # Reset UFW
         subprocess.run(["ufw", "--force", "reset"], capture_output=True, text=True)
@@ -376,6 +360,52 @@ async def reset_firewall(current_user: User = Depends(verify_token)):
 
 
 # ==================== SSL/TLS Certificate Management ====================
+
+def _certificate_files(name: str) -> tuple[Path, Path, Path]:
+    """Certificate, key and chain file of the custom certificate ``name``.
+
+    Raises ValueError unless all three are direct children of CERTS_DIR, so a
+    name can never reach another directory.
+    """
+    certs_path = Path(CERTS_DIR)
+    if name in ("", ".", "..") or "/" in name or "\0" in name:
+        raise ValueError(f"Invalid certificate name: {name!r}")
+    files = (
+        certs_path / f"{name}.crt",
+        certs_path / f"{name}.key",
+        certs_path / f"{name}.chain.crt",
+    )
+    if any(path.parent != certs_path for path in files):
+        raise ValueError(f"Invalid certificate name: {name!r}")
+    return files
+
+
+def _uploaded_certificate_name(common_name: str) -> str | None:
+    """Name to store an uploaded certificate under: its subject CN, if that is a
+    host name, a wildcard host name (*.example.com) or an IP address, of at most
+    MAX_CERTIFICATE_NAME_LENGTH characters."""
+    if common_name.startswith("*.") and is_dns_hostname(common_name[2:]):
+        return common_name if len(common_name) <= MAX_CERTIFICATE_NAME_LENGTH else None
+    try:
+        return validate_certificate_domain(common_name)
+    except ValueError:
+        return None
+
+
+def _write_private_key(path: Path, key: str) -> None:
+    """Write ``key`` to ``path``, readable and writable by the owner only (0600)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        # open() applies the mode only to a new file: tighten one that already
+        # existed (older versions wrote uploaded keys 0644) before writing.
+        os.fchmod(fd, 0o600)
+        fh.write(key)
+
+
+def _subject_value(value: str) -> str:
+    """Escape a value for openssl's -subj ("/type=value/..."), where \\, / and + are special."""
+    return re.sub(r"([\\/+])", r"\\\1", value)
+
 
 def get_certificate_info(cert_path: str) -> dict | None:
     """Parse certificate and extract information using openssl."""
@@ -492,7 +522,7 @@ def get_custom_certificates() -> list[Certificate]:
 
 
 @router.get("/certificates", response_model=CertificateListResponse)
-async def list_certificates(_: User = Depends(verify_token)):
+async def list_certificates(_: User = Depends(require_admin)):
     """List all SSL/TLS certificates."""
     caddy_certs = get_caddy_certificates()
     custom_certs = get_custom_certificates()
@@ -513,7 +543,7 @@ async def list_certificates(_: User = Depends(verify_token)):
 
 
 @router.get("/certificates/status", response_model=CertificateStatus)
-async def get_certificate_status(_: User = Depends(verify_token)):
+async def get_certificate_status(_: User = Depends(require_admin)):
     """Get current SSL/TLS certificate status."""
     caddy_certs = get_caddy_certificates()
     custom_certs = get_custom_certificates()
@@ -550,25 +580,31 @@ async def get_certificate_status(_: User = Depends(verify_token)):
 @router.post("/certificates/self-signed")
 async def generate_self_signed_certificate(
     request: SelfSignedCertRequest,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Generate a self-signed certificate. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
-    certs_path = Path(CERTS_DIR)
-    certs_path.mkdir(parents=True, exist_ok=True)
-
-    key_file = certs_path / f"{request.domain}.key"
-    cert_file = certs_path / f"{request.domain}.crt"
+    # The schema only accepts a host name or an IP address short enough for a
+    # subject CN (and so for the file names), so the domain can name files in
+    # CERTS_DIR and go into -subj and -addext as it is.
+    domain = request.domain
+    cert_file, key_file, _chain_file = _certificate_files(domain)
+    cert_file.parent.mkdir(parents=True, exist_ok=True)
+    san = f"IP:{domain}" if parse_ip_address(domain) is not None else f"DNS:{domain}"
 
     try:
         # Build subject string
-        subject = f"/CN={request.domain}"
+        subject = f"/CN={domain}"
         if request.organization:
-            subject += f"/O={request.organization}"
+            subject += f"/O={_subject_value(request.organization)}"
         if request.country:
-            subject += f"/C={request.country}"
+            subject += f"/C={_subject_value(request.country)}"
+
+        # openssl creates a new key file 0600, but writes into an existing one
+        # without changing its mode: tighten a key an older version left 0644.
+        try:
+            key_file.chmod(0o600)
+        except FileNotFoundError:
+            pass
 
         # Generate self-signed certificate
         result = subprocess.run([
@@ -578,7 +614,7 @@ async def generate_self_signed_certificate(
             "-keyout", str(key_file),
             "-out", str(cert_file),
             "-subj", subject,
-            "-addext", f"subjectAltName=DNS:{request.domain}"
+            "-addext", f"subjectAltName={san}"
         ], capture_output=True, text=True)
 
         if result.returncode != 0:
@@ -587,8 +623,10 @@ async def generate_self_signed_certificate(
         return {
             "status": "ok",
             "message": "Self-signed certificate generated",
-            "certificate_id": f"custom_{request.domain}"
+            "certificate_id": f"custom_{domain}"
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Failed to generate certificate: {str(e)}")
 
@@ -596,12 +634,9 @@ async def generate_self_signed_certificate(
 @router.post("/certificates/upload")
 async def upload_certificate(
     data: CertificateUpload,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Upload a custom SSL/TLS certificate. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     certs_path = Path(CERTS_DIR)
     certs_path.mkdir(parents=True, exist_ok=True)
 
@@ -618,18 +653,23 @@ async def upload_certificate(
         if not info:
             raise HTTPException(400, "Invalid certificate format")
 
-        domain = info.get("domain", "custom")
+        # The files are named after the subject CN, so it must be a name.
+        domain = _uploaded_certificate_name(info.get("domain") or "")
+        if domain is None:
+            raise HTTPException(
+                400,
+                "The certificate's subject CN must be a host name, a wildcard host name "
+                "(*.example.com) or an IP address, at most "
+                f"{MAX_CERTIFICATE_NAME_LENGTH} characters long",
+            )
+        cert_file, key_file, chain_file = _certificate_files(domain)
 
         # Save certificate and key
-        cert_file = certs_path / f"{domain}.crt"
-        key_file = certs_path / f"{domain}.key"
-
         cert_file.write_text(data.certificate)
-        key_file.write_text(data.private_key)
+        _write_private_key(key_file, data.private_key)
 
         # Save chain if provided
         if data.chain:
-            chain_file = certs_path / f"{domain}.chain.crt"
             chain_file.write_text(data.chain)
 
         return {
@@ -647,21 +687,18 @@ async def upload_certificate(
 @router.delete("/certificates/{cert_id}")
 async def delete_certificate(
     cert_id: str,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Delete a custom certificate. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     if not cert_id.startswith("custom_"):
         raise HTTPException(400, "Can only delete custom certificates")
 
-    domain = cert_id.replace("custom_", "")
-    certs_path = Path(CERTS_DIR)
-
-    cert_file = certs_path / f"{domain}.crt"
-    key_file = certs_path / f"{domain}.key"
-    chain_file = certs_path / f"{domain}.chain.crt"
+    # Not re-validated as a host name: certificates stored by older versions
+    # under other names must stay deletable. The files must be in CERTS_DIR.
+    try:
+        cert_file, key_file, chain_file = _certificate_files(cert_id.removeprefix("custom_"))
+    except ValueError:
+        raise HTTPException(400, "Invalid certificate id") from None
 
     if not cert_file.exists():
         raise HTTPException(404, "Certificate not found")
@@ -690,13 +727,9 @@ async def record_login_attempt(
     user_agent = None
 
     if request:
-        # Get client IP (handle proxy headers)
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            ip_address = forwarded.split(",")[0].strip()
-        else:
-            ip_address = request.client.host if request.client else None
-
+        # Real client address: uvicorn already resolved the proxy's
+        # X-Forwarded-For into request.client (see auth.utils.client_ip).
+        ip_address = client_ip(request)
         user_agent = request.headers.get("User-Agent", "")[:500]  # Limit length
 
     attempt = LoginAttempt(

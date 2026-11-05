@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Server, RefreshCw, Clock } from "lucide-svelte";
+  import { Server, RefreshCw, Clock, UserCog } from "lucide-svelte";
+  import { Card } from "$lib/components/ui";
   import SystemStatsWidget from "$lib/components/widgets/SystemStatsWidget.svelte";
   import StorageWidget from "$lib/components/widgets/StorageWidget.svelte";
   import ContainersWidget from "$lib/components/widgets/ContainersWidget.svelte";
@@ -11,7 +12,8 @@
   import { getPools, type Pool } from "$lib/api/storage";
   import { getContainers, type Container } from "$lib/api/containers";
   import { getLogs, type NotificationLog } from "$lib/api/notifications";
-  import { stats, wsConnected, type WebSocketStats } from "$lib/stores/stats";
+  import { stats, wsConnected, wsForbidden, type WebSocketStats } from "$lib/stores/stats";
+  import { user } from "$lib/stores/auth";
 
   let systemInfo: SystemInfo | null = null;
   let pools: Pool[] = [];
@@ -31,22 +33,28 @@
     await loadData();
   });
 
+  // The layout renders this page only after the user is known. Pools,
+  // containers and notifications are administrator-only APIs; regular
+  // accounts get the system overview and the live stats only.
+  $: isAdmin = $user?.is_admin === true;
+
   async function loadData() {
     loading = true;
     try {
       const [infoData, poolsData, containersData, logsData] = await Promise.all([
-        getSystemInfo(),
-        getPools().catch(() => []),
-        getContainers().catch(() => []),
-        getLogs().catch(() => [])
+        getSystemInfo().catch((e) => {
+          console.error("Failed to load system info:", e);
+          return null;
+        }),
+        isAdmin ? getPools().catch(() => []) : [],
+        isAdmin ? getContainers().catch(() => []) : [],
+        isAdmin ? getLogs().catch(() => []) : []
       ]);
 
       systemInfo = infoData;
       pools = Array.isArray(poolsData) ? poolsData : [];
       containers = Array.isArray(containersData) ? containersData : [];
       notificationLogs = Array.isArray(logsData) ? logsData : [];
-    } catch (e) {
-      console.error("Failed to load dashboard data:", e);
     } finally {
       loading = false;
     }
@@ -85,7 +93,12 @@
     size: p.total_size || 0,
     used: p.used_size || 0,
     free: (p.total_size || 0) - (p.used_size || 0),
-    health: "healthy"
+    health: p.health ?? "unknown",
+    mounted: p.mounted ?? !!p.mountpoint,
+    missingDevices: p.missing_devices ?? 0,
+    deviceErrors: p.device_errors ?? 0,
+    readOnly: p.read_only ?? false,
+    forcedReadOnly: p.forced_read_only ?? false
   }));
 
   // Transform containers for widget
@@ -122,8 +135,10 @@
       </div>
     </div>
     <div class="flex items-center gap-4">
-      {#if !$wsConnected}
-        <span class="text-xs text-yellow-500">WebSocket disconnected</span>
+      {#if $wsForbidden}
+        <span class="text-xs text-warning">Live stats are not available for this account</span>
+      {:else if !$wsConnected}
+        <span class="text-xs text-warning">WebSocket disconnected</span>
       {:else if lastUpdate}
         <span class="text-xs text-slate-500 flex items-center gap-1">
           <Clock class="w-3 h-3" />
@@ -158,22 +173,38 @@
       />
     {/if}
 
-    <!-- Main Grid -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <!-- Storage -->
-      <StorageWidget pools={poolsForWidget} />
+    {#if isAdmin}
+      <!-- Main Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Storage -->
+        <StorageWidget pools={poolsForWidget} />
 
-      <!-- Containers -->
-      <ContainersWidget containers={containersForWidget} limit={5} />
-    </div>
+        <!-- Containers -->
+        <ContainersWidget containers={containersForWidget} limit={5} />
+      </div>
 
-    <!-- Bottom Row -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <!-- Quick Actions -->
-      <QuickActionsWidget />
+      <!-- Bottom Row -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Quick Actions -->
+        <QuickActionsWidget />
 
-      <!-- Recent Activity -->
-      <RecentActivityWidget notifications={notificationsForWidget} limit={5} />
-    </div>
+        <!-- Recent Activity -->
+        <RecentActivityWidget notifications={notificationsForWidget} limit={5} />
+      </div>
+    {:else}
+      <Card>
+        <div class="flex items-start gap-3">
+          <UserCog class="w-5 h-5 text-info mt-0.5" />
+          <div>
+            <p class="font-medium">Signed in as {$user?.username}</p>
+            <p class="text-sm text-secondary">
+              Storage, shares, containers and apps are managed by an administrator.
+              You can change your password, two-factor authentication and review your
+              sign-ins under <a href="/system#security" class="text-info hover:underline">Account</a>.
+            </p>
+          </div>
+        </div>
+      </Card>
+    {/if}
   {/if}
 </div>

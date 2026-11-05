@@ -1,0 +1,225 @@
+"""Run commands and access files on the host, not in the supervisor container.
+
+The supervisor runs in a privileged container with ``pid: host``, so PID 1 is
+the host's init process. Anything that must change the real host (mounts,
+``/etc/fstab``, Samba reloads, ...) has to run in the host's namespaces;
+running it inside the container only changes the container and is lost on the
+next restart.
+
+Every host-affecting operation should go through this module so there is one
+place to audit, test and mock. Arguments are always passed as a list (never
+through a shell), so callers still have to validate untrusted values, but
+they cannot inject extra shell syntax.
+
+Set ``UNOS_HOST_EXEC=local`` to run commands directly (no nsenter), e.g. when
+the supervisor runs natively on the host during development.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import shlex
+import subprocess
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+# Programs the supervisor runs on the host through this module, with the
+# Debian/Ubuntu package that installs them. Callers: storage/pools.py,
+# storage/disks.py, shares/smb.py and health/router.py. cat, test, mkdir,
+# rmdir, find, sync and sh also run there but come from essential packages.
+HOST_TOOLS: dict[str, str] = {
+    "btrfs": "btrfs-progs",
+    "mkfs.btrfs": "btrfs-progs",
+    "chattr": "e2fsprogs",
+    "findmnt": "util-linux",
+    "lsblk": "util-linux",
+    "blkid": "util-linux",
+    "wipefs": "util-linux",
+    "mount": "mount",
+    "umount": "mount",
+    "swapon": "mount",
+    "udevadm": "udev",
+    "systemctl": "systemd",
+    "testparm": "samba-common-bin",
+    "smbcontrol": "samba-common-bin",
+}
+
+# Enter all of PID 1's namespaces except the user and cgroup namespaces.
+_NSENTER_PREFIX = [
+    "nsenter",
+    "--target",
+    "1",
+    "--mount",
+    "--uts",
+    "--ipc",
+    "--net",
+    "--pid",
+    "--",
+]
+
+
+class HostCommandError(RuntimeError):
+    """A host command exited with a non-zero status."""
+
+    def __init__(self, cmd: list[str], returncode: int, stderr: str):
+        self.cmd = cmd
+        self.returncode = returncode
+        self.stderr = stderr
+        super().__init__(
+            f"Host command failed ({returncode}): {shlex.join(cmd)}: {stderr.strip()}"
+        )
+
+
+@dataclass(frozen=True)
+class HostResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0
+
+
+def _prefix() -> list[str]:
+    if os.environ.get("UNOS_HOST_EXEC", "").lower() == "local":
+        return []
+    return list(_NSENTER_PREFIX)
+
+
+def _validate_cmd(cmd: list[str]) -> None:
+    if not cmd or not all(isinstance(part, str) for part in cmd):
+        raise ValueError("Host command must be a non-empty list of strings")
+    if any("\x00" in part for part in cmd):
+        raise ValueError("Host command arguments must not contain NUL bytes")
+
+
+def run_on_host(
+    cmd: list[str],
+    *,
+    timeout: float = 60,
+    check: bool = False,
+    input: str | None = None,
+) -> HostResult:
+    """Run ``cmd`` in the host's namespaces and return its output.
+
+    With ``check=True`` a non-zero exit status raises :class:`HostCommandError`.
+    A timeout raises :class:`subprocess.TimeoutExpired`.
+    """
+    _validate_cmd(cmd)
+    proc = subprocess.run(
+        _prefix() + cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        input=input,
+    )
+    result = HostResult(proc.returncode, proc.stdout, proc.stderr)
+    if check and not result.ok:
+        raise HostCommandError(cmd, result.returncode, result.stderr)
+    return result
+
+
+async def run_on_host_async(
+    cmd: list[str],
+    *,
+    timeout: float = 60,
+    check: bool = False,
+    input: str | None = None,
+) -> HostResult:
+    """Async wrapper around :func:`run_on_host` that does not block the event loop."""
+    return await asyncio.to_thread(
+        run_on_host, cmd, timeout=timeout, check=check, input=input
+    )
+
+
+def read_host_file(path: str, *, timeout: float = 10) -> str:
+    """Return the contents of an absolute path on the host filesystem."""
+    if not path.startswith("/"):
+        raise ValueError("Host paths must be absolute")
+    return run_on_host(["cat", "--", path], timeout=timeout, check=True).stdout
+
+
+def write_host_file_atomic(
+    path: str, content: str, *, mode: str = "0644", timeout: float = 30
+) -> None:
+    """Atomically and durably replace a file on the host filesystem.
+
+    The content is written to a temporary file next to ``path``, flushed to
+    disk, and renamed over the original. Readers therefore see either the old
+    or the new file, never a truncated one.
+
+    The directory is flushed after the rename as well. Until then the rename
+    only lives in the filesystem journal, and ext4 commits the journal every
+    ``commit=`` seconds: Armbian mounts SD-card roots with ``commit=600``, so a
+    power cut within ten minutes would bring back the old file (for
+    ``/etc/fstab``: a pool that is no longer mounted at boot).
+    """
+    if not path.startswith("/"):
+        raise ValueError("Host paths must be absolute")
+    script = (
+        'set -e; tmp="$1.unos-tmp.$$"; '
+        'cat > "$tmp"; chmod "$2" "$tmp"; sync "$tmp" 2>/dev/null || sync; '
+        'mv -f "$tmp" "$1"; '
+        'sync "$(dirname "$1")" 2>/dev/null || sync'
+    )
+    run_on_host(
+        ["/bin/sh", "-c", script, "unos-write", path, mode],
+        input=content,
+        timeout=timeout,
+        check=True,
+    )
+
+
+def sync_host_path(path: str, *, timeout: float = 60) -> bool:
+    """Flush a file or directory on the host to stable storage; never raises.
+
+    ``sync PATH`` fsyncs it. For a directory that makes changes of its
+    entries (mkdir, rmdir, rename) and of its inode flags (``chattr``)
+    durable; ext4 commits its whole journal for it. Falls back to a global
+    ``sync``. Returns False when neither worked.
+    """
+    if not path.startswith("/"):
+        raise ValueError("Host paths must be absolute")
+    return _try_on_host(["sync", path], timeout) or _try_on_host(["sync"], timeout)
+
+
+def _try_on_host(cmd: list[str], timeout: float) -> bool:
+    """Run a host command; True if it succeeded, False on failure, timeout or nsenter error."""
+    try:
+        return run_on_host(cmd, timeout=timeout).ok
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def missing_host_binaries(names: list[str], *, timeout: float = 10) -> list[str] | None:
+    """Return the ``names`` the host cannot find on its PATH, in the given order.
+
+    One host command checks them all; the names reach the shell as positional
+    arguments and are never interpolated into the script. Never raises: when
+    the check itself cannot run (nsenter or the shell fails, timeout), it logs
+    why and returns None.
+    """
+    names = list(dict.fromkeys(names))
+    if not names:
+        return []
+    # "--" and printf (not echo): a name is never taken for an option, and
+    # dash's echo would interpret backslashes in it.
+    script = 'for c do command -v -- "$c" >/dev/null 2>&1 || printf "%s\\n" "$c"; done'
+    try:
+        result = run_on_host(["/bin/sh", "-c", script, "sh", *names], timeout=timeout)
+    except Exception as exc:
+        logger.warning("Could not check which programs the host has: %s", exc)
+        return None
+    if not result.ok:
+        logger.warning(
+            "Could not check which programs the host has (exit status %d): %s",
+            result.returncode,
+            result.stderr.strip(),
+        )
+        return None
+    reported = set(result.stdout.splitlines())
+    return [name for name in names if name in reported]

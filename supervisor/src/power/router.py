@@ -507,7 +507,6 @@ async def get_ups_monitor_status(_: dict = Depends(verify_token)):
     }
 
 
-@router.on_event("startup")
 async def start_ups_monitor():
     """Start the UPS monitor on app startup."""
     global _ups_monitor_running, _ups_monitor_task
@@ -515,7 +514,6 @@ async def start_ups_monitor():
     _ups_monitor_task = asyncio.create_task(ups_monitor_loop())
 
 
-@router.on_event("shutdown")
 async def stop_ups_monitor():
     """Stop the UPS monitor on app shutdown."""
     global _ups_monitor_running, _ups_monitor_task

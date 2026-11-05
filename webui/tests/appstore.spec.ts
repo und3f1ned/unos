@@ -17,7 +17,8 @@ test.describe('App Store', () => {
 
   test('should display installed apps tab', async ({ authenticatedPage: page }) => {
     await page.goto('/apps');
-    await expect(page.locator('text=Installed')).toBeVisible();
+    // The tab button; the page header ("N apps available, M installed") matches text=Installed too.
+    await expect(page.locator('button:has-text("Installed")')).toBeVisible();
   });
 
   test('should show app cards in catalog', async ({ authenticatedPage: page }) => {
@@ -43,8 +44,9 @@ test.describe('App Store', () => {
   test('should have category filter', async ({ authenticatedPage: page }) => {
     await page.goto('/apps');
     
-    const categorySelect = page.locator('select').first();
-    await expect(categorySelect).toBeVisible();
+    // The categories are buttons in the "Categories" list next to the catalog.
+    await expect(page.locator('h3:has-text("Categories")')).toBeVisible();
+    await expect(page.locator('main nav').getByRole('button', { name: /^All Apps/ })).toBeVisible();
   });
 
   test('should show install button on app card', async ({ authenticatedPage: page }) => {

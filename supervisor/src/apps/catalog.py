@@ -11,11 +11,45 @@ Sources:
 - https://github.com/awesome-selfhosted/awesome-selfhosted
 - https://github.com/linuxserver/docker-documentation
 - https://apps.truenas.com/catalog/
+
+Volume host paths:
+- Paths under POOL ("{pool}/...") are on the storage pool the administrator
+  picks at install time; the placeholder becomes the pool's mount point.
+  Missing directories are created there (only while the pool is mounted).
+- Any other absolute path is a fixed host resource (docker.sock, /dev, /proc,
+  /etc/localtime, ...). It is mounted as-is, never created, and cannot be
+  changed through install overrides.
+- Mark single-file sources on the pool with is_file=True.
+- Never put a pool path inside another app's (or the same app's) writable
+  pool path, e.g. {pool}/downloads/watch next to {pool}/downloads. Docker
+  resolves bind sources again on every start and follows symbolic links, so
+  a process in a container that can write {pool}/downloads could replace
+  "watch" with a link to "/" and get the host's root directory mounted into
+  the other container at its next start. App-specific folders belong under
+  {pool}/apps/<app>. The only exception is a read-write bind of the pool
+  root itself for an image that runs as a non-root user (filebrowser): the
+  pool root and the folders the supervisor creates are owned by root.
+- Images that run as a fixed non-root user (USER in the Dockerfile, no
+  root init that fixes permissions) need uid/gid on their writable pool
+  folders; otherwise they cannot write to the root-owned folders the
+  supervisor creates.
+
+Mark passwords, tokens and keys with secret=True and never ship a default
+value for them; required secrets must be set by the administrator.
 """
 
-from .schemas import AppTemplate, AppCategory, AppSource, PortMapping, VolumeMapping, EnvVar
+from .schemas import (
+    POOL_PLACEHOLDER,
+    AppCategory,
+    AppSource,
+    AppTemplate,
+    EnvVar,
+    PortMapping,
+    VolumeMapping,
+)
 
-APPS_DATA_PATH = "/mnt/pools/default/apps"
+POOL = POOL_PLACEHOLDER
+APPS_DATA_PATH = f"{POOL}/apps"
 
 APP_CATALOG: list[AppTemplate] = [
     # ═══════════════════════════════════════════════════════════════════════════
@@ -40,13 +74,13 @@ APP_CATALOG: list[AppTemplate] = [
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/plex/config", container="/config"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/plex/transcode", container="/transcode"),
-            VolumeMapping(host="/mnt/pools/default/media", container="/data", readonly=True),
+            VolumeMapping(host=f"{POOL}/media", container="/data", readonly=True),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
             EnvVar(name="PGID", value="1000"),
             EnvVar(name="TZ", value="UTC", description="Timezone (e.g., America/New_York)"),
-            EnvVar(name="PLEX_CLAIM", value="", description="Claim token from plex.tv/claim"),
+            EnvVar(name="PLEX_CLAIM", value="", description="Claim token from plex.tv/claim", secret=True),
         ],
     ),
     
@@ -68,7 +102,7 @@ APP_CATALOG: list[AppTemplate] = [
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/jellyfin/config", container="/config"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/jellyfin/cache", container="/cache"),
-            VolumeMapping(host="/mnt/pools/default/media", container="/media", readonly=True),
+            VolumeMapping(host=f"{POOL}/media", container="/media", readonly=True),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -94,7 +128,7 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=8920, container=8096)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/emby/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/media", container="/media", readonly=True),
+            VolumeMapping(host=f"{POOL}/media", container="/media", readonly=True),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -120,7 +154,7 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=4533, container=4533)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/navidrome/data", container="/data"),
-            VolumeMapping(host="/mnt/pools/default/music", container="/music", readonly=True),
+            VolumeMapping(host=f"{POOL}/music", container="/music", readonly=True),
         ],
         environment=[
             EnvVar(name="ND_SCANSCHEDULE", value="1h"),
@@ -146,10 +180,10 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=2342, container=2342)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/photoprism/storage", container="/photoprism/storage"),
-            VolumeMapping(host="/mnt/pools/default/photos", container="/photoprism/originals", readonly=True),
+            VolumeMapping(host=f"{POOL}/photos", container="/photoprism/originals", readonly=True),
         ],
         environment=[
-            EnvVar(name="PHOTOPRISM_ADMIN_PASSWORD", value="changeme", description="Initial admin password", required=True),
+            EnvVar(name="PHOTOPRISM_ADMIN_PASSWORD", value="", description="Initial admin password", required=True, secret=True),
             EnvVar(name="PHOTOPRISM_SITE_URL", value="http://localhost:2342/"),
             EnvVar(name="PHOTOPRISM_ORIGINALS_LIMIT", value="5000", description="File size limit in MB"),
             EnvVar(name="PHOTOPRISM_HTTP_COMPRESSION", value="gzip"),
@@ -173,7 +207,7 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=2283, container=2283)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/immich/upload", container="/usr/src/app/upload"),
-            VolumeMapping(host="/mnt/pools/default/photos", container="/usr/src/app/external", readonly=True),
+            VolumeMapping(host=f"{POOL}/photos", container="/usr/src/app/external", readonly=True),
         ],
         environment=[
             EnvVar(name="DB_HOSTNAME", value="immich-db"),
@@ -200,8 +234,8 @@ APP_CATALOG: list[AppTemplate] = [
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/audiobookshelf/config", container="/config"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/audiobookshelf/metadata", container="/metadata"),
-            VolumeMapping(host="/mnt/pools/default/audiobooks", container="/audiobooks", readonly=True),
-            VolumeMapping(host="/mnt/pools/default/podcasts", container="/podcasts"),
+            VolumeMapping(host=f"{POOL}/audiobooks", container="/audiobooks", readonly=True),
+            VolumeMapping(host=f"{POOL}/podcasts", container="/podcasts"),
         ],
     ),
     
@@ -222,7 +256,7 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=8083, container=8083)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/calibre-web/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/books", container="/books"),
+            VolumeMapping(host=f"{POOL}/books", container="/books"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -248,8 +282,8 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=5000, container=5000)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/kavita/config", container="/kavita/config"),
-            VolumeMapping(host="/mnt/pools/default/manga", container="/manga", readonly=True),
-            VolumeMapping(host="/mnt/pools/default/comics", container="/comics", readonly=True),
+            VolumeMapping(host=f"{POOL}/manga", container="/manga", readonly=True),
+            VolumeMapping(host=f"{POOL}/comics", container="/comics", readonly=True),
         ],
     ),
     
@@ -272,8 +306,8 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=8989, container=8989)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/sonarr/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/media/tv", container="/tv"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
+            VolumeMapping(host=f"{POOL}/media/tv", container="/tv"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -299,8 +333,8 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=7878, container=7878)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/radarr/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/media/movies", container="/movies"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
+            VolumeMapping(host=f"{POOL}/media/movies", container="/movies"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -326,8 +360,8 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=8686, container=8686)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/lidarr/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/music", container="/music"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
+            VolumeMapping(host=f"{POOL}/music", container="/music"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -353,8 +387,8 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=8787, container=8787)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/readarr/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/books", container="/books"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
+            VolumeMapping(host=f"{POOL}/books", container="/books"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -405,8 +439,8 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=6767, container=6767)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/bazarr/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/media/movies", container="/movies"),
-            VolumeMapping(host="/mnt/pools/default/media/tv", container="/tv"),
+            VolumeMapping(host=f"{POOL}/media/movies", container="/movies"),
+            VolumeMapping(host=f"{POOL}/media/tv", container="/tv"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -490,8 +524,10 @@ APP_CATALOG: list[AppTemplate] = [
         ],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/transmission/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
-            VolumeMapping(host="/mnt/pools/default/downloads/watch", container="/watch"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
+            # Not {pool}/downloads/watch: many apps can write to downloads and
+            # could swap the folder for a link (see the module docstring).
+            VolumeMapping(host=f"{APPS_DATA_PATH}/transmission/watch", container="/watch"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -521,7 +557,7 @@ APP_CATALOG: list[AppTemplate] = [
         ],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/qbittorrent/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -552,7 +588,7 @@ APP_CATALOG: list[AppTemplate] = [
         ],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/deluge/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -578,8 +614,9 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=8085, container=8080)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/sabnzbd/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
-            VolumeMapping(host="/mnt/pools/default/downloads/incomplete", container="/incomplete-downloads"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
+            # Not {pool}/downloads/incomplete: see the transmission watch folder.
+            VolumeMapping(host=f"{APPS_DATA_PATH}/sabnzbd/incomplete", container="/incomplete-downloads"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -605,7 +642,7 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=6789, container=6789)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/nzbget/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -631,7 +668,7 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=5800, container=5800)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/jdownloader2/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/output"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/output"),
         ],
     ),
     
@@ -656,10 +693,10 @@ APP_CATALOG: list[AppTemplate] = [
         ],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/aria2/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/downloads", container="/downloads"),
+            VolumeMapping(host=f"{POOL}/downloads", container="/downloads"),
         ],
         environment=[
-            EnvVar(name="RPC_SECRET", value="", description="RPC secret token"),
+            EnvVar(name="RPC_SECRET", value="", description="RPC secret token", secret=True),
             EnvVar(name="RPC_PORT", value="6800"),
         ],
     ),
@@ -716,7 +753,7 @@ APP_CATALOG: list[AppTemplate] = [
         ],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/syncthing/config", container="/config"),
-            VolumeMapping(host="/mnt/pools/default/sync", container="/data"),
+            VolumeMapping(host=f"{POOL}/sync", container="/data"),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -740,10 +777,16 @@ APP_CATALOG: list[AppTemplate] = [
         min_memory="64m",
         recommended_memory="256m",
         ports=[PortMapping(host=8081, container=80)],
+        # Current images keep the database in /database and settings.json in
+        # /config (the old /database.db and /.filebrowser.json are not used).
+        # The image runs as "user" (uid/gid 1000) and its init script copies
+        # the default settings into /config, so both folders must be owned by
+        # that user. The pool root (/srv) stays root-owned: browsing works,
+        # and the app cannot rename the folders other apps are bound to.
         volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/filebrowser/database.db", container="/database.db"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/filebrowser/config.json", container="/.filebrowser.json"),
-            VolumeMapping(host="/mnt/pools/default", container="/srv"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/filebrowser/database", container="/database", uid=1000, gid=1000),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/filebrowser/config", container="/config", uid=1000, gid=1000),
+            VolumeMapping(host=POOL, container="/srv"),
         ],
     ),
     
@@ -769,7 +812,7 @@ APP_CATALOG: list[AppTemplate] = [
             VolumeMapping(host=f"{APPS_DATA_PATH}/paperless/consume", container="/usr/src/paperless/consume"),
         ],
         environment=[
-            EnvVar(name="PAPERLESS_SECRET_KEY", value="changeme", description="Secret key for encryption", required=True),
+            EnvVar(name="PAPERLESS_SECRET_KEY", value="", description="Secret key for encryption (long random string)", required=True, secret=True),
             EnvVar(name="PAPERLESS_OCR_LANGUAGE", value="eng", description="OCR language (e.g., eng, deu, fra)"),
             EnvVar(name="PAPERLESS_TIME_ZONE", value="UTC"),
         ],
@@ -821,7 +864,7 @@ APP_CATALOG: list[AppTemplate] = [
             EnvVar(name="DB_HOST", value="bookstack-db"),
             EnvVar(name="DB_DATABASE", value="bookstack"),
             EnvVar(name="DB_USERNAME", value="bookstack"),
-            EnvVar(name="DB_PASSWORD", value="changeme", required=True),
+            EnvVar(name="DB_PASSWORD", value="", description="Password of the BookStack database user", required=True, secret=True),
         ],
     ),
     
@@ -1004,10 +1047,11 @@ APP_CATALOG: list[AppTemplate] = [
         recommended_memory="512m",
         ports=[PortMapping(host=3003, container=3000)],
         volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/grafana/data", container="/var/lib/grafana"),
+            # The image runs as grafana (uid 472, gid 0).
+            VolumeMapping(host=f"{APPS_DATA_PATH}/grafana/data", container="/var/lib/grafana", uid=472, gid=0),
         ],
         environment=[
-            EnvVar(name="GF_SECURITY_ADMIN_PASSWORD", value="admin", description="Admin password", required=True),
+            EnvVar(name="GF_SECURITY_ADMIN_PASSWORD", value="", description="Admin password", required=True, secret=True),
         ],
     ),
     
@@ -1027,8 +1071,9 @@ APP_CATALOG: list[AppTemplate] = [
         recommended_memory="1g",
         ports=[PortMapping(host=9090, container=9090)],
         volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/prometheus/config", container="/etc/prometheus"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/prometheus/data", container="/prometheus"),
+            # The image runs as nobody (uid/gid 65534); it writes its TSDB to /prometheus.
+            VolumeMapping(host=f"{APPS_DATA_PATH}/prometheus/config", container="/etc/prometheus", uid=65534, gid=65534),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/prometheus/data", container="/prometheus", uid=65534, gid=65534),
         ],
     ),
     
@@ -1176,7 +1221,7 @@ APP_CATALOG: list[AppTemplate] = [
             VolumeMapping(host="/etc/localtime", container="/etc/localtime", readonly=True),
         ],
         environment=[
-            EnvVar(name="FRIGATE_RTSP_PASSWORD", value="", description="Password for RTSP streams"),
+            EnvVar(name="FRIGATE_RTSP_PASSWORD", value="", description="Password for RTSP streams", secret=True),
         ],
         privileged=True,
     ),
@@ -1218,7 +1263,8 @@ APP_CATALOG: list[AppTemplate] = [
         recommended_memory="512m",
         ports=[PortMapping(host=1880, container=1880)],
         volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/nodered/data", container="/data"),
+            # The image runs as node-red (uid/gid 1000).
+            VolumeMapping(host=f"{APPS_DATA_PATH}/nodered/data", container="/data", uid=1000, gid=1000),
         ],
         environment=[
             EnvVar(name="TZ", value="UTC"),
@@ -1329,7 +1375,7 @@ APP_CATALOG: list[AppTemplate] = [
         ],
         environment=[
             EnvVar(name="TZ", value="UTC"),
-            EnvVar(name="WEBPASSWORD", value="", description="Admin password for web interface"),
+            EnvVar(name="WEBPASSWORD", value="", description="Admin password for web interface", secret=True),
         ],
     ),
 
@@ -1352,7 +1398,7 @@ APP_CATALOG: list[AppTemplate] = [
             VolumeMapping(host="/dev/net/tun", container="/dev/net/tun"),
         ],
         environment=[
-            EnvVar(name="TS_AUTHKEY", value="", description="Tailscale auth key from admin console", required=True),
+            EnvVar(name="TS_AUTHKEY", value="", description="Tailscale auth key from the admin console (optional). Without a key, open the app's logs after it starts and follow the login URL shown there.", secret=True),
             EnvVar(name="TS_STATE_DIR", value="/var/lib/tailscale"),
         ],
         capabilities=["NET_ADMIN", "NET_RAW"],
@@ -1527,7 +1573,7 @@ APP_CATALOG: list[AppTemplate] = [
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/duplicati/config", container="/config"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/duplicati/backups", container="/backups"),
-            VolumeMapping(host="/mnt/pools/default", container="/source", readonly=True),
+            VolumeMapping(host=POOL, container="/source", readonly=True),
         ],
         environment=[
             EnvVar(name="PUID", value="1000"),
@@ -1623,7 +1669,8 @@ APP_CATALOG: list[AppTemplate] = [
         recommended_memory="1g",
         ports=[PortMapping(host=5678, container=5678)],
         volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/n8n/data", container="/home/node/.n8n"),
+            # The image runs as node (uid/gid 1000).
+            VolumeMapping(host=f"{APPS_DATA_PATH}/n8n/data", container="/home/node/.n8n", uid=1000, gid=1000),
         ],
         environment=[
             EnvVar(name="TZ", value="UTC"),
@@ -1650,7 +1697,7 @@ APP_CATALOG: list[AppTemplate] = [
             VolumeMapping(host=f"{APPS_DATA_PATH}/linkwarden/data", container="/data/data"),
         ],
         environment=[
-            EnvVar(name="NEXTAUTH_SECRET", value="", description="Secret for session encryption", required=True),
+            EnvVar(name="NEXTAUTH_SECRET", value="", description="Secret for session encryption", required=True, secret=True),
             EnvVar(name="NEXTAUTH_URL", value="http://localhost:3000"),
         ],
     ),
@@ -1671,8 +1718,9 @@ APP_CATALOG: list[AppTemplate] = [
         recommended_memory="256m",
         ports=[PortMapping(host=3456, container=3456)],
         volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/vikunja/files", container="/app/vikunja/files"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/vikunja/db", container="/db"),
+            # The image runs as uid 1000 (USER 1000 in a scratch image).
+            VolumeMapping(host=f"{APPS_DATA_PATH}/vikunja/files", container="/app/vikunja/files", uid=1000, gid=1000),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/vikunja/db", container="/db", uid=1000, gid=1000),
         ],
     ),
 
@@ -1700,7 +1748,8 @@ APP_CATALOG: list[AppTemplate] = [
         ],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/gitea/data", container="/data"),
-            VolumeMapping(host="/etc/timezone", container="/etc/timezone", readonly=True),
+            # /etc/timezone is not mounted: newer Debian releases no longer ship
+            # it, and bind sources must exist. Gitea reads /etc/localtime.
             VolumeMapping(host="/etc/localtime", container="/etc/localtime", readonly=True),
         ],
     ),
@@ -1727,7 +1776,7 @@ APP_CATALOG: list[AppTemplate] = [
             EnvVar(name="PUID", value="1000"),
             EnvVar(name="PGID", value="1000"),
             EnvVar(name="TZ", value="UTC"),
-            EnvVar(name="PASSWORD", value="", description="Password for web access"),
+            EnvVar(name="PASSWORD", value="", description="Password for web access (without it anyone on the network gets a shell)", required=True, secret=True),
         ],
     ),
 
@@ -1754,7 +1803,7 @@ APP_CATALOG: list[AppTemplate] = [
             VolumeMapping(host=f"{APPS_DATA_PATH}/vaultwarden/data", container="/data"),
         ],
         environment=[
-            EnvVar(name="ADMIN_TOKEN", value="", description="Admin panel token (generate secure random string)"),
+            EnvVar(name="ADMIN_TOKEN", value="", description="Admin panel token (generate secure random string)", secret=True),
             EnvVar(name="SIGNUPS_ALLOWED", value="true", description="Allow new user signups"),
         ],
     ),

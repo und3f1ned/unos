@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { toDataURL } from "qrcode";
   import { user } from "$lib/stores/auth";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
@@ -35,6 +36,9 @@
   let showDisableModal = false;
   let disableCode = "";
   let secretCopied = false;
+  // The otpauth:// URI contains the TOTP secret, so the QR code is rendered in
+  // the browser and never sent to a third-party service.
+  let qrDataUrl = "";
 
   // Login History state
   let loginHistory: LoginAttempt[] = [];
@@ -76,11 +80,14 @@
     country: ""
   };
 
+  // Firewall and certificates are administrator-only APIs; every account can
+  // manage its own password, 2FA and see its own login history.
+  $: isAdmin = $user?.is_admin === true;
+
   onMount(async () => {
     await Promise.all([
       loadTOTPStatus(),
-      loadFirewallStatus(),
-      loadCertificateStatus()
+      ...(isAdmin ? [loadFirewallStatus(), loadCertificateStatus()] : [])
     ]);
   });
 
@@ -129,6 +136,18 @@
     totpLoading = true;
     try {
       totpSetupData = await setupTOTP();
+      try {
+        // Twice the displayed size so it stays sharp on high-DPI screens.
+        qrDataUrl = await toDataURL(totpSetupData.qr_uri, {
+          width: 384,
+          margin: 2,
+          errorCorrectionLevel: "M"
+        });
+      } catch (e) {
+        // The secret is still shown for manual entry.
+        console.error("Failed to render QR code:", e);
+        qrDataUrl = "";
+      }
       showSetupModal = true;
     } catch (e: any) {
       totpError = e.message || "Failed to setup 2FA";
@@ -151,6 +170,7 @@
       totpSuccess = "Two-Factor Authentication enabled successfully";
       showSetupModal = false;
       totpSetupData = null;
+      qrDataUrl = "";
       totpCode = "";
     } catch (e: any) {
       totpError = e.message || "Invalid code. Please try again.";
@@ -183,6 +203,7 @@
   function cancelSetup() {
     showSetupModal = false;
     totpSetupData = null;
+    qrDataUrl = "";
     totpCode = "";
     totpError = "";
   }
@@ -199,10 +220,6 @@
       secretCopied = true;
       setTimeout(() => secretCopied = false, 2000);
     }
-  }
-
-  function getQRCodeUrl(uri: string): string {
-    return "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=" + encodeURIComponent(uri);
   }
 
   // Login History functions
@@ -572,6 +589,7 @@
     </form>
   </div>
 
+  {#if isAdmin}
   <!-- Firewall -->
   <div class="bg-slate-800 rounded-lg p-4">
     <div class="flex items-center justify-between mb-4">
@@ -809,6 +827,8 @@
     {/if}
   </div>
 
+  {/if}
+
   <!-- Login History -->
   <div class="bg-slate-800 rounded-lg p-4">
     <div class="flex items-center justify-between mb-4">
@@ -917,15 +937,13 @@
           Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.)
         </p>
 
-        <div class="flex justify-center">
-          <div class="bg-white p-2 rounded-lg">
-            <img
-              src={getQRCodeUrl(totpSetupData.qr_uri)}
-              alt="QR Code"
-              class="w-48 h-48"
-            />
+        {#if qrDataUrl}
+          <div class="flex justify-center">
+            <div class="bg-white p-2 rounded-lg">
+              <img src={qrDataUrl} alt="QR code for your authenticator app" class="w-48 h-48" />
+            </div>
           </div>
-        </div>
+        {/if}
 
         <div class="text-center">
           <p class="text-xs text-slate-500 mb-2">Or enter this code manually:</p>

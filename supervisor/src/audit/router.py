@@ -2,16 +2,17 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 import csv
 import io
 
-from ..auth.utils import verify_token
+from ..auth.utils import client_ip, require_admin
 from ..auth.models import User
 from .schemas import AuditEntry, AuditAction, AuditSeverity, AuditQuery
 
-router = APIRouter(prefix="/audit", tags=["audit"])
+# Every audit endpoint is for administrators only.
+router = APIRouter(prefix="/audit", tags=["audit"], dependencies=[Depends(require_admin)])
 
 AUDIT_FILE = "/data/audit_log.json"
 MAX_ENTRIES = 10000  # Keep last 10000 entries
@@ -54,7 +55,7 @@ async def log_action(
     ip_address = None
     user_agent = None
     if request:
-        ip_address = request.client.host if request.client else None
+        ip_address = client_ip(request)
         user_agent = request.headers.get("user-agent")
 
     # Get username from user object or parameter
@@ -96,12 +97,9 @@ async def get_audit_logs(
     end_date: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Get audit logs with optional filtering. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     entries = load_audit_log()
 
     # Apply filters
@@ -133,12 +131,9 @@ async def get_audit_count(
     severity: Optional[AuditSeverity] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Get count of audit logs matching filters. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     entries = load_audit_log()
 
     # Apply filters
@@ -161,12 +156,9 @@ async def export_audit_logs(
     format: str = "json",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Export audit logs as JSON or CSV. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     entries = load_audit_log()
 
     # Apply date filters
@@ -211,12 +203,9 @@ async def export_audit_logs(
 @router.get("/logs/summary")
 async def get_audit_summary(
     days: int = 7,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Get summary of audit activity. Admin only."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     from datetime import timedelta
     cutoff = (datetime.now() - timedelta(days=days)).isoformat()
 
@@ -254,7 +243,7 @@ async def get_audit_summary(
 
 
 @router.get("/actions")
-async def list_audit_actions(_: User = Depends(verify_token)):
+async def list_audit_actions(_: User = Depends(require_admin)):
     """List all available audit action types."""
     return {
         "actions": [
@@ -266,13 +255,11 @@ async def list_audit_actions(_: User = Depends(verify_token)):
 
 @router.delete("/logs")
 async def clear_audit_logs(
+    request: Request,
     before_date: Optional[str] = None,
-    current_user: User = Depends(verify_token)
+    current_user: User = Depends(require_admin)
 ):
     """Clear audit logs. Admin only. Optionally clear only before a date."""
-    if not current_user.is_admin:
-        raise HTTPException(403, "Admin access required")
-
     entries = load_audit_log()
     original_count = len(entries)
 
@@ -288,6 +275,7 @@ async def clear_audit_logs(
     # Log this action itself
     await log_action(
         action=AuditAction.OTHER,
+        request=request,
         username=current_user.username,
         resource_type="audit_log",
         details=f"Cleared {deleted_count} audit entries",

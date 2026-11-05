@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -21,32 +22,57 @@ from .schemas import (
 )
 from .utils import (
     hash_password, verify_password, create_access_token, verify_token,
-    generate_api_token, generate_recovery_codes, verify_recovery_code
+    require_admin, generate_api_token, generate_recovery_codes, verify_recovery_code
 )
 from ..security.router import record_login_attempt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+LAST_ADMIN_DETAIL = "At least one administrator account must remain"
+
+# First-run setup must create exactly one administrator. The supervisor runs
+# as a single uvicorn process, so this lock makes "no users yet" and the
+# insert one step for concurrent setup requests.
+_setup_lock = asyncio.Lock()
+
+
+async def _ensure_an_admin_remains(db: AsyncSession) -> None:
+    """Abort a pending demotion/deletion that would leave no administrator.
+
+    Call after changing the session, before committing. Flushing first takes
+    SQLite's write lock, so two administrators demoting or deleting each other
+    at the same moment cannot both pass this check.
+    """
+    await db.flush()
+    remaining = await db.scalar(
+        select(func.count()).select_from(User).where(User.is_admin.is_(True))
+    )
+    if not remaining:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LAST_ADMIN_DETAIL)
 
 
 @router.post("/setup", response_model=UserResponse)
 @limiter.limit("3/minute")  # Limit setup attempts
 async def setup_admin(request: Request, user: UserCreate, db: AsyncSession = Depends(get_db)):
     """Create initial admin user. Only works if no users exist."""
-    result = await db.execute(select(func.count()).select_from(User))
-    count = result.scalar()
-    if count > 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Admin user already exists. Use /login instead.",
-        )
+    async with _setup_lock:
+        # Counted while holding the lock: a request that waited for it sees
+        # the administrator the previous one committed.
+        count = await db.scalar(select(func.count()).select_from(User))
+        if count:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin user already exists. Use /login instead.",
+            )
 
-    db_user = User(
-        username=user.username,
-        hashed_password=hash_password(user.password),
-        is_admin=True,
-    )
-    db.add(db_user)
-    await db.commit()
+        db_user = User(
+            username=user.username,
+            hashed_password=await asyncio.to_thread(hash_password, user.password),
+            is_admin=True,
+        )
+        db.add(db_user)
+        await db.commit()
     await db.refresh(db_user)
     return db_user
 
@@ -61,7 +87,10 @@ async def login(
     result = await db.execute(select(User).where(User.username == login_request.username))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(login_request.password, user.hashed_password):
+    # bcrypt (cost 12) takes hundreds of milliseconds; keep it off the event loop.
+    if not user or not await asyncio.to_thread(
+        verify_password, login_request.password, user.hashed_password
+    ):
         # Record failed login attempt
         await record_login_attempt(
             db, login_request.username, False, request,
@@ -133,10 +162,12 @@ async def change_password(
     db: AsyncSession = Depends(get_db)
 ):
     """Change current user password."""
-    if not verify_password(data.current_password, current_user.hashed_password):
+    if not await asyncio.to_thread(
+        verify_password, data.current_password, current_user.hashed_password
+    ):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
-    current_user.hashed_password = hash_password(data.new_password)
+    current_user.hashed_password = await asyncio.to_thread(hash_password, data.new_password)
     await db.commit()
     return {"status": "ok", "message": "Password changed successfully"}
 
@@ -216,13 +247,10 @@ async def totp_status(current_user: User = Depends(verify_token)):
 
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """List all users (admin only)."""
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-
     result = await db.execute(select(User))
     return result.scalars().all()
 
@@ -231,20 +259,17 @@ async def list_users(
 async def create_user(
     request: Request,
     user: UserCreate,
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new user (admin only)."""
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-
     result = await db.execute(select(User).where(User.username == user.username))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Username already exists")
 
     db_user = User(
         username=user.username,
-        hashed_password=hash_password(user.password),
+        hashed_password=await asyncio.to_thread(hash_password, user.password),
         is_admin=False,
     )
     db.add(db_user)
@@ -269,25 +294,26 @@ async def update_user(
     request: Request,
     user_id: int,
     data: UserUpdate,
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Update a user (admin only)."""
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     changes = []
+    demoting_admin = data.is_admin is False and bool(user.is_admin)
     if data.is_admin is not None:
         user.is_admin = data.is_admin
         changes.append(f"is_admin={data.is_admin}")
     if data.password:
-        user.hashed_password = hash_password(data.password)
+        user.hashed_password = await asyncio.to_thread(hash_password, data.password)
         changes.append("password changed")
+
+    if demoting_admin:
+        await _ensure_an_admin_remains(db)
 
     await db.commit()
     await db.refresh(user)
@@ -309,14 +335,16 @@ async def update_user(
 async def delete_user(
     request: Request,
     user_id: int,
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a user (admin only)."""
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-
     if current_user.id == user_id:
+        admin_count = await db.scalar(
+            select(func.count()).select_from(User).where(User.is_admin.is_(True))
+        )
+        if not admin_count or admin_count <= 1:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LAST_ADMIN_DETAIL)
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
 
     result = await db.execute(select(User).where(User.id == user_id))
@@ -325,7 +353,10 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     deleted_username = user.username
+    was_admin = bool(user.is_admin)
     await db.delete(user)
+    if was_admin:
+        await _ensure_an_admin_remains(db)
     await db.commit()
 
     # Audit log

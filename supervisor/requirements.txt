@@ -1,22 +1,24 @@
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.0.1
-sqlalchemy==2.0.25
-aiosqlite==0.19.0
-docker==6.1.3
-requests<2.32.0
+# Runtime dependencies of the supervisor (Python 3.11). Test tooling lives in
+# requirements-dev.txt. Pin exact versions; check with pip-audit when bumping.
+fastapi==0.162.0
+starlette==1.10.0
+uvicorn[standard]==0.54.0
+websockets==17.4
+python-multipart==0.0.33
+pydantic==2.14.3
+pydantic-settings==2.16.2
+PyJWT==2.15.1
+bcrypt==5.0.0
+cryptography==50.0.2
+sqlalchemy[asyncio]==2.1.8
+aiosqlite==0.22.1
+docker==7.2.0
+requests==2.34.2
+# Runtime dependency (updates/updater.py, notifications/router.py), not only
+# the TestClient transport.
+httpx==0.28.1
 psutil==5.9.8
-websockets==12.0
-python-multipart==0.0.6
-pytest==8.0.0
-pytest-asyncio==0.21.1
-httpx==0.26.0
 croniter==6.0.0
 pyotp==2.9.0
 nut2==2.1.1
 slowapi==0.1.9
-cryptography>=41.0.0

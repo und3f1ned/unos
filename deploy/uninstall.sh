@@ -61,7 +61,10 @@ backup_before_uninstall() {
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
         log_info "Creating backup..."
         mkdir -p "$BACKUP_DIR"
-        
+        # The backup holds password hashes, 2FA secrets and the JWT signing
+        # secret (jwt_secret): root only, as in update.sh.
+        chmod 700 "$BACKUP_DIR"
+
         # Backup database
         docker run --rm \
             -v deploy_unos-data:/data \

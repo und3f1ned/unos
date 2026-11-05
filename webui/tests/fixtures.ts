@@ -1,7 +1,8 @@
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, type Page } from '@playwright/test';
 
-// Extend base test with authenticated state
-export const test = base.extend({
+// Extend base test with authenticated state. The type argument declares the
+// fixture, so tests get a typed `authenticatedPage` instead of `any`.
+export const test = base.extend<{ authenticatedPage: Page }>({
   authenticatedPage: async ({ page }, use) => {
     await page.goto('/login');
     await page.fill('input[type="text"]', 'admin');

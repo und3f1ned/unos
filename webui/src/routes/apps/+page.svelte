@@ -8,6 +8,7 @@
 		stopApp,
 		restartApp,
 		type AppTemplate,
+		type AppInstallResponse,
 		type InstalledApp
 	} from '$lib/api/apps';
 	import {
@@ -36,12 +37,13 @@
 		Cpu
 	} from 'lucide-svelte';
 	import { Button, Card, Badge, Alert, EmptyState } from '$lib/components/ui';
-	import { AppDetailModal } from '$lib/components/apps';
+	import { AppDetailModal, AppStorageWarning } from '$lib/components/apps';
 
 	let catalog: AppTemplate[] = [];
 	let installed: InstalledApp[] = [];
 	let loading = true;
 	let error = '';
+	let notice = '';
 	let searchQuery = '';
 	let selectedCategory = '';
 	let activeTab: 'catalog' | 'installed' = 'catalog';
@@ -116,7 +118,13 @@
 		selectedApp = null;
 	}
 
-	async function handleInstalled() {
+	async function handleInstalled(
+		event: CustomEvent<{ app: AppTemplate; result: AppInstallResponse }>
+	) {
+		const { app, result } = event.detail;
+		notice = result.pool
+			? `${app.name} was installed. Its data is stored on the "${result.pool}" pool.`
+			: `${app.name} was installed.`;
 		await refresh();
 	}
 
@@ -167,7 +175,7 @@
 	}
 
 	function getSourceBadge(
-		source: string
+		source: string | undefined
 	): { variant: 'success' | 'info' | 'purple' | 'warning'; label: string } {
 		switch (source?.toUpperCase()) {
 			case 'OFFICIAL':
@@ -215,6 +223,10 @@
 
 	{#if error}
 		<Alert variant="error">{error}</Alert>
+	{/if}
+
+	{#if notice}
+		<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
 	{/if}
 
 	<!-- Tabs -->
@@ -458,6 +470,11 @@
 										Port: <span class="mono">{app.web_port}</span>
 									</p>
 								{/if}
+								{#if app.pool}
+									<p class="text-xs text-muted mt-1">
+										Data on pool: <span class="mono">{app.pool}</span>
+									</p>
+								{/if}
 							</div>
 							<div class="flex items-center gap-2">
 								{#if getWebUrl(app)}
@@ -508,6 +525,7 @@
 								</Button>
 							</div>
 						</div>
+						<AppStorageWarning {app} class="mt-4" />
 					</Card>
 				{/each}
 			</div>
@@ -520,6 +538,7 @@
 	bind:open={showDetailModal}
 	app={selectedApp}
 	isInstalled={selectedApp ? isInstalled(selectedApp.id) : false}
+	installedApp={selectedApp ? (getInstalledInfo(selectedApp.id) ?? null) : null}
 	on:close={closeDetail}
 	on:installed={handleInstalled}
 />

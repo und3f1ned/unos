@@ -1,74 +1,83 @@
-import pytest
+import asyncio
+import importlib
 import json
-from unittest.mock import patch, MagicMock
+import subprocess
+import threading
+import time
+from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi import HTTPException
+
+from src.notifications.schemas import (
+    EmailConfig,
+    NotificationChannel,
+    NotificationConfig,
+    TelegramConfig,
+)
+from src.security.validators import (
+    validate_device_list,
+    validate_disk_name,
+    validate_pool_name,
+)
 from src.storage import disks, pools
-from src.storage.schemas import DiskInfo, SmartData, PoolCreate, PoolInfo, VolumeCreate, VolumeInfo
-from src.security.validators import validate_disk_name, validate_pool_name, validate_device_list
+from src.storage.schemas import (
+    DiskInfo,
+    PoolCreate,
+    PoolInfo,
+    SmartData,
+    VolumeCreate,
+    VolumeInfo,
+)
+
+from .test_pool_persistence import (
+    BASE_FSTAB,
+    DATA_UUID,
+    admin_client,
+    entry,
+    install_fake_host,
+    marker,
+    wait_for_app_starts,
+)
+
+health_router = importlib.import_module("src.health.router")
+
+
+@pytest.fixture
+def fake_host(monkeypatch):
+    """Host commands are answered by the in-memory FakeHost (see test_pool_persistence)."""
+    yield install_fake_host(monkeypatch)
+    # A mount starts the pool's apps in a background thread; it must finish
+    # before the fake host's patches are undone.
+    wait_for_app_starts()
 
 
 class TestDisksModule:
-    """Tests for disk management."""
+    """Tests for disk management (host view through src.host)."""
 
     @pytest.fixture
-    def mock_lsblk_output(self):
-        """Mock lsblk JSON output."""
-        return {
-            "blockdevices": [
-                {
-                    "name": "sda",
-                    "path": "/dev/sda",
-                    "model": "Samsung SSD 860",
-                    "serial": "S3Z2NB0K123456",
-                    "size": 500107862016,
-                    "rota": False,
-                    "mountpoint": None,
-                    "type": "disk"
-                },
-                {
-                    "name": "sdb",
-                    "path": "/dev/sdb",
-                    "model": "WDC WD40EFRX",
-                    "serial": "WD-WCC4E0123456",
-                    "size": 4000787030016,
-                    "rota": True,
-                    "mountpoint": None,
-                    "type": "disk"
-                },
-                {
-                    "name": "sda1",
-                    "path": "/dev/sda1",
-                    "model": None,
-                    "serial": None,
-                    "size": 500106813440,
-                    "rota": False,
-                    "mountpoint": "/",
-                    "type": "part"
-                }
-            ]
-        }
+    def host_disks(self, fake_host):
+        """sda: SSD whose partition sda1 is the host's root filesystem; sdb: HDD."""
+        fake_host.mounts = [m for m in fake_host.mounts if m["target"] != "/"]
+        fake_host.add_disk("sda", size=500107862016, rota=False, model="Samsung SSD 860",
+                           serial="S3Z2NB0K123456", pttype="gpt")
+        fake_host.add_partition("sda", "sda1", size=500106813440, fstype="ext4")
+        fake_host.add_mount("/", "/dev/sda1", "ext4")
+        fake_host.add_disk("sdb", size=4000787030016, rota=True, model="WDC WD40EFRX",
+                           serial="WD-WCC4E0123456")
+        return fake_host
 
-    def test_list_disks_success(self, mock_lsblk_output):
+    def test_list_disks_success(self, host_disks):
         """Test listing disks successfully."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps(mock_lsblk_output)
+        result = disks.list_disks()
 
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
-            result = disks.list_disks()
-
-        # Should return only disk type devices
-        assert len(result) == 2
+        # Only whole disks; the SD card and zram are boot/virtual devices
+        assert [d.name for d in result] == ["sda", "sdb"]
         assert all(isinstance(d, DiskInfo) for d in result)
 
-    def test_list_disks_returns_disk_info(self, mock_lsblk_output):
+    def test_list_disks_returns_disk_info(self, host_disks):
         """Test that list_disks returns correct disk information."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps(mock_lsblk_output)
-
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
-            result = disks.list_disks()
+        result = disks.list_disks()
 
         sda = next(d for d in result if d.name == "sda")
         assert sda.path == "/dev/sda"
@@ -77,41 +86,47 @@ class TestDisksModule:
         assert sda.size == 500107862016
         assert sda.rotational is False
 
-    def test_list_disks_filters_partitions(self, mock_lsblk_output):
-        """Test that partitions are filtered out."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps(mock_lsblk_output)
-
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
-            result = disks.list_disks()
+    def test_list_disks_filters_partitions(self, host_disks):
+        """Test that partitions are reported on their disk, not as disks."""
+        result = disks.list_disks()
 
         disk_names = [d.name for d in result]
         assert "sda1" not in disk_names
+        sda = next(d for d in result if d.name == "sda")
+        assert [p.name for p in sda.partitions] == ["sda1"]
 
-    def test_list_disks_lsblk_failure(self):
+    def test_list_disks_flags_system_disk(self, host_disks):
+        """The disk holding the host's root filesystem is listed as a system disk."""
+        result = {d.name: d for d in disks.list_disks()}
+
+        assert result["sda"].is_system is True
+        assert result["sda"].in_use_reason == "Mounted at /"
+        assert result["sdb"].is_system is False
+        assert result["sdb"].in_use is False
+
+    def test_list_disks_lsblk_failure(self, fake_host):
         """Test that RuntimeError is raised when lsblk fails."""
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = "lsblk: command not found"
+        fake_host.fail[("lsblk",)] = (1, "lsblk: command not found")
 
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError, match="lsblk failed"):
-                disks.list_disks()
+        with pytest.raises(RuntimeError, match="lsblk failed"):
+            disks.list_disks()
 
-    def test_list_disks_identifies_ssd(self, mock_lsblk_output):
+    def test_list_disks_identifies_ssd(self, host_disks):
         """Test that SSDs are identified correctly (rotational=False)."""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = json.dumps(mock_lsblk_output)
-
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
-            result = disks.list_disks()
+        result = disks.list_disks()
 
         sda = next(d for d in result if d.name == "sda")
         sdb = next(d for d in result if d.name == "sdb")
         assert sda.rotational is False  # SSD
         assert sdb.rotational is True   # HDD
+
+    def test_list_disks_accepts_legacy_lsblk_types(self, fake_host):
+        """lsblk < 2.33 prints numbers and booleans as strings."""
+        node = fake_host.add_disk("sdb")
+        node.update(size="4000787030016", rota="0")
+
+        [sdb] = disks.list_disks()
+        assert (sdb.size, sdb.rotational) == (4000787030016, False)
 
 
 class TestSmartData:
@@ -192,20 +207,23 @@ class TestPoolsModule:
         pool = PoolCreate(
             name="datapool",
             devices=["/dev/sda", "/dev/sdb"],
-            raid_level="raid1"
+            raid_level="raid1",
+            confirm_name="datapool",
         )
-        
+
         assert pool.name == "datapool"
         assert pool.devices == ["/dev/sda", "/dev/sdb"]
         assert pool.raid_level == "raid1"
+        assert pool.force is False
 
     def test_pool_create_default_raid(self):
         """Test PoolCreate default raid level."""
         pool = PoolCreate(
             name="datapool",
-            devices=["/dev/sda"]
+            devices=["/dev/sda"],
+            confirm_name="datapool",
         )
-        
+
         assert pool.raid_level == "single"
 
     def test_pool_info_schema(self):
@@ -224,6 +242,8 @@ class TestPoolsModule:
         assert pool.uuid == "12345-67890"
         assert len(pool.devices) == 2
         assert pool.total_size == 4000000000000
+        # Never "healthy" unless the health check said so
+        assert (pool.health, pool.mounted, pool.persistent) == ("unknown", False, False)
 
     def test_volume_create_schema(self):
         """Test VolumeCreate schema."""
@@ -266,7 +286,8 @@ class TestPoolsModule:
             PoolCreate(
                 name="testpool",
                 devices=["/dev/sda"],
-                raid_level="invalid"
+                raid_level="invalid",
+                confirm_name="testpool",
             )
 
     def test_raid5_rejected_as_unsafe(self):
@@ -274,14 +295,14 @@ class TestPoolsModule:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            PoolCreate(name="test", devices=["/dev/sda"], raid_level="raid5")
+            PoolCreate(name="test", devices=["/dev/sda"], raid_level="raid5", confirm_name="test")
 
     def test_raid6_rejected_as_unsafe(self):
         """Test that RAID6 is rejected as unsafe (write hole bug)."""
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            PoolCreate(name="test", devices=["/dev/sda"], raid_level="raid6")
+            PoolCreate(name="test", devices=["/dev/sda"], raid_level="raid6", confirm_name="test")
 
     @patch("src.storage.pools.settings")
     def test_create_pool_rejects_insufficient_devices_raid1c3(self, mock_settings):
@@ -291,7 +312,8 @@ class TestPoolsModule:
         pool = PoolCreate(
             name="testpool",
             devices=["/dev/sda", "/dev/sdb"],
-            raid_level="raid1c3"
+            raid_level="raid1c3",
+            confirm_name="testpool",
         )
 
         with pytest.raises(ValueError, match="requires at least 3 devices"):
@@ -305,7 +327,8 @@ class TestPoolsModule:
         pool = PoolCreate(
             name="testpool",
             devices=["/dev/sda", "/dev/sdb", "/dev/sdc"],
-            raid_level="raid1c4"
+            raid_level="raid1c4",
+            confirm_name="testpool",
         )
 
         with pytest.raises(ValueError, match="requires at least 4 devices"):
@@ -319,58 +342,87 @@ class TestPoolsModule:
         pool = PoolCreate(
             name="testpool",
             devices=["/dev/sda", "/dev/sdb", "/dev/sdc"],
-            raid_level="raid10"
+            raid_level="raid10",
+            confirm_name="testpool",
         )
 
         with pytest.raises(ValueError, match="requires at least 4 devices"):
             pools.create_pool(pool)
 
-    @patch("src.storage.pools.settings")
-    def test_list_pools_parses_btrfs_show(self, mock_settings):
-        """Test parsing btrfs filesystem show output."""
-        mock_settings.pools_base_path = "/mnt/pools"
-        
-        btrfs_show_output = """Label: datapool  uuid: 12345-67890
-        Total devices 2 FS bytes used 500.00GiB
-        devid    1 size 2.00TiB used 501.00GiB path /dev/sda
-        devid    2 size 2.00TiB used 501.00GiB path /dev/sdb
-"""
-        mock_show = MagicMock()
-        mock_show.returncode = 0
-        mock_show.stdout = btrfs_show_output
-        
-        mock_usage = MagicMock()
-        mock_usage.returncode = 0
-        mock_usage.stdout = """Device size:       4000000000000
-Used:              1000000000000
-Data,RAID1:        500000000000
-"""
-        
-        def subprocess_side_effect(cmd, *args, **kwargs):
-            if "show" in cmd:
-                return mock_show
-            return mock_usage
-        
-        with patch("src.storage.pools.subprocess.run", side_effect=subprocess_side_effect):
-            with patch("os.path.join", return_value="/mnt/pools/datapool"):
-                # This will call list_pools which internally calls get_pool
-                pass  # Complex to test fully without mocking filesystem
+    def test_create_pool_requires_matching_confirm_name(self):
+        """The typed confirmation must match before anything else happens."""
+        pool = PoolCreate(name="testpool", devices=["/dev/sda"], confirm_name="testpoo")
 
-    @patch("src.storage.pools.settings")  
-    @patch("src.storage.pools.subprocess.run")
-    def test_delete_pool_unmounts(self, mock_run, mock_settings):
-        """Test that delete_pool unmounts the filesystem."""
-        mock_settings.pools_base_path = "/mnt/pools"
-        mock_run.return_value = MagicMock(returncode=0)
-        
-        with patch("os.path.exists", return_value=True):
-            with patch("os.rmdir"):
-                with patch("builtins.open", MagicMock()):
-                    pools.delete_pool("testpool")
-        
-        # Verify umount was called
-        calls = [str(c) for c in mock_run.call_args_list]
-        assert any("umount" in str(c) for c in calls)
+        with pytest.raises(ValueError, match="confirm_name"):
+            pools.create_pool(pool)
+
+    def test_list_pools_parses_btrfs_show(self, fake_host):
+        """Test listing pools from the host's btrfs filesystem show output."""
+        fake_host.add_disk("sda")
+        fake_host.add_disk("sdb")
+        fake_host.add_btrfs("datapool", DATA_UUID, ["/dev/sda", "/dev/sdb"], profile="raid1")
+        fake_host.mount_pool("datapool")
+
+        [pool] = pools.list_pools()
+
+        assert pool.name == "datapool"
+        assert pool.uuid == DATA_UUID
+        assert pool.devices == ["/dev/sda", "/dev/sdb"]
+        assert pool.mountpoint == "/mnt/pools/datapool"
+        assert pool.raid_level == "raid1"
+        assert pool.total_size == 2 * 4_000_787_030_016
+        assert pool.health == "healthy"
+
+    @pytest.mark.parametrize(
+        ("vfs_options", "fs_options", "errors", "expected"),
+        [
+            ("rw,noatime", "rw,space_cache=v2", 0, ("healthy", False, False)),
+            # btrfs made the filesystem read-only after an error (an aborted transaction)
+            ("rw,noatime", "ro,space_cache=v2", 0, ("error", True, True)),
+            # mounted with "-o ro" on purpose
+            ("ro,noatime", "ro,space_cache=v2", 0, ("healthy", True, False)),
+            # on purpose, and the error counters moved: an error, but btrfs forced nothing
+            ("ro,noatime", "ro,space_cache=v2", 3, ("error", True, False)),
+        ],
+    )
+    def test_list_pools_tells_a_forced_read_only_filesystem_from_a_read_only_mount(
+        self, fake_host, vfs_options, fs_options, errors, expected
+    ):
+        fake_host.add_disk("sda")
+        fake_host.add_btrfs("datapool", DATA_UUID, ["/dev/sda"])
+        fake_host.mount_pool("datapool", vfs_options=vfs_options, fs_options=fs_options)
+        fake_host.device_errors["/mnt/pools/datapool"] = errors
+
+        [pool] = pools.list_pools()
+
+        assert (pool.health, pool.read_only, pool.forced_read_only) == expected
+        assert pool.device_errors == errors
+
+    def test_pool_endpoints_report_a_forced_read_only_filesystem(self, fake_host):
+        fake_host.add_disk("sda")
+        fake_host.add_btrfs("datapool", DATA_UUID, ["/dev/sda"])
+        fake_host.mount_pool("datapool", fs_options="ro,space_cache=v2")
+
+        with admin_client() as api:
+            [listed] = api.get("/api/v1/storage/pools").json()
+            single = api.get("/api/v1/storage/pools/datapool").json()
+
+        for pool in (listed, single):
+            assert (pool["health"], pool["read_only"], pool["forced_read_only"]) == ("error", True, True)
+
+    def test_delete_pool_unmounts(self, fake_host):
+        """delete_pool unmounts on the host and forgets the fstab entry; data stays."""
+        fake_host.add_disk("sda")
+        fake_host.add_btrfs("testpool", DATA_UUID, ["/dev/sda"])
+        fake_host.mount_pool("testpool")
+        fake_host.files["/etc/fstab"] = BASE_FSTAB + marker("testpool") + entry("testpool", DATA_UUID)
+
+        pools.delete_pool("testpool")
+
+        assert ["umount", "/mnt/pools/testpool"] in fake_host.changes
+        assert fake_host.fstab == BASE_FSTAB
+        assert not any(call[0] in ("mkfs.btrfs", "wipefs") for call in fake_host.changes)
+        assert [p.name for p in pools.list_pools()] == ["testpool"]
 
 
 class TestStorageSchemas:
@@ -401,21 +453,25 @@ class TestStorageSchemas:
         assert smart.healthy is True
 
     def test_pool_create_requires_name_and_devices(self):
-        """Test PoolCreate requires name and devices."""
+        """Test PoolCreate requires name, devices and the typed confirmation."""
         from pydantic import ValidationError
-        
+
         # Should work with required fields
-        pool = PoolCreate(name="pool1", devices=["/dev/sda"])
+        pool = PoolCreate(name="pool1", devices=["/dev/sda"], confirm_name="pool1")
         assert pool.name == "pool1"
-        
+
         # Should fail without devices
         with pytest.raises(ValidationError):
-            PoolCreate(name="pool1")
+            PoolCreate(name="pool1", confirm_name="pool1")
+
+        # Should fail without confirm_name
+        with pytest.raises(ValidationError):
+            PoolCreate(name="pool1", devices=["/dev/sda"])
 
     def test_raid_levels_supported(self):
         """Test supported (safe) RAID levels in schema."""
         for raid in ["single", "raid0", "raid1", "raid1c3", "raid1c4", "raid10"]:
-            pool = PoolCreate(name="test", devices=["/dev/sda"], raid_level=raid)
+            pool = PoolCreate(name="test", devices=["/dev/sda"], raid_level=raid, confirm_name="test")
             assert pool.raid_level == raid
 
     def test_unsafe_raid_levels_rejected(self):
@@ -424,7 +480,7 @@ class TestStorageSchemas:
 
         for raid in ["raid5", "raid6"]:
             with pytest.raises(ValidationError):
-                PoolCreate(name="test", devices=["/dev/sda"], raid_level=raid)
+                PoolCreate(name="test", devices=["/dev/sda"], raid_level=raid, confirm_name="test")
 
 
 class TestStorageSecurityValidation:
@@ -493,10 +549,187 @@ class TestStorageSecurityValidation:
         pool = PoolCreate(
             name="testpool",
             devices=["/etc/passwd"],  # Invalid device path
-            raid_level="single"
+            raid_level="single",
+            confirm_name="testpool",
         )
 
         with pytest.raises(HTTPException) as exc:
             pools.create_pool(pool)
         assert exc.value.status_code == 400
         assert "device" in exc.value.detail.lower() or "/dev/" in exc.value.detail
+
+
+def _on_event_loop() -> bool:
+    """Whether the calling thread is running an asyncio event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+SMART_JSON = json.dumps({
+    "serial_number": "WD-1",
+    "smart_status": {"passed": True},
+    "ata_smart_attributes": {"table": [{"id": 5, "name": "Reallocated_Sector_Ct", "raw": {"value": 0}}]},
+})
+
+
+class TestSmartOffTheEventLoop:
+    """smartctl and SMTP block for seconds: never on the event loop (API, WebSocket)."""
+
+    @pytest.fixture
+    def recorded_run(self, monkeypatch):
+        """subprocess.run stand-in: one data disk sda; records (program, on_event_loop)."""
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append((cmd[0], _on_event_loop(), kwargs.get("timeout")))
+            if cmd[0] == "lsblk":
+                devices = {"blockdevices": [{"name": "sda", "type": "disk", "size": "4T"}]}
+                return subprocess.CompletedProcess(cmd, 0, json.dumps(devices), "")
+            return subprocess.CompletedProcess(cmd, 0, SMART_JSON, "")
+
+        monkeypatch.setattr(subprocess, "run", run)
+        return calls
+
+    async def test_monitor_round_runs_in_a_worker_thread(self, recorded_run, monkeypatch, tmp_path):
+        monkeypatch.setattr(health_router, "SMART_HISTORY_FILE", str(tmp_path / "smart.json"))
+
+        async def stop_after_one_round(_seconds):
+            health_router._smart_monitor_running = False
+
+        monkeypatch.setattr(health_router.asyncio, "sleep", stop_after_one_round)
+        monkeypatch.setattr(health_router, "_smart_monitor_running", True)
+        await health_router.smart_monitor_loop()
+
+        assert [(prog, on_loop) for prog, on_loop, _ in recorded_run] == [
+            ("lsblk", False), ("smartctl", False)]
+        assert all(timeout for _, _, timeout in recorded_run)
+        assert "WD-1" in json.loads((tmp_path / "smart.json").read_text())
+
+    def test_snapshot_leaves_sleeping_disks_asleep(self, monkeypatch):
+        commands = []
+
+        def run(cmd, **kwargs):
+            commands.append(cmd)
+            # smartctl -n standby: exit status bit 1 when the disk sleeps
+            return subprocess.CompletedProcess(cmd, 2, '{"power_mode": "STANDBY"}', "")
+
+        monkeypatch.setattr(subprocess, "run", run)
+        assert health_router.collect_smart_snapshot("/dev/sda") is None
+        assert commands == [["smartctl", "-n", "standby", "-j", "-a", "/dev/sda"]]
+
+    def test_snapshot_of_a_failing_disk_is_kept(self, monkeypatch):
+        # Exit status bit 3: "SMART status check returned DISK FAILING".
+        monkeypatch.setattr(
+            subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 8, SMART_JSON, "")
+        )
+        snapshot = health_router.collect_smart_snapshot("/dev/sda")
+        assert snapshot is not None and snapshot.serial == "WD-1"
+
+    def test_storage_smart_endpoint(self, recorded_run):
+        with admin_client() as api:
+            response = api.get("/api/v1/storage/disks/sda/smart")
+        assert response.status_code == 200, response.text
+        assert response.json()["healthy"] is True
+        assert recorded_run == [("smartctl", False, disks.SMARTCTL_TIMEOUT)]
+
+    def test_storage_smart_endpoint_times_out(self, monkeypatch):
+        def hanging(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        monkeypatch.setattr(subprocess, "run", hanging)
+        with admin_client() as api:
+            response = api.get("/api/v1/storage/disks/sda/smart")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["healthy"] is False
+        assert "did not answer" in body["raw_data"]["error"]
+
+    @pytest.mark.parametrize("url", ["/api/v1/health/disks", "/api/v1/health/overview",
+                                     "/api/v1/health/disk/sda"])
+    def test_health_smart_endpoints_run_in_a_worker_thread(self, recorded_run, monkeypatch, url):
+        real_exists = health_router.Path.exists
+        monkeypatch.setattr(
+            health_router.Path, "exists", lambda self: str(self) == "/dev/sda" or real_exists(self)
+        )
+        with admin_client() as api:
+            response = api.get(url)
+        assert response.status_code == 200, response.text
+        assert recorded_run and not any(on_loop for _, on_loop, _ in recorded_run)
+
+
+class TestAlertsOffTheEventLoop:
+    @pytest.fixture
+    def mail_channel(self, monkeypatch):
+        config = NotificationConfig(
+            channel=NotificationChannel.EMAIL,
+            email_config=EmailConfig(smtp_host="mail.example", smtp_user="u", smtp_password="p",
+                                     from_address="nas@example", to_addresses=["me@example"]),
+        )
+        monkeypatch.setattr(health_router, "load_notification_configs", lambda: [config])
+        return config
+
+    async def test_email_is_sent_from_the_alert_threads(self, mail_channel, monkeypatch):
+        main_loop = asyncio.get_running_loop()
+        seen = []
+
+        async def fake_send_email(config, event):
+            seen.append((asyncio.get_running_loop() is main_loop,
+                         threading.current_thread().name, event.title))
+            return True, None
+
+        monkeypatch.setattr(health_router, "send_email", fake_send_email)
+        await health_router.send_raid_alert("data", "degraded", 0, "1 device(s) missing.")
+
+        [(on_main_loop, thread, title)] = seen
+        assert not on_main_loop
+        assert thread.startswith("unos-alerts")
+        assert title == "RAID Pool 'data' DEGRADED"
+
+    async def test_unresponsive_mail_server_neither_blocks_nor_hangs(self, mail_channel, monkeypatch,
+                                                                      caplog):
+        release = threading.Event()
+
+        async def hanging_send_email(config, event):
+            release.wait(5)  # smtplib without a timeout, blocking its thread
+            return True, None
+
+        monkeypatch.setattr(health_router, "send_email", hanging_send_email)
+        monkeypatch.setattr(health_router, "ALERT_TIMEOUT", 0.2)
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        ticking = asyncio.create_task(ticker())
+        started = time.monotonic()
+        try:
+            await health_router.send_raid_alert("data", "error", 3, "details")
+        finally:
+            elapsed = time.monotonic() - started
+            ticking.cancel()
+            release.set()
+
+        assert elapsed < 2
+        assert ticks > 5  # the event loop kept running while the mail server hung
+        assert "Could not send alert" in caplog.text
+
+    async def test_telegram_alerts_are_bounded_too(self, monkeypatch, caplog):
+        config = NotificationConfig(
+            channel=NotificationChannel.TELEGRAM,
+            telegram_config=TelegramConfig(bot_token="t", chat_id="1"),
+        )
+        monkeypatch.setattr(health_router, "load_notification_configs", lambda: [config])
+        monkeypatch.setattr(health_router, "ALERT_TIMEOUT", 0.05)
+
+        async def slow_telegram(config, event):
+            await asyncio.sleep(5)
+
+        monkeypatch.setattr(health_router, "send_telegram", slow_telegram)
+        await health_router.send_raid_alert("data", "error", 1, "details")
+        assert "Could not send alert" in caplog.text

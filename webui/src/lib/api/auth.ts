@@ -1,4 +1,4 @@
-import { api } from "./client";
+import { api, clearToken, getToken, setToken } from "./client";
 
 export interface User {
   id: number;
@@ -53,7 +53,7 @@ export async function login(
     totp_code,
   });
   if (token.access_token) {
-    localStorage.setItem("token", token.access_token);
+    setToken(token.access_token);
   }
   return token;
 }
@@ -71,11 +71,11 @@ export async function getAuthStatus(): Promise<AuthStatus> {
 }
 
 export function logout(): void {
-  localStorage.removeItem("token");
+  clearToken();
 }
 
 export function isAuthenticated(): boolean {
-  return !!localStorage.getItem("token");
+  return !!getToken();
 }
 
 // User management functions (admin only)

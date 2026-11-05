@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 
-const BASE_URL = process.env.BASE_URL || 'http://10.1.1.103';
+// Same default as playwright.config.ts: the UI and API are served over HTTPS.
+const BASE_URL = process.env.BASE_URL || 'https://10.1.1.103';
 let token = '';
 
 test.describe('API Tests', () => {

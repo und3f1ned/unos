@@ -1,4 +1,5 @@
 import { writable, derived } from 'svelte/store';
+import { getToken, handleUnauthorized } from '$lib/api/client';
 
 // Extended types for WebSocket stats
 export interface CpuStats {
@@ -163,54 +164,137 @@ export const statsHistory = derived(stats, $stats => $stats?.history ?? null);
 // Derived store for network interfaces with rates
 export const networkInterfaces = derived(stats, $stats => $stats?.network?.interfaces ?? []);
 
+// Close codes of the WebSocket auth handshake (supervisor/src/websocket/events.py).
+export const WS_CLOSE_UNAUTHORIZED = 4401;
+export const WS_CLOSE_FORBIDDEN = 4403;
+
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
+// A connection that stayed up this long resets the backoff; one that is
+// dropped right after the handshake keeps backing off.
+const STABLE_CONNECTION_MS = 10000;
+
+/** The server refused the stream for this account (close code 4403). */
+export const wsForbidden = writable(false);
+
 let ws: WebSocket | null = null;
+let wsToken: string | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
 
-export function connectWebSocket() {
-  const token = localStorage.getItem('token');
-  if (!token) return;
-
-  // Clear any pending reconnect
+function clearReconnect() {
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
   }
+}
+
+/** Close the current socket without triggering its reconnect logic. */
+function closeSocket() {
+  const socket = ws;
+  ws = null;
+  wsToken = null;
+  if (!socket) return;
+  socket.onopen = null;
+  socket.onmessage = null;
+  socket.onerror = null;
+  socket.onclose = null;
+  if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+    socket.close(1000);
+  }
+}
+
+function scheduleReconnect() {
+  clearReconnect();
+  const backoff = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** Math.min(reconnectAttempts, 10));
+  reconnectAttempts += 1;
+  // Jitter keeps many open tabs from reconnecting in lockstep after a restart.
+  const delay = backoff + Math.random() * backoff * 0.2;
+  reconnectTimeout = setTimeout(() => {
+    reconnectTimeout = null;
+    connectWebSocket();
+  }, delay);
+}
+
+/**
+ * Open the stats stream. Keeps a single connection: a call while a socket for
+ * the same token is open or connecting does nothing; a different token (new
+ * login) replaces the old socket.
+ */
+export function connectWebSocket() {
+  const token = getToken();
+  if (!token || typeof window === 'undefined') return;
+
+  if (
+    ws &&
+    wsToken === token &&
+    (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
+  ) {
+    return;
+  }
+
+  clearReconnect();
+  closeSocket();
+  wsForbidden.set(false);
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws/v1/events?token=${token}`;
+  // No token in the URL: URLs end up in proxy and server logs.
+  const socket = new WebSocket(`${protocol}//${window.location.host}/ws/v1/events`);
+  ws = socket;
+  wsToken = token;
+  let authenticatedAt = 0;
 
-  ws = new WebSocket(wsUrl);
-
-  ws.onopen = () => {
-    wsConnected.set(true);
+  socket.onopen = () => {
+    socket.send(JSON.stringify({ type: 'auth', token }));
   };
 
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (data.type === 'stats') {
-      stats.set(data.data);
+  socket.onmessage = (event) => {
+    let message: { type?: string; data?: WebSocketStats };
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (message.type === 'auth_ok') {
+      authenticatedAt = Date.now();
+      wsConnected.set(true);
+    } else if (message.type === 'stats' && message.data) {
+      if (!authenticatedAt) authenticatedAt = Date.now();
+      wsConnected.set(true);
+      stats.set(message.data);
     }
   };
 
-  ws.onclose = () => {
-    wsConnected.set(false);
+  // No onerror handler: an error event is always followed by this close event.
+  socket.onclose = (event) => {
+    if (ws !== socket) return;
     ws = null;
-    // Reconnect after 3 seconds
-    reconnectTimeout = setTimeout(connectWebSocket, 3000);
-  };
+    wsToken = null;
+    wsConnected.set(false);
 
-  ws.onerror = () => {
-    ws?.close();
+    if (event.code === WS_CLOSE_UNAUTHORIZED) {
+      // Token expired or the account is gone: same as an HTTP 401.
+      handleUnauthorized(token);
+      return;
+    }
+    if (event.code === WS_CLOSE_FORBIDDEN) {
+      wsForbidden.set(true);
+      return;
+    }
+    if (authenticatedAt && Date.now() - authenticatedAt >= STABLE_CONNECTION_MS) {
+      reconnectAttempts = 0;
+    }
+    scheduleReconnect();
   };
 }
 
 export function disconnectWebSocket() {
-  if (reconnectTimeout) {
-    clearTimeout(reconnectTimeout);
-    reconnectTimeout = null;
-  }
-  ws?.close();
-  ws = null;
+  clearReconnect();
+  reconnectAttempts = 0;
+  closeSocket();
+  wsConnected.set(false);
+  wsForbidden.set(false);
+  stats.set(null);
 }
 
 // Utility functions

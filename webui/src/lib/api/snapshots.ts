@@ -28,7 +28,7 @@ export async function createSnapshot(subvolume: string, name?: string): Promise<
 }
 
 export async function deleteSnapshot(snapshotId: string, subvolume: string): Promise<void> {
-  return api.delete(`/snapshots/${snapshotId}?subvolume=${encodeURIComponent(subvolume)}`);
+  return api.delete(`/snapshots/${encodeURIComponent(snapshotId)}?subvolume=${encodeURIComponent(subvolume)}`);
 }
 
 export async function restoreSnapshot(snapshotPath: string, targetPath?: string): Promise<{ status: string; source: string; target: string }> {

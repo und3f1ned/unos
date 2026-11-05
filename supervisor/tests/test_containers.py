@@ -1,10 +1,23 @@
+import importlib
+import os
 import pytest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
+from docker.errors import NotFound
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from src.auth.utils import verify_token
+from src.config import get_settings
 from src.containers import docker as docker_module
 from src.containers.schemas import (
     ContainerInfo, ContainerCreate, ContainerState, 
     PortMapping, VolumeMount, ImageInfo
 )
+from src.main import app
+
+# The package re-exports its APIRouter as ``router``; import the module.
+apps_router = importlib.import_module("src.apps.router")
 
 
 class TestContainerSchemas:
@@ -332,3 +345,171 @@ class TestContainerStateMapping:
     def test_exited_state(self):
         """Test exited state."""
         assert ContainerState.EXITED.value == "exited"
+
+
+# ---------------------------------------------------------------------------
+# UNOS apps started from the Containers page get the Apps page's checks
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def api():
+    previous = app.dependency_overrides.get(verify_token)
+    app.dependency_overrides[verify_token] = lambda: SimpleNamespace(
+        id=1, username="admin", is_admin=True, is_active=True
+    )
+    try:
+        yield TestClient(app)
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(verify_token, None)
+        else:
+            app.dependency_overrides[verify_token] = previous
+
+
+@pytest.fixture
+def pool(tmp_path, monkeypatch) -> Path:
+    """A pools base with the mounted pool "alpha" and a directory outside of it."""
+    alpha = tmp_path / "pools" / "alpha"
+    alpha.mkdir(parents=True)
+    (tmp_path / "outside").mkdir()
+    monkeypatch.setattr(get_settings(), "pools_base_path", str(alpha.parent))
+    monkeypatch.setattr(os.path, "ismount", lambda path: os.fspath(path) == str(alpha))
+    return alpha
+
+
+def _bind(source, target: str, *, rw: bool = True) -> dict:
+    return {"Type": "bind", "Source": str(source), "Destination": target, "Mode": "", "RW": rw}
+
+
+def _container(name: str, labels: dict, mounts: list[dict]) -> MagicMock:
+    container = MagicMock(name=name)
+    container.short_id = f"{name}-id"
+    container.name = name
+    container.status = "exited"
+    container.image.tags = [f"example/{name}:latest"]
+    container.labels = labels
+    container.attrs = {"Created": "2026-01-02T03:04:05Z", "NetworkSettings": {"Ports": {}}, "Mounts": mounts}
+    return container
+
+
+def _jellyfin(pool: Path) -> MagicMock:
+    return _container(
+        "jellyfin",
+        {"unos.app": "jellyfin", "unos.app.pool": pool.name},
+        [
+            _bind(pool / "apps/jellyfin/config", "/config"),
+            _bind(pool / "apps/jellyfin/cache", "/cache"),
+            _bind(pool / "media", "/media", rw=False),
+        ],
+    )
+
+
+@pytest.fixture
+def docker_client(monkeypatch):
+    """A mocked Docker client that knows the containers passed to ``add``."""
+    by_name: dict[str, MagicMock] = {}
+    client = MagicMock(name="docker")
+
+    def get(name):
+        try:
+            return by_name[name]
+        except KeyError:
+            raise NotFound(f"No such container: {name}") from None
+
+    client.containers.get.side_effect = get
+    monkeypatch.setattr(docker_module, "get_client", lambda: client)
+    client.add = lambda container: by_name.setdefault(container.name, container)
+    return client
+
+
+class TestUnosAppStartChecks:
+    @pytest.mark.parametrize("operation", ["start_container", "restart_container"])
+    def test_checks_run_right_before_the_start(self, docker_client, monkeypatch, operation):
+        container = docker_client.add(_jellyfin(Path("/mnt/pools/alpha")))
+        checked = []
+
+        def prepare_app_start(target, pools=None):
+            assert not container.start.called and not container.restart.called
+            checked.append(target)
+
+        monkeypatch.setattr(apps_router, "prepare_app_start", prepare_app_start)
+
+        getattr(docker_module, operation)("jellyfin")
+
+        assert checked == [container]
+        getattr(container, operation.split("_")[0]).assert_called_once_with()
+
+    @pytest.mark.parametrize("operation", ["start_container", "restart_container"])
+    def test_refused_app_is_not_started(self, docker_client, monkeypatch, operation):
+        container = docker_client.add(_jellyfin(Path("/mnt/pools/alpha")))
+
+        def refuse(target, pools=None):
+            raise HTTPException(409, "not on a mounted storage pool")
+
+        monkeypatch.setattr(apps_router, "prepare_app_start", refuse)
+
+        with pytest.raises(HTTPException) as caught:
+            getattr(docker_module, operation)("jellyfin")
+
+        assert caught.value.status_code == 409
+        container.start.assert_not_called()
+        container.restart.assert_not_called()
+
+    def test_other_containers_are_not_checked(self, docker_client, monkeypatch):
+        container = docker_client.add(
+            _container("nginx", {"unos.app.pool": "alpha"}, [_bind("/mnt/pools/alpha/www", "/www")])
+        )
+        prepare = MagicMock(side_effect=AssertionError("checked a container that is no UNOS app"))
+        monkeypatch.setattr(apps_router, "prepare_app_start", prepare)
+
+        docker_module.start_container("nginx")
+        docker_module.restart_container("nginx")
+
+        prepare.assert_not_called()
+        container.start.assert_called_once_with()
+        container.restart.assert_called_once_with()
+
+    @pytest.mark.parametrize("action", ["start", "restart"])
+    def test_planted_link_is_refused_with_409(self, api, pool, docker_client, action):
+        # Docker follows links in bind sources when it starts the container.
+        (pool / "apps/jellyfin/config").mkdir(parents=True)
+        (pool / "apps/jellyfin/cache").mkdir(parents=True)
+        (pool / "media").symlink_to(pool.parent.parent / "outside")
+        container = docker_client.add(_jellyfin(pool))
+
+        response = api.post(f"/api/v1/containers/jellyfin/{action}")
+
+        assert response.status_code == 409
+        assert "symbolic link" in response.json()["detail"]
+        container.start.assert_not_called()
+        container.restart.assert_not_called()
+
+    def test_app_on_an_unmounted_pool_is_refused_with_409(self, api, pool, docker_client, monkeypatch):
+        monkeypatch.setattr(os.path, "ismount", lambda path: False)
+        container = docker_client.add(_jellyfin(pool))
+
+        response = api.post("/api/v1/containers/jellyfin/start")
+
+        assert response.status_code == 409
+        assert "not on a mounted storage pool" in response.json()["detail"]
+        container.start.assert_not_called()
+        assert list(pool.iterdir()) == []
+
+    @pytest.mark.parametrize("action", ["start", "restart"])
+    def test_app_with_usable_folders_starts(self, api, pool, docker_client, action):
+        (pool / "apps/jellyfin/config").mkdir(parents=True)
+        container = docker_client.add(_jellyfin(pool))
+
+        response = api.post(f"/api/v1/containers/jellyfin/{action}")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["name"] == "jellyfin"
+        getattr(container, action).assert_called_once_with()
+        # Missing folders on the app's own pool are created again.
+        assert (pool / "apps/jellyfin/cache").is_dir()
+        assert (pool / "media").is_dir()
+
+    def test_unknown_container_is_still_404(self, api, docker_client):
+        assert api.post("/api/v1/containers/nope/start").status_code == 404
+        assert api.post("/api/v1/containers/nope/restart").status_code == 404

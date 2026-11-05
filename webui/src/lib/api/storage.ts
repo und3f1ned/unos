@@ -1,14 +1,42 @@
 import { api } from './client';
 
+export interface PartitionInfo {
+  name: string;
+  path: string;
+  size: number;
+  fstype: string | null;
+  label: string | null;
+  mountpoints: string[];
+}
+
 export interface Disk {
   name: string;
   path: string;
   model: string | null;
   serial: string | null;
+  /** World Wide Name, if the disk reports one. */
+  wwn: string | null;
   size: number;
   rotational: boolean;
   mountpoint: string | null;
   type: string;
+  /** Filesystem signature on the whole disk, e.g. "btrfs". */
+  fstype: string | null;
+  label: string | null;
+  /** Partition table type ("gpt" / "dos"), if any. */
+  pttype: string | null;
+  partitions: PartitionInfo[];
+  /** Host mountpoints of the disk and all its partitions. */
+  mountpoints: string[];
+  /** Any filesystem, partition table, partition or other signature was found. */
+  has_data: boolean;
+  /** Backs the host's /, /boot, /boot/efi or active swap, or is the boot disk. */
+  is_system: boolean;
+  /** is_system, mounted on the host, or a member of a mounted pool. */
+  in_use: boolean;
+  in_use_reason: string | null;
+  /** Label of the btrfs filesystem the disk (or a partition) belongs to. */
+  pool: string | null;
 }
 
 export interface SmartData {
@@ -20,6 +48,8 @@ export interface SmartData {
   raw_data: Record<string, unknown> | null;
 }
 
+export type PoolHealth = 'healthy' | 'degraded' | 'unmounted' | 'error' | 'unknown';
+
 export interface Pool {
   name: string;
   uuid: string | null;
@@ -28,12 +58,56 @@ export interface Pool {
   used_size: number;
   mountpoint: string | null;
   raid_level: string | null;
+  mounted: boolean;
+  /** A UNOS-managed /etc/fstab entry exists on the host. */
+  persistent: boolean;
+  health: PoolHealth;
+  missing_devices: number;
+  /** Sum of the btrfs device error counters (0 when unmounted or unknown). */
+  device_errors: number;
+  /** Mounted, but writes fail: mounted read-only on purpose, or forced_read_only. */
+  read_only: boolean;
+  /**
+   * Mounted read-write, but btrfs made the filesystem read-only after a
+   * serious error such as an aborted transaction (health "error").
+   */
+  forced_read_only: boolean;
+}
+
+export type RaidLevel = 'single' | 'raid0' | 'raid1' | 'raid1c3' | 'raid1c4' | 'raid10';
+
+/** A selected disk as GET /storage/disks listed it. */
+export interface DeviceIdentity {
+  path: string;
+  serial: string | null;
+  wwn: string | null;
+  size: number;
 }
 
 export interface PoolCreate {
   name: string;
   devices: string[];
-  raid_level: 'single' | 'raid0' | 'raid1' | 'raid1c3' | 'raid1c4' | 'raid10';
+  raid_level: RaidLevel;
+  /** Must equal name (HTTP 400 otherwise). */
+  confirm_name: string;
+  /** Required when any selected disk has_data (HTTP 409 otherwise). */
+  force: boolean;
+  /**
+   * What the user saw for each selected disk. Disk names change when a disk
+   * is reconnected, so the pool is only created if every path still holds
+   * the disk with that serial, WWN and size (HTTP 409 otherwise). With force,
+   * every selected disk needs one (HTTP 400 otherwise).
+   */
+  device_identities?: DeviceIdentity[];
+}
+
+export function deviceIdentity(disk: Disk): DeviceIdentity {
+  return { path: disk.path, serial: disk.serial, wwn: disk.wwn, size: disk.size };
+}
+
+/** The 409 detail of POST /storage/pools when a path now holds another disk. */
+export function isChangedDiskError(message: string): boolean {
+  return message.includes('is no longer the disk that was selected');
 }
 
 export interface Volume {
@@ -82,6 +156,16 @@ export async function createPool(pool: PoolCreate): Promise<Pool> {
 
 export async function deletePool(name: string): Promise<void> {
   return api.delete(`/storage/pools/${name}`);
+}
+
+/** Mount on the host at /mnt/pools/{name} and keep the managed fstab entry. */
+export async function mountPool(name: string): Promise<Pool> {
+  return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/mount`, {});
+}
+
+/** Unmount on the host and remove the managed fstab entry; 409 while busy. */
+export async function unmountPool(name: string): Promise<Pool> {
+  return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
 }
 
 export async function getVolumes(poolName: string): Promise<Volume[]> {

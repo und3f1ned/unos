@@ -4,9 +4,11 @@ import json
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from ..auth.utils import verify_token
+from ..auth.utils import require_admin, verify_token
 from ..security.validators import validate_hostname, validate_timezone, validate_interface_name
 
+# Read-only endpoints are available to every signed-in user (dashboard);
+# anything that changes the host requires an administrator.
 router = APIRouter(prefix="/system", tags=["system"])
 
 
@@ -229,7 +231,7 @@ async def list_timezones(_=Depends(verify_token)):
 
 
 @router.put("/timezone")
-async def set_timezone(data: TimezoneUpdate, _=Depends(verify_token)):
+async def set_timezone(data: TimezoneUpdate, _=Depends(require_admin)):
     """Set system timezone."""
     # Get valid timezones for validation
     valid_tz = set()
@@ -256,7 +258,7 @@ async def set_timezone(data: TimezoneUpdate, _=Depends(verify_token)):
 
 
 @router.put("/hostname")
-async def set_hostname(data: HostnameUpdate, _=Depends(verify_token)):
+async def set_hostname(data: HostnameUpdate, _=Depends(require_admin)):
     """Set system hostname."""
     # Validate hostname
     validated_hostname = validate_hostname(data.hostname)
@@ -271,21 +273,21 @@ async def set_hostname(data: HostnameUpdate, _=Depends(verify_token)):
 
 
 @router.post("/reboot")
-async def reboot_system(_=Depends(verify_token)):
+async def reboot_system(_=Depends(require_admin)):
     """Reboot the system."""
     subprocess.Popen(["shutdown", "-r", "+1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"status": "ok", "message": "System will reboot in 1 minute"}
 
 
 @router.post("/shutdown")
-async def shutdown_system(_=Depends(verify_token)):
+async def shutdown_system(_=Depends(require_admin)):
     """Shutdown the system."""
     subprocess.Popen(["shutdown", "-h", "+1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"status": "ok", "message": "System will shutdown in 1 minute"}
 
 
 @router.post("/cancel-shutdown")
-async def cancel_shutdown(_=Depends(verify_token)):
+async def cancel_shutdown(_=Depends(require_admin)):
     """Cancel pending shutdown/reboot."""
     subprocess.run(["shutdown", "-c"], capture_output=True)
     return {"status": "ok", "message": "Shutdown cancelled"}

@@ -1,12 +1,19 @@
+import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from . import host
 from .database import init_db
 from .config import get_settings
+from .auth.utils import require_admin
+
+logger = logging.getLogger(__name__)
 
 # Global rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -30,12 +37,90 @@ from .backup.router import router as backup_router
 from .audit.router import router as audit_router
 from .updates.router import router as updates_router
 from .websocket.events import router as ws_router
+from .scheduler.router import start_scheduler, stop_scheduler
+from .health.router import start_health_monitors, stop_health_monitors
+from .power.router import start_ups_monitor, stop_ups_monitor
+from .storage import pools as storage_pools
+from .storage.pools import reconcile_pools_on_startup
+
+# Seconds the startup check for missing host programs may take.
+HOST_TOOL_CHECK_TIMEOUT = 10
+# Seconds the Docker API gets to answer the /health/full check.
+DOCKER_CHECK_TIMEOUT = 5
+
+
+def _running_containers() -> int:
+    """Number of running containers, from the Docker API.
+
+    Through the socket like the rest of the supervisor: the image has no
+    docker CLI. Blocking; call it in a worker thread.
+    """
+    import docker
+
+    client = docker.from_env(timeout=DOCKER_CHECK_TIMEOUT)
+    try:
+        return int(client.info().get("ContainersRunning") or 0)
+    finally:
+        client.close()
+
+
+async def check_host_tools() -> None:
+    """Log one warning naming the host programs UNOS runs but the host lacks.
+
+    Pool, mount and share operations run these programs on the host (not in
+    this container), so they fail until the packages are installed there.
+    Never raises.
+    """
+    try:
+        missing = await asyncio.to_thread(
+            host.missing_host_binaries, list(host.HOST_TOOLS), timeout=HOST_TOOL_CHECK_TIMEOUT
+        )
+    except Exception as exc:
+        logger.warning("Could not check the host for required programs: %s", exc)
+        return
+    if missing:
+        packages = sorted({host.HOST_TOOLS[name] for name in missing})
+        logger.warning(
+            "The host is missing programs that UNOS runs for storage pools, mounts and "
+            "shares: %s. Install them on the host (apt-get install %s); until then "
+            "those operations fail.",
+            ", ".join(missing),
+            " ".join(packages),
+        )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    yield
+    # UNOS_DISABLE_BACKGROUND_TASKS=1 (tests, development) also skips the pool
+    # mount check below, because it mounts filesystems on the host.
+    run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"
+    host_tool_check: asyncio.Task | None = None
+    if run_background:
+        # Runs beside the rest of startup (in a worker thread, bounded by
+        # HOST_TOOL_CHECK_TIMEOUT), so a slow host neither delays nor fails it.
+        host_tool_check = asyncio.create_task(check_host_tools())
+        # Mount UNOS-managed pools the host did not mount at boot (fstab
+        # "nofail" gives up on slow or missing disks) before the scheduler and
+        # apps start writing to /mnt/pools. Logs the outcome, never raises.
+        await reconcile_pools_on_startup()
+    # Background loops must be started here. FastAPI ignores router-level
+    # @router.on_event hooks when the app defines a lifespan, which silently
+    # disabled the scheduler and all monitors in earlier releases.
+    if run_background:
+        await start_scheduler()
+        await start_health_monitors()
+        await start_ups_monitor()
+    try:
+        yield
+    finally:
+        if run_background:
+            await stop_ups_monitor()
+            await stop_health_monitors()
+            await stop_scheduler()
+        if host_tool_check is not None:
+            host_tool_check.cancel()
+            await asyncio.gather(host_tool_check, return_exceptions=True)
 
 
 app = FastAPI(
@@ -71,26 +156,35 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
+# Routers whose endpoints mix public, user and admin access check roles per
+# endpoint. Every other router is administrator-only as a whole: these
+# endpoints change the host (disks, shares, containers, network, power, ...)
+# and a regular account must never reach them.
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(system_router, prefix="/api/v1")
-app.include_router(storage_router, prefix="/api/v1")
-app.include_router(shares_router, prefix="/api/v1")
-app.include_router(containers_router, prefix="/api/v1")
-app.include_router(apps_router, prefix="/api/v1")
-app.include_router(files_router, prefix="/api/v1")
-app.include_router(snapshots_router, prefix="/api/v1")
-app.include_router(notifications_router, prefix="/api/v1")
-app.include_router(scheduler_router, prefix="/api/v1")
-app.include_router(power_router, prefix="/api/v1")
-app.include_router(network_router, prefix="/api/v1")
-app.include_router(logs_router, prefix="/api/v1")
-app.include_router(health_router, prefix="/api/v1")
-app.include_router(monitor_router, prefix="/api/v1")
-app.include_router(backup_router, prefix="/api/v1")
 app.include_router(security_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
-app.include_router(updates_router, prefix="/api/v1")
 app.include_router(ws_router)
+
+_ADMIN_ONLY = [Depends(require_admin)]
+for _router in (
+    storage_router,
+    shares_router,
+    containers_router,
+    apps_router,
+    files_router,
+    snapshots_router,
+    notifications_router,
+    scheduler_router,
+    power_router,
+    network_router,
+    logs_router,
+    health_router,
+    monitor_router,
+    backup_router,
+    updates_router,
+):
+    app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY)
 
 
 @app.get("/api/v1/health")
@@ -99,13 +193,12 @@ async def health_check():
     return {"status": "ok"}
 
 
-@app.get("/api/v1/health/full")
+@app.get("/api/v1/health/full", dependencies=[Depends(require_admin)])
 async def full_health_check():
     """
     Comprehensive health check aggregating all system components.
     Suitable for monitoring systems like Prometheus, Uptime Robot, etc.
     """
-    import subprocess
     import json
     import psutil
     from pathlib import Path
@@ -133,27 +226,23 @@ async def full_health_check():
         health["components"]["database"] = {"status": "error", "message": str(e)}
         issues.append("database")
 
-    # Docker check
+    # Docker check: through the API socket, off the event loop. Apps cannot
+    # run without Docker, so an unreachable daemon is an issue.
     try:
-        result = subprocess.run(["docker", "info", "--format", "{{.ContainersRunning}}"],
-                               capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            running = int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
-            health["components"]["docker"] = {"status": "ok", "containers_running": running}
-        else:
-            health["components"]["docker"] = {"status": "error", "message": "Docker not responding"}
-            issues.append("docker")
+        running = await asyncio.wait_for(
+            asyncio.to_thread(_running_containers), DOCKER_CHECK_TIMEOUT * 2
+        )
+        health["components"]["docker"] = {"status": "ok", "containers_running": running}
     except Exception as e:
-        health["components"]["docker"] = {"status": "unavailable", "message": str(e)}
+        health["components"]["docker"] = {"status": "error", "message": str(e) or type(e).__name__}
+        issues.append("docker")
 
-    # Storage pools check
+    # Storage pools: btrfs filesystems labelled with a pool name, as on the
+    # Storage page (other directories under /mnt/pools are not pools). Listing
+    # them runs host commands, so not on the event loop.
     try:
-        pools_path = Path("/mnt/pools")
-        if pools_path.exists():
-            pools = [p.name for p in pools_path.iterdir() if p.is_dir()]
-            health["components"]["storage"] = {"status": "ok", "pools": len(pools)}
-        else:
-            health["components"]["storage"] = {"status": "ok", "pools": 0}
+        pools = await asyncio.to_thread(storage_pools.list_pools)
+        health["components"]["storage"] = {"status": "ok", "pools": len(pools)}
     except Exception as e:
         health["components"]["storage"] = {"status": "error", "message": str(e)}
         issues.append("storage")
@@ -218,7 +307,7 @@ async def full_health_check():
     return health
 
 
-@app.get("/api/v1/health/prometheus")
+@app.get("/api/v1/health/prometheus", dependencies=[Depends(require_admin)])
 async def prometheus_metrics():
     """
     Prometheus-compatible metrics endpoint.
@@ -262,14 +351,12 @@ async def prometheus_metrics():
     lines.append(f'unos_load_average{{period="5m"}} {load[1]}')
     lines.append(f'unos_load_average{{period="15m"}} {load[2]}')
 
-    # Storage pools
+    # Storage pools (btrfs filesystems labelled with a pool name)
     try:
-        pools_path = Path("/mnt/pools")
-        if pools_path.exists():
-            pool_count = len([p for p in pools_path.iterdir() if p.is_dir()])
-            lines.append("# HELP unos_storage_pools Number of storage pools")
-            lines.append("# TYPE unos_storage_pools gauge")
-            lines.append(f"unos_storage_pools {pool_count}")
+        pool_count = len(await asyncio.to_thread(storage_pools.list_pools))
+        lines.append("# HELP unos_storage_pools Number of storage pools")
+        lines.append("# TYPE unos_storage_pools gauge")
+        lines.append(f"unos_storage_pools {pool_count}")
     except Exception:
         pass
 

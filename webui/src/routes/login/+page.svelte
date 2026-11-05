@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { login, getAuthStatus, getMe } from "$lib/api/auth";
+  import { ApiError } from "$lib/api/client";
   import { user, isLoggedIn } from "$lib/stores/auth";
   import { connectWebSocket } from "$lib/stores/stats";
   import { Server, ShieldCheck } from "lucide-svelte";
@@ -50,8 +51,9 @@
       goto("/");
     } catch (e: any) {
       error = e.message || "Login failed";
-      // If invalid 2FA code, keep the TOTP form visible
-      if (!error.includes("2FA")) {
+      // Only a rejected password leads back to the password form. An invalid
+      // code, too many attempts (429) or a server error keep the 2FA step.
+      if (e instanceof ApiError && e.status === 401 && !error.includes("2FA")) {
         requiresTOTP = false;
       }
     } finally {

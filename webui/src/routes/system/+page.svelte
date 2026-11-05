@@ -1,5 +1,7 @@
 <script lang="ts">
   import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
+  import { isAdmin } from "$lib/stores/auth";
   import {
     Settings,
     Gauge,
@@ -15,43 +17,58 @@
     ArrowUpCircle
   } from "lucide-svelte";
 
-  // Sub-navigation for System page
+  // Sub-navigation for System page. Only the Security tab (own password,
+  // 2FA and login history) works for regular accounts; the APIs behind the
+  // other tabs are administrator-only.
   const tabs = [
-    { id: "general", icon: Settings, label: "General" },
-    { id: "updates", icon: ArrowUpCircle, label: "Updates" },
-    { id: "security", icon: Shield, label: "Security" },
-    { id: "monitor", icon: Gauge, label: "Resource Monitor" },
-    { id: "logs", icon: FileText, label: "System Logs" },
-    { id: "health", icon: Heart, label: "Disk Health" },
-    { id: "backup", icon: Database, label: "Backup & Restore" },
-    { id: "scheduler", icon: Calendar, label: "Scheduler" },
-    { id: "notifications", icon: Bell, label: "Notifications" },
-    { id: "network", icon: Network, label: "Network" },
-    { id: "power", icon: Power, label: "Power Management" },
+    { id: "general", icon: Settings, label: "General", adminOnly: true },
+    { id: "updates", icon: ArrowUpCircle, label: "Updates", adminOnly: true },
+    { id: "security", icon: Shield, label: "Security", adminOnly: false },
+    { id: "monitor", icon: Gauge, label: "Resource Monitor", adminOnly: true },
+    { id: "logs", icon: FileText, label: "System Logs", adminOnly: true },
+    { id: "health", icon: Heart, label: "Disk Health", adminOnly: true },
+    { id: "backup", icon: Database, label: "Backup & Restore", adminOnly: true },
+    { id: "scheduler", icon: Calendar, label: "Scheduler", adminOnly: true },
+    { id: "notifications", icon: Bell, label: "Notifications", adminOnly: true },
+    { id: "network", icon: Network, label: "Network", adminOnly: true },
+    { id: "power", icon: Power, label: "Power Management", adminOnly: true },
   ];
+
+  $: visibleTabs = $isAdmin ? tabs : tabs.filter(t => !t.adminOnly);
 
   let activeTab = "general";
 
-  // Reactively update activeTab when URL hash changes
-  $: {
-    const hash = $page.url.hash.slice(1);
-    if (hash && tabs.some(t => t.id === hash)) {
+  // Follow the URL hash (links such as /system#notifications, /settings,
+  // reloads, bookmarks) and never show a tab the user may not open (e.g.
+  // /system#logs typed by a regular user). The work is done in a function so
+  // that this statement depends only on the URL and the visible tabs. If it
+  // read activeTab itself, every tab click would re-run it and switch straight
+  // back to the tab named in the URL.
+  $: syncTabFromHash($page.url.hash, visibleTabs);
+
+  function syncTabFromHash(rawHash: string, available: typeof tabs) {
+    const hash = rawHash.slice(1);
+    if (hash && available.some(t => t.id === hash)) {
       activeTab = hash;
+    } else if (!available.some(t => t.id === activeTab)) {
+      activeTab = available[0].id;
     }
   }
 
   function setTab(id: string) {
     activeTab = id;
-    history.replaceState(null, "", "#" + id);
+    // SvelteKit's goto, not history.replaceState: it updates $page.url and
+    // keeps the router's state in the history entry, which Back/Forward need.
+    goto(`#${id}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
 </script>
 
 <div class="flex h-full -m-6">
   <!-- Sidebar tabs -->
   <div class="w-56 bg-slate-800 border-r border-slate-700 p-3 overflow-y-auto">
-    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">System</h2>
+    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">{$isAdmin ? "System" : "Account"}</h2>
     <nav class="space-y-1">
-      {#each tabs as tab}
+      {#each visibleTabs as tab}
         <button
           on:click={() => setTab(tab.id)}
           class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}"
