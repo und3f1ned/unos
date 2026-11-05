@@ -1,14 +1,14 @@
 # Playwright Test Runner Dockerfile
-FROM mcr.microsoft.com/playwright:v1.40.0-jammy
+# The tag must be the @playwright/test version in package-lock.json: the image
+# carries the browsers, and their system libraries, of exactly that version.
+# supervisor/tests/test_deploy_scripts.py checks it.
+FROM mcr.microsoft.com/playwright:v1.57.0-noble
 
 WORKDIR /app
 
 # Copy package files and install dependencies
 COPY package*.json ./
 RUN npm ci
-
-# Install Playwright browsers
-RUN npx playwright install chromium
 
 # Copy test files and configuration
 COPY tests/ ./tests/
@@ -17,5 +17,7 @@ COPY playwright.config.ts ./
 # Create directories for test artifacts
 RUN mkdir -p test-results playwright-report
 
-# Default command runs all tests
-CMD ["npx", "playwright", "test", "--reporter=html"]
+# Default command runs all tests. The test-runner of
+# deploy/docker-compose.test.yml runs the same command after it has created
+# the test account.
+CMD ["npx", "playwright", "test", "--reporter=list,html"]

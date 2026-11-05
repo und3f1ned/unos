@@ -16,13 +16,15 @@ test.describe('Security Settings', () => {
   test('should display Change Password section', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);
-    await expect(page.locator('text=Change Password')).toBeVisible();
+    // The section heading; its submit button says "Change Password" too.
+    await expect(page.locator('h3:has-text("Change Password")')).toBeVisible();
   });
 
   test('should display Firewall section', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);
-    await expect(page.locator('text=Firewall')).toBeVisible();
+    // The section heading; the description below it mentions the firewall too.
+    await expect(page.locator('h3:has-text("Firewall")')).toBeVisible();
   });
 
   test('should display SSL/TLS Certificates section', async ({ authenticatedPage: page }) => {
@@ -47,8 +49,10 @@ test.describe('Security Settings', () => {
   test('should have Manage button for SSL/TLS Certificates', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);
+    // Exact name: the outer divs matched here also hold the System tab
+    // buttons, one of which is "Power Management".
     const certSection = page.locator('div:has(h3:has-text("SSL/TLS Certificates"))');
-    await expect(certSection.locator('button:has-text("Manage")')).toBeVisible();
+    await expect(certSection.getByRole('button', { name: 'Manage', exact: true })).toBeVisible();
   });
 
   test('should have View History button for Login History', async ({ authenticatedPage: page }) => {
@@ -62,7 +66,8 @@ test.describe('Security Settings', () => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);
     await expect(page.locator('label:has-text("Current Password")')).toBeVisible();
-    await expect(page.locator('label:has-text("New Password")')).toBeVisible();
+    // Exact text: "Confirm New Password" contains "New Password".
+    await expect(page.locator('label:text-is("New Password")')).toBeVisible();
     await expect(page.locator('label:has-text("Confirm New Password")')).toBeVisible();
   });
 
@@ -103,7 +108,7 @@ test.describe('Security Settings', () => {
 
     // Click Manage button for Certificates
     const certSection = page.locator('div:has(h3:has-text("SSL/TLS Certificates"))');
-    await certSection.locator('button:has-text("Manage")').click();
+    await certSection.getByRole('button', { name: 'Manage', exact: true }).click();
     await page.waitForTimeout(500);
 
     // Should show certificate section
@@ -116,7 +121,7 @@ test.describe('Security Settings', () => {
 
     // 2FA section should have Enable or Disable button
     const totpSection = page.locator('div:has(h3:has-text("Two-Factor Authentication"))');
-    await expect(totpSection.locator('button:has-text(/Enable|Disable/)')).toBeVisible();
+    await expect(totpSection.getByRole('button', { name: /^(Enable|Disable)$/ })).toBeVisible();
   });
 
   test('should validate password change requires all fields', async ({ authenticatedPage: page }) => {

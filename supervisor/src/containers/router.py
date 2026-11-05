@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from ..auth.utils import verify_token
 from .schemas import ContainerInfo, ContainerCreate, ContainerLogs, ImageInfo
@@ -37,9 +39,12 @@ async def get_container(container_id: str, _=Depends(verify_token)):
 
 @router.post("/{container_id}/start", response_model=ContainerInfo)
 async def start_container(container_id: str, _=Depends(verify_token)):
-    """Start a container."""
+    """Start a container (409 for a UNOS app whose data folders are not usable)."""
     try:
-        return docker_ops.start_container(container_id)
+        # The app checks read the pools (statvfs can hang): keep them off the event loop.
+        return await asyncio.to_thread(docker_ops.start_container, container_id)
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -59,9 +64,11 @@ async def stop_container(container_id: str, _=Depends(verify_token)):
 
 @router.post("/{container_id}/restart", response_model=ContainerInfo)
 async def restart_container(container_id: str, _=Depends(verify_token)):
-    """Restart a container."""
+    """Restart a container (409 for a UNOS app whose data folders are not usable)."""
     try:
-        return docker_ops.restart_container(container_id)
+        return await asyncio.to_thread(docker_ops.restart_container, container_id)
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

@@ -10,7 +10,17 @@ services:
     hostname: ${HOSTNAME:-unos}
     environment:
       - UNOS_DB_PATH=/data/unos.db
-      - UNOS_JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      # Empty: the supervisor generates a random secret on first start and
+      # keeps it in the unos-data volume (/data/jwt_secret). Known placeholder
+      # values are refused at startup.
+      - UNOS_JWT_SECRET=${JWT_SECRET:-}
+      # Uvicorn takes the client address from X-Forwarded-For only on
+      # connections from this address: the webui container (Caddy), see
+      # unos-net below. Never "*" or the whole subnet: processes in the host's
+      # network namespace (including host-network apps) can connect to port
+      # 8080 directly, from the gateway address, and would pick their own
+      # address and login rate-limit bucket.
+      - FORWARDED_ALLOW_IPS=172.31.254.2
     volumes:
       - unos-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
@@ -23,7 +33,8 @@ services:
         bind:
           propagation: rshared
     networks:
-      - unos-net
+      unos-net:
+        ipv4_address: 172.31.254.3
 
   webui:
     build: ../webui
@@ -32,13 +43,19 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      # Name on the HTTPS certificate from Caddy's local CA. Clients that
+      # connect by IP address get this certificate too (see webui/Caddyfile).
+      - UNOS_HOSTNAME=${UNOS_HOSTNAME:-unos}
     volumes:
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
       - supervisor
     networks:
-      - unos-net
+      unos-net:
+        # The supervisor trusts X-Forwarded-For from this address only.
+        ipv4_address: 172.31.254.2
 
 volumes:
   unos-data:
@@ -47,3 +64,12 @@ volumes:
 
 networks:
   unos-net:
+    ipam:
+      config:
+        # Fixed so that webui keeps the address the supervisor trusts. Both
+        # containers have fixed addresses, so no automatic address assignment
+        # can take webui's. Host processes connect from the gateway (.1). If
+        # this subnet is already used on the host, change every 172.31.254.x
+        # address in this file together.
+        - subnet: 172.31.254.0/24
+          gateway: 172.31.254.1

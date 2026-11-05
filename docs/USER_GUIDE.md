@@ -24,17 +24,22 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
 ### First Login
 
 1. Open your web browser
-2. Navigate to `http://YOUR_NAS_IP`
-3. Log in with default credentials:
-   - Username: `admin`
-   - Password: `admin`
-4. **Change your password immediately** via Users → Change Password
+2. Navigate to `https://YOUR_NAS_IP` (plain `http://` redirects there)
+3. Your browser warns about the certificate: UNOS issues it from its own
+   certificate authority. Continue to the site, or make your devices trust that
+   authority once (see
+   [HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)).
+4. On the very first visit UNOS asks you to create the administrator account:
+   choose a user name and a password (at least 8 characters). There are no
+   default credentials.
+5. Afterwards you sign in on the login page.
 
 ### Interface Overview
 
 The UNOS interface consists of:
-- **Sidebar** - Navigation menu on the left
-- **Header** - System status and user menu
+- **Sidebar** - Navigation menu on the left, with your account and **Logout**
+  at the bottom. Regular users see **Dashboard** and **Account** only (see
+  [User Roles](#user-roles)).
 - **Main Content** - Current page content
 
 ---
@@ -85,7 +90,7 @@ Go to **Storage** to see:
 1. Go to **Storage**
 2. Click **Create Pool**
 3. Enter a pool name (e.g., "data", "media")
-4. Select disks to include
+4. Select disks to include. System disks and disks in use cannot be selected.
 5. Choose a RAID profile:
 
 | Profile | Min Disks | Redundancy | Space Efficiency |
@@ -102,16 +107,24 @@ Go to **Storage** to see:
 > UNOS prioritizes data safety. Use RAID 1C3 (3 copies) or RAID 1C4 (4 copies)
 > for multi-disk redundancy beyond RAID 1.
 
-6. Click **Create**
+6. Type the pool name again to confirm. If a selected disk already contains
+   data, also tick **Erase the existing data on these disks**.
+7. Click **Erase Disks & Create Pool**
+
+UNOS mounts the new pool at `/mnt/pools/<name>` and adds it to the host's
+`/etc/fstab`, so it is mounted again after a reboot.
 
 ### Pool Operations
 
 For each pool, you can:
 - **View Details** - Space usage, devices, status
+- **Mount / Unmount** - Mount the pool (and mount it at every boot), or unmount
+  it; the data on the disks is not touched
 - **Add Devices** - Expand the pool
 - **Scrub** - Check data integrity
 - **Balance** - Redistribute data across devices
-- **Delete** - Remove the pool (data will be lost!)
+- **Delete** - Unmount the pool and remove it from `/etc/fstab`. The disks are
+  not wiped: the data stays on them and the pool can be mounted again later.
 
 ### SMART Monitoring
 
@@ -236,8 +249,13 @@ The App Store provides one-click installation of popular applications.
 1. Go to **App Store**
 2. Browse or search for an app
 3. Click **Install**
-4. Configure settings if prompted
+4. Choose the **Storage pool** for the app's data (apps that keep data need a
+   mounted pool; create or mount one on the **Storage** page first) and
+   configure settings if prompted
 5. Wait for installation to complete
+
+Starting or restarting an app from UNOS fails while its data folders are not
+on a mounted pool.
 
 ### Managing Installed Apps
 
@@ -253,27 +271,32 @@ Go to **App Store** → **Installed** to:
 
 ### Creating Users
 
-1. Go to **Users**
+1. Go to **Users** (administrators only)
 2. Click **Add User**
 3. Enter:
    - Username
-   - Password
-   - Role (Admin or User)
-4. Click **Create**
+   - Password (twice)
+4. Click **Create User**
+
+New accounts are regular users. To make one an administrator, edit it and
+tick **Administrator privileges**.
 
 ### User Roles
 
 | Role | Permissions |
 |------|-------------|
 | Admin | Full access to all features |
-| User | Access to shares only |
+| User | **Dashboard** (system overview and live statistics) and **Account** (own password, two-factor authentication and login history) |
+
+Every other page and API is for administrators only; regular users do not see
+them. At least one administrator must remain: the last one cannot be demoted
+or deleted.
 
 ### Changing Passwords
 
 Users can change their own password:
-1. Click username in the header
-2. Select **Change Password**
-3. Enter current and new password
+1. Go to **Account** (administrators: **System** → **Security**)
+2. Under **Change Password**, enter the current and the new password
 
 Admins can reset any user's password via **Users** page.
 
@@ -281,34 +304,42 @@ Admins can reset any user's password via **Users** page.
 
 Protect your account with TOTP-based two-factor authentication:
 
-1. Go to **Users** → **Security**
-2. Click **Enable 2FA**
-3. Scan the QR code with an authenticator app (Google Authenticator, Authy, etc.)
-4. Enter the verification code to confirm
-5. **Save your recovery codes** in a secure location
+1. Go to **Account** (administrators: **System** → **Security**)
+2. Under **Two-Factor Authentication**, click **Enable**
+3. Scan the QR code with an authenticator app (Google Authenticator, Authy,
+   etc.). The QR code is drawn in your browser; the secret is never sent to
+   another service.
+4. Enter the verification code and click **Enable 2FA**
 
 To disable 2FA:
-1. Go to **Users** → **Security**
-2. Click **Disable 2FA**
-3. Enter your password and a 2FA code to confirm
+1. Go to **Account** (administrators: **System** → **Security**)
+2. Under **Two-Factor Authentication**, click **Disable**
+3. Enter a current 2FA code and click **Disable 2FA**
 
 ### API Tokens
 
-Generate tokens for programmatic access to the UNOS API:
+Tokens give scripts access to the UNOS API with the rights of the account that
+created them: a regular user's token cannot use the administrator-only APIs.
+There is no page for them yet; create one with the API, using the
+`access_token` that `POST /api/v1/auth/login` returns (the full API token is
+shown only once):
 
-1. Go to **Users** → **API Tokens**
-2. Click **Generate Token**
-3. Enter a description (e.g., "Backup Script")
-4. Copy the token immediately (it won't be shown again)
+```bash
+curl --cacert unos-root-ca.crt -X POST https://unos/api/v1/auth/tokens \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Backup Script"}'
+```
 
 Use tokens in API requests:
 ```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" http://your-nas/api/v1/system/info
+curl --cacert unos-root-ca.crt -H "Authorization: Bearer YOUR_TOKEN" https://unos/api/v1/system/info
 ```
 
-To revoke a token:
-1. Go to **Users** → **API Tokens**
-2. Click the delete icon next to the token
+`unos-root-ca.crt` is the UNOS root certificate (see
+[Trust the UNOS Certificate Authority](INSTALL.md#trust-the-unos-certificate-authority)),
+and `unos` the name on the certificate. List your tokens with
+`GET /api/v1/auth/tokens` and revoke one with `DELETE /api/v1/auth/tokens/<id>`.
 
 ---
 
@@ -419,7 +450,7 @@ Choose which events trigger notifications:
 
 ### Security
 
-1. ✅ Change default password immediately
+1. ✅ Create the administrator account right after installing, with a strong password
 2. ✅ Enable two-factor authentication (2FA)
 3. ✅ Use strong, unique passwords
 4. ✅ Keep UNOS updated
@@ -468,8 +499,8 @@ Follow the 3-2-1 rule:
 
 If you encounter issues:
 
-1. Check the **Logs** page for errors
-2. Review the [FAQ](FAQ.md)
+1. Check **System** → **System Logs** for errors (administrators)
+2. Review [Troubleshooting](INSTALL.md#troubleshooting)
 3. Search [GitHub Issues](https://github.com/und3f1ned/unos/issues)
 4. Ask in [Discussions](https://github.com/und3f1ned/unos/discussions)
 

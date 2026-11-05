@@ -1,38 +1,86 @@
-import secrets
 import hashlib
-import json
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
-from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
+import secrets
+from datetime import datetime, timedelta, timezone
+
+import bcrypt
+import jwt
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..config import get_settings
 from ..database import get_db
-from .models import User, APIToken
+from .models import APIToken, User
+from .schemas import MAX_PASSWORD_BYTES
 
-settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 # API Token prefix for identification
 API_TOKEN_PREFIX = "unos_"
 
+BCRYPT_ROUNDS = 12
+
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    secret = password.encode("utf-8")
+    if len(secret) > MAX_PASSWORD_BYTES:
+        # The request schemas reject these with a 422 before we get here.
+        raise ValueError(f"Password must not be longer than {MAX_PASSWORD_BYTES} bytes")
+    return bcrypt.hashpw(secret, bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode("ascii")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    # bcrypt only ever used the first 72 bytes: the passlib-based code before
+    # this one silently truncated longer passwords when hashing them. Truncate
+    # the same way here so those users can still log in with the full password
+    # they chose (bcrypt>=5 raises instead of truncating). New passwords over
+    # the limit are rejected by the request schemas.
+    secret = plain_password.encode("utf-8")[:MAX_PASSWORD_BYTES]
+    try:
+        return bcrypt.checkpw(secret, hashed_password.encode("ascii"))
+    except (TypeError, ValueError):
+        # Malformed or unsupported hash in the database.
+        return False
 
 
 def create_access_token(data: dict) -> str:
+    settings = get_settings()
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=settings.jwt_expire_minutes)
-    to_encode.update({"exp": expire})
+    to_encode["exp"] = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_access_token(token: str) -> str:
+    """Return the username of a valid, unexpired access token.
+
+    Raises ``jwt.PyJWTError`` for anything else (bad signature, expired,
+    missing ``exp``/``sub`` claim, other algorithm).
+    """
+    settings = get_settings()
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        options={"require": ["exp", "sub"]},
+    )
+    username = payload["sub"]
+    if not isinstance(username, str) or not username:
+        raise jwt.InvalidTokenError("Token subject must be a non-empty string")
+    return username
+
+
+def client_ip(request: Request | None) -> str | None:
+    """Address of the client that sent ``request``.
+
+    Uvicorn runs with ``--proxy-headers`` and trusts the X-Forwarded-For value
+    set by Caddy (see supervisor/Dockerfile), so ``request.client`` already is
+    the browser's address, not the proxy's. Do not read X-Forwarded-For here:
+    without the proxy in front, that header is whatever the caller wants.
+    """
+    if request is None or request.client is None:
+        return None
+    return request.client.host
 
 
 def generate_api_token() -> tuple[str, str]:
@@ -72,37 +120,54 @@ def verify_recovery_code(code: str, hashed_codes: list[str]) -> int | None:
     return None
 
 
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def authenticate_token(token: str, db: AsyncSession) -> User:
+    """Resolve a bearer credential (JWT or ``unos_`` API token) to its user.
+
+    Shared by HTTP requests (``verify_token``) and the WebSocket handshake so
+    both apply the same rules. Raises ``HTTPException(401)`` when the
+    credential is invalid, expired or disabled, or its user no longer exists.
+    """
+    if token.startswith(API_TOKEN_PREFIX):
+        return await verify_api_token(token, db)
+
+    try:
+        username = decode_access_token(token)
+    except jwt.PyJWTError:
+        raise _unauthorized("Invalid token") from None
+
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise _unauthorized("User not found")
+    return user
+
+
 async def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Verify JWT token or API token."""
-    token = credentials.credentials
+    return await authenticate_token(credentials.credentials, db)
 
-    # Check if it's an API token (starts with prefix)
-    if token.startswith(API_TOKEN_PREFIX):
-        return await verify_api_token(token, db)
 
-    # Otherwise, treat as JWT
-    try:
-        payload = jwt.decode(
-            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
-        )
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
-            )
-    except JWTError:
+async def require_admin(user: User = Depends(verify_token)) -> User:
+    """Allow the request only for administrators.
+
+    Use as a route or router dependency: ``dependencies=[Depends(require_admin)]``.
+    Anonymous requests are rejected by ``verify_token`` before this runs.
+    """
+    if not user.is_admin:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
-        )
-
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator privileges required",
         )
     return user
 
@@ -117,20 +182,14 @@ async def verify_api_token(token: str, db: AsyncSession) -> User:
     api_token = result.scalar_one_or_none()
 
     if api_token is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API token"
-        )
+        raise _unauthorized("Invalid API token")
 
     if not api_token.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="API token is disabled"
-        )
+        raise _unauthorized("API token is disabled")
 
-    # Check expiration
+    # Check expiration (stored as naive UTC)
     if api_token.expires_at and api_token.expires_at < datetime.utcnow():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="API token has expired"
-        )
+        raise _unauthorized("API token has expired")
 
     # Update last used timestamp
     api_token.last_used_at = datetime.utcnow()
@@ -141,8 +200,6 @@ async def verify_api_token(token: str, db: AsyncSession) -> User:
     user = result.scalar_one_or_none()
 
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
-        )
+        raise _unauthorized("User not found")
 
     return user

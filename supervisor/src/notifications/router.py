@@ -1,6 +1,8 @@
+import asyncio
 import smtplib
 import json
 import httpx
+from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -18,6 +20,15 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 CONFIG_FILE = "/data/notifications.json"
 LOGS_FILE = "/data/notification_logs.json"
+
+# Seconds the e-mail and Telegram senders wait for each network operation
+# (connect, read, write) before giving up.
+SEND_TIMEOUT = 15
+
+# smtplib blocks for the whole SMTP conversation, so it runs on a small private
+# pool: a slow or unreachable mail server must neither freeze the event loop
+# nor tie up the default executor that storage operations run in.
+_SMTP_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="unos-smtp")
 
 
 def load_configs() -> list[NotificationConfig]:
@@ -61,8 +72,30 @@ def save_log(log: NotificationLog) -> None:
     path.write_text(json.dumps([l.model_dump() for l in logs], indent=2))
 
 
+def _error_text(error: Exception) -> str:
+    """What to report for a failed send: the error's message, else its type.
+
+    httpx timeouts carry no message (str() is ""), which would leave the
+    reason blank in the test result and the notification log.
+    """
+    return str(error) or type(error).__name__
+
+
+def _deliver_email(config: EmailConfig, message: str) -> None:
+    """Connect, log in and send ``message`` (blocking: runs on _SMTP_EXECUTOR)."""
+    server = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=SEND_TIMEOUT)
+    try:
+        if config.smtp_tls:
+            server.starttls()
+        server.login(config.smtp_user, config.smtp_password)
+        server.sendmail(config.from_address, config.to_addresses, message)
+        server.quit()
+    finally:
+        server.close()
+
+
 async def send_email(config: EmailConfig, event: NotificationEvent) -> tuple[bool, str | None]:
-    """Send email notification."""
+    """Send email notification; the SMTP conversation runs off the event loop."""
     try:
         msg = MIMEMultipart()
         msg["From"] = config.from_address
@@ -82,19 +115,12 @@ UNOS NAS Notification System
 """
         msg.attach(MIMEText(body, "plain"))
 
-        if config.smtp_tls:
-            server = smtplib.SMTP(config.smtp_host, config.smtp_port)
-            server.starttls()
-        else:
-            server = smtplib.SMTP(config.smtp_host, config.smtp_port)
-
-        server.login(config.smtp_user, config.smtp_password)
-        server.sendmail(config.from_address, config.to_addresses, msg.as_string())
-        server.quit()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_SMTP_EXECUTOR, _deliver_email, config, msg.as_string())
 
         return True, None
     except Exception as e:
-        return False, str(e)
+        return False, _error_text(e)
 
 
 async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tuple[bool, str | None]:
@@ -111,7 +137,7 @@ async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tup
         message = f"{emoji} *{event.title}*\n\n{event.message}\n\n_UNOS NAS_"
 
         url = f"https://api.telegram.org/bot{config.bot_token}/sendMessage"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=SEND_TIMEOUT) as client:
             resp = await client.post(url, json={
                 "chat_id": config.chat_id,
                 "text": message,
@@ -119,11 +145,12 @@ async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tup
             })
 
             if resp.status_code != 200:
-                return False, resp.text
+                # Telegram explains its errors in the body; a proxy on the way may send none.
+                return False, resp.text or f"HTTP {resp.status_code}"
 
         return True, None
     except Exception as e:
-        return False, str(e)
+        return False, _error_text(e)
 
 
 async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple[bool, str | None]:
@@ -163,7 +190,7 @@ async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple
 
         return True, None
     except Exception as e:
-        return False, str(e)
+        return False, _error_text(e)
 
 
 async def send_discord(config: DiscordConfig, event: NotificationEvent) -> tuple[bool, str | None]:
@@ -198,7 +225,7 @@ async def send_discord(config: DiscordConfig, event: NotificationEvent) -> tuple
 
         return True, None
     except Exception as e:
-        return False, str(e)
+        return False, _error_text(e)
 
 
 async def send_slack(config: SlackConfig, event: NotificationEvent) -> tuple[bool, str | None]:
@@ -234,7 +261,7 @@ async def send_slack(config: SlackConfig, event: NotificationEvent) -> tuple[boo
 
         return True, None
     except Exception as e:
-        return False, str(e)
+        return False, _error_text(e)
 
 
 @router.get("/configs", response_model=list[NotificationConfig])

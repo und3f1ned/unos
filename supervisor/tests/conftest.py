@@ -1,11 +1,14 @@
 import pytest
 import os
+import secrets
 import tempfile
 from unittest.mock import patch, MagicMock
 
 # Set test environment variables before importing anything
 os.environ["UNOS_DB_PATH"] = ":memory:"
-os.environ["UNOS_JWT_SECRET"] = "test-secret-key"
+# Random per run: secrets this repo published (such as the "test-secret-key"
+# used here before) are refused at startup (config.INSECURE_JWT_SECRETS).
+os.environ["UNOS_JWT_SECRET"] = secrets.token_hex(32)
 os.environ["UNOS_SMB_CONF_PATH"] = "/tmp/test_smb.conf"
 os.environ["UNOS_NFS_EXPORTS_PATH"] = "/tmp/test_exports"
 os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"

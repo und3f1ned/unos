@@ -2,10 +2,23 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { user, isLoggedIn } from '$lib/stores/auth';
+	import { navigating, page } from '$app/stores';
+	import {
+		user,
+		isAdminOnlyRoute,
+		loadCurrentUser,
+		clearCurrentUser
+	} from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
-	import { getMe, isAuthenticated, logout } from '$lib/api/auth';
+	import {
+		ApiError,
+		getToken,
+		isPublicRoute,
+		onTokenChangedElsewhere,
+		setUnauthorizedHandler
+	} from '$lib/api/client';
+	import { logout, type User } from '$lib/api/auth';
+	import { Alert, Button } from '$lib/components/ui';
 	import {
 		LayoutDashboard,
 		HardDrive,
@@ -17,11 +30,11 @@
 		FolderOpen,
 		Users,
 		Wrench,
-		Archive
+		Archive,
+		UserCog
 	} from 'lucide-svelte';
 
-	// Base navigation items (always visible)
-	const baseNavItems = [
+	const adminNavItems = [
 		{ href: '/', icon: LayoutDashboard, label: 'Dashboard' },
 		{ href: '/storage', icon: HardDrive, label: 'Storage' },
 		{ href: '/snapshots', icon: Archive, label: 'Snapshots' },
@@ -29,59 +42,118 @@
 		{ href: '/files', icon: FolderOpen, label: 'Files' },
 		{ href: '/containers', icon: Container, label: 'Containers' },
 		{ href: '/apps', icon: Package, label: 'App Store' },
+		{ href: '/users', icon: Users, label: 'Users' },
 		{ href: '/system', icon: Wrench, label: 'System' }
 	];
 
-	// Admin-only navigation items
-	const adminNavItems = [{ href: '/users', icon: Users, label: 'Users' }];
+	// Regular accounts only get live system stats and their own account settings;
+	// every other API is administrator-only.
+	const userNavItems = [
+		{ href: '/', icon: LayoutDashboard, label: 'Dashboard' },
+		{ href: '/system#security', icon: UserCog, label: 'Account' }
+	];
 
-	// Reactive nav items based on user role
-	$: navItems = $user?.is_admin
-		? [...baseNavItems.slice(0, 7), ...adminNavItems, baseNavItems[7]]
-		: baseNavItems;
+	$: navItems = !$user ? [] : $user.is_admin ? adminNavItems : userNavItems;
 
-	onMount(async () => {
-		if (!isAuthenticated()) {
-			if (
-				!$page.url.pathname.startsWith('/login') &&
-				!$page.url.pathname.startsWith('/setup')
-			) {
-				goto('/login');
-			}
+	let mounted = false;
+	let userLoadError = '';
+
+	type Gate = 'public' | 'allowed' | 'blocked';
+
+	$: pathname = $page.url.pathname;
+	// A page renders only once we know who is asking and that they may see it,
+	// so admin pages never fire requests on behalf of a regular account.
+	$: gate = gateFor(pathname, $user);
+	// SvelteKit creates the next page inside the slot shown at that moment and
+	// updates $page only afterwards. While navigating to a page with another
+	// gate (e.g. from /login to an admin page), show no slot, so the next page
+	// is created only once the layout shows the branch and gate for it.
+	$: nextPath =
+		$navigating && !$navigating.willUnload ? ($navigating.to?.url.pathname ?? null) : null;
+	$: showSlot = nextPath === null || gateFor(nextPath, $user) === gate;
+	$: if (mounted) guardRoute(pathname, $user);
+
+	function gateFor(path: string, currentUser: User | null): Gate {
+		if (isPublicRoute(path)) return 'public';
+		if (currentUser && (currentUser.is_admin || !isAdminOnlyRoute(path))) return 'allowed';
+		return 'blocked';
+	}
+
+	function guardRoute(path: string, currentUser: User | null) {
+		if (isPublicRoute(path)) return;
+		if (!getToken()) {
+			goto('/login', { replaceState: true });
 			return;
 		}
-
-		try {
-			const me = await getMe();
-			user.set(me);
-			isLoggedIn.set(true);
-			connectWebSocket();
-		} catch {
-			logout();
-			goto('/login');
+		if (!currentUser) {
+			ensureUser();
+			return;
 		}
-	});
+		if (!currentUser.is_admin && isAdminOnlyRoute(path)) {
+			goto('/', { replaceState: true });
+		}
+	}
 
-	function handleLogout() {
+	async function ensureUser() {
+		userLoadError = '';
+		try {
+			await loadCurrentUser();
+			connectWebSocket();
+		} catch (e) {
+			// 401 already ended the session (see setUnauthorizedHandler below).
+			if (e instanceof ApiError && e.status === 401) return;
+			if (e instanceof ApiError && e.status === 403) {
+				endSession();
+				return;
+			}
+			userLoadError = e instanceof Error ? e.message : 'Failed to load your account';
+		}
+	}
+
+	function endSession() {
 		logout();
 		disconnectWebSocket();
-		user.set(null);
-		isLoggedIn.set(false);
+		clearCurrentUser();
 		goto('/login');
 	}
 
-	// Reactive pathname - this ensures menu updates on navigation
-	$: pathname = $page.url.pathname;
+	// Another tab logged out, or logged in again (possibly as another account).
+	function handleTokenChange() {
+		disconnectWebSocket();
+		// Without a user, a page that needs a session is unmounted. The guard
+		// then sends this tab to /login, or loads the account of the new token,
+		// so the menus and the page follow its role.
+		clearCurrentUser();
+		guardRoute(pathname, null);
+	}
+
+	onMount(() => {
+		// Any request (or the stats socket) rejected with 401 lands here.
+		setUnauthorizedHandler(endSession);
+		const stopWatchingToken = onTokenChangedElsewhere(handleTokenChange);
+		mounted = true;
+		return () => {
+			setUnauthorizedHandler(null);
+			stopWatchingToken();
+		};
+	});
+
+	function handleLogout() {
+		endSession();
+	}
 
 	// Check if current path matches nav item
 	function isActive(href: string, currentPath: string): boolean {
-		if (href === '/') return currentPath === '/';
-		return currentPath === href || currentPath.startsWith(href + '/');
+		const target = href.split('#')[0];
+		if (target === '/') return currentPath === '/';
+		return currentPath === target || currentPath.startsWith(target + '/');
 	}
 </script>
 
-{#if $page.url.pathname.startsWith('/login') || $page.url.pathname.startsWith('/setup')}
-	<slot />
+{#if gate === 'public'}
+	{#if showSlot}
+		<slot />
+	{/if}
 {:else}
 	<div class="flex h-screen bg-surface">
 		<!-- Sidebar -->
@@ -97,7 +169,7 @@
 			<!-- Navigation -->
 			<nav class="flex-1 p-3 overflow-y-auto scrollbar-thin">
 				<ul class="space-y-1">
-					{#each navItems as item}
+					{#each navItems as item (item.href)}
 						<li>
 							<a
 								href={item.href}
@@ -117,13 +189,16 @@
 			<div class="p-3 border-t border-border">
 				{#if $user}
 					<div class="flex items-center justify-between">
-						<div class="flex items-center gap-2">
+						<div class="flex items-center gap-2 min-w-0">
 							<div
 								class="w-8 h-8 rounded-full bg-surface-overlay flex items-center justify-center text-sm font-medium text-content"
 							>
 								{$user.username.charAt(0).toUpperCase()}
 							</div>
-							<span class="text-sm text-content-secondary">{$user.username}</span>
+							<div class="min-w-0">
+								<p class="text-sm text-content-secondary truncate">{$user.username}</p>
+								<p class="text-xs text-muted">{$user.is_admin ? 'Administrator' : 'User'}</p>
+							</div>
 						</div>
 						<button
 							on:click={handleLogout}
@@ -139,7 +214,16 @@
 
 		<!-- Main content -->
 		<main class="flex-1 overflow-auto bg-surface p-6 scrollbar-thin">
-			<slot />
+			{#if gate === 'allowed' && showSlot}
+				<slot />
+			{:else if userLoadError}
+				<Alert variant="error" title="Could not load your account">
+					<p>{userLoadError}</p>
+					<Button variant="secondary" size="sm" class="mt-3" on:click={ensureUser}>Retry</Button>
+				</Alert>
+			{:else}
+				<p class="loading-text">Loading...</p>
+			{/if}
 		</main>
 	</div>
 {/if}

@@ -1,8 +1,10 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
-from jose import jwt, JWTError, ExpiredSignatureError
+import jwt
+from jwt import PyJWTError
 import os
+import secrets
 
 
 class TestPasswordHashing:
@@ -52,6 +54,55 @@ class TestPasswordHashing:
         
         assert verify_password("", hashed) is False
 
+    # Hashes written by the previous passlib 1.7.4 + bcrypt 4.0.1 code. passlib
+    # silently truncated passwords to bcrypt's 72-byte limit when hashing.
+    LEGACY_PASSLIB_HASHES = (
+        ("admin123", "$2b$12$2QBMldgfbsfUHoQrs9u9c.qm4p5lVDC7GFd/Ks5tt.il66q2kOhpu"),
+        ("correct-horse-battery-staple-" * 4,  # 116 bytes
+         "$2b$12$Ijd/kIObhng1hvAERpfQIebn2dKXTJryGyrHePLsyoKXIFU9W0gYS"),
+        ("\u043f\u0430\u0440\u043e\u043b\u044c-" * 12,  # 156 bytes, cut mid-character at 72
+         "$2b$12$Ia7euZ1YJhlwuWL8mWaRMu1m0CdQqMCbhpaeP5uJOqC5T4zpbu1LS"),
+    )
+
+    @pytest.mark.parametrize("password,legacy_hash", LEGACY_PASSLIB_HASHES)
+    def test_legacy_passlib_hashes_still_verify(self, password, legacy_hash):
+        from src.auth.utils import verify_password
+
+        assert verify_password(password, legacy_hash) is True
+        assert verify_password(password + "x", legacy_hash) is (len(password.encode()) >= 72)
+        assert verify_password("wrong", legacy_hash) is False
+
+    def test_hash_password_rejects_more_than_72_bytes(self):
+        from src.auth.utils import hash_password
+
+        hash_password("a" * 72)
+        with pytest.raises(ValueError):
+            hash_password("a" * 73)
+        with pytest.raises(ValueError):
+            hash_password("\u00e4" * 37)  # 74 bytes in UTF-8
+
+    def test_verify_password_malformed_hash_is_false(self):
+        from src.auth.utils import verify_password
+
+        assert verify_password("x", "") is False
+        assert verify_password("x", "not-a-bcrypt-hash") is False
+
+    def test_new_password_schemas_enforce_bcrypt_limit(self):
+        from pydantic import ValidationError
+        from src.auth.schemas import LoginRequest, PasswordChange, UserCreate, UserUpdate
+
+        long_password = "a" * 73
+        with pytest.raises(ValidationError):
+            UserCreate(username="u", password=long_password)
+        with pytest.raises(ValidationError):
+            PasswordChange(current_password="old", new_password=long_password)
+        with pytest.raises(ValidationError):
+            UserUpdate(password=long_password)
+        # Passwords that are only verified stay unlimited, so legacy accounts
+        # whose password is longer than 72 bytes can still log in.
+        assert LoginRequest(username="u", password=long_password).password == long_password
+        assert PasswordChange(current_password=long_password, new_password="new").new_password == "new"
+
 
 class TestJWTTokens:
     """Tests for JWT token creation and verification."""
@@ -60,7 +111,7 @@ class TestJWTTokens:
     def mock_settings(self):
         """Mock settings for JWT."""
         mock = MagicMock()
-        mock.jwt_secret = "test-secret-key"
+        mock.jwt_secret = secrets.token_hex(32)
         mock.jwt_algorithm = "HS256"
         mock.jwt_expire_minutes = 60
         return mock
@@ -69,7 +120,7 @@ class TestJWTTokens:
         """Test creating an access token."""
         from src.auth.utils import create_access_token
         
-        with patch("src.auth.utils.settings", mock_settings):
+        with patch("src.auth.utils.get_settings", return_value=mock_settings):
             token = create_access_token({"sub": "testuser"})
         
         assert isinstance(token, str)
@@ -79,7 +130,7 @@ class TestJWTTokens:
         """Test that token contains the subject."""
         from src.auth.utils import create_access_token
         
-        with patch("src.auth.utils.settings", mock_settings):
+        with patch("src.auth.utils.get_settings", return_value=mock_settings):
             token = create_access_token({"sub": "testuser"})
             
             # Decode and verify
@@ -95,7 +146,7 @@ class TestJWTTokens:
         """Test that token has expiry time."""
         from src.auth.utils import create_access_token
         
-        with patch("src.auth.utils.settings", mock_settings):
+        with patch("src.auth.utils.get_settings", return_value=mock_settings):
             token = create_access_token({"sub": "testuser"})
             
             payload = jwt.decode(
@@ -110,7 +161,7 @@ class TestJWTTokens:
         """Test token expiry time is correct."""
         from src.auth.utils import create_access_token
         
-        with patch("src.auth.utils.settings", mock_settings):
+        with patch("src.auth.utils.get_settings", return_value=mock_settings):
             before = datetime.utcnow()
             token = create_access_token({"sub": "testuser"})
             after = datetime.utcnow()
@@ -204,7 +255,7 @@ class TestVerifyToken:
     def mock_settings(self):
         """Mock settings for JWT."""
         mock = MagicMock()
-        mock.jwt_secret = "test-secret-key"
+        mock.jwt_secret = secrets.token_hex(32)
         mock.jwt_algorithm = "HS256"
         mock.jwt_expire_minutes = 60
         return mock
@@ -213,7 +264,7 @@ class TestVerifyToken:
         """Test verifying a valid token."""
         from src.auth.utils import create_access_token
         
-        with patch("src.auth.utils.settings", mock_settings):
+        with patch("src.auth.utils.get_settings", return_value=mock_settings):
             token = create_access_token({"sub": "testuser"})
             
             # Verify token
@@ -229,11 +280,11 @@ class TestVerifyToken:
         """Test that token with invalid signature fails."""
         from src.auth.utils import create_access_token
         
-        with patch("src.auth.utils.settings", mock_settings):
+        with patch("src.auth.utils.get_settings", return_value=mock_settings):
             token = create_access_token({"sub": "testuser"})
             
             # Try to decode with wrong secret
-            with pytest.raises(JWTError):
+            with pytest.raises(PyJWTError):
                 jwt.decode(
                     token,
                     "wrong-secret",
@@ -244,11 +295,11 @@ class TestVerifyToken:
         """Test that token with wrong algorithm fails."""
         from src.auth.utils import create_access_token
         
-        with patch("src.auth.utils.settings", mock_settings):
+        with patch("src.auth.utils.get_settings", return_value=mock_settings):
             token = create_access_token({"sub": "testuser"})
             
             # Try to decode with wrong algorithm
-            with pytest.raises(JWTError):
+            with pytest.raises(PyJWTError):
                 jwt.decode(
                     token,
                     mock_settings.jwt_secret,
@@ -274,3 +325,98 @@ class TestVerifyToken:
         )
         
         assert decoded["sub"] == "manual_user"
+
+
+class TestFirstRunSetup:
+    """POST /auth/setup creates exactly one administrator, even under concurrency."""
+
+    @pytest.fixture
+    def empty_db(self, tmp_path, monkeypatch):
+        import asyncio
+
+        from sqlalchemy import create_engine
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        from src.auth import router as auth_router
+        from src.database import Base, get_db
+        from src.main import app
+
+        path = tmp_path / "setup.db"
+        engine = create_engine(f"sqlite:///{path}")
+        Base.metadata.create_all(engine)
+        maker = async_sessionmaker(
+            create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool),
+            expire_on_commit=False,
+        )
+
+        async def override_get_db():
+            async with maker() as session:
+                yield session
+
+        app.dependency_overrides[get_db] = override_get_db
+        # A lock bound to no event loop yet (the module's may belong to an earlier test's loop).
+        monkeypatch.setattr(auth_router, "_setup_lock", asyncio.Lock())
+        auth_router.limiter.reset()
+        try:
+            yield engine
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+            auth_router.limiter.reset()
+            engine.dispose()
+
+    @pytest.fixture
+    def slow_hash(self, monkeypatch):
+        """bcrypt-like delay between the "no users yet" check and the insert."""
+        import time
+
+        import bcrypt
+
+        from src.auth import router as auth_router
+
+        cheap = bcrypt.hashpw(b"pw", bcrypt.gensalt(rounds=4)).decode()
+
+        def hash_password(password):
+            time.sleep(0.2)
+            return cheap
+
+        monkeypatch.setattr(auth_router, "hash_password", hash_password)
+
+    async def test_concurrent_setup_creates_one_admin(self, empty_db, slow_hash):
+        import asyncio
+
+        import httpx
+        from sqlalchemy import select
+        from sqlalchemy.orm import Session
+
+        from src.auth.models import User
+        from src.main import app
+
+        async def setup(ip, username):
+            transport = httpx.ASGITransport(app=app, client=(ip, 40000))
+            async with httpx.AsyncClient(transport=transport, base_url="http://unos") as client:
+                return await client.post(
+                    "/api/v1/auth/setup", json={"username": username, "password": "pw-" + username}
+                )
+
+        responses = await asyncio.gather(setup("10.0.0.5", "owner"), setup("10.0.0.6", "intruder"))
+
+        assert sorted(r.status_code for r in responses) == [200, 400]
+        [refused] = [r for r in responses if r.status_code == 400]
+        assert refused.json()["detail"] == "Admin user already exists. Use /login instead."
+        [created] = [r for r in responses if r.status_code == 200]
+        with Session(empty_db) as session:
+            users = [(u.username, u.is_admin) for u in session.scalars(select(User))]
+        assert users == [(created.json()["username"], True)]
+
+    def test_setup_is_refused_once_a_user_exists(self, empty_db, slow_hash):
+        from fastapi.testclient import TestClient
+
+        from src.main import app
+
+        client = TestClient(app)
+        first = client.post("/api/v1/auth/setup", json={"username": "owner", "password": "pw"})
+        second = client.post("/api/v1/auth/setup", json={"username": "other", "password": "pw"})
+
+        assert first.status_code == 200 and first.json()["is_admin"] is True
+        assert second.status_code == 400

@@ -1,4 +1,25 @@
+"""Scheduled tasks (snapshots, scrubs, SMART tests, backups, custom commands).
+
+Trust model: tasks run as root inside the privileged supervisor container,
+which shares the host's PID namespace and has the Docker socket and /mnt. A
+``custom`` task runs an arbitrary shell command there, so being able to
+create, edit, toggle or run tasks is equivalent to root on the host. That is
+intended, but only for administrators:
+
+* every endpoint of this router requires an administrator (``require_admin``
+  on the router itself, in addition to the admin-only include in main.py);
+* tasks are stored only in TASKS_FILE under /data, which no other API can
+  write (the file manager is confined to the pools base and backup restore
+  does not restore it).
+
+Do not expose task creation or editing to regular users. Task targets (pool
+names, disks) are validated when a task is saved and again before it runs,
+because the tasks file may predate validation or have been edited by hand.
+"""
+
 import json
+import os
+import stat
 import subprocess
 import asyncio
 from datetime import datetime, timedelta
@@ -7,13 +28,31 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from croniter import croniter
 
-from ..auth.utils import verify_token
+from ..auth.utils import require_admin, verify_token
+from ..backup.router import copy_database
+from ..security.validators import (
+    pools_base,
+    safe_path_join,
+    validate_disk_target,
+    validate_pool_name,
+)
 from .schemas import ScheduledTask, TaskRun, TaskType, ScheduleFrequency
 
-router = APIRouter(prefix="/scheduler", tags=["scheduler"])
+router = APIRouter(
+    prefix="/scheduler",
+    tags=["scheduler"],
+    dependencies=[Depends(require_admin)],
+)
+
+SNAPSHOT_DIR_NAME = ".snapshots"
+MAX_TASK_NAME_LENGTH = 100
+MAX_COMMAND_LENGTH = 4096
+MAX_KEEP_COUNT = 1000
 
 TASKS_FILE = "/data/scheduled_tasks.json"
 RUNS_FILE = "/data/task_runs.json"
+SCHEDULED_BACKUP_DIR = "/data/backups"
+DB_FILE = "/data/unos.db"
 
 # In-memory scheduler state
 _scheduler_running = False
@@ -99,14 +138,108 @@ def get_next_run(task: ScheduledTask) -> str:
         return ""
 
 
+def _bad_task(message: str) -> HTTPException:
+    return HTTPException(status_code=400, detail=message)
+
+
+def pool_path(pool_name: str | None) -> Path:
+    """Return the mount point of a pool, validated to be inside the pools base."""
+    if not pool_name:
+        raise _bad_task("No target pool specified")
+    validate_pool_name(pool_name)
+    return safe_path_join(str(pools_base()), pool_name)
+
+
+def disk_device(target_disk: str | None) -> str:
+    """Return ``/dev/<disk>`` for a target given as ``sda`` or ``/dev/sda``."""
+    if not target_disk:
+        raise _bad_task("No target disk specified")
+    return validate_disk_target(target_disk)
+
+
+def _validate_schedule(task: ScheduledTask) -> None:
+    if not 0 <= task.hour <= 23:
+        raise _bad_task("hour must be between 0 and 23")
+    if not 0 <= task.minute <= 59:
+        raise _bad_task("minute must be between 0 and 59")
+    if task.day_of_week is not None and not 0 <= task.day_of_week <= 6:
+        raise _bad_task("day_of_week must be between 0 and 6")
+    if task.day_of_month is not None and not 1 <= task.day_of_month <= 31:
+        raise _bad_task("day_of_month must be between 1 and 31")
+    if task.frequency == ScheduleFrequency.CUSTOM:
+        expression = task.cron_expression or ""
+        if not expression.isprintable() or not croniter.is_valid(expression):
+            raise _bad_task("A valid cron expression is required for a custom schedule")
+
+
+def validate_task(task: ScheduledTask) -> ScheduledTask:
+    """Validate a task before it is saved and normalize its targets.
+
+    Raises HTTPException(400) for invalid input. Validation lives here rather
+    than in the schema so that tasks already stored in TASKS_FILE keep
+    loading (load_tasks drops the whole file if one entry fails to parse).
+    """
+    name = task.name.strip()
+    if not name or len(name) > MAX_TASK_NAME_LENGTH or not name.isprintable():
+        raise _bad_task(f"Task name must be 1-{MAX_TASK_NAME_LENGTH} printable characters")
+    task.name = name
+
+    _validate_schedule(task)
+
+    if task.keep_count is not None and not 1 <= task.keep_count <= MAX_KEEP_COUNT:
+        raise _bad_task(f"keep_count must be between 1 and {MAX_KEEP_COUNT}")
+
+    if task.task_type in (TaskType.SNAPSHOT, TaskType.SCRUB):
+        pool_path(task.target_pool)
+    elif task.task_type == TaskType.SMART_TEST:
+        task.target_disk = disk_device(task.target_disk)
+    elif task.task_type == TaskType.CUSTOM:
+        command = task.command or ""
+        if not command.strip():
+            raise _bad_task("No command specified")
+        if "\x00" in command or len(command) > MAX_COMMAND_LENGTH:
+            raise _bad_task(f"Command must be at most {MAX_COMMAND_LENGTH} characters without NUL bytes")
+
+    return task
+
+
+def _run(cmd: list[str] | str, **kwargs) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+
+
+def _real_dir(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except FileNotFoundError:
+        return False
+
+
+def _snapshot_dir(pool: Path, *, create: bool) -> Path | None:
+    """``<pool>/.snapshots`` if it is a real directory (not a symlink), optionally created."""
+    snap_dir = pool / SNAPSHOT_DIR_NAME
+    if os.path.islink(snap_dir):
+        raise _bad_task(f"{snap_dir} must not be a symbolic link")
+    if not os.path.lexists(snap_dir):
+        if not create:
+            return None
+        os.mkdir(snap_dir, 0o755)
+    if not _real_dir(snap_dir):
+        raise _bad_task(f"{snap_dir} is not a directory")
+    return snap_dir
+
+
 async def create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
     """Create a scheduled backup and optionally cleanup old ones."""
+    return await asyncio.to_thread(_create_scheduled_backup, keep_count)
+
+
+def _create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
     import tarfile
     import tempfile
     import shutil
     import os
 
-    BACKUP_DIR = Path("/data/backups")
+    BACKUP_DIR = Path(SCHEDULED_BACKUP_DIR)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -129,10 +262,11 @@ async def create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
             with open(manifest_path, "w") as f:
                 json.dump(manifest, f, indent=2)
 
-            # Backup database
-            db_path = Path("/data/unos.db")
+            # Backup database with SQLite's backup API: a plain file copy of a
+            # database in use can be torn and would then fail the restore check.
+            db_path = Path(DB_FILE)
             if db_path.exists():
-                shutil.copy2(db_path, tmpdir_path / "unos.db")
+                copy_database(db_path, tmpdir_path / "unos.db")
 
             # Backup SMB config
             smb_conf = Path("/etc/samba/smb.conf")
@@ -175,21 +309,17 @@ async def create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
         return False, f"Backup failed: {str(e)}"
 
 
-async def cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
-    """Remove old auto-created snapshots, keeping only the most recent ones."""
-    snapshots_dir = Path(f"/mnt/pools/{pool_name}/.snapshots")
-    if not snapshots_dir.exists():
+def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
+    snapshots_dir = _snapshot_dir(pool_path(pool_name), create=False)
+    if snapshots_dir is None:
         return ""
 
-    # Get all auto-created snapshots (prefixed with "auto_")
+    # Get all auto-created snapshots (prefixed with "auto_"); never follow symlinks.
     auto_snapshots = []
     for snap in snapshots_dir.iterdir():
-        if snap.is_dir() and snap.name.startswith("auto_"):
+        if _real_dir(snap) and snap.name.startswith("auto_"):
             # Get creation time from btrfs
-            result = subprocess.run(
-                ["btrfs", "subvolume", "show", str(snap)],
-                capture_output=True, text=True
-            )
+            result = _run(["btrfs", "subvolume", "show", str(snap)])
             if result.returncode == 0:
                 created = None
                 for line in result.stdout.split("\n"):
@@ -209,10 +339,7 @@ async def cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
     # Delete snapshots beyond keep_count
     deleted_count = 0
     for snap, _ in auto_snapshots[keep_count:]:
-        result = subprocess.run(
-            ["btrfs", "subvolume", "delete", str(snap)],
-            capture_output=True, text=True
-        )
+        result = _run(["btrfs", "subvolume", "delete", str(snap)])
         if result.returncode == 0:
             deleted_count += 1
 
@@ -221,22 +348,41 @@ async def cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
     return ""
 
 
+async def cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
+    """Remove old auto-created snapshots, keeping only the most recent ones."""
+    return await asyncio.to_thread(_cleanup_old_snapshots, pool_name, keep_count)
+
+
+def _pool_is_mounted(pool: Path) -> bool:
+    return _real_dir(pool) and os.path.ismount(pool)
+
+
+def _create_snapshot(pool_name: str) -> tuple[bool, str]:
+    pool = pool_path(pool_name)
+    # Checked before .snapshots is created, so an unmounted pool does not get
+    # a directory on the root filesystem under its mount point.
+    if not _pool_is_mounted(pool):
+        return False, f"Pool {pool_name} is not mounted at {pool}"
+    snap_dir = _snapshot_dir(pool, create=True)
+    name = f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    result = _run(["btrfs", "subvolume", "snapshot", "-r", str(pool), str(snap_dir / name)])
+    if result.returncode != 0:
+        return False, result.stderr
+    return True, name
+
+
 async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
-    """Execute a scheduled task."""
+    """Execute a scheduled task.
+
+    Targets are validated again here: the tasks file may contain entries
+    written before validation existed or edited by hand.
+    """
     try:
         if task.task_type == TaskType.SNAPSHOT:
-            if not task.target_pool:
-                return False, "No target pool specified"
-            # Create snapshot
-            name = f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            result = subprocess.run(
-                ["btrfs", "subvolume", "snapshot", "-r",
-                 f"/mnt/pools/{task.target_pool}",
-                 f"/mnt/pools/{task.target_pool}/.snapshots/{name}"],
-                capture_output=True, text=True
-            )
-            if result.returncode != 0:
-                return False, result.stderr
+            ok, result = await asyncio.to_thread(_create_snapshot, task.target_pool)
+            if not ok:
+                return False, result
+            name = result
 
             # Cleanup old snapshots if keep_count is set
             if task.keep_count and task.keep_count > 0:
@@ -249,25 +395,18 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             return True, f"Snapshot {name} created"
 
         elif task.task_type == TaskType.SCRUB:
-            if not task.target_pool:
-                return False, "No target pool specified"
-            result = subprocess.run(
-                ["btrfs", "scrub", "start", f"/mnt/pools/{task.target_pool}"],
-                capture_output=True, text=True
-            )
+            pool = pool_path(task.target_pool)
+            result = await asyncio.to_thread(_run, ["btrfs", "scrub", "start", str(pool)])
             if result.returncode != 0:
                 return False, result.stderr
             return True, "Scrub started"
 
         elif task.task_type == TaskType.SMART_TEST:
-            if not task.target_disk:
-                return False, "No target disk specified"
-            result = subprocess.run(
-                ["smartctl", "-t", "short", f"/dev/{task.target_disk}"],
-                capture_output=True, text=True
-            )
+            # Accepts "sda" and "/dev/sda" (what the UI sends).
+            device = disk_device(task.target_disk)
+            result = await asyncio.to_thread(_run, ["smartctl", "-t", "short", device])
             if result.returncode != 0:
-                return False, result.stderr
+                return False, result.stderr or result.stdout
             return True, "SMART test started"
 
         elif task.task_type == TaskType.BACKUP:
@@ -278,14 +417,15 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
         elif task.task_type == TaskType.CUSTOM:
             if not task.command:
                 return False, "No command specified"
-            result = subprocess.run(
-                task.command, shell=True,
-                capture_output=True, text=True
-            )
+            # Deliberately a shell command run as root: administrators only,
+            # see the trust model at the top of this module.
+            result = await asyncio.to_thread(_run, task.command, shell=True)
             return result.returncode == 0, result.stdout or result.stderr
 
         return False, "Unknown task type"
 
+    except HTTPException as e:
+        return False, str(e.detail)
     except Exception as e:
         return False, str(e)
 
@@ -351,7 +491,6 @@ async def scheduler_loop():
         await asyncio.sleep(60)  # Check every minute
 
 
-@router.on_event("startup")
 async def start_scheduler():
     """Start the scheduler on app startup."""
     global _scheduler_running, _scheduler_task
@@ -359,7 +498,6 @@ async def start_scheduler():
     _scheduler_task = asyncio.create_task(scheduler_loop())
 
 
-@router.on_event("shutdown")
 async def stop_scheduler():
     """Stop the scheduler on app shutdown."""
     global _scheduler_running, _scheduler_task
@@ -381,6 +519,7 @@ async def list_tasks(_: dict = Depends(verify_token)):
 @router.post("/tasks", response_model=ScheduledTask)
 async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
     """Create a new scheduled task."""
+    validate_task(task)
     tasks = load_tasks()
 
     task.id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -395,6 +534,7 @@ async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
 @router.put("/tasks/{task_id}", response_model=ScheduledTask)
 async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verify_token)):
     """Update a scheduled task."""
+    validate_task(task)
     tasks = load_tasks()
 
     for i, t in enumerate(tasks):

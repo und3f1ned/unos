@@ -1,14 +1,56 @@
-import asyncio
-import time
-import psutil
-from datetime import datetime
-from collections import deque
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from jose import jwt, JWTError
-from ..config import get_settings
+"""Real-time WebSocket endpoints.
 
-settings = get_settings()
+Authentication handshake, used by both sockets. Tokens never travel in the
+URL, because request URLs end up in the uvicorn and proxy access logs:
+
+1. The client connects without query parameters.
+2. Within 10 seconds it sends one text message:
+   ``{"type": "auth", "token": "<JWT or unos_ API token>"}``.
+3. The token is checked exactly like an HTTP bearer token (signature, expiry,
+   API token state, user still exists). The server answers
+   ``{"type": "auth_ok"}`` and the regular message stream follows.
+
+The server closes the socket with 4401 ("unauthorized") when the first
+message is missing, late, malformed or carries an invalid token, and with
+4403 ("forbidden") when the user may not use the socket (container logs
+require an administrator). A ``?token=`` query parameter is refused (4401).
+
+While a socket is open, its token is checked again every
+``WS_REAUTH_INTERVAL_SECONDS``. A token that stopped being valid (expired
+JWT, disabled or expired API token, deleted user) closes the socket with
+4401; a logs socket whose user is no longer an administrator is closed with
+4403. If the check itself fails (database error), the socket is closed with
+1011 and the client reconnects through the handshake.
+"""
+import asyncio
+import functools
+import json
+import logging
+import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from typing import Any
+
+import psutil
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+
+from ..auth.models import User
+from ..auth.utils import authenticate_token
+from ..config import get_settings
+from ..database import async_session
+
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+WS_AUTH_TIMEOUT_SECONDS = 10.0
+WS_REAUTH_INTERVAL_SECONDS = 60.0
+STATS_INTERVAL_SECONDS = 2.0
+WS_CLOSE_UNAUTHORIZED = 4401
+WS_CLOSE_FORBIDDEN = 4403
+WS_CLOSE_INTERNAL_ERROR = 1011
+# Generous bound for {"type": "auth", "token": ...}; anything larger is not a token.
+_MAX_AUTH_MESSAGE_CHARS = 16 * 1024
 
 # Track previous values for rate calculation
 _prev_net_io = None
@@ -28,8 +70,8 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
+    def register(self, websocket: WebSocket) -> None:
+        """Track an accepted, authenticated socket."""
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
@@ -256,63 +298,226 @@ def get_system_stats() -> dict:
     }
 
 
-def verify_ws_token(token: str) -> bool:
-    """Verify JWT token for WebSocket connection."""
+async def _close(websocket: WebSocket, code: int, reason: str) -> None:
     try:
-        payload = jwt.decode(
-            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
-        )
-        return payload.get("sub") is not None
-    except JWTError:
-        return False
+        await websocket.close(code=code, reason=reason)
+    except (RuntimeError, OSError, WebSocketDisconnect):
+        pass  # the client is already gone
+
+
+def _token_from_auth_message(message: dict[str, Any]) -> str | None:
+    text = message.get("text")
+    if not isinstance(text, str) or len(text) > _MAX_AUTH_MESSAGE_CHARS:
+        return None
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict) or payload.get("type") != "auth":
+        return None
+    token = payload.get("token")
+    if not isinstance(token, str) or not token:
+        return None
+    return token
+
+
+async def _user_for_token(token: str) -> User | None:
+    # Short-lived session: a socket can stay open for hours and must not hold
+    # a pooled database connection that long.
+    try:
+        async with async_session() as db:
+            return await authenticate_token(token, db)
+    except HTTPException:
+        return None
+
+
+async def authenticate_websocket(websocket: WebSocket, *, admin_only: bool = False) -> str | None:
+    """Accept ``websocket`` and run the auth handshake described above.
+
+    Returns the accepted token (``_watch_credential`` checks it again while
+    the socket is open), or ``None`` after the socket has been closed (or the
+    client went away). The socket must be accepted before it can be closed
+    with an application close code, so rejected clients are accepted first
+    and then closed with 4401/4403.
+    """
+    await websocket.accept()
+
+    if "token" in websocket.query_params:
+        await _close(websocket, WS_CLOSE_UNAUTHORIZED, "unauthorized")
+        return None
+
+    try:
+        message = await asyncio.wait_for(websocket.receive(), WS_AUTH_TIMEOUT_SECONDS)
+    except TimeoutError:
+        await _close(websocket, WS_CLOSE_UNAUTHORIZED, "unauthorized")
+        return None
+    if message["type"] == "websocket.disconnect":
+        return None
+
+    token = _token_from_auth_message(message)
+    user = await _user_for_token(token) if token else None
+    if user is None:
+        await _close(websocket, WS_CLOSE_UNAUTHORIZED, "unauthorized")
+        return None
+    if admin_only and not user.is_admin:
+        await _close(websocket, WS_CLOSE_FORBIDDEN, "forbidden")
+        return None
+
+    await websocket.send_json({"type": "auth_ok"})
+    return token
+
+
+async def _watch_credential(token: str, *, admin_only: bool = False) -> tuple[int, str]:
+    """Check ``token`` every WS_REAUTH_INTERVAL_SECONDS while a socket is open.
+
+    Returns the close code and reason once the socket must be closed. Each
+    check uses a new short-lived database session (see ``_user_for_token``).
+    """
+    while True:
+        await asyncio.sleep(WS_REAUTH_INTERVAL_SECONDS)
+        try:
+            user = await _user_for_token(token)
+        except Exception:
+            logger.exception("Could not re-check a WebSocket's credentials")
+            return WS_CLOSE_INTERNAL_ERROR, "re-authentication failed"
+        if user is None:
+            return WS_CLOSE_UNAUTHORIZED, "unauthorized"
+        if admin_only and not user.is_admin:
+            return WS_CLOSE_FORBIDDEN, "forbidden"
 
 
 @router.websocket("/ws/v1/events")
 async def websocket_endpoint(websocket: WebSocket):
-    # Get token from query param
-    token = websocket.query_params.get("token")
-    if not token or not verify_ws_token(token):
-        await websocket.close(code=4001, reason="Unauthorized")
+    token = await authenticate_websocket(websocket)
+    if token is None:
         return
 
-    await manager.connect(websocket)
-
+    manager.register(websocket)
+    # Reading the socket notices a closed client right away (not only when the
+    # next send fails) and drains anything the client sends.
+    disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
+    revoked = asyncio.ensure_future(_watch_credential(token))
     try:
         # Start sending stats
-        while True:
+        while not (disconnected.done() or revoked.done()):
             stats = get_system_stats()
             await websocket.send_json(stats)
-            await asyncio.sleep(2)
+            await asyncio.wait(
+                {disconnected, revoked},
+                timeout=STATS_INTERVAL_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        if revoked.done() and not disconnected.done():
+            await _close(websocket, *revoked.result())
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        pass
     except Exception:
+        pass
+    finally:
+        _finish(disconnected)
+        _finish(revoked)
         manager.disconnect(websocket)
 
 
 @router.websocket("/ws/v1/logs/{container_id}")
 async def container_logs_endpoint(websocket: WebSocket, container_id: str):
-    """Stream container logs in real-time."""
-    import docker
-
-    token = websocket.query_params.get("token")
-    if not token or not verify_ws_token(token):
-        await websocket.close(code=4001, reason="Unauthorized")
+    """Stream container logs in real-time (administrators only)."""
+    token = await authenticate_websocket(websocket, admin_only=True)
+    if token is None:
         return
 
-    await manager.connect(websocket)
-
+    manager.register(websocket)
     try:
-        client = docker.DockerClient(base_url=f"unix://{settings.docker_socket}")
-        container = client.containers.get(container_id)
+        await _stream_container_logs(websocket, container_id, token)
+    finally:
+        manager.disconnect(websocket)
 
-        for log in container.logs(stream=True, follow=True, tail=50):
+
+async def _wait_for_disconnect(websocket: WebSocket) -> None:
+    """Return once the client disconnects; anything else it sends is ignored."""
+    while True:
+        message = await websocket.receive()
+        if message["type"] == "websocket.disconnect":
+            return
+
+
+def _consume_result(future: "asyncio.Future[Any]") -> None:
+    """Done-callback that marks an abandoned future's outcome as retrieved."""
+    if not future.cancelled():
+        future.exception()
+
+
+def _finish(task: "asyncio.Future[Any]") -> None:
+    """Cancel ``task`` if still running, otherwise retrieve its outcome."""
+    if task.done():
+        _consume_result(task)
+    else:
+        task.cancel()
+
+
+async def _stream_container_logs(websocket: WebSocket, container_id: str, token: str) -> None:
+    import docker
+
+    loop = asyncio.get_running_loop()
+    # docker-py blocks while it waits for the next log line. Run it on a
+    # private thread: iterating it on the event loop froze the whole API for
+    # as long as a quiet container produced no output, and a shared pool
+    # thread could be held for hours by one open log view.
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ws-container-logs")
+
+    def run(func: Any, *args: Any, **kwargs: Any) -> "asyncio.Future[Any]":
+        return loop.run_in_executor(executor, functools.partial(func, *args, **kwargs))
+
+    disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
+    # Runs on its own timer, so access is re-checked while the container is quiet too.
+    revoked = asyncio.ensure_future(_watch_credential(token, admin_only=True))
+    client = None
+    stream = None
+    try:
+        client = await run(docker.DockerClient, base_url=f"unix://{get_settings().docker_socket}")
+        container = await run(client.containers.get, container_id)
+        stream = await run(container.logs, stream=True, follow=True, tail=50)
+
+        while True:
+            next_chunk = run(next, stream, None)
+            await asyncio.wait(
+                {next_chunk, disconnected, revoked}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if revoked.done() or not next_chunk.done():
+                # Access was revoked, or the client left while we waited for
+                # output: send nothing more. Closing the stream (finally)
+                # unblocks the reader thread.
+                next_chunk.add_done_callback(_consume_result)
+                if revoked.done() and not disconnected.done():
+                    await _close(websocket, *revoked.result())
+                return
+            chunk = next_chunk.result()
+            if chunk is None:
+                return  # log stream ended, e.g. the container stopped
             await websocket.send_json({
                 "type": "log",
                 "container_id": container_id,
-                "data": log.decode("utf-8"),
+                "data": chunk.decode("utf-8", errors="replace"),
             })
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception as e:
-        await websocket.send_json({"type": "error", "message": str(e)})
-        manager.disconnect(websocket)
+        pass
+    except Exception as exc:
+        if not disconnected.done():
+            try:
+                await websocket.send_json({"type": "error", "message": str(exc)})
+            except Exception:
+                pass
+    finally:
+        _finish(disconnected)
+        _finish(revoked)
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+        executor.shutdown(wait=False, cancel_futures=True)

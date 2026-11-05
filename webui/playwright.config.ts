@@ -8,12 +8,16 @@ import { defineConfig, devices } from '@playwright/test';
  *    Usage: npm test
  *
  * 2. Container mode: Tests against local Docker Compose stack
- *    Usage: BASE_URL=http://localhost:3080 npm test
+ *    Usage: BASE_URL=https://localhost:3443 npm test
  *    Or: npm run test:local
+ *
+ * BASE_URL must be the HTTPS address. Caddy answers plain HTTP only with a
+ * redirect to https://<host>/ on the default port (see webui/Caddyfile), so
+ * an http:// base URL ends up on another origin or a closed port.
  */
 
 // Determine the base URL for tests
-const baseURL = process.env.BASE_URL || 'http://10.1.1.103';
+const baseURL = process.env.BASE_URL || 'https://10.1.1.103';
 
 // In CI or container mode, we may need to wait for services
 const isCI = !!process.env.CI;
@@ -29,6 +33,9 @@ export default defineConfig({
 
   use: {
     baseURL,
+    // The certificate comes from Caddy's local CA ("tls internal"), which the
+    // test machine does not trust. Also applies to the `request` fixture.
+    ignoreHTTPSErrors: true,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: isCI ? 'on-first-retry' : 'off',

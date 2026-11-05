@@ -8,8 +8,24 @@
 		used: number;
 		free: number;
 		health: string;
+		mounted?: boolean;
+		missingDevices?: number;
+		deviceErrors?: number;
+		readOnly?: boolean;
+		/** btrfs made the filesystem read-only after a serious error. */
+		forcedReadOnly?: boolean;
 	}> = [];
 	export let compact: boolean = false;
+
+	type BadgeVariant = 'success' | 'warning' | 'error' | 'orange' | 'neutral';
+
+	const healthBadges: Record<string, { variant: BadgeVariant; label: string }> = {
+		healthy: { variant: 'success', label: 'Healthy' },
+		degraded: { variant: 'warning', label: 'Degraded' },
+		unmounted: { variant: 'orange', label: 'Not mounted' },
+		error: { variant: 'error', label: 'Error' },
+		unknown: { variant: 'neutral', label: 'Unknown' }
+	};
 
 	function formatBytes(bytes: number): string {
 		if (bytes === 0) return '0 B';
@@ -23,23 +39,38 @@
 		return size > 0 ? (used / size) * 100 : 0;
 	}
 
-	function getHealthVariant(
-		health: string
-	): 'success' | 'warning' | 'error' | 'neutral' {
-		switch (health?.toLowerCase()) {
-			case 'healthy':
-			case 'online':
-				return 'success';
-			case 'degraded':
-				return 'warning';
-			default:
-				return 'error';
-		}
+	function getHealthBadge(health: string): { variant: BadgeVariant; label: string } {
+		return healthBadges[health?.toLowerCase()] ?? { variant: 'error', label: health || 'Unknown' };
 	}
 
-	$: totalSize = pools.reduce((acc, p) => acc + p.size, 0);
-	$: totalUsed = pools.reduce((acc, p) => acc + p.used, 0);
+	function isMounted(pool: (typeof pools)[number]): boolean {
+		return pool.mounted ?? pool.health !== 'unmounted';
+	}
+
+	function problems(pool: (typeof pools)[number]): string[] {
+		const list: string[] = [];
+		if (pool.missingDevices) {
+			list.push(`${pool.missingDevices} device${pool.missingDevices === 1 ? '' : 's'} missing`);
+		}
+		if (pool.deviceErrors) {
+			list.push(`${pool.deviceErrors} device error${pool.deviceErrors === 1 ? '' : 's'}`);
+		}
+		if (pool.forcedReadOnly) list.push('forced read-only');
+		else if (pool.readOnly) list.push('read-only');
+		return list;
+	}
+
+	// Only a healthy pool mounted read-only on purpose is a warning; the rest are errors.
+	function isWarning(pool: (typeof pools)[number]): boolean {
+		return pool.health?.toLowerCase() === 'healthy' && !pool.forcedReadOnly;
+	}
+
+	// Usage is only known for mounted pools.
+	$: mountedPools = pools.filter(isMounted);
+	$: totalSize = mountedPools.reduce((acc, p) => acc + p.size, 0);
+	$: totalUsed = mountedPools.reduce((acc, p) => acc + p.used, 0);
 	$: totalPercent = totalSize > 0 ? (totalUsed / totalSize) * 100 : 0;
+	$: problemCount = pools.filter((p) => p.health?.toLowerCase() !== 'healthy').length;
 </script>
 
 {#if compact}
@@ -48,6 +79,10 @@
 		<span>{pools.length} pool{pools.length !== 1 ? 's' : ''}</span>
 		<span class="text-muted">•</span>
 		<span>{formatBytes(totalUsed)} / {formatBytes(totalSize)}</span>
+		{#if problemCount > 0}
+			<span class="text-muted">•</span>
+			<span class="text-warning">{problemCount} need{problemCount === 1 ? 's' : ''} attention</span>
+		{/if}
 	</div>
 {:else}
 	<Card>
@@ -66,18 +101,31 @@
 		{:else}
 			<div class="space-y-3">
 				{#each pools as pool}
-					{@const percent = getUsagePercent(pool.used, pool.size)}
+					{@const badge = getHealthBadge(pool.health)}
+					{@const mounted = isMounted(pool)}
+					{@const issues = problems(pool)}
 					<div>
 						<div class="flex items-center justify-between mb-1">
 							<div class="flex items-center gap-2">
 								<span class="font-medium">{pool.name}</span>
-								<Badge variant={getHealthVariant(pool.health)}>{pool.health}</Badge>
+								<Badge variant={badge.variant}>{badge.label}</Badge>
 							</div>
-							<span class="text-sm text-secondary"
-								>{formatBytes(pool.used)} / {formatBytes(pool.size)}</span
-							>
+							{#if mounted}
+								<span class="text-sm text-secondary"
+									>{formatBytes(pool.used)} / {formatBytes(pool.size)}</span
+								>
+							{:else}
+								<span class="text-sm text-muted">Data not accessible</span>
+							{/if}
 						</div>
-						<ProgressBar value={percent} variant="info" size="sm" />
+						{#if mounted}
+							<ProgressBar value={getUsagePercent(pool.used, pool.size)} variant="info" size="sm" />
+						{/if}
+						{#if issues.length > 0}
+							<p class="text-xs mt-1 {isWarning(pool) ? 'text-warning' : 'text-error'}">
+								{issues.join(' • ')}
+							</p>
+						{/if}
 					</div>
 				{/each}
 			</div>

@@ -1,6 +1,77 @@
-from pydantic import BaseModel
+import ipaddress
+import re
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, ConfigDict
 from datetime import datetime
 from enum import Enum
+
+from .validators import NAME_MAX
+
+# One DNS label: letters, digits and hyphens, 1-63 characters, no hyphen at
+# either end.
+_DNS_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+MAX_HOSTNAME_LENGTH = 253
+
+# A custom certificate is stored as <name>.crt, <name>.key and <name>.chain.crt
+# (security.router._certificate_files), and each file name must fit in
+# NAME_MAX bytes. The names are ASCII, so characters are bytes.
+MAX_CERTIFICATE_NAME_LENGTH = NAME_MAX - len(".chain.crt")
+
+# X.509 limits a certificate's subject common name (CN) to 64 characters
+# (RFC 5280, ub-common-name). openssl refuses a longer one, after it has
+# already written the new key.
+MAX_COMMON_NAME_LENGTH = 64
+
+
+def is_dns_hostname(value: str) -> bool:
+    """Whether ``value`` is a DNS host name: dot-separated labels, at most 253 characters."""
+    return 0 < len(value) <= MAX_HOSTNAME_LENGTH and all(
+        _DNS_LABEL.fullmatch(label) for label in value.split(".")
+    )
+
+
+def parse_ip_address(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """``value`` as an IP address, or None. IPv6 zone IDs ("fe80::1%eth0") are refused."""
+    if "%" in value:
+        return None
+    try:
+        return ipaddress.ip_address(value)
+    except ValueError:
+        return None
+
+
+def validate_certificate_domain(
+    value: str, *, max_length: int = MAX_CERTIFICATE_NAME_LENGTH
+) -> str:
+    """Accept a DNS host name of at most ``max_length`` characters or an IP
+    address (returned in canonical form).
+
+    The name becomes the file names of the key and the certificate and goes
+    into openssl's -subj and -addext arguments, so anything else (path
+    separators, "..", NUL, spaces, wildcards) is refused. The default
+    ``max_length`` is the longest name those files can have.
+    """
+    address = parse_ip_address(value)
+    if address is not None:
+        return str(address)
+    if not is_dns_hostname(value):
+        raise ValueError(
+            "must be a host name (letters, digits and hyphens, separated by dots) or an IP address"
+        )
+    if len(value) > max_length:
+        raise ValueError(f"must be at most {max_length} characters long")
+    return value
+
+
+def validate_common_name(value: str) -> str:
+    """A certificate domain that can also be a certificate's subject CN."""
+    return validate_certificate_domain(value, max_length=MAX_COMMON_NAME_LENGTH)
+
+
+# The domain of a certificate UNOS generates: it names the files and becomes
+# the subject CN.
+CertificateDomain = Annotated[str, AfterValidator(validate_common_name)]
 
 
 # Login History Schemas
@@ -13,8 +84,7 @@ class LoginAttemptResponse(BaseModel):
     failure_reason: str | None
     timestamp: datetime | None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LoginHistoryResponse(BaseModel):
@@ -104,7 +174,7 @@ class CertificateUpload(BaseModel):
 
 
 class SelfSignedCertRequest(BaseModel):
-    domain: str
+    domain: CertificateDomain
     validity_days: int = 365
     organization: str | None = None
     country: str | None = None

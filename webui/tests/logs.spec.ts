@@ -1,4 +1,11 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+
+// The filters are Select components: a button with role="combobox" below a
+// <label>. The label is not associated with the button, so the combobox has
+// no accessible name; find it through the element that holds both.
+const filterSelect = (page: Page, label: string) =>
+  page.locator('label', { hasText: label }).locator('..').getByRole('combobox');
 
 test.describe('System Logs', () => {
   test('should display logs tab', async ({ authenticatedPage: page }) => {
@@ -10,15 +17,16 @@ test.describe('System Logs', () => {
   test('should have source filter', async ({ authenticatedPage: page }) => {
     await page.goto('/system#logs');
     await page.waitForTimeout(1000);
-    // Should have select dropdown for source
-    await expect(page.locator('select').first()).toBeVisible();
+    // One button per available source (GET /api/v1/logs/sources); the journal
+    // and the kernel log are always available.
+    await expect(page.getByRole('button', { name: 'System Journal' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Kernel' })).toBeVisible();
   });
 
   test('should have severity filter', async ({ authenticatedPage: page }) => {
     await page.goto('/system#logs');
     await page.waitForTimeout(1000);
-    // Should have select dropdowns
-    await expect(page.locator('select').first()).toBeVisible();
+    await expect(filterSelect(page, 'Priority Level')).toBeVisible();
   });
 
   test('should display log entries or empty state', async ({ authenticatedPage: page }) => {
@@ -50,7 +58,37 @@ test.describe('System Logs', () => {
   test('should have limit selector', async ({ authenticatedPage: page }) => {
     await page.goto('/system#logs');
     await page.waitForTimeout(1000);
-    // Should have select elements
-    await expect(page.locator('select').first()).toBeVisible();
+    await expect(filterSelect(page, 'Limit')).toBeVisible();
+  });
+
+  // Log lines contain text anyone can influence (login names, request paths,
+  // container output). Highlighting search matches must not turn it into HTML.
+  test('search highlighting shows markup in log lines as text', async ({ authenticatedPage: page }) => {
+    const payload = '<img src=x onerror="document.title=\'xss\'">';
+    const message = `Failed password for ${payload} from 192.0.2.7`;
+    await page.route(
+      (url) => url.pathname === '/api/v1/logs/sources',
+      (route) => route.fulfill({
+        json: { sources: [{ name: 'journal', label: 'System Journal', description: 'systemd journal', path: null, available: true }] },
+      }),
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/logs/entries',
+      (route) => route.fulfill({
+        json: {
+          entries: [{ timestamp: '2026-01-01T00:00:00', facility: 'auth', priority: 'warning', message, source: 'journal', unit: 'sshd' }],
+          total: 1,
+        },
+      }),
+    );
+    await page.goto('/system#logs');
+    const table = page.locator('main table');
+    await expect(table).toContainText(message);
+
+    await page.getByPlaceholder('Search in logs').fill('password');
+    await expect(table.locator('mark')).toHaveText('password');
+    await expect(table).toContainText(message);
+    await expect(table.locator('img')).toHaveCount(0);
+    expect(await page.title()).not.toBe('xss');
   });
 });

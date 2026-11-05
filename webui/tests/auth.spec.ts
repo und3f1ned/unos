@@ -26,6 +26,38 @@ test.describe('Authentication', () => {
     await expect(page.locator('text=Dashboard')).toBeVisible();
   });
 
+  test('errors in the 2FA step keep the code form unless the password was rejected', async ({ page }) => {
+    // Canned /auth/login answers, in order; nothing reaches the supervisor.
+    const answers = [
+      { status: 200, json: { access_token: '', token_type: 'bearer', requires_totp: true } },
+      // slowapi's answer once the 5 attempts per minute are used up.
+      { status: 429, json: { error: 'Rate limit exceeded: 5 per 1 minute' } },
+      { status: 401, json: { detail: 'Invalid 2FA code' } },
+      { status: 401, json: { detail: 'Incorrect username or password' } },
+    ];
+    await page.route('**/api/v1/auth/login', (route) => route.fulfill(answers.shift()!));
+    await page.goto('/login');
+    await page.fill('#username', 'e2e_totp_user');
+    await page.fill('#password', 'e2e-password');
+    await page.click('button[type="submit"]');
+    await expect(page.locator('#totp')).toBeVisible();
+
+    await page.fill('#totp', '123456');
+    await page.click('button[type="submit"]');
+    await expect(page.getByText('Too many attempts. Wait a minute and try again.')).toBeVisible();
+    await expect(page.locator('#totp')).toBeVisible();
+
+    await page.click('button[type="submit"]');
+    await expect(page.getByText('Invalid 2FA code')).toBeVisible();
+    await expect(page.locator('#totp')).toBeVisible();
+
+    await page.click('button[type="submit"]');
+    await expect(page.getByText('Incorrect username or password')).toBeVisible();
+    await expect(page.locator('#password')).toBeVisible();
+    await expect(page.locator('#totp')).toHaveCount(0);
+    expect(answers).toEqual([]);
+  });
+
   test('should logout by clearing session', async ({ page }) => {
     // Login first
     await page.goto('/login');

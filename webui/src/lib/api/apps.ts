@@ -1,5 +1,11 @@
 import { api } from "./client";
 
+/**
+ * Catalog host paths that start with this placeholder live on the storage pool
+ * chosen at install time; the server replaces it with the pool's mount point.
+ */
+export const POOL_PLACEHOLDER = "{pool}";
+
 export interface PortMapping {
   host: number;
   container: number;
@@ -10,6 +16,13 @@ export interface VolumeMapping {
   host: string;
   container: string;
   readonly: boolean;
+  /** The source is a single file, not a directory. */
+  is_file: boolean;
+  /** Owner the server gives a folder it creates (images that run as a non-root user). */
+  uid?: number | null;
+  gid?: number | null;
+  /** The source lives on the selected pool; otherwise it is a fixed host path. */
+  on_pool: boolean;
 }
 
 export interface EnvVar {
@@ -17,6 +30,8 @@ export interface EnvVar {
   value: string;
   description: string;
   required: boolean;
+  /** Password, token or key: mask it; placeholders like "changeme" are rejected. */
+  secret: boolean;
 }
 
 export interface AppTemplate {
@@ -46,14 +61,53 @@ export interface InstalledApp {
   status: string;
   web_port: number | null;
   created_at: string;
+  /** Pool chosen at install time; null without pool data or for apps installed by older versions. */
+  pool: string | null;
+  /** The container's bind mounts with the host paths it really uses. */
+  volumes: AppVolume[];
+  /**
+   * Data folders that are not on a mounted pool: on the system disk (apps installed
+   * by older versions under /mnt/pools/default) or on a pool that is not mounted.
+   * The server refuses to start such an app.
+   */
+  data_outside_pools: string[];
+}
+
+/** A mounted storage pool that can hold app data. */
+export interface AppPool {
+  name: string;
+  path: string;
+  free_bytes: number;
+  total_bytes: number;
+}
+
+/** A bind mount with the host path the server actually used. */
+export interface AppVolume {
+  host: string;
+  container: string;
+  readonly: boolean;
 }
 
 export interface AppInstallRequest {
   template_id: string;
   name?: string;
+  /** Pool for the app's data; omitted = first mounted pool by name. */
+  pool?: string;
   port_overrides?: Record<number, number>;
+  /** Container path -> host path inside a mounted pool. */
   volume_overrides?: Record<string, string>;
   env_overrides?: Record<string, string>;
+}
+
+export interface AppInstallResponse {
+  id: string;
+  name: string;
+  container_id: string;
+  status: string;
+  web_url: string | null;
+  /** Pool holding the app's data, or null if it stores nothing on a pool. */
+  pool: string | null;
+  volumes: AppVolume[];
 }
 
 export async function getAppCatalog(category?: string, query?: string): Promise<AppTemplate[]> {
@@ -68,12 +122,17 @@ export async function getAppTemplate(appId: string): Promise<AppTemplate> {
   return api.get<AppTemplate>(`/apps/catalog/${appId}`);
 }
 
+/** Mounted storage pools sorted by name; the first one is the server's default. */
+export async function getAppPools(): Promise<AppPool[]> {
+  return api.get<AppPool[]>("/apps/pools");
+}
+
 export async function getInstalledApps(): Promise<InstalledApp[]> {
   return api.get<InstalledApp[]>("/apps/installed");
 }
 
-export async function installApp(req: AppInstallRequest): Promise<{ id: string; name: string; status: string; web_url: string | null }> {
-  return api.post("/apps/install", req);
+export async function installApp(req: AppInstallRequest): Promise<AppInstallResponse> {
+  return api.post<AppInstallResponse>("/apps/install", req);
 }
 
 export async function uninstallApp(containerId: string): Promise<void> {
@@ -90,4 +149,40 @@ export async function stopApp(containerId: string): Promise<void> {
 
 export async function restartApp(containerId: string): Promise<void> {
   return api.post(`/apps/installed/${containerId}/restart`);
+}
+
+/** Host path a catalog volume gets on a pool; fixed host paths are returned unchanged. */
+export function poolHostPath(volume: VolumeMapping, poolPath: string): string {
+  if (!volume.on_pool) return volume.host;
+  return poolPath + volume.host.slice(POOL_PLACEHOLDER.length);
+}
+
+/** Collapse "." and ".." segments of an absolute path; null if it is not absolute. */
+function normalizePath(path: string): string | null {
+  if (!path.startsWith("/")) return null;
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return "/" + parts.join("/");
+}
+
+/**
+ * Whether `path` lies inside one of the pools. This is only a lexical pre-check
+ * for the form; the server resolves symlinks and has the final say.
+ */
+export function isInsidePools(path: string, pools: AppPool[]): boolean {
+  const normalized = normalizePath(path.trim());
+  if (normalized === null) return false;
+  return pools.some((pool) => normalized === pool.path || normalized.startsWith(pool.path + "/"));
+}
+
+/** Readable text for a failed request, with a fallback for empty or opaque messages. */
+export function describeApiError(e: unknown, fallback: string): string {
+  const message = e instanceof Error ? e.message.trim() : "";
+  // An error object stringified into the message carries no information.
+  if (!message || message.includes("[object Object]")) return fallback;
+  return message;
 }

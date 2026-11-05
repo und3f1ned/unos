@@ -103,17 +103,25 @@ class LogFileContent(BaseModel):
     lines: int
 
 
+def _unit_active(unit: str) -> bool:
+    """True if systemd reports ``unit`` active; False if systemctl is missing or hangs."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", unit],
+            capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
 def _check_source_available(source: str) -> bool:
     """Check if a log source is available."""
     if source in ["journal", "dmesg"]:
         return True
     if source == "docker":
         # Check if docker service exists
-        result = subprocess.run(
-            ["systemctl", "is-active", "docker"],
-            capture_output=True, text=True
-        )
-        return result.returncode == 0
+        return _unit_active("docker")
     if source == "samba":
         return os.path.exists("/var/log/samba")
     if source == "auth":
@@ -122,11 +130,7 @@ def _check_source_available(source: str) -> bool:
         # Check for unos-supervisor in journal
         return True
     if source == "caddy":
-        result = subprocess.run(
-            ["systemctl", "is-active", "caddy"],
-            capture_output=True, text=True
-        )
-        return result.returncode == 0 or os.path.exists("/var/log/caddy")
+        return _unit_active("caddy") or os.path.exists("/var/log/caddy")
     if source == "cron":
         return os.path.exists("/var/log/cron.log") or True  # cron uses journal too
     return False

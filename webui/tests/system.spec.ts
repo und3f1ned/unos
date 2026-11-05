@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 test.describe('System Settings', () => {
@@ -69,5 +70,53 @@ test.describe('System Settings', () => {
     await page.goto('/system');
     // Should show some settings on the General tab
     await expect(page.locator('text=/Hostname|General|Settings/i').first()).toBeVisible();
+  });
+});
+
+// The tab named in the URL hash must not override later clicks on the tab
+// buttons. Pages reached with a hash (dashboard "View all", /settings,
+// bookmarks, reloads) used to stay stuck on that tab.
+test.describe('System tabs and the URL', () => {
+  const tabButton = (page: Page, name: string) =>
+    page.locator('main nav').getByRole('button', { name, exact: true });
+
+  test('tab buttons work when the page was opened with a hash', async ({ authenticatedPage: page }) => {
+    await page.goto('/system#notifications');
+    await expect(tabButton(page, 'Notifications')).toHaveClass(/bg-blue-600/);
+
+    await tabButton(page, 'Scheduler').click();
+    await expect(page).toHaveURL(/\/system#scheduler$/);
+    await expect(page.locator('h2:has-text("Scheduled Tasks")')).toBeVisible();
+    await expect(tabButton(page, 'Scheduler')).toHaveClass(/bg-blue-600/);
+    await expect(tabButton(page, 'Notifications')).not.toHaveClass(/bg-blue-600/);
+
+    await tabButton(page, 'Backup & Restore').click();
+    await expect(page).toHaveURL(/\/system#backup$/);
+    await expect(page.locator('h2:has-text("Backup and Restore")')).toBeVisible();
+  });
+
+  test('/settings opens General and the other tabs still switch', async ({ authenticatedPage: page }) => {
+    await page.goto('/settings');
+    await expect(page).toHaveURL(/\/system#general$/);
+    await expect(page.locator('h2:has-text("General Settings")')).toBeVisible();
+
+    await tabButton(page, 'Security').click();
+    await expect(page).toHaveURL(/\/system#security$/);
+    await expect(page.locator('h2:has-text("Security Settings")')).toBeVisible();
+    await expect(page.locator('h2:has-text("General Settings")')).toHaveCount(0);
+  });
+
+  test('Back returns to the tab that was open', async ({ authenticatedPage: page }) => {
+    await page.click('aside a[href="/system"]');
+    await tabButton(page, 'Power Management').click();
+    await expect(page).toHaveURL(/\/system#power$/);
+
+    await page.click('aside a[href="/storage"]');
+    await expect(page.locator('h1:has-text("Storage")')).toBeVisible();
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/system#power$/);
+    await expect(page.locator('h2:has-text("Power Management")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Storage")')).toHaveCount(0);
   });
 });

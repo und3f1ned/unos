@@ -77,12 +77,4 @@ cat > /data/app-catalog.json << 'EOF'
 }
 EOF
 
-# Create initial admin user file
-cat > /data/init-user.json << 'EOF'
-{
-  "username": "admin",
-  "password": "admin123"
-}
-EOF
-
 echo "Test environment initialized successfully!"

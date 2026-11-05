@@ -24,7 +24,10 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Configuration
 COMPOSE_FILE="$PROJECT_ROOT/deploy/docker-compose.test.yml"
+# The test stack serves the UI over HTTPS only. Plain HTTP (3080) answers with
+# a redirect, except the health check.
 TEST_URL="http://localhost:3080"
+TEST_HTTPS_URL="https://localhost:3443"
 MAX_WAIT_TIME=120  # seconds
 
 # Functions
@@ -59,7 +62,8 @@ wait_for_service() {
     log_info "Waiting for service at $url..."
 
     while [ $waited -lt $max_time ]; do
-        if curl -s -o /dev/null -w "%{http_code}" "$url/api/v1/health" | grep -q "200"; then
+        # -k: the HTTPS certificate comes from Caddy's local CA.
+        if curl -sk -o /dev/null -w "%{http_code}" "$url/api/v1/health" | grep -q "200"; then
             log_success "Service is ready!"
             return 0
         fi
@@ -73,20 +77,38 @@ wait_for_service() {
     return 1
 }
 
+# The E2E suites sign in as admin/admin123 (webui/tests/fixtures.ts). A fresh
+# test stack has no account yet: create it through the first-run setup API.
+seed_test_admin() {
+    local status
+    log_info "Creating the test administrator account..."
+    status=$(curl -sk -o /dev/null -w "%{http_code}" -X POST "$TEST_HTTPS_URL/api/v1/auth/setup" \
+        -H "Content-Type: application/json" \
+        -d '{"username": "admin", "password": "admin123"}')
+    case "$status" in
+        200) log_success "Test administrator created" ;;
+        400) log_info "An account already exists" ;;
+        *)
+            log_error "Creating the test administrator failed (HTTP $status)"
+            return 1
+            ;;
+    esac
+}
+
 run_unit_tests() {
     log_info "Running backend unit tests..."
     cd "$PROJECT_ROOT/supervisor"
 
-    if [ -f "requirements.txt" ]; then
+    if [ -f "requirements-dev.txt" ]; then
         # Create virtual environment if it doesn't exist
         if [ ! -d "venv" ]; then
             log_info "Creating Python virtual environment..."
             python3 -m venv venv
         fi
 
-        # Activate and install dependencies
+        # Activate and install dependencies (runtime + pytest & co.)
         source venv/bin/activate
-        pip install -q -r requirements.txt
+        pip install -q -r requirements-dev.txt
 
         # Run tests
         log_info "Executing pytest..."
@@ -94,7 +116,7 @@ run_unit_tests() {
 
         deactivate
     else
-        log_warning "requirements.txt not found, skipping backend tests"
+        log_warning "requirements-dev.txt not found, skipping backend tests"
     fi
 
     log_success "Backend unit tests passed!"
@@ -108,8 +130,11 @@ start_test_containers() {
     docker compose -f docker-compose.test.yml build --quiet
     docker compose -f docker-compose.test.yml up -d
 
-    # Wait for services to be ready
-    if ! wait_for_service "$TEST_URL" "$MAX_WAIT_TIME"; then
+    # Wait for services to be ready: the health check over plain HTTP, then
+    # over HTTPS (Caddy has issued its certificate)
+    if ! wait_for_service "$TEST_URL" "$MAX_WAIT_TIME" ||
+        ! wait_for_service "$TEST_HTTPS_URL" "$MAX_WAIT_TIME" ||
+        ! seed_test_admin; then
         log_error "Failed to start test containers"
         docker compose -f docker-compose.test.yml logs
         cleanup
@@ -130,9 +155,10 @@ run_e2e_tests() {
     # Install Playwright browsers if needed
     npx playwright install chromium --with-deps 2>/dev/null || true
 
-    # Run tests
+    # Run tests. HTTP_URL is the plain-HTTP port for the redirect and health
+    # checks in tests/https.spec.ts.
     log_info "Executing Playwright tests..."
-    BASE_URL="$TEST_URL" CI=true npx playwright test --reporter=list
+    BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test --reporter=list
 
     log_success "E2E tests passed!"
 }
@@ -147,7 +173,7 @@ run_quick_test() {
     fi
 
     # Run only auth and API tests as smoke test
-    BASE_URL="$TEST_URL" CI=true npx playwright test auth.spec.ts api.spec.ts --reporter=list
+    BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test auth.spec.ts api.spec.ts --reporter=list
 
     log_success "Smoke test passed!"
 }

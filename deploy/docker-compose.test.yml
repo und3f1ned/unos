@@ -4,6 +4,12 @@ version: '3.8'
 # This compose file runs the full UNOS stack without requiring a physical device.
 # All device-dependent operations are mocked or use test fixtures.
 
+# Own project name. Without it this file shares the project "deploy" (the
+# directory name) with docker-compose.yml: its build would replace the
+# production images (deploy-supervisor, deploy-webui) and its `down` would
+# remove the production containers of the same services.
+name: unos-test
+
 services:
   supervisor:
     build:
@@ -12,18 +18,24 @@ services:
     container_name: unos-supervisor-test
     environment:
       - UNOS_DB_PATH=/data/unos.db
-      - UNOS_JWT_SECRET=test-secret-key-for-testing
+      # Same as production: the secret is generated into /data/jwt_secret.
+      - UNOS_JWT_SECRET=
       - UNOS_SMB_CONF_PATH=/data/smb.conf
       - UNOS_NFS_EXPORTS_PATH=/data/exports
       - UNOS_POOLS_BASE_PATH=/mnt/pools
       - UNOS_TEST_MODE=true
+      # Not privileged: run "host" commands inside the container instead of nsenter.
+      - UNOS_HOST_EXEC=local
+      # Same trust rule as production: X-Forwarded-For only from webui.
+      - FORWARDED_ALLOW_IPS=172.31.253.2
       - PYTHONUNBUFFERED=1
     volumes:
       - test-data:/data
       - test-pools:/mnt/pools
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - unos-test-net
+      unos-test-net:
+        ipv4_address: 172.31.253.3
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 5s
@@ -36,8 +48,16 @@ services:
       context: ../webui
       dockerfile: Dockerfile
     container_name: unos-webui-test
+    # The UI is served over HTTPS only (see webui/Caddyfile); plain HTTP
+    # answers with a redirect, except /api/v1/health. Loopback only: the test
+    # account (admin/admin123) is public and the supervisor has the Docker
+    # socket. The test-runner uses the compose network instead.
     ports:
-      - "3080:80"
+      - "127.0.0.1:3080:80"
+      - "127.0.0.1:3443:443"
+    environment:
+      # Certificate name: the test-runner connects to https://webui.
+      - UNOS_HOSTNAME=webui
     volumes:
       - caddy-test-data:/data
       - caddy-test-config:/config
@@ -45,7 +65,8 @@ services:
       supervisor:
         condition: service_healthy
     networks:
-      - unos-test-net
+      unos-test-net:
+        ipv4_address: 172.31.253.2
 
   # Test runner service - runs Playwright tests against the stack
   test-runner:
@@ -54,8 +75,44 @@ services:
       dockerfile: Dockerfile.test
     container_name: unos-test-runner
     environment:
-      - BASE_URL=http://webui
+      # HTTPS; the plain-HTTP URL (http://webui) is derived from it in
+      # tests/https.spec.ts.
+      - BASE_URL=https://webui
       - CI=true
+    # A fresh stack has no account. Before the command runs, create the one
+    # the tests sign in with (admin/admin123, webui/tests/fixtures.ts) through
+    # the first-run setup API, as scripts/test-cycle.sh does; 400 means that an
+    # account exists already. Caddy creates its certificate when it first
+    # starts, hence the wait. $$ is a $ for the shell: compose replaces $.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        tries=60
+        until curl -fsk -o /dev/null --max-time 5 "$$BASE_URL/api/v1/health"; do
+          tries=$$((tries - 1))
+          if [ "$$tries" -eq 0 ]; then
+            echo "UNOS does not answer at $$BASE_URL" >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        status=$$(curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -X POST \
+          -H 'Content-Type: application/json' \
+          -d '{"username": "admin", "password": "admin123"}' \
+          "$$BASE_URL/api/v1/auth/setup")
+        case "$$status" in
+          200) echo "Created the test account admin/admin123" ;;
+          400) echo "An account exists already" ;;
+          *)
+            echo "Creating the test account failed (HTTP $$status)" >&2
+            exit 1
+            ;;
+        esac
+        exec "$$@"
+      - test-runner
+    # The results as a list, and the HTML report in the test-reports volume.
+    command: ["npx", "playwright", "test", "--reporter=list,html"]
     volumes:
       - ../webui/tests:/app/tests:ro
       - ../webui/playwright.config.ts:/app/playwright.config.ts:ro
@@ -82,3 +139,9 @@ volumes:
 networks:
   unos-test-net:
     driver: bridge
+    ipam:
+      config:
+        # Fixed addresses as in docker-compose.yml, on a different subnet so
+        # both stacks can run on one host.
+        - subnet: 172.31.253.0/24
+          gateway: 172.31.253.1

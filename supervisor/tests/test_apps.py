@@ -1,0 +1,1613 @@
+"""App installs keep their data on a mounted storage pool.
+
+Regression tests for apps that wrote their data to /mnt/pools/default on the
+boot SD card: nothing ever created a pool named "default", so every install
+silently created those directories on the root filesystem.
+
+Nothing here touches the real host: a temporary directory is the pools base,
+``os.path.ismount`` decides which of its directories count as mounted pools,
+the Docker client is a MagicMock, and ``os.fchown`` only records its calls.
+"""
+
+import fcntl
+import importlib
+import os
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+from docker.errors import APIError, NotFound
+from docker.models.containers import Container
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+from src.apps.catalog import APP_CATALOG, get_app_by_id
+from src.apps.schemas import (
+    POOL_PLACEHOLDER,
+    AppCategory,
+    AppPool,
+    AppTemplate,
+    VolumeMapping,
+)
+from src.auth.utils import verify_token
+from src.config import get_settings
+from src.main import app
+
+# The package re-exports its APIRouter as ``router``; import the module.
+apps_router = importlib.import_module("src.apps.router")
+
+INSTALL = "/api/v1/apps/install"
+POOLS = "/api/v1/apps/pools"
+INSTALLED = "/api/v1/apps/installed"
+
+
+def _fd_path(fd: int) -> Path:
+    """The path of an open file or directory descriptor."""
+    if sys.platform == "darwin":
+        return Path(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0").decode())
+    return Path(os.readlink(f"/proc/self/fd/{fd}"))
+
+
+def _full_path(path, dir_fd: int | None) -> Path:
+    """The path a call with ``dir_fd`` refers to."""
+    return Path(path) if dir_fd is None else _fd_path(dir_fd) / path
+
+
+def _open_fds() -> set[str]:
+    """The descriptors this process has open."""
+    return set(os.listdir("/dev/fd" if sys.platform == "darwin" else "/proc/self/fd"))
+
+
+@pytest.fixture(autouse=True)
+def chown_calls(monkeypatch) -> list[tuple[Path, int, int]]:
+    """Record owner changes (path of the descriptor, uid, gid) instead of making them.
+
+    Making them needs root. Owners are only ever set through a descriptor
+    of the new file or folder (os.fchown): a change by name could reach
+    whatever was put in its place in the meantime.
+    """
+    calls: list[tuple[Path, int, int]] = []
+
+    def record(fd, uid, gid):
+        calls.append((_fd_path(fd), uid, gid))
+
+    def by_name(path, *args, **kwargs):
+        raise AssertionError(f"owner changed by name: {path!r}")
+
+    monkeypatch.setattr(os, "fchown", record)
+    monkeypatch.setattr(os, "chown", by_name)
+    return calls
+
+
+def _as_user(is_admin: bool):
+    """Override authentication for the duration of a fixture."""
+    previous = app.dependency_overrides.get(verify_token)
+    app.dependency_overrides[verify_token] = lambda: SimpleNamespace(
+        id=1, username="admin" if is_admin else "viewer", is_admin=is_admin
+    )
+    try:
+        yield TestClient(app)
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(verify_token, None)
+        else:
+            app.dependency_overrides[verify_token] = previous
+
+
+@pytest.fixture
+def api():
+    yield from _as_user(is_admin=True)
+
+
+@pytest.fixture
+def user_api():
+    yield from _as_user(is_admin=False)
+
+
+@pytest.fixture
+def anon_api():
+    previous = app.dependency_overrides.pop(verify_token, None)
+    try:
+        yield TestClient(app)
+    finally:
+        if previous is not None:
+            app.dependency_overrides[verify_token] = previous
+
+
+@pytest.fixture
+def pools(tmp_path, monkeypatch):
+    """Pools base with mounted pools "alpha" and "beta" and an unmounted "ghost".
+
+    "ghost" is what an unmounted pool looks like: a plain directory on the
+    boot disk. Tests remove paths from ``mounted`` to unmount a pool.
+    """
+    base = tmp_path / "pools"
+    for name in ("alpha", "beta", "ghost"):
+        (base / name).mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    mounted = {str(base / "alpha"), str(base / "beta")}
+    monkeypatch.setattr(os.path, "ismount", lambda path: os.fspath(path) in mounted)
+    monkeypatch.setattr(get_settings(), "pools_base_path", str(base))
+    return SimpleNamespace(
+        root=tmp_path,
+        base=base,
+        alpha=base / "alpha",
+        beta=base / "beta",
+        ghost=base / "ghost",
+        outside=outside,
+        mounted=mounted,
+    )
+
+
+@pytest.fixture
+def docker_client(monkeypatch):
+    client = MagicMock(name="docker")
+    client.containers.get.side_effect = NotFound("No such container")
+    container = MagicMock(name="container", short_id="c0ffee", status="running")
+    client.containers.create.return_value = container
+    monkeypatch.setattr(apps_router, "get_client", lambda: client)
+    return client
+
+
+def _mounts(docker_client) -> dict[str, dict]:
+    """Bind mounts passed to Docker, keyed by container path."""
+    kwargs = docker_client.containers.create.call_args.kwargs
+    return {mount["Target"]: dict(mount) for mount in kwargs["mounts"] or []}
+
+
+def _tree(root: Path) -> set[Path]:
+    return set(root.rglob("*"))
+
+
+def _pool(path: Path) -> AppPool:
+    return AppPool(name=path.name, path=str(path), free_bytes=1, total_bytes=2)
+
+
+# ---------------------------------------------------------------------------
+# GET /apps/pools
+# ---------------------------------------------------------------------------
+
+
+class TestPoolsEndpoint:
+    def test_lists_only_mounted_pools_sorted_by_name(self, api, pools, monkeypatch):
+        (pools.base / "notes.txt").write_text("not a pool")
+        (pools.base / "link").symlink_to(pools.alpha)
+        # Even if a symlink looked like a mount point, it is not a pool.
+        pools.mounted.add(str(pools.base / "link"))
+        monkeypatch.setattr(
+            apps_router.shutil,
+            "disk_usage",
+            lambda path: SimpleNamespace(total=1000, used=400, free=600),
+        )
+
+        response = api.get(POOLS)
+
+        assert response.status_code == 200
+        assert response.json() == [
+            {"name": "alpha", "path": str(pools.alpha), "free_bytes": 600, "total_bytes": 1000},
+            {"name": "beta", "path": str(pools.beta), "free_bytes": 600, "total_bytes": 1000},
+        ]
+
+    def test_empty_when_nothing_is_mounted(self, api, pools):
+        pools.mounted.clear()
+        assert api.get(POOLS).json() == []
+
+    def test_empty_when_pools_base_is_missing(self, api, tmp_path, monkeypatch):
+        monkeypatch.setattr(get_settings(), "pools_base_path", str(tmp_path / "missing"))
+        assert api.get(POOLS).json() == []
+
+    def test_requires_admin(self, user_api, pools):
+        assert user_api.get(POOLS).status_code == 403
+
+    def test_requires_authentication(self, anon_api, pools):
+        assert anon_api.get(POOLS).status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Pool selection
+# ---------------------------------------------------------------------------
+
+
+class TestPoolSelection:
+    def test_defaults_to_first_mounted_pool_by_name(self, api, pools, docker_client):
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["pool"] == "alpha"
+        assert body["volumes"] == [
+            {"host": str(pools.alpha / "apps/jellyfin/config"), "container": "/config", "readonly": False},
+            {"host": str(pools.alpha / "apps/jellyfin/cache"), "container": "/cache", "readonly": False},
+            {"host": str(pools.alpha / "media"), "container": "/media", "readonly": True},
+        ]
+        assert _mounts(docker_client) == {
+            "/config": {"Target": "/config", "Source": str(pools.alpha / "apps/jellyfin/config"), "Type": "bind", "ReadOnly": False},
+            "/cache": {"Target": "/cache", "Source": str(pools.alpha / "apps/jellyfin/cache"), "Type": "bind", "ReadOnly": False},
+            "/media": {"Target": "/media", "Source": str(pools.alpha / "media"), "Type": "bind", "ReadOnly": True},
+        }
+        kwargs = docker_client.containers.create.call_args.kwargs
+        # -v style binds would let Docker create missing sources on the boot
+        # disk (also on every restart while the pool is unmounted).
+        assert "volumes" not in kwargs
+        assert kwargs["labels"]["unos.app.pool"] == "alpha"
+        for sub in ("apps/jellyfin/config", "apps/jellyfin/cache", "media"):
+            assert (pools.alpha / sub).is_dir()
+
+    def test_uses_requested_pool(self, api, pools, docker_client):
+        response = api.post(INSTALL, json={"template_id": "jellyfin", "pool": "beta"})
+
+        assert response.status_code == 200, response.text
+        assert response.json()["pool"] == "beta"
+        assert {m["Source"] for m in _mounts(docker_client).values()} == {
+            str(pools.beta / "apps/jellyfin/config"),
+            str(pools.beta / "apps/jellyfin/cache"),
+            str(pools.beta / "media"),
+        }
+        assert not (pools.alpha / "apps").exists()
+
+    def test_no_mounted_pool_is_a_conflict(self, api, pools, docker_client):
+        pools.mounted.clear()
+        before = _tree(pools.root)
+
+        response = api.post(INSTALL, json={"template_id": "transmission"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "No mounted storage pool — create or mount a pool first"
+        )
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    @pytest.mark.parametrize("pool", ["ghost", "nope", "../alpha", ""])
+    def test_unknown_or_unmounted_pool_is_rejected(self, api, pools, docker_client, pool):
+        before = _tree(pools.root)
+
+        response = api.post(INSTALL, json={"template_id": "transmission", "pool": pool})
+
+        assert response.status_code == 400
+        assert "not mounted" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_app_without_pool_data_installs_without_a_pool(self, api, pools, docker_client):
+        pools.mounted.clear()
+
+        response = api.post(INSTALL, json={"template_id": "dozzle"})
+
+        assert response.status_code == 200, response.text
+        assert response.json()["pool"] is None
+        assert _mounts(docker_client) == {
+            "/var/run/docker.sock": {
+                "Target": "/var/run/docker.sock",
+                "Source": "/var/run/docker.sock",
+                "Type": "bind",
+                "ReadOnly": True,
+            }
+        }
+        assert "unos.app.pool" not in docker_client.containers.create.call_args.kwargs["labels"]
+
+    def test_requested_pool_is_validated_but_not_reported_without_pool_data(
+        self, api, pools, docker_client
+    ):
+        bad = api.post(INSTALL, json={"template_id": "dozzle", "pool": "ghost"})
+        assert bad.status_code == 400
+
+        good = api.post(INSTALL, json={"template_id": "dozzle", "pool": "beta"})
+        assert good.status_code == 200, good.text
+        assert good.json()["pool"] is None
+        assert "unos.app.pool" not in docker_client.containers.create.call_args.kwargs["labels"]
+
+    def test_install_requires_admin(self, user_api, pools, docker_client):
+        response = user_api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 403
+        docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Catalog path substitution
+# ---------------------------------------------------------------------------
+
+FIXED = object()  # marker: a fixed host path, mounted as-is
+
+EXPECTED_PATHS = {
+    "plex": {
+        "/config": "apps/plex/config",
+        "/transcode": "apps/plex/transcode",
+        "/data": "media",
+    },
+    "transmission": {
+        "/config": "apps/transmission/config",
+        "/downloads": "downloads",
+        # Not downloads/watch: other apps can write to downloads.
+        "/watch": "apps/transmission/watch",
+    },
+    "sabnzbd": {
+        "/config": "apps/sabnzbd/config",
+        "/downloads": "downloads",
+        "/incomplete-downloads": "apps/sabnzbd/incomplete",
+    },
+    "filebrowser": {
+        "/database": "apps/filebrowser/database",
+        "/config": "apps/filebrowser/config",
+        "/srv": "",  # the pool root itself
+    },
+    "portainer": {
+        "/data": "apps/portainer/data",
+        "/var/run/docker.sock": FIXED,
+    },
+    "netdata": {
+        "/etc/netdata": "apps/netdata/config",
+        "/var/lib/netdata": "apps/netdata/lib",
+        "/var/cache/netdata": "apps/netdata/cache",
+        "/host/etc/passwd": FIXED,
+        "/host/etc/group": FIXED,
+        "/host/proc": FIXED,
+        "/host/sys": FIXED,
+    },
+}
+
+
+class TestCatalogPaths:
+    @pytest.fixture
+    def pool_dir(self, tmp_path, monkeypatch) -> Path:
+        """A pool directory below the pools base."""
+        monkeypatch.setattr(get_settings(), "pools_base_path", str(tmp_path))
+        pool_dir = tmp_path / "data"
+        pool_dir.mkdir()
+        return pool_dir
+
+    @pytest.mark.parametrize("app_id", sorted(EXPECTED_PATHS))
+    def test_pool_paths_are_substituted(self, pool_dir, app_id):
+        pool = _pool(pool_dir)
+        template = get_app_by_id(app_id)
+
+        planned = apps_router._plan_volumes(template, {}, pool, [pool])
+
+        sources = {m.target: m for m in planned}
+        assert set(sources) == set(EXPECTED_PATHS[app_id])
+        volumes = {v.container: v for v in template.volumes}
+        for target, relative in EXPECTED_PATHS[app_id].items():
+            if relative is FIXED:
+                assert sources[target].source == Path(volumes[target].host)
+                assert sources[target].pool is None
+            else:
+                expected = pool_dir / relative if relative else pool_dir
+                assert sources[target].source == expected
+                assert sources[target].pool == pool
+
+    def test_catalog_has_no_hard_coded_pool_paths(self):
+        for template in APP_CATALOG:
+            targets = [v.container for v in template.volumes]
+            assert len(targets) == len(set(targets)), template.id
+            for volume in template.volumes:
+                assert "/mnt/pools" not in volume.host, template.id
+                assert volume.on_pool or volume.host.startswith("/"), template.id
+                assert ".." not in volume.host.split("/"), template.id
+
+    def test_every_template_keeps_pool_data_inside_the_pool(self, pool_dir):
+        pool = _pool(pool_dir)
+        for template in APP_CATALOG:
+            for m in apps_router._plan_volumes(template, {}, pool, [pool]):
+                if m.pool is not None:
+                    assert m.source.is_relative_to(pool_dir), (template.id, m)
+                else:
+                    assert not str(m.source).startswith(POOL_PLACEHOLDER), template.id
+
+    def test_catalog_ships_no_placeholder_secrets(self):
+        for template in APP_CATALOG:
+            for var in template.environment:
+                if var.secret:
+                    assert var.value.strip().lower() not in apps_router.PLACEHOLDER_SECRETS, (
+                        template.id,
+                        var.name,
+                    )
+                if var.secret and var.required:
+                    assert var.value == "", (template.id, var.name)
+
+    def test_catalog_api_marks_pool_and_fixed_volumes(self, api):
+        response = api.get("/api/v1/apps/catalog/portainer")
+
+        assert response.status_code == 200
+        assert response.json()["volumes"] == [
+            {"host": f"{POOL_PLACEHOLDER}/apps/portainer/data", "container": "/data",
+             "readonly": False, "is_file": False, "uid": None, "gid": None, "on_pool": True},
+            {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock",
+             "readonly": False, "is_file": False, "uid": None, "gid": None, "on_pool": False},
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Nothing is written outside the selected pool
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mkdir_calls(monkeypatch) -> list[Path]:
+    """Record the path of every directory created with os.mkdir (os.makedirs uses it too)."""
+    calls: list[Path] = []
+    real_mkdir = os.mkdir
+
+    def spy(path, mode=0o777, *, dir_fd=None):
+        calls.append(_full_path(path, dir_fd))
+        return real_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", spy)
+    return calls
+
+
+class TestNoWritesOutsidePool:
+    def test_only_the_selected_pool_gets_directories(self, api, pools, docker_client, mkdir_calls):
+        before = _tree(pools.root)
+
+        # netdata mixes pool data with fixed host paths (/proc, /etc/passwd...).
+        response = api.post(INSTALL, json={"template_id": "netdata"})
+
+        assert response.status_code == 200, response.text
+        assert mkdir_calls, "expected the app directories to be created"
+        assert all(path.is_relative_to(pools.alpha) for path in mkdir_calls), mkdir_calls
+        new_paths = _tree(pools.root) - before
+        assert new_paths and all(path.is_relative_to(pools.alpha) for path in new_paths)
+        mounts = _mounts(docker_client)
+        assert mounts["/host/proc"]["Source"] == "/proc"
+        assert mounts["/host/etc/passwd"]["Source"] == "/etc/passwd"
+
+    def test_fixed_host_paths_are_never_created(self, api, pools, docker_client, mkdir_calls):
+        response = api.post(INSTALL, json={"template_id": "portainer"})
+
+        assert response.status_code == 200, response.text
+        assert mkdir_calls == [
+            pools.alpha / "apps",
+            pools.alpha / "apps/portainer",
+            pools.alpha / "apps/portainer/data",
+        ]
+        assert _mounts(docker_client)["/var/run/docker.sock"]["Source"] == "/var/run/docker.sock"
+
+    def test_pool_unmounted_during_pull_writes_nothing(self, api, pools, docker_client):
+        docker_client.images.pull.side_effect = lambda *a, **k: pools.mounted.discard(str(pools.alpha))
+        before = _tree(pools.root)
+
+        response = api.post(INSTALL, json={"template_id": "transmission"})
+
+        assert response.status_code == 409
+        assert "no longer mounted" in response.json()["detail"]
+        assert _tree(pools.root) == before
+        docker_client.containers.create.assert_not_called()
+
+    def test_existing_data_is_reused(self, api, pools, docker_client):
+        config = pools.alpha / "apps/transmission/config"
+        config.mkdir(parents=True)
+        (config / "settings.json").write_text("{}")
+
+        response = api.post(INSTALL, json={"template_id": "transmission"})
+
+        assert response.status_code == 200, response.text
+        assert (config / "settings.json").read_text() == "{}"
+
+
+# ---------------------------------------------------------------------------
+# volume_overrides
+# ---------------------------------------------------------------------------
+
+
+class TestVolumeOverrides:
+    @pytest.mark.parametrize(
+        "make_path",
+        [
+            lambda p: "/",
+            lambda p: "/etc",
+            lambda p: "relative/downloads",
+            lambda p: "",
+            lambda p: str(p.base),  # the pools base, i.e. every pool and the SD card
+            lambda p: str(p.alpha / ".." / ".." / "outside"),
+            lambda p: str(p.ghost / "downloads"),  # unmounted pool = boot disk
+            lambda p: str(p.alpha / "escape" / "downloads"),  # symlink out of the pool
+        ],
+        ids=["root", "etc", "relative", "empty", "pools-base", "dotdot", "unmounted-pool", "symlink"],
+    )
+    def test_paths_outside_mounted_pools_are_rejected(self, api, pools, docker_client, make_path):
+        (pools.alpha / "escape").symlink_to(pools.outside)
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": "transmission", "volume_overrides": {"/downloads": make_path(pools)}},
+        )
+
+        assert response.status_code == 400, response.text
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_unknown_volume_cannot_be_added(self, api, pools, docker_client):
+        response = api.post(
+            INSTALL,
+            json={"template_id": "transmission", "volume_overrides": {"/host-root": str(pools.alpha)}},
+        )
+
+        assert response.status_code == 400
+        assert "/host-root" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+    def test_fixed_host_mount_cannot_be_changed(self, api, pools, docker_client):
+        response = api.post(
+            INSTALL,
+            json={
+                "template_id": "portainer",
+                "volume_overrides": {"/var/run/docker.sock": str(pools.alpha / "docker.sock")},
+            },
+        )
+
+        assert response.status_code == 400
+        assert "fixed host mount" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+    def test_path_in_selected_pool_is_created_and_normalised(self, api, pools, docker_client):
+        raw = f"{pools.alpha}//torrents/./new/"
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": "transmission", "volume_overrides": {"/downloads": raw}},
+        )
+
+        assert response.status_code == 200, response.text
+        assert (pools.alpha / "torrents/new").is_dir()
+        assert _mounts(docker_client)["/downloads"]["Source"] == str(pools.alpha / "torrents/new")
+
+    def test_dotdot_is_refused_even_inside_the_pool(self, api, pools, docker_client):
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={
+                "template_id": "transmission",
+                "volume_overrides": {"/downloads": f"{pools.alpha}/media/../torrents"},
+            },
+        )
+
+        assert response.status_code == 400
+        assert "traversal" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_link_to_another_pools_folder_is_not_resolved(self, api, pools, docker_client):
+        # Pool contents are writable by SMB users and apps. Resolving this link
+        # used to bind-mount beta's private folder into the new app.
+        private = pools.beta / "apps/vaultwarden/data"
+        private.mkdir(parents=True)
+        (pools.alpha / "shared").symlink_to(private)
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": "transmission", "volume_overrides": {"/downloads": str(pools.alpha / "shared")}},
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "symbolic link" in detail and str(pools.alpha / "shared") in detail
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    @pytest.mark.parametrize("override", ["alias", "alias/torrents"])
+    def test_link_inside_the_same_pool_is_not_resolved(self, api, pools, docker_client, override):
+        (pools.alpha / "library").mkdir()
+        (pools.alpha / "alias").symlink_to(pools.alpha / "library")
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": "transmission", "volume_overrides": {"/downloads": str(pools.alpha / override)}},
+        )
+
+        assert response.status_code == 400
+        assert "symbolic link" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_existing_path_in_another_mounted_pool_is_used(self, api, pools, docker_client):
+        library = pools.beta / "torrents"
+        library.mkdir()
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": "transmission", "volume_overrides": {"/downloads": str(library)}},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["pool"] == "alpha"
+        assert _mounts(docker_client)["/downloads"]["Source"] == str(library)
+        assert _mounts(docker_client)["/config"]["Source"] == str(pools.alpha / "apps/transmission/config")
+
+    def test_missing_path_in_another_pool_is_not_created(self, api, pools, docker_client):
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": "transmission", "volume_overrides": {"/downloads": str(pools.beta / "torrents")}},
+        )
+
+        assert response.status_code == 400
+        assert "does not exist" in response.json()["detail"]
+        assert _tree(pools.root) == before
+        docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Required environment and placeholder secrets
+# ---------------------------------------------------------------------------
+
+
+class TestEnvironment:
+    @pytest.mark.parametrize("value", [None, "", "   "])
+    def test_required_variable_must_be_set(self, api, pools, docker_client, value):
+        env = {} if value is None else {"PHOTOPRISM_ADMIN_PASSWORD": value}
+
+        response = api.post(INSTALL, json={"template_id": "photoprism", "env_overrides": env})
+
+        assert response.status_code == 400
+        assert "PHOTOPRISM_ADMIN_PASSWORD is required" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "app_id,name,value",
+        [
+            ("photoprism", "PHOTOPRISM_ADMIN_PASSWORD", "changeme"),
+            ("grafana", "GF_SECURITY_ADMIN_PASSWORD", "Admin"),
+            ("bookstack", "DB_PASSWORD", " password "),
+            ("aria2", "RPC_SECRET", "secret"),  # optional secrets are checked too
+        ],
+    )
+    def test_placeholder_secrets_are_rejected(self, api, pools, docker_client, app_id, name, value):
+        response = api.post(INSTALL, json={"template_id": app_id, "env_overrides": {name: value}})
+
+        assert response.status_code == 400
+        assert name in response.json()["detail"]
+        assert "placeholder" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+    def test_unique_secret_is_passed_to_the_container(self, api, pools, docker_client):
+        response = api.post(
+            INSTALL,
+            json={
+                "template_id": "grafana",
+                "env_overrides": {"GF_SECURITY_ADMIN_PASSWORD": "k7-Unique-pass"},
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        environment = docker_client.containers.create.call_args.kwargs["environment"]
+        assert environment == {"GF_SECURITY_ADMIN_PASSWORD": "k7-Unique-pass"}
+
+    def test_tailscale_installs_without_an_auth_key(self, api, pools, docker_client):
+        # Without a key the container logs a login URL to follow.
+        [key] = [var for var in get_app_by_id("tailscale").environment if var.name == "TS_AUTHKEY"]
+        assert (key.required, key.secret) == (False, True)
+        assert "logs" in key.description and "login URL" in key.description
+
+        response = api.post(INSTALL, json={"template_id": "tailscale"})
+
+        assert response.status_code == 200, response.text
+        assert docker_client.containers.create.call_args.kwargs["environment"]["TS_AUTHKEY"] == ""
+
+    def test_tailscale_auth_key_is_passed_and_checked(self, api, pools, docker_client):
+        bad = api.post(INSTALL, json={"template_id": "tailscale", "env_overrides": {"TS_AUTHKEY": "changeme"}})
+        assert bad.status_code == 400
+        assert "placeholder" in bad.json()["detail"]
+
+        good = api.post(INSTALL, json={"template_id": "tailscale", "env_overrides": {"TS_AUTHKEY": "tskey-auth-k1"}})
+        assert good.status_code == 200, good.text
+        assert docker_client.containers.create.call_args.kwargs["environment"]["TS_AUTHKEY"] == "tskey-auth-k1"
+
+
+# ---------------------------------------------------------------------------
+# File-like sources on the pool
+# ---------------------------------------------------------------------------
+
+
+DEMO = AppTemplate(
+    id="demo",
+    name="Demo",
+    description="Template with a single-file volume",
+    icon="x",
+    category=AppCategory.OTHER,
+    image="example/demo:1",
+    version="1",
+    volumes=[
+        VolumeMapping(host=f"{POOL_PLACEHOLDER}/apps/demo/app.db", container="/app.db", is_file=True),
+        VolumeMapping(host=f"{POOL_PLACEHOLDER}/apps/demo/data", container="/data"),
+    ],
+)
+
+
+class TestFileVolumes:
+    @pytest.fixture(autouse=True)
+    def demo_template(self, monkeypatch):
+        real = apps_router.get_app_by_id
+        monkeypatch.setattr(
+            apps_router, "get_app_by_id", lambda app_id: DEMO if app_id == "demo" else real(app_id)
+        )
+
+    def test_missing_file_is_created_empty(self, api, pools, docker_client):
+        response = api.post(INSTALL, json={"template_id": "demo"})
+
+        assert response.status_code == 200, response.text
+        db = pools.alpha / "apps/demo/app.db"
+        assert db.is_file() and db.stat().st_size == 0
+        assert (pools.alpha / "apps/demo/data").is_dir()
+        assert _mounts(docker_client)["/app.db"]["Source"] == str(db)
+
+    def test_existing_file_is_kept(self, api, pools, docker_client):
+        db = pools.alpha / "apps/demo/app.db"
+        db.parent.mkdir(parents=True)
+        db.write_bytes(b"data")
+
+        response = api.post(INSTALL, json={"template_id": "demo"})
+
+        assert response.status_code == 200, response.text
+        assert db.read_bytes() == b"data"
+
+    def test_directory_in_place_of_a_file_is_rejected(self, api, pools, docker_client):
+        # What Docker leaves behind when it auto-creates a missing file source.
+        (pools.alpha / "apps/demo/app.db").mkdir(parents=True)
+
+        response = api.post(INSTALL, json={"template_id": "demo"})
+
+        assert response.status_code == 400
+        assert "needs a file" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+    def test_file_override_is_normalised(self, api, pools, docker_client):
+        (pools.beta / "db").mkdir()
+        (pools.beta / "db/app.db").write_bytes(b"data")
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": "demo", "volume_overrides": {"/app.db": f"{pools.beta}//db/./app.db"}},
+        )
+
+        assert response.status_code == 200, response.text
+        assert _mounts(docker_client)["/app.db"]["Source"] == str(pools.beta / "db/app.db")
+
+    def test_file_in_a_linked_folder_is_refused(self, api, pools, docker_client):
+        (pools.alpha / "linked").symlink_to(pools.outside)
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": "demo", "volume_overrides": {"/app.db": str(pools.alpha / "linked/app.db")}},
+        )
+
+        assert response.status_code == 400
+        assert "symbolic link" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_link_in_place_of_the_file_is_refused(self, api, pools, docker_client):
+        (pools.alpha / "apps/demo").mkdir(parents=True)
+        (pools.alpha / "apps/demo/app.db").symlink_to(pools.outside / "app.db")
+
+        response = api.post(INSTALL, json={"template_id": "demo"})
+
+        assert response.status_code == 409
+        assert "symbolic link" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+        assert list(pools.outside.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "path", ["{alpha}/apps/demo/..", "{alpha}/apps/demo/.", "/", "{alpha}/apps/demo/app\n.db"]
+    )
+    def test_file_override_must_name_a_file(self, api, pools, docker_client, path):
+        response = api.post(
+            INSTALL,
+            json={"template_id": "demo", "volume_overrides": {"/app.db": path.format(alpha=pools.alpha)}},
+        )
+
+        assert response.status_code == 400
+        assert "must name a file" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Docker flow
+# ---------------------------------------------------------------------------
+
+
+class TestDockerFlow:
+    def test_existing_container_is_a_conflict(self, api, pools, docker_client):
+        docker_client.containers.get.side_effect = None
+        docker_client.containers.get.return_value = MagicMock(name="existing")
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 409
+        assert "already exists" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+        assert not (pools.alpha / "apps").exists()
+
+    def test_failed_start_removes_the_container(self, api, pools, docker_client):
+        container = docker_client.containers.create.return_value
+        container.start.side_effect = APIError("port is already allocated")
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 500
+        assert "port is already allocated" in response.json()["detail"]
+        container.remove.assert_called_once_with(force=True)
+
+    @pytest.mark.parametrize("name", ["../etc", "a b", "-x", "x"])
+    def test_invalid_container_name_is_rejected(self, api, pools, docker_client, name):
+        response = api.post(INSTALL, json={"template_id": "jellyfin", "name": name})
+
+        assert response.status_code == 400
+        docker_client.containers.get.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Installed containers (mocked Docker objects)
+# ---------------------------------------------------------------------------
+
+START = "/api/v1/apps/installed/{}/start"
+RESTART = "/api/v1/apps/installed/{}/restart"
+
+
+def _bind(source, target: str, *, rw: bool = True, propagation: str = "rprivate") -> dict:
+    """A bind mount as ``docker inspect`` reports it under "Mounts"."""
+    return {
+        "Type": "bind",
+        "Source": str(source),
+        "Destination": target,
+        "Mode": "",
+        "RW": rw,
+        "Propagation": propagation,
+    }
+
+
+def _container(
+    name: str,
+    *,
+    template: str | None = None,
+    pool: str | None = None,
+    mounts: list[dict] = (),
+    status: str = "exited",
+    error: str = "",
+    policy: str = "unless-stopped",
+) -> MagicMock:
+    labels = {}
+    if template is not None:
+        labels["unos.app"] = template
+    if pool is not None:
+        labels["unos.app.pool"] = pool
+    container = MagicMock(name=f"container:{name}")
+    container.name = name
+    container.short_id = f"{name}-id"
+    container.status = status
+    container.labels = labels
+    container.attrs = {
+        "Created": "2026-01-02T03:04:05Z",
+        "State": {
+            "Status": status,
+            "Running": status == "running",
+            "Paused": status == "paused",
+            "Restarting": False,
+            "Error": error,
+        },
+        "HostConfig": {"RestartPolicy": {"Name": policy}},
+        "NetworkSettings": {"Ports": {}},
+        "Mounts": list(mounts),
+    }
+    return container
+
+
+@pytest.fixture
+def installed(docker_client):
+    """Register containers that the mocked Docker client knows by name."""
+    by_name: dict[str, MagicMock] = {}
+
+    def get(name):
+        try:
+            return by_name[name]
+        except KeyError:
+            raise NotFound(f"No such container: {name}") from None
+
+    docker_client.containers.get.side_effect = get
+    docker_client.containers.list.side_effect = lambda *args, **kwargs: list(by_name.values())
+
+    def add(container: MagicMock) -> MagicMock:
+        by_name[container.name] = container
+        return container
+
+    return add
+
+
+def _jellyfin(pools, **kwargs) -> MagicMock:
+    return _container(
+        kwargs.pop("name", "jellyfin"),
+        template="jellyfin",
+        pool="alpha",
+        mounts=[
+            _bind(pools.alpha / "apps/jellyfin/config", "/config"),
+            _bind(pools.alpha / "apps/jellyfin/cache", "/cache"),
+            _bind(pools.alpha / "media", "/media", rw=False),
+        ],
+        **kwargs,
+    )
+
+
+def _make_jellyfin_folders(pools) -> None:
+    for sub in ("apps/jellyfin/config", "apps/jellyfin/cache", "media"):
+        (pools.alpha / sub).mkdir(parents=True, exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Folders for images that run as a non-root user
+# ---------------------------------------------------------------------------
+
+# Images that run as a fixed non-root user without fixing the permissions of
+# their data folders as root first. Their writable pool folders must belong to
+# that user: filebrowser's init script, for example, cannot copy its settings
+# into a root-owned /config, exits, and Docker restarts it forever.
+NON_ROOT_IMAGES = {
+    "filebrowser/filebrowser": (1000, 1000),
+    "grafana/grafana": (472, 0),
+    "prom/prometheus": (65534, 65534),
+    "nodered/node-red": (1000, 1000),
+    "n8nio/n8n": (1000, 1000),
+    "vikunja/vikunja": (1000, 1000),
+}
+
+
+def _image_name(image: str) -> str:
+    name, sep, tag = image.rpartition(":")
+    return name if sep and "/" not in tag else image
+
+
+class TestDataFolderOwner:
+    def test_catalog_gives_writable_folders_of_non_root_images_to_their_user(self):
+        for template in APP_CATALOG:
+            user = NON_ROOT_IMAGES.get(_image_name(template.image))
+            for volume in template.volumes:
+                # Never the pool root, and only folders the app writes to.
+                owned = (
+                    user is not None
+                    and volume.on_pool
+                    and not volume.readonly
+                    and volume.host != POOL_PLACEHOLDER
+                )
+                expected = user if owned else (None, None)
+                assert (volume.uid, volume.gid) == expected, (template.id, volume.container)
+
+    def test_new_folders_belong_to_the_image_user(self, api, pools, docker_client, chown_calls):
+        response = api.post(INSTALL, json={"template_id": "filebrowser"})
+
+        assert response.status_code == 200, response.text
+        assert sorted(chown_calls) == [
+            (pools.alpha / "apps/filebrowser/config", 1000, 1000),
+            (pools.alpha / "apps/filebrowser/database", 1000, 1000),
+        ]
+        # The parent folders and the pool root (/srv) stay owned by root.
+
+    def test_existing_folders_keep_their_owner(self, api, pools, docker_client, chown_calls):
+        (pools.alpha / "apps/filebrowser/config").mkdir(parents=True)
+
+        response = api.post(INSTALL, json={"template_id": "filebrowser"})
+
+        assert response.status_code == 200, response.text
+        assert [call[0] for call in chown_calls] == [pools.alpha / "apps/filebrowser/database"]
+
+    def test_images_that_start_as_root_get_root_owned_folders(
+        self, api, pools, docker_client, chown_calls
+    ):
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        assert chown_calls == []
+
+    def test_failed_owner_change_fails_the_install(self, api, pools, docker_client, monkeypatch):
+        def refuse(*args, **kwargs):
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(os, "fchown", refuse)
+
+        response = api.post(INSTALL, json={"template_id": "filebrowser"})
+
+        assert response.status_code == 500
+        assert "Operation not permitted" in response.json()["detail"]
+        docker_client.containers.create.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Creating a source never follows a symbolic link
+# ---------------------------------------------------------------------------
+
+
+def _planned(pool_dir: Path, relative: str, *, is_file: bool = False) -> apps_router._PlannedMount:
+    """A missing source on the app's own pool, owned by uid 1000 / gid 100 once created."""
+    return apps_router._PlannedMount(
+        source=pool_dir / relative,
+        target="/data",
+        readonly=False,
+        is_file=is_file,
+        pool=_pool(pool_dir),
+        creatable=True,
+        uid=1000,
+        gid=100,
+    )
+
+
+class TestCreateSource:
+    """_create_source runs after the checks; a link planted in between must not redirect it."""
+
+    @pytest.mark.parametrize("is_file", [False, True], ids=["folder", "file"])
+    def test_new_source_is_created_and_chowned_through_its_own_descriptor(
+        self, pools, chown_calls, is_file
+    ):
+        apps_router._create_source(_planned(pools.alpha, "apps/x/config", is_file=is_file))
+
+        created = pools.alpha / "apps/x/config"
+        assert created.is_file() if is_file else created.is_dir()
+        # A descriptor of the new file or folder itself (os.fchown), never a name.
+        assert chown_calls == [(created, 1000, 100)]
+
+    @pytest.mark.parametrize("is_file", [False, True], ids=["folder", "file"])
+    def test_owner_change_never_reaches_what_replaced_the_new_source(self, pools, monkeypatch, is_file):
+        # Whoever can write the folder (an app, an SMB share) can move the new
+        # source away right after it was created and put a hard link to another
+        # app's file under its name. An owner change by name would hand that
+        # file to the app's user.
+        folder = pools.alpha / "apps/x"
+        folder.mkdir(parents=True)
+        victim = pools.alpha / "apps/private.db"
+        victim.write_bytes(b"another app's data")
+        created: list[int] = []
+
+        def swap() -> None:
+            created.append((folder / "config").lstat().st_ino)
+            (folder / "config").rename(folder / "config.moved")
+            os.link(victim, folder / "config")
+
+        real_open, real_mkdir = os.open, os.mkdir
+
+        def open_and_swap(path, flags, mode=0o777, *, dir_fd=None):
+            fd = real_open(path, flags, mode, dir_fd=dir_fd)
+            if flags & os.O_CREAT:
+                swap()
+            return fd
+
+        def mkdir_and_swap(path, mode=0o777, *, dir_fd=None):
+            real_mkdir(path, mode, dir_fd=dir_fd)
+            swap()
+
+        changed: list[int] = []  # inodes whose owner was changed
+
+        def chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
+            changed.append(os.stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks).st_ino)
+
+        monkeypatch.setattr(os, "open", open_and_swap)
+        monkeypatch.setattr(os, "mkdir", mkdir_and_swap)
+        monkeypatch.setattr(os, "chown", chown)
+        monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: changed.append(os.fstat(fd).st_ino))
+
+        if is_file:
+            apps_router._create_source(_planned(pools.alpha, "apps/x/config", is_file=True))
+            assert changed == created  # the file this call created, wherever it is now
+        else:
+            # The new folder is opened again to change its owner, and what is
+            # there now is not a folder.
+            with pytest.raises(HTTPException) as caught:
+                apps_router._create_source(_planned(pools.alpha, "apps/x/config"))
+            assert caught.value.status_code == 500
+            assert changed == []
+        assert (folder / "config").stat().st_ino == victim.stat().st_ino  # the swap happened
+
+    def test_owner_change_never_follows_a_link_put_in_place_of_the_new_folder(
+        self, pools, monkeypatch
+    ):
+        # Right after mkdir, the new folder is moved away and a symbolic link to
+        # a folder outside the pool is put under its name. Opening the name again
+        # to change the owner must not follow it: the app's user would get that folder.
+        folder = pools.alpha / "apps/x"
+        folder.mkdir(parents=True)
+        real_mkdir = os.mkdir
+
+        def mkdir_and_link(path, mode=0o777, *, dir_fd=None):
+            real_mkdir(path, mode, dir_fd=dir_fd)
+            (folder / "config").rename(folder / "config.moved")
+            (folder / "config").symlink_to(pools.outside)
+
+        changed: list[int] = []  # inodes whose owner was changed
+        monkeypatch.setattr(os, "mkdir", mkdir_and_link)
+        monkeypatch.setattr(os, "fchown", lambda fd, uid, gid: changed.append(os.fstat(fd).st_ino))
+
+        with pytest.raises(HTTPException) as caught:
+            apps_router._create_source(_planned(pools.alpha, "apps/x/config"))
+
+        assert caught.value.status_code == 500
+        assert changed == []
+        assert (folder / "config").is_symlink()  # the swap happened
+
+    @pytest.mark.parametrize("is_file", [False, True], ids=["folder", "file"])
+    def test_existing_source_keeps_its_owner(self, pools, chown_calls, is_file):
+        (pools.alpha / "apps").mkdir()
+        existing = pools.alpha / "apps/config"
+        if is_file:
+            existing.write_bytes(b"data")
+        else:
+            existing.mkdir()
+
+        apps_router._create_source(_planned(pools.alpha, "apps/config", is_file=is_file))
+
+        assert chown_calls == []
+        assert existing.read_bytes() == b"data" if is_file else existing.is_dir()
+
+    @pytest.mark.parametrize("link", ["apps", "apps/x"])
+    @pytest.mark.parametrize("is_file", [False, True], ids=["folder", "file"])
+    def test_linked_parent_folder_is_not_followed(self, pools, chown_calls, link, is_file):
+        (pools.alpha / link).parent.mkdir(exist_ok=True)
+        (pools.alpha / link).symlink_to(pools.outside)
+
+        with pytest.raises(HTTPException) as caught:
+            apps_router._create_source(_planned(pools.alpha, "apps/x/config", is_file=is_file))
+
+        assert caught.value.status_code == 409
+        assert "symbolic link" in caught.value.detail
+        assert list(pools.outside.iterdir()) == []
+        assert chown_calls == []
+
+    @pytest.mark.parametrize("case", ["created", "exists", "linked-parent", "chown-fails"])
+    @pytest.mark.parametrize("is_file", [False, True], ids=["folder", "file"])
+    def test_descriptors_are_closed(self, pools, monkeypatch, case, is_file):
+        # Every start of an app can create sources: a leaked descriptor per
+        # call would pile up in the long-running supervisor.
+        if case == "exists":
+            (pools.alpha / "apps/x").mkdir(parents=True)
+            if is_file:
+                (pools.alpha / "apps/x/config").write_bytes(b"")
+            else:
+                (pools.alpha / "apps/x/config").mkdir()
+        elif case == "linked-parent":
+            (pools.alpha / "apps").symlink_to(pools.outside)
+        elif case == "chown-fails":
+            def refuse(*args, **kwargs):
+                raise PermissionError(1, "Operation not permitted")
+
+            monkeypatch.setattr(os, "fchown", refuse)
+        before = _open_fds()
+
+        try:
+            apps_router._create_source(_planned(pools.alpha, "apps/x/config", is_file=is_file))
+        except HTTPException as e:
+            assert case in ("linked-parent", "chown-fails"), e.detail
+        else:
+            assert case in ("created", "exists")
+
+        assert _open_fds() - before == set()
+
+    @pytest.mark.parametrize("is_file", [False, True], ids=["folder", "file"])
+    def test_linked_source_is_not_followed(self, pools, chown_calls, is_file):
+        (pools.alpha / "apps").mkdir()
+        (pools.alpha / "apps/config").symlink_to(pools.outside / "config")
+
+        apps_router._create_source(_planned(pools.alpha, "apps/config", is_file=is_file))
+
+        assert list(pools.outside.iterdir()) == []
+        assert chown_calls == []
+        # The check after creating reports the link.
+        with pytest.raises(HTTPException) as caught:
+            apps_router._prepare_sources([_planned(pools.alpha, "apps/config", is_file=is_file)], create=True)
+        assert caught.value.status_code == 409
+        assert "symbolic link" in caught.value.detail
+
+
+# ---------------------------------------------------------------------------
+# No pool folder inside a folder an app can write to
+# ---------------------------------------------------------------------------
+
+# Templates that bind the pool root read-write. Allowed only for images that
+# run as a non-root user: the pool root and the folders the supervisor creates
+# are owned by root, so the app cannot rename them.
+POOL_ROOT_WRITERS = {"filebrowser"}
+
+
+def _pool_relative(volume: VolumeMapping) -> Path:
+    return Path("/" + volume.host[len(POOL_PLACEHOLDER):].lstrip("/"))
+
+
+class TestNestedFolders:
+    def test_no_catalog_folder_lies_inside_a_writable_folder_of_any_app(self):
+        """Docker re-resolves bind sources on every start and follows links.
+
+        Apps share pool folders (downloads, media, ...). If transmission's
+        /watch came from {pool}/downloads/watch, any app that can write to
+        {pool}/downloads could replace "watch" with a link to "/", and the
+        host's root directory would be mounted at /watch at the next start.
+        """
+        volumes = [(t, v) for t in APP_CATALOG for v in t.volumes if v.on_pool]
+        for outer_template, outer in volumes:
+            if outer.readonly:
+                continue
+            if outer.host == POOL_PLACEHOLDER:
+                assert outer_template.id in POOL_ROOT_WRITERS, outer_template.id
+                assert _image_name(outer_template.image) in NON_ROOT_IMAGES, outer_template.id
+                continue
+            outer_path = _pool_relative(outer)
+            for inner_template, inner in volumes:
+                inner_path = _pool_relative(inner)
+                assert inner_path == outer_path or not inner_path.is_relative_to(outer_path), (
+                    f"{inner_template.id} {inner.container} ({inner.host}) is inside "
+                    f"{outer_template.id} {outer.container} ({outer.host})"
+                )
+
+    def test_override_inside_a_writable_folder_of_the_app_is_rejected(
+        self, api, pools, docker_client
+    ):
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={
+                "template_id": "transmission",
+                "volume_overrides": {"/watch": str(pools.alpha / "downloads/watch")},
+            },
+        )
+
+        assert response.status_code == 400
+        assert "inside the folder for /downloads" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_writable_folder_cannot_be_moved_to_the_pool_root(self, api, pools, docker_client):
+        # Syncthing's /data on the pool root would contain its own /config.
+        response = api.post(
+            INSTALL,
+            json={"template_id": "syncthing", "volume_overrides": {"/data": str(pools.alpha)}},
+        )
+
+        assert response.status_code == 400
+        assert "inside the folder for /data" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+    @pytest.mark.parametrize("app_id", ["filebrowser", "duplicati"])
+    def test_templates_built_for_the_pool_root_install(self, api, pools, docker_client, app_id):
+        response = api.post(INSTALL, json={"template_id": app_id})
+
+        assert response.status_code == 200, response.text
+        sources = {m["Source"] for m in _mounts(docker_client).values()}
+        assert str(pools.alpha) in sources
+
+    def test_symlink_planted_after_resolution_is_refused(self, api, pools, docker_client, monkeypatch):
+        # A link that appears between planning and creating (a race) is caught
+        # by the walk that does not follow links.
+        real_plan = apps_router._plan_volumes
+
+        def plan_then_plant(*args, **kwargs):
+            planned = real_plan(*args, **kwargs)
+            (pools.alpha / "apps").mkdir(exist_ok=True)
+            (pools.alpha / "apps/transmission").symlink_to(pools.outside)
+            return planned
+
+        monkeypatch.setattr(apps_router, "_plan_volumes", plan_then_plant)
+
+        response = api.post(INSTALL, json={"template_id": "transmission"})
+
+        assert response.status_code == 409
+        assert "symbolic link" in response.json()["detail"]
+        assert list(pools.outside.iterdir()) == []
+        docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Starting an installed app re-checks its folders
+# ---------------------------------------------------------------------------
+
+
+class TestStartChecks:
+    def test_app_with_usable_folders_starts(self, api, pools, installed):
+        _make_jellyfin_folders(pools)
+        container = installed(_jellyfin(pools))
+
+        response = api.post(START.format("jellyfin"))
+
+        assert response.status_code == 200, response.text
+        container.start.assert_called_once_with()
+
+    def test_restart_with_usable_folders(self, api, pools, installed):
+        _make_jellyfin_folders(pools)
+        container = installed(_jellyfin(pools, status="running"))
+
+        response = api.post(RESTART.format("jellyfin"))
+
+        assert response.status_code == 200, response.text
+        container.restart.assert_called_once_with()
+
+    def test_missing_folders_on_the_apps_pool_are_created_again(self, api, pools, installed):
+        # Docker's old -v binds recreated a deleted folder; Mount binds do not.
+        (pools.alpha / "apps/jellyfin/config").mkdir(parents=True)
+        container = installed(_jellyfin(pools))
+
+        response = api.post(START.format("jellyfin"))
+
+        assert response.status_code == 200, response.text
+        assert (pools.alpha / "apps/jellyfin/cache").is_dir()
+        assert (pools.alpha / "media").is_dir()
+        container.start.assert_called_once_with()
+
+    def test_recreated_folder_belongs_to_the_image_user(self, api, pools, installed, chown_calls):
+        (pools.alpha / "apps/filebrowser/database").mkdir(parents=True)
+        container = installed(
+            _container(
+                "filebrowser",
+                template="filebrowser",
+                pool="alpha",
+                mounts=[
+                    _bind(pools.alpha / "apps/filebrowser/database", "/database"),
+                    _bind(pools.alpha / "apps/filebrowser/config", "/config"),
+                    _bind(pools.alpha, "/srv"),
+                ],
+            )
+        )
+
+        response = api.post(START.format("filebrowser"))
+
+        assert response.status_code == 200, response.text
+        assert chown_calls == [(pools.alpha / "apps/filebrowser/config", 1000, 1000)]
+        container.start.assert_called_once_with()
+
+    @pytest.mark.parametrize("link", ["media", "apps"], ids=["source", "parent-folder"])
+    def test_symlink_on_the_way_to_a_bind_source_is_refused(self, api, pools, installed, link):
+        # What an app that can write the parent folder could plant, e.g.
+        # "ln -s / downloads/watch": Docker would mount the link's target.
+        (pools.outside / "jellyfin/config").mkdir(parents=True)
+        (pools.outside / "jellyfin/cache").mkdir(parents=True)
+        if link == "media":
+            (pools.alpha / "apps/jellyfin/config").mkdir(parents=True)
+            (pools.alpha / "apps/jellyfin/cache").mkdir(parents=True)
+            (pools.alpha / "media").symlink_to(pools.outside)
+        else:
+            (pools.alpha / "media").mkdir()
+            (pools.alpha / "apps").symlink_to(pools.outside)
+        container = installed(_jellyfin(pools))
+        before = _tree(pools.root)
+
+        response = api.post(START.format("jellyfin"))
+
+        assert response.status_code == 409
+        assert "symbolic link" in response.json()["detail"]
+        assert str(pools.alpha / link) in response.json()["detail"]
+        container.start.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_app_on_an_unmounted_pool_is_not_started(self, api, pools, installed):
+        container = installed(_jellyfin(pools))
+        pools.mounted.discard(str(pools.alpha))
+        before = _tree(pools.root)
+
+        response = api.post(START.format("jellyfin"))
+
+        assert response.status_code == 409
+        assert "not on a mounted storage pool" in response.json()["detail"]
+        container.start.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_restart_is_refused_like_a_start(self, api, pools, installed):
+        container = installed(_jellyfin(pools, status="running"))
+        pools.mounted.discard(str(pools.alpha))
+
+        response = api.post(RESTART.format("jellyfin"))
+
+        assert response.status_code == 409
+        container.restart.assert_not_called()
+
+    def test_old_app_with_data_on_the_system_disk_is_not_started(self, api, pools, installed):
+        # Installed by an older version: binds under /mnt/pools/default, a
+        # plain folder on the boot SD card, with -v binds Docker recreates.
+        legacy = pools.base / "default"
+        (legacy / "apps/transmission/config").mkdir(parents=True)
+        (legacy / "downloads/watch").mkdir(parents=True)
+        container = installed(
+            _container(
+                "transmission",
+                template="transmission",
+                mounts=[
+                    _bind(legacy / "apps/transmission/config", "/config"),
+                    _bind(legacy / "downloads", "/downloads"),
+                    _bind(legacy / "downloads/watch", "/watch"),
+                ],
+            )
+        )
+
+        response = api.post(START.format("transmission"))
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert "system disk" in detail and "uninstall" in detail
+        container.start.assert_not_called()
+
+    def test_missing_folder_on_another_pool_is_not_created(self, api, pools, installed):
+        (pools.alpha / "apps/jellyfin/config").mkdir(parents=True)
+        container = installed(
+            _container(
+                "jellyfin",
+                template="jellyfin",
+                pool="alpha",
+                mounts=[
+                    _bind(pools.alpha / "apps/jellyfin/config", "/config"),
+                    _bind(pools.beta / "library", "/media", rw=False),
+                ],
+            )
+        )
+        before = _tree(pools.root)
+
+        response = api.post(START.format("jellyfin"))
+
+        assert response.status_code == 409
+        assert "does not exist" in response.json()["detail"]
+        container.start.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_fixed_host_paths_are_not_checked(self, api, pools, installed):
+        (pools.alpha / "apps/portainer/data").mkdir(parents=True)
+        container = installed(
+            _container(
+                "portainer",
+                template="portainer",
+                pool="alpha",
+                mounts=[
+                    _bind(pools.alpha / "apps/portainer/data", "/data"),
+                    _bind("/var/run/docker.sock", "/var/run/docker.sock"),
+                ],
+            )
+        )
+
+        response = api.post(START.format("portainer"))
+
+        assert response.status_code == 200, response.text
+        container.start.assert_called_once_with()
+
+    def test_unknown_app_is_not_found(self, api, pools, installed):
+        assert api.post(START.format("nope")).status_code == 404
+
+    def test_docker_error_is_reported(self, api, pools, installed):
+        _make_jellyfin_folders(pools)
+        container = installed(_jellyfin(pools))
+        container.start.side_effect = APIError("port is already allocated")
+
+        response = api.post(START.format("jellyfin"))
+
+        assert response.status_code == 500
+        assert "port is already allocated" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# The same checks for every code path that starts an app
+# ---------------------------------------------------------------------------
+
+
+def _inspected(container: MagicMock) -> Container:
+    """docker-py's Container built from raw ``docker inspect`` data.
+
+    Code that talks to the low-level API (the restart of apps Docker could not
+    start before their pool was mounted) has only this data.
+    """
+    details = dict(container.attrs, Name=f"/{container.name}", Config={"Labels": container.labels})
+    return Container(attrs=details)
+
+
+class TestPrepareAppStart:
+    def test_accepts_raw_inspect_data_and_recreates_folders(self, pools):
+        (pools.alpha / "apps/jellyfin/config").mkdir(parents=True)
+
+        apps_router.prepare_app_start(_inspected(_jellyfin(pools)))
+
+        assert (pools.alpha / "apps/jellyfin/cache").is_dir()
+        assert (pools.alpha / "media").is_dir()
+
+    def test_refuses_a_planted_link(self, pools):
+        (pools.alpha / "apps/jellyfin/config").mkdir(parents=True)
+        (pools.alpha / "apps/jellyfin/cache").mkdir(parents=True)
+        (pools.alpha / "media").symlink_to(pools.outside)
+
+        with pytest.raises(HTTPException) as caught:
+            apps_router.prepare_app_start(_inspected(_jellyfin(pools)))
+
+        assert caught.value.status_code == 409
+        assert "symbolic link" in caught.value.detail
+
+    def test_refuses_an_unmounted_pool(self, pools):
+        pools.mounted.discard(str(pools.alpha))
+        before = _tree(pools.root)
+
+        with pytest.raises(HTTPException) as caught:
+            apps_router.prepare_app_start(_inspected(_jellyfin(pools)))
+
+        assert caught.value.status_code == 409
+        assert "not on a mounted storage pool" in caught.value.detail
+        assert _tree(pools.root) == before
+
+
+# ---------------------------------------------------------------------------
+# Installed apps report the folders they really use
+# ---------------------------------------------------------------------------
+
+
+class TestInstalledApps:
+    def test_real_host_folders_are_reported(self, api, pools, installed):
+        installed(
+            _container(
+                "portainer",
+                template="portainer",
+                pool="alpha",
+                status="running",
+                mounts=[
+                    _bind("/var/run/docker.sock", "/var/run/docker.sock"),
+                    _bind(pools.alpha / "apps/portainer/data", "/data"),
+                ],
+            )
+        )
+
+        response = api.get(INSTALLED)
+
+        assert response.status_code == 200, response.text
+        [app_info] = response.json()
+        assert app_info["pool"] == "alpha"
+        assert app_info["volumes"] == [
+            {"host": str(pools.alpha / "apps/portainer/data"), "container": "/data", "readonly": False},
+            {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock", "readonly": False},
+        ]
+        assert app_info["data_outside_pools"] == []
+
+    def test_old_app_with_data_on_the_system_disk_is_flagged(self, api, pools, installed):
+        legacy = pools.base / "default"
+        installed(
+            _container(
+                "transmission",
+                template="transmission",
+                status="running",
+                mounts=[
+                    _bind(legacy / "apps/transmission/config", "/config"),
+                    _bind(legacy / "downloads", "/downloads"),
+                    _bind(legacy / "downloads/watch", "/watch"),
+                ],
+            )
+        )
+
+        [app_info] = api.get(INSTALLED).json()
+
+        assert app_info["pool"] is None
+        assert app_info["data_outside_pools"] == [
+            str(legacy / "apps/transmission/config"),
+            str(legacy / "downloads"),
+            str(legacy / "downloads/watch"),
+        ]
+        # The modal shows these real paths, not paths on the first pool.
+        assert [v["host"] for v in app_info["volumes"]] == app_info["data_outside_pools"]
+
+    def test_pool_volume_outside_the_pools_base_is_flagged(self, api, pools, installed):
+        # Older versions accepted any host path as an override.
+        installed(
+            _container(
+                "transmission",
+                template="transmission",
+                pool="alpha",
+                mounts=[
+                    _bind(pools.alpha / "apps/transmission/config", "/config"),
+                    _bind(pools.outside / "downloads", "/downloads"),
+                    _bind("/etc/localtime", "/etc/localtime", rw=False),
+                ],
+            )
+        )
+
+        [app_info] = api.get(INSTALLED).json()
+
+        assert app_info["data_outside_pools"] == [str(pools.outside / "downloads")]
+
+    def test_app_on_an_unmounted_pool_is_flagged(self, api, pools, installed):
+        installed(_jellyfin(pools))
+        pools.mounted.discard(str(pools.alpha))
+
+        [app_info] = api.get(INSTALLED).json()
+
+        assert app_info["pool"] == "alpha"
+        assert len(app_info["data_outside_pools"]) == 3

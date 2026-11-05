@@ -62,10 +62,11 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Process Monitor** - View and manage running processes
 - **Temperature Monitoring** - Hardware temperature sensors
 - **Network Statistics** - Per-interface bandwidth monitoring with history graphs
-- **Prometheus Metrics** - `/api/v1/health/prometheus` endpoint for external monitoring
+- **Prometheus Metrics** - `/api/v1/health/prometheus` endpoint for external monitoring (administrator API token)
 
 ### User Management & Security
-- **Multi-user Support** - Create users with admin or regular permissions
+- **HTTPS by Default** - The web interface is served over HTTPS with certificates from a built-in local CA; plain HTTP redirects
+- **Multi-user Support** - Administrators and regular users (who see only the dashboard and their own account)
 - **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps
 - **Recovery Codes** - Backup codes for 2FA recovery
 - **API Tokens** - Generate tokens for programmatic access
@@ -129,14 +130,17 @@ sudo ./install.sh
 After installation, open your browser:
 
 ```
-http://YOUR_SERVER_IP
+https://YOUR_SERVER_IP
 ```
 
-Default credentials:
-- **Username:** `admin`
-- **Password:** `admin`
+Plain `http://` redirects to `https://`. Expect a certificate warning: UNOS
+issues its certificate from its own local CA. Accept it, or trust the CA on
+your devices as described in
+[HTTPS and the Certificate Warning](docs/INSTALL.md#https-and-the-certificate-warning).
 
-**Important:** Change the default password immediately after first login.
+There are no default credentials: on the first visit UNOS asks you to create the
+administrator account. Do this right after installing, because until then
+anyone who can reach the page can create it.
 
 ## System Requirements
 
@@ -161,10 +165,10 @@ Default credentials:
 ┌─────────────────────────────────────────────────────────┐
 │  Web Browser                                            │
 └──────────────────────┬──────────────────────────────────┘
-                       │ HTTP/HTTPS + WebSocket
+                       │ HTTPS + WebSocket (wss)
 ┌──────────────────────▼──────────────────────────────────┐
 │  unos-webui (SvelteKit + Caddy)                         │
-│  Port: 80/443                                           │
+│  Port: 443 (HTTPS), 80 (redirects to HTTPS)             │
 └──────────────────────┬──────────────────────────────────┘
                        │ /api/*, /ws/*
 ┌──────────────────────▼──────────────────────────────────┐
@@ -193,7 +197,7 @@ Default credentials:
 ### Backend (Supervisor)
 - Python 3.11+, FastAPI, Uvicorn
 - SQLAlchemy + aiosqlite (async SQLite)
-- python-jose (JWT), passlib (bcrypt), pyotp (2FA)
+- PyJWT (JWT), bcrypt, pyotp (2FA)
 - docker-py, psutil
 
 ### Frontend (WebUI)
@@ -207,13 +211,20 @@ Default credentials:
 sudo /opt/unos/deploy/update.sh
 ```
 
-Or manually:
+The script refuses to run over local changes in `/opt/unos`, builds the new
+images while UNOS keeps running, and rolls back if the new version does not
+start. Or manually:
 ```bash
 cd /opt/unos
-sudo git pull
+sudo git pull --ff-only
 cd deploy
-sudo docker compose build && sudo docker compose up -d
+sudo docker compose build
+sudo docker compose down
+sudo systemctl restart unos   # docker compose up -d with /etc/unos/secrets.env
 ```
+
+Updating from 1.0.0 or earlier needs a few steps once (HTTPS, mounting existing
+pools): see [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from-100-or-earlier).
 
 ## Uninstalling
 

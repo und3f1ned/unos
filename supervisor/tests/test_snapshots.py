@@ -1,8 +1,12 @@
-import pytest
 import json
-from datetime import datetime
-from unittest.mock import patch, MagicMock
+import os
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch, MagicMock
+
+import pytest
+from fastapi import HTTPException
+
 from src.snapshots.schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore
 from src.snapshots.router import (
     run_cmd,
@@ -12,6 +16,61 @@ from src.snapshots.router import (
     delete_snapshot,
     restore_snapshot,
 )
+
+BTRFS_SHOW = """snap
+\tName: \t\t\tsnap
+\tUUID: \t\t\t12345-67890
+\tCreation time: \t\t2025-01-24 12:00:00 +0000
+\tFlags: \t\t\treadonly
+"""
+
+
+@pytest.fixture
+def pools(tmp_path):
+    """A pools base with two pools and a directory outside of it."""
+    root = tmp_path.resolve()
+    base = root / "pools"
+    (base / "datapool").mkdir(parents=True)
+    (base / "mediapool").mkdir()
+    outside = root / "outside"
+    outside.mkdir()
+    with patch("src.security.validators.settings", SimpleNamespace(pools_base_path=str(base))):
+        yield SimpleNamespace(root=root, base=base, pool=base / "datapool", media=base / "mediapool",
+                              outside=outside)
+
+
+@pytest.fixture
+def btrfs():
+    """Fake btrfs/du; snapshot creation is emulated with mkdir. Records every command."""
+    calls = []
+    state = {"fail": False}
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        result = MagicMock(stdout="", stderr="", returncode=0)
+        if state["fail"] and cmd[0] == "btrfs":
+            result.returncode = 1
+            result.stderr = "btrfs error"
+        elif cmd[:3] == ["btrfs", "subvolume", "snapshot"]:
+            Path(cmd[-1]).mkdir()
+        elif cmd[:3] == ["btrfs", "subvolume", "show"]:
+            result.stdout = BTRFS_SHOW
+        elif cmd[0] == "du":
+            result.stdout = f"1.5G\t{cmd[-1]}"
+        return result
+
+    with patch("src.snapshots.router.subprocess.run", side_effect=fake_run):
+        yield SimpleNamespace(calls=calls, state=state)
+
+
+def _make_snapshot(subvolume: Path, name: str) -> Path:
+    snap = subvolume / ".snapshots" / name
+    snap.mkdir(parents=True)
+    return snap
+
+
+# Names create_snapshot refuses but other tools (snapper, btrfs on the shell) use.
+NAMES_FROM_OTHER_TOOLS = ["before upgrade (v2)", ".hidden", "-x", "x\n", "2025-01-24 12:00 ü"]
 
 
 class TestSnapshotSchemas:
@@ -49,19 +108,14 @@ class TestSnapshotSchemas:
 
     def test_snapshot_create_schema(self):
         """Test SnapshotCreate schema."""
-        create = SnapshotCreate(
-            subvolume="/mnt/pools/datapool",
-            name="mybackup"
-        )
+        create = SnapshotCreate(subvolume="/mnt/pools/datapool", name="mybackup")
 
         assert create.subvolume == "/mnt/pools/datapool"
         assert create.name == "mybackup"
 
     def test_snapshot_create_auto_name(self):
         """Test SnapshotCreate with auto-generated name."""
-        create = SnapshotCreate(
-            subvolume="/mnt/pools/datapool"
-        )
+        create = SnapshotCreate(subvolume="/mnt/pools/datapool")
 
         assert create.subvolume == "/mnt/pools/datapool"
         assert create.name is None
@@ -78,9 +132,7 @@ class TestSnapshotSchemas:
 
     def test_snapshot_restore_default_target(self):
         """Test SnapshotRestore with default target."""
-        restore = SnapshotRestore(
-            snapshot_path="/mnt/pools/datapool/.snapshots/snap_20250124_120000"
-        )
+        restore = SnapshotRestore(snapshot_path="/mnt/pools/datapool/.snapshots/snap_20250124_120000")
 
         assert restore.target_path is None
 
@@ -90,10 +142,7 @@ class TestRunCmd:
 
     def test_run_cmd_success(self):
         """Test run_cmd returns correct output."""
-        mock_result = MagicMock()
-        mock_result.stdout = "output"
-        mock_result.stderr = ""
-        mock_result.returncode = 0
+        mock_result = MagicMock(stdout="output", stderr="", returncode=0)
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
             stdout, stderr, rc = run_cmd(["echo", "test"])
@@ -104,10 +153,7 @@ class TestRunCmd:
 
     def test_run_cmd_failure(self):
         """Test run_cmd handles failure."""
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = "error"
-        mock_result.returncode = 1
+        mock_result = MagicMock(stdout="", stderr="error", returncode=1)
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
             stdout, stderr, rc = run_cmd(["false"])
@@ -120,64 +166,36 @@ class TestRunCmd:
 class TestListSubvolumes:
     """Tests for listing subvolumes."""
 
-    @pytest.fixture
-    def mock_findmnt_output(self):
-        """Mock findmnt JSON output."""
-        return {
+    async def test_list_subvolumes_success(self, pools):
+        """Only mount points strictly inside the pools base are returned."""
+        findmnt = {
             "filesystems": [
-                {
-                    "target": "/mnt/pools/datapool",
-                    "source": "/dev/sda"
-                },
-                {
-                    "target": "/mnt/pools/mediapool",
-                    "source": "/dev/sdb"
-                },
-                {
-                    "target": "/other/path",
-                    "source": "/dev/sdc"
-                }
+                {"target": str(pools.pool), "source": "/dev/sda"},
+                {"target": str(pools.media), "source": "/dev/sdb"},
+                {"target": str(pools.root / "pools-old" / "x"), "source": "/dev/sdc"},
+                {"target": str(pools.base), "source": "/dev/sdd"},
+                {"target": "/other/path", "source": "/dev/sde"},
             ]
         }
-
-    @pytest.mark.asyncio
-    async def test_list_subvolumes_success(self, mock_findmnt_output):
-        """Test listing subvolumes successfully."""
-        mock_result = MagicMock()
-        mock_result.stdout = json.dumps(mock_findmnt_output)
-        mock_result.stderr = ""
-        mock_result.returncode = 0
+        mock_result = MagicMock(stdout=json.dumps(findmnt), stderr="", returncode=0)
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
             result = await list_subvolumes({})
 
-        # Should only return pools under /mnt/pools
-        assert len(result) == 2
-        paths = [sv["path"] for sv in result]
-        assert "/mnt/pools/datapool" in paths
-        assert "/mnt/pools/mediapool" in paths
-        assert "/other/path" not in paths
+        assert [sv["path"] for sv in result] == [str(pools.pool), str(pools.media)]
 
-    @pytest.mark.asyncio
-    async def test_list_subvolumes_empty(self):
+    async def test_list_subvolumes_empty(self, pools):
         """Test listing when no subvolumes."""
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = ""
-        mock_result.returncode = 1
+        mock_result = MagicMock(stdout="", stderr="", returncode=1)
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
             result = await list_subvolumes({})
 
         assert result == []
 
-    @pytest.mark.asyncio
-    async def test_list_subvolumes_invalid_json(self):
+    async def test_list_subvolumes_invalid_json(self, pools):
         """Test handling of invalid JSON from findmnt."""
-        mock_result = MagicMock()
-        mock_result.stdout = "not json"
-        mock_result.stderr = ""
-        mock_result.returncode = 0
+        mock_result = MagicMock(stdout="not json", stderr="", returncode=0)
 
         with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
             result = await list_subvolumes({})
@@ -188,195 +206,132 @@ class TestListSubvolumes:
 class TestListSnapshots:
     """Tests for listing snapshots."""
 
-    @pytest.mark.asyncio
-    async def test_list_snapshots_parses_btrfs_show(self):
-        """Test parsing btrfs subvolume show output."""
-        btrfs_show_output = """snap_20250124_120000
-	Name: 			snap_20250124_120000
-	UUID: 			12345-67890
-	Creation time: 		2025-01-24 12:00:00 +0000
-	Flags: 			readonly
-"""
-        du_output = "1.5G\t/mnt/pools/datapool/.snapshots/snap_20250124_120000"
+    async def test_list_snapshots_parses_btrfs_show(self, pools, btrfs):
+        _make_snapshot(pools.pool, "snap_20250124_120000")
 
-        def cmd_side_effect(cmd, *args, **kwargs):
-            result = MagicMock()
-            if "btrfs" in cmd and "show" in cmd:
-                result.stdout = btrfs_show_output
-                result.returncode = 0
-            elif "du" in cmd:
-                result.stdout = du_output
-                result.returncode = 0
-            else:
-                result.stdout = ""
-                result.returncode = 0
-            result.stderr = ""
-            return result
+        (snap,) = await list_snapshots(None, {})
 
-        mock_pool_dir = MagicMock()
-        mock_pool_dir.is_dir.return_value = True
-        mock_pool_dir.__str__ = lambda x: "/mnt/pools/datapool"
-        mock_pool_dir.__truediv__ = lambda x, y: Path(f"/mnt/pools/datapool/{y}")
+        assert snap.name == "snap_20250124_120000"
+        assert snap.subvolume == str(pools.pool)
+        assert snap.created == "2025-01-24T12:00:00"
+        assert snap.size == "1.5G"
 
-        mock_snap_dir = MagicMock()
-        mock_snap_dir.exists.return_value = True
+    async def test_list_snapshots_skips_symlinks(self, pools, btrfs):
+        _make_snapshot(pools.pool, "real")
+        os.symlink(pools.outside, pools.pool / ".snapshots" / "evil")
+        (pools.pool / ".snapshots" / "file").write_text("x")
+        # A planted .snapshots symlink in another pool is ignored entirely.
+        os.symlink(pools.outside, pools.media / ".snapshots")
 
-        mock_snap = MagicMock()
-        mock_snap.is_dir.return_value = True
-        mock_snap.name = "snap_20250124_120000"
-        mock_snap.__str__ = lambda x: "/mnt/pools/datapool/.snapshots/snap_20250124_120000"
+        snapshots = await list_snapshots(None, {})
 
-        with patch("src.snapshots.router.subprocess.run", side_effect=cmd_side_effect):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_path.return_value.iterdir.return_value = [mock_pool_dir]
-                # Complex mock setup - just verify the function runs
-                pass
+        assert [s.name for s in snapshots] == ["real"]
+        assert all(str(pools.outside) not in " ".join(cmd) for cmd in btrfs.calls)
 
-    @pytest.mark.asyncio
-    async def test_list_snapshots_empty_directory(self):
+    async def test_list_snapshots_of_one_subvolume(self, pools, btrfs):
+        _make_snapshot(pools.pool, "a")
+        _make_snapshot(pools.media, "b")
+        volume = pools.pool / "volume"
+        volume.mkdir()
+        _make_snapshot(volume, "c")
+
+        assert [s.name for s in await list_snapshots(str(pools.media), {})] == ["b"]
+        assert [s.name for s in await list_snapshots(str(volume), {})] == ["c"]
+
+    @pytest.mark.parametrize("subvolume", ["/etc", "{root}/outside", "{base}/datapool/../../outside", "{base}"])
+    async def test_list_snapshots_rejects_outside_subvolume(self, pools, btrfs, subvolume):
+        with pytest.raises(HTTPException) as exc:
+            await list_snapshots(subvolume.format(root=pools.root, base=pools.base), {})
+        assert exc.value.status_code == 400
+        assert btrfs.calls == []
+
+    async def test_list_snapshots_empty_directory(self, pools, btrfs):
         """Test listing when no snapshots directory."""
-        with patch("src.snapshots.router.Path") as mock_path:
-            mock_path.return_value.iterdir.return_value = []
-            result = await list_snapshots(None, {})
-
-        assert result == []
+        assert await list_snapshots(None, {}) == []
 
 
 class TestCreateSnapshot:
     """Tests for creating snapshots."""
 
-    @pytest.mark.asyncio
-    async def test_create_snapshot_success(self):
+    async def test_create_snapshot_success(self, pools, btrfs):
         """Test creating a snapshot successfully."""
-        create_req = SnapshotCreate(
-            subvolume="/mnt/pools/datapool",
-            name="test_snapshot"
-        )
-
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = ""
-        mock_result.returncode = 0
-
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_subvol = MagicMock()
-                mock_subvol.exists.return_value = True
-                mock_path.return_value = mock_subvol
-
-                mock_snap_dir = MagicMock()
-                mock_subvol.__truediv__ = lambda x, y: mock_snap_dir
-                mock_snap_dir.__truediv__ = lambda x, y: MagicMock(exists=lambda: False)
-                mock_snap_dir.mkdir = MagicMock()
-
-                result = await create_snapshot(create_req, {})
+        result = await create_snapshot(SnapshotCreate(subvolume=str(pools.pool), name="test_snapshot"), {})
 
         assert result.name == "test_snapshot"
-        assert result.subvolume == "/mnt/pools/datapool"
+        assert result.subvolume == str(pools.pool)
+        expected = pools.pool / ".snapshots" / "test_snapshot"
+        assert result.path == str(expected)
+        assert btrfs.calls == [["btrfs", "subvolume", "snapshot", "-r", str(pools.pool), str(expected)]]
 
-    @pytest.mark.asyncio
-    async def test_create_snapshot_auto_name(self):
+    async def test_create_snapshot_auto_name(self, pools, btrfs):
         """Test creating a snapshot with auto-generated name."""
-        create_req = SnapshotCreate(
-            subvolume="/mnt/pools/datapool"
-        )
-
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = ""
-        mock_result.returncode = 0
-
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_subvol = MagicMock()
-                mock_subvol.exists.return_value = True
-                mock_path.return_value = mock_subvol
-
-                mock_snap_dir = MagicMock()
-                mock_subvol.__truediv__ = lambda x, y: mock_snap_dir
-                mock_snap_dir.__truediv__ = lambda x, y: MagicMock(exists=lambda: False)
-                mock_snap_dir.mkdir = MagicMock()
-
-                result = await create_snapshot(create_req, {})
+        result = await create_snapshot(SnapshotCreate(subvolume=str(pools.pool)), {})
 
         assert result.name.startswith("snap_")
 
-    @pytest.mark.asyncio
-    async def test_create_snapshot_not_found(self):
+    async def test_create_snapshot_not_found(self, pools, btrfs):
         """Test creating snapshot for non-existent subvolume."""
-        from fastapi import HTTPException
-
-        create_req = SnapshotCreate(
-            subvolume="/mnt/pools/nonexistent"
-        )
-
-        with patch("src.snapshots.router.Path") as mock_path:
-            mock_subvol = MagicMock()
-            mock_subvol.exists.return_value = False
-            mock_path.return_value = mock_subvol
-
-            with pytest.raises(HTTPException) as exc_info:
-                await create_snapshot(create_req, {})
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=str(pools.base / "nonexistent")), {})
 
         assert exc_info.value.status_code == 404
 
-    @pytest.mark.asyncio
-    async def test_create_snapshot_already_exists(self):
+    @pytest.mark.parametrize(
+        "subvolume", ["/etc", "/", "{root}/outside", "{root}/pools-old", "{base}", "{base}/datapool/../../outside",
+                      "relative", "{base}/datapool\n"],
+    )
+    async def test_create_snapshot_rejects_bad_subvolume(self, pools, btrfs, subvolume):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=subvolume.format(root=pools.root, base=pools.base)), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    async def test_create_snapshot_rejects_symlink_escaping_pools(self, pools, btrfs):
+        os.symlink(pools.outside, pools.pool / "escape")
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=str(pools.pool / "escape")), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    async def test_create_snapshot_rejects_symlink_to_other_pool(self, pools, btrfs):
+        """A link planted inside one pool must not redirect the snapshot to another pool."""
+        os.symlink(pools.media, pools.pool / "apps")
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=str(pools.pool / "apps"), name="x"), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+        assert not (pools.media / ".snapshots").exists()
+
+    @pytest.mark.parametrize("name", ["../../outside/x", "a/b", "..", ".", "x\n", ".hidden", "x" * 129])
+    async def test_create_snapshot_rejects_bad_names(self, pools, btrfs, name):
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=str(pools.pool), name=name), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+        assert list(pools.outside.iterdir()) == []
+
+    async def test_create_snapshot_refuses_symlinked_snapshot_dir(self, pools, btrfs):
+        os.symlink(pools.outside, pools.pool / ".snapshots")
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=str(pools.pool), name="x"), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    async def test_create_snapshot_already_exists(self, pools, btrfs):
         """Test creating snapshot that already exists."""
-        from fastapi import HTTPException
+        _make_snapshot(pools.pool, "existing_snapshot")
 
-        create_req = SnapshotCreate(
-            subvolume="/mnt/pools/datapool",
-            name="existing_snapshot"
-        )
-
-        with patch("src.snapshots.router.Path") as mock_path:
-            mock_subvol = MagicMock()
-            mock_subvol.exists.return_value = True
-            mock_path.return_value = mock_subvol
-
-            mock_snap_dir = MagicMock()
-            mock_snap_path = MagicMock()
-            mock_snap_path.exists.return_value = True
-            mock_subvol.__truediv__ = lambda x, y: mock_snap_dir
-            mock_snap_dir.__truediv__ = lambda x, y: mock_snap_path
-            mock_snap_dir.mkdir = MagicMock()
-
-            with pytest.raises(HTTPException) as exc_info:
-                await create_snapshot(create_req, {})
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=str(pools.pool), name="existing_snapshot"), {})
 
         assert exc_info.value.status_code == 400
 
-    @pytest.mark.asyncio
-    async def test_create_snapshot_btrfs_failure(self):
+    async def test_create_snapshot_btrfs_failure(self, pools, btrfs):
         """Test handling btrfs command failure."""
-        from fastapi import HTTPException
+        btrfs.state["fail"] = True
 
-        create_req = SnapshotCreate(
-            subvolume="/mnt/pools/datapool",
-            name="test_snapshot"
-        )
-
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = "btrfs error"
-        mock_result.returncode = 1
-
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_subvol = MagicMock()
-                mock_subvol.exists.return_value = True
-                mock_path.return_value = mock_subvol
-
-                mock_snap_dir = MagicMock()
-                mock_snap_path = MagicMock()
-                mock_snap_path.exists.return_value = False
-                mock_subvol.__truediv__ = lambda x, y: mock_snap_dir
-                mock_snap_dir.__truediv__ = lambda x, y: mock_snap_path
-                mock_snap_dir.mkdir = MagicMock()
-
-                with pytest.raises(HTTPException) as exc_info:
-                    await create_snapshot(create_req, {})
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=str(pools.pool), name="test_snapshot"), {})
 
         assert exc_info.value.status_code == 500
 
@@ -384,57 +339,100 @@ class TestCreateSnapshot:
 class TestDeleteSnapshot:
     """Tests for deleting snapshots."""
 
-    @pytest.mark.asyncio
-    async def test_delete_snapshot_success(self):
+    async def test_delete_snapshot_success(self, pools, btrfs):
         """Test deleting a snapshot successfully."""
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = ""
-        mock_result.returncode = 0
+        snap = _make_snapshot(pools.pool, "snap_test")
 
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_snap_path = MagicMock()
-                mock_snap_path.exists.return_value = True
-                mock_path.return_value.__truediv__ = lambda x, y: mock_path.return_value
-                mock_path.return_value.exists.return_value = True
-
-                result = await delete_snapshot("snap_test", "/mnt/pools/datapool", {})
+        result = await delete_snapshot("snap_test", str(pools.pool), {})
 
         assert result["status"] == "deleted"
         assert result["id"] == "snap_test"
+        assert btrfs.calls == [["btrfs", "subvolume", "delete", str(snap)]]
 
-    @pytest.mark.asyncio
-    async def test_delete_snapshot_not_found(self):
+    async def test_delete_snapshot_not_found(self, pools, btrfs):
         """Test deleting non-existent snapshot."""
-        from fastapi import HTTPException
-
-        with patch("src.snapshots.router.Path") as mock_path:
-            mock_path.return_value.__truediv__ = lambda x, y: mock_path.return_value
-            mock_path.return_value.exists.return_value = False
-
-            with pytest.raises(HTTPException) as exc_info:
-                await delete_snapshot("nonexistent", "/mnt/pools/datapool", {})
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_snapshot("nonexistent", str(pools.pool), {})
 
         assert exc_info.value.status_code == 404
 
-    @pytest.mark.asyncio
-    async def test_delete_snapshot_btrfs_failure(self):
+    @pytest.mark.parametrize("snapshot_id", ["../../../outside", "../x", "a/b", ".", "..", "", "a\x00b", "x" * 256])
+    async def test_delete_snapshot_rejects_bad_ids(self, pools, btrfs, snapshot_id):
+        _make_snapshot(pools.pool, "keep")
+        _make_snapshot(pools.outside, "x")
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_snapshot(snapshot_id, str(pools.pool), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    @pytest.mark.parametrize("name", NAMES_FROM_OTHER_TOOLS)
+    async def test_delete_snapshot_accepts_any_listed_name(self, pools, btrfs, name):
+        """Snapshots made by other tools may have names create_snapshot refuses."""
+        snap = _make_snapshot(pools.pool, name)
+        (listed,) = await list_snapshots(None, {})
+        assert listed.name == name
+        btrfs.calls.clear()
+
+        result = await delete_snapshot(listed.id, listed.subvolume, {})
+
+        assert result == {"status": "deleted", "id": name}
+        assert btrfs.calls == [["btrfs", "subvolume", "delete", str(snap)]]
+
+    async def test_delete_snapshot_missing_odd_name_is_not_found(self, pools, btrfs):
+        _make_snapshot(pools.pool, "keep")
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_snapshot("x\n", str(pools.pool), {})
+        assert exc_info.value.status_code == 404
+        assert btrfs.calls == []
+
+    async def test_delete_snapshot_file_entry_is_refused(self, pools, btrfs):
+        (pools.pool / ".snapshots").mkdir()
+        (pools.pool / ".snapshots" / "notes").write_text("x")
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_snapshot("notes", str(pools.pool), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    @pytest.mark.parametrize("subvolume", ["/", "{root}/outside", "{base}/datapool/../../outside", "{base}"])
+    async def test_delete_snapshot_rejects_bad_subvolume(self, pools, btrfs, subvolume):
+        _make_snapshot(pools.outside, "victim")
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_snapshot("victim", subvolume.format(root=pools.root, base=pools.base), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    async def test_delete_snapshot_entry_symlink_is_not_followed(self, pools, btrfs):
+        """A planted symlink must not turn a snapshot delete into a delete elsewhere."""
+        victim = pools.media / "important"
+        victim.mkdir()
+        (pools.pool / ".snapshots").mkdir()
+        os.symlink(victim, pools.pool / ".snapshots" / "fake")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_snapshot("fake", str(pools.pool), {})
+
+        assert exc_info.value.status_code == 400
+        assert "symbolic link" in exc_info.value.detail
+        assert btrfs.calls == []
+        assert victim.is_dir()
+
+    async def test_delete_snapshot_symlinked_snapshot_dir_is_refused(self, pools, btrfs):
+        (pools.media / "important").mkdir()
+        os.symlink(pools.media, pools.pool / ".snapshots")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_snapshot("important", str(pools.pool), {})
+
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    async def test_delete_snapshot_btrfs_failure(self, pools, btrfs):
         """Test handling btrfs delete failure."""
-        from fastapi import HTTPException
+        _make_snapshot(pools.pool, "snap_test")
+        btrfs.state["fail"] = True
 
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = "Cannot delete"
-        mock_result.returncode = 1
-
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_path.return_value.__truediv__ = lambda x, y: mock_path.return_value
-                mock_path.return_value.exists.return_value = True
-
-                with pytest.raises(HTTPException) as exc_info:
-                    await delete_snapshot("snap_test", "/mnt/pools/datapool", {})
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_snapshot("snap_test", str(pools.pool), {})
 
         assert exc_info.value.status_code == 500
 
@@ -442,96 +440,132 @@ class TestDeleteSnapshot:
 class TestRestoreSnapshot:
     """Tests for restoring snapshots."""
 
-    @pytest.mark.asyncio
-    async def test_restore_snapshot_success(self):
+    async def test_restore_snapshot_success(self, pools, btrfs):
         """Test restoring a snapshot successfully."""
-        restore_req = SnapshotRestore(
-            snapshot_path="/mnt/pools/datapool/.snapshots/snap_test"
-        )
+        snap = _make_snapshot(pools.pool, "snap_test")
 
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = ""
-        mock_result.returncode = 0
-
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_snap = MagicMock()
-                mock_snap.exists.return_value = True
-                mock_snap.parent.parent = MagicMock()
-                mock_snap.parent.parent.__truediv__ = lambda x, y: MagicMock(__str__=lambda x: f"/mnt/pools/datapool/{y}")
-                mock_path.return_value = mock_snap
-
-                result = await restore_snapshot(restore_req, {})
+        result = await restore_snapshot(SnapshotRestore(snapshot_path=str(snap)), {})
 
         assert result["status"] == "restored"
-        assert "restore_" in result["target"]
+        assert result["source"] == str(snap)
+        target = Path(result["target"])
+        assert target.parent == pools.pool
+        assert target.name.startswith("restore_")
+        assert btrfs.calls == [["btrfs", "subvolume", "snapshot", str(snap), str(target)]]
 
-    @pytest.mark.asyncio
-    async def test_restore_snapshot_with_target(self):
+    async def test_restore_snapshot_with_target(self, pools, btrfs):
         """Test restoring to specific target."""
-        restore_req = SnapshotRestore(
-            snapshot_path="/mnt/pools/datapool/.snapshots/snap_test",
-            target_path="/mnt/pools/datapool/custom"
-        )
+        snap = _make_snapshot(pools.pool, "snap_test")
+        custom = pools.pool / "custom"
+        custom.mkdir()
 
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = ""
-        mock_result.returncode = 0
-
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_snap = MagicMock()
-                mock_snap.exists.return_value = True
-                mock_path.return_value = mock_snap
-
-                result = await restore_snapshot(restore_req, {})
+        result = await restore_snapshot(SnapshotRestore(snapshot_path=str(snap), target_path=str(custom)), {})
 
         assert result["status"] == "restored"
+        assert Path(result["target"]).parent == custom
 
-    @pytest.mark.asyncio
-    async def test_restore_snapshot_not_found(self):
+    async def test_restore_snapshot_not_found(self, pools, btrfs):
         """Test restoring non-existent snapshot."""
-        from fastapi import HTTPException
-
-        restore_req = SnapshotRestore(
-            snapshot_path="/mnt/pools/datapool/.snapshots/nonexistent"
-        )
-
-        with patch("src.snapshots.router.Path") as mock_path:
-            mock_snap = MagicMock()
-            mock_snap.exists.return_value = False
-            mock_path.return_value = mock_snap
-
-            with pytest.raises(HTTPException) as exc_info:
-                await restore_snapshot(restore_req, {})
+        (pools.pool / ".snapshots").mkdir()
+        with pytest.raises(HTTPException) as exc_info:
+            await restore_snapshot(
+                SnapshotRestore(snapshot_path=str(pools.pool / ".snapshots" / "nonexistent")), {}
+            )
 
         assert exc_info.value.status_code == 404
 
-    @pytest.mark.asyncio
-    async def test_restore_snapshot_btrfs_failure(self):
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "{root}/outside/.snapshots/x",
+            "{base}/datapool/.snapshots/../../../outside",
+            "{base}/datapool/x",  # not inside .snapshots
+            "{base}/datapool/.snapshots/x/y",
+            "{base}/datapool/.snapshots/..",
+            "relative/.snapshots/x",
+            "/.snapshots/x",
+        ],
+    )
+    async def test_restore_snapshot_rejects_bad_paths(self, pools, btrfs, template):
+        _make_snapshot(pools.outside, "x")
+        with pytest.raises(HTTPException) as exc_info:
+            await restore_snapshot(SnapshotRestore(snapshot_path=template.format(root=pools.root, base=pools.base)), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    @pytest.mark.parametrize("name", NAMES_FROM_OTHER_TOOLS)
+    async def test_restore_snapshot_accepts_any_listed_name(self, pools, btrfs, name):
+        """Snapshots made by other tools may have names create_snapshot refuses."""
+        snap = _make_snapshot(pools.pool, name)
+        (listed,) = await list_snapshots(None, {})
+        assert listed.path == str(snap)
+        btrfs.calls.clear()
+
+        result = await restore_snapshot(SnapshotRestore(snapshot_path=listed.path), {})
+
+        assert result["source"] == str(snap)
+        target = Path(result["target"])
+        assert target.parent == pools.pool
+        assert btrfs.calls == [["btrfs", "subvolume", "snapshot", str(snap), str(target)]]
+
+    @pytest.mark.parametrize(
+        "name", ["../x", "a/b", ".", "..", "", "a\x00b", "x" * 256], ids=repr
+    )
+    async def test_restore_snapshot_rejects_bad_names(self, pools, btrfs, name):
+        _make_snapshot(pools.pool, "x")
+        _make_snapshot(pools.pool, "a")
+        with pytest.raises(HTTPException) as exc_info:
+            await restore_snapshot(SnapshotRestore(snapshot_path=f"{pools.pool}/.snapshots/{name}"), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+
+    @pytest.mark.parametrize("link", ["entry", "snapshot-dir"])
+    async def test_restore_snapshot_refuses_symlinks(self, pools, btrfs, link):
+        """A planted symlink must not turn a restore into a copy of something else."""
+        victim = pools.media / "important"
+        victim.mkdir()
+        if link == "entry":
+            (pools.pool / ".snapshots").mkdir()
+            os.symlink(victim, pools.pool / ".snapshots" / "important")
+        else:
+            os.symlink(pools.media, pools.pool / ".snapshots")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await restore_snapshot(
+                SnapshotRestore(snapshot_path=str(pools.pool / ".snapshots" / "important")), {}
+            )
+
+        assert exc_info.value.status_code == 400
+        assert "symbolic link" in exc_info.value.detail
+        assert btrfs.calls == []
+
+    @pytest.mark.parametrize("target", ["/etc", "{root}/outside", "{base}", "{base}/datapool/../../outside"])
+    async def test_restore_snapshot_rejects_bad_target(self, pools, btrfs, target):
+        snap = _make_snapshot(pools.pool, "snap_test")
+        with pytest.raises(HTTPException) as exc_info:
+            await restore_snapshot(
+                SnapshotRestore(snapshot_path=str(snap), target_path=target.format(root=pools.root, base=pools.base)),
+                {},
+            )
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+        assert list(pools.outside.iterdir()) == []
+
+    async def test_restore_snapshot_rejects_target_through_symlink(self, pools, btrfs):
+        snap = _make_snapshot(pools.pool, "snap_test")
+        os.symlink(pools.media, pools.pool / "apps")
+        with pytest.raises(HTTPException) as exc_info:
+            await restore_snapshot(SnapshotRestore(snapshot_path=str(snap), target_path=str(pools.pool / "apps")), {})
+        assert exc_info.value.status_code == 400
+        assert btrfs.calls == []
+        assert list(pools.media.iterdir()) == []
+
+    async def test_restore_snapshot_btrfs_failure(self, pools, btrfs):
         """Test handling btrfs restore failure."""
-        from fastapi import HTTPException
+        snap = _make_snapshot(pools.pool, "snap_test")
+        btrfs.state["fail"] = True
 
-        restore_req = SnapshotRestore(
-            snapshot_path="/mnt/pools/datapool/.snapshots/snap_test"
-        )
-
-        mock_result = MagicMock()
-        mock_result.stdout = ""
-        mock_result.stderr = "Cannot create snapshot"
-        mock_result.returncode = 1
-
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            with patch("src.snapshots.router.Path") as mock_path:
-                mock_snap = MagicMock()
-                mock_snap.exists.return_value = True
-                mock_snap.parent.parent = MagicMock()
-                mock_snap.parent.parent.__truediv__ = lambda x, y: MagicMock(__str__=lambda x: f"/mnt/pools/datapool/{y}")
-                mock_path.return_value = mock_snap
-
-                with pytest.raises(HTTPException) as exc_info:
-                    await restore_snapshot(restore_req, {})
+        with pytest.raises(HTTPException) as exc_info:
+            await restore_snapshot(SnapshotRestore(snapshot_path=str(snap)), {})
 
         assert exc_info.value.status_code == 500

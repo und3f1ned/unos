@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import {
-		ExternalLink,
 		Globe,
 		Github,
 		BookOpen,
@@ -10,38 +9,197 @@
 		Settings,
 		Download,
 		Check,
-		AlertCircle,
 		Package,
 		Tag,
-		Shield
+		Shield,
+		Database
 	} from 'lucide-svelte';
-	import { Button, Badge, Modal, Alert, Input } from '$lib/components/ui';
-	import { type AppTemplate, installApp, type AppInstallRequest } from '$lib/api/apps';
+	import { Button, Badge, Modal, Alert, Input, Select } from '$lib/components/ui';
+	import AppStorageWarning from './AppStorageWarning.svelte';
+	import {
+		type AppTemplate,
+		type AppPool,
+		type AppInstallRequest,
+		type AppInstallResponse,
+		type InstalledApp,
+		type VolumeMapping,
+		getAppPools,
+		installApp,
+		poolHostPath,
+		isInsidePools,
+		describeApiError
+	} from '$lib/api/apps';
+	import { formatBytes } from '$lib/stores/stats';
 
 	export let app: AppTemplate | null = null;
 	export let open = false;
 	export let isInstalled = false;
+	/** The installed instance of the app, if any: its real host folders are shown. */
+	export let installedApp: InstalledApp | null = null;
 
-	const dispatch = createEventDispatcher();
+	const dispatch = createEventDispatcher<{
+		close: null;
+		installed: { app: AppTemplate; result: AppInstallResponse };
+	}>();
 
 	let installing = false;
 	let error = '';
 	let activeTab: 'overview' | 'ports' | 'volumes' | 'environment' = 'overview';
 
-	// Configuration overrides
-	let portOverrides: Record<number, number> = {};
+	// Form state, reset whenever an app is shown
+	let portValues: Record<number, string> = {};
 	let volumeOverrides: Record<string, string> = {};
-	let envOverrides: Record<string, string> = {};
-	$: sourceBadge = app ? getSourceBadge(app.source) : { variant: "warning" as const, label: "Unknown" };
+	let envValues: Record<string, string> = {};
 
+	// Storage pools, reloaded every time the modal opens
+	let pools: AppPool[] = [];
+	let poolsLoading = false;
+	let poolsError = '';
+	let selectedPoolName = '';
+	let poolsRequest = 0;
+	let wasOpen = false;
 
-	$: if (app) {
-		// Reset overrides when app changes
-		portOverrides = {};
+	$: sourceBadge = getSourceBadge(app?.source);
+	$: if (app) resetForm(app);
+	$: handleOpenChange(open);
+
+	$: selectedPool = pools.find((pool) => pool.name === selectedPoolName) ?? null;
+	$: poolOptions = pools.map((pool) => ({
+		value: pool.name,
+		label: `${pool.name} — ${formatBytes(pool.free_bytes)} free of ${formatBytes(pool.total_bytes)}`
+	}));
+	$: poolVolumes = app ? app.volumes.filter((volume) => volume.on_pool) : [];
+	$: needsPool = poolVolumes.length > 0;
+	// An installed app lists the folders its container really uses.
+	$: volumeCount =
+		isInstalled && installedApp ? installedApp.volumes.length : (app?.volumes.length ?? 0);
+
+	// Client-side checks for a clear form; the server validates everything again.
+	$: missingRequired = app
+		? app.environment
+				.filter((env) => env.required && !(envValues[env.name] ?? '').trim())
+				.map((env) => env.name)
+		: [];
+	$: invalidPorts = app
+		? app.ports
+				.filter((port) => !isValidPort(portValues[port.container]))
+				.map((port) => port.container)
+		: [];
+	$: invalidVolumes = Object.entries(volumeOverrides)
+		.filter(([, path]) => !isInsidePools(path, pools))
+		.map(([container]) => container);
+	$: blockers = [
+		...(missingRequired.length > 0
+			? [`Set the required variable${missingRequired.length > 1 ? 's' : ''} ${missingRequired.join(', ')}.`]
+			: []),
+		...(invalidPorts.length > 0 ? ['Host ports must be numbers between 1 and 65535.'] : []),
+		...(invalidVolumes.length > 0
+			? [`Paths for ${invalidVolumes.join(', ')} must be inside a mounted storage pool.`]
+			: [])
+	];
+	$: canInstall =
+		!!app &&
+		!isInstalled &&
+		!installing &&
+		!poolsLoading &&
+		(!needsPool || selectedPool !== null) &&
+		blockers.length === 0;
+
+	function resetForm(template: AppTemplate) {
+		portValues = Object.fromEntries(
+			template.ports.map((port) => [port.container, String(port.host)])
+		);
 		volumeOverrides = {};
-		envOverrides = {};
+		envValues = Object.fromEntries(template.environment.map((env) => [env.name, env.value]));
 		error = '';
 		activeTab = 'overview';
+	}
+
+	function handleOpenChange(isOpen: boolean) {
+		if (isOpen && !wasOpen) {
+			selectedPoolName = '';
+			// An installed app already has its folders; no pool is chosen for it.
+			if (isInstalled) {
+				poolsRequest++;
+				pools = [];
+				poolsLoading = false;
+				poolsError = '';
+			} else {
+				void loadPools();
+			}
+		}
+		wasOpen = isOpen;
+	}
+
+	async function loadPools() {
+		const request = ++poolsRequest;
+		poolsLoading = true;
+		poolsError = '';
+		try {
+			const result = await getAppPools();
+			if (request !== poolsRequest) return;
+			pools = result;
+			// The server sorts pools by name and uses the first one by default.
+			if (!pools.some((pool) => pool.name === selectedPoolName)) {
+				selectedPoolName = pools[0]?.name ?? '';
+			}
+		} catch (e) {
+			if (request !== poolsRequest) return;
+			pools = [];
+			poolsError = describeApiError(e, 'Could not load storage pools');
+		} finally {
+			if (request === poolsRequest) poolsLoading = false;
+		}
+	}
+
+	function isValidPort(value: string | undefined): boolean {
+		if (value === undefined || !/^\d{1,5}$/.test(value.trim())) return false;
+		const port = Number(value);
+		return port >= 1 && port <= 65535;
+	}
+
+	/** Host path shown for a volume: the override, else the path on the selected pool. */
+	function effectiveHostPath(
+		volume: VolumeMapping,
+		pool: AppPool | null,
+		overrides: Record<string, string>
+	): string {
+		const override = overrides[volume.container];
+		if (volume.on_pool && override !== undefined) return override;
+		return pool ? poolHostPath(volume, pool.path) : volume.host;
+	}
+
+	function setVolumePath(volume: VolumeMapping, value: string) {
+		const defaultPath = selectedPool ? poolHostPath(volume, selectedPool.path) : volume.host;
+		const next = { ...volumeOverrides };
+		if (value === defaultPath) {
+			delete next[volume.container];
+		} else {
+			next[volume.container] = value;
+		}
+		volumeOverrides = next;
+	}
+
+	function inputValue(event: Event): string {
+		return (event.target as HTMLInputElement).value;
+	}
+
+	function changedPorts(template: AppTemplate): Record<number, number> {
+		const result: Record<number, number> = {};
+		for (const port of template.ports) {
+			const value = Number(portValues[port.container]);
+			if (value !== port.host) result[port.container] = value;
+		}
+		return result;
+	}
+
+	function changedEnv(template: AppTemplate): Record<string, string> {
+		const result: Record<string, string> = {};
+		for (const env of template.environment) {
+			const value = envValues[env.name] ?? env.value;
+			if (value !== env.value) result[env.name] = value;
+		}
+		return result;
 	}
 
 	function close() {
@@ -49,31 +207,36 @@
 	}
 
 	async function handleInstall() {
-		if (!app) return;
+		if (!app || !canInstall) return;
+		const template = app;
 
 		installing = true;
 		error = '';
 
 		try {
-			const req: AppInstallRequest = {
-				template_id: app.id,
-				port_overrides: Object.keys(portOverrides).length > 0 ? portOverrides : undefined,
-				volume_overrides: Object.keys(volumeOverrides).length > 0 ? volumeOverrides : undefined,
-				env_overrides: Object.keys(envOverrides).length > 0 ? envOverrides : undefined
-			};
+			const req: AppInstallRequest = { template_id: template.id };
+			if (needsPool && selectedPool) req.pool = selectedPool.name;
+			const ports = changedPorts(template);
+			if (Object.keys(ports).length > 0) req.port_overrides = ports;
+			const volumes = Object.fromEntries(
+				Object.entries(volumeOverrides).map(([container, path]) => [container, path.trim()])
+			);
+			if (Object.keys(volumes).length > 0) req.volume_overrides = volumes;
+			const env = changedEnv(template);
+			if (Object.keys(env).length > 0) req.env_overrides = env;
 
-			await installApp(req);
-			dispatch('installed', { app });
+			const result = await installApp(req);
+			dispatch('installed', { app: template, result });
 			close();
-		} catch (e: any) {
-			error = e.message || 'Installation failed';
+		} catch (e) {
+			error = describeApiError(e, 'Installation failed');
 		} finally {
 			installing = false;
 		}
 	}
 
 	function getSourceBadge(
-		source: string
+		source: string | undefined
 	): { variant: 'success' | 'info' | 'purple' | 'warning'; label: string } {
 		switch (source?.toUpperCase()) {
 			case 'OFFICIAL':
@@ -176,6 +339,37 @@
 			{/if}
 		</div>
 
+		<!-- Storage pool for the app's data -->
+		{#if needsPool && !isInstalled}
+			<div class="mb-4">
+				{#if poolsLoading}
+					<p class="text-sm text-muted">Loading storage pools...</p>
+				{:else if poolsError}
+					<Alert variant="error" title="Could not load storage pools">{poolsError}</Alert>
+				{:else if pools.length === 0}
+					<Alert variant="warning" title="No mounted storage pool">
+						<p>
+							{app.name} keeps its data on a storage pool, and no pool is mounted. Create or mount
+							a pool on the Storage page, then install the app.
+						</p>
+						<Button variant="secondary" size="sm" href="/storage" icon={HardDrive} class="mt-3">
+							Go to Storage
+						</Button>
+					</Alert>
+				{:else}
+					<Select
+						label="Storage pool"
+						options={poolOptions}
+						bind:value={selectedPoolName}
+						hint="The app's data is stored on this pool."
+					/>
+				{/if}
+			</div>
+		{/if}
+		{#if isInstalled && installedApp}
+			<AppStorageWarning app={installedApp} class="mb-4" />
+		{/if}
+
 		<!-- Tabs -->
 		<div class="flex border-b border-border -mx-6 px-6 mb-4">
 			<button
@@ -200,7 +394,7 @@
 					Ports ({app.ports.length})
 				</button>
 			{/if}
-			{#if app.volumes?.length > 0}
+			{#if volumeCount > 0}
 				<button
 					class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
 					'volumes'
@@ -209,7 +403,7 @@
 					on:click={() => (activeTab = 'volumes')}
 				>
 					<HardDrive class="w-4 h-4" />
-					Volumes ({app.volumes.length})
+					Volumes ({volumeCount})
 				</button>
 			{/if}
 			{#if app.environment?.length > 0}
@@ -237,6 +431,28 @@
 							<code class="mono text-sm">{app.image}</code>
 						</div>
 					</div>
+
+					<!-- Where the data goes on the selected pool -->
+					{#if needsPool && selectedPool && !isInstalled}
+						<div class="card-nested">
+							<div class="flex items-center gap-2 mb-3">
+								<Database class="w-4 h-4 icon-storage" />
+								<h4 class="text-sm font-medium">Data locations on {selectedPool.name}</h4>
+							</div>
+							<ul class="space-y-2">
+								{#each poolVolumes as volume}
+									<li class="text-sm">
+										<p class="mono break-all">
+											{effectiveHostPath(volume, selectedPool, volumeOverrides)}
+										</p>
+										<p class="text-xs text-muted">
+											mounted at {volume.container}{volume.readonly ? ' (read-only)' : ''}
+										</p>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
 
 					<!-- Resource Recommendations -->
 					{#if app.min_memory || app.recommended_memory}
@@ -268,7 +484,7 @@
 						</div>
 						<div class="card-nested text-center">
 							<HardDrive class="w-5 h-5 mx-auto mb-1 text-purple-400" />
-							<p class="text-2xl font-bold">{app.volumes?.length || 0}</p>
+							<p class="text-2xl font-bold">{volumeCount}</p>
 							<p class="text-xs text-secondary">Volumes</p>
 						</div>
 						<div class="card-nested text-center">
@@ -285,81 +501,110 @@
 					</p>
 					{#each app.ports as port}
 						<div class="card-nested">
-							<div class="flex items-center gap-4">
-								<div class="flex-1">
-									<label class="form-label">Host Port</label>
-									<input
-										type="number"
-										value={portOverrides[port.container] ?? port.host}
-										on:input={(e) => {
-											const value = parseInt(e.currentTarget.value);
-											if (value !== port.host) {
-												portOverrides[port.container] = value;
-											} else {
-												delete portOverrides[port.container];
-											}
-											portOverrides = portOverrides;
-										}}
-										class="form-input"
-									/>
-								</div>
-								<span class="text-secondary pt-6">→</span>
-								<div class="flex-1">
-									<label class="form-label">Container Port</label>
-									<input
-										type="number"
-										value={port.container}
-										disabled
-										class="form-input bg-surface-overlay opacity-60"
-									/>
-								</div>
-								<div class="pt-6">
+							<div class="flex items-start gap-4">
+								<Input
+									class="flex-1"
+									type="number"
+									label="Host Port"
+									bind:value={portValues[port.container]}
+									disabled={isInstalled}
+									error={invalidPorts.includes(port.container) ? 'Use a port from 1 to 65535' : ''}
+								/>
+								<span class="text-secondary pt-8">→</span>
+								<Input
+									class="flex-1"
+									type="number"
+									label="Container Port"
+									value={String(port.container)}
+									disabled
+								/>
+								<div class="pt-8">
 									<Badge variant="info">{port.protocol.toUpperCase()}</Badge>
 								</div>
 							</div>
 						</div>
 					{/each}
 				</div>
+			{:else if activeTab === 'volumes' && isInstalled}
+				<!-- The folders the installed container really uses, not paths on a pool -->
+				<div class="space-y-3">
+					<p class="text-sm text-secondary mb-4">Host folders this installed app uses.</p>
+					{#if installedApp && installedApp.volumes.length > 0}
+						{#each installedApp.volumes as volume}
+							<div class="card-nested">
+								<div class="flex items-start gap-4">
+									<div class="flex-1 min-w-0">
+										<p class="form-label">Host Path</p>
+										<p class="mono text-sm break-all py-2">{volume.host}</p>
+									</div>
+									<span class="text-secondary pt-8">→</span>
+									<div class="flex-1 min-w-0">
+										<p class="form-label">Container Path</p>
+										<p class="mono text-sm break-all py-2">{volume.container}</p>
+									</div>
+									<div class="pt-8 flex flex-col items-end gap-1">
+										{#if volume.readonly}
+											<Badge variant="warning">RO</Badge>
+										{:else}
+											<Badge variant="neutral">RW</Badge>
+										{/if}
+										{#if installedApp.data_outside_pools.includes(volume.host)}
+											<Badge variant="error">Not on a pool</Badge>
+										{/if}
+									</div>
+								</div>
+							</div>
+						{/each}
+					{:else}
+						<p class="text-sm text-muted">No host folders are mounted into this app.</p>
+					{/if}
+				</div>
 			{:else if activeTab === 'volumes'}
 				<div class="space-y-3">
 					<p class="text-sm text-secondary mb-4">
-						Configure volume paths. Data will be stored at these locations on the host.
+						{#if needsPool}
+							Data folders are created on the selected storage pool. A data folder can point to
+							another folder inside a mounted pool.
+						{/if}
+						System paths marked "System" are mounted from the host as they are.
 					</p>
 					{#each app.volumes as volume}
 						<div class="card-nested">
 							<div class="flex items-start gap-4">
-								<div class="flex-1">
-									<label class="form-label">Host Path</label>
-									<input
-										type="text"
-										value={volumeOverrides[volume.container] ?? volume.host}
-										on:input={(e) => {
-											const value = e.currentTarget.value;
-											if (value !== volume.host) {
-												volumeOverrides[volume.container] = value;
-											} else {
-												delete volumeOverrides[volume.container];
-											}
-											volumeOverrides = volumeOverrides;
-										}}
-										class="form-input font-mono text-sm"
-									/>
+								<div class="flex-1 min-w-0">
+									{#if volume.on_pool}
+										<Input
+											class="font-mono text-sm"
+											label="Host Path"
+											value={effectiveHostPath(volume, selectedPool, volumeOverrides)}
+											on:input={(e) => setVolumePath(volume, inputValue(e))}
+											disabled={isInstalled || selectedPool === null}
+											autocomplete="off"
+											error={invalidVolumes.includes(volume.container)
+												? 'Must be inside a mounted storage pool'
+												: ''}
+										/>
+									{:else}
+										<p class="form-label">Host Path</p>
+										<p class="mono text-sm break-all py-2">{volume.host}</p>
+									{/if}
 								</div>
-								<span class="text-secondary pt-7">→</span>
-								<div class="flex-1">
-									<label class="form-label">Container Path</label>
-									<input
-										type="text"
-										value={volume.container}
-										disabled
-										class="form-input font-mono text-sm bg-surface-overlay opacity-60"
-									/>
+								<span class="text-secondary pt-8">→</span>
+								<div class="flex-1 min-w-0">
+									<p class="form-label">Container Path</p>
+									<p class="mono text-sm break-all py-2">{volume.container}</p>
 								</div>
-								<div class="pt-7">
+								<div class="pt-8 flex flex-col items-end gap-1">
 									{#if volume.readonly}
 										<Badge variant="warning">RO</Badge>
 									{:else}
 										<Badge variant="neutral">RW</Badge>
+									{/if}
+									{#if !volume.on_pool}
+										<Badge variant="info">System</Badge>
+									{/if}
+									{#if volume.is_file}
+										<Badge variant="neutral">File</Badge>
 									{/if}
 								</div>
 							</div>
@@ -373,31 +618,17 @@
 					</p>
 					{#each app.environment as env}
 						<div class="card-nested">
-							<div class="flex items-center justify-between mb-2">
-								<div class="flex items-center gap-2">
-									<code class="mono font-medium">{env.name}</code>
-									{#if env.required}
-										<Badge variant="error">Required</Badge>
-									{/if}
-								</div>
-							</div>
-							{#if env.description}
-								<p class="text-sm text-secondary mb-2">{env.description}</p>
-							{/if}
-							<input
-								type="text"
-								value={envOverrides[env.name] ?? env.value}
-								placeholder={env.value || `Enter ${env.name}`}
-								on:input={(e) => {
-									const value = e.currentTarget.value;
-									if (value !== env.value) {
-										envOverrides[env.name] = value;
-									} else {
-										delete envOverrides[env.name];
-									}
-									envOverrides = envOverrides;
-								}}
-								class="form-input font-mono text-sm"
+							<Input
+								class="font-mono text-sm"
+								label={env.name}
+								type={env.secret ? 'password' : 'text'}
+								bind:value={envValues[env.name]}
+								required={env.required}
+								disabled={isInstalled}
+								hint={env.description}
+								placeholder={env.secret ? (env.required ? 'Choose a unique value' : 'Optional') : `Enter ${env.name}`}
+								autocomplete={env.secret ? 'new-password' : 'off'}
+								error={missingRequired.includes(env.name) ? 'Required' : ''}
 							/>
 						</div>
 					{/each}
@@ -405,8 +636,16 @@
 			{/if}
 		</div>
 
+		{#if !isInstalled && blockers.length > 0}
+			<Alert variant="warning" class="mt-4">
+				{#each blockers as blocker}
+					<p>{blocker}</p>
+				{/each}
+			</Alert>
+		{/if}
+
 		{#if error}
-			<Alert variant="error" class="mt-4">{error}</Alert>
+			<Alert variant="error" title="Installation failed" class="mt-4">{error}</Alert>
 		{/if}
 	{/if}
 
@@ -422,10 +661,11 @@
 				variant="primary"
 				class="flex-1"
 				loading={installing}
+				disabled={!canInstall}
 				on:click={handleInstall}
 				icon={Download}
 			>
-				Install {app?.name}
+				Install {app?.name ?? ''}
 			</Button>
 		{/if}
 	</svelte:fragment>

@@ -1,19 +1,26 @@
 import subprocess
 import json
 import asyncio
+import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
 
+from .. import host
 from ..auth.utils import verify_token
+from ..security.validators import validate_pool_name
+from ..storage import pools as storage_pools
+from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
 from ..notifications.router import send_email, send_telegram
 from ..notifications.schemas import NotificationEvent, NotificationType, NotificationChannel
 
 router = APIRouter(prefix="/health", tags=["health"])
+logger = logging.getLogger(__name__)
 
 # System disk patterns to exclude from health monitoring
 SYSTEM_DISK_PATTERNS = [
@@ -91,10 +98,19 @@ class RaidHealthInfo(BaseModel):
     pool: str
     mount_point: str
     profile: Optional[str]
-    status: str  # healthy, degraded, error
+    # The pool's health as the Storage page reports it (storage.pools):
+    # healthy, degraded (devices missing), error (error counters, or forced
+    # read-only), unmounted (not mounted at mount_point), unknown (the mount
+    # state or the error counters could not be read)
+    status: str
     devices: list[RaidDeviceStats]
     total_errors: int
     last_checked: str
+    missing_devices: int = 0
+    read_only: bool = False
+    # btrfs made the filesystem read-only after an error (read_only is also
+    # true for a pool mounted read-only on purpose).
+    forced_read_only: bool = False
 
 
 # In-memory state for RAID monitoring
@@ -104,6 +120,15 @@ RAID_CHECK_INTERVAL = 300  # Check every 5 minutes
 RAID_STATUS_FILE = "/data/raid_status.json"
 SMART_HISTORY_FILE = "/data/smart_history.json"
 SMART_CHECK_INTERVAL = 3600  # Check SMART every hour
+SMARTCTL_TIMEOUT = 30
+
+# Alerts are sent from their own small thread pool and each delivery is bounded
+# by ALERT_TIMEOUT. send_email itself runs smtplib on the notifications SMTP
+# pool with a per-operation timeout; this pool keeps the monitors isolated from
+# whatever a sender does, so a slow or unreachable mail server never freezes the
+# event loop or uses up the default executor that storage operations run in.
+ALERT_TIMEOUT = 60
+_ALERT_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="unos-alerts")
 
 # Critical SMART attributes to track for trends
 CRITICAL_ATTRIBUTES = {
@@ -165,13 +190,19 @@ def save_smart_history(history: dict[str, list[dict]]):
 
 
 def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
-    """Collect current SMART data for trend tracking."""
+    """Collect current SMART data for trend tracking (blocking).
+
+    ``-n standby`` leaves disks that sleep alone: reading SMART data would
+    spin them up every hour. smartctl then exits with bit 1 set, as it does
+    when the device cannot be opened; both give no snapshot. Higher bits
+    (failing health, logged errors, ...) still come with data.
+    """
     try:
         result = subprocess.run(
-            ["smartctl", "-j", "-a", device],
-            capture_output=True, text=True, timeout=30
+            ["smartctl", "-n", "standby", "-j", "-a", device],
+            capture_output=True, text=True, timeout=SMARTCTL_TIMEOUT, check=False
         )
-        if result.returncode not in [0, 4]:  # 4 = SMART error but data available
+        if result.returncode & 0b11:  # bad command line, open failed or asleep
             return None
 
         data = json.loads(result.stdout)
@@ -216,6 +247,20 @@ def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
         return None
 
 
+def _attribute_value(entry: dict, attr_id: int) -> int:
+    """Raw value of SMART attribute ``attr_id`` in a history entry (0 if absent).
+
+    Entries read from SMART_HISTORY_FILE have str keys (JSON); an entry dumped
+    from a SmartHistoryEntry without mode="json" has int keys. Accept both.
+    """
+    attributes = entry.get("attributes") or {}
+    value = attributes.get(str(attr_id), attributes.get(attr_id, 0))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def analyze_smart_trends(serial: str, history: list[dict]) -> list[SmartTrendAlert]:
     """Analyze SMART history for concerning trends."""
     alerts = []
@@ -232,8 +277,8 @@ def analyze_smart_trends(serial: str, history: list[dict]) -> list[SmartTrendAle
     device = latest.get("device", "unknown")
 
     for attr_id, attr_name in CRITICAL_ATTRIBUTES.items():
-        current = latest.get("attributes", {}).get(str(attr_id), 0)
-        previous = compare.get("attributes", {}).get(str(attr_id), 0)
+        current = _attribute_value(latest, attr_id)
+        previous = _attribute_value(compare, attr_id)
 
         if current > previous:
             change = current - previous
@@ -275,6 +320,41 @@ def analyze_smart_trends(serial: str, history: list[dict]) -> list[SmartTrendAle
     return alerts
 
 
+def _send_email_blocking(config, event: NotificationEvent):
+    """Run notifications.send_email to completion in the calling alert thread."""
+    return asyncio.run(send_email(config, event))
+
+
+async def _deliver_alert(event: NotificationEvent) -> None:
+    """Send an alert through every enabled e-mail/Telegram channel; best effort.
+
+    The senders report failures as (False, error) instead of raising; those are
+    logged like timeouts and exceptions.
+    """
+    loop = asyncio.get_running_loop()
+    for config in load_notification_configs():
+        if not config.enabled:
+            continue
+        try:
+            if config.channel == NotificationChannel.EMAIL and config.email_config:
+                sending = loop.run_in_executor(
+                    _ALERT_EXECUTOR, _send_email_blocking, config.email_config, event
+                )
+            elif config.channel == NotificationChannel.TELEGRAM and config.telegram_config:
+                sending = send_telegram(config.telegram_config, event)
+            else:
+                continue
+            sent, error = await asyncio.wait_for(sending, ALERT_TIMEOUT)
+        except TimeoutError:
+            sent, error = False, f"no answer within {ALERT_TIMEOUT} s"
+        except Exception as exc:
+            sent, error = False, str(exc) or type(exc).__name__
+        if not sent:
+            logger.warning(
+                "Could not send alert '%s' by %s: %s", event.title, config.channel.value, error
+            )
+
+
 async def send_smart_alert(alert: SmartTrendAlert):
     """Send notification about SMART trend issue."""
     event = NotificationEvent(
@@ -283,18 +363,63 @@ async def send_smart_alert(alert: SmartTrendAlert):
         message=f"{alert.message}\n\nRecommendation: {alert.recommendation}",
         timestamp=datetime.now().isoformat()
     )
+    await _deliver_alert(event)
 
-    configs = load_notification_configs()
-    for config in configs:
-        if not config.enabled:
+
+def _new_trend_alerts(serial: str, history: list[dict]) -> list[SmartTrendAlert]:
+    """The trend alerts of ``history`` whose attribute rose since the previous snapshot.
+
+    analyze_smart_trends compares with a snapshot up to a day old, so a single
+    increase stays in its result for a day. The monitor runs every hour and
+    alerts when the value rises, not again on every pass after it.
+    """
+    if len(history) < 2:
+        return []
+    previous = history[-2]
+    return [
+        alert
+        for alert in analyze_smart_trends(serial, history)
+        if alert.current_value > _attribute_value(previous, alert.attribute_id)
+    ]
+
+
+def _smart_monitor_pass() -> list[SmartTrendAlert]:
+    """One round of the SMART monitor (blocking: lsblk and smartctl per disk).
+
+    Records a snapshot of every data disk that is awake and returns the
+    trend alerts of the attributes that rose since the disk's previous
+    snapshot.
+    """
+    result = subprocess.run(
+        ["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT"],
+        capture_output=True, text=True, timeout=SMARTCTL_TIMEOUT, check=False
+    )
+    if result.returncode != 0:
+        return []
+    data = json.loads(result.stdout)
+    history = load_smart_history()
+    alerts: list[SmartTrendAlert] = []
+
+    for dev in data.get("blockdevices", []):
+        if dev.get("type") != "disk":
             continue
-        try:
-            if config.channel == NotificationChannel.EMAIL and config.email_config:
-                await send_email(config.email_config, event)
-            elif config.channel == NotificationChannel.TELEGRAM and config.telegram_config:
-                await send_telegram(config.telegram_config, event)
-        except Exception:
-            pass
+        name = dev.get("name", "")
+        mountpoint = dev.get("mountpoint")
+        children = dev.get("children", [])
+
+        if _is_system_disk(name, mountpoint, children):
+            continue
+
+        snapshot = collect_smart_snapshot(f"/dev/{name}")
+        if snapshot:
+            serial = snapshot.serial
+            entries = history.setdefault(serial, [])
+            # JSON form (str attribute keys), like the entries read from the file.
+            entries.append(snapshot.model_dump(mode="json"))
+            alerts.extend(_new_trend_alerts(serial, entries))
+
+    save_smart_history(history)
+    return alerts
 
 
 async def smart_monitor_loop():
@@ -303,56 +428,29 @@ async def smart_monitor_loop():
 
     while _smart_monitor_running:
         try:
-            # Get list of disks
-            result = subprocess.run(
-                ["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT"],
-                capture_output=True, text=True
-            )
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                history = load_smart_history()
-
-                for dev in data.get("blockdevices", []):
-                    if dev.get("type") != "disk":
-                        continue
-                    name = dev.get("name", "")
-                    mountpoint = dev.get("mountpoint")
-                    children = dev.get("children", [])
-
-                    if _is_system_disk(name, mountpoint, children):
-                        continue
-
-                    device_path = f"/dev/{name}"
-                    snapshot = collect_smart_snapshot(device_path)
-
-                    if snapshot:
-                        serial = snapshot.serial
-                        if serial not in history:
-                            history[serial] = []
-
-                        history[serial].append(snapshot.model_dump())
-
-                        # Analyze trends
-                        alerts = analyze_smart_trends(serial, history[serial])
-                        for alert in alerts:
-                            await send_smart_alert(alert)
-
-                save_smart_history(history)
-
+            # smartctl takes seconds per disk: never run it on the event loop.
+            alerts = await asyncio.to_thread(_smart_monitor_pass)
+            for alert in alerts:
+                await send_smart_alert(alert)
         except Exception as e:
-            print(f"SMART monitor error: {e}")
+            logger.error("SMART monitor error: %s", e)
 
         await asyncio.sleep(SMART_CHECK_INTERVAL)
 
 
-def parse_btrfs_device_stats(pool_path: str) -> list[RaidDeviceStats]:
-    """Parse btrfs device stats output for error counts."""
-    result = subprocess.run(
-        ["btrfs", "device", "stats", pool_path],
-        capture_output=True, text=True
-    )
+def parse_btrfs_device_stats(pool_path: str) -> Optional[list[RaidDeviceStats]]:
+    """Parse btrfs device stats output for error counts.
+
+    Returns None when the counters cannot be read (the command failed, e.g.
+    because nothing is mounted at pool_path, or printed no counters). That
+    must not be treated as "no errors".
+    """
+    try:
+        result = host.run_on_host(["btrfs", "device", "stats", pool_path], timeout=30)
+    except Exception:
+        return None
     if result.returncode != 0:
-        return []
+        return None
 
     devices = {}
     # Parse output like: [/dev/sda].write_io_errs    0
@@ -390,67 +488,42 @@ def parse_btrfs_device_stats(pool_path: str) -> list[RaidDeviceStats]:
             has_errors=total > 0
         ))
 
-    return result_list
+    return result_list or None
 
 
-def get_btrfs_profile(pool_path: str) -> Optional[str]:
-    """Get BTRFS data profile (single, raid0, raid1, etc.)."""
-    result = subprocess.run(
-        ["btrfs", "filesystem", "df", pool_path],
-        capture_output=True, text=True
+def _raid_health_of_pool(info: PoolInfo) -> RaidHealthInfo:
+    """RAID health of one pool from its storage view (blocking: run it in a thread).
+
+    The status is the pool health of the Storage page, so missing devices,
+    error counters and a filesystem forced read-only are reported the same
+    way everywhere. The per-device counters are added for the details.
+    """
+    mount_point = storage_pools.pool_mountpoint(info.name)
+    devices = parse_btrfs_device_stats(mount_point) if info.mounted else None
+    return RaidHealthInfo(
+        pool=info.name,
+        mount_point=mount_point,
+        profile=info.raid_level,
+        status=info.health,
+        devices=devices or [],
+        total_errors=info.device_errors,
+        last_checked=datetime.now().isoformat(),
+        missing_devices=info.missing_devices,
+        read_only=info.read_only,
+        forced_read_only=info.forced_read_only,
     )
-    if result.returncode != 0:
-        return None
 
-    # Parse first line like "Data, RAID1: total=..."
-    for line in result.stdout.split("\n"):
-        if line.startswith("Data,"):
-            match = re.search(r'Data,\s*(\w+):', line)
-            if match:
-                return match.group(1).lower()
-    return None
+
+def _raid_health_of_all_pools() -> list[RaidHealthInfo]:
+    # Pools are btrfs filesystems labelled with a pool name, mounted or not;
+    # other directories under the pools base (e.g. app data an older version
+    # put on the boot disk) are not pools.
+    return [_raid_health_of_pool(info) for info in storage_pools.list_pools()]
 
 
 async def check_raid_health() -> list[RaidHealthInfo]:
     """Check RAID health for all BTRFS pools."""
-    pools_base = Path("/mnt/pools")
-    if not pools_base.exists():
-        return []
-
-    health_info = []
-    for pool_dir in pools_base.iterdir():
-        if not pool_dir.is_dir():
-            continue
-
-        pool_path = str(pool_dir)
-        devices = parse_btrfs_device_stats(pool_path)
-        profile = get_btrfs_profile(pool_path)
-
-        total_errors = sum(
-            d.write_io_errs + d.read_io_errs + d.flush_io_errs +
-            d.corruption_errs + d.generation_errs
-            for d in devices
-        )
-
-        # Determine status
-        if total_errors == 0:
-            status = "healthy"
-        elif any(d.corruption_errs > 0 or d.generation_errs > 0 for d in devices):
-            status = "error"  # Data corruption detected
-        else:
-            status = "degraded"  # I/O errors but no corruption
-
-        health_info.append(RaidHealthInfo(
-            pool=pool_dir.name,
-            mount_point=pool_path,
-            profile=profile,
-            status=status,
-            devices=devices,
-            total_errors=total_errors,
-            last_checked=datetime.now().isoformat()
-        ))
-
-    return health_info
+    return await asyncio.to_thread(_raid_health_of_all_pools)
 
 
 async def send_raid_alert(pool: str, status: str, errors: int, details: str):
@@ -461,18 +534,7 @@ async def send_raid_alert(pool: str, status: str, errors: int, details: str):
         message=f"Pool {pool} has detected {errors} error(s).\n\n{details}\n\nImmediate attention may be required.",
         timestamp=datetime.now().isoformat()
     )
-
-    configs = load_notification_configs()
-    for config in configs:
-        if not config.enabled:
-            continue
-        try:
-            if config.channel == NotificationChannel.EMAIL and config.email_config:
-                await send_email(config.email_config, event)
-            elif config.channel == NotificationChannel.TELEGRAM and config.telegram_config:
-                await send_telegram(config.telegram_config, event)
-        except Exception:
-            pass  # Best effort notification
+    await _deliver_alert(event)
 
 
 def load_previous_raid_status() -> dict:
@@ -508,6 +570,7 @@ async def raid_monitor_loop():
                 current_status[pool_name] = {
                     "status": pool_health.status,
                     "total_errors": pool_health.total_errors,
+                    "forced_read_only": pool_health.forced_read_only,
                     "last_checked": pool_health.last_checked
                 }
 
@@ -515,13 +578,37 @@ async def raid_monitor_loop():
                 prev = previous_status.get(pool_name, {})
                 prev_errors = prev.get("total_errors", 0)
 
-                # Alert if new errors detected or status changed to degraded/error
-                if pool_health.total_errors > prev_errors or (
-                    pool_health.status != "healthy" and
-                    prev.get("status") == "healthy"
+                # Alert if new errors detected, if btrfs has just made the
+                # filesystem read-only (no error counter moves for that, and
+                # the pool may already be degraded or in error), or if the
+                # status changed from healthy (or was never recorded) to
+                # anything else
+                if (
+                    pool_health.total_errors > prev_errors
+                    or (pool_health.forced_read_only and not prev.get("forced_read_only", False))
+                    or (pool_health.status != "healthy" and prev.get("status", "healthy") == "healthy")
                 ):
                     # Build error details
                     details = []
+                    if pool_health.status == "unmounted":
+                        details.append(
+                            f"Nothing is mounted at {pool_health.mount_point}."
+                        )
+                    elif pool_health.status == "unknown":
+                        details.append(
+                            "The mount state or the device error counters could not be read."
+                        )
+                    if pool_health.forced_read_only:
+                        details.append(
+                            "btrfs made the filesystem read-only after a serious error: "
+                            "check the kernel log (dmesg)."
+                        )
+                    elif pool_health.read_only:
+                        details.append("The filesystem is mounted read-only.")
+                    if pool_health.missing_devices:
+                        details.append(
+                            f"{pool_health.missing_devices} device(s) of the pool are missing."
+                        )
                     for dev in pool_health.devices:
                         if dev.has_errors:
                             details.append(
@@ -540,7 +627,7 @@ async def raid_monitor_loop():
             save_raid_status(current_status)
 
         except Exception as e:
-            print(f"RAID monitor error: {e}")
+            logger.error("RAID monitor error: %s", e)
 
         await asyncio.sleep(RAID_CHECK_INTERVAL)
 
@@ -669,8 +756,10 @@ def parse_smart_data(device: str) -> SmartInfo:
     )
 
 
+# The SMART endpoints are plain functions: FastAPI runs them in its thread
+# pool, so smartctl (seconds per disk) does not block the event loop.
 @router.get("/disks")
-async def get_disk_health(_: dict = Depends(verify_token)):
+def get_disk_health(_: dict = Depends(verify_token)):
     """Get SMART health for all disks."""
     # List block devices with children to check root mounts
     result = subprocess.run(
@@ -719,7 +808,7 @@ async def get_disk_health(_: dict = Depends(verify_token)):
 
 
 @router.get("/disk/{device:path}")
-async def get_disk_smart(device: str, _: dict = Depends(verify_token)):
+def get_disk_smart(device: str, _: dict = Depends(verify_token)):
     """Get detailed SMART data for a specific disk."""
     if not device.startswith("/dev/"):
         device = f"/dev/{device}"
@@ -732,7 +821,7 @@ async def get_disk_smart(device: str, _: dict = Depends(verify_token)):
 
 
 @router.post("/disk/{device:path}/test")
-async def start_smart_test(
+def start_smart_test(
     device: str,
     test_type: str = "short",
     background_tasks: BackgroundTasks = None,
@@ -767,7 +856,7 @@ async def start_smart_test(
 
 
 @router.get("/overview")
-async def get_health_overview(_: dict = Depends(verify_token)):
+def get_health_overview(_: dict = Depends(verify_token)):
     """Get overall health overview of all disks."""
     # List block devices with children to check root mounts
     result = subprocess.run(
@@ -838,41 +927,24 @@ async def get_health_overview(_: dict = Depends(verify_token)):
 @router.get("/raid", response_model=list[RaidHealthInfo])
 async def get_raid_health(_: dict = Depends(verify_token)):
     """Get RAID health status for all BTRFS pools."""
-    return await check_raid_health()
+    try:
+        return await check_raid_health()
+    except Exception as exc:
+        raise HTTPException(500, f"Could not check the pools: {exc}") from exc
 
 
 @router.get("/raid/{pool_name}")
 async def get_pool_raid_health(pool_name: str, _: dict = Depends(verify_token)):
     """Get RAID health for a specific pool."""
-    pool_path = f"/mnt/pools/{pool_name}"
-    if not Path(pool_path).exists():
-        raise HTTPException(404, f"Pool not found: {pool_name}")
+    name = validate_pool_name(pool_name)
+    try:
+        info = await asyncio.to_thread(storage_pools.get_pool, name)
+    except storage_pools.PoolNotFoundError as exc:
+        raise HTTPException(404, f"Pool not found: {name}") from exc
+    except Exception as exc:
+        raise HTTPException(500, f"Could not check pool {name}: {exc}") from exc
 
-    devices = parse_btrfs_device_stats(pool_path)
-    profile = get_btrfs_profile(pool_path)
-
-    total_errors = sum(
-        d.write_io_errs + d.read_io_errs + d.flush_io_errs +
-        d.corruption_errs + d.generation_errs
-        for d in devices
-    )
-
-    if total_errors == 0:
-        status = "healthy"
-    elif any(d.corruption_errs > 0 or d.generation_errs > 0 for d in devices):
-        status = "error"
-    else:
-        status = "degraded"
-
-    return RaidHealthInfo(
-        pool=pool_name,
-        mount_point=pool_path,
-        profile=profile,
-        status=status,
-        devices=devices,
-        total_errors=total_errors,
-        last_checked=datetime.now().isoformat()
-    )
+    return await asyncio.to_thread(_raid_health_of_pool, info)
 
 
 @router.post("/raid/{pool_name}/reset-stats")
@@ -966,7 +1038,7 @@ async def get_disk_predictions(_: dict = Depends(verify_token)):
 
         for attr_id, attr_name in CRITICAL_ATTRIBUTES.items():
             # Get values over time
-            values = [e.get("attributes", {}).get(str(attr_id), 0) for e in entries]
+            values = [_attribute_value(e, attr_id) for e in entries]
             if not values:
                 continue
 
@@ -1030,7 +1102,6 @@ async def get_smart_monitor_status(_: dict = Depends(verify_token)):
     }
 
 
-@router.on_event("startup")
 async def start_health_monitors():
     """Start health monitors on app startup."""
     global _raid_monitor_running, _raid_monitor_task
@@ -1043,7 +1114,6 @@ async def start_health_monitors():
     _smart_monitor_task = asyncio.create_task(smart_monitor_loop())
 
 
-@router.on_event("shutdown")
 async def stop_health_monitors():
     """Stop health monitors on app shutdown."""
     global _raid_monitor_running, _raid_monitor_task

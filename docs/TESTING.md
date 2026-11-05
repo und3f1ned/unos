@@ -22,8 +22,8 @@ All tests can run without physical hardware using Docker containers and mock dat
 
 This will:
 1. Run backend unit tests
-2. Start test containers (supervisor + webui)
-3. Run E2E tests with Playwright
+2. Start test containers (supervisor + webui) and create the test account
+3. Run E2E tests with Playwright against `https://localhost:3443`
 4. Clean up containers
 
 ### Run Only Unit Tests
@@ -63,12 +63,11 @@ unos/
 │       ├── fixtures/           # Test data fixtures
 │       │   └── init-test-data.sh
 │       ├── mocks/              # Mock data providers
-│       │   ├── __init__.py
 │       │   └── mock_data.py
 │       └── test_*.py           # Test files
 ├── webui/
 │   ├── Dockerfile              # Production Dockerfile
-│   ├── Dockerfile.test         # Playwright test runner
+│   ├── Dockerfile.test         # Playwright test runner (test profile)
 │   ├── playwright.config.ts    # Playwright configuration
 │   └── tests/
 │       ├── fixtures.ts         # Shared test fixtures
@@ -80,17 +79,38 @@ unos/
 
 ### Test Environment
 
-The test environment uses `docker-compose.test.yml` which:
+The test environment uses `docker-compose.test.yml`. Its compose project is
+`unos-test`, so it never touches the containers or images of a production stack
+on the same host. It:
 
-- Runs the supervisor with `UNOS_TEST_MODE=true`
-- Uses in-memory SQLite database
+- Runs the supervisor with `UNOS_TEST_MODE=true`, unprivileged, with
+  `UNOS_HOST_EXEC=local` (host commands run inside the container)
+- Keeps the SQLite database and the generated JWT secret in the `test-data`
+  volume
 - Mounts mock filesystem paths
-- Exposes webui on port 3080
+- Serves the web UI and API over HTTPS on `https://localhost:3443`, with a
+  certificate from Caddy's local CA issued for `webui`
+- Answers plain HTTP on `http://localhost:3080` only with a redirect to HTTPS,
+  except the health check `/api/v1/health`
+
+Both ports are bound to 127.0.0.1: the test account is public and the test
+supervisor has the Docker socket.
+
+A fresh stack has no account. `scripts/test-cycle.sh` creates `admin` /
+`admin123`, which the E2E tests sign in with, through the first-run setup API,
+and so does the `test-runner` (see
+[Running the Tests in a Container](#running-the-tests-in-a-container)). Do the
+same when you start the stack yourself:
 
 ```bash
 # Start test environment manually
 cd deploy
 docker compose -f docker-compose.test.yml up -d
+
+# Create the test account
+curl -k -X POST https://localhost:3443/api/v1/auth/setup \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin123"}'
 
 # View logs
 docker compose -f docker-compose.test.yml logs -f
@@ -111,8 +131,7 @@ cd supervisor
 # Create virtual environment (first time)
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
-pip install pytest pytest-asyncio httpx
+pip install -r requirements-dev.txt  # runtime dependencies + pytest & co.
 
 # Run all tests
 pytest tests/ -v
@@ -131,25 +150,34 @@ The `conftest.py` sets up the test environment:
 ```python
 # Environment variables for testing
 os.environ["UNOS_DB_PATH"] = ":memory:"  # In-memory database
-os.environ["UNOS_JWT_SECRET"] = "test-secret-key"
+# Random per run: secrets this repository published (such as "test-secret-key")
+# are refused at startup.
+os.environ["UNOS_JWT_SECRET"] = secrets.token_hex(32)
 os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"
 ```
 
 ### Mocking Device Operations
 
-Device-dependent operations (lsblk, smartctl, btrfs) are mocked:
+Commands that run on the host (lsblk, findmnt, mkfs.btrfs, mount, ...) go
+through `src/host.py`. Tests answer them with the in-memory `FakeHost` from
+`tests/test_pool_persistence.py`; `install_fake_host` also blocks real
+subprocesses and Docker:
 
 ```python
-from unittest.mock import patch, MagicMock
+import pytest
 
-def test_list_disks():
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stdout = json.dumps(MOCK_LSBLK_OUTPUT)
+from src.storage import disks
+from .test_pool_persistence import install_fake_host
 
-    with patch("src.storage.disks.subprocess.run", return_value=mock_result):
-        result = list_disks()
-        assert len(result) > 0
+
+@pytest.fixture
+def fake_host(monkeypatch):
+    return install_fake_host(monkeypatch)
+
+
+def test_list_disks(fake_host):
+    fake_host.add_disk("sdb", model="WDC WD40EFRX", serial="WD-1")
+    assert [d.name for d in disks.list_disks()] == ["sdb"]
 ```
 
 ## E2E Tests (Playwright)
@@ -165,10 +193,10 @@ cd webui
 npm ci
 npx playwright install chromium
 
-# Run against device (default)
+# Run against device (default: https://10.1.1.103)
 npm test
 
-# Run against local containers
+# Run against local containers (https://localhost:3443)
 npm run test:local
 
 # Run with UI
@@ -178,19 +206,63 @@ npm run test:ui
 npx playwright test auth.spec.ts
 ```
 
+### Running the Tests in a Container
+
+The `test` profile of `deploy/docker-compose.test.yml` adds the `test-runner`
+service (`webui/Dockerfile.test`), which runs the suites against the test stack
+over the compose network (`https://webui`). It needs neither Node.js nor a
+browser on the host. Before the tests, it waits until the stack answers and
+creates the test account `admin` / `admin123` through the first-run setup API;
+an existing account is left as it is (the API answers 400).
+
+```bash
+cd deploy
+
+# Build the images (again after changes to the supervisor or the web UI; the
+# tests and playwright.config.ts are mounted from webui/)
+docker compose -f docker-compose.test.yml --profile test build
+
+# Start the stack and run all suites
+docker compose -f docker-compose.test.yml --profile test run --rm test-runner
+
+# Run one suite (the account is created first here too)
+docker compose -f docker-compose.test.yml --profile test run --rm test-runner \
+  npx playwright test auth.spec.ts --reporter=list
+
+# Stop and clean up
+docker compose -f docker-compose.test.yml --profile test down -v
+```
+
+The results are printed as a list; the HTML report is written to the
+`test-reports` volume (`/app/playwright-report` in the container).
+
+The image is `mcr.microsoft.com/playwright:v<version>-noble`, which carries the
+browsers, and their system libraries, of exactly that Playwright version.
+`<version>` must be the `@playwright/test` version in
+`webui/package-lock.json`: when you update Playwright, change the `FROM` line
+of `webui/Dockerfile.test` with it (`supervisor/tests/test_deploy_scripts.py`
+checks that they match).
+
 ### Configuration
 
 The `playwright.config.ts` supports two modes:
 
-1. **Device Mode**: Tests against physical device at `10.1.1.103`
-2. **Container Mode**: Tests against local Docker stack at `localhost:3080`
+1. **Device Mode**: Tests against physical device at `https://10.1.1.103`
+2. **Container Mode**: Tests against local Docker stack at `https://localhost:3443`
+
+`BASE_URL` must be the HTTPS address: plain HTTP only redirects to
+`https://<host>/` on the default port. Playwright ignores certificate errors
+(`ignoreHTTPSErrors`), because the certificate comes from Caddy's local CA.
+`HTTP_URL` is the plain-HTTP address of the same server, for the redirect and
+health checks in `tests/https.spec.ts`; without it they use the `BASE_URL` host
+on port 80, and are skipped when `BASE_URL` has a port.
 
 ```bash
 # Device mode (default)
 npm test
 
 # Container mode
-BASE_URL=http://localhost:3080 npm test
+BASE_URL=https://localhost:3443 HTTP_URL=http://localhost:3080 npm test
 ```
 
 ### Test Structure
@@ -226,10 +298,10 @@ GitHub Actions runs tests on every push and PR:
 
 ### Workflow Jobs
 
-1. **unit-tests**: Runs backend pytest (fast)
-2. **e2e-tests**: Runs Playwright tests (after unit tests pass)
-3. **smoke-test**: Quick validation for PRs
-4. **build**: Validates Docker builds
+1. **Unit Tests**: Runs backend pytest with `requirements-dev.txt`
+2. **Build Check**: Validates the Docker builds (pushes to `main` only)
+
+The E2E tests are not run in CI; run them with `./scripts/test-cycle.sh --e2e`.
 
 ### Running Locally
 
@@ -240,9 +312,12 @@ CI=true ./scripts/test-cycle.sh
 
 ### Viewing Results
 
-- Test artifacts are uploaded to GitHub Actions
-- Playwright HTML report available as artifact
-- JUnit XML results for test reporting
+- CI: the pytest output is in the log of the **Unit Tests** job
+- Locally: `npm test` in `webui/` writes the Playwright HTML report to
+  `webui/playwright-report/` (open it with `npx playwright show-report`);
+  `scripts/test-cycle.sh` prints the results as a list
+- `test-runner`: prints the results as a list and writes the HTML report to
+  the `test-reports` volume
 
 ## Troubleshooting
 
@@ -271,24 +346,33 @@ expect: { timeout: 30000 }
 
 ### Port Conflicts
 
-If port 3080 is in use:
+If port 3080 or 3443 is in use:
 
 ```bash
-# Check what's using the port
-lsof -i :3080
-
-# Use a different port
-TEST_PORT=3081 docker compose -f docker-compose.test.yml up -d
-BASE_URL=http://localhost:3081 npm run test:local
+# Check what's using the ports
+lsof -i :3080 -i :3443
 ```
+
+Change the published ports of the `webui` service in
+`deploy/docker-compose.test.yml` (for example `"127.0.0.1:3081:80"` and
+`"127.0.0.1:3444:443"`) and point the tests at them:
+
+```bash
+BASE_URL=https://localhost:3444 HTTP_URL=http://localhost:3081 npx playwright test
+```
+
+`scripts/test-cycle.sh` reads the addresses from `TEST_URL` and
+`TEST_HTTPS_URL` at its top.
 
 ### Database Issues
 
-The test environment uses in-memory SQLite:
+The test environment keeps its database in the `test-data` volume. To start
+over, remove the volumes and create the test account again (see
+[Test Environment](#test-environment)):
 
 ```bash
-# Reset database by restarting supervisor
-docker compose -f docker-compose.test.yml restart supervisor
+docker compose -f docker-compose.test.yml down -v
+docker compose -f docker-compose.test.yml up -d
 ```
 
 ## Mock Data
@@ -310,7 +394,8 @@ The test environment provides realistic mock data:
 - Nextcloud (stopped)
 
 ### Users
-- Admin: `admin` / `admin123`
+- Admin: `admin` / `admin123` (created by `scripts/test-cycle.sh` and the
+  `test-runner`, see [Test Environment](#test-environment))
 
 ## Adding New Tests
 
