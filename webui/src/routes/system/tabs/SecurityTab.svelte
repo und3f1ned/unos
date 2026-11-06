@@ -507,7 +507,7 @@
           {:else}
             <input
               type="password"
-              id="currentPasswordHidden"
+              id="currentPassword"
               bind:value={currentPassword}
               class="w-full px-4 py-2 pr-10 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
               required
@@ -544,7 +544,7 @@
           {:else}
             <input
               type="password"
-              id="newPasswordHidden"
+              id="newPassword"
               bind:value={newPassword}
               minlength="8"
               class="w-full px-4 py-2 pr-10 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"

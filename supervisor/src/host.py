@@ -103,17 +103,22 @@ def run_on_host(
     timeout: float = 60,
     check: bool = False,
     input: str | None = None,
+    errors: str | None = None,
 ) -> HostResult:
     """Run ``cmd`` in the host's namespaces and return its output.
 
     With ``check=True`` a non-zero exit status raises :class:`HostCommandError`.
-    A timeout raises :class:`subprocess.TimeoutExpired`.
+    A timeout raises :class:`subprocess.TimeoutExpired`. ``errors`` is the
+    error handler for decoding the output: strict by default (output that is
+    not valid in the locale's encoding raises UnicodeDecodeError); "replace"
+    for commands that print names anyone can choose, such as file names.
     """
     _validate_cmd(cmd)
     proc = subprocess.run(
         _prefix() + cmd,
         capture_output=True,
         text=True,
+        errors=errors,
         timeout=timeout,
         input=input,
     )
@@ -129,10 +134,11 @@ async def run_on_host_async(
     timeout: float = 60,
     check: bool = False,
     input: str | None = None,
+    errors: str | None = None,
 ) -> HostResult:
     """Async wrapper around :func:`run_on_host` that does not block the event loop."""
     return await asyncio.to_thread(
-        run_on_host, cmd, timeout=timeout, check=check, input=input
+        run_on_host, cmd, timeout=timeout, check=check, input=input, errors=errors
     )
 
 

@@ -110,18 +110,30 @@ export function isChangedDiskError(message: string): boolean {
   return message.includes('is no longer the disk that was selected');
 }
 
+/** A btrfs subvolume in the top directory of a mounted pool. */
 export interface Volume {
   name: string;
   pool: string;
+  /** Host path: the pool's mountpoint and the volume name. */
   path: string;
   used: number | null;
   quota: number | null;
 }
 
+/** Body of POST /storage/pools/{pool}/volumes; the pool is the one in the URL. */
 export interface VolumeCreate {
+  /** Must match VOLUME_NAME_PATTERN (HTTP 400 otherwise). */
   name: string;
-  quota: number | null;
+  /**
+   * Bytes, at most 2^64 - 2 (HTTP 422 otherwise; btrfs reads 2^64 - 1 as no
+   * limit); omit or null for no limit. Needs quotas enabled on the pool
+   * (HTTP 409 otherwise, and nothing is created).
+   */
+  quota?: number | null;
 }
+
+/** Volume names the API accepts (VOLUME_NAME_PATTERN in supervisor/src/security/validators.py). */
+export const VOLUME_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 
 export interface ScrubStatus {
   pool: string;
@@ -138,6 +150,7 @@ export async function getDisks(): Promise<Disk[]> {
   return api.get<Disk[]>('/storage/disks');
 }
 
+/** SMART data of a disk as getDisks() lists it, by name (HTTP 400 for any other device). */
 export async function getDiskSmart(name: string): Promise<SmartData> {
   return api.get<SmartData>(`/storage/disks/${name}/smart`);
 }
@@ -168,16 +181,31 @@ export async function unmountPool(name: string): Promise<Pool> {
   return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
 }
 
+/**
+ * Volumes of a mounted pool, also a read-only one (HTTP 409 when it is not
+ * mounted, or is mounted at a subvolume other than the top level).
+ */
 export async function getVolumes(poolName: string): Promise<Volume[]> {
-  return api.get<Volume[]>(`/storage/pools/${poolName}/volumes`);
+  return api.get<Volume[]>(`/storage/pools/${encodeURIComponent(poolName)}/volumes`);
 }
 
+/**
+ * Create a volume in a mounted pool (HTTP 409 when it is not mounted, read-only
+ * or not at its top level, or the name is taken).
+ */
 export async function createVolume(poolName: string, volume: VolumeCreate): Promise<Volume> {
-  return api.post<Volume>(`/storage/pools/${poolName}/volumes`, volume);
+  return api.post<Volume>(`/storage/pools/${encodeURIComponent(poolName)}/volumes`, volume);
 }
 
+/**
+ * Delete a volume with everything in it. HTTP 409 when the pool is read-only or
+ * the volume is used by a running container, an SMB share or an NFS export;
+ * 503 when Docker cannot be asked about the containers. Nothing is deleted then.
+ */
 export async function deleteVolume(poolName: string, volumeName: string): Promise<void> {
-  return api.delete(`/storage/pools/${poolName}/volumes/${volumeName}`);
+  return api.delete(
+    `/storage/pools/${encodeURIComponent(poolName)}/volumes/${encodeURIComponent(volumeName)}`
+  );
 }
 
 export async function startScrub(poolName: string): Promise<ScrubStatus> {

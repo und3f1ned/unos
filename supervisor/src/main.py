@@ -1,10 +1,30 @@
 import asyncio
 import logging
 import os
+import tempfile
+
+
+def pin_temporary_directory() -> None:
+    """Pin the directory of the tempfile module to $TMPDIR, if that is a directory.
+
+    tempfile picks its directory on first use: the first of $TMPDIR, /tmp,
+    /var/tmp, ... where it can write a small test file. In the container
+    $TMPDIR is the tmpfs at /tmp (deploy/docker-compose.yml): were it full at
+    that moment, every temporary file would silently go to /var/tmp, on the
+    system disk (an SD card). Pinned, a full /tmp fails with "No space left on
+    device" instead. Does nothing when TMPDIR is unset.
+    """
+    path = os.environ.get("TMPDIR")
+    if path and os.path.isdir(path):
+        tempfile.tempdir = os.path.abspath(path)
+
+
+# Before anything else is imported, so before anything uses tempfile.
+pin_temporary_directory()
+
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -12,6 +32,7 @@ from . import host
 from .database import init_db
 from .config import get_settings
 from .auth.utils import require_admin
+from .request_limits import MAX_REQUEST_BODY, RequestBodyLimitMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +55,7 @@ from .health.router import router as health_router
 from .security.router import router as security_router
 from .monitor.router import router as monitor_router
 from .backup.router import router as backup_router
+from .backup.router import MAX_ARCHIVE_BYTES as MAX_BACKUP_ARCHIVE_BYTES
 from .audit.router import router as audit_router
 from .updates.router import router as updates_router
 from .websocket.events import router as ws_router
@@ -134,6 +156,19 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# FastAPI reads a request body before it checks the credentials, so every
+# body is limited (src/request_limits.py). The two uploads read their form
+# only after that check: files of any size, and backups up to the archive
+# limit plus 1 MiB for the multipart framing.
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    limit=MAX_REQUEST_BODY,
+    path_limits={
+        "/api/v1/files/upload": None,
+        "/api/v1/backup/upload": MAX_BACKUP_ARCHIVE_BYTES + MAX_REQUEST_BODY,
+    },
+)
+
 # Configure CORS - restrict origins based on settings
 settings = get_settings()
 
@@ -187,7 +222,37 @@ for _router in (
     app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY)
 
 
-@app.get("/api/v1/health")
+HEALTH_PATH = "/api/v1/health"
+
+
+class _SuccessfulHealthCheckFilter(logging.Filter):
+    """Keeps successful health checks out of uvicorn's access log.
+
+    The Docker healthchecks (deploy/docker-compose.yml) call HEALTH_PATH every
+    10 seconds (supervisor) and every 30 seconds (webui, through Caddy):
+    thousands of lines a day that would bury everything else in
+    `docker logs unos-supervisor`. Every other request, and a check that
+    fails, is still logged.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn logs '%s - "%s %s HTTP/%s" %d' with the client address, the
+        # method, the path with the query string, the HTTP version and the
+        # status code.
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5:
+            _client, method, path, _version, status = args
+            if method == "GET" and path == HEALTH_PATH and status == 200:
+                return False
+        return True
+
+
+# uvicorn configures its loggers before it imports this module; dictConfig
+# keeps the filters of a logger anyway.
+logging.getLogger("uvicorn.access").addFilter(_SuccessfulHealthCheckFilter())
+
+
+@app.get(HEALTH_PATH)
 async def health_check():
     """Basic health check for load balancers."""
     return {"status": "ok"}

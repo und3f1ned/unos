@@ -111,25 +111,24 @@ function errorDetail(status: number, payload: unknown): string {
   return 'Request failed';
 }
 
-async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown
-): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
+/**
+ * Send a request to `${API_BASE}${path}` with the stored token and return the
+ * response. Use it directly only for what the JSON helpers in `api` cannot
+ * send or read, such as multipart uploads and file downloads: it handles
+ * errors the same way, so an expired session ends the same way everywhere.
+ *
+ * A 401 ends the session (see handleUnauthorized), except from endpoints
+ * that check credentials. Every error status is thrown as an ApiError with
+ * the server's message.
+ */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
   const token = getToken();
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
 
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
@@ -138,6 +137,50 @@ async function request<T>(
     }
     throw new ApiError(response.status, errorDetail(response.status, payload));
   }
+
+  return response;
+}
+
+// How long a downloaded file stays reachable through its blob: URL. The
+// browser reads the URL when the download starts, after click() has returned.
+const DOWNLOAD_URL_LIFETIME_MS = 60_000;
+
+/**
+ * Download `path` from the API with the stored token and let the browser
+ * save it as `filename`. A plain link or window.open() cannot be used for
+ * API files: they send no Authorization header, so the server rejects them.
+ *
+ * The response is read into a Blob first (browsers keep large blobs on disk),
+ * so the browser shows the download only once the whole file has arrived.
+ */
+export async function downloadAs(path: string, filename: string): Promise<void> {
+  const response = await apiFetch(path);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.hidden = true;
+  document.body.appendChild(link);
+  try {
+    link.click();
+  } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_LIFETIME_MS);
+  }
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<T> {
+  const response = await apiFetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    // undefined and null send no body; anything else is sent as JSON, also
+    // arrays (the file manager endpoints take a JSON list of paths).
+    body: body === undefined || body === null ? undefined : JSON.stringify(body),
+  });
 
   if (response.status === 204) {
     return {} as T;
@@ -150,7 +193,7 @@ export const api = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
-  delete: <T>(path: string) => request<T>('DELETE', path),
+  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
 };
 
 export { ApiError };

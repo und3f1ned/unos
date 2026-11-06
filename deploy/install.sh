@@ -22,6 +22,20 @@ UNOS_INSTALL_DIR="${UNOS_INSTALL_DIR:-/opt/unos}"
 UNOS_DATA_DIR="${UNOS_DATA_DIR:-/var/lib/unos}"
 UNOS_REPO="${UNOS_REPO:-https://github.com/und3f1ned/unos.git}"
 UNOS_BRANCH="${UNOS_BRANCH:-main}"
+# Seconds `docker compose up` (here and in the systemd unit) waits for the
+# supervisor to become healthy; webui starts only then. As long as Docker can
+# take to report the supervisor healthy or unhealthy: start_period +
+# (retries + 1) x (interval + timeout) of its healthcheck in
+# docker-compose.yml, 600 + 4 x (10 + 10). A failed check counts only if it
+# started after start_period, so the one that runs then does not, and the
+# supervisor is unhealthy after retries more; a check takes up to timeout once
+# its process has started, and Docker waits interval after each one. At
+# startup the supervisor mounts the pools the host has not mounted, up to 2
+# minutes each. Same value in update.sh; change both with the healthcheck.
+SUPERVISOR_START_TIMEOUT=680
+# Arguments of `docker compose up`, with --wait-timeout where Compose has it
+# (set by check_compose_wait).
+COMPOSE_UP_ARGS=(-d)
 
 # Logging
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -158,6 +172,52 @@ install_docker() {
     log_success "Docker installed and started"
 }
 
+# The later steps run Docker Compose v2, the compose plugin of the docker CLI.
+# Without it, the script would fail only at `docker compose build`, after the
+# checkout and the Samba configuration. $1 says what has changed so far.
+# Debian 13's docker-compose package (Compose 2.26) installs the plugin;
+# Debian 12's (Compose 1.29, written in Python) has only the docker-compose
+# command.
+require_compose() {
+    if docker compose version >/dev/null 2>&1; then
+        return 0
+    fi
+    log_error "Docker Compose is not installed: \`docker compose version\` failed. $1"
+    echo "  Install the Compose plugin: the package docker-compose-plugin from Docker's"
+    echo "  repository (https://docs.docker.com/engine/install/), docker-compose-v2 on"
+    echo "  Ubuntu, or docker-compose on Debian 13. Then run this script again."
+    exit 1
+}
+
+# Whether the Compose version $1 (2.26.1, v2.40.3, 2.40.3+ds1-0ubuntu1, ...)
+# is older than 2.30. False when it cannot be read.
+compose_before_2_30() {
+    [[ $1 =~ ^v?([0-9]+)\.([0-9]+) ]] || return 1
+    local major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]}))
+    [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 30 ]; }
+}
+
+# `docker compose up` starts webui only once the supervisor is healthy
+# (depends_on), and waits for that. --wait-timeout ends the wait: Compose
+# 2.17 added the option (for `up --wait` only), 2.30 applies it to this wait.
+# Older versions reject it, so it is passed only where `up --help` lists it.
+check_compose_wait() {
+    local help version
+    help=$(docker compose up --help 2>/dev/null) || help=""
+    version=$(docker compose version --short 2>/dev/null) || version=""
+    case "$help" in
+        *--wait-timeout*)
+            COMPOSE_UP_ARGS=(-d --wait-timeout "$SUPERVISOR_START_TIMEOUT")
+            compose_before_2_30 "$version" || return 0
+            log_warn "Docker Compose $version cannot limit its wait for the supervisor to become healthy (that needs Compose 2.30 or later): \`docker compose up\`, here and in the unos service, waits until Docker reports the supervisor healthy or unhealthy."
+            ;;
+        *)
+            COMPOSE_UP_ARGS=(-d)
+            log_warn "Docker Compose ${version:-(version unknown)} has no \`up --wait-timeout\`: \`docker compose up\`, here and in the unos service, runs without it and waits until Docker reports the supervisor healthy or unhealthy. Compose 2.30 or later limits that wait; run install.sh again after updating Docker Compose."
+            ;;
+    esac
+}
+
 # Create UNOS user and directories
 setup_directories() {
     log_info "Setting up directories..."
@@ -283,9 +343,12 @@ start_unos() {
     # (172.31.254.0/24) and must be recreated. Does nothing on a fresh system.
     docker compose down --remove-orphans || true
 
-    # Start containers
-    docker compose up -d
-    
+    # Start containers: webui once the supervisor is healthy.
+    if ! docker compose up "${COMPOSE_UP_ARGS[@]}"; then
+        log_error "Starting UNOS failed. If the error above says \"dependency failed to start\", \"is unhealthy\", \"exited\" or \"timeout waiting for dependencies\" (the wording depends on the Compose version), the supervisor stopped or did not become healthy in time: docker logs unos-supervisor. If it mentions an overlapping address pool, see \"Network subnet\" in docs/INSTALL.md."
+        exit 1
+    fi
+
     log_success "UNOS containers started"
 }
 
@@ -304,7 +367,7 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=$UNOS_INSTALL_DIR/deploy
 EnvironmentFile=/etc/unos/secrets.env
-ExecStart=/usr/bin/docker compose up -d
+ExecStart=/usr/bin/docker compose up ${COMPOSE_UP_ARGS[*]}
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=0
 
@@ -386,8 +449,16 @@ main() {
     print_header
     check_root
     detect_system
+    # Docker is installed already: without its Compose plugin, stop before
+    # anything changes. install_docker installs the plugin with Docker.
+    if command -v docker >/dev/null 2>&1; then
+        require_compose "Nothing was changed."
+    fi
     install_dependencies
     install_docker
+    require_compose "The system packages are installed; UNOS is not."
+    # Sets the `docker compose up` arguments of start_unos and the unit.
+    check_compose_wait
     setup_directories
     download_unos
     generate_secrets

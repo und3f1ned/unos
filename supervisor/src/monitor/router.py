@@ -4,7 +4,6 @@ from datetime import datetime
 from collections import deque
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
 
 from ..auth.utils import verify_token
 

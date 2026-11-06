@@ -22,7 +22,7 @@ from .schemas import (
 )
 from .utils import (
     hash_password, verify_password, create_access_token, verify_token,
-    require_admin, generate_api_token, generate_recovery_codes, verify_recovery_code
+    require_admin, generate_api_token, generate_recovery_codes
 )
 from ..security.router import record_login_attempt
 

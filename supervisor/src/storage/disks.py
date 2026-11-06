@@ -17,7 +17,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from fastapi import HTTPException
+
 from .. import host
+from ..security.validators import sanitize_error_message, validate_disk_target
 from .schemas import DiskInfo, PartitionInfo, SmartData
 
 logger = logging.getLogger(__name__)
@@ -106,6 +109,21 @@ class DeviceFacts:
     size: int = 0
 
 
+@dataclass(frozen=True)
+class HostDisk:
+    """A whole disk of the host, as the Storage page lists it (see host_disks)."""
+
+    name: str  # "sda"
+    path: str  # "/dev/sda"
+    model: str | None
+    size: int  # bytes; 0 when lsblk reports none
+
+    @property
+    def paths(self) -> frozenset[str]:
+        """The paths SMART requests may name the disk by: its path and /dev/<name>."""
+        return frozenset((self.path, f"/dev/{self.name}"))
+
+
 @dataclass
 class _HostState:
     tree: list[dict[str, Any]]
@@ -155,8 +173,15 @@ def _unique(values: Iterator[str] | list[str]) -> list[str]:
 
 
 def host_mounts() -> list[HostMount]:
-    """Return the host's mount table. Raises RuntimeError if findmnt fails."""
-    result = host.run_on_host(["findmnt", "-J", "-l", "-o", FINDMNT_COLUMNS], timeout=30)
+    """Return the host's mount table. Raises RuntimeError if findmnt fails.
+
+    findmnt prints the folder a mount shows (SOURCE "/dev/sda[/folder]") and
+    the btrfs subvolume (subvol=) as they are named now, and whatever can
+    write in a pool names them: bytes that are not UTF-8 become U+FFFD.
+    """
+    result = host.run_on_host(
+        ["findmnt", "-J", "-l", "-o", FINDMNT_COLUMNS], timeout=30, errors="replace"
+    )
     if not result.ok:
         raise RuntimeError(f"findmnt failed: {result.stderr.strip() or result.returncode}")
     try:
@@ -191,11 +216,18 @@ def host_mounts() -> list[HostMount]:
 
 
 def _lsblk_tree() -> list[dict[str, Any]]:
-    result = host.run_on_host(["lsblk", "-J", "-b", "-o", LSBLK_COLUMNS], timeout=30)
+    # lsblk -J prints labels, models and mountpoints with their bytes as they
+    # are, and a FAT label in a Windows code page (a USB stick) is not UTF-8:
+    # such bytes become U+FFFD, which no device path or pool name contains.
+    result = host.run_on_host(
+        ["lsblk", "-J", "-b", "-o", LSBLK_COLUMNS], timeout=30, errors="replace"
+    )
     if not result.ok:
         # util-linux < 2.37 has no MOUNTPOINTS column.
         legacy_columns = LSBLK_COLUMNS.replace("MOUNTPOINTS", "MOUNTPOINT")
-        legacy = host.run_on_host(["lsblk", "-J", "-b", "-o", legacy_columns], timeout=30)
+        legacy = host.run_on_host(
+            ["lsblk", "-J", "-b", "-o", legacy_columns], timeout=30, errors="replace"
+        )
         if not legacy.ok:
             raise RuntimeError(f"lsblk failed: {result.stderr.strip() or result.returncode}")
         result = legacy
@@ -203,6 +235,21 @@ def _lsblk_tree() -> list[dict[str, Any]]:
         return json.loads(result.stdout).get("blockdevices") or []
     except (json.JSONDecodeError, AttributeError) as exc:
         raise RuntimeError(f"lsblk failed: invalid output ({exc})") from exc
+
+
+def _whole_disks(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The whole disks among the top-level devices of an lsblk tree.
+
+    Devices of TYPE "disk" without the boot SD card/eMMC and virtual devices
+    (HIDDEN_DISK_PREFIXES). A system disk on NVMe, SATA or USB is included.
+    Partitions, RAID arrays and other devices built on a disk are not whole
+    disks.
+    """
+    return [
+        node
+        for node in tree
+        if node.get("type") == "disk" and node.get("name") and not is_hidden_disk(node["name"])
+    ]
 
 
 def _active_swaps() -> set[str]:
@@ -470,12 +517,8 @@ def list_disks() -> list[DiskInfo]:
     """
     state = _collect_host_state()
     result: list[DiskInfo] = []
-    for node in state.tree:
-        if node.get("type") != "disk":
-            continue
-        name = node.get("name") or ""
-        if is_hidden_disk(name):
-            continue
+    for node in _whole_disks(state.tree):
+        name = node["name"]
         facts = _node_facts(node, node, state)
         partitions = [
             PartitionInfo(
@@ -515,6 +558,59 @@ def list_disks() -> list[DiskInfo]:
             )
         )
     return result
+
+
+def host_disks() -> list[HostDisk]:
+    """The host's whole disks, exactly as the Storage page lists them (list_disks).
+
+    The disks lsblk reports in the host namespaces, without the boot SD
+    card/eMMC and virtual devices; a system disk on NVMe, SATA or USB is
+    included (_whole_disks). SMART data, self-tests, Disk Health and the
+    SMART monitor are for these disks only. Blocking (lsblk runs on the
+    host): call it in a worker thread. RuntimeError when lsblk fails.
+    """
+    return [
+        HostDisk(
+            name=node["name"],
+            path=node.get("path") or f"/dev/{node['name']}",
+            model=disk_id(node.get("model")),
+            size=_to_int(node.get("size")),
+        )
+        for node in _whole_disks(_lsblk_tree())
+    ]
+
+
+def host_disks_or_500() -> list[HostDisk]:
+    """host_disks() for an endpoint: HTTPException 500 when the host's disks cannot be listed."""
+    try:
+        return host_disks()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not list the host's disks: {sanitize_error_message(exc)}",
+        ) from exc
+
+
+def whole_disk_device(target: str) -> str:
+    """Return ``/dev/<disk>`` for a whole disk of the host given as ``sda`` or ``/dev/sda``.
+
+    For SMART data and self-tests: anything else, such as a partition, a
+    RAID array, the boot SD card or eMMC, /dev/null or a /dev/disk/by-id
+    link, is refused. Blocking (lsblk runs on the host): call it in a worker
+    thread. HTTPException 400 for anything but one of host_disks(), 500
+    when the host's disks cannot be listed.
+    """
+    device = validate_disk_target(target)
+    if not any(device in disk.paths for disk in host_disks_or_500()):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{device} is not a disk of this system. SMART works on whole disks as the "
+                "Storage page lists them, not on partitions, RAID arrays, the boot SD card or "
+                "eMMC, or virtual devices"
+            ),
+        )
+    return device
 
 
 def get_device_facts(paths: list[str]) -> dict[str, DeviceFacts]:

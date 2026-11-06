@@ -187,8 +187,8 @@ test.describe('API Tests', () => {
     const response = await request.get(`${BASE_URL}/api/v1/containers/images`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    // Docker may not be available, so accept 200, 404, or 500
-    expect([200, 404, 500]).toContain(response.status());
+    // 500 when Docker is not available; 404 was /containers/{container_id} taking "images" for a name
+    expect([200, 500]).toContain(response.status());
     if (response.ok()) {
       const data = await response.json();
       expect(Array.isArray(data)).toBeTruthy();
@@ -217,7 +217,7 @@ test.describe('API Tests', () => {
 
   // ==================== Files ====================
   test('GET /api/v1/files/list should return directory listing or 404', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/files/list?path=/mnt/pools`, {
+    const response = await request.get(`${BASE_URL}/api/v1/files/list`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect([200, 404]).toContain(response.status());

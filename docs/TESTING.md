@@ -105,7 +105,7 @@ same when you start the stack yourself:
 ```bash
 # Start test environment manually
 cd deploy
-docker compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d --wait-timeout 120
 
 # Create the test account
 curl -k -X POST https://localhost:3443/api/v1/auth/setup \
@@ -118,6 +118,16 @@ docker compose -f docker-compose.test.yml logs -f
 # Stop and clean up
 docker compose -f docker-compose.test.yml down -v
 ```
+
+`docker compose up` starts `webui` only once the supervisor answers its health
+check, and waits for that. `--wait-timeout 120` limits the wait to as long as
+Docker can take to report the supervisor healthy or unhealthy, that is
+`start_period` + (`retries` + 1) × (`interval` + `timeout`) of its healthcheck
+in `deploy/docker-compose.test.yml`, 10 + 11 × (5 + 5) seconds (a failed check
+counts only if it started after `start_period`). Docker Compose 2.30 or later
+applies the option to this wait; 2.17 to 2.29 accept it without applying it,
+and earlier versions reject it. `scripts/test-cycle.sh` uses the same limit
+(`STACK_START_TIMEOUT`); change it with the healthcheck.
 
 ## Backend Unit Tests
 
@@ -257,6 +267,13 @@ The `playwright.config.ts` supports two modes:
 health checks in `tests/https.spec.ts`; without it they use the `BASE_URL` host
 on port 80, and are skipped when `BASE_URL` has a port.
 
+The tests that restore a backup ("Restoring backups" in
+`tests/backup-restore.spec.ts`) replace the database and `smb.conf` of the
+target. They run only when `BASE_URL` is a local address (`localhost`,
+`127.0.0.1`, `::1`, `*.localhost`) or `E2E_ALLOW_RESTORE=1` is set; otherwise
+they are skipped before any request, so device mode never restores the device.
+The deviceless stack sets `E2E_ALLOW_RESTORE=1`.
+
 ```bash
 # Device mode (default)
 npm test
@@ -294,25 +311,128 @@ test('should display dashboard', async ({ authenticatedPage }) => {
 
 ## CI/CD Pipeline
 
-GitHub Actions runs tests on every push and PR:
+GitHub Actions (`.github/workflows/test.yml`) runs on every push to `main` and
+on every pull request against `main`. A new push to a pull request cancels the
+run for the previous one.
 
 ### Workflow Jobs
 
-1. **Unit Tests**: Runs backend pytest with `requirements-dev.txt`
-2. **Build Check**: Validates the Docker builds (pushes to `main` only)
+1. **Unit Tests** (`test`): the backend pytest suite, with
+   `supervisor/requirements-dev.txt` on Python 3.11
+2. **Lint and Audit (Python)** (`lint`):
+   - `ruff check --select F,E9 supervisor`: pyflakes findings (undefined
+     names, unused imports and variables, ...) and syntax errors
+   - `pip-audit -r supervisor/requirements.txt`: known vulnerabilities in the
+     runtime dependencies of the supervisor, and in their dependencies
+3. **Frontend Checks** (`frontend`), on Node.js 22:
+   - `npm ci` and `npm run build`: the production build of the web UI
+   - `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
+     error`): type errors in the Svelte and TypeScript sources
+   - `npm audit --omit=dev --audit-level=high`: high and critical
+     vulnerabilities in the `dependencies` of `webui/package.json`
+     (lucide-svelte with its peer svelte, and qrcode) and everything they
+     depend on; the `devDependencies` are left out, `@sveltejs/kit` too,
+     although its client code is bundled into the web UI
+4. **Build Check** (`build`): the Docker builds of both images (pushes to
+   `main` only, after the unit tests)
+
+Every check fails the run when it finds something. In the lint and frontend
+jobs each check runs even when another one has failed, so one run reports all
+problems. svelte-check is a dev dependency of the web UI: `npm ci` installs
+exactly the version in `webui/package-lock.json`, with every package it
+depends on, so a new release cannot change the type check (to bump it, run
+`npm install --save-dev --save-exact svelte-check@<version>` in `webui/`).
+`npm run check` runs it from `webui/node_modules/.bin`, as `npm run` does for
+every script of `webui/package.json`; `npx` would download a program that is
+missing there from the registry, without asking where `CI` is set. ruff and
+pip-audit, and every package they depend on, come from
+`.github/lint-requirements.txt`, which pins them with their hashes
+(`pip install --require-hashes`); see
+[Updating ruff and pip-audit](#updating-ruff-and-pip-audit).
+`supervisor/tests/test_deploy_scripts.py` checks that this page has the
+commands of the lint and frontend jobs. The two audits can still fail a
+commit that passed before: they check against the advisories published
+since. Update the affected package then (`supervisor/requirements.txt`, or
+`webui/package-lock.json`, e.g. with `npm update <package>`) rather than
+weakening the check. The Node.js major version of the frontend job, of the
+builder stage in `webui/Dockerfile` and of `engines` in `webui/package.json`
+must be the same (`supervisor/tests/test_deploy_scripts.py` checks it).
+
+The jobs check out the repository with `persist-credentials: false`: no step
+needs the job's GitHub token afterwards, so it is not left in the git
+configuration of the checkout, where the build or test code of a dependency
+could read it.
 
 The E2E tests are not run in CI; run them with `./scripts/test-cycle.sh --e2e`.
 
-### Running Locally
+### Running the CI Checks Locally
+
+The commands of the workflow, from the root of the repository:
 
 ```bash
-# Simulate CI environment
-CI=true ./scripts/test-cycle.sh
+# Unit Tests (Python 3.11, in the virtual environment from "Backend Unit Tests")
+cd supervisor
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v --tb=short --ignore=tests/mocks --ignore=tests/fixtures
+cd ..
+
+# Lint and Audit (Python 3.11, in a virtual environment of their own, which
+# keeps the tools out of the supervisor's)
+python3.11 -m venv ~/.venvs/unos-lint
+. ~/.venvs/unos-lint/bin/activate
+pip install --require-hashes -r .github/lint-requirements.txt
+ruff check --select F,E9 supervisor
+pip-audit -r supervisor/requirements.txt
+deactivate
+
+# Frontend Checks (Node.js 22 or later)
+cd webui
+npm ci
+npm run build
+npm run check
+npm audit --omit=dev --audit-level=high
 ```
+
+- `ruff check --fix --select F,E9 supervisor` removes unused imports. Unused
+  variables (F841) need a manual fix: their assignment may hold a call that
+  must stay.
+- pip-audit resolves `requirements.txt` in a temporary virtual environment
+  (`pip install --dry-run`), after it has installed the latest pip, setuptools
+  and wheel there: those three are not pinned. `npm audit` asks the npm
+  registry. Both need network access.
+- `npm run check` first runs `svelte-kit sync`, which writes
+  `.svelte-kit/tsconfig.json`: `tsconfig.json` extends it (`npm run build`
+  writes it too).
+- On macOS, deselect the temperature tests, which need Linux (psutil has no
+  temperature sensors there):
+  `--deselect tests/test_system.py::TestTemperatures`.
+
+### Updating ruff and pip-audit
+
+`.github/lint-requirements.txt` is generated from
+`.github/lint-requirements.in` with [uv](https://docs.astral.sh/uv/). Change
+the versions in the `.in` file, then run, from the root of the repository:
+
+```bash
+uv pip compile --universal --python-version 3.11 --generate-hashes .github/lint-requirements.in -o .github/lint-requirements.txt
+```
+
+`--universal` resolves for every platform, the Linux x86_64 of the CI runners
+included, and `--python-version 3.11` for Python 3.11 and later (the lint job
+runs 3.11). Where it can, uv keeps the versions that the `.txt` already pins
+for the packages ruff and pip-audit depend on; add `--upgrade` to update those
+too, or `--upgrade-package <name>` for one of them. Commit both files.
+`supervisor/tests/test_deploy_scripts.py` checks that every package has hashes
+and that ruff and pip-audit have the versions of the `.in` file.
+
+The file pins pip too (pip-audit depends on it through pip-api), so the
+install replaces the pip of the environment with that version.
 
 ### Viewing Results
 
-- CI: the pytest output is in the log of the **Unit Tests** job
+- CI: every job has its own log on the page of the run. The pytest output is
+  in the **Unit Tests** job; ruff, pip-audit, svelte-check and npm audit print
+  their findings in their own step
 - Locally: `npm test` in `webui/` writes the Playwright HTML report to
   `webui/playwright-report/` (open it with `npx playwright show-report`);
   `scripts/test-cycle.sh` prints the results as a list
@@ -332,7 +452,7 @@ docker compose -f docker-compose.test.yml logs supervisor
 
 # Restart with clean state
 docker compose -f docker-compose.test.yml down -v
-docker compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d --wait-timeout 120
 ```
 
 ### Test Timeout Issues
@@ -372,7 +492,7 @@ over, remove the volumes and create the test account again (see
 
 ```bash
 docker compose -f docker-compose.test.yml down -v
-docker compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d --wait-timeout 120
 ```
 
 ## Mock Data

@@ -1,3 +1,4 @@
+import copy
 import subprocess
 import json
 import asyncio
@@ -13,6 +14,7 @@ from typing import Optional
 from .. import host
 from ..auth.utils import verify_token
 from ..security.validators import validate_pool_name
+from ..storage import disks as storage_disks
 from ..storage import pools as storage_pools
 from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
@@ -21,37 +23,6 @@ from ..notifications.schemas import NotificationEvent, NotificationType, Notific
 
 router = APIRouter(prefix="/health", tags=["health"])
 logger = logging.getLogger(__name__)
-
-# System disk patterns to exclude from health monitoring
-SYSTEM_DISK_PATTERNS = [
-    "mmcblk",      # eMMC storage (system disk)
-    "zram",        # Virtual RAM disks
-    "loop",        # Loop devices
-    "sr",          # CD/DVD drives
-    "fd",          # Floppy drives
-    "nvme0n1",     # Often system NVMe
-    "ram",         # RAM disks
-]
-
-
-def _is_system_disk(name: str, mountpoint: str | None = None, children: list | None = None) -> bool:
-    """Check if disk is a system disk that should be hidden."""
-    # Check against known system disk patterns
-    for pattern in SYSTEM_DISK_PATTERNS:
-        if name.startswith(pattern):
-            return True
-    
-    # Check if mounted as root
-    if mountpoint == "/":
-        return True
-    
-    # Check if any partition is mounted as root
-    if children:
-        for child in children:
-            if child.get("mountpoint") == "/":
-                return True
-    
-    return False
 
 
 class SmartAttribute(BaseModel):
@@ -384,33 +355,24 @@ def _new_trend_alerts(serial: str, history: list[dict]) -> list[SmartTrendAlert]
 
 
 def _smart_monitor_pass() -> list[SmartTrendAlert]:
-    """One round of the SMART monitor (blocking: lsblk and smartctl per disk).
+    """One round of the SMART monitor (blocking: lsblk on the host, smartctl per disk).
 
-    Records a snapshot of every data disk that is awake and returns the
+    Records a snapshot of every whole disk of the host that is awake (the
+    disks of GET /health/disks, storage.disks.host_disks) and returns the
     trend alerts of the attributes that rose since the disk's previous
-    snapshot.
+    snapshot. When the host's disks cannot be listed, the pass is logged
+    and skipped.
     """
-    result = subprocess.run(
-        ["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT"],
-        capture_output=True, text=True, timeout=SMARTCTL_TIMEOUT, check=False
-    )
-    if result.returncode != 0:
+    try:
+        disks = storage_disks.host_disks()
+    except Exception as exc:
+        logger.warning("SMART monitor: pass skipped, could not list the host's disks: %s", exc)
         return []
-    data = json.loads(result.stdout)
     history = load_smart_history()
     alerts: list[SmartTrendAlert] = []
 
-    for dev in data.get("blockdevices", []):
-        if dev.get("type") != "disk":
-            continue
-        name = dev.get("name", "")
-        mountpoint = dev.get("mountpoint")
-        children = dev.get("children", [])
-
-        if _is_system_disk(name, mountpoint, children):
-            continue
-
-        snapshot = collect_smart_snapshot(f"/dev/{name}")
+    for disk in disks:
+        snapshot = collect_smart_snapshot(disk.path)
         if snapshot:
             serial = snapshot.serial
             entries = history.setdefault(serial, [])
@@ -538,19 +500,41 @@ async def send_raid_alert(pool: str, status: str, errors: int, details: str):
 
 
 def load_previous_raid_status() -> dict:
-    """Load previous RAID status to detect new errors."""
+    """Load previous RAID status to detect new errors (only well-formed pool entries)."""
     path = Path(RAID_STATUS_FILE)
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
     except Exception:
         return {}
+    if not isinstance(data, dict):
+        return {}
+    return {pool: entry for pool, entry in data.items() if isinstance(entry, dict)}
+
+
+# The latest RAID check, with its time (GET /raid-monitor/status). The file
+# keeps the state the next check compares with for its alerts; it is on the
+# system disk (an SD card on small boards), so it is written only when that
+# state changes, not after every check.
+_latest_raid_status: Optional[dict] = None
+
+
+def _raid_state(status: dict) -> dict:
+    """A RAID status without the times of the checks."""
+    return {
+        pool: ({k: v for k, v in entry.items() if k != "last_checked"} if isinstance(entry, dict) else entry)
+        for pool, entry in status.items()
+    }
 
 
 def save_raid_status(status: dict):
-    """Save current RAID status."""
+    """Keep the current RAID status, and write it to RAID_STATUS_FILE if more than its check times changed."""
+    global _latest_raid_status
+    _latest_raid_status = status
     path = Path(RAID_STATUS_FILE)
+    if path.exists() and _raid_state(load_previous_raid_status()) == _raid_state(status):
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(status, indent=2))
 
@@ -632,6 +616,15 @@ async def raid_monitor_loop():
         await asyncio.sleep(RAID_CHECK_INTERVAL)
 
 
+def _format_capacity(size: int) -> str:
+    """A size in bytes as the Health page shows it ("3.64 TB", "476.94 GB"); "Unknown" for 0."""
+    if not size:
+        return "Unknown"
+    if size >= 1024**4:
+        return f"{size / 1024**4:.2f} TB"
+    return f"{size / 1024**3:.2f} GB"
+
+
 def parse_smart_data(device: str) -> SmartInfo:
     """Parse SMART data from smartctl."""
     try:
@@ -648,12 +641,7 @@ def parse_smart_data(device: str) -> SmartInfo:
     serial = data.get("serial_number", "Unknown")
     firmware = data.get("firmware_version", "Unknown")
     
-    # Capacity
-    capacity_bytes = data.get("user_capacity", {}).get("bytes", 0)
-    if capacity_bytes:
-        capacity = f"{capacity_bytes / (1024**4):.2f} TB" if capacity_bytes >= 1024**4 else f"{capacity_bytes / (1024**3):.2f} GB"
-    else:
-        capacity = "Unknown"
+    capacity = _format_capacity(data.get("user_capacity", {}).get("bytes", 0))
 
     # Health status
     health_status = "UNKNOWN"
@@ -756,68 +744,63 @@ def parse_smart_data(device: str) -> SmartInfo:
     )
 
 
+def _disk_health(disk: storage_disks.HostDisk) -> SmartInfo:
+    """SMART health of a whole disk of the host (blocking: smartctl).
+
+    When smartctl fails, the disk is still listed, with the status UNKNOWN.
+    The model and the capacity that lsblk reports stand in for those that
+    smartctl does not report: with -j it prints JSON without them when it
+    cannot open or identify the disk, such as one behind a USB bridge it
+    does not know.
+    """
+    try:
+        info = parse_smart_data(disk.path)
+    except Exception:
+        info = SmartInfo(
+            device=disk.path,
+            model="Unknown",
+            serial="Unknown",
+            firmware="Unknown",
+            capacity="Unknown",
+            temperature=None,
+            power_on_hours=None,
+            power_cycle_count=None,
+            health_status="UNKNOWN",
+            attributes=[],
+            self_test_status=None,
+            last_test_result=None,
+        )
+    from_lsblk: dict[str, str] = {}
+    if info.model == "Unknown" and disk.model:
+        from_lsblk["model"] = disk.model
+    if info.capacity == "Unknown":
+        from_lsblk["capacity"] = _format_capacity(disk.size)
+    return info.model_copy(update=from_lsblk)
+
+
 # The SMART endpoints are plain functions: FastAPI runs them in its thread
-# pool, so smartctl (seconds per disk) does not block the event loop.
+# pool, so smartctl (seconds per disk) and lsblk on the host do not block the
+# event loop.
 @router.get("/disks")
 def get_disk_health(_: dict = Depends(verify_token)):
-    """Get SMART health for all disks."""
-    # List block devices with children to check root mounts
-    result = subprocess.run(
-        ["lsblk", "-J", "-o", "NAME,TYPE,SIZE,MODEL,MOUNTPOINT"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise HTTPException(500, "Failed to list disks")
+    """SMART health of the host's whole disks, as the Storage page lists them.
 
-    data = json.loads(result.stdout)
-    devices = []
-
-    for dev in data.get("blockdevices", []):
-        if dev.get("type") != "disk":
-            continue
-        name = dev.get("name", "")
-        mountpoint = dev.get("mountpoint")
-        children = dev.get("children", [])
-        
-        # Skip system disks
-        if _is_system_disk(name, mountpoint, children):
-            continue
-        
-        device_path = f"/dev/{name}"
-        try:
-            smart_info = parse_smart_data(device_path)
-            devices.append(smart_info)
-        except Exception:
-            # Add basic info if SMART fails
-            devices.append(SmartInfo(
-                device=device_path,
-                model=dev.get("model", "Unknown"),
-                serial="Unknown",
-                firmware="Unknown",
-                capacity=dev.get("size", "Unknown"),
-                temperature=None,
-                power_on_hours=None,
-                power_cycle_count=None,
-                health_status="UNKNOWN",
-                attributes=[],
-                self_test_status=None,
-                last_test_result=None
-            ))
-
-    return {"disks": devices}
+    A system disk on NVMe, SATA or USB is included; the boot SD card/eMMC
+    and virtual devices are not (storage.disks.host_disks). Every disk
+    listed here answers on GET /health/disk/{device}. 500 when the host's
+    disks cannot be listed.
+    """
+    return {"disks": [_disk_health(disk) for disk in storage_disks.host_disks_or_500()]}
 
 
 @router.get("/disk/{device:path}")
 def get_disk_smart(device: str, _: dict = Depends(verify_token)):
-    """Get detailed SMART data for a specific disk."""
-    if not device.startswith("/dev/"):
-        device = f"/dev/{device}"
-    
-    # Security check
-    if ".." in device or not Path(device).exists():
-        raise HTTPException(400, "Invalid device path")
+    """Get detailed SMART data for a whole disk of the host (``sda`` or ``/dev/sda``).
 
-    return parse_smart_data(device)
+    400 for anything else (a partition, the boot SD card, /dev/null, a
+    /dev/disk/by-id link, ...); 500 when the host's disks cannot be listed.
+    """
+    return parse_smart_data(storage_disks.whole_disk_device(device))
 
 
 @router.post("/disk/{device:path}/test")
@@ -827,16 +810,15 @@ def start_smart_test(
     background_tasks: BackgroundTasks = None,
     _: dict = Depends(verify_token)
 ):
-    """Start a SMART self-test."""
-    if not device.startswith("/dev/"):
-        device = f"/dev/{device}"
+    """Start a SMART self-test on a whole disk of the host (``sda`` or ``/dev/sda``).
 
+    400 for another device or test type; 500 when the host's disks cannot
+    be listed or smartctl fails.
+    """
     if test_type not in ["short", "long", "conveyance"]:
         raise HTTPException(400, "Invalid test type. Use: short, long, or conveyance")
 
-    # Security check
-    if ".." in device or not Path(device).exists():
-        raise HTTPException(400, "Invalid device path")
+    device = storage_disks.whole_disk_device(device)
 
     try:
         result = subprocess.run(
@@ -857,18 +839,10 @@ def start_smart_test(
 
 @router.get("/overview")
 def get_health_overview(_: dict = Depends(verify_token)):
-    """Get overall health overview of all disks."""
-    # List block devices with children to check root mounts
-    result = subprocess.run(
-        ["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise HTTPException(500, "Failed to list disks")
+    """Health counts of the disks of GET /health/disks (500 when they cannot be listed)."""
+    disks = storage_disks.host_disks_or_500()
 
-    data = json.loads(result.stdout)
-    
-    total_disks = 0
+    total_disks = len(disks)
     healthy_disks = 0
     warning_disks = 0
     failed_disks = 0
@@ -876,39 +850,22 @@ def get_health_overview(_: dict = Depends(verify_token)):
     total_temp = 0
     temp_count = 0
 
-    for dev in data.get("blockdevices", []):
-        if dev.get("type") != "disk":
-            continue
-        name = dev.get("name", "")
-        mountpoint = dev.get("mountpoint")
-        children = dev.get("children", [])
-        
-        # Skip system disks
-        if _is_system_disk(name, mountpoint, children):
-            continue
-
-        total_disks += 1
-        device_path = f"/dev/{name}"
-
-        try:
-            smart_info = parse_smart_data(device_path)
-            if smart_info.health_status == "PASSED":
-                # Check for warning attributes
-                has_warning = any(attr.status in ["warning", "critical"] for attr in smart_info.attributes)
-                if has_warning:
-                    warning_disks += 1
-                else:
-                    healthy_disks += 1
-            elif smart_info.health_status == "FAILED":
-                failed_disks += 1
+    for smart_info in map(_disk_health, disks):
+        if smart_info.health_status == "PASSED":
+            # Check for warning attributes
+            has_warning = any(attr.status in ["warning", "critical"] for attr in smart_info.attributes)
+            if has_warning:
+                warning_disks += 1
             else:
-                unknown_disks += 1
-
-            if smart_info.temperature:
-                total_temp += smart_info.temperature
-                temp_count += 1
-        except Exception:
+                healthy_disks += 1
+        elif smart_info.health_status == "FAILED":
+            failed_disks += 1
+        else:  # also when smartctl failed
             unknown_disks += 1
+
+        if smart_info.temperature:
+            total_temp += smart_info.temperature
+            temp_count += 1
 
     avg_temp = round(total_temp / temp_count) if temp_count > 0 else None
 
@@ -950,26 +907,45 @@ async def get_pool_raid_health(pool_name: str, _: dict = Depends(verify_token)):
 @router.post("/raid/{pool_name}/reset-stats")
 async def reset_device_stats(pool_name: str, _: dict = Depends(verify_token)):
     """Reset error statistics for a pool (after replacing a drive)."""
-    pool_path = f"/mnt/pools/{pool_name}"
+    name = validate_pool_name(pool_name)
+    pool_path = str(Path(storage_pools.settings.pools_base_path) / name)
     if not Path(pool_path).exists():
-        raise HTTPException(404, f"Pool not found: {pool_name}")
+        raise HTTPException(404, f"Pool not found: {name}")
 
-    result = subprocess.run(
-        ["btrfs", "device", "stats", "--reset", pool_path],
-        capture_output=True, text=True
-    )
+    # Off the event loop, with a timeout: btrfs can block on a hung pool.
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run, ["btrfs", "device", "stats", "--reset", pool_path],
+            capture_output=True, text=True, timeout=storage_pools.SCRUB_COMMAND_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            500, f"btrfs device stats did not answer within {storage_pools.SCRUB_COMMAND_TIMEOUT} "
+            f"seconds: pool {name} may not be responding",
+        )
 
     if result.returncode != 0:
         raise HTTPException(500, f"Failed to reset stats: {result.stderr}")
 
-    # Update saved status
-    status = load_previous_raid_status()
+    _clear_raid_errors(name)
+
+    return {"status": "ok", "message": f"Error stats reset for pool {name}"}
+
+
+def _clear_raid_errors(pool_name: str) -> None:
+    """After an error stats reset: the pool has no errors in the RAID status.
+
+    Starts from the latest check: the file is written only when the state
+    changes, so its check times can be old.
+    """
+    if _latest_raid_status is not None:
+        status = copy.deepcopy(_latest_raid_status)
+    else:
+        status = load_previous_raid_status()
     if pool_name in status:
         status[pool_name]["total_errors"] = 0
         status[pool_name]["status"] = "healthy"
         save_raid_status(status)
-
-    return {"status": "ok", "message": f"Error stats reset for pool {pool_name}"}
 
 
 @router.get("/raid-monitor/status")
@@ -978,7 +954,7 @@ async def get_raid_monitor_status(_: dict = Depends(verify_token)):
     return {
         "running": _raid_monitor_running,
         "check_interval_seconds": RAID_CHECK_INTERVAL,
-        "last_status": load_previous_raid_status()
+        "last_status": _latest_raid_status if _latest_raid_status is not None else load_previous_raid_status(),
     }
 
 

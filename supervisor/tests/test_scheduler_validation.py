@@ -1,8 +1,12 @@
 """Scheduler tasks: admin-only, validated targets at creation and at run time."""
 
+import contextlib
 import importlib
 import json
 import os
+import signal
+import subprocess
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +17,8 @@ from fastapi.testclient import TestClient
 from src.auth.utils import verify_token
 from src.main import app
 from src.scheduler.schemas import ScheduledTask
+
+from .test_pool_persistence import install_fake_host
 
 scheduler = importlib.import_module("src.scheduler.router")
 
@@ -30,11 +36,21 @@ def env(tmp_path, monkeypatch):
     app.dependency_overrides[verify_token] = lambda: ADMIN
     # Temporary directories are not mount points; treat existing pool directories as mounted.
     monkeypatch.setattr(scheduler, "_pool_is_mounted", scheduler._real_dir)
+    # The host's block devices, as lsblk reports them in the host namespaces
+    # (FakeHost also has the boot SD card mmcblk1 and the swap device zram0).
+    host = install_fake_host(monkeypatch)
+    host.add_disk("sda", serial="WD-1")
+    host.add_partition("sda", "sda1", fstype="ext4")
+    host.add_disk("sdc", serial="WD-3")
+    host.add_holder("sdc", "md0", "raid1")
+    host.add_disk("nvme0n1", rota=False, serial="NV-1")
+    host.add_disk("loop0", size=1_000_000)["type"] = "loop"
     with patch("src.security.validators.settings", SimpleNamespace(pools_base_path=str(base))):
+        # smartctl, btrfs and custom commands run in the container (subprocess.run).
         with patch("src.scheduler.router.subprocess.run") as run:
             run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             yield SimpleNamespace(client=TestClient(app), base=base, pool=base / "data",
-                                  outside=tmp_path / "outside", run=run, tmp=tmp_path)
+                                  outside=tmp_path / "outside", run=run, tmp=tmp_path, host=host)
     app.dependency_overrides.pop(verify_token, None)
 
 
@@ -122,12 +138,46 @@ def test_disk_targets_are_normalized(env, disk, stored):
     assert _stored(env)[0]["target_disk"] == stored
 
 
-@pytest.mark.parametrize("disk", ["/dev//dev/sda", "sda; reboot", "../sda", "/dev/../etc/passwd", "sda\n", "", None])
+@pytest.mark.parametrize(
+    "disk",
+    ["/dev//dev/sda", "sda; reboot", "../sda", "/dev/../etc/passwd", "sda\n", "", None, "dev/sda",
+     "/dev/./sda", "/dev/sda/", "/dev/disk/by-id/ata-WD-1", "mmcblk1"],
+)
 def test_invalid_disk_targets_rejected(env, disk):
     response = env.client.post(
         "/api/v1/scheduler/tasks", json=_task(task_type="smart_test", target_pool=None, target_disk=disk)
     )
     assert response.status_code == 400
+    assert _stored(env) == []
+
+
+@pytest.mark.parametrize(
+    "disk",
+    [
+        "/dev/sda1", "sda1",  # a partition
+        "sdz", "/dev/sdz",  # no such device
+        "zram0", "loop0",  # virtual devices
+        "md0",  # a RAID array built on sdc
+        "nvme0",  # the NVMe controller, not a block device
+    ],
+)
+def test_disk_target_must_be_a_whole_disk_of_the_host(env, disk):
+    response = env.client.post(
+        "/api/v1/scheduler/tasks", json=_task(task_type="smart_test", target_pool=None, target_disk=disk)
+    )
+    assert response.status_code == 400, response.text
+    assert "is not a disk of this system" in response.json()["detail"]
+    assert _stored(env) == []
+    env.run.assert_not_called()
+
+
+def test_disk_target_is_not_saved_when_the_host_disks_cannot_be_listed(env):
+    env.host.fail[("lsblk",)] = (1, "lsblk: failed to access sysfs directory: /sys/dev/block")
+    response = env.client.post(
+        "/api/v1/scheduler/tasks", json=_task(task_type="smart_test", target_pool=None, target_disk="/dev/sda")
+    )
+    assert response.status_code == 500
+    assert "Could not list the host's disks" in response.json()["detail"]
     assert _stored(env) == []
 
 
@@ -173,6 +223,83 @@ def test_update_is_validated(env):
     assert _stored(env) == [task]
 
 
+@pytest.mark.parametrize("disk", ["/dev/sda1", "md0", "sdz"])
+def test_update_checks_the_disk_on_the_host(env, disk):
+    env.client.post("/api/v1/scheduler/tasks", json=_task(task_type="smart_test", target_pool=None, target_disk="sda"))
+    (task,) = _stored(env)
+    response = env.client.put(
+        f"/api/v1/scheduler/tasks/{task['id']}", json=_task(task_type="smart_test", target_pool=None, target_disk=disk)
+    )
+    assert response.status_code == 400, response.text
+    assert "is not a disk of this system" in response.json()["detail"]
+    assert _stored(env) == [task]
+    env.run.assert_not_called()
+
+
+def test_update_keeps_the_disk_of_a_smart_task_while_it_is_disconnected(env):
+    """Changing the hour of a task for an unplugged USB disk must not need the disk."""
+    task = _create_smart_task(env, "/dev/nvme0n1")
+    env.host.tree = [node for node in env.host.tree if node["name"] != "nvme0n1"]
+    url = f"/api/v1/scheduler/tasks/{task['id']}"
+
+    for disk in ("/dev/nvme0n1", "nvme0n1"):
+        response = env.client.put(url, json=_task(task_type="smart_test", target_pool=None, target_disk=disk, hour=5))
+        assert response.status_code == 200, response.text
+        assert response.json()["target_disk"] == "/dev/nvme0n1"
+    (stored,) = _stored(env)
+    assert (stored["hour"], stored["target_disk"]) == (5, "/dev/nvme0n1")
+
+    # Another disk is still checked on the host.
+    response = env.client.put(url, json=_task(task_type="smart_test", target_pool=None, target_disk="/dev/sdz"))
+    assert response.status_code == 400, response.text
+    assert "/dev/sdz is not a disk of this system" in response.json()["detail"]
+    assert _stored(env) == [stored]
+
+    # The run checks the kept disk before smartctl runs.
+    env.client.post(f"{url}/run")
+    env.run.assert_not_called()
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    assert run["status"] == "failed"
+    assert "/dev/nvme0n1 is not a disk of this system" in run["error"]
+
+
+def test_a_disconnected_disk_is_only_kept_by_the_smart_task_that_has_it(env):
+    tasks = [
+        _task(id="task_snapshot"),
+        _task(id="task_smart_sda", task_type="smart_test", target_pool=None, target_disk="/dev/sda"),
+        _task(id="task_smart_nvme", task_type="smart_test", target_pool=None, target_disk="/dev/nvme0n1"),
+    ]
+    (env.tmp / "tasks.json").write_text(json.dumps(tasks))
+    env.host.tree = [node for node in env.host.tree if node["name"] != "nvme0n1"]
+
+    for task_id in ("task_snapshot", "task_smart_sda", "task_missing"):
+        response = env.client.put(
+            f"/api/v1/scheduler/tasks/{task_id}",
+            json=_task(task_type="smart_test", target_pool=None, target_disk="/dev/nvme0n1"),
+        )
+        assert response.status_code == 400, (task_id, response.text)
+        assert "/dev/nvme0n1 is not a disk of this system" in response.json()["detail"]
+    assert _stored(env) == tasks
+
+
+def test_tasks_created_in_the_same_second_get_different_ids(env, monkeypatch):
+    """The id was the creation time to the second: two tasks got the same id, and
+    deleting one deleted both (editing, running and toggling reached only the first)."""
+    frozen = datetime(2026, 1, 2, 3, 4, 5)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz is None else frozen.replace(tzinfo=tz)
+
+    monkeypatch.setattr(scheduler, "datetime", _FrozenDatetime)
+    first, second = [env.client.post("/api/v1/scheduler/tasks", json=_task(name=name)).json() for name in ("A", "B")]
+
+    assert first["id"] != second["id"]
+    assert env.client.delete(f"/api/v1/scheduler/tasks/{first['id']}").status_code == 200
+    assert [task["name"] for task in _stored(env)] == ["B"]
+
+
 def test_stored_tasks_that_predate_validation_still_load(env):
     legacy = _task(id="task_1", keep_count=0, target_pool="../../etc")
     (env.tmp / "tasks.json").write_text(json.dumps([legacy, _task(id="task_2")]))
@@ -194,6 +321,92 @@ async def test_smart_test_runs_on_normalized_device(env):
         ok, _ = await scheduler.execute_task(ScheduledTask(**_task(task_type="smart_test", target_disk=target)))
         assert ok
         assert _commands(env) == [["smartctl", "-t", "short", "/dev/sda"]]
+
+
+def _create_smart_task(env, disk: str) -> dict:
+    response = env.client.post(
+        "/api/v1/scheduler/tasks", json=_task(task_type="smart_test", target_pool=None, target_disk=disk)
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+# The Scheduler tab sends the device path of the disk it lists (Disk.path);
+# older clients and hand-written task files use the bare name.
+@pytest.mark.parametrize("disk", ["/dev/sda", "sda", "/dev/nvme0n1"])
+def test_smart_task_end_to_end(env, disk):
+    """Save the task, run it now, read the result: smartctl gets the device path once."""
+    device = disk if disk.startswith("/dev/") else f"/dev/{disk}"
+    env.run.return_value = MagicMock(returncode=0, stdout="Testing has begun.\n", stderr="")
+    task = _create_smart_task(env, disk)
+    assert task["target_disk"] == device
+
+    response = env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    assert response.status_code == 200, response.text
+    assert _commands(env) == [["smartctl", "-t", "short", device]]
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    assert (run["status"], run["output"], run["error"]) == ("success", "SMART test started", None)
+    (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
+    assert stored["last_status"] == "success"
+
+
+def test_failed_smart_test_is_recorded(env):
+    env.run.return_value = MagicMock(
+        returncode=2, stdout="", stderr="Smartctl open device: /dev/sda failed: No such device"
+    )
+    task = _create_smart_task(env, "/dev/sda")
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    assert _commands(env) == [["smartctl", "-t", "short", "/dev/sda"]]
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    assert run["status"] == "failed"
+    assert "No such device" in run["error"]
+
+
+def test_hanging_smart_test_is_recorded_as_timed_out(env):
+    """A hung disk or USB bridge must not block a worker thread and leave the run "running"."""
+
+    def smartctl(cmd, **kwargs):
+        if kwargs.get("timeout") is None:
+            raise AssertionError("smartctl was started without a timeout and would never return")
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    env.run.side_effect = smartctl
+    task = _create_smart_task(env, "/dev/sda")
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    assert run["status"] == "failed" and run["finished_at"]
+    assert run["error"] == (
+        "smartctl timed out: /dev/sda did not answer within 60 seconds. "
+        "The disk or its USB bridge may not be responding."
+    )
+    assert env.run.call_args.kwargs["timeout"] == scheduler.SMART_TEST_TIMEOUT == 60
+    (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
+    assert stored["last_status"] == "failed"
+
+
+def test_smart_task_whose_disk_is_gone_fails_without_smartctl(env):
+    task = _create_smart_task(env, "/dev/nvme0n1")
+    env.host.tree = [node for node in env.host.tree if node["name"] != "nvme0n1"]
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    env.run.assert_not_called()
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    assert run["status"] == "failed"
+    assert "/dev/nvme0n1 is not a disk of this system" in run["error"]
+
+
+@pytest.mark.parametrize("disk", ["/dev/sda1", "sdz", "zram0", "md0"])
+async def test_stored_smart_task_on_a_device_that_is_no_whole_disk_fails(env, disk):
+    ok, message = await scheduler.execute_task(ScheduledTask(**_task(task_type="smart_test", target_disk=disk)))
+    assert not ok
+    assert "is not a disk of this system" in message
+    env.run.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -251,6 +464,88 @@ async def test_scrub_task(env):
     ok, _ = await scheduler.execute_task(ScheduledTask(**_task(task_type="scrub")))
     assert ok
     assert _commands(env) == [["btrfs", "scrub", "start", str(env.pool)]]
+    assert env.run.call_args.kwargs["timeout"] == scheduler.SCRUB_START_TIMEOUT == 60
+
+
+async def test_scrub_of_an_unmounted_pool_fails_without_btrfs(env, monkeypatch):
+    """Not mounted, the pool's path is a folder on the root filesystem: btrfs would scrub that one if it is btrfs."""
+    monkeypatch.setattr(scheduler, "_pool_is_mounted", lambda pool: False)
+
+    ok, message = await scheduler.execute_task(ScheduledTask(**_task(task_type="scrub")))
+
+    assert not ok and message == f"Pool data is not mounted at {env.pool}"
+    env.run.assert_not_called()
+
+
+async def test_hanging_scrub_start_is_recorded_as_timed_out(env):
+    """A hung filesystem must not block a worker thread and leave the run "running"."""
+
+    def btrfs(cmd, **kwargs):
+        if kwargs.get("timeout") is None:
+            raise AssertionError("btrfs scrub start was run without a timeout and would never return")
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    env.run.side_effect = btrfs
+
+    ok, message = await scheduler.execute_task(ScheduledTask(**_task(task_type="scrub")))
+
+    assert not ok
+    assert message == (
+        "btrfs scrub start timed out: data did not answer within 60 seconds. "
+        "The pool may not be responding."
+    )
+
+
+# The env fixture replaces subprocess.run with a mock; the next test runs a fake btrfs.
+_REAL_RUN = subprocess.run
+# What the fake btrfs does for "scrub start". Without -B, btrfs-progs forks the
+# process that runs the scrub and returns at once; that process keeps the
+# standard output and error of btrfs open (it closes none of them) until the
+# scrub ends, hours later on a large pool.
+FAKE_SCRUB_START = {
+    "running": 'sleep 300 &\necho $! > "$0.pid"\necho "scrub started on $3, fsid 4d1c2b3a (pid=$!)"\n',
+    "refused": 'echo "ERROR: not a btrfs filesystem: $3" >&2\nexit 1\n',
+    "hanging": "exec sleep 300\n",
+}
+
+
+@pytest.mark.parametrize("btrfs", FAKE_SCRUB_START)
+def test_a_scheduled_scrub_is_recorded_when_btrfs_returns(env, monkeypatch, btrfs):
+    """Not when the scrub ends: the run read the output of btrfs through pipes
+    up to their end, which the process of the scrub holds, and so recorded a
+    scrub longer than SCRUB_START_TIMEOUT as timed out ("The pool may not be
+    responding") while it ran."""
+    monkeypatch.setattr(scheduler, "SCRUB_START_TIMEOUT", 5)
+    bin_dir = env.tmp / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "btrfs").write_text("#!/bin/sh\n" + FAKE_SCRUB_START[btrfs])
+    (bin_dir / "btrfs").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    env.run.side_effect = _REAL_RUN
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task(name="Scrub", task_type="scrub")).json()
+    scrub = bin_dir / "btrfs.pid"
+    try:
+        env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+        assert _commands(env) == [["btrfs", "scrub", "start", str(env.pool)]]
+        (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+        (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
+        assert run["finished_at"]
+        if btrfs == "running":
+            os.kill(int(scrub.read_text()), 0)  # still running: the run did not wait for it
+            assert (run["status"], run["output"], run["error"]) == ("success", "Scrub started", None)
+        elif btrfs == "refused":
+            assert (run["status"], run["error"]) == ("failed", f"ERROR: not a btrfs filesystem: {env.pool}\n")
+        else:
+            assert (run["status"], run["error"]) == (
+                "failed",
+                "btrfs scrub start timed out: data did not answer within 5 seconds. The pool may not be responding.",
+            )
+        assert stored["last_status"] == run["status"]
+    finally:
+        if scrub.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(scrub.read_text()), signal.SIGKILL)
 
 
 async def test_cleanup_only_deletes_real_auto_snapshots(env):

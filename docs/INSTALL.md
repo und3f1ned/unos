@@ -28,6 +28,13 @@ This guide provides detailed instructions for installing UNOS on your system.
 | Raspberry Pi OS | 64-bit | ✅ Fully Supported |
 | Armbian | Latest | ⚠️ Community Supported |
 
+Docker: `install.sh` installs Docker Engine with the Compose plugin from
+Docker's repository when Docker is missing. When Docker is already installed,
+it needs Docker Compose v2 (`docker compose version`): the packages
+`docker-compose-plugin` from Docker's repository, `docker-compose-v2` on
+Ubuntu, or `docker-compose` on Debian 13. Debian 12's `docker-compose` (1.29)
+is not enough; the script then stops before it changes anything.
+
 ### Supported Architectures
 
 - **AMD64** (x86_64) - Intel/AMD processors
@@ -64,6 +71,13 @@ This guide provides detailed instructions for installing UNOS on your system.
 | RAM | 4 GB or more |
 | System Storage | 16 GB SSD |
 | Network | 1 Gbps Ethernet |
+
+The supervisor keeps its temporary files in RAM instead of on the system disk:
+at most 2 GiB, and only while a backup is made or restored, or `update.sh`
+saves the database before an update. A restore needs about twice the size of
+the database, a backup and `update.sh` about its size. Uploads need none:
+files go straight to their folder, and an uploaded backup is checked in one
+pass that writes nothing.
 
 ### Storage Disks
 
@@ -214,7 +228,7 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/unos/deploy
 EnvironmentFile=/etc/unos/secrets.env
-ExecStart=/usr/bin/docker compose up -d
+ExecStart=/usr/bin/docker compose up -d --wait-timeout 680
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=0
 
@@ -225,6 +239,19 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable unos.service
 ```
+
+`docker compose up` starts the web interface only once the supervisor answers
+its health check. The supervisor first mounts the pools the host has not
+mounted, up to two minutes each. Docker counts a failed check only if it
+started after 10 minutes (`start_period` in `docker-compose.yml`), so the
+check that runs then does not count, and reports the supervisor unhealthy
+once three more have failed (`retries`); each check takes up to 10 seconds
+(`timeout`), and Docker waits 10 seconds (`interval`) after each one.
+`--wait-timeout 680`, `start_period` + (`retries` + 1) × (`interval` +
+`timeout`), covers that time: `docker compose up` does not give up before
+Docker has decided. Docker Compose applies the option to this wait from
+version 2.30 on (`docker compose version`); versions before 2.17 reject it, so
+leave it out there, as `install.sh` does.
 
 ---
 
@@ -475,12 +502,22 @@ The script:
    util-linux `flock` it only warns.
 2. Backs up the database (consistently, with SQLite's online backup API) and
    the rest of the data volume to `/var/lib/unos/backups/update-<date>/`. Only
-   root can read the backups: they contain the JWT signing secret.
+   root can read the backups: they contain the JWT signing secret. If the
+   backup fails, nothing has changed yet: the script asks whether to update
+   without a backup, and stops if the answer is no or there is no terminal.
 3. Tags the running images `:previous`, pulls the update and builds the new
    images while UNOS keeps running. If the build fails, nothing changes.
-4. Restarts UNOS (`docker compose down`, then `up -d`) and waits up to five
-   minutes (`UNOS_HEALTH_TIMEOUT`, in seconds) for the health check over HTTP
-   and HTTPS.
+4. Restarts UNOS (`docker compose down`, then `up -d`). `docker compose up`
+   starts the web interface once the supervisor answers its health check. The
+   supervisor first mounts the pools the host has not mounted, up to two
+   minutes each. With Docker Compose 2.30 or later, `up` waits for it up to
+   680 seconds, as long as Docker can take to report it healthy or unhealthy
+   (see [Step 7](#step-7-create-systemd-service-optional)), or
+   `UNOS_HEALTH_TIMEOUT` seconds if that is longer. The script then waits up
+   to `UNOS_HEALTH_TIMEOUT` seconds (default 300) for the health check over
+   HTTP and HTTPS; if UNOS needs longer to answer, run it again with a longer
+   limit, such as `sudo UNOS_HEALTH_TIMEOUT=600 /opt/unos/deploy/update.sh`.
+   The error message suggests twice the last limit, at least 600 seconds.
 5. If the new version does not start or answer, starts the previous images and
    source revision again and exits with an error. Otherwise it removes unused
    images; the previous ones stay tagged `:previous`.
@@ -519,6 +556,10 @@ a few steps once.
 
 Before updating:
 
+- Check **System** → **Scheduler**: after the update, enabled scheduled tasks
+  run on their schedule for the first time (earlier releases never started the
+  scheduler; only Run now ran a task), including custom commands, which run as
+  root.
 - `git -C /opt/unos status` must show no local changes. This update still runs
   the update script of the version you have installed, which stashes local
   changes and replaces them with the upstream code. It also stops UNOS while it
@@ -546,6 +587,11 @@ After updating:
 - Open `https://<server address>`; `http://` only redirects. Expect the
   certificate warning described in
   [HTTPS and the Certificate Warning](#https-and-the-certificate-warning).
+  Scripts and monitoring that call the API must use `https://` too and trust
+  Caddy's local CA (or skip the certificate check): tools such as curl fail
+  on the certificate instead of warning. Request bodies are limited to 1 MiB
+  (HTTP 413), except file uploads (no limit) and backup uploads (a backup
+  file of at most 256 MiB).
 - Everyone signs in again once: the web interface has a new address (`https://`),
   and installations without `JWT_SECRET` now use the secret that the
   supervisor generates on first start. A `JWT_SECRET=` line in
@@ -555,17 +601,37 @@ After updating:
   sessions and API tokens get HTTP 403 from the administrator-only APIs,
   including `/api/v1/health/prometheus`: monitoring needs an administrator's
   API token.
-- Scheduled tasks, disk health (SMART and RAID) alerts and the UPS monitor run
-  for the first time; earlier releases never started them. Check
-  **System** → **Scheduler** before updating, especially custom commands,
-  which run as root.
+- Scheduled tasks run on their schedule, and disk health (SMART and RAID)
+  alerts and the UPS monitor run, for the first time; earlier releases never
+  started the scheduler or these monitors.
 - Apps installed by earlier releases keep their data in `/mnt/pools/default` on
-  the system disk. The App Store marks them and UNOS no longer starts them:
-  uninstall such an app (its data is kept), move the folders onto a pool and
-  install the app again on that pool.
+  the system disk. The App Store marks them and UNOS no longer starts them,
+  but Docker keeps them running and restarts them at boot until they are
+  stopped: uninstall such an app (its data is kept), move the folders onto a
+  pool and install the app again on that pool.
 - Scripts that use the WebSocket API must send
   `{"type": "auth", "token": "<token>"}` as the first message; a `?token=`
-  parameter in the URL is refused.
+  parameter in the URL is refused. A message larger than 64 KiB sent to UNOS
+  closes the connection (code 1009; without a code when the proxy closes it
+  while the client is still sending), and messages are not compressed
+  (`permessage-deflate` is off).
+- Optional: the `unos` systemd unit written by an earlier `install.sh` runs
+  `docker compose up -d` without `--wait-timeout`. It keeps working; with
+  Docker Compose 2.30 or later (`docker compose version`; versions before 2.17
+  reject the option), add the limit of a new installation, so that starting
+  UNOS (also at boot) waits for the supervisor no longer than Docker can take
+  to report it healthy or unhealthy (see
+  [Step 7](#step-7-create-systemd-service-optional)):
+  ```bash
+  sudo sed -i -E 's#^(ExecStart=/usr/bin/docker compose up -d)( --wait-timeout [0-9]+)?$#\1 --wait-timeout 680#' /etc/systemd/system/unos.service
+  sudo systemctl daemon-reload
+  grep '^ExecStart=' /etc/systemd/system/unos.service   # ... up -d --wait-timeout 680
+  ```
+  Or run `install.sh` again: it runs `apt-get install` for its system packages
+  (which upgrades those with a newer version), writes the unit as for a new
+  installation, keeps `/etc/unos/secrets.env` and the shares in `smb.conf`,
+  checks out and pulls `UNOS_BRANCH` (default `main`), restarts Samba, and
+  rebuilds and restarts UNOS, without the backup and rollback of `update.sh`.
 
 #### Pools created before this release
 

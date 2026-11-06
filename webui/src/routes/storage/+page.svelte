@@ -12,11 +12,16 @@
 		cancelScrub,
 		deviceIdentity,
 		isChangedDiskError,
+		getVolumes,
+		createVolume,
+		deleteVolume,
+		VOLUME_NAME_PATTERN,
 		type DeviceIdentity,
 		type Disk,
 		type Pool,
 		type RaidLevel,
-		type ScrubStatus
+		type ScrubStatus,
+		type Volume
 	} from '$lib/api/storage';
 	import { ApiError } from '$lib/api/client';
 	import {
@@ -30,7 +35,8 @@
 		XCircle,
 		Loader2,
 		Plug,
-		Unplug
+		Unplug,
+		Layers
 	} from 'lucide-svelte';
 	import {
 		Button,
@@ -400,6 +406,113 @@
 		}
 	}
 
+	// ---- Volumes ----
+
+	// The mounted pool whose volumes (btrfs subvolumes) the dialog shows.
+	let volumesPool: Pool | null = null;
+	let volumes: Volume[] = [];
+	let volumesLoading = false;
+	let volumesError = '';
+	let newVolumeName = '';
+	let creatingVolume = false;
+	let createVolumeError = '';
+	let volumeToDelete: Volume | null = null;
+	let deleteVolumeConfirm = '';
+	let deletingVolume = false;
+	let deleteVolumeError = '';
+
+	$: volumeBusy = creatingVolume || deletingVolume;
+	// btrfs cannot create or delete subvolumes on a read-only pool (the API answers 409).
+	$: volumesReadOnly = volumesPool?.read_only ?? false;
+	$: newVolumeNameValid = VOLUME_NAME_PATTERN.test(newVolumeName);
+	$: newVolumeNameError =
+		newVolumeName && !newVolumeNameValid
+			? "Use letters, numbers, '-' and '_' (up to 63), starting with a letter or number"
+			: '';
+
+	async function openVolumes(pool: Pool) {
+		volumesPool = pool;
+		volumes = [];
+		newVolumeName = '';
+		createVolumeError = '';
+		volumeToDelete = null;
+		await loadVolumes();
+	}
+
+	function closeVolumes() {
+		if (volumeBusy) return;
+		volumesPool = null;
+		volumeToDelete = null;
+	}
+
+	// Only the latest request updates the dialog (it may have been reopened for another pool).
+	let volumesRequest = 0;
+
+	async function loadVolumes() {
+		const pool = volumesPool?.name;
+		if (!pool) return;
+		const request = ++volumesRequest;
+		volumesLoading = true;
+		volumesError = '';
+		try {
+			const list = await getVolumes(pool);
+			if (request === volumesRequest) volumes = list;
+		} catch (e) {
+			// e.g. 409 when the pool was unmounted meanwhile
+			if (request === volumesRequest) volumesError = messageOf(e);
+		} finally {
+			if (request === volumesRequest) volumesLoading = false;
+		}
+	}
+
+	async function handleCreateVolume() {
+		if (!volumesPool || !newVolumeNameValid || volumeBusy || volumesReadOnly) return;
+		creatingVolume = true;
+		createVolumeError = '';
+		try {
+			// The pool is part of the URL; the body only names the volume.
+			await createVolume(volumesPool.name, { name: newVolumeName });
+			newVolumeName = '';
+			creatingVolume = false;
+			await loadVolumes();
+		} catch (e) {
+			// 409: not mounted, read-only or not at its top level, or the name is taken; 400: invalid name
+			createVolumeError = messageOf(e);
+		} finally {
+			creatingVolume = false;
+		}
+	}
+
+	function askDeleteVolume(volume: Volume) {
+		if (volumesReadOnly) return;
+		volumeToDelete = volume;
+		deleteVolumeConfirm = '';
+		deleteVolumeError = '';
+	}
+
+	function cancelDeleteVolume() {
+		if (deletingVolume) return;
+		volumeToDelete = null;
+	}
+
+	async function handleDeleteVolume() {
+		if (!volumesPool || !volumeToDelete || deleteVolumeConfirm !== volumeToDelete.name) return;
+		deletingVolume = true;
+		deleteVolumeError = '';
+		try {
+			await deleteVolume(volumesPool.name, volumeToDelete.name);
+			deletingVolume = false;
+			volumeToDelete = null;
+			await loadVolumes();
+		} catch (e) {
+			// 409: in use by containers, shares or exports, or holds snapshots;
+			// 503: Docker could not be asked about the containers
+			deleteVolumeError = messageOf(e);
+		} finally {
+			deletingVolume = false;
+		}
+	}
+
 	const raidOptions = [
 		{ value: 'single', label: 'Single (No RAID) — 1+ disk' },
 		{ value: 'raid0', label: 'RAID 0 (Striping) — 2+ disks' },
@@ -571,6 +684,14 @@
 												Scrub
 											</Button>
 										{/if}
+										<Button
+											variant="secondary"
+											size="sm"
+											icon={Layers}
+											on:click={() => openVolumes(pool)}
+										>
+											Volumes
+										</Button>
 										<Button
 											variant="secondary"
 											size="sm"
@@ -1031,5 +1152,128 @@
 				</Button>
 			{/if}
 		{/if}
+	</svelte:fragment>
+</Modal>
+
+<!-- Volumes Modal -->
+<Modal
+	open={volumesPool !== null}
+	title={volumesPool ? `Volumes on ${volumesPool.name}` : 'Volumes'}
+	size="lg"
+	closable={!volumeBusy}
+	on:close={closeVolumes}
+>
+	{#if volumesPool}
+		<div class="space-y-4">
+			<!-- btrfs snapshots are not recursive, and the Snapshots page and scheduled
+			     snapshot tasks only offer pools: say so before files move into a volume. -->
+			<p class="text-sm text-secondary">
+				A volume is a btrfs subvolume in
+				<span class="mono-xs">{volumesPool.mountpoint || `/mnt/pools/${volumesPool.name}`}</span>
+				that can be shared on its own. Snapshots of the pool do not include the files in its
+				volumes.
+			</p>
+
+			{#if volumesReadOnly}
+				<Alert variant="warning" title="Mounted read-only">
+					Volumes cannot be created or deleted while the pool is mounted read-only.
+					{#if volumesPool.forced_read_only}
+						btrfs made it read-only after an error; check the kernel log (dmesg).
+					{/if}
+				</Alert>
+			{/if}
+
+			{#if volumesLoading}
+				<p class="loading-text">Loading volumes...</p>
+			{:else if volumesError}
+				<Alert variant="error" title="Could not load the volumes">{volumesError}</Alert>
+			{:else if volumes.length === 0}
+				<p class="text-muted text-sm">No volumes yet</p>
+			{:else}
+				<ul class="space-y-2">
+					{#each volumes as volume (volume.name)}
+						<li class="card-nested flex items-center justify-between gap-2">
+							<div class="min-w-0">
+								<p class="font-semibold">{volume.name}</p>
+								<p class="mono-xs text-muted break-all">{volume.path}</p>
+							</div>
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								disabled={volumeBusy || volumesReadOnly}
+								on:click={() => askDeleteVolume(volume)}
+							>
+								<Trash2 class="w-4 h-4 text-error" />
+								<span class="sr-only">Delete volume {volume.name}</span>
+							</Button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+
+			{#if volumeToDelete}
+				<Alert variant="error" title={`Delete volume "${volumeToDelete.name}"?`}>
+					All files in <span class="mono-xs">{volumeToDelete.path}</span> are deleted with it,
+					including those of stopped apps. This cannot be undone. While a running app or
+					container, an SMB share or an NFS export uses the volume, it is not deleted.
+				</Alert>
+				<Input
+					label="Type the volume name to confirm"
+					bind:value={deleteVolumeConfirm}
+					placeholder={volumeToDelete.name}
+					autocomplete="off"
+				/>
+				{#if deleteVolumeError}
+					<Alert variant="error" title="Volume was not deleted">{deleteVolumeError}</Alert>
+				{/if}
+				<div class="flex gap-2">
+					<Button
+						variant="secondary"
+						class="flex-1"
+						disabled={deletingVolume}
+						on:click={cancelDeleteVolume}
+					>
+						Cancel
+					</Button>
+					<Button
+						variant="danger"
+						class="flex-1"
+						loading={deletingVolume}
+						disabled={deleteVolumeConfirm !== volumeToDelete.name}
+						on:click={handleDeleteVolume}
+					>
+						Delete Volume
+					</Button>
+				</div>
+			{:else}
+				<form on:submit|preventDefault={handleCreateVolume} class="space-y-2">
+					<Input
+						label="New volume name"
+						bind:value={newVolumeName}
+						placeholder="documents"
+						autocomplete="off"
+						disabled={volumesReadOnly}
+						error={newVolumeNameError}
+					/>
+					{#if createVolumeError}
+						<Alert variant="error" title="Volume was not created">{createVolumeError}</Alert>
+					{/if}
+					<Button
+						type="submit"
+						icon={Plus}
+						loading={creatingVolume}
+						disabled={!newVolumeNameValid || volumeBusy || volumesReadOnly}
+					>
+						Create Volume
+					</Button>
+				</form>
+			{/if}
+		</div>
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={volumeBusy} on:click={closeVolumes}>
+			Close
+		</Button>
 	</svelte:fragment>
 </Modal>

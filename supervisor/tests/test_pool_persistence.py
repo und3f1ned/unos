@@ -78,8 +78,19 @@ class FakeDocker:
 
     def __init__(self) -> None:
         self.containers_: list[dict] = []  # inspect format: Id, Name, Config.Labels, State, ...
+        self.volumes: dict[str, dict] = {}  # name -> `docker volume inspect` format
         self.started: list[str] = []
         self.unavailable = False
+
+    def add_volume(self, name, *, driver="local", options=None) -> dict:
+        """A Docker volume; returns the mount of it to pass to ``add(mounts=...)``."""
+        self.volumes[name] = {
+            "Name": name, "Driver": driver, "Mountpoint": f"/var/lib/docker/volumes/{name}/_data",
+            "Options": options, "Scope": "local", "Labels": None,
+        }
+        return {"Type": "volume", "Name": name, "Source": f"/var/lib/docker/volumes/{name}/_data",
+                "Destination": f"/{name}", "Driver": driver, "Mode": "z", "RW": True,
+                "Propagation": ""}
 
     def add(self, name, *, sources=(), labels=None, running=True, error="", policy="unless-stopped",
             mounts=None):
@@ -129,6 +140,11 @@ class FakeDocker:
 
     def inspect_container(self, container_id):
         return next(c for c in self.containers_ if c["Id"] == container_id)
+
+    def inspect_volume(self, name):
+        if name not in self.volumes:
+            raise docker.errors.NotFound(f"get {name}: no such volume")
+        return self.volumes[name]
 
     def start(self, container_id):
         container = self.inspect_container(container_id)
@@ -278,7 +294,7 @@ class FakeHost:
 
     # -- command dispatch ---------------------------------------------------
 
-    def run(self, cmd, *, timeout=60, check=False, input=None):
+    def run(self, cmd, *, timeout=60, check=False, input=None, errors=None):
         cmd = list(cmd)
         self.calls.append(cmd)
         result = None
@@ -288,9 +304,23 @@ class FakeHost:
                 break
         if result is None:
             result = self._dispatch(cmd, input)
+        result = self._decoded(result, errors)
         if check and not result.ok:
             raise HostCommandError(cmd, result.returncode, result.stderr)
         return result
+
+    @staticmethod
+    def _decoded(result, errors):
+        """The output as subprocess.run(text=True, errors=errors) decodes it (UTF-8 locale).
+
+        Fake output holds bytes that are not UTF-8 as surrogate escapes
+        (``b"x\\xff".decode("utf-8", "surrogateescape")``): strict decoding,
+        the default, raises UnicodeDecodeError, like real output with them.
+        """
+        def decode(text):
+            return text.encode("utf-8", "surrogateescape").decode("utf-8", errors or "strict")
+
+        return HostResult(result.returncode, decode(result.stdout), decode(result.stderr))
 
     def _dispatch(self, cmd, input):
         prog = cmd[0]
@@ -324,7 +354,10 @@ class FakeHost:
             names = self.contents.get(target) or (["something"] if target in self.nonempty else [])
             return self._result(stdout="".join(f"{target}/{name}\0" for name in names))
         if prog == "findmnt":
-            return self._result(stdout=json.dumps({"filesystems": self.mounts}))
+            # findmnt -J prints the bytes of a name as they are, also bytes that
+            # are not UTF-8 (it escapes only quotes, backslashes and control
+            # characters).
+            return self._result(stdout=json.dumps({"filesystems": self.mounts}, ensure_ascii=False))
         if prog == "lsblk":
             return self._result(stdout=self._lsblk())
         if prog == "swapon":
@@ -359,7 +392,9 @@ class FakeHost:
                 out["children"] = [render(child) for child in node["children"]]
             return out
 
-        return json.dumps({"blockdevices": [render(node) for node in self.tree]})
+        # Like findmnt, lsblk -J prints labels, models and mountpoints with
+        # their bytes as they are, also bytes that are not UTF-8.
+        return json.dumps({"blockdevices": [render(node) for node in self.tree]}, ensure_ascii=False)
 
     def _btrfs(self, cmd):
         sub = cmd[1:3]
@@ -785,6 +820,14 @@ class TestMountPool:
         with pytest.raises(pools.PoolConflictError, match=r"file04 and 7 more"):
             pools.mount_pool("data")
 
+    def test_hidden_file_whose_name_is_not_utf8(self, data_pool):
+        # b"caf\xe9" (Latin-1), as an SMB client could write it: the mount was
+        # refused with "'utf-8' codec can't decode byte 0xe9" (HTTP 400).
+        data_pool.contents["/mnt/pools/data"] = [b"caf\xe9".decode("utf-8", "surrogateescape")]
+        with pytest.raises(pools.PoolConflictError, match="1 item\\(s\\) on the host's boot disk \\(caf\ufffd\\)"):
+            pools.mount_pool("data")
+        assert data_pool.changes == []
+
     def test_unreadable_mountpoint_is_not_mounted_over(self, data_pool):
         data_pool.fail[("find",)] = (1, "find: '/mnt/pools/data': Input/output error")
         with pytest.raises(RuntimeError, match="Could not check whether /mnt/pools/data is empty"):
@@ -889,6 +932,41 @@ class TestUnmountAndDelete:
         with pytest.raises(pools.PoolBusyError, match=r"running containers \(jellyfin, transmission\)"):
             operation("data")
         assert mounted.changes == []  # not even an umount
+        self.assert_still_mounted_and_persistent(mounted)
+
+    # A Docker volume of the local driver that binds a folder of the pool
+    # (driver_opts type: none, o: bind, device: <folder>): Docker reports the
+    # volume's own folder below /var/lib/docker/volumes as the Source, and the
+    # volume's mount on the host passed the check after the umount as one the
+    # administrator made ("also mounted elsewhere on the host").
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    def test_refuses_while_a_containers_docker_volume_binds_a_folder_of_the_pool(self, mounted, operation):
+        mounted.add_mount("/var/lib/docker/volumes/paperless_media/_data",
+                          "/dev/sda[/apps/paperless/media]", "btrfs", DATA_UUID)
+        options = {"type": "none", "o": "bind", "device": "/mnt/pools/data/apps/paperless/media"}
+        mounted.docker.add("paperless", mounts=[
+            mounted.docker.add_volume("paperless_media", options=options),
+            mounted.docker.add_volume("paperless_db"),  # a plain named volume
+        ])
+        with pytest.raises(pools.PoolBusyError, match=r"running containers \(paperless\)"):
+            operation("data")
+        assert mounted.changes == []
+        self.assert_still_mounted_and_persistent(mounted)
+
+    def test_docker_volumes_that_bind_no_folder_of_the_pool_do_not_count(self, mounted):
+        mounted.docker.add("app", mounts=[
+            mounted.docker.add_volume("db"),
+            mounted.docker.add_volume("other", options={"type": "none", "o": "bind", "device": "/mnt/pools/database"}),
+        ])
+        assert not pools.unmount_pool("data").mounted
+
+    def test_docker_volume_that_cannot_be_inspected_leaves_the_check_after_unmounting(self, mounted, caplog):
+        mounted.docker.add("app", mounts=[mounted.docker.add_volume("media")])
+        mounted.docker.volumes.clear()  # inspect_volume: 404
+        mounted.held.add(DATA_UUID)
+        with pytest.raises(pools.PoolBusyError, match="mounted again"):
+            pools.unmount_pool("data")
+        assert "Could not list the running containers or their volumes" in caplog.text
         self.assert_still_mounted_and_persistent(mounted)
 
     def test_refuses_while_an_app_is_labelled_with_the_pool(self, mounted):

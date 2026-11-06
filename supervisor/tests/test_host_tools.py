@@ -1,11 +1,14 @@
 """host.missing_host_binaries: one host command lists the programs the host lacks.
 
-These tests run the check locally (UNOS_HOST_EXEC=local), so they need /bin/sh
-but no nsenter and no privileges.
+Also how host.run_on_host decodes the output of a command. These tests run
+the commands locally (UNOS_HOST_EXEC=local), so they need /bin/sh but no
+nsenter and no privileges.
 """
+import asyncio
 import logging
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -141,3 +144,30 @@ def test_host_tools_list_names_the_programs_run_on_the_host():
     assert all(isinstance(pkg, str) and pkg for pkg in host.HOST_TOOLS.values())
     assert {"btrfs", "mkfs.btrfs", "chattr", "udevadm", "testparm", "smbcontrol",
             "findmnt", "lsblk", "wipefs", "blkid", "mount", "umount"} <= set(host.HOST_TOOLS)
+
+
+# ---------------------------------------------------------------------------
+# run_on_host: decoding the output
+# ---------------------------------------------------------------------------
+
+# A command that prints a name that is not UTF-8, as btrfs-progs prints such
+# subvolume names (raw bytes).
+NOT_UTF8_OUTPUT = [sys.executable, "-c", r"import sys; sys.stdout.buffer.write(b'ID 300 path x\xff\n')"]
+
+
+def test_output_is_decoded_strictly_by_default():
+    with pytest.raises(UnicodeDecodeError):
+        host.run_on_host(NOT_UTF8_OUTPUT)
+
+
+def test_output_with_replaced_bytes():
+    result = host.run_on_host(NOT_UTF8_OUTPUT, errors="replace")
+
+    assert result.ok
+    assert result.stdout == "ID 300 path x�\n"
+
+
+def test_errors_reach_the_async_wrapper_too():
+    result = asyncio.run(host.run_on_host_async(NOT_UTF8_OUTPUT, errors="replace"))
+
+    assert result.stdout == "ID 300 path x�\n"

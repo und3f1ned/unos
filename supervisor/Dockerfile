@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 
+# No .pyc files: the container's writable layer is on the system disk (SD card).
+ENV PYTHONDONTWRITEBYTECODE=1
+
 EXPOSE 8080
 
 # Every request reaches the supervisor through Caddy (the webui container), so
@@ -32,4 +35,16 @@ EXPOSE 8080
 # overwrites a client-supplied X-Forwarded-For with the real peer address (no
 # trusted_proxies configured), so the value cannot be spoofed through the
 # proxy.
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers"]
+#
+# --ws-max-size: uvicorn reads a whole WebSocket message into memory before
+# the application gets it, also the first message of a socket, which is read
+# before the client is authenticated (src/websocket/events.py). Uvicorn's
+# default allows 16 MiB per message; the only message clients send is
+# {"type": "auth", "token": ...}, well under 1 KiB. A larger message closes
+# the socket with 1009.
+# --ws-per-message-deflate false: uvicorn inflates and queues every message of
+# one read from the socket before the application reads the first, so
+# compressed messages (86 bytes on the wire for 65,000) would still let one
+# unauthenticated socket make the supervisor hold hundreds of MiB.
+# Keep both options in supervisor/Dockerfile.test the same.
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--ws-max-size", "65536", "--ws-per-message-deflate", "false"]

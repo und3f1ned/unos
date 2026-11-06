@@ -1,6 +1,9 @@
 import asyncio
+import contextlib
 import importlib
 import json
+import os
+import signal
 import subprocess
 import threading
 import time
@@ -33,6 +36,7 @@ from src.storage.schemas import (
 from .test_pool_persistence import (
     BASE_FSTAB,
     DATA_UUID,
+    MEDIA_UUID,
     admin_client,
     entry,
     install_fake_host,
@@ -246,25 +250,39 @@ class TestPoolsModule:
         assert (pool.health, pool.mounted, pool.persistent) == ("unknown", False, False)
 
     def test_volume_create_schema(self):
-        """Test VolumeCreate schema."""
+        """VolumeCreate is the request body; the pool is in the URL (see test_volumes.py)."""
         volume = VolumeCreate(
-            pool_name="datapool",
             name="documents",
             quota=1073741824  # 1GB
         )
-        
-        assert volume.pool_name == "datapool"
+
         assert volume.name == "documents"
         assert volume.quota == 1073741824
+        assert "pool_name" not in VolumeCreate.model_fields
 
     def test_volume_create_no_quota(self):
         """Test VolumeCreate without quota."""
-        volume = VolumeCreate(
-            pool_name="datapool",
-            name="documents"
-        )
-        
+        volume = VolumeCreate(name="documents")
+
         assert volume.quota is None
+
+    def test_volume_create_quota_fits_in_64_bits(self):
+        """btrfs stores a quota group limit as an unsigned 64-bit number; 2^64 - 1 means no limit."""
+        from pydantic import ValidationError
+
+        assert VolumeCreate(name="documents", quota=(1 << 64) - 2).quota == (1 << 64) - 2
+        for quota in ((1 << 64) - 1, 1 << 64, 10**30):
+            with pytest.raises(ValidationError):
+                VolumeCreate(name="documents", quota=quota)
+
+    @pytest.mark.parametrize("quota", [2**64 - 1, 2**64])
+    def test_volume_quota_without_a_limit_in_btrfs_is_refused(self, fake_host, quota):
+        with admin_client() as api:
+            response = api.post("/api/v1/storage/pools/data/volumes", json={"name": "documents", "quota": quota})
+
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"][0]["loc"] == ["body", "quota"]
+        assert fake_host.calls == []
 
     def test_volume_info_schema(self):
         """Test VolumeInfo schema."""
@@ -372,6 +390,24 @@ class TestPoolsModule:
         assert pool.raid_level == "raid1"
         assert pool.total_size == 2 * 4_000_787_030_016
         assert pool.health == "healthy"
+
+    def test_a_btrfs_label_that_is_not_utf8_hides_no_pool(self, fake_host):
+        # btrfs filesystem show prints a label as it is. Read as strict UTF-8,
+        # the pools could not be listed (400) while a disk with a btrfs
+        # filesystem formatted elsewhere, labelled "caf\xe9" in Latin-1, was
+        # connected.
+        fake_host.add_disk("sda")
+        fake_host.add_disk("sdb")
+        fake_host.add_btrfs("datapool", DATA_UUID, ["/dev/sda"])
+        fake_host.mount_pool("datapool")
+        fake_host.add_btrfs(b"caf\xe9".decode("utf-8", "surrogateescape"), MEDIA_UUID, ["/dev/sdb"])
+
+        # Not a valid pool name, so not a pool.
+        assert [pool.name for pool in pools.list_pools()] == ["datapool"]
+        with admin_client() as client:
+            response = client.get("/api/v1/storage/pools")
+        assert response.status_code == 200, response.text
+        assert [pool["name"] for pool in response.json()] == ["datapool"]
 
     @pytest.mark.parametrize(
         ("vfs_options", "fs_options", "errors", "expected"),
@@ -580,10 +616,16 @@ class TestSmartOffTheEventLoop:
 
     @pytest.fixture
     def recorded_run(self, monkeypatch):
-        """subprocess.run stand-in: one data disk sda; records (program, on_event_loop)."""
+        """subprocess.run stand-in: one data disk sda; records (program, on_event_loop, timeout).
+
+        Host commands (src.host.run_on_host) are recorded by the program run
+        through nsenter.
+        """
         calls = []
 
         def run(cmd, **kwargs):
+            if cmd[0] == "nsenter":
+                cmd = cmd[cmd.index("--") + 1:]
             calls.append((cmd[0], _on_event_loop(), kwargs.get("timeout")))
             if cmd[0] == "lsblk":
                 devices = {"blockdevices": [{"name": "sda", "type": "disk", "size": "4T"}]}
@@ -633,13 +675,18 @@ class TestSmartOffTheEventLoop:
             response = api.get("/api/v1/storage/disks/sda/smart")
         assert response.status_code == 200, response.text
         assert response.json()["healthy"] is True
-        assert recorded_run == [("smartctl", False, disks.SMARTCTL_TIMEOUT)]
+        # First the host's disks (only whole disks get SMART queries), then smartctl.
+        assert recorded_run == [("lsblk", False, 30), ("smartctl", False, disks.SMARTCTL_TIMEOUT)]
 
-    def test_storage_smart_endpoint_times_out(self, monkeypatch):
-        def hanging(cmd, **kwargs):
-            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+    def test_storage_smart_endpoint_times_out(self, recorded_run, monkeypatch):
+        answering = subprocess.run
 
-        monkeypatch.setattr(subprocess, "run", hanging)
+        def hanging_smartctl(cmd, **kwargs):
+            if cmd[0] == "smartctl":
+                raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+            return answering(cmd, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", hanging_smartctl)
         with admin_client() as api:
             response = api.get("/api/v1/storage/disks/sda/smart")
         assert response.status_code == 200
@@ -649,15 +696,110 @@ class TestSmartOffTheEventLoop:
 
     @pytest.mark.parametrize("url", ["/api/v1/health/disks", "/api/v1/health/overview",
                                      "/api/v1/health/disk/sda"])
-    def test_health_smart_endpoints_run_in_a_worker_thread(self, recorded_run, monkeypatch, url):
-        real_exists = health_router.Path.exists
-        monkeypatch.setattr(
-            health_router.Path, "exists", lambda self: str(self) == "/dev/sda" or real_exists(self)
-        )
+    def test_health_smart_endpoints_run_in_a_worker_thread(self, recorded_run, url):
         with admin_client() as api:
             response = api.get(url)
         assert response.status_code == 200, response.text
         assert recorded_run and not any(on_loop for _, on_loop, _ in recorded_run)
+
+
+class TestScrubOffTheEventLoop:
+    """btrfs scrub can block on a busy or hung disk: the API runs it in a worker
+    thread, with a timeout, never on the event loop."""
+
+    @pytest.fixture
+    def scrub_run(self, monkeypatch):
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append((cmd[:3], _on_event_loop(), kwargs.get("timeout")))
+            if cmd[:3] == ["btrfs", "scrub", "status"]:
+                out = "Scrub started:    Thu Nov  6 07:00:00 2026\nStatus:           running\nDuration:         0:00:05\n"
+                return subprocess.CompletedProcess(cmd, 0, out, "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", run)
+        return calls
+
+    @pytest.mark.parametrize("method, first", [("post", "start"), ("get", "status"), ("delete", "cancel")])
+    def test_the_scrub_endpoints_run_btrfs_in_a_worker_thread(self, scrub_run, method, first):
+        with admin_client() as client:
+            r = getattr(client, method)("/api/v1/storage/pools/data/scrub")
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "running"
+        assert scrub_run[0][0] == ["btrfs", "scrub", first]
+        assert [(on_loop, timeout) for _, on_loop, timeout in scrub_run] == [
+            (False, pools.SCRUB_COMMAND_TIMEOUT)] * len(scrub_run)
+
+    def test_a_failed_start_is_still_500(self, monkeypatch):
+        def run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 1, "", "ERROR: not a btrfs filesystem")
+
+        monkeypatch.setattr(subprocess, "run", run)
+        with admin_client() as client:
+            r = client.post("/api/v1/storage/pools/data/scrub")
+        assert r.status_code == 500
+        assert "Scrub start failed" in r.json()["detail"]
+
+    def test_an_invalid_pool_name_is_still_400(self, scrub_run):
+        with admin_client() as client:
+            r = client.get("/api/v1/storage/pools/bad name/scrub")
+        assert r.status_code == 400
+        assert scrub_run == []
+
+
+# What a fake btrfs does. Without -B, btrfs-progs forks the process that runs
+# the scrub and returns at once; that process keeps the standard output and
+# error of btrfs open (it closes none of them) until the scrub ends, hours
+# later on a large pool.
+FAKE_BTRFS = {
+    "running": (
+        'case "$2" in\n'
+        '  start) sleep 300 & echo $! > "$0.pid"; echo "scrub started on $3, fsid 4d1c2b3a (pid=$!)";;\n'
+        '  status) printf "Scrub started:    Thu Nov  6 07:00:00 2026\\nStatus:           running\\n";;\n'
+        "esac\n"
+    ),
+    "refused": 'echo "ERROR: not a btrfs filesystem: $3" >&2\nexit 1\n',
+    "hanging": "exec sleep 300\n",
+}
+
+
+class TestScrubStart:
+    """Start Scrub on the Storage page answers once btrfs has started the scrub.
+
+    It read the output of btrfs through pipes up to their end, which the
+    process of the scrub holds: in 1.0.0 the request (on the event loop, the
+    whole API with it) waited for the whole scrub, and with the timeout it
+    answered 500 after it while the scrub ran.
+    """
+
+    @pytest.mark.parametrize("btrfs", FAKE_BTRFS)
+    def test_start_answers_when_btrfs_returns(self, tmp_path, monkeypatch, btrfs):
+        monkeypatch.setattr(pools, "SCRUB_COMMAND_TIMEOUT", 5)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "btrfs").write_text("#!/bin/sh\n" + FAKE_BTRFS[btrfs])
+        (bin_dir / "btrfs").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+        scrub = bin_dir / "btrfs.pid"
+        try:
+            with admin_client() as client:
+                r = client.post("/api/v1/storage/pools/data/scrub")
+
+            if btrfs == "running":
+                assert r.status_code == 200, r.text
+                assert r.json()["status"] == "running"
+                os.kill(int(scrub.read_text()), 0)  # still running: the request did not wait for it
+            elif btrfs == "refused":
+                assert r.status_code == 500
+                assert r.json()["detail"].startswith("Scrub start failed: ERROR: not a btrfs filesystem")
+            else:
+                assert (r.status_code, r.json()["detail"]) == (
+                    500, "btrfs scrub start did not answer within 5 seconds: pool data may not be responding")
+        finally:
+            if scrub.exists():
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(int(scrub.read_text()), signal.SIGKILL)
 
 
 class TestAlertsOffTheEventLoop:

@@ -42,6 +42,7 @@
   let runs: TaskRun[] = [];
   let pools: Pool[] = [];
   let disks: Disk[] = [];
+  let disksLoaded = false;
   let loading = true;
   let saving = false;
   let runningTaskId: string | null = null;
@@ -121,6 +122,7 @@
       const [poolsResult, disksResult] = await Promise.all([getPools(), getDisks()]);
       pools = poolsResult;
       disks = disksResult.filter((d) => d.type === "disk");
+      disksLoaded = true;
     } catch (e) {
       console.error("Failed to load resources:", e);
     }
@@ -150,6 +152,16 @@
     if (disks.length > 0) formData.target_disk = disks[0].path;
     showTaskModal = true;
   }
+
+  // The disk of the SMART task being edited when the disk list does not have
+  // it (not connected, or the list is not loaded): it stays a choice, so
+  // saving keeps it. The backend checks the disk again when the task runs.
+  $: storedDisk =
+    editingTask?.task_type === "smart_test" &&
+    editingTask.target_disk &&
+    !disks.some((d) => d.path === editingTask?.target_disk)
+      ? editingTask.target_disk
+      : null;
 
   function openEditModal(task: ScheduledTask) {
     editingTask = task;
@@ -508,18 +520,27 @@
         <!-- Disk Selection (for smart_test) -->
         {#if formData.task_type === "smart_test"}
           <div>
-            <label class="block text-sm text-slate-400 mb-1">Target Disk</label>
-            {#if disks.length === 0}
+            <label for="task-target-disk" class="block text-sm text-slate-400 mb-1">Target Disk</label>
+            {#if disks.length === 0 && !storedDisk}
               <p class="text-sm text-yellow-400">No disks available.</p>
             {:else}
-              <select
-                bind:value={formData.target_disk}
-                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
-              >
-                {#each disks as disk}
-                  <option value={disk.path}>{disk.path} - {disk.model || disk.name}</option>
-                {/each}
-              </select>
+              <!-- Made again when the extra option goes (the disk list arrived and has
+                   the disk): Svelte selects the bound value when it changes, not when
+                   the options change, and the browser would show the first disk. -->
+              {#key storedDisk}
+                <select
+                  id="task-target-disk"
+                  bind:value={formData.target_disk}
+                  class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+                >
+                  {#if storedDisk}
+                    <option value={storedDisk}>{storedDisk}{disksLoaded ? " (not connected)" : ""}</option>
+                  {/if}
+                  {#each disks as disk}
+                    <option value={disk.path}>{disk.path} - {disk.model || disk.name}</option>
+                  {/each}
+                </select>
+              {/key}
             {/if}
           </div>
         {/if}

@@ -1,7 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
 from enum import Enum
-from datetime import datetime
 
 
 class AuditAction(str, Enum):

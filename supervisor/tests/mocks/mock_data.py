@@ -6,7 +6,6 @@ Enable via UNOS_TEST_MODE=true environment variable.
 """
 
 import json
-from datetime import datetime
 
 # Mock lsblk output - simulated disks
 MOCK_LSBLK_OUTPUT = {

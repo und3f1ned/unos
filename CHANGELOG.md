@@ -7,14 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Security and robustness hardening. Updating needs a few steps once: read the
-upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from-100-or-earlier).
+Security and robustness hardening, fixes for broken user flows, and a few new
+features (volumes, copy and move in the file manager, encrypted backup uploads,
+health checks, CI checks). Updating needs a few steps once: read the upgrade
+notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from-100-or-earlier).
 
 ### Upgrade notes (breaking changes)
 - **HTTPS only.** The web interface and API are served on `https://` (port 443)
   with a certificate from Caddy's local CA, so browsers warn until the CA is
   trusted. Plain HTTP on port 80 only redirects, except `/api/v1/health`. The
-  certificate is issued for `UNOS_HOSTNAME` (default `unos`).
+  certificate is issued for `UNOS_HOSTNAME` (default `unos`). Scripts and
+  monitoring that call the API must use `https://` and trust that CA (or skip
+  the certificate check): tools such as curl fail on it instead of warning.
 - **Everyone is signed out once.** The web interface moves to a new address
   (`https://`), and installations without `JWT_SECRET` switch to a secret that
   the supervisor generates in the data volume (`/data/jwt_secret`). The
@@ -36,25 +40,40 @@ upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from
 - **WebSocket authentication.** Clients send `{"type": "auth", "token": "..."}`
   as the first message, within 10 seconds; a `?token=` query parameter is
   refused (close code 4401). The container log stream requires an administrator
-  (4403).
+  (4403). A message larger than 64 KiB sent to UNOS closes the socket (1009,
+  or without a code when the proxy closes it while the client is still
+  sending), and messages are not compressed.
 - **Dependencies.** `python-jose` and `passlib` are replaced by `PyJWT` and
   `bcrypt`. Existing password hashes keep working; new passwords longer than
   72 bytes are rejected (422). Test tools moved to
   `supervisor/requirements-dev.txt`.
 - **Pools must be mounted once.** Pools created by earlier releases were never
-  added to the host's `/etc/fstab` and are not mounted at boot. After updating,
-  Storage shows them as "Not mounted" and their `/mnt/pools/<name>` directory
-  is write-protected (`chattr +i`); press Mount once.
+  added to the host's `/etc/fstab` and are not mounted at boot. Once such a
+  pool is not mounted (at the latest after the next reboot), Storage shows it
+  as "Not mounted" and its `/mnt/pools/<name>` directory is write-protected
+  (`chattr +i`); press Mount once. A pool still mounted from before the update
+  shows "Not mounted at boot": stop its apps, press Unmount, then Mount.
 - **Background tasks run.** The scheduler, the SMART and RAID monitors and the
   UPS monitor never started before. Enabled scheduled tasks, including custom
   commands (run as root), now run: review them before updating.
 - **Apps on the system disk.** Apps installed by earlier releases keep their
-  data in `/mnt/pools/default` on the system disk. UNOS marks them and no longer
-  starts them; reinstall them on a pool.
+  data in `/mnt/pools/default` on the system disk. UNOS marks them and no
+  longer starts them, but Docker keeps them running and restarts them at boot
+  until they are stopped. Uninstall them (their data is kept), move their
+  folders onto a pool and install them again on that pool.
 - **Docker network.** The compose network uses the fixed subnet
   `172.31.254.0/24` and must be recreated once (`docker compose down`). If the
   subnet is in use, change every `172.31.254.x` in `deploy/docker-compose.yml`
-  together.
+  together, and commit the change: `update.sh` refuses to run with local
+  changes in the checkout.
+- **systemd unit (optional).** The `unos` unit of an existing installation
+  runs `docker compose up -d` without the `--wait-timeout 680` of a new
+  installation, which limits the wait for the supervisor with Docker Compose
+  2.30 or later. "Updating from 1.0.0 or Earlier" in `docs/INSTALL.md` shows
+  how to add it. Running `install.sh` again also rewrites the unit, but it
+  runs `apt-get update` and `apt-get install` for its system packages, pulls
+  `UNOS_BRANCH`, restarts Samba and rebuilds UNOS without the backup and
+  rollback of `update.sh`.
 
 ### Security
 - Caddy serves HTTPS from its local CA, redirects plain HTTP (308) and sends a
@@ -64,7 +83,8 @@ upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from
   can always continue past the certificate warning.
 - The JWT signing secret is a random 256-bit value created on first start (mode
   0600) unless `JWT_SECRET` is set; published placeholders stop the startup.
-  Tokens must carry `exp` and `sub`, and only HS256/HS384/HS512 are accepted.
+  Tokens must carry `exp` and `sub` and be signed with the configured
+  algorithm (HS256; `UNOS_JWT_ALGORITHM` can only be HS256, HS384 or HS512).
 - Administrator-only routers (`require_admin`). Hostname, timezone, reboot and
   shutdown, the firewall, certificates, the audit log and user management also
   require an administrator. The last administrator cannot be demoted or deleted.
@@ -88,11 +108,13 @@ upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from
   archived file.
 - `smb.conf` and `/etc/exports` values are validated against directive
   injection, share and export paths must not pass through symlinks, and
-  `smb.conf` is replaced atomically after `testparm` accepts it.
+  `smb.conf` is replaced atomically after `testparm` accepts it (without that
+  check, and with a warning in the log, when the host has no `testparm`).
 - Snapshot paths and names are validated; `.snapshots` must be a real
   directory.
 - Certificate names (generated or uploaded) must be a host name or an IP
-  address before they name files or go into `openssl` arguments.
+  address (the CN of an uploaded certificate may also be a wildcard such as
+  `*.example.com`) before they name files or go into `openssl` arguments.
 - Scheduled tasks are administrator-only and validated when saved and again
   before they run.
 - App installs refuse well-known placeholder secrets and keep app data inside
@@ -111,18 +133,76 @@ upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from
   secret) are readable by root only.
 - The test stack no longer uses a fixed JWT secret and publishes its ports on
   127.0.0.1 only.
+- Request bodies are limited before the credentials are checked. FastAPI reads
+  a request body, and Starlette spools an upload to a temporary file, before
+  the login and administrator checks run, so anyone who could reach the API
+  could make the supervisor hold a body of any size in memory, or an upload of
+  any size on disk, before it answered 401. Every request body is now limited
+  to 1 MiB (HTTP 413, also for chunked bodies), except the file and backup
+  uploads, which read their form only after the checks: file uploads have no
+  limit, backup uploads one of 257 MiB (the 256 MiB archive limit plus the
+  form around it). An upload form with more than one file gets 400.
+- SMART data and self-tests run only on whole disks of the host, as the
+  Storage page lists them (`sda`; the health endpoints and scheduled tests
+  also take `/dev/sda`), in
+  `GET /api/v1/storage/disks/{name}/smart`, `GET /api/v1/health/disk/{device}`,
+  `POST /api/v1/health/disk/{device}/test` and scheduled SMART tests, which
+  check the disk when they are saved and each time they run. The health
+  endpoints used to run smartctl on any device under `/dev`, such as a
+  partition, the boot SD card or `/dev/null`, and the others on any name of
+  the right format, such as `sda1`, `md0`, `null` or `st0` (a tape drive,
+  which rewinds when it is closed). Anything else now gets HTTP 400, and a
+  scheduled test fails without running smartctl; HTTP 500 when the host's
+  disks cannot be listed. An edit of a SMART task that keeps its disk is
+  saved also while the disk is disconnected.
+- Deleting a volume could follow a symbolic link that an app or an SMB user
+  had put in the pool under the volume's name, and delete another subvolume.
+  Volumes are now deleted by the subvolume id from the pool's own subvolume
+  list, checked against the filesystem first (409 when they differ, for
+  example for a subvolume whose name holds a line break).
+- CI: the workflow's token can only read the repository
+  (`permissions: contents: read`), and the checkouts no longer leave it in
+  the git configuration (`persist-credentials: false`), where the build or
+  test code of a dependency could read it.
+- WebSocket messages are limited to 64 KiB (uvicorn `--ws-max-size 65536` in
+  both supervisor images; uvicorn's default is 16 MiB). Uvicorn reads a whole
+  message into memory before the supervisor gets it, also the first message
+  of a socket, which comes before the client is authenticated. So anyone who
+  could reach `/ws/*` could make the supervisor read 16 MiB into memory for
+  each socket they opened, even with a compressed message of about 16 KB. A
+  larger message now closes the socket (code 1009) before the supervisor
+  gets it (through Caddy sometimes without a code, when it closes while the
+  client is still sending); the web interface sends only its auth message,
+  well under 1 KiB.
+  WebSocket compression (permessage-deflate) is off as well
+  (`--ws-per-message-deflate false`): uvicorn inflates every message that
+  arrives in one read from the socket before the supervisor reads the
+  first, so many compressed messages under the limit (86 bytes on the wire
+  for 65,000) still let one socket make the supervisor hold about 190 MiB.
+- Creating a volume with a quota set the quota by path
+  (`btrfs qgroup limit <size> <path>`), so it went to whatever had the
+  volume's name right after the create: an existing subvolume renamed to that
+  name, or the subvolume that a symbolic link with that name pointed to.
+  Anyone who can rename or create entries in the pool's top folder could do
+  that, such as an app or a guest of a writable SMB share of the whole pool.
+  The quota is now set by subvolume id
+  (`btrfs qgroup limit <size> 0/<id> <mountpoint>`), and only on a subvolume
+  with the volume's name that is newer than every subvolume that existed
+  before the create; otherwise no quota is set, nothing that existed before
+  is removed, and the request answers 409.
 
 ### Added
 - Mount and Unmount for pools (`POST /api/v1/storage/pools/{name}/mount`,
   `.../unmount`). Pools are mounted on the host by filesystem UUID, with a
-  managed `/etc/fstab` entry (`nofail`, mounted before Docker starts); the
-  original file is kept as `/etc/fstab.unos-backup`.
+  managed `/etc/fstab` entry (`nofail`; at boot Docker waits up to 15 seconds
+  for the pool's disks); the original file is kept as `/etc/fstab.unos-backup`.
 - At startup the supervisor mounts managed pools the host did not mount, starts
   the apps that could not start without them (in the background; an app whose
   checks take longer than 60 seconds stays stopped, as do the pool's remaining
   apps), and write-protects the mountpoints of pools that are not mounted, so
   nothing fills the boot disk.
-- Pool health (healthy, degraded, not mounted, error), missing devices, device
+- Pool health (healthy, degraded, not mounted, error, or unknown when the
+  mount table or the error counters cannot be read), missing devices, device
   error counters, read-only state, and whether btrfs forced the filesystem
   read-only after an error (`forced_read_only`).
 - RAID alerts name the cause: pool not mounted, error counters unreadable,
@@ -151,6 +231,52 @@ upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from
   security, scheduler validation, apps and the app lifespan; E2E tests for HTTPS
   and security headers, roles and the WebSocket handshake.
 - `supervisor/requirements-dev.txt`; `.dockerignore` files for both images.
+- Storage page: a Volumes dialog for each mounted pool lists, creates and
+  deletes volumes, the btrfs subvolumes in the pool's top folder
+  (`/mnt/pools/<pool>/<name>`) that can be shared on their own. Deleting a
+  volume asks for its name. On a pool mounted read-only the dialog lists the
+  volumes and says why they cannot be created or deleted. It notes that
+  snapshots of the pool do not include the files in its volumes.
+- File manager: Copy and Move. Select items, choose Copy or Move, open the
+  destination folder, then choose "Copy here" or "Move here". Nothing is
+  copied or moved when an item with the same name is there already.
+- File manager: keyboard and screen reader access. Every file and folder name
+  is a button: Enter or Space opens the folder or downloads the file, and
+  after a folder opens the focus is on its `..` entry. Going up from the
+  keyboard to the pools directory, which has no `..`, puts the focus on the
+  first item, or on the list ("Folder contents") when there is none. Upload
+  works from the keyboard too, and each checkbox is named after its item
+  ("Select <name>"). The mouse works as before: a click on a row selects it,
+  a double-click opens it.
+- Encrypted backups (`.tar.gz.enc`) can be uploaded, for example after a
+  download, and are stored as `uploaded_<date>_<time>[_<n>].tar.gz.enc`.
+  Without the passphrase their content cannot be checked (the format has no
+  header); it is checked when the backup is restored with its passphrase. An
+  unencrypted backup uploaded under a `.tar.gz.enc` name is refused (400).
+- Docker health checks for both containers: `docker ps` shows whether the
+  supervisor answers `/api/v1/health`, and whether the web interface reaches
+  it through Caddy. Failed checks of the supervisor count only after 10
+  minutes (`start_period`), because it first mounts the pools the host has
+  not mounted.
+- CI checks the supervisor with ruff (`--select F,E9`: pyflakes findings and
+  syntax errors) and pip-audit (`supervisor/requirements.txt`), and the web UI
+  on Node.js 22 with `npm ci`, `npm run build`, `npm run check`
+  (`svelte-kit sync`, then svelte-check `--threshold error`) and
+  `npm audit --omit=dev --audit-level=high`. Each check fails the run when it
+  finds a problem. ruff 0.17.3 and pip-audit 2.10.1, and every package they
+  depend on, are pinned with their hashes in `.github/lint-requirements.txt`
+  (`pip install --require-hashes`); svelte-check 3.8.6 is an exact dev
+  dependency of the web UI, installed from `webui/package-lock.json` and run
+  from `node_modules/.bin` (not through npx). A new push to a pull request
+  cancels the run for the previous one. `docs/TESTING.md` has the commands
+  for a local run and says how to update ruff and pip-audit.
+- E2E tests that restore a backup ("Restoring backups" in
+  `webui/tests/backup-restore.spec.ts`). They replace the database and
+  `smb.conf` of the target, so they run only when `BASE_URL` is a local
+  address (`localhost`, `127.0.0.1`, `::1`, `*.localhost`) or
+  `E2E_ALLOW_RESTORE=1` is set, as the deviceless test stack's Playwright
+  runner does. Otherwise they are skipped before any request:
+  `npx playwright test` against the device does not restore it.
 
 ### Changed
 - Regular users see only Dashboard and Account (own password, two-factor
@@ -168,15 +294,104 @@ upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from
   prints the HTTPS address, the certificate warning and the first-run steps.
 - Starting or restarting an app, from the App Store or the Containers page,
   first checks that its data folders are on a mounted pool.
-- Blocking work (storage and share operations, smartctl, bcrypt, container log
-  streams, e-mail) runs off the event loop; e-mail and Telegram notifications
-  time out instead of hanging.
+- Blocking work (storage and share operations, scrubs, smartctl, bcrypt,
+  container log streams, e-mail) runs off the event loop; e-mail
+  notifications and the scrub commands (of the Storage page and of scheduled
+  scrubs) time out instead of hanging, unless the command is stuck in the
+  kernel on a hung filesystem.
 - The deviceless test stack runs over HTTPS (`https://localhost:3443`; HTTP on
   3080 for the redirect and the health check) in its own compose project
   (`unos-test`), and `scripts/test-cycle.sh` creates its test account.
-- The `test` profile's Playwright runner (`webui/Dockerfile.test`) uses the
-  image of the pinned Playwright version (1.57.0) and creates the test account
-  itself.
+- The `test` profile's Playwright runner (the `test-runner` service of
+  `deploy/docker-compose.test.yml`) is built on the image of the pinned
+  Playwright version (1.57.0, `webui/Dockerfile.test`) and creates the test
+  account itself.
+- `docker compose up`, which `install.sh`, `update.sh` and the `unos`
+  systemd unit run, starts the web interface only once the supervisor
+  answers its health check (`depends_on` with `condition: service_healthy`);
+  until then `https://` does not answer. With Docker Compose 2.30 or later
+  it gives up after 680 seconds, `start_period` + (`retries` + 1) x
+  (`interval` + `timeout`) of the supervisor's health check, or in
+  `update.sh` after `UNOS_HEALTH_TIMEOUT` seconds if that is longer. Older
+  Compose versions do not limit the wait, and both scripts warn about that.
+  If the supervisor does not become healthy, the web interface is not
+  started: once the supervisor works, run `sudo systemctl restart unos`, or
+  `install.sh` again if its first run failed (it writes the `unos` unit only
+  after UNOS has started).
+- `update.sh`: `UNOS_HEALTH_TIMEOUT` (default 300) is the time the updated
+  version gets to answer over HTTP and HTTPS once `docker compose up` has
+  returned, before it is rolled back. Values of 1000000000 or more are
+  refused before anything changes. After such a rollback the error message
+  suggests a retry with twice that time, at least 600 seconds.
+- When `docker compose up` fails, `install.sh` and `update.sh` name the
+  messages that mean that the supervisor stopped or did not become healthy
+  in time ("dependency failed to start", "is unhealthy", "exited", "timeout
+  waiting for dependencies"; the wording depends on the Compose version).
+- Volumes API (`/api/v1/storage/pools/{pool}/volumes`): a volume is a
+  subvolume in the pool's top folder with a valid volume name. Snapshots and
+  nested or otherwise named subvolumes are no longer listed, also not as
+  folders for new shares (`GET /api/v1/shares/paths`). `POST` takes
+  `{"name": ..., "quota": bytes or null}` and uses the pool in the URL
+  (`pool_name` in the body is no longer needed and is ignored); `quota` must
+  be between 1 and 2^64 - 2 (422 otherwise; btrfs reads 2^64 - 1 as no
+  limit). The endpoints answer 404 for an unknown pool or volume, and 409
+  when the pool is not mounted or is mounted at a subvolume other than the
+  top level. Creating and deleting also answer 409 on a pool mounted
+  read-only, creating when the name is taken, and deleting while the volume
+  holds snapshots or other subvolumes.
+- The web UI is built with Node.js 22 (`node:22-alpine`); Node.js 20 reached
+  its end of life. `engines` in `webui/package.json` asks for Node.js 22 or
+  later.
+- The compose files no longer set the obsolete `version` key, which Docker
+  Compose warned about on every command.
+- Successful health checks (`GET /api/v1/health` answering 200) no longer
+  appear in the supervisor's access log, which the Docker health checks would
+  fill. Failed checks and all other requests are still logged.
+- `scripts/test-cycle.sh` and the `docker compose up` commands in
+  `docs/TESTING.md` start the deviceless test stack with `--wait-timeout 120`,
+  as long as Docker can take to report its supervisor healthy or unhealthy
+  (`docker compose run`, which runs the test-runner, has no such option).
+  That needs Docker Compose 2.17 or later; 2.30 or later applies it to this
+  wait.
+- The supervisor keeps its temporary files in RAM, in a tmpfs of at most
+  2 GiB at `/tmp` (`TMPDIR=/tmp`), instead of on the system disk, which on
+  many boards is an SD card that writes wear out. Making and restoring a
+  backup wrote temporary copies there; now they use RAM, and only while they
+  run, as does the copy of the database that `update.sh` takes before an
+  update. When the tmpfs is full they fail instead of moving to the system
+  disk, without changing anything: a backup with "No space left on device"
+  (or "database or disk is full" while it copies the database), a restore
+  with HTTP 507, and the database copy of `update.sh` with an error
+  (`update.sh` then asks whether to update without a backup, and stops
+  without a terminal).
+- While a scrub runs, btrfs rewrites its progress file every 5 seconds, for
+  hours on a large pool. The supervisor keeps that file (`/var/lib/btrfs`) in
+  RAM instead of on the system disk; the result of the last scrub is
+  forgotten when the supervisor restarts, as it already was when its
+  container was recreated.
+- The supervisor image no longer writes Python bytecode (`.pyc` files, about
+  1.8 MB) into each new container, on the system disk. The supervisor starts
+  about 0.1 to 0.2 seconds slower on an RK3588 board.
+- The RAID monitor, which now runs every 5 minutes, writes
+  `/data/raid_status.json` only when the state of a pool changes, not after
+  every check, so the check times in the file can be old;
+  `GET /api/v1/health/raid-monitor/status` shows the latest check.
+- An upload into a folder that does not exist, or that is not inside a pool,
+  is refused before any of the file is read. An upload whose file name
+  cannot be used (or names an existing folder), or a backup without a
+  `.tar.gz` or `.tar.gz.enc` extension, is refused as soon as the name
+  arrives. Before, the whole file was received first. A backup is refused as
+  soon as it grows over 256 MiB; there was no limit before. A refused,
+  failed or cancelled upload leaves nothing behind. A file uploaded in the
+  file manager is not in its folder, not even under a hidden name, until all
+  of it has arrived; if the supervisor stops in the middle of the upload (a
+  restart, an update, a crash), nothing of it stays and its space is freed.
+  Only in a folder on a disk mounted there by hand whose filesystem cannot
+  do this (vfat or exfat, for example; the pools can), the file arrives as a
+  hidden `.unos-upload-...` file, which such a stop leaves behind: delete it
+  in the file manager.
+- The headers of each part of an upload form are limited to 8 KiB in total
+  (HTTP 400 above that); browsers send a few hundred bytes.
 
 ### Fixed
 - Pools were never added to the host's `/etc/fstab` (the entry was written
@@ -184,9 +399,12 @@ upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from
 - Disks were inspected from inside the container, where the host's system disk
   looked unused and could be selected for a pool.
 - Mounting a pool over a directory with files hid them while they kept using
-  the boot disk; this is now refused.
-- Removing a pool that is in use is refused (409); the failed unmount used to be
-  ignored.
+  the boot disk. Mount and pool creation now refuse this (409). A pool in the
+  host's fstab is still mounted over such files at boot, or by the supervisor
+  at startup if the host did not mount it; the supervisor then logs them.
+- Removing a pool is refused (409) while a running container uses it or it
+  is otherwise busy (for example, files are open on it); the failed unmount
+  used to be ignored. SMB shares and NFS exports of the pool are not checked.
 - The scheduler, the health monitors and the UPS monitor never started (FastAPI
   ignores router startup hooks when the app defines a lifespan).
 - SMART trend alerts could never fire. The SMART monitor no longer wakes
@@ -205,7 +423,233 @@ upgrade notes and [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from
 - The container log stream froze the whole API while the container wrote no
   output.
 - A failed app install no longer leaves a dead container that blocks a retry.
-- The System page follows the URL hash, including Back and Forward.
+- The System page shows the tab named in the URL hash (such as
+  `/system#logs`), also after Back and Forward. Choosing a tab replaces the
+  hash in the current history entry, so Back does not return to the previous
+  tab.
+- File manager: downloading a file failed (HTTP 401) because the browser
+  opened the API address without the session token, and Delete failed (HTTP
+  422) because it sent no list of paths. Both work now: files are downloaded
+  with the new Download button (one file selected) or a double-click, and
+  the browser shows the download once the whole file has arrived.
+- File manager: the page assumed that the pools directory is `/mnt/pools` and
+  showed nothing when `UNOS_POOLS_BASE_PATH` points elsewhere. It now starts
+  at the directory the server lists, and the breadcrumbs start there
+  ("Pools") instead of offering the folders above it, which were refused.
+  Errors are shown on the page instead of in browser dialogs or only in the
+  browser console.
+- File manager: when another folder was opened while several files were
+  uploading, the remaining files went into that folder. All of them now go
+  to the folder that was open when they were chosen.
+- File manager: deleting a volume (`/mnt/pools/<pool>/<volume>`) removed all
+  its files and then the volume itself, also while an app, an SMB share or an
+  NFS export used it, and volumes could be moved, or renamed through the API
+  (`POST /api/v1/files/rename`; the page has no Rename). Deleting, renaming
+  and moving a volume, another btrfs subvolume (such as a snapshot) or the
+  mount point of another filesystem is now refused there (409); volumes are
+  deleted on the Storage page, which checks their users. Copying them still
+  works. A folder that contains one, or that is or contains a bind mount,
+  cannot be deleted there or moved to another pool or volume either (409):
+  deleting it, and moving it between filesystems (a copy, then a delete),
+  went into the subvolume or mount and deleted its files. A folder that
+  contains one can still be copied and moved within its pool or volume, and
+  renamed through the API.
+- File and backup uploads and downloads showed an error when the session had
+  expired. Like every other request, they now end the session and open the
+  sign-in page.
+- Restoring a backup on the Backup & Restore tab always failed (HTTP 422):
+  the API required a passphrase also for unencrypted backups, and the page
+  sent none. Unencrypted backups are restored without one; for an encrypted
+  backup (`.tar.gz.enc`) the page now asks for it, and the list marks
+  encrypted backups.
+- `POST /api/v1/backup/create` answered `"encrypted": false` in `backup` for
+  encrypted backups.
+- Backups made in the same second, with Create Backup or by scheduled backup
+  tasks, overwrote each other, and a backup was listed, and could be
+  downloaded, while it was still being written; one that failed (for example
+  on a full disk) stayed in the list half-written. Like uploaded backups,
+  they are now written under a temporary name and get their final name only
+  when they are complete and on disk, with `_1`, `_2`, ... before the
+  extension when the name is taken. Temporary files left behind by a killed
+  backup or backup upload are removed after a day by the next one.
+- The backup list left out a backup when an encrypted one with the same name
+  plus `.enc` existed, and showed symbolic links, folders and files with
+  other names. It now shows exactly the regular files with a backup name
+  (ASCII letters, digits, `.`, `_` and `-`, starting with a letter or digit,
+  ending in `.tar.gz` or `.tar.gz.enc`), newest first: only those can be
+  downloaded, restored or deleted.
+- Backup & Restore tab: when loading the list, creating or deleting a backup
+  failed, the page showed nothing (the error went to the browser console),
+  and failed downloads and uploads showed a browser dialog. These failures
+  are now shown above the list, in a message that screen readers announce
+  and that can be dismissed.
+- Scheduled backups with a Keep Count that run at the same time (two backup
+  tasks in the same minute, or Run now during a scheduled run) skip an old
+  backup that the other run has removed already, so neither run fails with
+  "No such file or directory".
+- Scheduled tasks created in the same second got the same id: deleting one
+  deleted both, and editing, running or switching one on or off reached only
+  the first. New tasks get ids of the form
+  `task_<date><time>_<8 hex digits>`; existing tasks keep theirs.
+- Scheduled SMART tests kill `smartctl` after 60 seconds and record the run
+  as failed (timed out); before, a run waited for smartctl without a limit
+  and could stay "running" for good. A smartctl that is blocked in the
+  kernel by a hung disk or USB bridge ends, and the run with it, only once
+  the kernel gives up on the command.
+- Creating a volume with a quota that btrfs could not set (UNOS does not
+  enable quotas) created the volume without the quota and reported success.
+  When quotas are not enabled on the pool, the request now answers 409,
+  creates nothing and suggests `btrfs quota enable <mountpoint>`. When the
+  quota cannot be set for another reason, it answers 409 with btrfs's reason
+  and removes the new volume again, but never a subvolume that existed
+  before under that name.
+- Deleting a volume is refused (409, naming them) while a running container
+  uses the volume or a folder in it, through a bind mount or through a
+  Docker volume of the local driver that binds it, or while an SMB share or
+  an NFS export points there; nothing was checked before. Containers, shares
+  and exports of a parent folder, such as the whole pool, do not count. When
+  Docker cannot be asked, nothing is deleted (503). The Volumes dialog's
+  delete confirmation says so, and that the files of stopped apps in the
+  volume are deleted with it.
+- Unmounting or deleting a pool is refused (409) while a running container
+  uses a Docker volume of the local driver that binds a folder of the pool.
+  The pool used to be unmounted and its fstab entry removed although Docker
+  kept the filesystem mounted on the host for the container, so its disks
+  looked safe to remove.
+- Names that are not valid UTF-8, which apps and SMB users can give to
+  folders and subvolumes in a pool, broke storage operations: a subvolume
+  with such a name made listing volumes fail (HTTP 500). Such names are now
+  read with a replacement character, and they are never volumes. While a
+  mount on the host shows such a folder (for example a Docker volume
+  binding a pool folder that an app renamed), the Storage page shows
+  whether the pools are mounted, and creating, mounting, unmounting and
+  deleting pools and mounting them at startup work; a file with such a name
+  in a mountpoint folder makes Mount answer 409 with the files to move.
+- `GET /api/v1/containers/images` answered 404: the
+  `/containers/{container_id}` route took "images" for a container name.
+- Select boxes (for example the System Logs filters) and the masked password
+  fields on the Security tab were not associated with their labels, so
+  screen readers did not read the labels.
+- `install.sh` stops before it changes anything when Docker is installed
+  without its Compose plugin, and says what to install
+  (`docker-compose-plugin` from Docker's repository, `docker-compose-v2` on
+  Ubuntu, or `docker-compose` on Debian 13). It used to fail only at
+  `docker compose build`, after the system packages, the checkout and the
+  Samba configuration.
+- `docs/USER_GUIDE.md`: the File Browser section listed features the page
+  does not have (drag and drop, sorting by column, Ctrl/Cmd selection), and
+  System Backup said that backups are scheduled on a Backup tab. Both now
+  describe the pages as they are (scheduled backups are tasks in System >
+  Scheduler), and the Storage section describes volumes. Restoring from
+  Snapshot warned that a restore overwrites the current data, but it makes a
+  writable copy, `restore_<date>_<time>`; the guide now says where the copy
+  is and how to delete it. SMART Monitoring and System Settings > Health
+  described what no page shows (power-on hours and SMART attributes of a
+  clicked disk, service status, resource usage history) and now describe
+  System > Disk Health; Viewing Disks no longer says that the Storage page
+  shows SMART health. The Keyboard Shortcuts section, for shortcuts that do
+  not exist, is removed. System Backup now also says that a restore brings
+  back the user accounts with their passwords, two-factor authentication and
+  API tokens of the backup (an API token revoked since then works again),
+  and that other files in a backup, such as `fstab`, are not restored.
+- Disk Health (`GET /api/v1/health/disks`), `GET /api/v1/health/overview`
+  and the hourly SMART monitor listed disks with lsblk inside the container
+  and left out a fixed list of names, among them `nvme0n1`: the first NVMe
+  disk, such as a data disk in the M.2 slot of the ArmSoM Sige7, was never
+  shown or monitored, while the SPI flash (`mtdblock0`) was listed. They now
+  cover exactly the whole disks that the Storage page lists, including a
+  system disk on NVMe, SATA or USB, and each of them opens on
+  `GET /api/v1/health/disk/{device}`. A disk that smartctl cannot open or
+  identify, such as one behind a USB bridge it does not know, shows the model
+  and size that lsblk reports instead of "Unknown". When the host's disks
+  cannot be listed, both endpoints answer 500 with the reason, and the
+  monitor logs it and skips that check.
+- While a disk was connected whose model is not valid UTF-8, the Storage
+  page and Disk Health could not list the disks (HTTP 500), and while a
+  btrfs filesystem with such a label was connected (formatted elsewhere),
+  the Storage page could not list the pools either. Such bytes are now read
+  as a replacement character (U+FFFD) wherever UNOS lists or checks disks
+  (the Storage page, Disk Health, the SMART monitor, SMART data and
+  self-tests), also in the filesystem labels that the Storage page now
+  reads (Windows writes FAT labels in its code page, as on a USB stick).
+- Scheduler tab: the edit form of a SMART task whose disk is not connected
+  showed an empty Target Disk select, or "No disks available." when no disk
+  was connected at all. Saving kept the disk only while the select was left
+  alone: once another disk was chosen, the task's disk could not be chosen
+  again. The disk is now listed as "<path> (not connected)" and selected
+  (without "(not connected)" while the disk list is loading or cannot be
+  loaded). New tasks still start with the first connected disk. The Target
+  Disk select is now associated with its label.
+- Backup & Restore tab: the restore dialog said that a restore overwrites
+  "Database (users, settings)", but settings such as notifications,
+  scheduled tasks and power are not restored. It now says "Database (user
+  accounts with their passwords, two-factor authentication, API tokens and
+  the login history)".
+- File manager: a move to another pool or volume copies the folder or file,
+  then deletes it. When it was renamed while it was copied and something
+  else was put in its place (for example a new folder with the same name),
+  that was deleted, although it had not been copied. It is now kept, the
+  copy stays at the destination, and the move answers 409.
+- SMART test tasks made in the Scheduler failed every time they ran: the web
+  interface saves the disk as `/dev/sda`, and the task ran smartctl on
+  `/dev//dev/sda`. They now test the disk.
+- Disk Health tab: when the disks could not be listed (for example when
+  lsblk fails on the host), the tab said "No disks found", and a refresh
+  that failed kept showing the disks of the last one. It now shows the
+  reason.
+- Uploads no longer go through the system disk and memory. Every file over
+  1 MiB uploaded in the file manager or as a backup was first written in full
+  to a temporary file on the system disk (on a small board, its SD card),
+  then read into memory in full and only then written to its folder: twice
+  the writes, wear on the SD card, and an upload larger than the free space
+  of the system disk or the free memory failed. The file now goes straight
+  into its folder (a backup into the backup folder) as it arrives: nothing
+  is copied once its last byte has arrived, and a backup is then checked in
+  one pass that writes nothing.
+- Backup upload and restore answered HTTP 500 for some malformed archives (a
+  member size of 2^63 bytes or more, broken GNU sparse data, a long chain of
+  extended headers), such as "cannot fit 'int' into an offset-sized
+  integer", and a restore also for a file time out of range. Such archives
+  now get HTTP 400, for example "Invalid backup: corrupt archive" or
+  "Backup archive is too large when decompressed", and a restore does not
+  use the file times of the archive. Both also refuse what UNOS backups
+  never contain and tarfile reads in full before anything can be checked:
+  sparse files, a global PAX header, and GNU long names and PAX headers of
+  more than 1 MiB in all. A 200 KiB upload could make the supervisor hold
+  740 MiB of memory, or work for minutes.
+- An upload whose form names a charset that fails on its field or file
+  names with an error other than an invalid byte (`charset=undefined` on
+  every name, `idna` and `punycode` on some) was refused with HTTP 400
+  ("There was an error parsing the body"). Such names are now read as
+  Latin-1, as names with an invalid byte and unknown charsets already were,
+  and the file is stored. Browsers do not send this parameter; other clients
+  may.
+- Certificate uploads no longer write a temporary file: openssl reads the
+  certificate from its input. An upload that failed while that file was
+  written (a full disk, or a certificate that is not valid Unicode, such as
+  a lone `\ud800` escape in the JSON) left the file, empty or partly
+  written, in the supervisor's `/tmp`. A certificate, private key or chain
+  that is not valid Unicode now gets HTTP 400 and changes nothing. It got
+  HTTP 500, a private key or chain only after the stored certificate of
+  that name had been replaced: with a bad key its key file was emptied,
+  with a bad chain its key replaced and its chain file emptied.
+- Start Scrub on the Storage page, and Run now of a scheduled scrub, waited
+  for the whole scrub, hours on a large pool, and blocked the whole API
+  meanwhile: the background process of btrfs kept open the output that UNOS
+  read to its end. Both now return as soon as the scrub runs.
+- Resetting the error counters of a pool
+  (`POST /api/v1/health/raid/<pool>/reset-stats`) ran btrfs on the event loop
+  without a time limit, blocking the whole API on a hung pool, and took any
+  name as the pool (`..` named `/mnt`). It now runs in a worker thread with a
+  timeout and refuses names that are not pool names (400).
+- A scheduled scrub of a pool that is not mounted ran btrfs on the folder of
+  its mount point, on the root filesystem, which btrfs scrubbed if it was
+  btrfs. It now fails with "Pool <name> is not mounted", as a scheduled
+  snapshot does.
+
+### Known issues
+- System → Updates: Install Update and Rollback start nothing, as in 1.0.0.
+  Update with `sudo /opt/unos/deploy/update.sh`.
 
 ### Planned
 - Per-user share permissions (ACLs)

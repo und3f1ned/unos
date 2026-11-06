@@ -71,6 +71,15 @@ test.describe('Security Settings', () => {
     await expect(page.locator('label:has-text("Confirm New Password")')).toBeVisible();
   });
 
+  // The labels name the masked inputs shown by default (and the unmasked ones).
+  test('password inputs are reachable through their labels', async ({ authenticatedPage: page }) => {
+    await page.goto('/system#security');
+    for (const label of ['Current Password', 'New Password', 'Confirm New Password']) {
+      await expect(page.getByLabel(label, { exact: true })).toBeVisible();
+    }
+    await expect(page.getByLabel('Current Password', { exact: true })).toHaveAttribute('type', 'password');
+  });
+
   test('should show change password button', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);

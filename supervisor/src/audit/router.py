@@ -9,7 +9,7 @@ import io
 
 from ..auth.utils import client_ip, require_admin
 from ..auth.models import User
-from .schemas import AuditEntry, AuditAction, AuditSeverity, AuditQuery
+from .schemas import AuditEntry, AuditAction, AuditSeverity
 
 # Every audit endpoint is for administrators only.
 router = APIRouter(prefix="/audit", tags=["audit"], dependencies=[Depends(require_admin)])
@@ -118,7 +118,6 @@ async def get_audit_logs(
     entries.sort(key=lambda x: x.timestamp, reverse=True)
 
     # Apply pagination
-    total = len(entries)
     entries = entries[offset:offset + limit]
 
     return entries

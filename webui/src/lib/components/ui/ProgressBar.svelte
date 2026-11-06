@@ -1,16 +1,20 @@
 <script lang="ts">
+	type Variant = 'success' | 'warning' | 'error' | 'info';
+
 	export let value: number = 0;
 	export let max: number = 100;
 	export let size: 'sm' | 'md' = 'md';
-	export let variant: 'success' | 'warning' | 'error' | 'info' | 'auto' = 'auto';
+	export let variant: Variant | 'auto' = 'auto';
 	export let showLabel: boolean = false;
 
 	$: percent = max > 0 ? Math.min(100, (value / max) * 100) : 0;
 
+	let autoVariant: Variant;
 	$: autoVariant = percent < 70 ? 'success' : percent < 90 ? 'warning' : 'error';
+	let actualVariant: Variant;
 	$: actualVariant = variant === 'auto' ? autoVariant : variant;
 
-	const fillClasses = {
+	const fillClasses: Record<Variant, string> = {
 		success: 'progress-fill-success',
 		warning: 'progress-fill-warning',
 		error: 'progress-fill-error',

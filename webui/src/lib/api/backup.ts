@@ -1,10 +1,12 @@
-import { api } from "./client";
+import { api, apiFetch, downloadAs } from "./client";
 
 export interface BackupInfo {
   filename: string;
   size: number;
   created: string;
   version: string;
+  /** Encrypted with a passphrase (.tar.gz.enc); restoring it needs the passphrase. */
+  encrypted: boolean;
 }
 
 export interface BackupConfig {
@@ -15,17 +17,28 @@ export interface BackupConfig {
   include_scheduler: boolean;
   include_notifications: boolean;
   include_network: boolean;
+  encrypt: boolean;
+  /** Required when encrypt is true. */
+  passphrase: string;
 }
 
 export interface RestoreResult {
   status: string;
+  /** What was applied: "database", "smb_config". */
   restored: string[];
+  /** manifest.json of the backup, as stored in the archive. */
   manifest: {
-    version: string;
-    created: string;
-    hostname: string;
+    version?: string;
+    created?: string;
+    hostname?: string;
+    [key: string]: unknown;
   };
+  /** Summary for the user; it includes the warnings. */
   message: string;
+  /** What was skipped or not restored automatically (e.g. fstab, an invalid share). */
+  warnings: string[];
+  /** Copy of the database taken before it was replaced, if it was. */
+  previous_database: string | null;
 }
 
 export async function listBackups(): Promise<{ backups: BackupInfo[] }> {
@@ -37,49 +50,34 @@ export async function createBackup(config?: Partial<BackupConfig>): Promise<{ st
 }
 
 export async function downloadBackup(filename: string): Promise<void> {
-  const token = localStorage.getItem("token");
-  const response = await fetch("/api/v1/backup/download/" + filename, {
-    headers: { Authorization: "Bearer " + token }
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to download backup");
-  }
-
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  await downloadAs(`/backup/download/${encodeURIComponent(filename)}`, filename);
 }
 
+/**
+ * Upload a backup file: .tar.gz, or .tar.gz.enc for an encrypted one (its
+ * content is checked when it is restored with the passphrase). The server
+ * stores it under a new name, uploaded_<date>_<time>[_<n>] with the same extension.
+ */
 export async function uploadBackup(file: File): Promise<{ status: string; backup: BackupInfo }> {
-  const token = localStorage.getItem("token");
   const formData = new FormData();
   formData.append("file", file);
-
-  const response = await fetch("/api/v1/backup/upload", {
-    method: "POST",
-    headers: { Authorization: "Bearer " + token },
-    body: formData
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || "Failed to upload backup");
-  }
-
+  const response = await apiFetch("/backup/upload", { method: "POST", body: formData });
   return response.json();
 }
 
-export async function restoreBackup(filename: string): Promise<RestoreResult> {
-  return api.post<RestoreResult>("/backup/restore/" + filename, {});
+/**
+ * Restore a backup. The body is {"passphrase": ...}: required for encrypted
+ * backups, ignored for the others (an empty object is sent for them).
+ */
+export async function restoreBackup(filename: string, passphrase?: string): Promise<RestoreResult> {
+  return api.post<RestoreResult>(
+    `/backup/restore/${encodeURIComponent(filename)}`,
+    passphrase ? { passphrase } : {}
+  );
 }
 
 export async function deleteBackup(filename: string): Promise<{ status: string }> {
-  return api.delete<{ status: string }>("/backup/" + filename);
+  return api.delete<{ status: string }>(`/backup/${encodeURIComponent(filename)}`);
 }
 
 export function formatBytes(bytes: number): string {

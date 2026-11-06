@@ -17,9 +17,20 @@ archive into arbitrary file writes on the host. Restore therefore:
   shares created through the API and smb.conf is regenerated and checked
   with testparm (``shares.smb.stage_backup_config``). Problems with smb.conf
   are reported as warnings and do not stop the database restore.
+
+An uploaded backup is checked with the same limits and member checks in one
+pass over its gzip stream, which writes nothing (``_inspect_archive``).
+
+Backups created or uploaded here are written under a temporary name in
+BACKUP_DIR and get their final name only when complete
+(``publish_backup_file``), with a hard link that never replaces an existing
+file: backups made in the same second get different names, and the list does
+not show them half-written.
 """
 
 import asyncio
+import contextlib
+import errno
 import gzip
 import io
 import json
@@ -35,6 +46,7 @@ import tempfile
 import threading
 import time
 import zlib
+from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Optional
@@ -43,13 +55,15 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..auth.utils import verify_token
 from ..config import get_settings
 from ..database import init_db
+from ..request_limits import UPLOAD_OPENAPI, UploadSink, receive_upload
 from ..shares import smb
 
 settings = get_settings()
@@ -60,6 +74,7 @@ SALT_SIZE = 16
 NONCE_SIZE = 12
 KEY_SIZE = 32  # AES-256
 ITERATIONS = 100000
+GCM_TAG_SIZE = 16  # AES-GCM appends a 16-byte authentication tag to the ciphertext
 
 router = APIRouter(prefix="/backup", tags=["backup"])
 
@@ -76,7 +91,17 @@ PRE_RESTORE_COPIES = 5
 DB_BUSY_TIMEOUT = 60
 _CHUNK_SIZE = 1024 * 1024
 
+PLAIN_EXTENSION = ".tar.gz"
+ENCRYPTED_EXTENSION = ".tar.gz.enc"
+# Only files with such names are listed and can be downloaded, restored or
+# deleted. Temporary files start with a dot and end in .tmp.
 BACKUP_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.tar\.gz(\.enc)?")
+NAME_ATTEMPTS = 100  # backups with the same prefix in one second
+# Names of backup_temp_file. Such a file older than STALE_TEMP_SECONDS was
+# left by a create, upload or scheduled backup that was killed (no finally
+# ran); it is removed, since it is not listed and so cannot be deleted in the UI.
+_TEMP_NAME_PATTERN = re.compile(r"\.[a-z]+-[0-9a-f]{16}\.tmp")
+STALE_TEMP_SECONDS = 24 * 3600
 # Regular files a backup may contain, with their size limits. Other regular
 # files and directories are ignored; any other member type aborts the restore.
 _FILE_MEMBERS = {
@@ -91,12 +116,38 @@ _DIR_MEMBERS = frozenset({"netplan"})
 # Included in backups but not restored automatically.
 _NOT_RESTORED = ("fstab", "netplan", "scheduled_tasks.json")
 REQUIRED_USER_COLUMNS = frozenset({"id", "username", "hashed_password", "is_admin"})
+# What tarfile raises for a malformed header in Python 3.11 besides TarError:
+# OverflowError or ValueError for a size or offset too large to seek to or
+# read (2**63 or more), MemoryError for data that claims more than the
+# memory, ValueError and IndexError for broken GNU sparse data or PAX numbers,
+# RecursionError for a long chain of extended headers.
+_CORRUPT_TAR_ERRORS = (
+    tarfile.TarError, OverflowError, MemoryError, ValueError, IndexError, RecursionError
+)
+# GNU long names and PAX extended headers. tarfile reads the data of one at
+# once (its size can claim 2**62 bytes or more), parses its records one by
+# one and keeps them with the member. A backup needs a few small ones (long
+# names, PAX times): together they may hold at most MAX_CONFIG_BYTES. A
+# global PAX header, whose records tarfile copies into every member that
+# follows, is never in a backup (_BackupTarInfo).
+_EXTENDED_HEADERS = frozenset(
+    {tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE, tarfile.SOLARIS_XHDTYPE}
+)
 
 _restore_lock = threading.Lock()
 
 
 class BackupValidationError(Exception):
     """The archive is not an acceptable UNOS backup (reported as HTTP 400)."""
+
+
+class RestoreSpaceError(Exception):
+    """The temporary files of a restore did not fit in /tmp (reported as HTTP 507)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Not enough room in /tmp for the temporary files of the restore: nothing was restored"
+        )
 
 
 class BackupInfo(BaseModel):
@@ -135,7 +186,7 @@ def derive_key(passphrase: str, salt: bytes) -> bytes:
     return kdf.derive(passphrase.encode())
 
 
-def encrypt_file(data: bytes, passphrase: str) -> bytes:
+def encrypt_file(data: bytes | memoryview, passphrase: str) -> bytes:
     """Encrypt data using AES-256-GCM."""
     salt = secrets.token_bytes(SALT_SIZE)
     key = derive_key(passphrase, salt)
@@ -242,7 +293,12 @@ def _keep_copy_of_database(db_path: Path) -> Path | None:
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     copy_path = db_path.with_name(f"{db_path.name}.pre-restore-{timestamp}")
-    copy_database(db_path, copy_path)
+    try:
+        copy_database(db_path, copy_path)
+    except BaseException:
+        # No copy to keep: SQLite leaves an empty or partial file when the disk is full.
+        copy_path.unlink(missing_ok=True)
+        raise
     copies = sorted(db_path.parent.glob(f"{db_path.name}.pre-restore-*"))
     for old in copies[:-PRE_RESTORE_COPIES]:
         old.unlink(missing_ok=True)
@@ -274,16 +330,6 @@ def _replace_database(restored: Path, db_path: Path) -> None:
 
 
 # --- archive handling ---------------------------------------------------------
-
-
-def _copy_limited(source: BinaryIO, dest: Path, limit: int) -> None:
-    total = 0
-    with open(dest, "xb") as out:
-        while chunk := source.read(_CHUNK_SIZE):
-            total += len(chunk)
-            if total > limit:
-                raise BackupValidationError("Backup file is too large")
-            out.write(chunk)
 
 
 def _open_archive(backup_path: Path, passphrase: str | None) -> BinaryIO:
@@ -327,8 +373,11 @@ def _member_name(member: tarfile.TarInfo) -> str:
     return "/".join(parts)
 
 
-def _scan_members(tar: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
-    """Validate every member and return the ones to extract, by normalized name."""
+def _scan_members(tar: Iterable[tarfile.TarInfo]) -> dict[str, tarfile.TarInfo]:
+    """Validate every member and return the ones to extract, by normalized name.
+
+    ``tar`` is a TarFile, or the members of a tar stream (_stream_members).
+    """
     wanted: dict[str, tarfile.TarInfo] = {}
     seen: set[str] = set()
     try:
@@ -354,8 +403,10 @@ def _scan_members(tar: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
                 continue  # not part of a UNOS backup: ignored
             if member.size > limit:
                 raise BackupValidationError(f"{name} in the backup archive is too large")
+            if member.size < 0:  # a base-256 size field can be negative
+                raise BackupValidationError("Invalid backup: corrupt archive")
             wanted[name] = member
-    except tarfile.TarError as e:
+    except _CORRUPT_TAR_ERRORS as e:
         raise BackupValidationError("Invalid backup: corrupt archive") from e
     if "manifest.json" not in wanted:
         raise BackupValidationError("Invalid backup: missing manifest")
@@ -372,60 +423,271 @@ def _parse_manifest(data: bytes) -> dict:
     return manifest
 
 
+class _BackupTarInfo(tarfile.TarInfo):
+    """A member of a backup archive as tarfile reads it, with the limits of _EXTENDED_HEADERS.
+
+    tarfile calls _proc_member for every header it reads, before it reads
+    the data of an extended header (tarfile's comments name it as the
+    method to override).
+
+    Sparse files are refused in every GNU format: UNOS never writes them
+    (tarfile cannot), and tarfile builds the map of one before the member
+    can be checked, from the extension blocks of the old format or from the
+    start of the data in format 1.0, at a cost in memory and time that grows
+    with the archive (124 MiB and 4 s on the device for a 166 KiB upload).
+    Formats 0.0 and 0.1 keep their map in PAX records, within the 1 MiB of
+    those.
+    GNU.sparse records without a map are refused too: tarfile takes
+    GNU.sparse.realsize as the size of the member but finds the next header
+    after the data stored, so the member would reach into the ones after it.
+    """
+
+    def _proc_member(self, tar: "_BackupTarFile") -> tarfile.TarInfo:
+        if self.type in (tarfile.XGLTYPE, tarfile.GNUTYPE_SPARSE):
+            raise BackupValidationError("Invalid backup: corrupt archive")
+        if self.type in _EXTENDED_HEADERS:
+            tar.extended_bytes += max(self.size, 0)
+            if tar.extended_bytes > MAX_CONFIG_BYTES:
+                raise BackupValidationError("Invalid backup: corrupt archive")
+        member = super()._proc_member(tar)
+        # A map from PAX records (format 0.0 or 0.1), or GNU.sparse records without one.
+        if member.sparse is not None or any(key.startswith("GNU.sparse.") for key in member.pax_headers):
+            raise BackupValidationError("Invalid backup: corrupt archive")
+        return member
+
+    def _proc_gnusparse_10(self, *args: object, **kwargs: object) -> None:  # whatever tarfile passes
+        raise BackupValidationError("Invalid backup: corrupt archive")  # before its map is read
+
+
+class _BackupTarFile(tarfile.TarFile):
+    """A backup archive being read: its members are _BackupTarInfo."""
+
+    tarinfo = _BackupTarInfo
+    extended_bytes = 0  # the data of the extended headers read so far
+
+
 def _open_tar(tar_path: Path) -> tarfile.TarFile:
     try:
-        return tarfile.open(tar_path, "r:")
-    except tarfile.TarError as e:
+        return _BackupTarFile.open(tar_path, "r:")
+    except _CORRUPT_TAR_ERRORS as e:  # the first header is read here
         raise BackupValidationError("Invalid backup: corrupt archive") from e
+
+
+def _restore_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo:
+    """tarfile's data filter, without the modification time of the archive.
+
+    The extracted files are temporary and their times are not needed; a time
+    out of range (base-256 or PAX "nan") made os.utime raise OverflowError
+    or ValueError.
+    """
+    return tarfile.data_filter(member, dest_path).replace(mtime=None, deep=False)
 
 
 def _extract(tar: tarfile.TarFile, members: dict[str, tarfile.TarInfo], dest: Path) -> None:
     if not hasattr(tarfile, "data_filter"):
         raise RuntimeError("Restoring backups requires Python 3.11.4 or newer (tarfile filters)")
     try:
-        tar.extractall(dest, members=list(members.values()), filter="data")
+        tar.extractall(dest, members=list(members.values()), filter=_restore_filter)
     except tarfile.TarError as e:  # includes the data filter's refusals
         raise BackupValidationError(f"Invalid backup: {e}") from e
 
 
-def _inspect_archive(archive: Path) -> dict:
-    """Validate an archive without extracting it; return its manifest."""
-    with tempfile.TemporaryDirectory(prefix="unos-backup-") as workdir:
-        tar_path = Path(workdir) / "backup.tar"
-        with _open_archive(archive, None) as source:
-            _decompress(source, tar_path)
-        with _open_tar(tar_path) as tar:
-            members = _scan_members(tar)
-            try:
-                manifest_file = tar.extractfile(members["manifest.json"])
-                data = manifest_file.read() if manifest_file else b""
-            except tarfile.TarError as e:
-                raise BackupValidationError("Invalid backup: corrupt archive") from e
-            return _parse_manifest(data)
+class _DecompressedStream:
+    """The decompressed data of a gzip stream, as tarfile reads it in stream mode.
 
+    read() refuses a decompression bomb (more than MAX_TAR_BYTES in all) and
+    reports damaged gzip data (header, deflate data, CRC or length, a stream
+    cut short, garbage after it) as a corrupt archive, like _decompress.
+    """
 
-def _publish(tmp: Path, prefix: str) -> str:
-    """Give an uploaded file its final name without replacing an existing backup."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    for attempt in range(100):
-        suffix = f"_{attempt}" if attempt else ""
-        name = f"{prefix}_{timestamp}{suffix}.tar.gz"
+    def __init__(self, gz: gzip.GzipFile) -> None:
+        self._gz = gz
+        self.size = 0
+
+    def read(self, size: int) -> bytes:
         try:
-            os.link(tmp, BACKUP_DIR / name)
+            data = self._gz.read(size)
+        except (gzip.BadGzipFile, EOFError, zlib.error) as e:
+            raise BackupValidationError("Invalid backup: corrupt archive") from e
+        self.size += len(data)
+        if self.size > MAX_TAR_BYTES:
+            raise BackupValidationError("Backup archive is too large when decompressed")
+        return data
+
+    def read_to_end(self) -> None:
+        while self.read(_CHUNK_SIZE):
+            pass
+
+
+def _stream_members(
+    tar: tarfile.TarFile, stream: _DecompressedStream, manifest: list[bytes]
+) -> Iterator[tarfile.TarInfo]:
+    """The members of a tar stream, for _scan_members; reads manifest.json on the way.
+
+    A member is handed on before the next one is read, so _scan_members
+    checks it first. tarfile skips the data of a member by reading it when
+    the next one is asked for, up to tar.offset, where the next header
+    starts: a member whose data would end past MAX_TAR_BYTES is refused
+    before that (its size can be 2**63 or more).
+    manifest.json can only be read while it is the current member: it is
+    read once _scan_members has accepted it, which it does only for a
+    regular file of at most MAX_CONFIG_BYTES. After the last member the
+    stream is read to its end, so that the size limit and the checks of gzip
+    cover all of it.
+    """
+    for member in tar:
+        yield member
+        # _scan_members did not refuse the member and asks for the next one.
+        if tar.offset > MAX_TAR_BYTES:
+            raise BackupValidationError("Backup archive is too large when decompressed")
+        if member.isreg() and _member_name(member) == "manifest.json":
+            with tar.extractfile(member) as data:
+                manifest.append(data.read(MAX_CONFIG_BYTES + 1))
+    stream.read_to_end()
+
+
+def _inspect_archive(archive: Path) -> dict:
+    """Validate an archive in one pass over its gzip stream; return its manifest.
+
+    Nothing is written, in /tmp or anywhere: tarfile reads the decompressed
+    data as a stream (mode "r|"), _scan_members checks each member as it
+    comes, and only manifest.json is kept, in memory. Restore applies the
+    same limits and checks to the files it extracts.
+    """
+    manifest: list[bytes] = []
+    with _open_archive(archive, None) as source, gzip.GzipFile(fileobj=source, mode="rb") as gz:
+        stream = _DecompressedStream(gz)
+        try:
+            with _BackupTarFile.open(fileobj=stream, mode="r|") as tar:
+                _scan_members(_stream_members(tar, stream, manifest))
+        except _CORRUPT_TAR_ERRORS as e:  # the first header is read by tarfile.open
+            raise BackupValidationError("Invalid backup: corrupt archive") from e
+    if not manifest:  # _scan_members refuses a backup without one
+        raise BackupValidationError("Invalid backup: missing manifest")
+    return _parse_manifest(manifest[0])
+
+
+def backup_temp_file(directory: Path, kind: str) -> Path:
+    """Path for a backup file being written; its name is never listed (see BACKUP_NAME_PATTERN)."""
+    return directory / f".{kind}-{secrets.token_hex(8)}.tmp"
+
+
+def remove_stale_temp_files(directory: Path) -> None:
+    """Remove the temporary files of killed creates, uploads and scheduled backups (see STALE_TEMP_SECONDS)."""
+    cutoff = time.time() - STALE_TEMP_SECONDS
+    for path in directory.iterdir():
+        if not _TEMP_NAME_PATTERN.fullmatch(path.name):
+            continue
+        try:
+            st = os.lstat(path)
+            if stat.S_ISREG(st.st_mode) and st.st_mtime < cutoff:
+                path.unlink()
+        except OSError:
+            continue  # gone meanwhile, or not removable: never fail the backup for it
+
+
+def publish_backup_file(tmp: Path, prefix: str, extension: str) -> str:
+    """Give the finished file ``tmp`` its backup name in the same directory; return the name.
+
+    The name is ``<prefix>_<YYYYmmdd_HHMMSS><extension>``, with ``_1``, ``_2``,
+    ... before the extension when it is taken. os.link never replaces an
+    existing file, and the file appears complete under the new name (also
+    after a power loss: it is written to disk first). The caller removes ``tmp``.
+    """
+    fd = os.open(tmp, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for attempt in range(NAME_ATTEMPTS):
+        number = f"_{attempt}" if attempt else ""
+        name = f"{prefix}_{timestamp}{number}{extension}"
+        try:
+            os.link(tmp, tmp.parent / name)
             return name
         except FileExistsError:
             continue
-    raise RuntimeError("Could not choose a file name for the uploaded backup")
+    raise RuntimeError("Could not choose a file name for the backup")
 
 
-def _store_upload(source: BinaryIO) -> tuple[str, dict]:
-    tmp = BACKUP_DIR / f".upload-{secrets.token_hex(8)}.tmp"
+def _check_encrypted_archive(path: Path) -> None:
+    """Check an encrypted backup as far as possible without its passphrase.
+
+    The file is salt, nonce and AES-GCM ciphertext with its tag (encrypt_file):
+    there is no header to recognise, so only the length is checked. Restore
+    validates the content after decrypting it.
+    """
+    if path.stat().st_size <= SALT_SIZE + NONCE_SIZE + GCM_TAG_SIZE:
+        raise BackupValidationError("Invalid encrypted backup: the file is too short")
+
+
+def _refuse_plain_archive(path: Path) -> None:
+    """Refuse an unencrypted backup uploaded under an encrypted name (.tar.gz.enc).
+
+    Stored as encrypted it could never be restored: restore asks for a
+    passphrase and cannot decrypt it.
+    """
     try:
-        _copy_limited(source, tmp, MAX_ARCHIVE_BYTES)
-        manifest = _inspect_archive(tmp)
-        return _publish(tmp, "uploaded"), manifest
-    finally:
-        tmp.unlink(missing_ok=True)
+        _inspect_archive(path)
+    except BackupValidationError:
+        return  # not a plain backup: kept as encrypted, checked when it is restored
+    raise BackupValidationError("This backup is not encrypted: upload it as .tar.gz")
+
+
+class _BackupUpload(UploadSink):
+    """An uploaded backup, for request_limits.receive_upload.
+
+    It arrives in backup_temp_file(BACKUP_DIR, "upload"), at most
+    MAX_ARCHIVE_BYTES (refused as soon as it grows over that), is validated
+    like a restore when it is complete, and then gets a new uploaded_* name
+    (publish_backup_file). discard removes the temporary file.
+    """
+
+    def __init__(self) -> None:
+        self.max_bytes = MAX_ARCHIVE_BYTES
+        self.encrypted = False
+        self.tmp: Path | None = None
+
+    def too_large(self) -> Exception:
+        return BackupValidationError("Backup file is too large")
+
+    def prepare(self) -> None:
+        ensure_backup_dir()
+
+    def open(self, filename: str) -> int:
+        # The client's file name only tells the format; the file is stored under a new name.
+        if filename.endswith(ENCRYPTED_EXTENSION):
+            self.encrypted = True
+        elif filename.endswith(PLAIN_EXTENSION):
+            self.encrypted = False
+        else:
+            raise HTTPException(400, "Invalid file format. Must be .tar.gz or .tar.gz.enc")
+        remove_stale_temp_files(BACKUP_DIR)
+        tmp = backup_temp_file(BACKUP_DIR, "upload")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o666)
+        self.tmp = tmp
+        return fd
+
+    def finish(self) -> tuple[str, dict | None, int]:
+        """Validate the backup and publish it: its name, its manifest and its size.
+
+        Encrypted backups cannot be read without their passphrase and have no
+        manifest here.
+        """
+        if self.encrypted:
+            _check_encrypted_archive(self.tmp)
+            _refuse_plain_archive(self.tmp)
+            manifest = None
+        else:
+            manifest = _inspect_archive(self.tmp)
+        extension = ENCRYPTED_EXTENSION if self.encrypted else PLAIN_EXTENSION
+        name = publish_backup_file(self.tmp, "uploaded", extension)
+        return name, manifest, (BACKUP_DIR / name).stat().st_size
+
+    def discard(self) -> None:
+        if self.tmp is not None:
+            self.tmp.unlink(missing_ok=True)
 
 
 def _stage_smb_conf(path: Path, warnings: list[str]) -> smb.StagedSmbConf | None:
@@ -461,22 +723,41 @@ def _restore(backup_path: Path, passphrase: str | None) -> dict:
         _restore_lock.release()
 
 
+@contextlib.contextmanager
+def _temporary_files_of_restore() -> Iterator[None]:
+    """Report a full /tmp as RestoreSpaceError while a restore writes its temporary files.
+
+    Only /tmp is written then (a tmpfs, in RAM, in the container): the backup
+    is read, and nothing else is changed before all of it is checked. A
+    full disk later, where the database is copied and replaced, keeps its
+    own answer.
+    """
+    try:
+        yield
+    except OSError as e:
+        if e.errno in (errno.ENOSPC, errno.EDQUOT):
+            raise RestoreSpaceError() from e
+        raise
+
+
 def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
     warnings: list[str] = []
     restored: list[str] = []
     previous_db: Path | None = None
 
-    with tempfile.TemporaryDirectory(prefix="unos-restore-") as workdir:
-        work = Path(workdir)
+    with _temporary_files_of_restore():
+        workdir = tempfile.TemporaryDirectory(prefix="unos-restore-")
+    with workdir:
+        work = Path(workdir.name)
         tar_path = work / "backup.tar"
-        with _open_archive(backup_path, passphrase) as source:
-            _decompress(source, tar_path)
-
         extract_dir = work / "extract"
-        extract_dir.mkdir()
-        with _open_tar(tar_path) as tar:
-            members = _scan_members(tar)
-            _extract(tar, members, extract_dir)
+        with _temporary_files_of_restore():
+            with _open_archive(backup_path, passphrase) as source:
+                _decompress(source, tar_path)
+            extract_dir.mkdir()
+            with _open_tar(tar_path) as tar:
+                members = _scan_members(tar)
+                _extract(tar, members, extract_dir)
         manifest = _parse_manifest((extract_dir / "manifest.json").read_bytes())
 
         # Validate everything before changing anything.
@@ -526,50 +807,64 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
 # --- endpoints ----------------------------------------------------------------
 
 
+def _manifest_version(path: Path) -> str:
+    """The version in the manifest of an unencrypted backup, or "unknown".
+
+    Read with the limits of a restore (_BackupTarFile, at most MAX_MEMBERS
+    entries within MAX_TAR_BYTES, a manifest of at most MAX_CONFIG_BYTES):
+    the list reads every backup each time it is shown, and one stored by an
+    earlier version can hold what its upload check let through, such as a
+    sparse file or a member of any size before the manifest. The
+    manifest has the name the restore gives it (_member_name): also
+    ./manifest.json, as tar -C <folder> . stores it.
+    """
+    try:
+        with _BackupTarFile.open(path, "r:gz") as tar:
+            for count, member in enumerate(tar, start=1):
+                if count > MAX_MEMBERS:
+                    break
+                if member.isreg() and _member_name(member) == "manifest.json":
+                    f = tar.extractfile(member)
+                    data = f.read(MAX_CONFIG_BYTES + 1) if f else b""
+                    if len(data) > MAX_CONFIG_BYTES:
+                        break
+                    return str(json.loads(data).get("version", "unknown"))
+                if tar.offset > MAX_TAR_BYTES:  # the next header lies past what a restore decompresses
+                    break
+    except Exception:
+        pass
+    return "unknown"
+
+
 def _list_backups() -> list[BackupInfo]:
+    """The backups that can be downloaded, restored and deleted, newest first.
+
+    That is every regular file with a backup name. Create and upload write
+    under a temporary name (backup_temp_file), which is not listed.
+    """
     ensure_backup_dir()
+    found: list[tuple[float, str, os.stat_result]] = []
+    for path in BACKUP_DIR.iterdir():
+        if not BACKUP_NAME_PATTERN.fullmatch(path.name):
+            continue
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            continue  # deleted meanwhile
+        if stat.S_ISREG(st.st_mode):  # links are not used (_is_regular_file)
+            found.append((st.st_mtime, path.name, st))
+    found.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
     backups = []
-
-    # Find both encrypted (.tar.gz.enc) and unencrypted (.tar.gz) backups
-    for pattern in ["*.tar.gz", "*.tar.gz.enc"]:
-        for path in BACKUP_DIR.glob(pattern):
-            # Skip if it's a .tar.gz that also has .enc version
-            if pattern == "*.tar.gz" and path.name.endswith(".tar.gz"):
-                enc_path = BACKUP_DIR / f"{path.name}.enc"
-                if enc_path.exists():
-                    continue
-
-            try:
-                stat_result = path.stat()
-                is_encrypted = path.name.endswith(".enc")
-                version = "unknown"
-
-                # Try to read version from backup (only for unencrypted)
-                if not is_encrypted:
-                    try:
-                        with tarfile.open(path, "r:gz") as tar:
-                            for member in tar.getmembers():
-                                if member.name == "manifest.json":
-                                    f = tar.extractfile(member)
-                                    if f:
-                                        manifest = json.load(f)
-                                        version = manifest.get("version", "unknown")
-                                    break
-                    except Exception:
-                        pass
-
-                backups.append(BackupInfo(
-                    filename=path.name,
-                    size=stat_result.st_size,
-                    created=datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
-                    version=str(version),
-                    encrypted=is_encrypted
-                ))
-            except Exception:
-                pass
-
-    # Sort by creation date, newest first
-    backups.sort(key=lambda x: x.created, reverse=True)
+    for mtime, name, st in found:
+        encrypted = name.endswith(ENCRYPTED_EXTENSION)
+        backups.append(BackupInfo(
+            filename=name,
+            size=st.st_size,
+            created=datetime.fromtimestamp(mtime).isoformat(),
+            version="unknown" if encrypted else _manifest_version(BACKUP_DIR / name),
+            encrypted=encrypted,
+        ))
     return backups
 
 
@@ -579,85 +874,89 @@ async def list_backups(_: dict = Depends(verify_token)):
     return {"backups": await asyncio.to_thread(_list_backups)}
 
 
+def _collect_backup_content(config: BackupConfig, content: Path) -> None:
+    """Put the files the backup contains into the directory ``content``."""
+    # Create manifest (don't include passphrase)
+    manifest_config = config.model_dump()
+    manifest_config.pop("passphrase", None)
+    manifest = {
+        "version": BACKUP_VERSION,
+        "created": datetime.now().isoformat(),
+        "hostname": os.uname().nodename,
+        "encrypted": config.encrypt,
+        "config": manifest_config
+    }
+
+    with open(content / "manifest.json", "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    # Backup database: use SQLite's backup API, a plain file copy of a
+    # database in use can be torn and would then fail the restore check.
+    db_path = _live_db_path()
+    if db_path is not None and db_path.exists():
+        copy_database(db_path, content / "unos.db")
+
+    # Backup SMB config
+    smb_conf = Path("/etc/samba/smb.conf")
+    if smb_conf.exists() and config.include_shares:
+        shutil.copy2(smb_conf, content / "smb.conf")
+
+    # The container's /etc/fstab, not the host's: the host's (with the pool
+    # entries, see src/storage/pools.py) is not mounted into the container.
+    # It is never restored (_NOT_RESTORED).
+    fstab = Path("/etc/fstab")
+    if fstab.exists() and config.include_pools:
+        shutil.copy2(fstab, content / "fstab")
+
+    # Backup network config
+    if config.include_network:
+        netplan_dir = Path("/etc/netplan")
+        if netplan_dir.exists():
+            net_backup = content / "netplan"
+            net_backup.mkdir()
+            for conf in netplan_dir.glob("*.yaml"):
+                shutil.copy2(conf, net_backup / conf.name)
+
+
+def _write_archive(content: Path, out: BinaryIO) -> None:
+    """Write the files in ``content`` to ``out`` as a .tar.gz archive."""
+    with tarfile.open(fileobj=out, mode="w:gz") as tar:
+        for item in sorted(content.iterdir()):
+            tar.add(item, arcname=item.name)
+
+
 def _create_backup(config: BackupConfig) -> dict:
     ensure_backup_dir()
+    remove_stale_temp_files(BACKUP_DIR)
+    extension = ENCRYPTED_EXTENSION if config.encrypt else PLAIN_EXTENSION
+    tmp = backup_temp_file(BACKUP_DIR, "create")
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            content = Path(tmpdir) / "content"
+            content.mkdir()
+            _collect_backup_content(config, content)
+            with open(tmp, "xb") as out:
+                if config.encrypt:
+                    plain = io.BytesIO()
+                    _write_archive(content, plain)
+                    out.write(encrypt_file(plain.getbuffer(), config.passphrase))
+                else:
+                    _write_archive(content, out)
+        backup_name = publish_backup_file(tmp, "unos_backup", extension)
+    finally:
+        tmp.unlink(missing_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix = ".tar.gz.enc" if config.encrypt else ".tar.gz"
-    backup_name = f"unos_backup_{timestamp}{suffix}"
-    backup_path = BACKUP_DIR / backup_name
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-
-        # Create manifest (don't include passphrase)
-        manifest_config = config.model_dump()
-        manifest_config.pop("passphrase", None)
-        manifest = {
-            "version": BACKUP_VERSION,
-            "created": datetime.now().isoformat(),
-            "hostname": os.uname().nodename,
-            "encrypted": config.encrypt,
-            "config": manifest_config
-        }
-
-        manifest_path = tmpdir_path / "manifest.json"
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
-
-        # Backup database: use SQLite's backup API, a plain file copy of a
-        # database in use can be torn and would then fail the restore check.
-        db_path = _live_db_path()
-        if db_path is not None and db_path.exists():
-            copy_database(db_path, tmpdir_path / "unos.db")
-
-        # Backup SMB config
-        smb_conf = Path("/etc/samba/smb.conf")
-        if smb_conf.exists() and config.include_shares:
-            shutil.copy2(smb_conf, tmpdir_path / "smb.conf")
-
-        # Backup fstab (pool mounts)
-        fstab = Path("/etc/fstab")
-        if fstab.exists() and config.include_pools:
-            shutil.copy2(fstab, tmpdir_path / "fstab")
-
-        # Backup network config
-        if config.include_network:
-            netplan_dir = Path("/etc/netplan")
-            if netplan_dir.exists():
-                net_backup = tmpdir_path / "netplan"
-                net_backup.mkdir()
-                for conf in netplan_dir.glob("*.yaml"):
-                    shutil.copy2(conf, net_backup / conf.name)
-
-        # Create tarball in memory for potential encryption
-        tar_path = tmpdir_path / "backup.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            for item in tmpdir_path.iterdir():
-                if item.name != "backup.tar.gz":
-                    tar.add(item, arcname=item.name)
-
-        # Encrypt if requested
-        if config.encrypt:
-            with open(tar_path, "rb") as f:
-                tar_data = f.read()
-            encrypted_data = encrypt_file(tar_data, config.passphrase)
-            with open(backup_path, "wb") as f:
-                f.write(encrypted_data)
-        else:
-            shutil.move(tar_path, backup_path)
-
-        stat_result = backup_path.stat()
-        return {
-            "status": "success",
-            "encrypted": config.encrypt,
-            "backup": BackupInfo(
-                filename=backup_name,
-                size=stat_result.st_size,
-                created=datetime.now().isoformat(),
-                version=BACKUP_VERSION
-            )
-        }
+    return {
+        "status": "success",
+        "encrypted": config.encrypt,
+        "backup": BackupInfo(
+            filename=backup_name,
+            size=(BACKUP_DIR / backup_name).stat().st_size,
+            created=datetime.now().isoformat(),
+            version=BACKUP_VERSION,
+            encrypted=config.encrypt,
+        )
+    }
 
 
 @router.post("/create")
@@ -691,32 +990,39 @@ async def download_backup(filename: str, _: dict = Depends(verify_token)):
     )
 
 
-@router.post("/upload")
-async def upload_backup(
-    file: UploadFile = File(...),
-    _: dict = Depends(verify_token)
-):
-    """Upload a backup file. It is validated like a restore, but not applied."""
-    ensure_backup_dir()
+@router.post("/upload", openapi_extra=UPLOAD_OPENAPI)
+async def upload_backup(request: Request, _: dict = Depends(verify_token)):
+    """Upload a backup file (form field "file"). It is validated like a restore, but not applied.
 
-    if not file.filename or not file.filename.endswith(".tar.gz"):
-        raise HTTPException(400, "Invalid file format. Must be .tar.gz")
-
+    Encrypted backups (.tar.gz.enc) cannot be read without their passphrase:
+    they are validated when they are restored. The form is read only here,
+    after the credentials were checked; the extension is checked as soon as
+    the file name arrives, and the file goes straight into a temporary file
+    in the backup directory as it arrives, not through /tmp
+    (request_limits.receive_upload, _BackupUpload). The check of the
+    complete file (_inspect_archive: a plain backup, or a .tar.gz.enc upload,
+    which is refused if it is a plain backup) reads it once, as a stream,
+    and writes nothing: neither the decompressed archive nor its files are
+    stored anywhere.
+    """
+    upload = _BackupUpload()
     try:
-        safe_name, manifest = await asyncio.to_thread(_store_upload, file.file)
+        safe_name, manifest, size = await receive_upload(request, upload)
     except BackupValidationError as e:
         raise HTTPException(400, str(e)) from e
+    except StarletteHTTPException:
+        raise  # the answers about the form and its file name, and the body limit (413)
     except Exception as e:
         raise HTTPException(500, f"Failed to upload backup: {e}") from e
 
-    stat_result = (BACKUP_DIR / safe_name).stat()
     return {
         "status": "success",
         "backup": BackupInfo(
             filename=safe_name,
-            size=stat_result.st_size,
+            size=size,
             created=datetime.now().isoformat(),
-            version=str(manifest.get("version", BACKUP_VERSION))
+            version="unknown" if manifest is None else str(manifest.get("version", BACKUP_VERSION)),
+            encrypted=upload.encrypted,
         )
     }
 
@@ -727,7 +1033,12 @@ async def restore_backup(
     decrypt_request: Optional[DecryptRequest] = None,
     _: dict = Depends(verify_token)
 ):
-    """Restore from a backup file. Provide passphrase for encrypted backups."""
+    """Restore from a backup file. Provide passphrase for encrypted backups.
+
+    The archive is decompressed and its files are extracted into /tmp first
+    (a tmpfs in RAM in the container); when they do not fit, the answer is
+    507 and nothing was restored.
+    """
     ensure_backup_dir()
     backup_path = _backup_path(filename)
     if not _is_regular_file(backup_path):
@@ -744,6 +1055,9 @@ async def restore_backup(
         raise HTTPException(409, "Another restore is already running") from None
     except BackupValidationError as e:
         raise HTTPException(400, str(e)) from e
+    except RestoreSpaceError as e:
+        logger.warning("Backup restore failed: %s (%s)", e, e.__cause__)
+        raise HTTPException(507, str(e)) from e
     except HTTPException:
         raise
     except Exception as e:

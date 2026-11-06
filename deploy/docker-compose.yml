@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   supervisor:
     build: ../supervisor
@@ -21,6 +19,10 @@ services:
       # 8080 directly, from the gateway address, and would pick their own
       # address and login rate-limit bucket.
       - FORWARDED_ALLOW_IPS=172.31.254.2
+      # SQLite creates its own temporary files (large sorts, temporary
+      # tables) in $SQLITE_TMPDIR, else $TMPDIR, else /var/tmp before /tmp:
+      # with this, on the tmpfs below, like those of Python's tempfile.
+      - TMPDIR=/tmp
     volumes:
       - unos-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
@@ -32,9 +34,65 @@ services:
         target: /mnt
         bind:
           propagation: rshared
+    # Temporary files in RAM: the container's writable layer is on the system
+    # disk, on many boards an SD card, which writes wear out. The largest use
+    # is a restore (supervisor/src/backup/router.py): the decompressed
+    # archive, at most MAX_TAR_BYTES (640 MiB), and the files extracted from
+    # it, at most as much again, while a backup made meanwhile collects its
+    # files here: a copy of the database and the small files, at most as much
+    # again, or it could not be restored (deploy/update.sh copies the database
+    # here the same way). That is 1920 MiB, hence 2g, with a margin for the
+    # small users. Uploads write nothing here: an uploaded backup is checked
+    # in one pass, as a stream. A tmpfs takes RAM only for the files it holds:
+    # about twice the size of the database while a backup is restored, about
+    # its size while one is made, nothing in between. The limit keeps a
+    # runaway write to about a quarter of the RAM of an 8 GB board; beyond it,
+    # writes fail with "No space left on device": a backup fails, and a
+    # restore answers 507, before either has changed anything. noexec, nosuid
+    # and nodev are Docker's defaults, stated here: nothing runs from /tmp. A
+    # restart empties it. supervisor/tests/test_deploy_scripts.py checks the
+    # limit against those constants.
+    tmpfs:
+      - /tmp:noexec,nosuid,nodev,size=2g
+      # btrfs scrub rewrites its progress file in /var/lib/btrfs every 5
+      # seconds while a scrub runs (hours on a large pool), each time a new
+      # file renamed over the old one, which ext4 writes out at once: in RAM,
+      # not in the writable layer on the system disk. The result of the last
+      # scrub is forgotten when the supervisor restarts.
+      - /var/lib/btrfs:noexec,nosuid,nodev,size=1m,mode=755
     networks:
       unos-net:
         ipv4_address: 172.31.254.3
+    # Healthy once the API answers; docker ps shows it, and webui starts only
+    # then (depends_on below). Python, because the image has neither curl nor
+    # wget, and without a proxy, so that HTTP_PROXY in the container's
+    # environment cannot divert the request. While the container starts
+    # (start_period), Docker runs the check every 5 seconds (its default
+    # start_interval since Engine 25). Before the API answers, the supervisor
+    # mounts the pools the host has not mounted (up to 2 minutes each): failed
+    # checks only count after start_period, a successful one counts at once.
+    # `docker compose up` starts webui once the supervisor is healthy. With
+    # Docker Engine 29 it fails at once when the supervisor exits. For one
+    # that runs without answering, Docker decides within start_period +
+    # (retries + 1) x (interval + timeout) = 600 + 4 x (10 + 10) = 680
+    # seconds: a failed check counts only if it started after start_period,
+    # so the one that runs then does not, and the supervisor is unhealthy
+    # after retries more; a check takes up to timeout once its process has
+    # started, and Docker waits interval after each one. update.sh, install.sh
+    # and its systemd unit pass at least that as --wait-timeout
+    # (SUPERVISOR_START_TIMEOUT), which Compose 2.30 or later applies to this
+    # wait, so that Compose does not give up on the supervisor first. Change
+    # SUPERVISOR_START_TIMEOUT in both scripts with these values.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:8080/api/v1/health', timeout=5)"
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 10m
 
   webui:
     build: ../webui
@@ -50,12 +108,23 @@ services:
     volumes:
       - caddy-data:/data
       - caddy-config:/config
+    # Not before the API answers: until then every request would fail with 502.
     depends_on:
-      - supervisor
+      supervisor:
+        condition: service_healthy
     networks:
       unos-net:
         # The supervisor trusts X-Forwarded-For from this address only.
         ipv4_address: 172.31.254.2
+    # Caddy, and the API behind it, over plain HTTP: the http:// site of
+    # webui/Caddyfile serves /api/v1/health without the redirect to HTTPS.
+    # busybox wget (caddy:2-alpine).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 volumes:
   unos-data:

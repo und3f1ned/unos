@@ -3,7 +3,6 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
 import jwt
 from jwt import PyJWTError
-import os
 import secrets
 
 

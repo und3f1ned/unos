@@ -1,11 +1,15 @@
 """Backup upload/restore must treat archives as untrusted input (tar-slip, links, bombs, bad DBs)."""
 
+import errno
+import gzip
 import importlib
 import io
 import json
 import os
 import sqlite3
 import tarfile
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -84,6 +88,11 @@ def _usernames(db_path) -> set[str]:
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    yield from make_env(tmp_path, monkeypatch)
+
+
+def make_env(tmp_path, monkeypatch):
+    """The env fixture: backup directory, live database and smb.conf in tmp_path."""
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
     data_dir = tmp_path / "data"
@@ -341,6 +350,374 @@ def test_bad_manifest_is_rejected(env, manifest):
         entries.insert(0, _file("manifest.json", manifest))
     assert _restore(env, _store(env, entries)).status_code == 400
     _assert_untouched(env)
+
+
+# --- malformed headers ------------------------------------------------------------
+#
+# tarfile raises more than TarError for some malformed headers (a size of 2**63
+# or more, broken GNU sparse data, a long chain of extended headers), and
+# extracting a sparse file with a broken map or a file with a time out of range
+# failed with OSError, ValueError or OverflowError: the restore answered 500
+# (such as "cannot fit 'int' into an offset-sized integer"), and the upload 500
+# too, or it accepted a backup with a broken sparse map that no restore could use.
+# Sparse files are now refused in every format (UNOS never writes them).
+
+END_OF_TAR = bytes(2 * 512)
+CORRUPT = "Invalid backup: corrupt archive"
+TOO_LARGE = "Backup archive is too large when decompressed"
+
+
+def _number(value: int) -> bytes:
+    """A 12-byte number field of a tar header, base-256 when octal is too short (as GNU tar writes it)."""
+    return tarfile.itn(value, 12, tarfile.GNU_FORMAT)
+
+
+def _raw(name: str, data: bytes = b"", kind: bytes = tarfile.REGTYPE, size: int | None = None,
+         fields: dict[int, bytes] | None = None) -> bytes:
+    """A member as bytes: its header, with ``fields`` written at these offsets, then its data.
+
+    The size field is ``size`` (default: the length of the data); the
+    checksum is computed again, so tarfile reads the header.
+    """
+    info = tarfile.TarInfo(name)
+    info.type = kind
+    info.size = len(data) if size is None else size
+    header = bytearray(info.tobuf(tarfile.GNU_FORMAT))
+    for offset, value in (fields or {}).items():
+        header[offset:offset + len(value)] = value
+    header[148:156] = b" " * 8
+    header[148:156] = b"%06o\0 " % sum(header)
+    return bytes(header) + data + bytes(-len(data) % 512)
+
+
+def _sparse(name: str, data: bytes, chunks: list[tuple[int, int]], real_size: int, extended: bool = False) -> bytes:
+    """An old GNU sparse member: up to 4 (offset, length) chunks of ``data`` in a file of ``real_size`` bytes."""
+    fields = {482: b"\x01" if extended else b"\x00", 483: _number(real_size)}
+    for i, (offset, length) in enumerate(chunks):
+        fields[386 + 24 * i] = _number(offset)
+        fields[398 + 24 * i] = _number(length)
+    return _raw(name, data, tarfile.GNUTYPE_SPARSE, fields=fields)
+
+
+def _pax(records: dict[str, str], kind: bytes = tarfile.XHDTYPE) -> bytes:
+    """A PAX extended header with these records."""
+    data = b""
+    for key, value in records.items():
+        record = f" {key}={value}\n".encode()
+        length = len(record) + 1
+        while len(str(length)) + len(record) != length:
+            length = len(str(length)) + len(record)
+        data += str(length).encode() + record
+    return _raw("pax", data, kind)
+
+
+MANIFEST_MEMBER = _raw("manifest.json", MANIFEST)
+
+# id, tar archive (not compressed), the answer of the upload; the restore answers CORRUPT.
+MALFORMED = [
+    ("size-2**63", MANIFEST_MEMBER + _raw("padding", size=2**63) + _raw("fstab", b"#\n") + END_OF_TAR, TOO_LARGE),
+    ("size-2**63-in-the-first-member", _raw("padding", size=2**63) + MANIFEST_MEMBER + END_OF_TAR, TOO_LARGE),
+    ("sparse-data-of-2**63",
+     MANIFEST_MEMBER + _raw("padding", kind=tarfile.GNUTYPE_SPARSE, size=2**63, fields={483: _number(10)}) + END_OF_TAR,
+     CORRUPT),
+    ("long-name-of-2**62", MANIFEST_MEMBER + _raw("././@LongLink", kind=tarfile.GNUTYPE_LONGNAME, size=2**62)
+     + _raw("x", b"y") + END_OF_TAR, CORRUPT),
+    ("long-name-of-2**63", MANIFEST_MEMBER + _raw("././@LongLink", kind=tarfile.GNUTYPE_LONGNAME, size=2**63)
+     + _raw("x", b"y") + END_OF_TAR, CORRUPT),
+    ("pax-header-of-2**63", _raw("pax", kind=tarfile.XHDTYPE, size=2**63) + MANIFEST_MEMBER + END_OF_TAR, CORRUPT),
+    ("sparse-extension-cut-off", MANIFEST_MEMBER + _sparse("padding", b"", [], 10, extended=True), CORRUPT),
+    ("sparse-map-not-numbers", MANIFEST_MEMBER + _pax({"GNU.sparse.map": "a,b"}) + _raw("x", b"y") + END_OF_TAR,
+     CORRUPT),
+    ("sparse-size-not-a-number", MANIFEST_MEMBER + _pax({"GNU.sparse.size": "x"}) + _raw("x", b"y") + END_OF_TAR,
+     CORRUPT),
+    ("chain-of-pax-headers", MANIFEST_MEMBER + _pax({"comment": "c"}) * 2000 + _raw("x", b"y") + END_OF_TAR, CORRUPT),
+    ("chain-of-long-names",
+     MANIFEST_MEMBER + _raw("././@LongLink", b"name\0", tarfile.GNUTYPE_LONGNAME) * 2000 + _raw("x", b"y") + END_OF_TAR,
+     CORRUPT),
+    ("sparse-map-with-a-negative-offset",
+     MANIFEST_MEMBER + _sparse("unos.db", b"x" * 10, [(-4096, 10)], 10) + END_OF_TAR, CORRUPT),
+    ("sparse-map-past-2**63", MANIFEST_MEMBER + _sparse("unos.db", b"x" * 10, [(2**63, 10)], 10) + END_OF_TAR, CORRUPT),
+    ("sparse-file-of-negative-size", MANIFEST_MEMBER + _sparse("unos.db", b"x" * 10, [(0, 10)], -5) + END_OF_TAR,
+     CORRUPT),
+]
+
+
+@pytest.mark.parametrize("archive, upload_detail", [case[1:] for case in MALFORMED], ids=[case[0] for case in MALFORMED])
+def test_malformed_headers_are_refused_by_restore(env, archive, upload_detail):
+    (env.backup_dir / "malformed.tar.gz").write_bytes(gzip.compress(archive))
+
+    response = _restore(env, "malformed.tar.gz")
+
+    assert (response.status_code, response.json()["detail"]) == (400, CORRUPT)
+    _assert_untouched(env)
+
+
+@pytest.mark.parametrize("archive, upload_detail", [case[1:] for case in MALFORMED], ids=[case[0] for case in MALFORMED])
+def test_malformed_headers_are_refused_by_upload(env, archive, upload_detail):
+    response = _upload(env, gzip.compress(archive))
+
+    assert (response.status_code, response.json()["detail"]) == (400, upload_detail)
+    assert os.listdir(env.backup_dir) == []  # nothing stored
+
+
+# --- sparse files ---------------------------------------------------------------
+#
+# tarfile builds the map of a sparse file before the member can be checked:
+# from the extension blocks of the old GNU format, or from the start of the
+# data in format 1.0, at a cost in memory and time that grows with the archive.
+# UNOS never writes sparse files (tarfile cannot): well-formed ones are refused
+# too, in every format, whether the backup keeps the member or not, and so are
+# GNU.sparse records without a map.
+
+SPARSE_MAP_1_0 = b"1\n0\n10\n".ljust(512, b"\0")
+SPARSE = [
+    ("old-gnu-format-unos.db", _sparse("unos.db", b"x" * 10, [(0, 10)], 10)),
+    ("old-gnu-format-ignored", _sparse("padding", b"x" * 10, [(0, 10)], 10)),
+    ("old-gnu-format-extended", _sparse("padding", b"", [], 10, extended=True) + bytes(512)),
+    ("pax-0.0", _pax({"GNU.sparse.size": "10", "GNU.sparse.offset": "0", "GNU.sparse.numbytes": "10"})
+     + _raw("unos.db", b"x" * 10)),
+    ("pax-0.1", _pax({"GNU.sparse.size": "10", "GNU.sparse.map": "0,10"}) + _raw("unos.db", b"x" * 10)),
+    ("pax-1.0", _pax({"GNU.sparse.major": "1", "GNU.sparse.minor": "0", "GNU.sparse.name": "unos.db",
+                      "GNU.sparse.realsize": "10"})
+     + _raw("GNUSparseFile.0/unos.db", SPARSE_MAP_1_0 + b"x" * 10)),
+    # Without the version records of format 1.0 tarfile builds no map, but it
+    # still takes GNU.sparse.realsize as the size of the member, and finds the
+    # next header after the data stored: the member reaches into the ones after
+    # it. The upload stored this backup, whose restore failed with "Invalid
+    # backup: unexpected end of data"; the files a restore extracted could add
+    # up to more than the archive.
+    ("pax-realsize-without-a-map", _pax({"GNU.sparse.realsize": "100000"}) + _raw("fstab", b"#\n")),
+]
+
+
+@pytest.mark.parametrize("member", [case[1] for case in SPARSE], ids=[case[0] for case in SPARSE])
+def test_sparse_files_are_refused_by_restore(env, member):
+    (env.backup_dir / "sparse.tar.gz").write_bytes(gzip.compress(MANIFEST_MEMBER + member + END_OF_TAR))
+
+    response = _restore(env, "sparse.tar.gz")
+
+    assert (response.status_code, response.json()["detail"]) == (400, CORRUPT)
+    _assert_untouched(env)
+
+
+@pytest.mark.parametrize("member", [case[1] for case in SPARSE], ids=[case[0] for case in SPARSE])
+def test_sparse_files_are_refused_by_upload(env, member):
+    response = _upload(env, gzip.compress(MANIFEST_MEMBER + member + END_OF_TAR))
+
+    assert (response.status_code, response.json()["detail"]) == (400, CORRUPT)
+    assert os.listdir(env.backup_dir) == []  # nothing stored
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        _raw("manifest.json", MANIFEST, fields={136: _number(2**70)}),
+        _pax({"mtime": "nan"}) + MANIFEST_MEMBER,
+        _pax({"mtime": "1e300"}) + MANIFEST_MEMBER,
+    ],
+    ids=["base-256-time", "pax-time-nan", "pax-time-1e300"],
+)
+def test_a_time_out_of_range_does_not_stop_a_restore(env, manifest):
+    """The extracted files are temporary: their times from the archive are not used."""
+    db = _raw("unos.db", _good_db(env))
+    (env.backup_dir / "times.tar.gz").write_bytes(gzip.compress(manifest + db + END_OF_TAR))
+
+    response = _restore(env, "times.tar.gz")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["restored"] == ["database"]
+    assert _usernames(env.db_path) == {"admin2", "bob"}
+
+
+# --- extended headers ---------------------------------------------------------------
+#
+# GNU long names and PAX headers: tarfile reads the data of one at once, keeps
+# its records with the member, and copies those of a global PAX header into
+# every member that follows. A PAX header that claimed 2**63 bytes made the
+# restore fail and, read as a stream by the upload check, ended the archive:
+# the upload kept a backup that no restore could use. Extended headers of
+# more than a backup needs, or a global one, are now refused by both.
+
+# Each comes after the manifest and a good database (_with_database).
+EXTENDED = [
+    ("pax-header-of-2**63", _raw("pax", b"[global]\n", tarfile.XHDTYPE, size=2**63 - 1)),
+    ("global-pax-header", _pax({"comment": "made by hand"}, tarfile.XGLTYPE) + _raw("fstab", b"#\n")),
+    ("extended-headers-over-1-MiB",
+     b"".join(_pax({"comment": "c" * 65000}) + _raw(f"f{i}", b"x") for i in range(17))),
+]
+
+
+def _with_database(env, tail: bytes) -> bytes:
+    """A backup of the manifest and a good database, then ``tail``, as .tar.gz."""
+    return gzip.compress(MANIFEST_MEMBER + _raw("unos.db", _good_db(env)) + tail + END_OF_TAR)
+
+
+@pytest.mark.parametrize("tail", [case[1] for case in EXTENDED], ids=[case[0] for case in EXTENDED])
+def test_extended_headers_beyond_what_a_backup_needs_are_refused_by_restore(env, tail):
+    (env.backup_dir / "extended.tar.gz").write_bytes(_with_database(env, tail))
+
+    response = _restore(env, "extended.tar.gz")
+
+    assert (response.status_code, response.json()["detail"]) == (400, CORRUPT)
+    _assert_untouched(env)
+
+
+@pytest.mark.parametrize("tail", [case[1] for case in EXTENDED], ids=[case[0] for case in EXTENDED])
+def test_extended_headers_beyond_what_a_backup_needs_are_refused_by_upload(env, tail):
+    response = _upload(env, _with_database(env, tail))
+
+    assert (response.status_code, response.json()["detail"]) == (400, CORRUPT)
+    assert os.listdir(env.backup_dir) == []  # nothing stored
+
+
+# --- a full /tmp ------------------------------------------------------------------
+#
+# A restore writes the decompressed archive and the files extracted from it
+# into /tmp, a tmpfs of 2 GiB in RAM in the container. When they did not fit,
+# the restore answered 500 "Failed to restore backup: [Errno 28] No space left
+# on device", which reads like a full system disk.
+
+NO_ROOM = "Not enough room in /tmp for the temporary files of the restore: nothing was restored"
+
+
+class _FullTmp:
+    """A /tmp with room for ``room`` bytes: a write past it fails with ENOSPC, as on a full tmpfs.
+
+    Files opened for writing under ``root``, by the backup router
+    (_decompress) and by tarfile (extraction), count against the room;
+    ``failed`` is the name of the file whose write failed.
+    """
+
+    def __init__(self, root, room: int | None):
+        self.root = root
+        self.room = room
+        self.failed: str | None = None
+
+    def wrap(self, real_open):
+        def open_(file, mode="r", *args, **kwargs):
+            handle = real_open(file, mode, *args, **kwargs)
+            if self.room is not None and set(mode) & set("wax+") and self.root in Path(file).resolve().parents:
+                return _CountedFile(handle, self, Path(file).name)
+            return handle
+
+        return open_
+
+
+class _CountedFile:
+    """A file being written in the _FullTmp ``full``."""
+
+    def __init__(self, handle, full: _FullTmp, name: str):
+        self._handle = handle
+        self._full = full
+        self._name = name
+
+    def write(self, data) -> int:
+        room = self._full.room
+        if len(data) > room:
+            self._handle.write(bytes(data[:room]))
+            self._full.room = 0
+            self._full.failed = self._name
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        self._full.room = room - len(data)
+        return self._handle.write(data)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self._handle.close()
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+
+@pytest.fixture
+def full_tmp(env, monkeypatch):
+    """/tmp in env.tmp/tmp, without a limit until the test sets ``room`` on the _FullTmp returned."""
+    tmp = env.tmp / "tmp"
+    tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp))
+    full = _FullTmp(tmp.resolve(), None)
+    monkeypatch.setattr(backup_router, "open", full.wrap(open), raising=False)
+    monkeypatch.setattr(tarfile, "bltn_open", full.wrap(tarfile.bltn_open))
+    return full
+
+
+def _big_backup(env) -> str:
+    """A backup with the database and 1 MiB of other data; its tar is the first file /tmp gets."""
+    return _store(env, [_file("manifest.json", MANIFEST), _file("padding", os.urandom(1024 * 1024)),
+                        _file("unos.db", _good_db(env)), _file("smb.conf", f"[docs]\n   path = {env.pools}/data/docs\n".encode())])
+
+
+def _tar_size(env, name: str) -> int:
+    return len(gzip.decompress((env.backup_dir / name).read_bytes()))
+
+
+def _no_room(*args, **kwargs):
+    raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+
+@pytest.mark.parametrize("phase", ["decompress", "extract", "temporary-directory"])
+def test_a_restore_that_does_not_fit_in_tmp_answers_507_and_changes_nothing(env, full_tmp, monkeypatch, phase):
+    name = _big_backup(env)
+    with monkeypatch.context() as patch_:
+        if phase == "decompress":
+            full_tmp.room = 64 * 1024
+        elif phase == "extract":
+            full_tmp.room = _tar_size(env, name) + 1024  # the tar fits, not the database extracted from it
+        else:
+            patch_.setattr(tempfile, "mkdtemp", _no_room)
+
+        response = _restore(env, name)
+
+    assert (response.status_code, response.json()["detail"]) == (507, NO_ROOM)
+    if phase != "temporary-directory":
+        assert full_tmp.failed == {"decompress": "backup.tar", "extract": "unos.db"}[phase]
+    _assert_untouched(env)  # database and smb.conf, and no copy of the database kept
+    assert sorted(os.listdir(env.samba)) == ["smb.conf"]
+    assert os.listdir(env.tmp / "tmp") == []  # the temporary directory is removed
+    assert not backup_router._restore_lock.locked()
+
+    # With room, the next restore works.
+    full_tmp.room = None
+    response = _restore(env, name)
+    assert response.status_code == 200, response.text
+    assert response.json()["restored"] == ["database", "smb_config"]
+    assert _usernames(env.db_path) == {"admin2", "bob"}
+
+
+def test_a_full_data_disk_is_not_reported_as_a_full_tmp(env, monkeypatch):
+    """SQLite reports a full disk as "database or disk is full": the copy of the database fails first."""
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
+    real_connect = sqlite3.connect
+
+    def connect(database, *args, **kwargs):
+        conn = real_connect(database, *args, **kwargs)
+        if ".pre-restore-" in str(database):
+            conn.execute("PRAGMA max_page_count = 1")  # SQLITE_FULL as soon as the copy grows
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    response = _restore(env, name)
+
+    assert (response.status_code, response.json()["detail"]) == (500, "Failed to restore backup: database or disk is full")
+    _assert_untouched(env)  # no incomplete copy of the database is left either
+    assert not backup_router._restore_lock.locked()
+
+
+def test_no_space_outside_tmp_keeps_its_own_answer(env, monkeypatch):
+    """Only the writes to /tmp are reported as a full /tmp."""
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
+
+    def no_space(db_path):
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(db_path) + ".pre-restore-x")
+
+    monkeypatch.setattr(backup_router, "_keep_copy_of_database", no_space)
+    response = _restore(env, name)
+
+    assert response.status_code == 500
+    assert response.json()["detail"].startswith("Failed to restore backup: [Errno 28] No space left on device")
+    assert _usernames(env.db_path) == {"admin"}
 
 
 # --- database checks ----------------------------------------------------------------

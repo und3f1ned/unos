@@ -1,4 +1,6 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { FAKE_DISKS, fakeStorageApi } from './storage-fakes';
 
 test.describe('Scheduler', () => {
   test('should display scheduler tab', async ({ authenticatedPage: page }) => {
@@ -56,5 +58,174 @@ test.describe('Scheduler', () => {
       await refreshButton.click();
       await page.waitForTimeout(500);
     }
+  });
+});
+
+// The Target Disk of SMART tasks. The scheduler and storage APIs are faked
+// (storage-fakes.ts): nothing reaches the supervisor, and no task is created
+// or changed.
+const GONE_DISK = '/dev/e2e-gone';
+const SMART_TASK = {
+  id: 'task_e2e_smart',
+  name: 'E2E SMART test',
+  task_type: 'smart_test',
+  enabled: true,
+  frequency: 'weekly',
+  cron_expression: null,
+  hour: 3,
+  minute: 0,
+  day_of_week: 0,
+  day_of_month: null,
+  target_pool: null,
+  target_disk: GONE_DISK,
+  command: null,
+  keep_count: null,
+  last_run: null,
+  next_run: '2026-11-08T03:00:00',
+  last_status: null,
+};
+const DISK_OPTIONS = FAKE_DISKS.map((d) => `${d.path} - ${d.model}`);
+
+/** List the task (SMART_TASK) and the given disks; returns the bodies of the task updates (PUT). */
+async function fakeSchedulerApi(page: Page, disks: typeof FAKE_DISKS, task = SMART_TASK): Promise<unknown[]> {
+  await fakeStorageApi(page, { disks: () => disks });
+  const updates: unknown[] = [];
+  await page.route(
+    (url) => url.pathname.startsWith('/api/v1/scheduler/'),
+    (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname.slice('/api/v1/scheduler'.length);
+      if (request.method() === 'GET' && path === '/tasks') return route.fulfill({ json: [task] });
+      if (request.method() === 'PUT' && path === `/tasks/${task.id}`) {
+        const body = request.postDataJSON();
+        updates.push(body);
+        return route.fulfill({ json: { ...task, ...body } });
+      }
+      return route.abort();
+    },
+  );
+  return updates;
+}
+
+async function openSchedulerTab(page: Page) {
+  await page.goto('/system#scheduler');
+  await expect(page.getByText(SMART_TASK.name, { exact: true })).toBeVisible();
+}
+
+async function saveTask(page: Page) {
+  await page.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(page.getByRole('heading', { name: 'Edit Task' })).toHaveCount(0);
+}
+
+test.describe('Scheduler: SMART task whose disk is not connected', () => {
+  test('the edit form shows the disk as not connected and saving keeps it', async ({
+    authenticatedPage: page,
+  }) => {
+    const updates = await fakeSchedulerApi(page, FAKE_DISKS);
+    await openSchedulerTab(page);
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+
+    const select = page.getByLabel('Target Disk');
+    await expect(select.locator('option')).toHaveText([`${GONE_DISK} (not connected)`, ...DISK_OPTIONS]);
+    await expect(select).toHaveValue(GONE_DISK);
+    // The option stays when another disk is chosen.
+    await select.selectOption(FAKE_DISKS[1].path);
+    await select.selectOption(GONE_DISK);
+    await saveTask(page);
+    expect(updates).toEqual([expect.objectContaining({ target_disk: GONE_DISK })]);
+  });
+
+  test('with no disks connected, the edit form shows the select with the disk of the task', async ({
+    authenticatedPage: page,
+  }) => {
+    const updates = await fakeSchedulerApi(page, []);
+    await openSchedulerTab(page);
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+
+    const select = page.getByLabel('Target Disk');
+    await expect(select.locator('option')).toHaveText([`${GONE_DISK} (not connected)`]);
+    await expect(select).toHaveValue(GONE_DISK);
+    await expect(page.getByText('No disks available.')).toHaveCount(0);
+    await saveTask(page);
+    expect(updates).toEqual([expect.objectContaining({ target_disk: GONE_DISK })]);
+  });
+
+  test('when the disk list cannot be loaded, the edit form keeps the disk without calling it not connected', async ({
+    authenticatedPage: page,
+  }) => {
+    const updates = await fakeSchedulerApi(page, FAKE_DISKS);
+    // Registered last, so it answers instead of fakeStorageApi.
+    await page.route(
+      (url) => url.pathname === '/api/v1/storage/disks',
+      (route) => route.fulfill({ status: 500, json: { detail: 'Could not list the disks (e2e)' } }),
+    );
+    const disksAnswered = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/storage/disks');
+    await openSchedulerTab(page);
+    expect((await disksAnswered).status()).toBe(500);
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+
+    const select = page.getByLabel('Target Disk');
+    await expect(select.locator('option')).toHaveText([GONE_DISK]);
+    await expect(select).toHaveValue(GONE_DISK);
+    await saveTask(page);
+    expect(updates).toEqual([expect.objectContaining({ target_disk: GONE_DISK })]);
+  });
+
+  test('a new SMART task starts with the first connected disk', async ({ authenticatedPage: page }) => {
+    await fakeSchedulerApi(page, FAKE_DISKS);
+    await openSchedulerTab(page);
+    // Edited and closed first: its disk must not stay a choice.
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expect(page.getByLabel('Target Disk')).toHaveValue(GONE_DISK);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    await page.getByRole('button', { name: 'New Task' }).click();
+    await page.locator('select:has(option[value="smart_test"])').selectOption('smart_test');
+    const select = page.getByLabel('Target Disk');
+    await expect(select.locator('option')).toHaveText(DISK_OPTIONS);
+    await expect(select).toHaveValue(FAKE_DISKS[0].path);
+  });
+
+  test('a new SMART task without connected disks shows that none is available', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeSchedulerApi(page, []);
+    await openSchedulerTab(page);
+    await page.getByRole('button', { name: 'New Task' }).click();
+    await page.locator('select:has(option[value="smart_test"])').selectOption('smart_test');
+    await expect(page.getByText('No disks available.')).toBeVisible();
+    await expect(page.getByLabel('Target Disk')).toHaveCount(0);
+  });
+});
+
+// Not in the describe above, so that `-g "not connected"` signs in only five
+// times (the login limit is five a minute).
+test.describe('Scheduler: SMART task whose disk is connected', () => {
+  test('the edit form shows the disk of the task also when the disk list arrives later', async ({
+    authenticatedPage: page,
+  }) => {
+    const disk = FAKE_DISKS[1];
+    const updates = await fakeSchedulerApi(page, FAKE_DISKS, { ...SMART_TASK, target_disk: disk.path });
+    // Registered last, so it answers instead of fakeStorageApi, once released.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === '/api/v1/storage/disks',
+      async (route) => {
+        await released;
+        await route.fulfill({ json: FAKE_DISKS });
+      },
+    );
+    await openSchedulerTab(page);
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+
+    const select = page.getByLabel('Target Disk');
+    await expect(select.locator('option')).toHaveText([disk.path]);
+    release();
+    await expect(select.locator('option')).toHaveText(DISK_OPTIONS);
+    // Not the first disk of the list: the form shows the disk that saving sends.
+    await expect(select).toHaveValue(disk.path);
+    await saveTask(page);
+    expect(updates).toEqual([expect.objectContaining({ target_disk: disk.path })]);
   });
 });

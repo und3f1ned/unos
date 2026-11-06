@@ -408,12 +408,36 @@ def _subject_value(value: str) -> str:
 
 
 def get_certificate_info(cert_path: str) -> dict | None:
-    """Parse certificate and extract information using openssl."""
+    """Parse the certificate file ``cert_path`` and extract information using openssl."""
+    return _certificate_info(["-in", cert_path])
+
+
+def get_pem_certificate_info(pem: str) -> dict | None:
+    """Like get_certificate_info, for a certificate given as PEM text.
+
+    openssl reads it on its standard input, so nothing is written to disk and
+    nothing can be left behind. None also when the text cannot be encoded (a
+    lone surrogate, which JSON can carry as an escape).
+    """
+    try:
+        pem.encode()
+    except UnicodeEncodeError:
+        return None
+    return _certificate_info([], pem)
+
+
+def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
+    """Parse a certificate and extract information using openssl x509.
+
+    openssl reads the file named in ``source`` (["-in", path]) or, with
+    ``source`` empty, the PEM text ``pem`` on its standard input.
+    """
     try:
         # Get subject, issuer, dates
         result = subprocess.run(
-            ["openssl", "x509", "-in", cert_path, "-noout",
+            ["openssl", "x509", *source, "-noout",
              "-subject", "-issuer", "-dates", "-fingerprint"],
+            input=pem,
             capture_output=True,
             text=True
         )
@@ -450,8 +474,10 @@ def get_certificate_info(cert_path: str) -> dict | None:
 
         # Check if certificate is currently valid
         verify_result = subprocess.run(
-            ["openssl", "x509", "-in", cert_path, "-noout", "-checkend", "0"],
-            capture_output=True
+            ["openssl", "x509", *source, "-noout", "-checkend", "0"],
+            input=pem,
+            capture_output=True,
+            text=True
         )
         info["is_valid"] = verify_result.returncode == 0
 
@@ -641,14 +667,9 @@ async def upload_certificate(
     certs_path.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Validate and parse the certificate to get domain
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as f:
-            f.write(data.certificate)
-            temp_cert = f.name
-
-        info = get_certificate_info(temp_cert)
-        Path(temp_cert).unlink()
+        # Validate and parse the certificate to get domain. openssl reads it
+        # on its standard input: no temporary file to leave in /tmp on errors.
+        info = get_pem_certificate_info(data.certificate)
 
         if not info:
             raise HTTPException(400, "Invalid certificate format")
@@ -663,6 +684,16 @@ async def upload_certificate(
                 f"{MAX_CERTIFICATE_NAME_LENGTH} characters long",
             )
         cert_file, key_file, chain_file = _certificate_files(domain)
+
+        # Text that cannot be encoded (a lone surrogate) would fail half-way
+        # through the writes below, with the certificate replaced and the old
+        # key or chain file emptied.
+        for text, what in ((data.private_key, "private key"),
+                           (data.chain or "", "certificate chain")):
+            try:
+                text.encode()
+            except UnicodeEncodeError:
+                raise HTTPException(400, f"Invalid {what} format") from None
 
         # Save certificate and key
         cert_file.write_text(data.certificate)

@@ -29,6 +29,13 @@ COMPOSE_FILE="$PROJECT_ROOT/deploy/docker-compose.test.yml"
 TEST_URL="http://localhost:3080"
 TEST_HTTPS_URL="https://localhost:3443"
 MAX_WAIT_TIME=120  # seconds
+# --wait-timeout of `docker compose up`, which starts webui only once the
+# supervisor is healthy: as long as Docker can take to report the supervisor
+# healthy or unhealthy, start_period + (retries + 1) x (interval + timeout) of
+# its healthcheck in deploy/docker-compose.test.yml, 10 + 11 x (5 + 5) (see
+# SUPERVISOR_START_TIMEOUT in deploy/update.sh). Docker Compose before 2.17
+# rejects the option; 2.30 or later applies it to this wait.
+STACK_START_TIMEOUT=120
 
 # Functions
 log_info() {
@@ -128,7 +135,7 @@ start_test_containers() {
 
     # Build and start containers
     docker compose -f docker-compose.test.yml build --quiet
-    docker compose -f docker-compose.test.yml up -d
+    docker compose -f docker-compose.test.yml up -d --wait-timeout "$STACK_START_TIMEOUT"
 
     # Wait for services to be ready: the health check over plain HTTP, then
     # over HTTPS (Caddy has issued its certificate)

@@ -40,7 +40,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 ## Features
 
 ### Storage Management
-- **BTRFS Storage Pools** - Create and manage pools with RAID 0/1/5/6/10 profiles
+- **BTRFS Storage Pools** - Create and manage pools with single, RAID 0/1/1C3/1C4/10 profiles (no RAID 5/6: btrfs write hole)
 - **Volume Management** - Create subvolumes within pools for organized storage
 - **SMART Monitoring** - Real-time disk health monitoring and diagnostics
 - **BTRFS Snapshots** - Create, restore, and schedule filesystem snapshots
@@ -100,14 +100,12 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Scheduled Power** - Configure auto-shutdown and wake times
 
 ### Backup & Recovery
-- **Configuration Backup** - Export all UNOS settings
+- **Configuration Backup** - Back up the UNOS database (accounts, 2FA, API tokens) and the SMB share configuration
 - **Encrypted Backups** - Optional AES-256 encryption with passphrase
 - **Restore** - Import backups to restore configuration
 
 ### System Updates
-- **GitHub-based Updates** - Check and install updates from releases
-- **Rollback Support** - Revert to previous version if issues occur
-- **Update History** - Track all applied updates
+- **Update script** - `sudo /opt/unos/deploy/update.sh` updates UNOS from its git branch, backs up the database and the data volume first, and rolls back automatically if the new version does not start
 
 ## Quick Start
 

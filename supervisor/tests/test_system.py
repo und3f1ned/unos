@@ -1,6 +1,5 @@
 import pytest
 from unittest.mock import patch, MagicMock
-import psutil
 
 
 class TestSystemInfo:
