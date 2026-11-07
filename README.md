@@ -48,7 +48,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### File Sharing
 - **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux
-- **Web File Browser** - Upload, download, copy, move, and manage files via browser
+- **Web File Browser** - Upload, download, copy, move, rename, and manage files via browser
 
 ### Application Platform
 - **70+ Curated Apps** - One-click installation of popular self-hosted applications

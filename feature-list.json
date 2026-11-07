@@ -1998,13 +1998,15 @@
         "A name that exists or breaks the name rules is refused"
       ],
       "verified_by": [
+        "webui/tests/files.spec.ts",
         "supervisor/tests/test_files_security.py"
       ],
       "passes": false,
       "adr": [
-        "ADR-0168"
+        "ADR-0168",
+        "ADR-0232"
       ],
-      "notes": "No E2E test renames an item."
+      "notes": "Step 1: files.spec.ts 'renames a file and a folder in the open folder', also from the keyboard, by leaving the field, and after a switch to another window as Chromium reports one; test_files_security.py test_rename_a_file_and_a_folder. Step 2: files.spec.ts 'refuses a name that exists or breaks the name rules, and Escape keeps the name'; test_rename_rejects_bad_names, test_rename_existing_target_is_refused, test_rename_never_replaces_a_name_that_appears_after_the_check. Missing: these backend tests on Linux. On Linux, which the dev device runs, the exclusive rename of ADR-0232 is renameat2 with RENAME_NOREPLACE, and no run has reached it: the tests ran renameatx_np on macOS. passes turns true once the owner's run of scripts/dev/linux-tests.sh tests/test_files_security.py -k rename is green."
     },
     {
       "id": "files.protects-volumes-and-mounts",
