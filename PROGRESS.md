@@ -67,10 +67,11 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 Open owner actions:
 
-1. GitHub, which needs the owner's sign-in (the agent's browsers have none): branch protection
-   for `main` (`ci.branch-protection`); the device's read-only deploy key
-   (`/root/.ssh/unos_deploy_ed25519.pub`, SHA256:0wAXyGOt…, ADR-0053); revoking the classic
-   token the device used before 2026-11-05.
+1. GitHub: branch protection for `main` needs GitHub Pro or a public repository (the Free plan
+   answers 403 for a private one); the classic token the device used before 2026-11-05 can be
+   revoked only on github.com (Settings, Developer settings, Tokens). Done on 2026-11-07 through
+   the API with GitHub Desktop's sign-in: the device's read-only deploy key (it reads the
+   repository with it), pull requests #27 and #28.
 2. Playwright's Chromium 1200: `make setup` in the owner's own terminal, where the network filter
    may allow it.
 3. The reboot of the device for the re-check of ADR-0018, once `device.scenario-checks-in-repo`
