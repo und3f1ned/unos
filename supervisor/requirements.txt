@@ -17,8 +17,8 @@ requests==2.34.2
 # Runtime dependency (updates/updater.py, notifications/router.py), not only
 # the TestClient transport.
 httpx==0.28.1
-psutil==5.9.8
-croniter==6.0.0
-pyotp==2.9.0
+psutil==7.2.2
+croniter==6.2.4
+pyotp==2.10.0
 nut2==2.1.1
-slowapi==0.1.9
+slowapi==0.1.10
