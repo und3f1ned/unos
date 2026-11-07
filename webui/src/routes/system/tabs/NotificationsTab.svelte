@@ -209,7 +209,8 @@
     }
     if (config.channel === "webhook" && config.webhook_config) {
       hookUrl = config.webhook_config.url;
-      hookMethod = config.webhook_config.method;
+      // The API stores the method as it was given, and the sender reads it in any case.
+      hookMethod = config.webhook_config.method.toUpperCase() === "PUT" ? "PUT" : "POST";
     }
     if (config.channel === "discord" && config.discord_config) hookUrl = config.discord_config.webhook_url;
     if (config.channel === "slack" && config.slack_config) hookUrl = config.slack_config.webhook_url;
@@ -499,10 +500,17 @@
                     >
                       Send test<span class="sr-only"> to {nameOf(config)}</span>
                     </Button>
-                    <Button variant="ghost" size="sm" on:click={() => toggleEnabled(config)}>
+                    <!-- Not while the channel's test runs: its outcome would show under the new settings. -->
+                    <Button variant="ghost" size="sm" disabled={testing === id} on:click={() => toggleEnabled(config)}>
                       {config.enabled ? "Disable" : "Enable"}<span class="sr-only"> {nameOf(config)}</span>
                     </Button>
-                    <Button variant="ghost" size="icon-sm" icon={Pencil} on:click={() => openEdit(config)}>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      icon={Pencil}
+                      disabled={testing === id}
+                      on:click={() => openEdit(config)}
+                    >
                       <span class="sr-only">Edit {nameOf(config)}</span>
                     </Button>
                     <Button variant="ghost" size="icon-sm" icon={Trash2} on:click={() => askDelete(config)}>
@@ -662,9 +670,12 @@
         <Input class="sm:col-span-2" label="SMTP host" bind:value={emailHost} placeholder="smtp.gmail.com" required />
         <Input label="Port" type="number" bind:value={emailPort} placeholder="587" required />
       </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Input label="Username" bind:value={emailUser} placeholder="user@example.com" autocomplete="off" />
-        <Input label="Password" type="password" bind:value={emailPassword} autocomplete="new-password" />
+      <div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Input label="Username" bind:value={emailUser} placeholder="user@example.com" autocomplete="off" />
+          <Input label="Password" type="password" bind:value={emailPassword} autocomplete="new-password" />
+        </div>
+        <p class="form-hint">Leave both empty for a mail server that takes mail without a login, such as a relay in your network.</p>
       </div>
       <Input label="From address" type="email" bind:value={emailFrom} placeholder="noreply@example.com" required />
       <Input

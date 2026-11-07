@@ -24,7 +24,8 @@ export interface TelegramConfig {
 /** A generic webhook: UNOS sends JSON with title, message, type, timestamp and source. */
 export interface WebhookConfig {
   url: string;
-  method: "POST" | "PUT";
+  /** POST or PUT, in any case: the API stores it as it was given. The form sends "POST" or "PUT". */
+  method: string;
   // Set only through the API; the form keeps them as they are.
   headers?: Record<string, string>;
   body_template?: string | null;

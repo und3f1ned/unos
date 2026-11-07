@@ -1,18 +1,22 @@
 import asyncio
+import email.utils
 import html
 import logging
 import os
 import smtplib
 import ssl
 import json
+import threading
 import uuid
 import httpx
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import ValidationError
 
 from ..auth.utils import verify_token
 from .schemas import (
@@ -39,57 +43,48 @@ TEST_TITLE = "Test Notification"
 TEST_MESSAGE = "This is a test notification from your UNOS NAS system."
 SEND_FAILED = "Failed to send notification: {error}"
 NOT_FOUND = "Config not found: {id}"
+SAVE_FAILED = "Could not save the notification channels: {error}"
 
 # smtplib blocks for the whole SMTP conversation, so it runs on a small private
 # pool: a slow or unreachable mail server must neither freeze the event loop
 # nor tie up the default executor that storage operations run in.
 _SMTP_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="unos-smtp")
 
+# The channels and the history are written in worker threads, synced to the
+# system disk (ADR-0021): one change of each file at a time, each on what the
+# one before stored, through a staged file of a fixed name.
+_CONFIGS_LOCK = threading.Lock()
+_HISTORY_LOCK = threading.Lock()
+
 
 def load_configs() -> list[NotificationConfig]:
-    """Load notification configs from file."""
+    """The notification channels; [] without a file.
+
+    A file that cannot be read reads as no channels too, and that is logged.
+    """
     path = Path(CONFIG_FILE)
     if not path.exists():
         return []
     try:
         data = json.loads(path.read_text())
         return [NotificationConfig(**c) for c in data]
-    except Exception:
+    except Exception as error:
+        logger.warning("Could not read the notification channels %s: %s", path, error)
         return []
 
 
-def save_configs(configs: list[NotificationConfig]) -> None:
-    """Save notification configs to file."""
-    path = Path(CONFIG_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([c.model_dump() for c in configs], indent=2))
+def _replace_file(path: Path, text: str) -> None:
+    """Replace the file at ``path`` with ``text`` (blocking: fsync).
 
-
-def load_logs() -> list[NotificationLog]:
-    """The history: the latest HISTORY_SIZE notifications sent, oldest first."""
-    path = Path(LOGS_FILE)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        return [NotificationLog(**l) for l in data[-HISTORY_SIZE:]]
-    except Exception:
-        return []
-
-
-def _write_history(logs: list[NotificationLog]) -> None:
-    """Replace the history file with ``logs``.
-
-    Staged next to the file, then renamed over it, as the SMART history
-    (ADR-0235): a full system disk or a power loss during the write leaves
-    the old history or the new one, never a part.
+    Staged next to the file, synced, then renamed over it, as the SMART
+    history (ADR-0235): a full system disk or a power loss during the write
+    leaves the old file or the new one, never a part.
     """
-    path = Path(LOGS_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     staged = path.with_name(path.name + ".new")
     try:
         with open(staged, "w") as f:
-            f.write(json.dumps([l.model_dump() for l in logs], indent=2))
+            f.write(text)
             f.flush()
             os.fsync(f.fileno())
         os.replace(staged, path)
@@ -98,20 +93,82 @@ def _write_history(logs: list[NotificationLog]) -> None:
         raise
 
 
-def save_logs(entries: list[NotificationLog]) -> None:
-    """Add the entries of one notification to the history, in one write.
+def save_configs(configs: list[NotificationConfig]) -> None:
+    """Replace the channels' file with ``configs`` (blocking: fsync)."""
+    _replace_file(Path(CONFIG_FILE), json.dumps([c.model_dump() for c in configs], indent=2))
 
-    The history records the deliveries and is no part of them: when it cannot
-    be written, that is logged, and the notification counts as sent all the same.
+
+def _change_configs(change: Callable[[list[NotificationConfig]], list[NotificationConfig]]) -> None:
+    """Store the channels that ``change`` makes of the stored ones (blocking: run it in a worker thread).
+
+    One change at a time, each on the channels that the one before stored, so
+    that none is lost. ``change`` refuses with an HTTPException, and then
+    nothing is written. A write that fails is HTTPException(500), and the
+    channels stay as they were.
+    """
+    with _CONFIGS_LOCK:
+        configs = change(load_configs())
+        try:
+            save_configs(configs)
+        except OSError as error:
+            raise HTTPException(500, SAVE_FAILED.format(error=error)) from error
+
+
+def load_logs() -> list[NotificationLog]:
+    """The history: the latest HISTORY_SIZE notifications sent, oldest first; [] without a file.
+
+    An entry that is not a notification as this version writes it (one from
+    before channel_name, or one damaged from outside UNOS) is left out, and a
+    file that cannot be read reads as no history. Both are logged, and the
+    next notification writes the history without them (ADR-0247).
+    """
+    path = Path(LOGS_FILE)
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as error:
+        logger.warning("Could not read the notification history %s: %s", path, error)
+        return []
+    if not isinstance(data, list):
+        logger.warning("Could not read the notification history %s: it holds no list of notifications", path)
+        return []
+    logs = []
+    for item in data:
+        try:
+            logs.append(NotificationLog.model_validate(item))
+        except ValidationError:
+            pass
+    if len(logs) < len(data):
+        logger.warning(
+            "Could not read %d of the entries of the notification history %s: they are left out",
+            len(data) - len(logs), path,
+        )
+    return logs[-HISTORY_SIZE:]
+
+
+def _write_history(logs: list[NotificationLog]) -> None:
+    """Replace the history file with ``logs`` (blocking: fsync)."""
+    _replace_file(Path(LOGS_FILE), json.dumps([l.model_dump() for l in logs], indent=2))
+
+
+def save_logs(entries: list[NotificationLog]) -> None:
+    """Add the entries of one notification to the history, in one write (blocking: run it in a worker thread).
+
+    One write at a time, each after reading what the one before wrote, so that
+    no entry is lost. The history records the deliveries and is no part of
+    them: when it cannot be written, that is logged, and the notification
+    counts as sent all the same.
     """
     if not entries:
         return
-    try:
-        _write_history((load_logs() + entries)[-HISTORY_SIZE:])
-    except OSError as error:
-        logger.warning(
-            "Could not record the notification '%s' in the history: %s", entries[0].event.title, error
-        )
+    with _HISTORY_LOCK:
+        try:
+            _write_history((load_logs() + entries)[-HISTORY_SIZE:])
+        except OSError as error:
+            logger.warning(
+                "Could not record the notification '%s' in the history: %s", entries[0].event.title, error
+            )
 
 
 def history_entry(
@@ -168,7 +225,10 @@ def _deliver_email(config: EmailConfig, message: str) -> None:
 
     Port 465 speaks TLS from the start. Other ports start in plain text and
     switch to TLS with STARTTLS when ``smtp_tls`` is set. Without
-    ``smtp_verify_tls`` the server's certificate is not checked.
+    ``smtp_verify_tls`` the server's certificate is not checked. A channel
+    without a username does not log in, for a mail server that takes mail
+    without a login, such as a relay in the LAN; one with a username never
+    sends without its login.
     """
     if config.smtp_port == IMPLICIT_TLS_PORT:
         server = smtplib.SMTP_SSL(
@@ -179,11 +239,21 @@ def _deliver_email(config: EmailConfig, message: str) -> None:
     try:
         if config.smtp_tls and config.smtp_port != IMPLICIT_TLS_PORT:
             server.starttls(context=_tls_context(config))
-        server.login(config.smtp_user, config.smtp_password)
+        if config.smtp_user:
+            server.login(config.smtp_user, config.smtp_password)
         server.sendmail(config.from_address, config.to_addresses, message)
         server.quit()
     finally:
         server.close()
+
+
+def _mail_domain(address: str) -> str:
+    """The domain of ``address``, for the Message-ID; "localhost" when it has none.
+
+    make_msgid's own default asks the resolver for this host's name, which can block.
+    """
+    _, at, domain = email.utils.parseaddr(address)[1].rpartition("@")
+    return domain if at and domain else "localhost"
 
 
 async def send_email(config: EmailConfig, event: NotificationEvent) -> tuple[bool, str | None]:
@@ -193,6 +263,10 @@ async def send_email(config: EmailConfig, event: NotificationEvent) -> tuple[boo
         msg["From"] = config.from_address
         msg["To"] = ", ".join(config.to_addresses)
         msg["Subject"] = f"[UNOS] {event.title}"
+        # RFC 5322 requires a Date, and providers junk or refuse a message
+        # without a Message-ID; not every relay adds them.
+        msg["Date"] = email.utils.formatdate(localtime=True)
+        msg["Message-ID"] = email.utils.make_msgid(domain=_mail_domain(config.from_address))
 
         body = f"""
 {event.title}
@@ -387,36 +461,37 @@ async def list_configs(_: dict = Depends(verify_token)):
 @router.post("/configs", response_model=NotificationConfig)
 async def create_config(config: NotificationConfig, _: dict = Depends(verify_token)):
     """Create a new notification configuration, with an id of its own."""
-    configs = load_configs()
     config.id = f"notif_{uuid.uuid4().hex[:12]}"
-    configs.append(config)
-    save_configs(configs)
+    await asyncio.to_thread(_change_configs, lambda configs: [*configs, config])
     return config
 
 
 @router.put("/configs/{config_id}", response_model=NotificationConfig)
 async def update_config(config_id: str, config: NotificationConfig, _: dict = Depends(verify_token)):
     """Update a notification configuration."""
-    configs = load_configs()
+    config.id = config_id
 
-    for i, c in enumerate(configs):
-        if c.id == config_id:
-            config.id = config_id
-            configs[i] = config
-            save_configs(configs)
-            return config
+    def replace(configs: list[NotificationConfig]) -> list[NotificationConfig]:
+        for i, c in enumerate(configs):
+            if c.id == config_id:
+                return [*configs[:i], config, *configs[i + 1:]]
+        raise HTTPException(404, NOT_FOUND.format(id=config_id))
 
-    raise HTTPException(404, NOT_FOUND.format(id=config_id))
+    await asyncio.to_thread(_change_configs, replace)
+    return config
 
 
 @router.delete("/configs/{config_id}")
 async def delete_config(config_id: str, _: dict = Depends(verify_token)):
     """Delete a notification configuration."""
-    configs = load_configs()
-    kept = [c for c in configs if c.id != config_id]
-    if len(kept) == len(configs):
-        raise HTTPException(404, NOT_FOUND.format(id=config_id))
-    save_configs(kept)
+
+    def remove(configs: list[NotificationConfig]) -> list[NotificationConfig]:
+        kept = [c for c in configs if c.id != config_id]
+        if len(kept) == len(configs):
+            raise HTTPException(404, NOT_FOUND.format(id=config_id))
+        return kept
+
+    await asyncio.to_thread(_change_configs, remove)
     return {"status": "deleted", "id": config_id}
 
 
@@ -434,7 +509,7 @@ async def test_notification(config_id: str, _: dict = Depends(verify_token)):
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
     success, error = await send_through(config, event)
-    save_logs([history_entry(config, event, success, error)])
+    await asyncio.to_thread(save_logs, [history_entry(config, event, success, error)])
     if not success:
         raise HTTPException(500, SEND_FAILED.format(error=error))
 
@@ -462,7 +537,7 @@ async def send_notification(event: NotificationEvent, _: dict = Depends(verify_t
             "success": success,
             "error": error,
         })
-    save_logs(entries)
+    await asyncio.to_thread(save_logs, entries)
 
     return {"results": results}
 

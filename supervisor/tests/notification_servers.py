@@ -55,15 +55,17 @@ class MailServer:
     """An SMTP server on 127.0.0.1 with the given certificate.
 
     ``implicit_tls`` speaks TLS from the first byte (SMTPS, as on port 465); otherwise the
-    connection starts in plain text and offers STARTTLS, and AUTH only after it. It records the
+    connection starts in plain text and offers STARTTLS, and AUTH only after it. Without ``auth``
+    it is a relay that takes mail without a login and offers no AUTH at all. It records the
     logins (user, password, whether TLS protected them) and the messages it accepted
     (sender, recipients, text), and keeps a failed TLS handshake in ``errors``.
     """
 
-    def __init__(self, cert_file: Path, key_file: Path, *, implicit_tls: bool = False):
+    def __init__(self, cert_file: Path, key_file: Path, *, implicit_tls: bool = False, auth: bool = True):
         self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.context.load_cert_chain(cert_file, key_file)
         self.implicit_tls = implicit_tls
+        self.auth = auth
         self.logins: list[tuple[str, str, bool]] = []
         self.messages: list[tuple[str, list[str], str]] = []
         self.errors: list[Exception] = []
@@ -115,14 +117,18 @@ class MailServer:
             verb, _, argument = line.partition(" ")
             verb = verb.upper()
             if verb == "EHLO":
-                extension = "AUTH PLAIN" if tls else "STARTTLS"
-                reply("mail.example", f"250 {extension}")
+                if not tls:
+                    reply("mail.example", "250 STARTTLS")
+                elif self.auth:
+                    reply("mail.example", "250 AUTH PLAIN")
+                else:
+                    reply("250 mail.example")
             elif verb == "STARTTLS" and not tls:
                 reply("220 2.0.0 Ready to start TLS")
                 connection = self.context.wrap_socket(connection, server_side=True)
                 reader = connection.makefile("rb")
                 tls = True
-            elif verb == "AUTH" and argument.upper().startswith("PLAIN "):
+            elif verb == "AUTH" and self.auth and argument.upper().startswith("PLAIN "):
                 _, user, password = base64.b64decode(argument.split(" ", 1)[1]).decode().split("\0")
                 self.logins.append((user, password, tls))
                 reply("235 2.7.0 Authentication successful")

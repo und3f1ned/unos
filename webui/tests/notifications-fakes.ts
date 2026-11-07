@@ -44,11 +44,15 @@ export interface FakeNotifications {
   tests: string[];
   /** The error that the next tests of a channel end with, by its id; none: the test is delivered. */
   errors: Record<string, string>;
+  /** While set, tests are answered only once it resolves, as a mail server that is slow to answer. */
+  hold: Promise<void> | null;
 }
 
 /** Serve the fake notifications API to the page, starting with ``channels``. */
 export async function fakeNotificationsApi(page: Page, channels: Channel[] = []): Promise<FakeNotifications> {
-  const fake: FakeNotifications = { channels: channels.map((c) => ({ ...c })), saved: [], tests: [], errors: {} };
+  const fake: FakeNotifications = {
+    channels: channels.map((c) => ({ ...c })), saved: [], tests: [], errors: {}, hold: null,
+  };
   // The history, newest first.
   const history: object[] = [];
   let ids = 0;
@@ -94,6 +98,7 @@ export async function fakeNotificationsApi(page: Page, channels: Channel[] = [])
         const channel = fake.channels.find((c) => c.id === id);
         if (!channel) return missing(id);
         fake.tests.push(id);
+        if (fake.hold) await fake.hold;
         const error = fake.errors[id] ?? null;
         const timestamp = new Date().toISOString();
         history.unshift({

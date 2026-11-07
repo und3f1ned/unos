@@ -351,7 +351,8 @@ async def _deliver_alert(event: NotificationEvent) -> None:
 
     The senders report failures as (False, error) instead of raising; those are
     logged like timeouts and exceptions. The history of System > Notifications
-    lists each alert sent, with its result, in one write per alert (ADR-0247).
+    lists each alert sent, with its result, in one write per alert, made in a
+    worker thread: it is synced to the system disk (ADR-0021, ADR-0247).
     """
     loop = asyncio.get_running_loop()
     entries = []
@@ -377,7 +378,7 @@ async def _deliver_alert(event: NotificationEvent) -> None:
                 "Could not send alert '%s' by %s: %s", event.title, config.channel.value, error
             )
         entries.append(history_entry(config, event, sent, error))
-    save_logs(entries)
+    await asyncio.to_thread(save_logs, entries)
 
 
 async def send_smart_alert(alert: SmartTrendAlert):

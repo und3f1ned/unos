@@ -3,7 +3,10 @@ webhook servers or name the error, without blocking the event loop, and the hist
 notification sent (ADR-0045, ADR-0247)."""
 import asyncio
 import builtins
+import contextlib
 import datetime
+import email
+import email.utils
 import errno
 import importlib
 import io
@@ -271,6 +274,13 @@ class TestTheMailServersCertificate:
         [(sender, recipients, text)] = server.messages
         assert (sender, recipients) == ("nas@example", ["me@example", "you@example"])
         assert "Subject: [UNOS] Disk warning" in text
+        # RFC 5322 requires a Date, and providers junk or refuse a message without a Message-ID.
+        # Before, the message had neither: only a relay that adds them made it acceptable.
+        message = email.message_from_string(text)
+        assert message["Date"] and message["Message-ID"], text
+        sent_at = email.utils.parsedate_to_datetime(message["Date"])
+        assert abs(sent_at - datetime.datetime.now(datetime.timezone.utc)) < datetime.timedelta(minutes=1)
+        assert re.fullmatch(r"<[^<>@\s]+@example>", message["Message-ID"]), message["Message-ID"]
 
     @pytest.mark.parametrize("server", ["untrusted"], indirect=True)
     async def test_a_self_signed_certificate_is_refused_before_the_login(self, server, monkeypatch, implicit_tls):
@@ -301,6 +311,30 @@ def certificate_of_another_host(tmp_path, monkeypatch):
     cert_file, key_file = certificate(tmp_path, dns=("mail.example",))
     monkeypatch.setenv("SSL_CERT_FILE", str(cert_file))
     return cert_file, key_file
+
+
+@pytest.mark.parametrize("smtp_tls", [False, True], ids=["plain", "starttls"])
+class TestAMailServerWithoutALogin:
+    """A mail server that takes mail without a login, such as a relay in the LAN, offers no AUTH:
+    the form's Username and Password are optional, and a channel without a username sends without
+    logging in. One with a username never sends without its login."""
+
+    async def test_a_channel_without_a_username_sends_without_logging_in(self, trusted, smtp_tls):
+        # Before, UNOS always logged in: smtplib refused with "SMTP AUTH extension not supported
+        # by server.", and no test or alert of such a channel was ever sent.
+        with MailServer(*trusted, auth=False) as server:
+            config = _mail_config(server, smtp_user="", smtp_password="", smtp_tls=smtp_tls)
+            assert await notifications.send_email(config, EVENT) == (True, None)
+        assert server.logins == []
+        [(sender, recipients, text)] = server.messages
+        assert (sender, recipients) == ("nas@example", ["me@example", "you@example"])
+        assert "Subject: [UNOS] Disk warning" in text
+
+    async def test_a_channel_with_a_username_does_not_send_without_its_login(self, trusted, smtp_tls):
+        with MailServer(*trusted, auth=False) as server:
+            sent, error = await notifications.send_email(_mail_config(server, smtp_tls=smtp_tls), EVENT)
+        assert (sent, error) == (False, "SMTP AUTH extension not supported by server.")
+        assert server.messages == []
 
 
 class TestSendTelegram:
@@ -516,6 +550,33 @@ class TestAlertDelivery:
         assert writes == [3]
         assert [entry.channel_name for entry in notifications.load_logs()] == ["Mail 0", "Mail 1", "Mail 2"]
 
+    async def test_the_history_of_an_alert_is_written_off_the_event_loop(self, smtp, mail_channel, monkeypatch):
+        # The write is synced to the system disk (fsync), which can take seconds on a busy SD card.
+        # Before, it ran on the event loop of the monitors, logins and every request (ADR-0021).
+        writing, release = _hold_writes_of(monkeypatch, "_write_history")
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        ticking = asyncio.create_task(ticker())
+        alerting = asyncio.create_task(health_router.send_raid_alert("data", "degraded", 0, "details"))
+        try:
+            assert await asyncio.to_thread(writing.wait, 5), "the history was never written"
+            before = ticks
+            await asyncio.sleep(0.2)
+            assert not alerting.done()  # still writing the history
+            assert ticks - before > 5  # while the event loop kept running
+        finally:
+            release.set()
+            ticking.cancel()
+        await alerting
+        [entry] = notifications.load_logs()
+        assert (entry.event.title, entry.success) == ("RAID Pool 'data' DEGRADED", True)
+
 
 class TestEndpoints:
     @pytest.fixture
@@ -606,6 +667,96 @@ def _count_history_writes(monkeypatch) -> list[int]:
 
     monkeypatch.setattr(notifications, "_write_history", counting)
     return writes
+
+
+@contextlib.contextmanager
+def _full_disk(monkeypatch, folder: Path):
+    """Inside it, every write of a file in ``folder`` fails as on a full system disk: opening the
+    file for writing empties it, then the write fails with ENOSPC."""
+
+    def full_disk(file, mode="r", *args, **kwargs):
+        handle = _REAL_OPEN(file, mode, *args, **kwargs)  # "w" has emptied the file
+        if "w" in mode and str(file).startswith(str(folder)):
+            handle.close()
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return handle
+
+    monkeypatch.setattr(builtins, "open", full_disk)
+    monkeypatch.setattr(io, "open", full_disk)  # what Path.open and Path.write_text call
+    try:
+        yield
+    finally:
+        monkeypatch.setattr(builtins, "open", _REAL_OPEN)
+        monkeypatch.setattr(io, "open", _REAL_OPEN)
+
+
+def _hold_writes_of(monkeypatch, name: str) -> tuple[threading.Event, threading.Event]:
+    """Make notifications.<name>, a write to the system disk, wait as on a busy SD card: returns
+    the event that is set when a write starts and the one that lets it go on (5 s at most)."""
+    writing, release = threading.Event(), threading.Event()
+    real = getattr(notifications, name)
+
+    def held(*args):
+        writing.set()
+        release.wait(5)
+        return real(*args)
+
+    monkeypatch.setattr(notifications, name, held)
+    return writing, release
+
+
+def _answer_while_held(api, monkeypatch, name: str, request):
+    """``request(api)``'s answer, sent while notifications.<name> is held as on a busy SD card.
+
+    Meanwhile GET /api/v1/health must answer at once: the write is synced to the system disk
+    (fsync), which must not hold up the event loop of every request and login (ADR-0021).
+    """
+    monkeypatch.setenv("UNOS_DISABLE_BACKGROUND_TASKS", "1")
+    writing, release = _hold_writes_of(monkeypatch, name)
+    answers = []
+    with api:  # all requests on one event loop, as in the supervisor
+        sender = threading.Thread(target=lambda: answers.append(request(api)))
+        sender.start()
+        try:
+            assert writing.wait(5), f"{name} was never called"
+            started = time.monotonic()
+            assert api.get("/api/v1/health").status_code == 200
+            assert time.monotonic() - started < 1, "the API waited for the write to the disk"
+            assert sender.is_alive()  # the request still waits for its write
+        finally:
+            release.set()
+            sender.join(10)
+    [answer] = answers
+    return answer
+
+
+def _history_item(title: str) -> dict:
+    """An entry of the history file, as the supervisor writes it."""
+    return {
+        "id": f"log_{title}",
+        "event": {"type": "info", "title": title, "message": "m", "timestamp": None},
+        "channel": "webhook", "channel_name": "Hook", "sent_at": "2026-11-07T12:00:00+00:00",
+        "success": True, "error": None,
+    }
+
+
+# The changes of a channel that the web UI makes, each answered 200 with what was stored.
+CHANNEL_CHANGES = [
+    pytest.param(
+        lambda api, hook: api.post(f"{API}/configs", json={
+            "name": "Second", "channel": "webhook", "webhook_config": {"url": "https://hooks.example/2"},
+        }),
+        id="add",
+    ),
+    pytest.param(lambda api, hook: api.put(f"{API}/configs/{hook['id']}", json={**hook, "enabled": False}), id="update"),
+    pytest.param(lambda api, hook: api.delete(f"{API}/configs/{hook['id']}"), id="delete"),
+]
+
+# The requests that send a notification and record it in the history.
+SENDS = [
+    pytest.param(lambda api, hook: api.post(f"{API}/test/{hook['id']}"), id="test"),
+    pytest.param(lambda api, hook: api.post(f"{API}/send", json={"type": "info", "title": "t", "message": "m"}), id="send"),
+]
 
 
 class _SameSecond(datetime.datetime):
@@ -758,20 +909,8 @@ class TestChannelsThroughTheApi:
         assert api.post(f"{API}/test/{hook['id']}").status_code == 200
         [kept] = self._history(api)
 
-        history_dir = str(Path(notifications.LOGS_FILE).parent)
-
-        def full_disk(file, mode="r", *args, **kwargs):
-            handle = _REAL_OPEN(file, mode, *args, **kwargs)  # "w" has emptied the file
-            if "w" in mode and str(file).startswith(history_dir):
-                handle.close()
-                raise OSError(errno.ENOSPC, "No space left on device")
-            return handle
-
-        monkeypatch.setattr(builtins, "open", full_disk)
-        monkeypatch.setattr(io, "open", full_disk)  # what Path.open and Path.write_text call
-        assert api.post(f"{API}/test/{hook['id']}").status_code == 200
-        monkeypatch.setattr(builtins, "open", _REAL_OPEN)
-        monkeypatch.setattr(io, "open", _REAL_OPEN)
+        with _full_disk(monkeypatch, Path(notifications.LOGS_FILE).parent):
+            assert api.post(f"{API}/test/{hook['id']}").status_code == 200
 
         assert self._history(api) == [kept]
         assert "Could not record the notification 'Test Notification' in the history" in caplog.text
@@ -790,6 +929,145 @@ class TestChannelsThroughTheApi:
         response = api.post(f"{API}/test/{hook['id']}")
         assert response.status_code == 200, response.text
         assert "Could not record the notification 'Test Notification' in the history" in caplog.text
+
+    @pytest.mark.parametrize("sends", SENDS)
+    def test_a_slow_history_write_does_not_hold_up_the_api(self, api, monkeypatch, sends):
+        # Before, the history was written and synced on the event loop.
+        _route_httpx_to(monkeypatch, lambda request: httpx.Response(200))
+        hook = self._add(api, "Hook", "webhook", url="https://hooks.example/unos")
+
+        answer = _answer_while_held(api, monkeypatch, "_write_history", lambda api: sends(api, hook))
+
+        assert answer.status_code == 200, answer.text
+        [entry] = self._history(api)
+        assert (entry["channel_name"], entry["success"]) == ("Hook", True)
+
+    @pytest.mark.parametrize("change", CHANNEL_CHANGES)
+    def test_a_slow_channel_write_does_not_hold_up_the_api(self, api, monkeypatch, change):
+        hook = self._add(api, "Hook", "webhook", url="https://hooks.example/unos")
+
+        answer = _answer_while_held(api, monkeypatch, "save_configs", lambda api: change(api, hook))
+
+        assert answer.status_code == 200, answer.text
+
+    @pytest.mark.parametrize("change", CHANNEL_CHANGES)
+    def test_a_channel_write_that_fails_half_way_keeps_the_channels(self, api, monkeypatch, change):
+        # Before, the channels were written in place: on a full system disk, any change emptied
+        # the file, the tab showed no channel, and the alerts went to none from then on.
+        hook = self._add(api, "Hook", "webhook", url="https://hooks.example/unos")
+        kept = api.get(f"{API}/configs").json()
+        as_the_web_ui = TestClient(app, raise_server_exceptions=False)
+
+        with _full_disk(monkeypatch, Path(notifications.CONFIG_FILE).parent):
+            answer = change(as_the_web_ui, hook)
+
+        assert api.get(f"{API}/configs").json() == kept
+        assert (answer.status_code, answer.json()["detail"]) == (
+            500, "Could not save the notification channels: [Errno 28] No space left on device",
+        )
+        # Nothing half-written is left beside it.
+        assert [p.name for p in Path(notifications.CONFIG_FILE).parent.iterdir()] == ["notifications.json"]
+
+    def test_two_channels_added_at_once_are_both_kept(self, api, monkeypatch):
+        # The channels are written in worker threads: one change at a time, each on the channels
+        # that the one before stored, or the second would drop the first one's channel.
+        monkeypatch.setenv("UNOS_DISABLE_BACKGROUND_TASKS", "1")
+        real = notifications.save_configs
+
+        def slow(configs):
+            time.sleep(0.2)
+            real(configs)
+
+        monkeypatch.setattr(notifications, "save_configs", slow)
+        with api:
+            adding = [
+                threading.Thread(target=self._add, args=(api, f"Hook {n}", "webhook"),
+                                 kwargs={"url": f"https://hooks.example/{n}"})
+                for n in range(2)
+            ]
+            for thread in adding:
+                thread.start()
+            for thread in adding:
+                thread.join(10)
+        assert sorted(c["name"] for c in api.get(f"{API}/configs").json()) == ["Hook 0", "Hook 1"]
+
+    def test_two_notifications_at_once_both_stay_in_the_history(self, monkeypatch):
+        # The history is written in worker threads: one write at a time, each after reading what
+        # the one before wrote, or the second would drop the first one's entry.
+        writing = threading.Event()
+        real = notifications._write_history
+
+        def slow(logs):
+            writing.set()
+            time.sleep(0.2)
+            real(logs)
+
+        monkeypatch.setattr(notifications, "_write_history", slow)
+        hook = NotificationConfig(id="hook", name="Hook", channel=NotificationChannel.WEBHOOK, webhook_config=WEBHOOK)
+        first, second = (
+            [notifications.history_entry(hook, EVENT.model_copy(update={"title": title}), True, None)]
+            for title in ("first", "second")
+        )
+        writers = [threading.Thread(target=notifications.save_logs, args=(first,))]
+        writers[0].start()
+        assert writing.wait(5)
+        writers.append(threading.Thread(target=notifications.save_logs, args=(second,)))
+        writers[1].start()
+        for writer in writers:
+            writer.join(5)
+
+        assert [entry.event.title for entry in notifications.load_logs()] == ["first", "second"]
+
+    def test_an_entry_that_cannot_be_read_is_left_out_and_the_others_kept(self, api, monkeypatch, caplog):
+        # Before, one entry that did not validate, such as one written before channel_name or one
+        # damaged from outside UNOS, hid the whole history, and the next notification wrote a new
+        # history over it without a word.
+        _route_httpx_to(monkeypatch, lambda request: httpx.Response(200))
+        hook = self._add(api, "Hook", "webhook", url="https://hooks.example/unos")
+        items = [_history_item(f"n{n}") for n in range(100)]
+        del items[0]["channel_name"]  # as written before this change
+        Path(notifications.LOGS_FILE).write_text(json.dumps(items))
+
+        others = [f"n{n}" for n in range(99, 0, -1)]
+        assert [entry["event"]["title"] for entry in self._history(api)] == others
+        assert f"Could not read 1 of the entries of the notification history {notifications.LOGS_FILE}" in caplog.text
+        assert api.post(f"{API}/test/{hook['id']}").status_code == 200
+        assert [entry["event"]["title"] for entry in self._history(api)] == ["Test Notification", *others]
+
+    def test_a_history_that_cannot_be_read_is_logged_and_started_anew(self, api, monkeypatch, caplog):
+        _route_httpx_to(monkeypatch, lambda request: httpx.Response(200))
+        hook = self._add(api, "Hook", "webhook", url="https://hooks.example/unos")
+        Path(notifications.LOGS_FILE).write_text('[{"id": "log_1", "event": {"ty')  # damaged from outside
+
+        assert self._history(api) == []
+        assert f"Could not read the notification history {notifications.LOGS_FILE}" in caplog.text
+        assert api.post(f"{API}/test/{hook['id']}").status_code == 200
+        [entry] = self._history(api)
+        assert (entry["event"]["title"], entry["channel_name"]) == ("Test Notification", "Hook")
+
+    def test_channels_that_cannot_be_read_are_logged(self, api, caplog):
+        # Before, a damaged file read as no channels without a word, and alerts went to none.
+        Path(notifications.CONFIG_FILE).write_text('[{"id": "notif_1", "chan')
+
+        assert api.get(f"{API}/configs").json() == []
+        assert f"Could not read the notification channels {notifications.CONFIG_FILE}" in caplog.text
+
+    def test_an_email_test_reaches_a_relay_that_needs_no_login(self, api, trusted):
+        # The form's Username and Password are optional. Before, a channel without them was refused
+        # by such a relay: "SMTP AUTH extension not supported by server."
+        with MailServer(*trusted, auth=False) as server:
+            relay = self._add(api, "LAN relay", "email", smtp_host="127.0.0.1", smtp_port=server.port,
+                              smtp_user="", smtp_password="", smtp_tls=False,
+                              from_address="nas@example", to_addresses=["me@example"])
+            response = api.post(f"{API}/test/{relay['id']}")
+
+        assert response.status_code == 200, response.text
+        assert server.logins == []
+        [(_, recipients, text)] = server.messages
+        assert recipients == ["me@example"]
+        assert "Subject: [UNOS] Test Notification" in text
+        [entry] = self._history(api)
+        assert (entry["channel_name"], entry["success"]) == ("LAN relay", True)
 
 
 def _fake_text(fakes: str, name: str) -> str:

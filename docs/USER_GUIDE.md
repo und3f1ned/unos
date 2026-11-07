@@ -1009,15 +1009,18 @@ UNOS sends two kinds of alerts on its own: pool (RAID) errors and disk health
 3. Fill in the form: a channel name, and
    - for Email the SMTP host, its port (usually 587; 465 for SMTPS), the
      username and password, the sender and the recipients (separated by
-     commas). **Use TLS/STARTTLS** switches the connection to TLS on ports
-     other than 465, which uses TLS from the start. **Verify the server's
-     certificate** is on: UNOS checks the mail server's certificate and host
-     name before it sends the password, and a server that fails the check
-     gets no password and no message. Turn it off only for a mail server with
-     a self-signed certificate: without the check, anyone on the network path
-     can read the password. With **Use TLS/STARTTLS** off on another port
-     than 465, the form warns that the password and the messages cross the
-     network unencrypted, with no certificate to check;
+     commas). Leave the username and password empty for a mail server that
+     takes mail without a login, such as a relay in your network: UNOS then
+     sends without logging in. **Use TLS/STARTTLS** switches the connection
+     to TLS on ports other than 465, which uses TLS from the start.
+     **Verify the server's certificate** is on: UNOS checks the mail server's
+     certificate and host name before it sends the password, and a server
+     that fails the check gets no password and no message. Turn it off only
+     for a mail server with a self-signed certificate: without the check,
+     anyone on the network path can read the password. With
+     **Use TLS/STARTTLS** off on another port than 465, the form warns that
+     the password and the messages cross the network unencrypted, with no
+     certificate to check;
    - for Telegram the bot token and the chat ID;
    - for Webhook the URL, and POST or PUT: UNOS sends JSON with `title`,
      `message`, `type`, `timestamp` and `source`;
@@ -1030,6 +1033,9 @@ UNOS sends two kinds of alerts on its own: pool (RAID) errors and disk health
    certificate error, Telegram's answer, or `HTTP 404: ...` from a webhook.
    A webhook, Discord or Slack channel counts as sent only when the service
    answers with success (2xx); a redirect is a failure, so give the final URL.
+   While a channel's test runs, its **Edit** and **Disable** (or **Enable**)
+   buttons wait, so that the outcome shown is that of the settings the test
+   was sent with.
 
 The list shows a webhook's URL by its host only, since the rest of the URL
 is its key. Editing a channel keeps the settings that only the API sets: a
@@ -1043,7 +1049,8 @@ tests, the alerts and what `POST /api/v1/notifications/send` sends, each with
 the channel it went to, its time and **Delivered** or **Failed**; click an
 entry for the error. Filter it by the kind of channel and by the result. The
 summary above counts the active channels and the notifications sent,
-delivered and failed.
+delivered and failed. An entry that UNOS cannot read, for example one
+damaged from outside, is left out, and the supervisor's log says so.
 
 Webhook, Discord and Slack channels receive test notifications and what
 `POST /api/v1/notifications/send` sends, but no alerts yet (feature-list

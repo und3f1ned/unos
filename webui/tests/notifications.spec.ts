@@ -42,6 +42,19 @@ const HOOK_WITH_HEADERS: Channel = {
     body_template: '{title}: {message}', content_type: 'text/plain',
   },
 };
+// A method given to the API in lower case is stored so, and the server sends a PUT for it.
+const LOWER_CASE_PUT: Channel = {
+  ...NO_SETTINGS,
+  id: 'notif_put',
+  name: 'Put hook',
+  channel: 'webhook',
+  enabled: true,
+  events: [],
+  webhook_config: {
+    url: 'https://hooks.example.com/put', method: 'put', headers: {}, body_template: null,
+    content_type: 'application/json',
+  },
+};
 
 async function openTab(page: Page) {
   await page.goto('/system#notifications');
@@ -110,6 +123,7 @@ test.describe('Notifications', () => {
 
     await page.getByRole('button', { name: 'Add Email' }).click();
     const dialog = page.getByRole('dialog', { name: 'Add Email channel' });
+    await expect(dialog.getByText('Leave both empty for a mail server that takes mail without a login')).toBeVisible();
     await expect(dialog.getByRole('checkbox', { name: "Verify the server's certificate" })).toBeChecked();
     await expect(dialog.getByRole('checkbox', { name: 'Use TLS/STARTTLS' })).toBeChecked();
     await expect(field(dialog, 'Port')).toHaveValue('587');
@@ -157,7 +171,10 @@ test.describe('Notifications', () => {
     await dialog.getByRole('checkbox', { name: "Verify the server's certificate" }).uncheck();
     await dialog.getByRole('button', { name: 'Add Channel' }).click();
     await expect(dialog).toBeHidden();
-    expect(fake.saved[1].body.email_config).toMatchObject({ smtp_host: 'mail.lan', smtp_port: 465, smtp_verify_tls: false });
+    // Without a username and password: the server sends without a login.
+    expect(fake.saved[1].body.email_config).toMatchObject({
+      smtp_host: 'mail.lan', smtp_port: 465, smtp_verify_tls: false, smtp_user: '', smtp_password: '',
+    });
 
     // The dialog shows the stored choice again.
     await channelItem(page, 'Self-signed mail').getByRole('button', { name: 'Edit Self-signed mail' }).click();
@@ -201,12 +218,51 @@ test.describe('Notifications', () => {
     await expect(failed.getByRole('button')).toHaveAttribute('aria-expanded', 'true');
     await expect(failed).toContainText(UNTRUSTED_CERTIFICATE);
 
+    // The filters by result, each with the one entry it keeps.
     await page.getByRole('button', { name: 'Failed', exact: true }).click();
     await expect(historyItems(page)).toHaveCount(1);
+    await expect(historyItems(page).first()).toContainText(UNTRUSTED_CERTIFICATE);
+    await page.getByRole('button', { name: 'Delivered', exact: true }).click();
+    await expect(historyItems(page)).toHaveCount(1);
+    await expect(historyItems(page).first()).toContainText('Delivered');
+    await expect(historyItems(page).first()).not.toContainText('Failed');
     await page.getByRole('button', { name: 'All', exact: true }).click();
+    await expect(historyItems(page)).toHaveCount(2);
+    // The filter by the kind of channel: e-mail keeps both, Telegram none.
+    await page.getByRole('combobox', { name: 'Channel' }).click();
+    await page.getByRole('option', { name: 'Email' }).click();
+    await expect(historyItems(page)).toHaveCount(2);
+    for (const entry of [historyItems(page).nth(0), historyItems(page).nth(1)]) {
+      await expect(entry).toContainText('Admin mail');
+    }
     await page.getByRole('combobox', { name: 'Channel' }).click();
     await page.getByRole('option', { name: 'Telegram' }).click();
     await expect(page.getByText('No notifications match your filters')).toBeVisible();
+  });
+
+  test('while a test runs, its channel cannot be edited, so no outcome shows under settings it was not sent with', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeNotificationsApi(page, [ADMIN_MAIL, HOOK_WITH_HEADERS]);
+    let answer = () => {};
+    fake.hold = new Promise((resolve) => (answer = resolve));
+    await openTab(page);
+    const channel = channelItem(page, 'Admin mail');
+
+    await channel.getByRole('button', { name: 'Send test to Admin mail' }).click();
+    await expect(channel.getByRole('button', { name: 'Send test to Admin mail' })).toBeDisabled();
+    await expect(channel.getByRole('button', { name: 'Edit Admin mail' })).toBeDisabled();
+    await expect(channel.getByRole('button', { name: 'Disable Admin mail' })).toBeDisabled();
+    // The other channels can be changed meanwhile; their tests wait for this one.
+    const other = channelItem(page, 'Home hook');
+    await expect(other.getByRole('button', { name: 'Edit Home hook' })).toBeEnabled();
+    await expect(other.getByRole('button', { name: 'Send test to Home hook' })).toBeDisabled();
+
+    answer();
+    await expect(channel.getByRole('status')).toHaveText('Test notification sent');
+    await expect(channel.getByRole('button', { name: 'Edit Admin mail' })).toBeEnabled();
+    await expect(channel.getByRole('button', { name: 'Disable Admin mail' })).toBeEnabled();
+    expect(fake.tests).toEqual([ADMIN_MAIL.id]);
   });
 
   test('a disabled channel can be tested before it receives notifications', async ({ authenticatedPage: page }) => {
@@ -288,7 +344,7 @@ test.describe('Notifications', () => {
   });
 
   test('editing a channel keeps the settings that only the API sets', async ({ authenticatedPage: page }) => {
-    const fake = await fakeNotificationsApi(page, [HOOK_WITH_HEADERS]);
+    const fake = await fakeNotificationsApi(page, [HOOK_WITH_HEADERS, LOWER_CASE_PUT]);
     await openTab(page);
 
     await channelItem(page, 'Home hook').getByRole('button', { name: 'Edit Home hook' }).click();
@@ -309,6 +365,18 @@ test.describe('Notifications', () => {
         },
       },
     }]);
+
+    // A method stored in lower case shows as the method it is, and a save keeps it.
+    await channelItem(page, 'Put hook').getByRole('button', { name: 'Edit Put hook' }).click();
+    const put = page.getByRole('dialog', { name: 'Edit Webhook channel' });
+    await expect(put.getByRole('combobox', { name: 'Method' })).toHaveText('PUT');
+    await field(put, 'Channel name').fill('Upload hook');
+    await put.getByRole('button', { name: 'Save Changes' }).click();
+    await expect(put).toBeHidden();
+    expect(fake.saved[1].body).toEqual({
+      name: 'Upload hook', channel: 'webhook', enabled: true, events: [],
+      webhook_config: { ...LOWER_CASE_PUT.webhook_config as object, method: 'PUT' },
+    });
   });
 
   test('on the stand-in itself, a test to a mail server that is not there names the error in the list and History', async ({
