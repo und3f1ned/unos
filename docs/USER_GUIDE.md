@@ -125,8 +125,14 @@ For each pool, you can:
 - **Scrub** - Check data integrity
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
-  shared on their own. Snapshots of the pool, manual or scheduled, do not
-  include the files in its volumes. Deleting a volume deletes its files and
+  shared on their own. **Quota in GiB** is optional: leave it empty for no
+  limit, or enter a size such as `10` or `0.5`. A quota needs quotas enabled
+  on the pool, which UNOS does not do itself: run
+  `btrfs quota enable /mnt/pools/<pool>` on the host. Without them the volume
+  is not created, the dialog says so, and you can create it without a quota.
+  Snapshots of the pool, manual or scheduled, do not include the files in its
+  volumes: a volume has snapshots of its own on the **Snapshots** page (see
+  [Snapshots](#snapshots)). Deleting a volume deletes its files and
   asks you to type its name. Deleting is refused while a running app or
   container, an SMB share or an NFS export uses the volume or a folder in it,
   and while the volume holds snapshots or other subvolumes, which must be
@@ -619,15 +625,24 @@ entries `system.power`, `system.scheduled-power` and `system.ups-monitoring`).
 
 ### Snapshots
 
-BTRFS snapshots provide instant, space-efficient backups.
+BTRFS snapshots provide instant, space-efficient backups: a snapshot is a
+read-only copy of a pool or a volume at one point in time, kept in its
+`.snapshots` folder (`/mnt/pools/<pool>/.snapshots`,
+`/mnt/pools/<pool>/<volume>/.snapshots`). A snapshot of a pool does not
+include the files in the pool's volumes: take snapshots of each volume as
+well.
 
 #### Creating a Snapshot
 
 1. Go to **Snapshots**
-2. Select a storage pool
+2. In **Pool or volume**, choose a mounted pool or one of its volumes. Its
+   snapshots are listed, newest first, with the time each was made in your
+   browser's time zone.
 3. Click **Create Snapshot**
-4. Enter a name (optional)
-5. Click **Create**
+4. Enter a name (optional; without one it is `snap_<date>_<time>`)
+5. Click **Create**: the new snapshot appears in the list.
+
+The list does not show how much space the snapshots take.
 
 #### Restoring from Snapshot
 
@@ -635,14 +650,34 @@ Restoring does not overwrite the current data: it makes a writable copy of
 the snapshot, `restore_<date>_<time>`, in the folder the snapshot was taken
 of (for a snapshot of a pool, `/mnt/pools/<pool>/restore_<date>_<time>`).
 
-1. Go to **Snapshots**
+1. Go to **Snapshots** and choose the pool or volume
 2. Find the snapshot to restore
-3. Click **Restore** and confirm. A message shows where the copy is.
+3. Click its **Restore** button and confirm. A message shows where the copy is.
 
 Copy what you need from it, for example in the **File Browser**. The copy of
 a pool snapshot is a volume of the pool: when you no longer need it, delete
 it with the pool's **Volumes** on the **Storage** page (see
-[Pool Operations](#pool-operations)).
+[Pool Operations](#pool-operations)). The copy of a volume's snapshot is a
+subvolume inside the volume: the web interface cannot delete it yet, and the
+volume cannot be deleted while it holds the copy.
+
+#### Deleting a Snapshot
+
+Click the snapshot's **Delete** button and confirm; this cannot be undone. A
+volume that holds snapshots cannot be deleted: delete its snapshots here
+first.
+
+#### Scheduled Snapshots
+
+A task of the type **BTRFS Snapshot** in **System** → **Scheduler**
+(**New Task**) takes snapshots of a pool on a schedule; volumes are not
+offered there. Its snapshots are named `auto_<date>_<time>`. **Keep Count**
+sets how many of them are kept: after each new snapshot, the oldest snapshots
+of the pool whose names start with `auto_` are deleted beyond that number,
+ordered by the time btrfs made them. Snapshots with other names are never
+deleted. A run on a pool that is not mounted fails with
+`Pool <name> is not mounted at /mnt/pools/<name>`, which the task's history
+shows.
 
 ### System Backup
 

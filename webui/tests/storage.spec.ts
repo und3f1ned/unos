@@ -342,7 +342,8 @@ async function fakeVolumesApi(
       if (method === 'POST' && !namePart) {
         if (responses.create) return route.fulfill(responses.create);
         volumes.set(pool, [...names, body.name].sort());
-        return route.fulfill({ json: info(body.name) });
+        // The list has no quotas (storage.volume-quota-usage); the answer to a create has its own.
+        return route.fulfill({ json: { ...info(body.name), quota: body.quota ?? null } });
       }
       if (method === 'DELETE' && namePart) {
         if (responses.delete) return route.fulfill(responses.delete);
@@ -375,8 +376,8 @@ test.describe('Storage volumes (fake data)', () => {
     await expect(items.first()).toContainText('documents');
     await expect(items.first()).toContainText('/mnt/pools/e2e_media/documents');
     await expect(dialog.getByText('Mounted read-only')).toHaveCount(0);
-    // btrfs snapshots are not recursive, and the Snapshots page and scheduled
-    // snapshot tasks only offer pools: files put in a volume leave the pool's snapshots.
+    // btrfs snapshots are not recursive, and scheduled snapshot tasks only take
+    // pools: files put in a volume leave the pool's snapshots (ADR-0232).
     await expect(dialog.getByText('Snapshots of the pool do not include the files in its volumes.')).toBeVisible();
     await expect(dialog.getByText(/snapshotted/)).toHaveCount(0);
 
@@ -456,6 +457,82 @@ test.describe('Storage volumes (fake data)', () => {
     expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_media/volumes', body: { name: 'photos' } }]);
   });
 
+  test('a volume is created with a quota in GiB, which the API gets in bytes', async ({ authenticatedPage: page }) => {
+    await fakeStorageApi(page);
+    const writes = await fakeVolumesApi(page, { e2e_media: [] });
+    await page.goto('/storage');
+    await poolCard(page, 'e2e_media').getByRole('button', { name: 'Volumes' }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Volumes on e2e_media' });
+    const name = dialog.getByLabel('New volume name');
+    const quota = dialog.getByLabel('Quota in GiB (optional)');
+    const create = dialog.getByRole('button', { name: 'Create Volume' });
+    const quotaError = dialog.getByText(/^Enter a number of GiB greater than 0/);
+    await expect(quota).toHaveValue('');
+    await expect(dialog.getByText('Empty for no limit. A quota needs quotas enabled on the pool.')).toBeVisible();
+    await name.fill('photos');
+    await expect(create).toBeEnabled();
+
+    // Not sent: what the API refuses (it takes 1 to 2^64 - 2 bytes), what could be read as another
+    // number, and more than the dialog's maximum of 8388607 GiB (bytes that stay exact in JSON).
+    for (const invalid of ['0', '0.0', '-1', 'ten', '1,5', '1e3', '.5', '5.', '10 GB', '9999999']) {
+      await quota.fill(invalid);
+      await expect(quotaError).toBeVisible();
+      await expect(create).toBeDisabled();
+    }
+
+    await quota.fill('1.5');
+    await expect(quotaError).toHaveCount(0);
+    await create.click();
+    await expect(dialog.getByRole('listitem')).toHaveCount(1);
+    await expect(dialog.getByRole('listitem').first()).toContainText('/mnt/pools/e2e_media/photos');
+    expect(writes).toEqual([
+      { method: 'POST', path: '/pools/e2e_media/volumes', body: { name: 'photos', quota: 1610612736 } },
+    ]);
+    // Both fields are empty again for the next volume.
+    await expect(name).toHaveValue('');
+    await expect(quota).toHaveValue('');
+  });
+
+  test('a quota on a pool without quotas: the dialog says how to enable them, and nothing is created', async ({
+    authenticatedPage: page,
+  }) => {
+    // The supervisor's 409 (storage/pools.py create_volume): it checks quotas before it creates anything.
+    const notEnabled =
+      "Volume 'photos' was not created: quotas are not enabled on pool 'e2e_media'. Enable them with " +
+      "'btrfs quota enable /mnt/pools/e2e_media' on the host and try again, or create the volume without a quota.";
+    const responses: { create?: FakeResponse } = { create: { status: 409, json: { detail: notEnabled } } };
+    await fakeStorageApi(page);
+    const writes = await fakeVolumesApi(page, { e2e_media: [] }, responses);
+    await page.goto('/storage');
+    await poolCard(page, 'e2e_media').getByRole('button', { name: 'Volumes' }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Volumes on e2e_media' });
+    const name = dialog.getByLabel('New volume name');
+    const quota = dialog.getByLabel('Quota in GiB (optional)');
+    const create = dialog.getByRole('button', { name: 'Create Volume' });
+    await name.fill('photos');
+    await quota.fill('10');
+    await create.click();
+
+    await expect(dialog.getByText('Volume was not created')).toBeVisible();
+    await expect(dialog.getByText(notEnabled)).toBeVisible();
+    await expect(dialog.getByText('No volumes yet')).toBeVisible();
+    await expect(name).toHaveValue('photos');
+    await expect(quota).toHaveValue('10');
+    expect(writes).toEqual([
+      { method: 'POST', path: '/pools/e2e_media/volumes', body: { name: 'photos', quota: 10737418240 } },
+    ]);
+
+    // Without a quota, quotas need not be enabled: the volume is created.
+    responses.create = undefined;
+    await quota.fill('');
+    await create.click();
+    await expect(dialog.getByRole('listitem')).toHaveCount(1);
+    await expect(dialog.getByText('Volume was not created')).toHaveCount(0);
+    expect(writes[1]).toEqual({ method: 'POST', path: '/pools/e2e_media/volumes', body: { name: 'photos' } });
+  });
+
   test('a volume in use is not deleted and the dialog says what uses it', async ({ authenticatedPage: page }) => {
     const inUse = "Volume 'documents' is used by SMB shares (docs). Stop or remove them and try again.";
     await fakeStorageApi(page);
@@ -499,6 +576,7 @@ test.describe('Storage volumes (fake data)', () => {
     await expect(archive.getByText(/btrfs made it read-only after an error/)).toHaveCount(0);
     await expect(archive.getByRole('button', { name: 'Delete volume documents' })).toBeDisabled();
     await expect(archive.getByLabel('New volume name')).toBeDisabled();
+    await expect(archive.getByLabel('Quota in GiB (optional)')).toBeDisabled();
     await expect(archive.getByRole('button', { name: 'Create Volume' })).toBeDisabled();
     await archive.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(archive).toBeHidden();

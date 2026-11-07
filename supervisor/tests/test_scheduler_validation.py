@@ -455,7 +455,22 @@ async def test_snapshot_task_requires_mounted_pool(env, monkeypatch):
     # An existing but unmounted mount point gets no .snapshots directory.
     monkeypatch.setattr(scheduler, "_pool_is_mounted", lambda pool: False)
     ok, message = await scheduler.execute_task(ScheduledTask(**_task()))
-    assert not ok and "not mounted" in message
+    assert not ok and message == f"Pool data is not mounted at {env.pool}"
+    assert not (env.pool / ".snapshots").exists()
+    env.run.assert_not_called()
+
+
+def test_a_scheduled_snapshot_of_an_unmounted_pool_is_recorded_as_failed(env, monkeypatch):
+    """What the Scheduler's history shows for the run: failed, with the reason."""
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task(keep_count=3)).json()
+    monkeypatch.setattr(scheduler, "_pool_is_mounted", lambda pool: False)
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    assert (run["status"], run["error"], run["output"]) == ("failed", f"Pool data is not mounted at {env.pool}", None)
+    (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
+    assert stored["last_status"] == "failed"
     assert not (env.pool / ".snapshots").exists()
     env.run.assert_not_called()
 
@@ -572,6 +587,62 @@ async def test_cleanup_only_deletes_real_auto_snapshots(env):
     assert sorted(os.path.basename(d) for d in deleted) == ["auto_20250101_000000", "auto_20250102_000000"]
     assert all(str(victim) not in " ".join(c) for c in _commands(env))
     assert "Cleaned up 2" in message
+
+
+def test_a_snapshot_task_with_keep_count_3_keeps_the_three_newest_auto_snapshots(env):
+    """Run through the API: the new snapshot and the two newest older ones stay, and nothing else goes.
+
+    Snapshots are ordered by the creation time that btrfs reports, not by their names.
+    """
+    snaps = env.pool / ".snapshots"
+    snaps.mkdir()
+    created = {
+        "auto_20250101_000000": "2025-01-01 00:00:00",
+        "auto_20250102_000000": "2025-01-02 00:00:00",
+        # Its name sorts first, but btrfs made it last of these four: kept as the second newest.
+        "auto_20240101_000000": "2025-01-04 00:00:00",
+        "auto_20250103_000000": "2025-01-03 00:00:00",
+    }
+    for name in created:
+        (snaps / name).mkdir()
+    # Not automatic snapshots: made by hand or by another tool.
+    others = ["manual", "before upgrade", "autosave_20200101_000000", "snap_20200101_000000"]
+    for name in others:
+        (snaps / name).mkdir()
+    victim = env.base / "victim"
+    victim.mkdir()
+    os.symlink(victim, snaps / "auto_29990101_000000")  # newest by name, but a symlink
+    existing = set(created)
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task(keep_count=3)).json()
+    assert task["keep_count"] == 3
+
+    def btrfs(cmd, **kwargs):
+        result = MagicMock(returncode=0, stdout="", stderr="")
+        if cmd[:4] == ["btrfs", "subvolume", "snapshot", "-r"]:
+            os.mkdir(cmd[5])
+            created[os.path.basename(cmd[5])] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elif cmd[:3] == ["btrfs", "subvolume", "show"]:
+            result.stdout = f"\tCreation time: \t\t{created[os.path.basename(cmd[3])]} +0000\n"
+        elif cmd[:3] == ["btrfs", "subvolume", "delete"]:
+            os.rmdir(cmd[3])
+        else:
+            raise AssertionError(f"unexpected command: {cmd}")
+        return result
+
+    env.run.side_effect = btrfs
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    (new,) = set(created) - existing
+    assert (run["status"], run["output"]) == ("success", f"Snapshot {new} created. Cleaned up 2 old snapshot(s)")
+    assert sorted(path.name for path in snaps.iterdir()) == sorted(
+        [new, "auto_20240101_000000", "auto_20250103_000000", "auto_29990101_000000", *others]
+    )
+    deleted = [os.path.basename(c[3]) for c in _commands(env) if c[:3] == ["btrfs", "subvolume", "delete"]]
+    assert sorted(deleted) == ["auto_20250101_000000", "auto_20250102_000000"]
+    assert all(str(victim) not in " ".join(c) for c in _commands(env))
+    assert victim.is_dir()
 
 
 async def test_scheduled_backup_passes_restore_validation(env, monkeypatch):

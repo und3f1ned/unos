@@ -1,5 +1,6 @@
-import json
+import errno
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -10,19 +11,35 @@ from fastapi import HTTPException
 from src.snapshots.schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore
 from src.snapshots.router import (
     run_cmd,
-    list_subvolumes,
     list_snapshots,
     create_snapshot,
     delete_snapshot,
     restore_snapshot,
 )
 
-BTRFS_SHOW = """snap
-\tName: \t\t\tsnap
-\tUUID: \t\t\t12345-67890
-\tCreation time: \t\t2025-01-24 12:00:00 +0000
-\tFlags: \t\t\treadonly
-"""
+from .test_pool_persistence import (
+    DATA_UUID,
+    MEDIA_UUID,
+    admin_client,
+    install_fake_host,
+    wait_for_app_starts,
+)
+from .test_volumes import FakeSubvolumes
+
+SUBVOLUMES = "/api/v1/snapshots/subvolumes"
+# What `btrfs subvolume show` prints when no other time is set (the fixture btrfs).
+CREATED = "2025-01-24 12:00:00 +0000"
+
+
+def btrfs_show(created: str) -> str:
+    """`btrfs subvolume show` of a snapshot; btrfs-progs prints its local time with the offset."""
+    return (
+        "snap\n"
+        "\tName: \t\t\tsnap\n"
+        "\tUUID: \t\t\t12345-67890\n"
+        f"\tCreation time: \t\t{created}\n"
+        "\tFlags: \t\t\treadonly\n"
+    )
 
 
 @pytest.fixture
@@ -41,26 +58,55 @@ def pools(tmp_path):
 
 @pytest.fixture
 def btrfs():
-    """Fake btrfs/du; snapshot creation is emulated with mkdir. Records every command."""
+    """Fake btrfs; snapshot creation is emulated with mkdir. Records every command.
+
+    ``state["created"]`` maps snapshot names to the creation time that
+    ``btrfs subvolume show`` prints for them (default CREATED). Any other
+    program fails the test.
+    """
     calls = []
-    state = {"fail": False}
+    state = {"fail": False, "created": {}}
 
     def fake_run(cmd, *args, **kwargs):
         calls.append(cmd)
+        assert cmd[0] == "btrfs", f"unexpected command: {cmd}"
         result = MagicMock(stdout="", stderr="", returncode=0)
-        if state["fail"] and cmd[0] == "btrfs":
+        if state["fail"]:
             result.returncode = 1
             result.stderr = "btrfs error"
         elif cmd[:3] == ["btrfs", "subvolume", "snapshot"]:
             Path(cmd[-1]).mkdir()
         elif cmd[:3] == ["btrfs", "subvolume", "show"]:
-            result.stdout = BTRFS_SHOW
-        elif cmd[0] == "du":
-            result.stdout = f"1.5G\t{cmd[-1]}"
+            result.stdout = btrfs_show(state["created"].get(Path(cmd[-1]).name, CREATED))
         return result
 
     with patch("src.snapshots.router.subprocess.run", side_effect=fake_run):
         yield SimpleNamespace(calls=calls, state=state)
+
+
+@pytest.fixture
+def pool_host(monkeypatch):
+    """The FakeHost: pool "data" mounted at /mnt/pools/data, pool "media" not mounted.
+
+    GET /snapshots/subvolumes reads the pools and their volumes on the host
+    (storage/pools.py through src/host.py), as the Storage page does.
+    """
+    fake = install_fake_host(monkeypatch)
+    fake.add_disk("sda", serial="WD-1")
+    fake.add_btrfs("data", DATA_UUID, ["/dev/sda"])
+    fake.mount_pool("data")
+    fake.add_disk("sdb", serial="WD-2")
+    fake.add_btrfs("media", MEDIA_UUID, ["/dev/sdb"])
+    fake.dirs.add("/mnt/pools/media")
+    fake.subvols = FakeSubvolumes(fake)
+    yield fake
+    wait_for_app_starts()
+
+
+def _offered(pool: str, volume: str | None = None) -> dict:
+    """An entry of GET /snapshots/subvolumes."""
+    path = f"/mnt/pools/{pool}" + (f"/{volume}" if volume else "")
+    return {"path": path, "pool": pool, "volume": volume}
 
 
 def _make_snapshot(subvolume: Path, name: str) -> Path:
@@ -83,28 +129,17 @@ class TestSnapshotSchemas:
             name="snap_20250124_120000",
             subvolume="/mnt/pools/datapool",
             path="/mnt/pools/datapool/.snapshots/snap_20250124_120000",
-            created="2025-01-24T12:00:00",
-            size="1.5G"
+            created="2025-01-24T12:00:00+00:00",
         )
 
         assert snap.id == "snap_20250124_120000"
         assert snap.name == "snap_20250124_120000"
         assert snap.subvolume == "/mnt/pools/datapool"
-        assert snap.created == "2025-01-24T12:00:00"
-        assert snap.size == "1.5G"
+        assert snap.created == "2025-01-24T12:00:00+00:00"
 
-    def test_snapshot_info_optional_size(self):
-        """Test SnapshotInfo with optional size."""
-        snap = SnapshotInfo(
-            id="test",
-            name="test",
-            subvolume="/mnt/pools/test",
-            path="/mnt/pools/test/.snapshots/test",
-            created="2025-01-24",
-            size=None
-        )
-
-        assert snap.size is None
+    def test_snapshot_info_has_no_size(self):
+        """The list does not measure snapshots: du walked every file of each one (ADR-0232)."""
+        assert set(SnapshotInfo.model_fields) == {"id", "name", "subvolume", "path", "created"}
 
     def test_snapshot_create_schema(self):
         """Test SnapshotCreate schema."""
@@ -164,57 +199,157 @@ class TestRunCmd:
 
 
 class TestListSubvolumes:
-    """Tests for listing subvolumes."""
+    """GET /snapshots/subvolumes: the pools and volumes that the Snapshots page offers.
 
-    async def test_list_subvolumes_success(self, pools):
-        """Only mount points strictly inside the pools base are returned."""
-        findmnt = {
-            "filesystems": [
-                {"target": str(pools.pool), "source": "/dev/sda"},
-                {"target": str(pools.media), "source": "/dev/sdb"},
-                {"target": str(pools.root / "pools-old" / "x"), "source": "/dev/sdc"},
-                {"target": str(pools.base), "source": "/dev/sdd"},
-                {"target": "/other/path", "source": "/dev/sde"},
-            ]
-        }
-        mock_result = MagicMock(stdout=json.dumps(findmnt), stderr="", returncode=0)
+    Every pool mounted at its mountpoint, followed by its volumes, as GET
+    /storage/pools and GET /storage/pools/{pool}/volumes show them (ADR-0232).
+    """
 
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            result = await list_subvolumes({})
+    def test_mounted_pools_and_their_volumes(self, pool_host):
+        documents = pool_host.subvols.add(DATA_UUID, "documents")
+        pool_host.subvols.add(DATA_UUID, "photos")
+        # Not volumes (ADR-0069): nested deeper, a snapshot, a name UNOS does not give volumes.
+        pool_host.subvols.add(DATA_UUID, "documents/nested", parent=documents)
+        pool_host.subvols.add(DATA_UUID, ".snapshots/auto_20250101_000000")
+        pool_host.subvols.add(DATA_UUID, "Old Photos")
 
-        assert [sv["path"] for sv in result] == [str(pools.pool), str(pools.media)]
+        with admin_client() as api:
+            response = api.get(SUBVOLUMES)
 
-    async def test_list_subvolumes_empty(self, pools):
-        """Test listing when no subvolumes."""
-        mock_result = MagicMock(stdout="", stderr="", returncode=1)
+        assert response.status_code == 200, response.text
+        # "media" is not mounted: its mountpoint is a folder on the boot disk.
+        assert response.json() == [_offered("data"), _offered("data", "documents"), _offered("data", "photos")]
+        assert pool_host.changes == []
 
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            result = await list_subvolumes({})
+    def test_every_mounted_pool_comes_with_its_own_volumes(self, pool_host):
+        pool_host.mount_pool("media")
+        pool_host.subvols.add(MEDIA_UUID, "music")
+        pool_host.subvols.add(DATA_UUID, "documents")
 
-        assert result == []
+        with admin_client() as api:
+            response = api.get(SUBVOLUMES)
 
-    async def test_list_subvolumes_invalid_json(self, pools):
-        """Test handling of invalid JSON from findmnt."""
-        mock_result = MagicMock(stdout="not json", stderr="", returncode=0)
+        assert response.status_code == 200, response.text
+        assert response.json() == [
+            _offered("data"), _offered("data", "documents"), _offered("media"), _offered("media", "music"),
+        ]
 
-        with patch("src.snapshots.router.subprocess.run", return_value=mock_result):
-            result = await list_subvolumes({})
+    # Path-wise: "/mnt/pools-old/media" is not inside "/mnt/pools".
+    @pytest.mark.parametrize("target", ["/srv/media", "/mnt/pools-old/media", "/mnt/pools", "/mnt/pools/data/media"])
+    def test_a_pool_mounted_elsewhere_only_is_not_offered(self, pool_host, target):
+        pool_host.mount_pool("media", target)
+        pool_host.subvols.add(MEDIA_UUID, "music")
 
-        assert result == []
+        with admin_client() as api:
+            response = api.get(SUBVOLUMES)
+
+        assert response.status_code == 200, response.text
+        assert response.json() == [_offered("data")]
+
+    def test_a_pool_mounted_at_another_subvolume_is_offered_without_volumes(self, pool_host):
+        """Its volumes are not reachable below its mountpoint (ADR-0069): the mounted subvolume is offered."""
+        nested = pool_host.subvols.add(DATA_UUID, "documents")
+        pool_host.subvols.add(DATA_UUID, "photos")
+        pool_host.subvols.mounted_subvolume["/mnt/pools/data"] = nested
+
+        with admin_client() as api:
+            response = api.get(SUBVOLUMES)
+
+        assert response.status_code == 200, response.text
+        assert response.json() == [_offered("data")]
+
+    def test_a_read_only_pool_is_offered_with_its_volumes(self, pool_host):
+        """Its snapshots are listed; btrfs refuses new ones, and the page shows why."""
+        pool_host.mounts[:] = [m for m in pool_host.mounts if m["target"] != "/mnt/pools/data"]
+        pool_host.mount_pool("data", vfs_options="ro,noatime", fs_options="ro")
+        pool_host.subvols.add(DATA_UUID, "documents")
+
+        with admin_client() as api:
+            response = api.get(SUBVOLUMES)
+
+        assert response.json() == [_offered("data"), _offered("data", "documents")]
+
+    def test_no_mounted_pool(self, pool_host):
+        pool_host.mounts[:] = [m for m in pool_host.mounts if m["target"] != "/mnt/pools/data"]
+
+        with admin_client() as api:
+            response = api.get(SUBVOLUMES)
+
+        assert response.status_code == 200, response.text
+        assert response.json() == []
+
+    @pytest.mark.parametrize(
+        "command,stderr",
+        [
+            # list_pools alone would take an unreadable mount table for no mounts.
+            (("findmnt",), "findmnt: cannot open /proc/self/mountinfo: Permission denied"),
+            (("btrfs", "filesystem", "show"), "ERROR: cannot open /dev/btrfs-control: Permission denied"),
+            (("btrfs", "subvolume", "list"), "ERROR: can't perform the search: Permission denied"),
+        ],
+    )
+    def test_what_cannot_be_read_on_the_host_is_reported(self, pool_host, command, stderr):
+        """Not an empty list: the page would say that no pool is mounted."""
+        pool_host.fail[command] = (1, stderr)
+
+        with admin_client() as api:
+            response = api.get(SUBVOLUMES)
+
+        assert response.status_code == 500
+        assert stderr in response.json()["detail"]
+        assert pool_host.changes == []
+
+    def test_commands_run_on_the_host_only(self, pool_host):
+        """In the host's mount namespace, where the Storage page reads the pools (ADR-0020)."""
+        with admin_client() as api:
+            assert api.get(SUBVOLUMES).status_code == 200
+        # install_fake_host blocks subprocess.run: a command in the container fails the test.
+        assert ["btrfs", "subvolume", "list", "/mnt/pools/data"] in pool_host.calls
 
 
 class TestListSnapshots:
     """Tests for listing snapshots."""
 
     async def test_list_snapshots_parses_btrfs_show(self, pools, btrfs):
-        _make_snapshot(pools.pool, "snap_20250124_120000")
+        snap_path = _make_snapshot(pools.pool, "snap_20250124_120000")
 
         (snap,) = await list_snapshots(None, {})
 
-        assert snap.name == "snap_20250124_120000"
-        assert snap.subvolume == str(pools.pool)
-        assert snap.created == "2025-01-24T12:00:00"
-        assert snap.size == "1.5G"
+        assert snap.model_dump() == {
+            "id": "snap_20250124_120000",
+            "name": "snap_20250124_120000",
+            "subvolume": str(pools.pool),
+            "path": str(snap_path),
+            # With its offset, so that the browser shows it in its own time zone (ADR-0232).
+            "created": "2025-01-24T12:00:00+00:00",
+        }
+        # Only btrfs: du walked every file of every snapshot at each listing (ADR-0232).
+        assert btrfs.calls == [["btrfs", "subvolume", "show", str(snap_path)]]
+
+    async def test_creation_times_are_given_in_utc_newest_first(self, pools, btrfs):
+        """btrfs prints its local time; a change of the offset (summer time) must not reorder the list."""
+        btrfs.state["created"] = {
+            "a": "2025-03-30 03:30:00 +0200",  # 01:30 UTC
+            "b": "2025-03-30 01:45:00 +0000",  # 01:45 UTC
+            "c": "2025-03-30 01:15:00 +0100",  # 00:15 UTC
+        }
+        for name in btrfs.state["created"]:
+            _make_snapshot(pools.pool, name)
+
+        snapshots = await list_snapshots(str(pools.pool), {})
+
+        assert [(s.name, s.created) for s in snapshots] == [
+            ("b", "2025-03-30T01:45:00+00:00"),
+            ("a", "2025-03-30T01:30:00+00:00"),
+            ("c", "2025-03-30T00:15:00+00:00"),
+        ]
+
+    async def test_a_creation_time_that_cannot_be_read_is_shown_as_btrfs_prints_it(self, pools, btrfs):
+        btrfs.state["created"] = {"odd": "-"}
+        _make_snapshot(pools.pool, "odd")
+
+        (snap,) = await list_snapshots(str(pools.pool), {})
+
+        assert snap.created == "-"
 
     async def test_list_snapshots_skips_symlinks(self, pools, btrfs):
         _make_snapshot(pools.pool, "real")
@@ -268,6 +403,46 @@ class TestCreateSnapshot:
         result = await create_snapshot(SnapshotCreate(subvolume=str(pools.pool)), {})
 
         assert result.name.startswith("snap_")
+
+    async def test_create_snapshot_of_a_volume(self, pools, btrfs):
+        """A volume (a subvolume in the pool's top folder) keeps its snapshots in its own .snapshots."""
+        volume = pools.pool / "documents"
+        volume.mkdir()
+
+        result = await create_snapshot(SnapshotCreate(subvolume=str(volume), name="before"), {})
+
+        expected = volume / ".snapshots" / "before"
+        assert (result.subvolume, result.path) == (str(volume), str(expected))
+        assert btrfs.calls == [["btrfs", "subvolume", "snapshot", "-r", str(volume), str(expected)]]
+        assert not (pools.pool / ".snapshots").exists()
+        (listed,) = await list_snapshots(str(volume), {})
+        assert (listed.name, listed.created) == ("before", "2025-01-24T12:00:00+00:00")
+
+    async def test_create_snapshot_answers_its_time_with_the_offset(self, pools, btrfs):
+        before = datetime.now(timezone.utc).replace(microsecond=0)
+
+        result = await create_snapshot(SnapshotCreate(subvolume=str(pools.pool), name="x"), {})
+
+        created = datetime.fromisoformat(result.created)
+        assert created.utcoffset() == timedelta(0)
+        assert before <= created <= datetime.now(timezone.utc)
+
+    async def test_snapshot_folder_that_cannot_be_made_is_reported(self, pools, btrfs, monkeypatch):
+        """A pool that btrfs made read-only after an error answered 500 without a reason."""
+
+        def read_only(path, mode=0o777):
+            raise OSError(errno.EROFS, "Read-only file system", str(path))
+
+        monkeypatch.setattr(os, "mkdir", read_only)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_snapshot(SnapshotCreate(subvolume=str(pools.pool), name="x"), {})
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == (
+            f"Failed to create snapshot: cannot create {pools.pool / '.snapshots'}: Read-only file system"
+        )
+        assert btrfs.calls == []
 
     async def test_create_snapshot_not_found(self, pools, btrfs):
         """Test creating snapshot for non-existent subvolume."""
@@ -347,6 +522,17 @@ class TestDeleteSnapshot:
 
         assert result["status"] == "deleted"
         assert result["id"] == "snap_test"
+        assert btrfs.calls == [["btrfs", "subvolume", "delete", str(snap)]]
+
+    async def test_delete_a_snapshot_of_a_volume(self, pools, btrfs):
+        volume = pools.pool / "documents"
+        volume.mkdir()
+        snap = _make_snapshot(volume, "before")
+        _make_snapshot(pools.pool, "before")  # the pool's snapshot of the same name stays
+
+        result = await delete_snapshot("before", str(volume), {})
+
+        assert result == {"status": "deleted", "id": "before"}
         assert btrfs.calls == [["btrfs", "subvolume", "delete", str(snap)]]
 
     async def test_delete_snapshot_not_found(self, pools, btrfs):
@@ -451,6 +637,19 @@ class TestRestoreSnapshot:
         target = Path(result["target"])
         assert target.parent == pools.pool
         assert target.name.startswith("restore_")
+        assert btrfs.calls == [["btrfs", "subvolume", "snapshot", str(snap), str(target)]]
+
+    async def test_restore_a_snapshot_of_a_volume_next_to_its_files(self, pools, btrfs):
+        volume = pools.pool / "documents"
+        volume.mkdir()
+        snap = _make_snapshot(volume, "before")
+
+        result = await restore_snapshot(SnapshotRestore(snapshot_path=str(snap)), {})
+
+        target = Path(result["target"])
+        assert (result["status"], target.parent) == ("restored", volume)
+        assert target.name.startswith("restore_")
+        # Writable: no -r.
         assert btrfs.calls == [["btrfs", "subvolume", "snapshot", str(snap), str(target)]]
 
     async def test_restore_snapshot_with_target(self, pools, btrfs):

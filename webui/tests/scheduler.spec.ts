@@ -229,3 +229,94 @@ test.describe('Scheduler: SMART task whose disk is connected', () => {
     expect(updates).toEqual([expect.objectContaining({ target_disk: disk.path })]);
   });
 });
+
+// Snapshot tasks: the pool and the keep count of a new task, and why a run
+// failed. The scheduler and storage APIs are faked as above; the texts are
+// the supervisor's (supervisor/src/scheduler/router.py).
+const SNAPSHOT_TASK = {
+  ...SMART_TASK,
+  id: 'task_e2e_snapshot',
+  name: 'E2E nightly snapshot',
+  task_type: 'snapshot',
+  frequency: 'daily',
+  hour: 2,
+  day_of_week: null,
+  target_pool: 'e2e_tank',
+  target_disk: null,
+  keep_count: 3,
+  last_run: '2026-11-07T02:00:00',
+  last_status: 'failed',
+};
+const FAILED_SNAPSHOT_RUN = {
+  id: 'run_e2e_1',
+  task_id: SNAPSHOT_TASK.id,
+  task_name: SNAPSHOT_TASK.name,
+  started_at: '2026-11-07T02:00:00',
+  finished_at: '2026-11-07T02:00:01',
+  status: 'failed',
+  output: null,
+  error: 'Pool e2e_tank is not mounted at /mnt/pools/e2e_tank',
+};
+
+/** List `tasks` and the runs of each; returns the bodies of the tasks created (POST). */
+async function fakeSnapshotTasksApi(page: Page, tasks: unknown[], runs: unknown[] = []): Promise<unknown[]> {
+  await fakeStorageApi(page);
+  const created: unknown[] = [];
+  await page.route(
+    (url) => url.pathname.startsWith('/api/v1/scheduler/'),
+    (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname.slice('/api/v1/scheduler'.length);
+      if (request.method() === 'GET' && path === '/tasks') return route.fulfill({ json: tasks });
+      if (request.method() === 'POST' && path === '/tasks') {
+        const body = request.postDataJSON();
+        created.push(body);
+        return route.fulfill({ json: { ...body, id: 'task_e2e_new' } });
+      }
+      const history = path.match(/^\/runs\/([^/]+)$/);
+      if (request.method() === 'GET' && history) {
+        return route.fulfill({ json: runs.filter((run) => (run as { task_id: string }).task_id === history[1]) });
+      }
+      return route.abort();
+    },
+  );
+  return created;
+}
+
+test.describe('Scheduler: snapshot tasks', () => {
+  test('a new snapshot task is saved with its pool and keep count', async ({ authenticatedPage: page }) => {
+    const created = await fakeSnapshotTasksApi(page, []);
+    await page.goto('/system#scheduler');
+    await expect(page.getByText('No scheduled tasks')).toBeVisible();
+
+    await page.getByRole('button', { name: 'New Task' }).click();
+    await page.getByPlaceholder('Daily snapshot').fill('E2E nightly snapshot');
+    // A snapshot is the default type; its target is a pool.
+    await expect(page.locator('select:has(option[value="snapshot"])')).toHaveValue('snapshot');
+    await page.locator('select:has(option[value="e2e_media"])').selectOption('e2e_media');
+    await page.locator('input[type="number"]').fill('3');
+    await page.getByRole('button', { name: 'Create Task' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Create Task' })).toHaveCount(0);
+    expect(created).toEqual([
+      expect.objectContaining({
+        name: 'E2E nightly snapshot',
+        task_type: 'snapshot',
+        target_pool: 'e2e_media',
+        keep_count: 3,
+      }),
+    ]);
+  });
+
+  test('the history of a failed run says that the pool is not mounted', async ({ authenticatedPage: page }) => {
+    await fakeSnapshotTasksApi(page, [SNAPSHOT_TASK], [FAILED_SNAPSHOT_RUN]);
+    await page.goto('/system#scheduler');
+    await expect(page.getByText(SNAPSHOT_TASK.name, { exact: true })).toBeVisible();
+    await expect(page.getByText(/BTRFS Snapshot\s+on e2e_tank/)).toBeVisible();
+
+    await page.getByTitle('View history').click();
+
+    await expect(page.getByRole('heading', { name: `Run History: ${SNAPSHOT_TASK.name}` })).toBeVisible();
+    await expect(page.getByText('Pool e2e_tank is not mounted at /mnt/pools/e2e_tank')).toBeVisible();
+  });
+});

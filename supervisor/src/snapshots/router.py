@@ -9,25 +9,32 @@ delete into one somewhere else. Names of new snapshots must match
 ``validate_snapshot_name``; delete and restore accept any existing snapshot
 the list shows (one path component, see ``validate_path_component``), also
 one made by another tool.
+
+The Snapshots page offers the pools mounted at their mountpoints and their
+volumes (GET /snapshots/subvolumes), read on the host as the Storage page
+reads them (ADR-0232). The snapshot commands themselves still run in the
+container (architecture.host-command-layer), which sees the pools at the
+same paths.
 """
 
 import asyncio
-import json
 import os
 import stat
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
 
 from ..auth.utils import verify_token
 from ..security.validators import (
     pools_base,
+    sanitize_error_message,
     validate_path_component,
     validate_pools_path,
     validate_snapshot_name,
 )
-from .schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore
+from ..storage import disks, pools
+from .schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore, SnapshotSubvolume
 
 router = APIRouter(prefix="/snapshots", tags=["snapshots"])
 
@@ -100,34 +107,42 @@ def _existing_snapshot(subvolume: Path, name: str, shown: str) -> Path:
     return snap_path
 
 
+def _creation_time(show_output: str) -> str:
+    """The "Creation time" of ``btrfs subvolume show`` output, in UTC with its offset.
+
+    btrfs-progs prints the local time of the process with its offset
+    ("2025-01-24 15:49:31 +0300"). Without the offset a browser would take
+    the time for its own local time; in UTC, the times of the list sort
+    as text, also across a change to or from summer time. Returned as
+    printed when it is not in that form; "" when the line is missing.
+    """
+    for line in show_output.split("\n"):
+        if "Creation time:" in line:
+            raw_date = line.split(":", 1)[1].strip()
+            try:
+                created = datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S %z")
+            except ValueError:
+                return raw_date
+            return created.astimezone(timezone.utc).isoformat()
+    return ""
+
+
 def _snapshot_info(snap: Path, subvolume: Path) -> SnapshotInfo | None:
+    """What the list shows of a snapshot, from ``btrfs subvolume show`` alone.
+
+    No size: ``du`` walked every file of every snapshot at each listing
+    (minutes on a large pool, and it woke the disks; ADR-0232).
+    """
     stdout, _, rc = run_cmd(["btrfs", "subvolume", "show", str(snap)])
     if rc != 0:
         return None
-
-    created = ""
-    for line in stdout.split("\n"):
-        if "Creation time:" in line:
-            raw_date = line.split(":", 1)[1].strip()
-            # Convert btrfs date format to ISO format
-            # e.g., "2025-01-24 12:49:31 +0000" -> "2025-01-24T12:49:31+00:00"
-            try:
-                dt = datetime.strptime(raw_date[:19], "%Y-%m-%d %H:%M:%S")
-                created = dt.isoformat()
-            except ValueError:
-                created = raw_date
-            break
-
-    stdout, _, _ = run_cmd(["du", "-sh", str(snap)])
-    size = stdout.split()[0] if stdout else None
 
     return SnapshotInfo(
         id=snap.name,
         name=snap.name,
         subvolume=str(subvolume),
         path=str(snap),
-        created=created,
-        size=size,
+        created=_creation_time(stdout),
     )
 
 
@@ -158,34 +173,47 @@ def _list_snapshots(subvolume: str | None) -> list[SnapshotInfo]:
     return sorted(snapshots, key=lambda x: x.created, reverse=True)
 
 
-def _list_subvolumes() -> list[dict]:
-    subvolumes = []
+def _list_subvolumes() -> list[SnapshotSubvolume]:
+    """Every pool mounted at its mountpoint, each followed by its volumes (ADR-0232).
 
-    stdout, _, _ = run_cmd(["findmnt", "-t", "btrfs", "-J"])
-    if not stdout:
-        return subvolumes
+    As the Storage page shows them: storage.pools.list_pools and
+    list_volumes, which read the host through src/host.py. A pool mounted at
+    a subvolume other than its top level has no volumes below its
+    mountpoint (list_volumes answers PoolConflictError, ADR-0069): it is
+    offered alone, and so is one that was unmounted or went away meanwhile.
+    Any other error is raised: an empty list would read as "no pool is
+    mounted".
+    """
+    # list_pools takes a mount table it cannot read for one without mounts
+    # (the Storage page then shows the pools as not mounted): read it first,
+    # so that its failure is raised.
+    disks.host_mounts()
+    offered = []
+    for pool in pools.list_pools():
+        if not pool.mountpoint:
+            continue
+        offered.append(SnapshotSubvolume(path=pool.mountpoint, pool=pool.name))
+        try:
+            volumes = pools.list_volumes(pool.name)
+        except (pools.PoolConflictError, pools.PoolNotFoundError):
+            continue
+        offered.extend(
+            SnapshotSubvolume(path=volume.path, pool=pool.name, volume=volume.name) for volume in volumes
+        )
+    return offered
 
-    base = pools_base()
-    try:
-        mounts = json.loads(stdout)
-        for fs in mounts.get("filesystems", []):
-            mount_point = fs.get("target", "")
-            # Path-wise comparison: "/mnt/pools-old" is not inside "/mnt/pools".
-            if mount_point and Path(mount_point).is_relative_to(base) and Path(mount_point) != base:
-                subvolumes.append({
-                    "path": mount_point,
-                    "device": fs.get("source", ""),
-                })
-    except (json.JSONDecodeError, AttributeError, TypeError):
-        pass
 
-    return subvolumes
-
-
-@router.get("/subvolumes")
+@router.get("/subvolumes", response_model=list[SnapshotSubvolume])
 async def list_subvolumes(_: dict = Depends(verify_token)):
-    """List available subvolumes for snapshotting."""
-    return await asyncio.to_thread(_list_subvolumes)
+    """The pools and volumes that snapshots can be made of: the mounted pools and their volumes.
+
+    500 with the reason when the host's pools or a mounted pool's volumes
+    cannot be read.
+    """
+    try:
+        return await asyncio.to_thread(_list_subvolumes)
+    except Exception as exc:
+        raise HTTPException(500, sanitize_error_message(exc)) from exc
 
 
 @router.get("/", response_model=list[SnapshotInfo])
@@ -201,7 +229,14 @@ async def create_snapshot(req: SnapshotCreate, _: dict = Depends(verify_token)):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     name = validate_snapshot_name(req.name) if req.name else f"snap_{timestamp}"
 
-    snap_dir = _snapshot_dir(subvol_path, create=True)
+    try:
+        snap_dir = _snapshot_dir(subvol_path, create=True)
+    except OSError as exc:
+        # e.g. a pool mounted read-only, or made read-only by btrfs after an error
+        raise HTTPException(
+            500,
+            f"Failed to create snapshot: cannot create {subvol_path / SNAPSHOT_DIR_NAME}: {exc.strerror or exc}",
+        ) from exc
     snap_path = snap_dir / name
 
     if os.path.lexists(snap_path):
@@ -220,8 +255,8 @@ async def create_snapshot(req: SnapshotCreate, _: dict = Depends(verify_token)):
         name=name,
         subvolume=str(subvol_path),
         path=str(snap_path),
-        created=datetime.now().isoformat(),
-        size=None,
+        # As the list gives it (_creation_time): UTC, with the offset.
+        created=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
     )
 
 
