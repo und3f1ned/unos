@@ -1,6 +1,6 @@
 import { api, downloadAs } from './client';
 
-// The audit log (administrators only): supervisor/src/audit/router.py, ADR-0232.
+// The audit log (administrators only): supervisor/src/audit/router.py, ADR-0233.
 
 export type AuditSeverity = 'info' | 'warning' | 'critical';
 

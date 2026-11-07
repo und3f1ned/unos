@@ -79,7 +79,8 @@ and this index, and `make check-fast` runs it.
 | [0212](0212-device-secrets-in-dev-env.md) | Device settings and secrets live in the git-ignored dev.env, never on command lines | accepted | 2026-11-07 |
 | [0213](0213-audit-notes-stay-out-of-the-repository.md) | Security audit notes and exploit details stay outside the repository | accepted | 2026-11-07 |
 | [0224](0224-append-only-audit-log-in-json-lines.md) | The audit log is append-only JSON lines with size-based rotation | accepted | 2026-11-07 |
-| [0232](0232-audit-log-filtered-alike-and-shown-on-an-administrator-page.md) | The audit log is listed, counted and exported with one set of filters and shown on an administrator page | accepted | 2026-11-07 |
+| [0232](0232-audit-log-filtered-alike-and-shown-on-an-administrator-page.md) | The audit log is listed, counted and exported with one set of filters and shown on an administrator page | superseded by [0233](0233-audit-log-filtered-by-whole-units-exported-without-formulas.md) | 2026-11-07 |
+| [0233](0233-audit-log-filtered-by-whole-units-exported-without-formulas.md) | The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page | accepted | 2026-11-07 |
 
 ## Auth
 

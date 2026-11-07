@@ -1,7 +1,7 @@
 import type { APIRequestContext, Download, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
 
-// The Audit Log page (feature-list.json: webui.audit-log-page and security.audit-log; ADR-0232),
+// The Audit Log page (feature-list.json: webui.audit-log-page and security.audit-log; ADR-0233),
 // against the real audit log of the target. beforeAll writes the entries the tests look for,
 // all named after this run: a failed sign-in with a name that has no account, and a user
 // created and deleted through the API. The page shows the times as the server writes them.
@@ -62,6 +62,36 @@ async function readText(download: Download): Promise<string> {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
+/** The filters of a request of the page, without its page size. */
+function filtersOf(url: string): Record<string, string> {
+  const params = Object.fromEntries(new URL(url).searchParams);
+  delete params.limit;
+  return params;
+}
+
+function sameFilters(a: Record<string, string>, b: Record<string, string>): boolean {
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+/**
+ * Change the filters and wait until the server has answered the list and the count for
+ * exactly `filters`. The page applies a change 300 ms after it, so without this wait the
+ * timeline shown before could pass for the answer.
+ */
+async function applyFilters(page: Page, filters: Record<string, string>, change: () => Promise<void>) {
+  const answer = (pathname: string) =>
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === pathname && sameFilters(filtersOf(response.url()), filters),
+    );
+  const answers = Promise.all([answer('/api/v1/audit/logs'), answer('/api/v1/audit/logs/count')]);
+  await change();
+  for (const response of await answers) {
+    expect(response.ok(), `${response.url()}: HTTP ${response.status()}`).toBeTruthy();
+  }
+}
+
 /** The timeline shows these entries in this order, and the count above it says how many. */
 async function expectTimeline(page: Page, expected: RegExp[]) {
   if (expected.length > 0) {
@@ -112,7 +142,7 @@ test.describe('Audit log', () => {
     expect(times.length).toBeGreaterThanOrEqual(4);
     expect(times).toEqual([...times].sort().reverse());
 
-    await filter(page, 'Search').fill(USER.username);
+    await applyFilters(page, { search: USER.username }, () => filter(page, 'Search').fill(USER.username));
     await expectTimeline(page, [/User deleted/, /User created/]);
     const [deleted, created] = runEntries;
     const shown = timelineEntries(page).first();
@@ -128,44 +158,62 @@ test.describe('Audit log', () => {
   test('search and filters by user, action and time narrow the list', async ({ authenticatedPage: page }) => {
     await page.goto('/audit');
 
-    await filter(page, 'Search').fill(RUN);
+    // Each step waits for the server's answer to its filters and changes what the timeline
+    // shows, so that only that answer can pass it.
+    await applyFilters(page, { search: RUN }, () => filter(page, 'Search').fill(RUN));
     await expectTimeline(page, [/User deleted/, /User created/, /Login failed/]);
 
-    await filter(page, 'User').fill(STRANGER);
+    await applyFilters(page, { search: RUN, username: STRANGER }, () => filter(page, 'User').fill(STRANGER));
     await expectTimeline(page, [/Login failed/]);
     await expect(timelineEntries(page).first()).toContainText('Failed');
-    await filter(page, 'User').fill(E2E_ADMIN.username);
+    await applyFilters(page, { search: RUN, username: E2E_ADMIN.username }, () =>
+      filter(page, 'User').fill(E2E_ADMIN.username),
+    );
     await expectTimeline(page, [/User deleted/, /User created/]);
 
-    await chooseAction(page, 'User created');
+    await applyFilters(page, { search: RUN, username: E2E_ADMIN.username, action: 'user_created' }, () =>
+      chooseAction(page, 'User created'),
+    );
     await expectTimeline(page, [/User created/]);
-    await chooseAction(page, 'All actions');
-    await filter(page, 'User').fill('');
+    await applyFilters(page, { search: RUN }, async () => {
+      await chooseAction(page, 'All actions');
+      await filter(page, 'User').fill('');
+    });
     await expectTimeline(page, [/User deleted/, /User created/, /Login failed/]);
 
-    // A day covers the whole day, as the last and as the first one.
+    // From and To include their whole day, as the first and as the last day of the range.
     const day = runEntries[0].timestamp.slice(0, 10);
-    await filter(page, 'To').fill(day);
-    await expectTimeline(page, labelsOf(runEntries));
-    await filter(page, 'From').fill(day);
-    await expectTimeline(page, labelsOf(runEntries.filter((entry) => entry.timestamp.startsWith(day))));
-    await filter(page, 'From').fill('');
-    await filter(page, 'To').fill(shiftDay(day, -1));
-    await expectTimeline(page, labelsOf(runEntries.filter((entry) => entry.timestamp < day)));
-    await filter(page, 'To').fill('');
-    await filter(page, 'From').fill(shiftDay(day, 1));
+    const ofTheDay = labelsOf(runEntries.filter((entry) => entry.timestamp.startsWith(day)));
+    const beforeTheDay = labelsOf(runEntries.filter((entry) => entry.timestamp < day));
+    await applyFilters(page, { search: RUN, start_date: shiftDay(day, 1) }, () =>
+      filter(page, 'From').fill(shiftDay(day, 1)),
+    );
     await expectTimeline(page, []);
+    await applyFilters(page, { search: RUN, start_date: day }, () => filter(page, 'From').fill(day));
+    await expectTimeline(page, ofTheDay);
+    await applyFilters(page, { search: RUN, start_date: day, end_date: shiftDay(day, -1) }, () =>
+      filter(page, 'To').fill(shiftDay(day, -1)),
+    );
+    await expectTimeline(page, []);
+    await applyFilters(page, { search: RUN, start_date: day, end_date: day }, () => filter(page, 'To').fill(day));
+    await expectTimeline(page, ofTheDay);
+    await applyFilters(page, { search: RUN, end_date: shiftDay(day, -1) }, async () => {
+      await filter(page, 'From').fill('');
+      await filter(page, 'To').fill(shiftDay(day, -1));
+    });
+    await expectTimeline(page, beforeTheDay);
 
-    await page.getByRole('button', { name: 'Clear filters' }).click();
+    await applyFilters(page, {}, () => page.getByRole('button', { name: 'Clear filters' }).click());
     await expect(filter(page, 'Search')).toHaveValue('');
     await expect(filter(page, 'From')).toHaveValue('');
+    await expect(filter(page, 'To')).toHaveValue('');
     await expect(timelineEntries(page).first()).toContainText('Login success');
   });
 
   test('export downloads the filtered entries', async ({ authenticatedPage: page }) => {
     await page.goto('/audit');
-    await filter(page, 'Search').fill(RUN);
-    await chooseAction(page, 'User created');
+    await applyFilters(page, { search: RUN }, () => filter(page, 'Search').fill(RUN));
+    await applyFilters(page, { search: RUN, action: 'user_created' }, () => chooseAction(page, 'User created'));
     await expectTimeline(page, [/User created/]);
     const signedIn = await page.evaluate(() => localStorage.getItem('token'));
 

@@ -6,16 +6,18 @@ disk; ADR-0214). Before an append would grow the file past MAX_FILE_BYTES, it be
 AUDIT_FILE.1 and the older files move one number up; KEEP_ROTATED old files are kept. Readers go
 through the old files and then the current one, and skip every line that is not a valid entry.
 
-Listing, counting and exporting take the same filters (AuditFilter, ADR-0232).
+Listing, counting and exporting take the same filters (AuditFilter, ADR-0233), and the CSV
+export holds no cell that a spreadsheet reads as a formula (_spreadsheet_text).
 """
 import asyncio
 import csv
 import io
 import logging
 import os
+import re
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -221,32 +223,44 @@ async def log_action(
     return entry
 
 
-# ==================== Filters (ADR-0232) ====================
+# ==================== Filters (ADR-0233) ====================
+
+# The forms of start_date and end_date: a date, or a date and time to the hour, the minute, the
+# second or 1 to 6 digits of a fraction of a second, without a time zone (extended ISO 8601).
+_BOUND_FORM = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    r"(?:[T ](?P<hour>[0-9]{2})(?::(?P<minute>[0-9]{2})(?::(?P<second>[0-9]{2})"
+    r"(?:\.(?P<fraction>[0-9]{1,6}))?)?)?)?"
+)
+
 
 def _bound(name: str, value: Optional[str], *, last: bool) -> Optional[str]:
     """The timestamp text that start_date (last=False) or end_date (last=True) stands for.
 
     Entries carry the server's local time without a zone, as datetime.isoformat() writes it,
-    and texts in that form sort as their times do. Both bounds include what they name: a date
-    its whole day, a date and time that instant. For start_date the result is the first time in
-    range; for end_date the first time after it (None: nothing comes after it). Any ISO 8601
-    form is accepted and written in the entries' form; a time zone is refused.
+    and texts in that form sort as their times do. Both bounds include the whole unit they
+    name: a date its day, a date and time its hour, minute, second or fraction of a second
+    (12:00 takes 12:00:59.999999 too). For start_date the result is the first time in range;
+    for end_date the first time after it (None: nothing comes after it).
     """
     if not value:
         return None
+    form = _BOUND_FORM.fullmatch(value)
     try:
-        day: Optional[date] = date.fromisoformat(value)
-    except ValueError:
-        day = None
-    try:
-        if day is not None:
-            moment = datetime.combine(day + timedelta(days=1) if last else day, time.min)
-        else:
-            moment = datetime.fromisoformat(value)
-            if moment.tzinfo is not None:
-                raise ValueError(f"{name} has a time zone")
-            if last:
-                moment += timedelta(microseconds=1)
+        if form is None:
+            raise ValueError("not one of the forms")
+        moment = datetime.fromisoformat(value)  # a day or a time that does not exist: ValueError
+        if last:
+            if form["fraction"]:
+                moment += timedelta(microseconds=10 ** (6 - len(form["fraction"])))
+            elif form["second"]:
+                moment += timedelta(seconds=1)
+            elif form["minute"]:
+                moment += timedelta(minutes=1)
+            elif form["hour"]:
+                moment += timedelta(hours=1)
+            else:
+                moment += timedelta(days=1)
     except OverflowError:
         return None  # the end of the calendar: no upper bound
     except ValueError:
@@ -282,8 +296,10 @@ class AuditFilter:
             return False
         if self.search:
             action = entry.action.value
+            # The resource as the page shows it: its type and id, a space between them.
+            resource = " ".join(part for part in (entry.resource_type, entry.resource_id) if part)
             fields = (entry.username, action, action.replace("_", " "), entry.ip_address, entry.user_agent,
-                      entry.resource_type, entry.resource_id, entry.details)
+                      resource, entry.details)
             return any(self.search in field.casefold() for field in fields if field)
         return True
 
@@ -314,6 +330,22 @@ def _selected(selection: AuditFilter) -> list[AuditEntry]:
     entries = [e for e in load_audit_log() if selection.matches(e)]
     entries.sort(key=lambda e: e.timestamp, reverse=True)
     return entries
+
+
+# CSV injection: a spreadsheet reads a cell that starts with =, +, -, @, a tab or a carriage
+# return as a formula. A cell starts where a value starts, and inside a value after a semicolon
+# (the list separator of many locales), a tab or a line break, where a spreadsheet that splits
+# on them starts one. A ' in front of such a character makes the cell text (ADR-0233).
+_FORMULA_START = re.compile(r"(^|[;\t\r\n])(?=[=+\-@\t\r])")
+
+
+def _spreadsheet_text(value: object) -> str:
+    """The text of one cell of the CSV export, with a ' wherever a formula could start.
+
+    The values are not trusted: anyone who reaches the login chooses the user name of a failed
+    sign-in. The JSON export and the list keep them as recorded.
+    """
+    return _FORMULA_START.sub(r"\1'", str(value))
 
 
 # ==================== API Endpoints ====================
@@ -350,7 +382,6 @@ async def export_audit_logs(
     filename = f"audit_log_{datetime.now().strftime('%Y%m%d')}"
 
     if format == "csv":
-        # Generate CSV
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([
@@ -358,12 +389,12 @@ async def export_audit_logs(
             "IP Address", "Resource Type", "Resource ID", "Details", "Success"
         ])
         for entry in entries:
-            writer.writerow([
+            writer.writerow([_spreadsheet_text(cell) for cell in (
                 entry.id, entry.timestamp, entry.action.value, entry.severity.value,
                 entry.username or "", entry.ip_address or "",
                 entry.resource_type or "", entry.resource_id or "",
                 entry.details or "", entry.success
-            ])
+            )])
 
         output.seek(0)
         return StreamingResponse(

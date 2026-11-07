@@ -1,5 +1,5 @@
 """The audit log: append-only (ADR-0224; feature-list.json: security.append-only-audit-log), and
-listed, filtered, searched, counted and exported through the API (ADR-0232; security.audit-log).
+listed, filtered, searched, counted and exported through the API (ADR-0233; security.audit-log).
 
 Entries are JSON lines appended to the log, written in a worker thread, read back without
 the lines that are damaged, and the log rotates by size into a fixed number of old files.
@@ -368,22 +368,23 @@ class TestLock:
         assert len(audit_router.load_audit_log()) == count
 
 
-# ==================== The API (ADR-0232; feature-list.json: security.audit-log) ====================
+# ==================== The API (ADR-0233; feature-list.json: security.audit-log) ====================
 
 CLIENT = "192.0.2.10"  # the address the test client connects from
 LISTED_ROUTES = ["/logs", "/logs/count", "/logs/export"]  # the routes that take the filters
 BOUND_REFUSED = "{name} must be a date (YYYY-MM-DD) or a date and time (YYYY-MM-DDTHH:MM:SS) without a time zone"
 
 # Entries at the edges of 2026-11-06, in the order written. Their times are the server's local
-# time without a zone, as log_action writes them.
+# time without a zone, as log_action writes them: with microseconds, and without them only at a
+# whole second (datetime.isoformat() leaves out a fraction of zero).
 DAY = "2026-11-06"
 SEEDED = [
     {"timestamp": "2026-11-05T23:59:59.999999", "action": "login_failed", "username": "mallory",
      "severity": "warning", "success": False, "ip_address": "198.51.100.4",
      "details": "Incorrect username or password"},
     {"timestamp": "2026-11-06T00:00:00", "action": "login_success", "username": "admin", "ip_address": CLIENT},
-    {"timestamp": "2026-11-06T12:00:00", "action": "user_created", "username": "admin", "ip_address": CLIENT,
-     "resource_type": "user", "resource_id": "carol", "details": "Created new user: carol"},
+    {"timestamp": "2026-11-06T12:00:00.483912", "action": "user_created", "username": "admin",
+     "ip_address": CLIENT, "resource_type": "user", "resource_id": "carol", "details": "Created new user: carol"},
     {"timestamp": "2026-11-06T23:59:59.999999", "action": "user_deleted", "username": "admin",
      "severity": "warning", "ip_address": CLIENT, "resource_type": "user", "resource_id": "carol",
      "details": "Deleted user: carol"},
@@ -454,12 +455,26 @@ class TestFilters:
         pytest.param({"start_date": DAY, "end_date": DAY}, [DELETED, CREATED, ADMIN_IN], id="one-day"),
         pytest.param({"start_date": DAY}, [ALICE_IN, DELETED, CREATED, ADMIN_IN], id="from-a-day"),
         pytest.param({"end_date": DAY}, [DELETED, CREATED, ADMIN_IN, FAILED], id="up-to-a-day"),
-        # A date and time is an instant, and both ends include it.
-        pytest.param({"start_date": CREATED, "end_date": CREATED}, [CREATED], id="one-instant"),
+        # A date and time covers the whole hour, minute, second or fraction of a second it names,
+        # as the first and as the last one: the page shows times to the second.
+        pytest.param({"start_date": "2026-11-06T12", "end_date": "2026-11-06T12"}, [CREATED], id="one-hour"),
+        pytest.param({"start_date": "2026-11-06T12:00", "end_date": "2026-11-06T12:00"}, [CREATED],
+                     id="one-minute"),
+        pytest.param({"start_date": "2026-11-06T12:00:00", "end_date": "2026-11-06T12:00:00"}, [CREATED],
+                     id="one-second"),
+        pytest.param({"start_date": "2026-11-06T12:00:00.4", "end_date": "2026-11-06T12:00:00.4"}, [CREATED],
+                     id="one-tenth-of-a-second"),
+        pytest.param({"start_date": CREATED, "end_date": CREATED}, [CREATED], id="one-microsecond"),
+        pytest.param({"end_date": "2026-11-06T12:00:00.483911"}, [ADMIN_IN, FAILED], id="up-to-the-microsecond-before"),
+        pytest.param({"end_date": "2026-11-06T23:59:59"}, [DELETED, CREATED, ADMIN_IN, FAILED],
+                     id="up-to-the-last-second-of-a-day"),
+        pytest.param({"start_date": "2026-11-06 12:00", "end_date": "2026-11-06 12:00"}, [CREATED],
+                     id="a-space-between-the-date-and-the-time"),
         pytest.param({"start_date": "2026-11-06T00:00:00.000001", "end_date": "2026-11-06T23:59:59.999998"},
                      [CREATED], id="between-two-instants"),
         pytest.param({"start_date": "2026-11-06T12:00", "end_date": "2026-11-07"}, [ALICE_IN, DELETED, CREATED],
                      id="from-a-minute-up-to-a-day"),
+        pytest.param({"start_date": "2026-11-06T12:00:01"}, [ALICE_IN, DELETED], id="from-the-next-second"),
         pytest.param({"start_date": "2026-11-07", "end_date": DAY}, [], id="an-empty-range"),
         pytest.param({"username": "admin", "action": "user_deleted", "start_date": DAY, "end_date": DAY},
                      [DELETED], id="together"),
@@ -474,6 +489,14 @@ class TestFilters:
         pytest.param({"end_date": "2026-11-31"}, id="no-such-day"),
         pytest.param({"start_date": "2026-11-06T12:00:00+01:00"}, id="an-offset"),
         pytest.param({"end_date": "2026-11-06T12:00:00Z"}, id="utc"),
+        pytest.param({"end_date": "2026-11-06T24:00"}, id="no-such-hour"),
+        # Only the forms whose unit is plain: the extended ISO 8601 date, then the time to the
+        # hour, minute, second or 1 to 6 digits of a fraction.
+        pytest.param({"start_date": "20261106"}, id="the-basic-form"),
+        pytest.param({"end_date": "2026-W45-5"}, id="a-week-date"),
+        pytest.param({"end_date": "2026-11-06T12:00:00,5"}, id="a-decimal-comma"),
+        pytest.param({"end_date": "2026-11-06T12:00:00.1234567"}, id="seven-digits-of-a-fraction"),
+        pytest.param({"start_date": "2026-11-06T12:0"}, id="a-minute-of-one-digit"),
     ])
     def test_a_bound_that_is_not_a_date_or_a_time_without_a_zone_is_refused(self, seeded, path, params):
         response = ask(seeded, path, **params)
@@ -513,6 +536,7 @@ class TestSearch:
         pytest.param("198.51.100", [FAILED], id="client-address"),
         pytest.param("user_deleted", [DELETED], id="action"),
         pytest.param("login failed", [FAILED], id="action-as-the-page-names-it"),
+        pytest.param("User Carol", [DELETED, CREATED], id="resource-as-the-page-shows-it"),
         pytest.param("firefox", [ALICE_IN], id="browser"),
         pytest.param("no such text", [], id="nothing"),
     ])
@@ -545,6 +569,52 @@ class TestExport:
             (DELETED, "user_deleted", "admin", CLIENT, "carol"),
             (CREATED, "user_created", "admin", CLIENT, "carol"),
         ]
+
+    def test_a_failed_sign_in_puts_no_formula_into_the_csv_export(self, world):
+        # Whoever reaches the login, signed in or not, chooses the user name of a failed sign-in.
+        failed = world.client.post(f"{API}/auth/login", json={"username": "=1+1", "password": "Not-the-password-1"})
+        assert failed.status_code == 401, failed.text
+
+        response = ask(world, "/logs/export", format="csv", action="login_failed")
+
+        assert response.status_code == 200, response.text
+        header, *rows = csv.reader(io.StringIO(response.text, newline=""))
+        assert [row[header.index("Username")] for row in rows] == ["'=1+1"]
+        assert [e["username"] for e in get(world, "/logs/export", action="login_failed")["entries"]] == ["=1+1"]
+
+    @pytest.mark.parametrize("recorded, exported", [
+        # A spreadsheet reads a cell that starts with one of these as a formula (CSV injection).
+        pytest.param("=1+1", "'=1+1", id="equals"),
+        pytest.param("+1+1", "'+1+1", id="plus"),
+        pytest.param("-1+1", "'-1+1", id="minus"),
+        pytest.param("@SUM(1,1)", "'@SUM(1,1)", id="at"),
+        pytest.param("\tcarol", "'\tcarol", id="tab"),
+        pytest.param("\rcarol", "'\rcarol", id="carriage-return"),
+        # A spreadsheet that splits a line at semicolons (the list separator of many locales) or
+        # tabs starts a cell inside the value, and so does a line break.
+        pytest.param("carol;=1+1", "carol;'=1+1", id="after-a-semicolon"),
+        pytest.param("carol\t+1", "carol\t'+1", id="after-a-tab"),
+        pytest.param("carol\n-1", "carol\n'-1", id="after-a-line-feed"),
+        pytest.param("carol\r@SUM(1,1)", "carol\r'@SUM(1,1)", id="after-a-carriage-return"),
+        pytest.param("\t=1+1", "'\t'=1+1", id="both"),
+        # Text that a spreadsheet does not read as a formula stays as it is.
+        pytest.param("carol", "carol", id="text"),
+        pytest.param("a-b = c; d @ e,+f", "a-b = c; d @ e,+f", id="signs-inside-the-text"),
+        pytest.param("'=1+1", "'=1+1", id="already-text"),
+    ])
+    def test_the_csv_export_has_no_cell_that_a_spreadsheet_reads_as_a_formula(self, world, recorded, exported):
+        entry = {"id": recorded, "timestamp": CREATED, "action": "other", "username": recorded,
+                 "ip_address": recorded, "resource_type": recorded, "resource_id": recorded, "details": recorded}
+        world.audit_file.parent.mkdir(parents=True, exist_ok=True)
+        world.audit_file.write_text(json.dumps(entry) + "\n")
+
+        response = ask(world, "/logs/export", format="csv")
+
+        assert response.status_code == 200, response.text
+        header, *rows = csv.reader(io.StringIO(response.text, newline=""))
+        assert rows == [[exported, CREATED, "other", "info", exported, exported, exported, exported, exported, "True"]]
+        # The entry and the JSON export keep the value as recorded.
+        assert get(world, "/logs/export")["entries"][0]["username"] == recorded
 
     def test_the_json_export_downloads_the_filtered_entries(self, seeded):
         response = ask(seeded, "/logs/export", action="login_success", end_date=DAY)

@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: security
 decided-by: agent
+superseded-by: ADR-0233
 ---
 
 # ADR-0232: The audit log is listed, counted and exported with one set of filters and shown on an administrator page
 
 ## Context
+
+Superseded by ADR-0233: the same filters, exports and page, with bounds that cover the whole unit they name, the resource searched as the page shows it, and a CSV export without spreadsheet formulas.
 
 `GET /api/v1/audit/logs` and `/logs/count` filtered by action, user, severity and dates, but `/logs/export` only by dates; nothing searched the text of the entries, and no page showed the log (feature-list.json: `security.audit-log`, `webui.audit-log-page`). Entries carry the server's local time without a zone (`datetime.now().isoformat()`; `architecture.times-with-time-zones`), and the date bounds were compared as text, so `end_date=2026-11-06` left out every entry of that day.
 

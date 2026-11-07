@@ -68,7 +68,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Multi-user Support** - Administrators and regular users (who see only the dashboard and their own account)
 - **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps
 - **API Tokens** - Generate tokens for scripts through the API
-- **Audit Logging** - Sign-ins and administrative actions are recorded; administrators search, filter and export them on the Audit Log page or through the API
+- **Audit Logging** - Sign-ins, the management of users and their SMB access, shares, API tokens and recovery codes are recorded (storage, containers, apps, backups and system settings not yet); administrators search, filter and export them on the Audit Log page or through the API
 - **Rate Limiting** - Protection against brute-force attacks
 
 ### Notifications
