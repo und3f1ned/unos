@@ -11,7 +11,7 @@ export interface LogEntry {
   unit?: string | null;
 }
 
-/** A part of the host's journal that GET /logs/entries reads (ADR-0247). */
+/** A part of the host's journal that GET /logs/entries reads (ADR-0257). */
 export interface LogSource {
   name: string;
   label: string;

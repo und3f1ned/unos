@@ -1,4 +1,4 @@
-"""System > Logs reads the host's journal, newest first (ADR-0247, ADR-0248).
+"""System > Logs reads the host's journal, newest first (ADR-0257, ADR-0258).
 
 Every source is a part of the host's systemd journal that journalctl prints on the host: the
 commands go to ``FakeJournal`` through a patched ``src.host.run_on_host``. The fake keeps its
@@ -732,7 +732,7 @@ class TestLegacyRoutes:
                                  journalctl("journal", lines=5, filters=("--priority=err",))]
 
     def test_the_journal_route_takes_no_unit(self):
-        # unit is removed (ADR-0247): the route does not offer a filter that it would ignore.
+        # unit is removed (ADR-0257): the route does not offer a filter that it would ignore.
         parameters = app.openapi()["paths"][f"{API}/journal"]["get"]["parameters"]
 
         assert sorted(parameter["name"] for parameter in parameters) == ["limit", "priority"]

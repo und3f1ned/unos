@@ -1623,3 +1623,14 @@ def test_the_device_skills_measure_every_other_command_and_lock_the_backend_test
     for name in ("device-checks", "deploy-device"):
         skill = (SKILLS / name / "SKILL.md").read_text()
         assert not re.search(r"-m pytest|\bpytest tests/", skill), name
+
+
+def test_the_supervisor_build_gets_the_version_of_the_workstations_tree():
+    """The device's checkout is synced file by file, without git: deploy.sh passes git describe of this tree (ADR-0234)."""
+    text = (DEV / "deploy.sh").read_text()
+
+    assert "describe --tags --always --dirty" in text
+    assert 'dev_remote "$REMOTE_BUILD_SUPERVISOR" "$UNOS_DEV_REPO" "$version"' in text
+    assert "UNOS_VERSION=${2:-unknown} env -u JWT_SECRET docker compose build supervisor" in text
+    # Only a plain version reaches the device's shell.
+    assert "*[!A-Za-z0-9._+-]*) version=unknown" in text

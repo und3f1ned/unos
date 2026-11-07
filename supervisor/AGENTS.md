@@ -24,7 +24,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 - A program new to the host joins `HOST_TOOLS` with its Debian package. Blocking work (host
   commands, smartctl, bcrypt, Docker, e-mail) runs off the event loop with a timeout (ADR-0021).
   The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
-  can run long runs under the host's `timeout` (ADR-0248).
+  can run long runs under the host's `timeout` (ADR-0258).
 
 ## Routers and roles (ADR-0030)
 

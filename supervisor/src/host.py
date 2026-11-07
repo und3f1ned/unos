@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl, under
-# timeout: ADR-0247, ADR-0248). cat, test, mkdir, rmdir, rm, find, sync, sleep,
+# timeout: ADR-0257, ADR-0258). cat, test, mkdir, rmdir, rm, find, sync, sleep,
 # timeout, hostname and sh also run there but come from essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",

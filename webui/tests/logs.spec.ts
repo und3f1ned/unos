@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 // The sources as GET /api/v1/logs/sources lists them: parts of the host's journal, with the
-// server's texts word for word (supervisor/src/logs/router.py, ADR-0247; ADR-0189).
+// server's texts word for word (supervisor/src/logs/router.py, ADR-0257; ADR-0189).
 // supervisor/tests/test_logs_sources.py checks that this file holds them.
 const SOURCES = [
   { name: 'journal', label: 'System Journal', description: "Everything in the host's systemd journal" },
@@ -19,7 +19,7 @@ const SOURCES = [
 
 const LEVELS = ['emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info', 'debug'];
 
-// The server's answer (500) when journalctl ran past its time on the host (ADR-0248).
+// The server's answer (500) when journalctl ran past its time on the host (ADR-0258).
 const DID_NOT_ANSWER = "Could not read the host's journal: journalctl did not answer within 30 seconds";
 
 type Entry = { timestamp: string; facility: string; priority: string; message: string; source: string; unit: string };

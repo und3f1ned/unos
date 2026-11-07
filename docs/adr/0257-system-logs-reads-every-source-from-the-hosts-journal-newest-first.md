@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0247: System > Logs reads every source from the host's journal, newest first, with one set of filters
+# ADR-0257: System > Logs reads every source from the host's journal, newest first, with one set of filters
 
 ## Context
 

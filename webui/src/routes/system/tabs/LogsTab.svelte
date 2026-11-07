@@ -91,7 +91,7 @@
     }
   }
 
-  // The entries as the server lists them: the newest first (ADR-0247).
+  // The entries as the server lists them: the newest first (ADR-0257).
   async function loadLogs() {
     const request = ++latestRequest;
     loading = true;
@@ -126,7 +126,7 @@
   }
 
   // A search waits for the answer that is still coming, like Auto: asking again
-  // would only add another journalctl on the host behind it (ADR-0248).
+  // would only add another journalctl on the host behind it (ADR-0258).
   function handleSearch() {
     if (loading) return;
     loadLogs();

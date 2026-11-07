@@ -1,4 +1,4 @@
-"""System > Logs: the host's journal, by source (ADR-0247, ADR-0248).
+"""System > Logs: the host's journal, by source (ADR-0257, ADR-0258).
 
 Every source is a part of the host's systemd journal. GET /entries reads it with
 one journalctl command on the host, through src/host.py (ADR-0020), off the
@@ -34,7 +34,7 @@ Priority = Literal["emerg", "alert", "crit", "err", "warning", "notice", "info",
 # host then, with SIGTERM, and KILL_AFTER seconds later with SIGKILL, and exits
 # with TIMED_OUT. The timeout of subprocess.run alone would end only the nsenter
 # in front of it, which forks for --pid and does not pass the signal on: journalctl
-# would read on (ADR-0248).
+# would read on (ADR-0258).
 JOURNAL_TIMEOUT = 30
 KILL_AFTER = 5
 TIMED_OUT = 124
@@ -264,7 +264,7 @@ async def get_log_entries(
     since: Optional[str] = Query(None, description="<N> minutes ago, <N> hours ago or <N> days ago"),
     _: dict = Depends(verify_token)
 ):
-    """The newest entries of a source of the host's journal, newest first (ADR-0247)."""
+    """The newest entries of a source of the host's journal, newest first (ADR-0257)."""
     if source not in LOG_SOURCES:
         raise HTTPException(400, f"Unknown log source: {source}")
     if since and not SINCE.fullmatch(since):
