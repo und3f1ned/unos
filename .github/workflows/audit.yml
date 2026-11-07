@@ -1,8 +1,9 @@
 name: Audit
 
 # Advisories are published without any change to this repository, so the runtime
-# dependencies are audited every week as well as on every pull request (the Lint and
-# Frontend jobs of test.yml; ADR-0218). The commands are those of make audit. A finding
+# dependencies are audited every week (ADR-0218). The Lint and Frontend jobs of test.yml
+# would audit every pull request too, but that workflow is off (ADR-0230): make audit runs
+# before a dependency change is merged. The commands are those of make audit. A finding
 # fails the run: update the affected package (supervisor/requirements.txt, or
 # webui/package-lock.json, e.g. with npm update <package>) rather than weakening the check.
 on:

@@ -21,7 +21,7 @@ On 2026-11-07 the owner asked to "turn off the CI checks on GitHub; right now th
 ## Consequences
 
 - Nothing checks a pull request on GitHub. Whoever merges runs `make check` on the pull request's branch first, and `scripts/dev/linux-tests.sh` when the change touches what the Linux-only tests cover.
-- A Dependabot pull request changes the dependencies themselves, so its `make check` needs a checkout set up from its branch with `make setup`, which needs the network: the owner's machine.
+- A Dependabot pull request changes the dependencies themselves, so its `make check` needs a checkout set up from its branch with `make setup`, which needs the network: the owner's machine. `make check` has no audit: a dependency change also gets `make audit` before its merge, or waits for the Monday run of the Audit workflow.
 - While the workflow is off, the statements that CI runs the same targets and is what the owner merges on (ADR-0216), and that CI checks every pull request (ADR-0229), do not hold.
 - The Linux-only tests run only in the dev device's RAM, on tmpfs: a difference of another filesystem, such as ext4's EPERM, shows only in a test that fakes it.
 - The `ci.*` entries of `feature-list.json` that extend the workflow wait until it is on again.

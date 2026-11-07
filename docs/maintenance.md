@@ -63,6 +63,10 @@ and proposes the changes, and the owner reviews them.
    tag of the image in `webui/Dockerfile.test`
    (`test_image_has_the_playwright_version_of_package_lock` checks that they match), then
    `make setup` for the browsers (the network: the owner's machine) and `make e2e-local`.
+10. **Outdated majors and the dev dependencies.** `npm outdated` in `webui/` names the new major
+    versions that Dependabot leaves out (ADR-0231), and `npm audit --audit-level=high` there
+    covers the dev dependencies that the weekly audit skips. Each finding becomes, or updates, an
+    entry of `feature-list.json` (such as `webui.toolchain-major-versions`).
 
 ## After a session that went badly
 

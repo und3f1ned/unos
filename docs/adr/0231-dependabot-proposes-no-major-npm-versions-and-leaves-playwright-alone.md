@@ -21,5 +21,5 @@ On 2026-11-07 Dependabot's npm group (pull request 26) carried new major version
 ## Consequences
 
 - The weekly npm pull request can pass `make check` as it is.
-- A security fix that comes only with a new major version is not proposed; the weekly audit reports the advisory (ADR-0218).
+- A security fix that comes only with a new major version is not proposed. The weekly audit reports it only for the runtime dependencies (`npm audit --omit=dev`: svelte, lucide-svelte, qrcode), not for the build toolchain (SvelteKit, Vite, TypeScript, Tailwind CSS, Playwright), so the monthly pass of `docs/maintenance.md` lists outdated majors with `npm outdated` and audits the dev dependencies too.
 - Playwright falls behind between monthly passes.

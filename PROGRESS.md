@@ -6,14 +6,13 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Now
 
-- `main` is 1b09cae: the audit log, the device's security and flash facts (pull request #27), the
+- `main` holds the audit log, the device's security and flash facts (pull request #27), the
   riscv64 study (#28, `docs/research/riscv64-support-2026-11-07.md`), and Dependabot's updates of
   the GitHub Actions (#23) and of the supervisor's pip packages (#25: psutil 7.2.2, croniter
-  6.2.4, pyotp 2.10.0, slowapi 0.1.10). Dependabot's #24 and #26 were closed unmerged (ADR-0231).
+  6.2.4, pyotp 2.10.0, slowapi 0.1.10), and the upload fix for ext4 (#29). Dependabot's #24 and
+  #26 were closed unmerged (ADR-0231).
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
-- A pull request of its own fixes the one test that failed every CI run, in the code of
-  `files.upload`: an upload into a removed folder answers 404 on ext4 too.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
   network). The device has not had them yet either: the next supervisor deploy rebuilds the pip
   layer.
@@ -92,10 +91,15 @@ Open owner actions:
 - Every CI run since the conversion had failed on
   `test_a_folder_removed_before_the_file_arrives_is_refused_before_any_of_it_either_way[unnamed]`:
   ext4 refuses an unnamed file in a removed folder with EPERM, which read as 403. Fixed for
-  `files.upload` in a pull request of its own, with a test that fakes ext4's answer: it failed on the
+  `files.upload` in #29, with a test that fakes ext4's answer: it failed on the
   device's Linux before the fix and passes after it, with 0 MiB written to the SD card.
 - The CI workflow was disabled on GitHub (ADR-0230); its file stays, and the documents that said
   CI checks every pull request now say who runs `make check`.
+- Fresh-context reviews: #29's found no bug; the order of its checks and three wordings were
+  fixed, and a deleted btrfs subvolume keeps a link, so an upload into one is refused only at the
+  link (`_removed`'s docstring). This change's review: the stale CI statements, the audit's reach
+  and the test's registry check were fixed. ADR-0230 names ADR-0216 and ADR-0229 instead of
+  superseding them: the workflow is off, not replaced, and both hold again once it is on.
 
 ### 2026-11-07: append-only audit log, device security, flash facts
 

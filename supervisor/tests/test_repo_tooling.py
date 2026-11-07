@@ -1042,7 +1042,7 @@ def test_dependabot_leaves_major_npm_versions_and_playwright_alone():
     assert npm_ignored["@playwright/test"] is None  # every version
     # Dependabot names an image without its registry: mcr.microsoft.com/playwright is "playwright".
     assert docker_ignored["playwright"] is None
-    assert not [name for name in docker_ignored if "/" in name]
+    assert not [name for name in docker_ignored if "." in name.split("/")[0] or ":" in name.split("/")[0]]
 
 
 def test_issue_templates_start_in_triage():

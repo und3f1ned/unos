@@ -3157,10 +3157,9 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0217",
-        "ADR-0230"
+        "ADR-0217"
       ],
-      "notes": "Today only supervisor/tests/test_repo_tooling.py runs scripts/setup.sh, with stub tools instead of the network. Waits while the CI workflow is off on GitHub (ADR-0230)."
+      "notes": "Today only supervisor/tests/test_repo_tooling.py runs scripts/setup.sh, with stub tools instead of the network."
     },
     {
       "id": "ci.secret-scan-of-history",
