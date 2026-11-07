@@ -40,7 +40,7 @@ CI. Run `make setup` once per checkout; it needs the network.
 9. **Conventional Commits** in English, whose first line, type and scope included, has at most 72
    characters: [ADR-0209](docs/adr/0209-conventional-commits-in-english.md) holds the rule, and
    [scripts/check-commit-msg.py](scripts/check-commit-msg.py) checks it in the commit-msg hook
-   and in CI's commits job.
+   (CI's commits job too, but CI is off on GitHub: ADR-0230).
 10. **The pull request** follows [the template](.github/pull_request_template.md). The owner opens
     and merges pull requests (ADR-0208).
 

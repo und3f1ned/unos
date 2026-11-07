@@ -3043,9 +3043,10 @@
       "adr": [
         "ADR-0208",
         "ADR-0216",
-        "ADR-0229"
+        "ADR-0229",
+        "ADR-0230"
       ],
-      "notes": "GitHub refuses branch protection and rulesets for a private repository on the Free plan (HTTP 403, 2026-11-07), and the owner keeps the plan and the repository private (ADR-0229). Until that changes, the guard blocks agents' pushes to main (ADR-0211) and CI checks every pull request."
+      "notes": "GitHub refuses branch protection and rulesets for a private repository on the Free plan (HTTP 403, 2026-11-07), and the owner keeps the plan and the repository private (ADR-0229). The CI workflow is off on GitHub as well (ADR-0230): the guard blocks agents' pushes to main (ADR-0211), and whoever merges runs make check first."
     },
     {
       "id": "ci.ledger-changes-checked",
@@ -3057,9 +3058,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0203"
+        "ADR-0203",
+        "ADR-0230"
       ],
-      "notes": "Step 1 holds: .github/workflows/test.yml checks out the whole history for the Unit Tests job. Until the ledger is merged into main the comparison skips, locally and in CI: there is no ledger at the base. FEATURE_LIST_BASE set to a base without a ledger makes the tests fail, so CI does not set it. The rule itself runs on fixture ledgers in every run of make test-fast (TestTheRequirementChangeRule)."
+      "notes": "Step 1 holds: .github/workflows/test.yml checks out the whole history for the Unit Tests job. Until the ledger is merged into main the comparison skips, locally and in CI: there is no ledger at the base. FEATURE_LIST_BASE set to a base without a ledger makes the tests fail, so CI does not set it. The rule itself runs on fixture ledgers in every run of make test-fast (TestTheRequirementChangeRule). Waits while the CI workflow is off on GitHub (ADR-0230)."
     },
     {
       "id": "ci.container-image-scanning",
@@ -3085,8 +3087,10 @@
       "passes": false,
       "adr": [
         "ADR-0189",
-        "ADR-0190"
-      ]
+        "ADR-0190",
+        "ADR-0230"
+      ],
+      "notes": "Waits while the CI workflow is off on GitHub (ADR-0230)."
     },
     {
       "id": "ci.python-type-check",
@@ -3169,9 +3173,10 @@
       "passes": false,
       "adr": [
         "ADR-0024",
-        "ADR-0212"
+        "ADR-0212",
+        "ADR-0230"
       ],
-      "notes": "The history still holds the passwords that CLAUDE.md once published."
+      "notes": "The history still holds the passwords that CLAUDE.md once published. Waits while the CI workflow is off on GitHub (ADR-0230)."
     },
     {
       "id": "architecture.sqlite-write-cost",
@@ -3254,7 +3259,26 @@
         "The web UI builds and every E2E spec passes on Svelte 5",
         "No Svelte 4 compatibility mode is left"
       ],
-      "passes": false
+      "passes": false,
+      "adr": [
+        "ADR-0231"
+      ],
+      "notes": "SvelteKit 3 and @sveltejs/vite-plugin-svelte 7 come with it: they need Svelte 5. Dependabot proposes no major npm versions (ADR-0231)."
+    },
+    {
+      "id": "webui.toolchain-major-versions",
+      "category": "webui",
+      "description": "The web UI builds with the current major versions of its toolchain",
+      "steps": [
+        "Vite, Tailwind CSS, TypeScript, svelte-check, @sveltejs/adapter-static and lucide-svelte are at their current major versions",
+        "npm ci passes without --force or --legacy-peer-deps",
+        "make check and make e2e-local pass"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0231"
+      ],
+      "notes": "After webui.svelte-5. Dependabot's npm group of 2026-11-07 (pull request 26, closed) proposed SvelteKit 3.1.1, @sveltejs/adapter-static 4, @sveltejs/vite-plugin-svelte 7, Vite 8, Tailwind CSS 4, TypeScript 7, svelte-check 4 and lucide-svelte 1 at once, and npm ci failed on it: SvelteKit 3.1.1 accepts TypeScript ^6 only. Tailwind CSS 4 replaces tailwind.config.js and the PostCSS setup."
     },
     {
       "id": "ci.btrfs-loop-device-tests",
@@ -3264,7 +3288,11 @@
         "A CI job creates loop devices, makes pools, volumes and snapshots through the API and checks the results",
         "The job runs on every pull request that changes supervisor/src/storage"
       ],
-      "passes": false
+      "passes": false,
+      "adr": [
+        "ADR-0230"
+      ],
+      "notes": "Waits while the CI workflow is off on GitHub (ADR-0230)."
     },
     {
       "id": "storage.import-existing-pool",

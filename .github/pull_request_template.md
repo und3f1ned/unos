@@ -17,7 +17,8 @@ ADRs:
 - [ ] Reviewed in a fresh context (ADR-0017): each finding fixed, or recorded with the reason
 - [ ] `feature-list.json`: `passes` turned true only after the scenario passed (ADR-0203)
 - [ ] `PROGRESS.md` updated; every new decision has an ADR; new terms are in `GLOSSARY.md`
-- [ ] The commit messages follow the commit convention (ADR-0209; CI's commits job checks them)
+- [ ] The commit messages follow the commit convention (ADR-0209; the commit-msg hook checks them,
+      `python3 scripts/check-commit-msg.py --range origin/main..HEAD` the whole branch)
 
 ## Notes for the reviewer
 

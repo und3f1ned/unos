@@ -6,18 +6,16 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Now
 
-- `main` is 9a28743, the merge of pull request #22: slice 1, slice 2 (SMB users, per-share
-  permissions, guest off by default), the transmission login fix and the agentic conversion.
-- Branch `security.append-only-audit-log` (worktree `../unos-security.append-only-audit-log`),
-  pushed for the owner's pull request:
-  - the append-only audit log (ADR-0224), deployed and measured on the dev device; its entry
-    passes;
-  - the dev device's SSH by key only with rotated passwords (ADR-0226, `device.key-only-ssh`
-    passes);
-  - the facts of the device's flash (ADR-0225), the IPv6 and Docker data-root decisions
-    (ADR-0227, ADR-0228), and the audit plan's entries that were missing from the ledger.
-- Branch `research.riscv64-support` (worktree `../unos-research.riscv64-support`): another
-  session's study of what riscv64 support would cost, for a SpacemiT K1 board the owner has.
+- `main` holds the audit log, the device's security and flash facts (pull request #27), the
+  riscv64 study (#28, `docs/research/riscv64-support-2026-11-07.md`), and Dependabot's updates of
+  the GitHub Actions (#23) and of the supervisor's pip packages (#25: psutil 7.2.2, croniter
+  6.2.4, pyotp 2.10.0, slowapi 0.1.10), and the upload fix for ext4 (#29). Dependabot's #24 and
+  #26 were closed unmerged (ADR-0231).
+- The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
+  `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
+- The local venvs still hold the pip versions from before #25; `make setup` updates them (the
+  network). The device has not had them yet either: the next supervisor deploy rebuilds the pip
+  layer.
 - The main checkout is set up: `supervisor/.venv`, `.venv-lint` and `webui/node_modules` were
   copied from environments verified against the pins (with `setup.sh`'s stamps), and the git
   hooks are on. Only Playwright's Chromium 1200 is missing: the workstation's network filter
@@ -43,10 +41,10 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs `main` plus this branch's audit log: the supervisor image was rebuilt on 2026-11-07 at
+- Runs the audit log of #27 (commit 2825d8b): the supervisor image was rebuilt on 2026-11-07 at
   14:20 UTC, the web UI is the one of the slice-2 deploy. The device checkout `/opt/unos` equals
-  this branch's working tree (`scripts/dev/deploy.sh sync`); the deploy's backup and rollback
-  copies are in the main checkout's `tmp/dev/`.
+  2825d8b's tree; `main` has since added the pip updates of #25, the riscv64 study and the
+  documents. The deploy's backup and rollback copies are in the main checkout's `tmp/dev/`.
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest, deploy-webui:latest, lscr.io/linuxserver/transmission,
   alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base).
@@ -67,18 +65,41 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 Open owner actions:
 
-1. GitHub: `main` stays without branch protection on the Free plan (ADR-0229); the classic token
-   the device used before 2026-11-05 can be revoked only on github.com (Settings, Developer
-   settings, Tokens). Done on 2026-11-07 through the API with GitHub Desktop's sign-in: the
-   device's read-only deploy key (it reads the repository with it), pull requests #27 and #28.
-2. Playwright's Chromium 1200: `make setup` in the owner's own terminal, where the network filter
-   may allow it.
+1. GitHub: `main` stays without branch protection on the Free plan (ADR-0229), and the CI
+   workflow is off (ADR-0230; "Enable workflow" in the Actions tab turns it on). The classic
+   token the device used before 2026-11-05 can be revoked only on github.com (Settings,
+   Developer settings, Tokens).
+2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
+   Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
 3. The reboot of the device for the re-check of ADR-0018, once `device.scenario-checks-in-repo`
    is done; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh` is made again.
 4. Who gets access to the share DATA (an SMB account for a regular user).
 5. Whether the services are used from outside over IPv6 (`device.ipv6-inbound-filter`).
 
 ## Log
+
+### 2026-11-07: pull requests merged, CI off, Dependabot's rules
+
+- The owner asked to merge every pull request and to turn the CI checks off. Merged through the
+  API: #28, #27, #23 and #25. CI's backend tests had passed with #25's pip versions except for
+  the one test below; psutil, croniter, pyotp and slowapi are used only through calls that the
+  new versions keep.
+- Closed unmerged, with the reason on each (ADR-0231): #26, a group of major versions of the web
+  UI's toolchain on which `npm ci` failed (now `webui.svelte-5` and
+  `webui.toolchain-major-versions`), and #24, the Playwright image without its npm package, let
+  through by an ignore rule that named the image with its registry.
+- Every CI run since the conversion had failed on
+  `test_a_folder_removed_before_the_file_arrives_is_refused_before_any_of_it_either_way[unnamed]`:
+  ext4 refuses an unnamed file in a removed folder with EPERM, which read as 403. Fixed for
+  `files.upload` in #29, with a test that fakes ext4's answer: it failed on the
+  device's Linux before the fix and passes after it, with 0 MiB written to the SD card.
+- The CI workflow was disabled on GitHub (ADR-0230); its file stays, and the documents that said
+  CI checks every pull request now say who runs `make check`.
+- Fresh-context reviews: #29's found no bug; the order of its checks and three wordings were
+  fixed, and a deleted btrfs subvolume keeps a link, so an upload into one is refused only at the
+  link (`_removed`'s docstring). This change's review: the stale CI statements, the audit's reach
+  and the test's registry check were fixed. ADR-0230 names ADR-0216 and ADR-0229 instead of
+  superseding them: the workflow is off, not replaced, and both hold again once it is on.
 
 ### 2026-11-07: append-only audit log, device security, flash facts
 

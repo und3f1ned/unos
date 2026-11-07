@@ -39,7 +39,7 @@ commit messages (ADR-0200); an ADR quotes the owner in translation. Answer the o
 
 | Command | A pass proves |
 | --- | --- |
-| `make check` | The gate (ADR-0216): what CI's Unit Tests, Lint and Frontend jobs check. All backend tests, `ruff check --select F,E9`, `bash -n` on the shell scripts, JSON syntax, svelte-check and the production build; `make test`, `make lint` and `make frontend` run its parts. Linux-only tests skip on macOS. |
+| `make check` | The gate (ADR-0216), the only one while CI is off on GitHub (ADR-0230): what the CI workflow's Unit Tests, Lint and Frontend jobs check. All backend tests, `ruff check --select F,E9`, `bash -n` on the shell scripts, JSON syntax, svelte-check and the production build; `make test`, `make lint` and `make frontend` run its parts. Linux-only tests skip on macOS. |
 | `make check-fast` | Lint plus `make test-fast`: the convention tests of the ADRs, the ledger, the guard, the repository tooling, the dev scripts and the stand-in. The pre-commit hook runs it, and so does the Stop hook `.claude/hooks/stop-check.sh` when the tree changed since its last green run: a failure sends you back to work. |
 | `make smoke` | In a few seconds, through existing backend tests: the app starts and serves health, first-run setup and login. The baseline of a session. |
 | `make e2e-local` | The Playwright specs pass against the local stand-in: the real supervisor and the built web UI on this machine. `scripts/standin/e2e.sh <spec> [args]` runs a part. |
@@ -123,7 +123,7 @@ A denial by the guard or the permission system is an answer: ask the owner how t
   through `webui/tests/target.ts`, and by the guard.
 - You push only your own branch; main and master belong to the owner, and pushed history is never
   rewritten (ADR-0208). Enforced by the guard (pushes to main or master, force pushes,
-  `--no-verify`); commit messages by the commit-msg hook and CI's commits job (ADR-0209).
+  `--no-verify`); commit messages by the commit-msg hook (ADR-0209).
 - Packages come from `make setup`, which the owner runs. The workstation's network filter blocks
   agents: report a blocked request to the owner as it is (ADR-0211).
 - Security audit notes and exploit details stay in the owner's private audit folder (ADR-0213).

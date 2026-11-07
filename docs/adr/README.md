@@ -319,3 +319,5 @@ and this index, and `make check-fast` runs it.
 | [0217](0217-make-setup-bootstraps-a-checkout.md) | One command, make setup, bootstraps a checkout idempotently | accepted | 2026-11-07 |
 | [0218](0218-scheduled-dependency-audits-and-maintenance.md) | Dependencies are audited weekly, and maintenance passes run monthly | accepted | 2026-11-07 |
 | [0229](0229-main-stays-without-branch-protection-on-the-free-plan.md) | The main branch stays without branch protection on GitHub's Free plan | accepted | 2026-11-07 |
+| [0230](0230-the-ci-workflow-is-off-on-github.md) | The CI workflow is off on GitHub, and make check on the workstation is the only gate | accepted | 2026-11-07 |
+| [0231](0231-dependabot-proposes-no-major-npm-versions-and-leaves-playwright-alone.md) | Dependabot proposes no major npm versions and leaves Playwright alone | accepted | 2026-11-07 |

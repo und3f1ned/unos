@@ -72,8 +72,9 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
   `tests/test_pool_persistence.py`, `tests/samba_fake.py` for Samba (ADR-0189). A command a fake
   does not know fails the test. Shared fakes live in test modules that other tests import.
 - Linux-only tests skip elsewhere with their reason (`os.O_PATH`, `/proc/self/fdinfo`, POSIX ACLs,
-  `O_TMPFILE`); `scripts/dev/linux-tests.sh` and CI run them. `tests/test_smbconf_testparm.py`
-  needs `scripts/dev/bin/testparm` on PATH (the device-checks skill).
+  `O_TMPFILE`); `scripts/dev/linux-tests.sh` runs them (CI is off, ADR-0230).
+  `tests/test_smbconf_testparm.py` needs `scripts/dev/bin/testparm` on PATH (the device-checks
+  skill).
 - After an edit of a file that tests read, run those tests: `test_deploy_scripts.py` (deploy/,
   `docs/INSTALL.md`, `docs/TESTING.md`, `scripts/test-cycle.sh`, the workflow, Dockerfiles, package
   files), `test_authz.py`, `test_secret_bootstrap.py`, `test_request_limits.py`, `test_standin.py`,
