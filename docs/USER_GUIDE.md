@@ -860,6 +860,59 @@ yet (feature-list entries `system.scheduled-power` and
 - Filter by type and date
 - Export logs for troubleshooting
 
+### Scheduler
+
+**System** → **Scheduler** runs tasks on a schedule: snapshots and scrubs of a
+pool, SMART tests of a disk, system backups (see
+[Scheduled Snapshots](#scheduled-snapshots) and [System Backup](#system-backup))
+and custom commands. Only administrators see the tab, and only they can use
+its API.
+
+- **New Task** asks for the task's type, its target and when it runs: every
+  hour at a minute, every day, week or month at a time, or a cron expression
+  (minute, hour, day of the month, month, day of the week). **Run now** runs a
+  task at once. **History**, or a task's history button, lists the last 100
+  runs with their status, start and duration, and the output or error of each.
+- The schedules follow the clock of the NAS's time zone, which the tab names:
+  the time zone set on the host (`timedatectl set-timezone`), or UTC when the
+  host's cannot be read. A task for 03:00 runs at 03:00 on that clock, also
+  after a change of daylight saving time, and a change of the time zone
+  applies within a minute. On the night the clocks go back, a time in the hour
+  that repeats runs once, the first time, and an hourly task skips the
+  repeated hour; on the night they go forward, a time that the clock skips
+  runs when the clock passes it, once (a task for 02:30 runs at 03:00 in
+  central Europe). Next runs and the times in the history show in your
+  browser's time zone.
+- A task runs while UNOS runs: a time that passes while the NAS is off or
+  suspended is not made up for, and when the clock is set forward, only the
+  tasks of its last 5 minutes run.
+
+#### Custom Commands
+
+A task of the type **Custom Command** runs a shell command with `/bin/sh`, as
+root in the supervisor's container. The command sees the host's processes,
+the Docker socket, `/etc/samba` and the pools under `/mnt/pools`, but the
+container's own files and network: keep scripts on a pool, and reach the host
+itself with `nsenter --target 1 --mount --uts --ipc --net --pid -- <command>`.
+
+Each run records, in the history:
+
+- the command's exit status, as **Exit status**: 0 is a success, any other
+  value a failure ("The command exited with status 3");
+- its output, under **View output**: standard output and error together, in
+  the order they were written. A run keeps the last 16 KiB, after a line that
+  says so when the output was longer.
+
+A command still running after 24 hours is stopped, with everything it
+started, and its run fails with "The command did not end within 24 hours and
+was stopped". Processes that a command leaves running in the background end
+when it returns: run a server in a container or as a service of the host. A
+run starts at its time also while the task's run before has not ended: a
+command that must not run twice at once can guard itself, for example with
+`flock /tmp/my-task.lock my-script.sh`. The command is checked again before
+each run, as when it is saved: at most 4096 characters, without NUL
+characters.
+
 ---
 
 ## Backups & Snapshots
@@ -971,8 +1024,11 @@ For automatic backups, add a task of the type **System Backup** in
 (AES-256-GCM) with the passphrase you enter twice, in **Passphrase** and
 **Confirm Passphrase**, at least 8 characters long. They are named `auto_backup_<date>_<time>.tar.gz.enc`
 (with `_1`, `_2`, ... before `.tar.gz.enc` when two are made in the same
-second) and appear in the list, marked encrypted; **Keep Count** sets how
-many of them are kept, counted over all backup tasks. Besides the database,
+second) and appear in the list, marked encrypted, once they are complete; **Keep
+Count** sets how many of them are kept, counted over all backup tasks: after
+each run, the oldest scheduled backups beyond that number are deleted, never a
+backup made with **Create Backup** or uploaded. Two runs at the same time, as
+**Run now** during a scheduled run, both succeed. Besides the database,
 they hold a copy of the scheduled tasks, without passphrases, which a
 restore does not restore.
 

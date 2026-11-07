@@ -19,25 +19,34 @@ because the tasks file may predate validation or have been edited by hand.
 Backup tasks encrypt their backups (ADR-0240). Their passphrase is never
 stored: BACKUP_KEYS_FILE (0600) keeps the key derived from it, apart from
 TASKS_FILE, which the API returns and every scheduled backup contains.
+
+Schedules follow the clock of the host's time zone, read on the host for each
+pass of the scheduler loop and each answer (ADR-0247). A custom task's run
+records the command's output and exit status; the command is stopped after
+COMMAND_TIMEOUT, and the processes it leaves running end with it (ADR-0248).
 """
 
 import base64
+import contextlib
 import io
 import json
 import logging
 import os
 import secrets
+import signal
 import stat
 import subprocess
 import tempfile
 import threading
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from croniter import croniter
 
+from .. import host
 from ..auth.utils import require_admin, verify_token
 from ..backup.router import (
     BACKUP_KEY_SIZE,
@@ -79,6 +88,24 @@ SMART_TEST_TIMEOUT = 60
 # Seconds `btrfs scrub start` may take: it returns once the scrub runs in the
 # background, unless the filesystem hangs (as storage.pools.SCRUB_COMMAND_TIMEOUT).
 SCRUB_START_TIMEOUT = 60
+# Seconds the command of a custom task may run; then it is stopped, with what it
+# started (ADR-0248). Long enough for a copy of a pool to another disk.
+COMMAND_TIMEOUT = 24 * 3600
+# What a run keeps of a command's output: its last part, so that RUNS_FILE, which
+# is rewritten on the system disk at each run, stays small.
+MAX_OUTPUT_BYTES = 16 * 1024
+OUTPUT_CUT = "[Only the last 16 KiB of the output are kept.]\n"
+# Seconds to wait, once the processes of a command were killed, for them to end
+# and for the rest of their output: a process in the kernel's uninterruptible
+# sleep ends only when the kernel lets it.
+STOP_WAIT = 5
+# How far back a pass of the scheduler loop looks for the times it has not
+# handled yet: a pass that comes late still starts the runs of the minutes
+# since the pass before, but a clock set forward by hours (a resume from
+# suspend, NTP after a boot without a real-time clock) does not start every task
+# of the hours it skipped (ADR-0247).
+CATCH_UP = timedelta(minutes=5)
+MINUTE = timedelta(minutes=1)
 
 TASKS_FILE = "/data/scheduled_tasks.json"
 RUNS_FILE = "/data/task_runs.json"
@@ -95,6 +122,22 @@ _backup_keys_lock = threading.Lock()
 # In-memory scheduler state
 _scheduler_running = False
 _scheduler_task: Optional[asyncio.Task] = None
+# The runs the loop started and that have not ended: the event loop keeps only
+# weak references to tasks.
+_runs: set[asyncio.Task] = set()
+# The warnings already logged: each is logged once, not at every pass.
+_reported: set[str] = set()
+_sleep = asyncio.sleep  # replaced by the tests, as _utc_now
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _warn_once(message: str) -> None:
+    if message not in _reported:
+        _reported.add(message)
+        logger.warning(message)
 
 
 def load_tasks() -> list[ScheduledTask]:
@@ -238,14 +281,79 @@ def get_cron_expression(task: ScheduledTask) -> str:
     return f"{minute} {hour} * * *"
 
 
-def get_next_run(task: ScheduledTask) -> str:
-    """Calculate next run time for a task."""
-    cron = get_cron_expression(task)
+def schedule_zone() -> tzinfo:
+    """The host's time zone, whose clock the schedules follow; UTC when it cannot be read.
+
+    Read on the host each time (host.time_zone_name), so that the schedules follow a
+    change of the zone at once. The zone's rules come from the supervisor's own
+    time zone database. Blocking (a host command): call it in a worker thread.
+    """
     try:
-        iter = croniter(cron, datetime.now())
-        return iter.get_next(datetime).isoformat()
+        name = host.time_zone_name()
+        if name is None:
+            raise ValueError("/etc/localtime is not a link into a zoneinfo folder")
+        return ZoneInfo(name)
+    except (OSError, subprocess.SubprocessError, ValueError, ZoneInfoNotFoundError) as e:
+        _warn_once(f"The time zone of the host cannot be read ({e}): the schedules follow UTC")
+        return timezone.utc
+
+
+def _first_instant(wall: datetime, zone: tzinfo) -> datetime:
+    """The first instant (UTC) at which the clock of ``zone`` shows the naive time ``wall`` or a later one.
+
+    That is the first of the two in the hour that the clock shows twice when daylight
+    saving time ends, and for a time that the clock skips when it begins, the end of
+    the skip: 02:30 comes at 03:00 in central Europe (ADR-0247).
+    """
+    at = wall.replace(tzinfo=zone, fold=0).astimezone(timezone.utc)
+    # A skipped time is read with the offset before the change, which gives an
+    # instant after the skip: go back to its end.
+    while (at - MINUTE).astimezone(zone).replace(tzinfo=None) >= wall:
+        at -= MINUTE
+    return at
+
+
+def next_run_after(task: ScheduledTask, after: datetime, zone: tzinfo) -> datetime:
+    """The first instant (UTC) after ``after`` at which ``task`` is due.
+
+    Its schedule is a series of times on the clock of ``zone``; each comes at
+    _first_instant. Raises ValueError (croniter's errors) for a schedule that has no
+    next time or cannot be read, as in a tasks file written by hand.
+    """
+    times = croniter(get_cron_expression(task), after.astimezone(zone).replace(tzinfo=None))
+    while True:
+        at = _first_instant(times.get_next(datetime), zone)
+        if at > after:  # in the hour shown twice, the times of its first showing have passed
+            return at
+
+
+def get_next_run(task: ScheduledTask, zone: tzinfo, now: datetime) -> str | None:
+    """When ``task`` runs next, in ISO 8601 with the offset of ``zone``; None when it never does.
+
+    Whatever its schedule raises, the task list is still answered (as due_tasks runs the others).
+    """
+    try:
+        return next_run_after(task, now, zone).astimezone(zone).isoformat()
     except Exception:
-        return ""
+        return None
+
+
+def due_tasks(tasks: list[ScheduledTask], after: datetime, now: datetime, zone: tzinfo) -> list[ScheduledTask]:
+    """The enabled tasks with a time of their schedule in (``after``, ``now``].
+
+    A task whose schedule cannot be followed, whatever it raises (croniter's errors are
+    ValueErrors), is left out, and the others still run.
+    """
+    due = []
+    for task in tasks:
+        if not task.enabled:
+            continue
+        try:
+            if next_run_after(task, after, zone) <= now:
+                due.append(task)
+        except Exception as e:
+            _warn_once(f"Task {task.id} does not run: its schedule has no next time ({e})")
+    return due
 
 
 def _bad_task(message: str) -> HTTPException:
@@ -271,6 +379,15 @@ def disk_device(target_disk: str | None) -> str:
     if not target_disk:
         raise _bad_task("No target disk specified")
     return storage_disks.whole_disk_device(target_disk)
+
+
+def _command_problem(command: str | None) -> str | None:
+    """Why ``command`` cannot be the command of a custom task, or None (checked when saved and before each run)."""
+    if not (command or "").strip():
+        return "No command specified"
+    if "\x00" in command or len(command) > MAX_COMMAND_LENGTH:
+        return f"Command must be at most {MAX_COMMAND_LENGTH} characters without NUL bytes"
+    return None
 
 
 def _validate_schedule(task: ScheduledTask) -> None:
@@ -317,11 +434,9 @@ def validate_task(task: ScheduledTask, *, kept_disk: str | None = None) -> Sched
         else:
             task.target_disk = disk_device(task.target_disk)
     elif task.task_type == TaskType.CUSTOM:
-        command = task.command or ""
-        if not command.strip():
-            raise _bad_task("No command specified")
-        if "\x00" in command or len(command) > MAX_COMMAND_LENGTH:
-            raise _bad_task(f"Command must be at most {MAX_COMMAND_LENGTH} characters without NUL bytes")
+        problem = _command_problem(task.command)
+        if problem:
+            raise _bad_task(problem)
 
     return task
 
@@ -563,10 +678,11 @@ def _create_snapshot(pool_name: str) -> tuple[bool, str]:
 
 
 async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
-    """Execute a scheduled task.
+    """Execute a snapshot, scrub, SMART test or backup task: whether it succeeded, and its output or error.
 
     Targets are validated again here: the tasks file may contain entries
-    written before validation existed or edited by hand.
+    written before validation existed or edited by hand. The commands of
+    custom tasks run through run_command (run_task).
     """
     try:
         if task.task_type == TaskType.SNAPSHOT:
@@ -629,14 +745,6 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
                 return False, NO_BACKUP_KEY
             return await create_scheduled_backup(task.keep_count, key)
 
-        elif task.task_type == TaskType.CUSTOM:
-            if not task.command:
-                return False, "No command specified"
-            # Deliberately a shell command run as root: administrators only,
-            # see the trust model at the top of this module.
-            result = await asyncio.to_thread(_run, task.command, shell=True)
-            return result.returncode == 0, result.stdout or result.stderr
-
         return False, "Unknown task type"
 
     except HTTPException as e:
@@ -645,65 +753,200 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
         return False, str(e)
 
 
+class CommandResult(NamedTuple):
+    """How the command of a custom task ended."""
+
+    exit_code: int | None  # None: it did not exit by itself (stopped at the time limit, or by a signal)
+    output: str  # what it and the processes it started wrote, standard output and error together
+    error: str | None  # why its run failed; None for the exit status 0
+
+
+class _OutputTail:
+    """The last MAX_OUTPUT_BYTES of what a command wrote, and whether more came before them."""
+
+    def __init__(self) -> None:
+        self.data = bytearray()
+        self.cut = False
+
+    def add(self, chunk: bytes) -> None:
+        self.data += chunk
+        if len(self.data) > MAX_OUTPUT_BYTES:
+            del self.data[: len(self.data) - MAX_OUTPUT_BYTES]
+            self.cut = True
+
+    def text(self) -> str:
+        if not self.cut:
+            return self.data.decode(errors="replace")
+        # The cut can fall inside a character: start with the next one.
+        return OUTPUT_CUT + self.data.lstrip(_UTF8_CONTINUATION).decode(errors="replace")
+
+
+_UTF8_CONTINUATION = bytes(range(0x80, 0xC0))  # the bytes after the first of a character
+
+
+async def _read_output(fd: int, output: _OutputTail) -> None:
+    """Read the pipe ``fd`` into ``output`` until it ends, when no process holds it open; then close it."""
+    reader = asyncio.StreamReader()
+    transport, _ = await asyncio.get_running_loop().connect_read_pipe(
+        lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(fd, "rb", buffering=0)
+    )
+    try:
+        while chunk := await reader.read(65536):
+            output.add(chunk)
+    finally:
+        transport.close()
+
+
+def _kill_process_group(pgid: int) -> None:
+    """Kill the processes left in the process group ``pgid``, if any."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(pgid, signal.SIGKILL)
+
+
+def _duration(seconds: float) -> str:
+    """``seconds`` in words: "24 hours", "2 seconds"."""
+    for size, unit in ((3600, "hour"), (60, "minute"), (1, "second")):
+        if seconds >= size and seconds % size == 0:
+            count = int(seconds // size)
+            return f"{count} {unit}{'' if count == 1 else 's'}"
+    return f"{seconds:g} seconds"
+
+
+def _signal_name(number: int) -> str:
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return f"signal {number}"
+
+
+async def run_command(command: str) -> CommandResult:
+    """Run ``command`` with /bin/sh, as root in the supervisor's container, as a custom task does.
+
+    Deliberately a shell command run as root: administrators only, see the trust
+    model at the top of this module. Its standard output and error go into one
+    pipe, which keeps their order, and the run keeps the last MAX_OUTPUT_BYTES.
+    It runs in a process group of its own: when its shell exits, the processes
+    it left running there are killed, and so is all of it after COMMAND_TIMEOUT
+    seconds (ADR-0248). The event loop waits for it, no worker thread. Raises
+    OSError when the shell cannot start.
+    """
+    read_end, write_end = os.pipe()
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command, stdin=subprocess.DEVNULL, stdout=write_end, stderr=write_end, start_new_session=True
+        )
+    except BaseException:
+        os.close(read_end)
+        raise
+    finally:
+        os.close(write_end)
+    output = _OutputTail()
+    reading = asyncio.create_task(_read_output(read_end, output))
+    timed_out = False
+    try:
+        try:
+            await asyncio.wait_for(process.wait(), COMMAND_TIMEOUT)
+        except asyncio.TimeoutError:
+            timed_out = True
+    finally:
+        # What it left running, or all of it at the time limit (or when the run is cancelled).
+        # The shell may have been reaped already. Its group's id stays taken while a process
+        # is left in the group, and the id of an empty group is not handed out again at once:
+        # Linux gives out process ids in turn, up to pid_max. So the kill reaches no other group.
+        _kill_process_group(process.pid)
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(process.wait(), STOP_WAIT)
+        # The rest of the output; a process that left the group may still hold the pipe.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(reading, STOP_WAIT)
+    code = process.returncode
+    if timed_out:
+        return CommandResult(None, output.text(),
+                             f"The command did not end within {_duration(COMMAND_TIMEOUT)} and was stopped")
+    if code < 0:
+        return CommandResult(None, output.text(), f"The command was ended by {_signal_name(-code)}")
+    return CommandResult(code, output.text(), None if code == 0 else f"The command exited with status {code}")
+
+
+async def _run_custom_task(task: ScheduledTask, run: TaskRun) -> bool:
+    """Run the command of a custom task: its output and exit status, or why it failed, go into ``run``."""
+    # Checked again: the tasks file may have been written before the checks or by hand.
+    problem = _command_problem(task.command)
+    if problem:
+        run.error = problem
+        return False
+    try:
+        result = await run_command(task.command)
+    except Exception as e:  # as execute_task: the run is recorded as failed, never left running
+        run.error = f"The command could not run: {e}"
+        return False
+    run.output, run.exit_code, run.error = result.output or None, result.exit_code, result.error
+    return result.exit_code == 0
+
+
 async def run_task(task: ScheduledTask) -> None:
-    """Run a task and save the result."""
-    run_id = f"run_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    """Run a task and record the run, and its result with the task."""
+    started = _utc_now()
     run = TaskRun(
-        id=run_id,
+        # Random suffix: two runs that start in the same microsecond must not share an id.
+        id=f"run_{started.strftime('%Y%m%d%H%M%S%f')}_{secrets.token_hex(4)}",
         task_id=task.id or "",
         task_name=task.name,
-        started_at=datetime.now().isoformat(),
-        status="running"
+        started_at=started.isoformat(),
+        status="running",
     )
     save_run(run)
 
-    success, output = await execute_task(task)
-
-    run.finished_at = datetime.now().isoformat()
-    run.status = "success" if success else "failed"
-    if success:
-        run.output = output
+    if task.task_type == TaskType.CUSTOM:
+        success = await _run_custom_task(task, run)
     else:
-        run.error = output
+        success, message = await execute_task(task)
+        if success:
+            run.output = message
+        else:
+            run.error = message
+
+    run.finished_at = _utc_now().isoformat()
+    run.status = "success" if success else "failed"
     save_run(run)
 
-    # Update task with last run info
+    # Read again: an edit may have saved the task during the run. A task deleted
+    # meanwhile is not written back.
     tasks = load_tasks()
     for t in tasks:
         if t.id == task.id:
             t.last_run = run.started_at
             t.last_status = run.status
-            t.next_run = get_next_run(t)
+            save_tasks(tasks)
             break
-    save_tasks(tasks)
+
+
+def _seconds_to_next_pass(now: datetime) -> float:
+    """Seconds from ``now`` to one second after the next minute begins."""
+    return 61 - now.timestamp() % 60
 
 
 async def scheduler_loop():
-    """Main scheduler loop - checks tasks every minute."""
-    global _scheduler_running
+    """Start the runs of the enabled tasks when their time comes (ADR-0247).
+
+    A pass, a second after each minute begins, starts the tasks with a time in the
+    minutes since the pass before, by the clock of the host's time zone, which it
+    reads again: a pass that comes late misses no task, and none runs twice.
+    """
+    checked = _utc_now()
     while _scheduler_running:
+        await _sleep(_seconds_to_next_pass(_utc_now()))
+        now = _utc_now()
         try:
-            tasks = load_tasks()
-            now = datetime.now()
-
-            for task in tasks:
-                if not task.enabled:
-                    continue
-
-                cron = get_cron_expression(task)
-                try:
-                    iter = croniter(cron, now - timedelta(minutes=1))
-                    next_time = iter.get_next(datetime)
-                    # If next run is within this minute, execute
-                    if next_time <= now < next_time + timedelta(minutes=1):
-                        asyncio.create_task(run_task(task))
-                except Exception:
-                    pass
-
-        except Exception as e:
-            print(f"Scheduler error: {e}")
-
-        await asyncio.sleep(60)  # Check every minute
+            zone = await asyncio.to_thread(schedule_zone)
+            # A clock set back gives an empty window, and the next one starts at its time.
+            for task in due_tasks(load_tasks(), max(checked, now - CATCH_UP), now, zone):
+                run = asyncio.create_task(run_task(task))
+                _runs.add(run)
+                run.add_done_callback(_runs.discard)
+        except Exception:
+            logger.exception("The scheduler could not start the tasks that were due")
+        checked = now
 
 
 async def start_scheduler():
@@ -721,10 +964,19 @@ async def stop_scheduler():
         _scheduler_task.cancel()
 
 
-def _task_info(task: ScheduledTask, has_key: bool | None) -> ScheduledTaskInfo:
-    """``task`` as the API answers with it; ``has_key`` (whether it has a key) counts for a backup task only."""
+def _task_info(task: ScheduledTask, has_key: bool | None, zone: tzinfo, now: datetime) -> ScheduledTaskInfo:
+    """``task`` as the API answers with it, with its next run in ``zone`` after ``now``.
+
+    ``has_key`` (whether it has a key) counts for a backup task only.
+    """
     has_backup_key = has_key if task.task_type == TaskType.BACKUP else None
-    return ScheduledTaskInfo(**task.model_dump(), has_backup_key=has_backup_key)
+    return ScheduledTaskInfo(**task.model_dump(), has_backup_key=has_backup_key, next_run=get_next_run(task, zone, now))
+
+
+@router.get("/timezone")
+async def get_schedule_timezone(_: dict = Depends(verify_token)):
+    """The time zone whose clock the schedules follow: the host's, or UTC when it cannot be read."""
+    return {"timezone": str(await asyncio.to_thread(schedule_zone))}
 
 
 @router.get("/tasks", response_model=list[ScheduledTaskInfo])
@@ -737,10 +989,9 @@ async def list_tasks(_: dict = Depends(verify_token)):
         # The key file cannot be read: the edits and runs of the backup tasks
         # fail with the reason, but the tasks are still listed.
         keys = None
-    # Update next_run for each task
-    for task in tasks:
-        task.next_run = get_next_run(task)
-    return [_task_info(task, None if keys is None else task.id in keys) for task in tasks]
+    zone = await asyncio.to_thread(schedule_zone)
+    now = _utc_now()
+    return [_task_info(task, None if keys is None else task.id in keys, zone, now) for task in tasks]
 
 
 @router.post("/tasks", response_model=ScheduledTaskInfo)
@@ -753,7 +1004,6 @@ async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
 
     # Random suffix: tasks created in the same second must not share an id.
     task.id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}"
-    task.next_run = get_next_run(task)
 
     # The key first: a task that is then not saved leaves only an unused key.
     if key is not None:
@@ -762,7 +1012,7 @@ async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
     tasks.append(task)
     save_tasks(tasks)
 
-    return _task_info(task, key is not None)
+    return _task_info(task, key is not None, await asyncio.to_thread(schedule_zone), _utc_now())
 
 
 @router.put("/tasks/{task_id}", response_model=ScheduledTaskInfo)
@@ -786,11 +1036,10 @@ async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verif
             task.id = task_id
             # Results of the runs, not of the edit (ADR-0175).
             task.last_run, task.last_status = t.last_run, t.last_status
-            task.next_run = get_next_run(task)
             tasks[i] = task
             save_tasks(tasks)
             # A backup task has the new key now, or kept the one it had.
-            return _task_info(task, key is not None or has_key)
+            return _task_info(task, key is not None or has_key, await asyncio.to_thread(schedule_zone), _utc_now())
 
     raise HTTPException(404, f"Task not found: {task_id}")
 

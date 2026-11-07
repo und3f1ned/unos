@@ -81,7 +81,8 @@ const SMART_TASK = {
   command: null,
   keep_count: null,
   last_run: null,
-  next_run: '2026-11-08T03:00:00',
+  // As the server answers: on the clock of the NAS's time zone, with its offset.
+  next_run: '2026-11-08T03:00:00+01:00',
   last_status: null,
   has_backup_key: null,
 };
@@ -96,11 +97,13 @@ const BACKUP_TASK = {
   hour: 2,
   target_disk: null,
   keep_count: 7,
-  last_run: '2026-11-07T02:00:00',
+  last_run: '2026-11-07T01:00:00.104071+00:00',
   last_status: 'success',
   has_backup_key: true,
 };
 const DISK_OPTIONS = FAKE_DISKS.map((d) => `${d.path} - ${d.model}`);
+// The time zone whose clock the faked schedules follow (GET /scheduler/timezone).
+const NAS_ZONE = 'Europe/Berlin';
 const PASSPHRASE = 'e2e correct horse battery';
 
 interface SchedulerWrites {
@@ -123,6 +126,7 @@ async function fakeSchedulerApi(page: Page, disks: typeof FAKE_DISKS, tasks: obj
       const request = route.request();
       const path = new URL(request.url()).pathname.slice('/api/v1/scheduler'.length);
       if (request.method() === 'GET' && path === '/tasks') return route.fulfill({ json: tasks });
+      if (request.method() === 'GET' && path === '/timezone') return route.fulfill({ json: { timezone: NAS_ZONE } });
       if (request.method() === 'POST' && path === '/tasks') {
         const body = request.postDataJSON();
         writes.created.push(body);
@@ -486,18 +490,19 @@ const SNAPSHOT_TASK = {
   target_pool: 'e2e_tank',
   target_disk: null,
   keep_count: 3,
-  last_run: '2026-11-07T02:00:00',
+  last_run: '2026-11-07T01:00:01.020013+00:00',
   last_status: 'failed',
 };
 const FAILED_SNAPSHOT_RUN = {
   id: 'run_e2e_1',
   task_id: SNAPSHOT_TASK.id,
   task_name: SNAPSHOT_TASK.name,
-  started_at: '2026-11-07T02:00:00',
-  finished_at: '2026-11-07T02:00:01',
+  started_at: '2026-11-07T01:00:01.020013+00:00',
+  finished_at: '2026-11-07T01:00:01.031209+00:00',
   status: 'failed',
   output: null,
   error: 'Pool e2e_tank is not mounted at /mnt/pools/e2e_tank',
+  exit_code: null,
 };
 
 /** List `tasks` and the runs of each; returns the bodies of the tasks created (POST). */
@@ -510,6 +515,7 @@ async function fakeSnapshotTasksApi(page: Page, tasks: unknown[], runs: unknown[
       const request = route.request();
       const path = new URL(request.url()).pathname.slice('/api/v1/scheduler'.length);
       if (request.method() === 'GET' && path === '/tasks') return route.fulfill({ json: tasks });
+      if (request.method() === 'GET' && path === '/timezone') return route.fulfill({ json: { timezone: NAS_ZONE } });
       if (request.method() === 'POST' && path === '/tasks') {
         const body = request.postDataJSON();
         created.push(body);
@@ -560,5 +566,232 @@ test.describe('Scheduler: snapshot tasks', () => {
 
     await expect(page.getByRole('heading', { name: `Run History: ${SNAPSHOT_TASK.name}` })).toBeVisible();
     await expect(page.getByText('Pool e2e_tank is not mounted at /mnt/pools/e2e_tank')).toBeVisible();
+  });
+});
+
+// The time zone of the schedules, with the scheduler and storage APIs faked as above: the
+// tasks of a NAS in Berlin, seen from a browser in New York.
+test.describe('Scheduler: the time zone of the schedules', () => {
+  test.use({ timezoneId: 'America/New_York', locale: 'en-US' });
+
+  test("the tab names the time zone that the schedules follow and shows times in the browser's", async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeSnapshotTasksApi(page, [SNAPSHOT_TASK], [FAILED_SNAPSHOT_RUN]);
+    await page.goto('/system#scheduler');
+    await expect(page.getByText(SNAPSHOT_TASK.name, { exact: true })).toBeVisible();
+
+    await expect(
+      page.getByText(`The schedules follow the clock of the NAS's time zone, ${NAS_ZONE}.`, { exact: false }),
+    ).toBeVisible();
+    // The next run, 03:00 in Berlin (2026-11-08T03:00:00+01:00), is 21:00 the evening before in New York.
+    await expect(page.getByText(/^11\/7\/2026, 9:00:00\sPM$/)).toBeVisible();
+
+    // The times of the task form are on the NAS's clock, and the form says so.
+    await page.getByRole('button', { name: 'New Task' }).click();
+    const onTheClock = `On the clock of the NAS's time zone, ${NAS_ZONE}.`;
+    await expect(field(page, 'Hour')).toHaveAccessibleDescription(onTheClock);
+    await expect(field(page, 'Minute')).toHaveAccessibleDescription(onTheClock);
+    await field(page, 'Frequency').selectOption('custom');
+    await expect(field(page, 'Cron Expression')).toHaveAccessibleDescription(onTheClock);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    // A run started at 01:00:01 UTC, in the browser's time zone.
+    await page.getByTitle('View history').click();
+    await expect(page.getByRole('heading', { name: `Run History: ${SNAPSHOT_TASK.name}` })).toBeVisible();
+    await expect(page.getByText(/^11\/6\/2026, 8:00:01\sPM$/)).toBeVisible();
+  });
+});
+
+// Against the stand-in's supervisor: custom tasks made in the form run there (Run now), as the
+// user who runs the stand-in, with harmless commands. The tasks are deleted afterwards.
+test.describe('Scheduler: custom tasks', () => {
+  let token = '';
+  let taskId = '';
+
+  const auth = () => ({ Authorization: `Bearer ${token}` });
+
+  async function signIn(page: Page) {
+    token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
+    expect(token, 'signed in').not.toBe('');
+  }
+
+  /** Make a custom task in the form; returns the task as the server answered. */
+  async function createCustomTask(page: Page, name: string, command: string, hour?: number) {
+    await page.goto('/system#scheduler');
+    await page.getByRole('button', { name: 'New Task' }).click();
+    await field(page, 'Task Name').fill(name);
+    await field(page, 'Task Type').selectOption('custom');
+    await field(page, 'Command').fill(command);
+    if (hour !== undefined) await field(page, 'Hour').selectOption(String(hour));
+    const created = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/v1/scheduler/tasks' && r.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Create Task' }).click();
+    const task = await (await created).json();
+    taskId = task.id;
+    return task;
+  }
+
+  /** The statuses of the task's runs that have ended, oldest first. */
+  async function endedRuns(page: Page): Promise<string[]> {
+    const response = await page.request.get(`/api/v1/scheduler/runs/${taskId}`, { headers: auth() });
+    expect(response.ok(), `list runs: HTTP ${response.status()}`).toBeTruthy();
+    return ((await response.json()) as { status: string; finished_at: string | null }[])
+      .filter((run) => run.finished_at)
+      .map((run) => run.status);
+  }
+
+  test.afterEach(async ({ request }) => {
+    if (taskId) await request.delete(`/api/v1/scheduler/tasks/${taskId}`, { headers: auth() });
+    taskId = '';
+  });
+
+  test('a run records the output and the exit status of the command', async ({ authenticatedPage: page }) => {
+    await signIn(page);
+    const name = `E2E custom command ${Date.now().toString(36)}`;
+    await page.goto('/system#scheduler');
+    await page.getByRole('button', { name: 'New Task' }).click();
+    await field(page, 'Task Type').selectOption('custom');
+    await expect(field(page, 'Command')).toHaveAccessibleDescription(/records its output .* and its exit status/);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await createCustomTask(page, name, 'echo "e2e to stdout"; echo "e2e to stderr" >&2; exit 3');
+
+    const row = page.locator('div.justify-between', { hasText: name });
+    await row.getByRole('button', { name: 'Run now' }).click();
+    await expect.poll(() => endedRuns(page), { timeout: 30000 }).toEqual(['failed']);
+    await row.getByRole('button', { name: 'View history' }).click();
+    await expect(page.getByRole('heading', { name: `Run History: ${name}` })).toBeVisible();
+    await expect(page.getByText('Exit status 3', { exact: true })).toBeVisible();
+    await expect(page.getByText('The command exited with status 3', { exact: true })).toBeVisible();
+    // Both output streams, in the order the command wrote them.
+    await page.getByText('View output').click();
+    await expect(page.locator('details > div')).toHaveText(/^e2e to stdout\ne2e to stderr\n$/);
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+
+    // A command that succeeds: exit status 0, its output, no error.
+    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    await field(page, 'Command').fill('echo "e2e all good"');
+    await saveTask(page);
+    await row.getByRole('button', { name: 'Run now' }).click();
+    await expect.poll(() => endedRuns(page), { timeout: 30000 }).toEqual(['failed', 'success']);
+    await row.getByRole('button', { name: 'View history' }).click();
+    await expect(page.getByText('Exit status 0', { exact: true })).toBeVisible();
+    const succeeded = page.locator('details').nth(1);
+    await succeeded.getByText('View output').click();
+    await expect(succeeded.locator('div')).toHaveText('e2e all good');
+    await expect(page.getByText('The command exited with status', { exact: false })).toHaveCount(1);
+  });
+
+  test("a task for 03:00 is due at 03:00 on the clock of the NAS's time zone", async ({ authenticatedPage: page }) => {
+    await signIn(page);
+    // The stand-in's host is this machine: the zone of its /etc/localtime link.
+    const zone = await page.request.get('/api/v1/scheduler/timezone', { headers: auth() });
+    expect(zone.ok(), `time zone: HTTP ${zone.status()}`).toBeTruthy();
+    const { timezone } = await zone.json();
+
+    const task = await createCustomTask(page, `E2E at three ${Date.now().toString(36)}`, 'true', 3);
+
+    await expect(
+      page.getByText(`The schedules follow the clock of the NAS's time zone, ${timezone}.`, { exact: false }),
+    ).toBeVisible();
+    expect(task.hour).toBe(3);
+    // 03:00 on that clock, with its offset, at most a day away.
+    expect(task.next_run).toMatch(/T03:00:00[+-]\d\d:\d\d$/);
+    const wait = new Date(task.next_run).getTime() - Date.now();
+    expect(wait).toBeGreaterThan(0);
+    expect(wait).toBeLessThanOrEqual(25 * 3600 * 1000);
+  });
+});
+
+// Against the stand-in's supervisor: Keep Count of a backup task made in the form, which runs
+// there four times (Run now) and writes its backups into the stand-in's data. The task and the
+// backups made here are deleted afterwards.
+test.describe('Scheduler: a backup task with a Keep Count', () => {
+  let token = '';
+  let taskId = '';
+  let backupsBefore: string[] = [];
+
+  const auth = () => ({ Authorization: `Bearer ${token}` });
+  const isScheduled = (name: string) => /^auto_backup_\d{8}_\d{6}(_\d+)?\.tar\.gz\.enc$/.test(name);
+
+  async function backupNames(page: Page): Promise<string[]> {
+    const response = await page.request.get('/api/v1/backup/list', { headers: auth() });
+    expect(response.ok(), `list backups: HTTP ${response.status()}`).toBeTruthy();
+    return ((await response.json()).backups as { filename: string }[]).map((b) => b.filename);
+  }
+
+  async function runStatuses(page: Page): Promise<string[]> {
+    const response = await page.request.get(`/api/v1/scheduler/runs/${taskId}`, { headers: auth() });
+    expect(response.ok(), `list runs: HTTP ${response.status()}`).toBeTruthy();
+    return ((await response.json()) as { status: string; finished_at: string | null }[])
+      .filter((run) => run.finished_at)
+      .map((run) => run.status);
+  }
+
+  test.afterEach(async ({ request }) => {
+    if (taskId) await request.delete(`/api/v1/scheduler/tasks/${taskId}`, { headers: auth() });
+    const listed = await request.get('/api/v1/backup/list', { headers: auth() });
+    if (listed.ok()) {
+      for (const { filename } of (await listed.json()).backups as { filename: string }[]) {
+        if (!backupsBefore.includes(filename)) {
+          await request.delete(`/api/v1/backup/${encodeURIComponent(filename)}`, { headers: auth() });
+        }
+      }
+    }
+    taskId = '';
+    backupsBefore = [];
+  });
+
+  test('with Keep Count 3 the fourth run deletes the oldest scheduled backup and never a manual one', async ({
+    authenticatedPage: page,
+  }) => {
+    token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
+    expect(token, 'signed in').not.toBe('');
+    backupsBefore = await backupNames(page);
+    // Keep Count counts the scheduled backups of all tasks: none may be there from elsewhere.
+    expect(backupsBefore.filter(isScheduled)).toEqual([]);
+    const made = await page.request.post('/api/v1/backup/create', { headers: auth(), data: {} });
+    expect(made.ok(), `create backup: HTTP ${made.status()}`).toBeTruthy();
+    const manual: string = (await made.json()).backup.filename;
+
+    const name = `E2E keep three ${Date.now().toString(36)}`;
+    await page.goto('/system#scheduler');
+    await page.getByRole('button', { name: 'New Task' }).click();
+    await field(page, 'Task Name').fill(name);
+    await field(page, 'Task Type').selectOption('backup');
+    await field(page, 'Keep Count').fill('3');
+    await field(page, 'Passphrase').fill(PASSPHRASE);
+    await field(page, 'Confirm Passphrase').fill(PASSPHRASE);
+    const created = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/v1/scheduler/tasks' && r.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Create Task' }).click();
+    const task = await (await created).json();
+    taskId = task.id;
+    expect(task.keep_count).toBe(3);
+
+    // Four runs, one after the other: each stores one scheduled backup, and only the newest
+    // three stay.
+    const row = page.locator('div.justify-between', { hasText: name });
+    const scheduled: string[] = [];
+    for (let run = 1; run <= 4; run++) {
+      await row.getByRole('button', { name: 'Run now' }).click();
+      await expect.poll(async () => (await runStatuses(page)).length, { timeout: 30000 }).toBe(run);
+      const listed = (await backupNames(page)).filter(isScheduled);
+      const added = listed.filter((backup) => !scheduled.includes(backup));
+      expect(added, `run ${run} stores one backup`).toHaveLength(1);
+      scheduled.push(added[0]);
+      expect(listed.sort()).toEqual(scheduled.slice(-3).sort());
+    }
+    expect(await runStatuses(page)).toEqual(['success', 'success', 'success', 'success']);
+
+    // The Backup & Restore tab lists the three newest and the manual backup, not the oldest.
+    await page.goto('/system#backup');
+    await expect(page.getByRole('heading', { name: 'Backup and Restore' })).toBeVisible();
+    for (const kept of scheduled.slice(1)) await expect(page.getByText(kept, { exact: true })).toBeVisible();
+    await expect(page.getByText(scheduled[0], { exact: true })).toHaveCount(0);
+    await expect(page.getByText(manual, { exact: true })).toBeVisible();
+    await expect(page.getByText(/^auto_backup_\d{8}_\d{6}(_\d+)?\.tar\.gz\.enc$/)).toHaveCount(3);
   });
 });

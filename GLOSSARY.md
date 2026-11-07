@@ -35,6 +35,13 @@ Avoid: user (a UNOS user), admin.
 addresses and routes: a timer on the host that runs unless the administrator keeps the disable
 within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` do), undo.
 
+**Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
+clock of the host's time zone: a snapshot, a scrub, a SMART test, a backup or a custom task. Each
+run is recorded with its status in the task's history (ADR-0044, ADR-0247). Avoid: job, cron job.
+
+**Custom task**: A scheduled task that runs a shell command as root in the supervisor's container;
+its runs record the command's output and exit status (ADR-0044, ADR-0248). Avoid: script.
+
 ## Storage
 
 **Pool**: A btrfs filesystem on one or more disks that UNOS mounts under `/mnt/pools` (ADR-0034).

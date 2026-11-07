@@ -9,6 +9,7 @@
     toggleTask,
     getTaskRuns,
     getTaskRunsForTask,
+    getScheduleTimezone,
     type ScheduledTask,
     type TaskRun,
     type TaskType,
@@ -44,6 +45,8 @@
   let pools: Pool[] = [];
   let disks: Disk[] = [];
   let disksLoaded = false;
+  // The time zone whose clock the schedules follow (the NAS's); empty until it is known.
+  let timeZone = "";
   let loading = true;
   let saving = false;
   let runningTaskId: string | null = null;
@@ -71,6 +74,8 @@
   $: keepsPassphrase = editingTask?.task_type === "backup" && editingTask.has_backup_key === true;
   $: passphraseTooShort = passphrase !== "" && passphrase.length < MIN_PASSPHRASE_LENGTH;
   $: passphraseMismatch = passphraseConfirm !== passphrase;
+  // The hint that names the time zone of the schedule's times, once it is shown.
+  $: timeZoneHint = timeZone ? "task-time-zone-hint" : undefined;
   $: waitsForPassphrase =
     formData.task_type === "backup" &&
     (passphraseTooShort || passphraseMismatch || (!passphrase && !keepsPassphrase));
@@ -120,8 +125,16 @@
   }
 
   onMount(async () => {
-    await Promise.all([loadTasks(), loadResources()]);
+    await Promise.all([loadTasks(), loadResources(), loadTimeZone()]);
   });
+
+  async function loadTimeZone() {
+    try {
+      timeZone = (await getScheduleTimezone()).timezone;
+    } catch (e) {
+      console.error("Failed to load the time zone of the schedules:", e);
+    }
+  }
 
   async function loadTasks() {
     loading = true;
@@ -368,6 +381,12 @@
       </button>
     </div>
   </div>
+  {#if timeZone}
+    <p class="text-sm text-content-secondary">
+      The schedules follow the clock of the NAS's time zone, {timeZone}. The times shown here are your
+      browser's.
+    </p>
+  {/if}
 
   <!-- Task List -->
   <div class="bg-slate-800 rounded-lg p-4">
@@ -580,9 +599,14 @@
               type="text"
               bind:value={formData.command}
               placeholder="/usr/local/bin/my-script.sh"
+              aria-describedby="task-command-hint"
               class="form-input font-mono text-sm"
             />
-            <p class="text-xs text-slate-500 mt-1">Shell command to execute</p>
+            <p id="task-command-hint" class="text-xs text-content-muted mt-1">
+              Runs with /bin/sh as root in the supervisor's container. Each run records its output (the
+              last 16 KiB) and its exit status. A command still running after 24 hours is stopped, and the
+              processes it leaves running end with it.
+            </p>
           </div>
         {/if}
 
@@ -651,6 +675,7 @@
               type="text"
               bind:value={formData.cron_expression}
               placeholder="0 2 * * *"
+              aria-describedby={timeZoneHint}
               class="form-input font-mono"
             />
             <p class="text-xs text-slate-500 mt-1">Format: minute hour day_of_month month day_of_week</p>
@@ -663,6 +688,7 @@
                 <label for="task-hour" class="form-label">Hour</label>
                 <select
                   id="task-hour"
+                  aria-describedby={timeZoneHint}
                   bind:value={formData.hour}
                   class="form-input"
                 >
@@ -676,6 +702,7 @@
               <label for="task-minute" class="form-label">Minute</label>
               <select
                 id="task-minute"
+                aria-describedby={timeZoneHint}
                 bind:value={formData.minute}
                 class="form-input"
               >
@@ -692,6 +719,7 @@
               <label for="task-day-of-week" class="form-label">Day of Week</label>
               <select
                 id="task-day-of-week"
+                aria-describedby={timeZoneHint}
                 bind:value={formData.day_of_week}
                 class="form-input"
               >
@@ -707,6 +735,7 @@
               <label for="task-day-of-month" class="form-label">Day of Month</label>
               <select
                 id="task-day-of-month"
+                aria-describedby={timeZoneHint}
                 bind:value={formData.day_of_month}
                 class="form-input"
               >
@@ -716,6 +745,11 @@
               </select>
             </div>
           {/if}
+        {/if}
+        {#if timeZone}
+          <p id="task-time-zone-hint" class="text-xs text-content-muted">
+            On the clock of the NAS's time zone, {timeZone}.
+          </p>
         {/if}
 
         <!-- Enabled Toggle -->
@@ -795,8 +829,11 @@
                   </div>
                   <span class="text-xs text-slate-500">{formatDuration(run.started_at, run.finished_at)}</span>
                 </div>
-                <div class="text-xs text-slate-400">
-                  {new Date(run.started_at).toLocaleString()}
+                <div class="flex flex-wrap gap-x-3 text-xs text-content-secondary">
+                  <span>{new Date(run.started_at).toLocaleString()}</span>
+                  {#if typeof run.exit_code === "number"}
+                    <span>Exit status {run.exit_code}</span>
+                  {/if}
                 </div>
                 {#if run.error}
                   <div class="mt-2 p-2 bg-red-500/10 rounded text-xs text-red-400 font-mono break-all">

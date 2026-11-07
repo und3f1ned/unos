@@ -1893,14 +1893,15 @@
       ],
       "verified_by": [
         "supervisor/tests/test_backup_files.py",
-        "supervisor/tests/test_scheduler_validation.py"
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/scheduler.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0172",
         "ADR-0240"
       ],
-      "notes": "The E2E specs run a backup task on the stand-in, without the Keep Count (webui/tests/scheduler.spec.ts, webui/tests/backup-restore.spec.ts). Device check: 2026-11-06 (two scheduled backups at once), before scheduled backups were encrypted (ADR-0240)."
+      "notes": "webui/tests/scheduler.spec.ts makes a backup task with Keep Count 3 in the form on the stand-in and runs it four times (Run now): each run stores one auto_backup_*.tar.gz.enc, the fourth deletes the oldest, and the Backup & Restore tab lists the three newest and the manual backup. The backend tests check that a backup is listed only once complete and that two runs at once both succeed. Not host-level: the backups stay in the supervisor's /data. Device check: 2026-11-06 (two scheduled backups at once), before scheduled backups were encrypted (ADR-0240)."
     },
     {
       "id": "backup.off-device-copies",
@@ -2340,13 +2341,19 @@
         "Regular users can neither see nor create such tasks"
       ],
       "verified_by": [
-        "supervisor/tests/test_scheduler_validation.py"
+        "supervisor/tests/test_custom_tasks.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "supervisor/tests/test_scheduler_time_zone.py",
+        "supervisor/tests/test_authz.py",
+        "webui/tests/scheduler.spec.ts",
+        "webui/tests/roles.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0044"
+        "ADR-0044",
+        "ADR-0248"
       ],
-      "notes": "The command runs inside the supervisor container. No E2E test covers the custom task form."
+      "notes": "The command runs with /bin/sh as root inside the supervisor container. A run records the exit status and the last 16 KiB of standard output and error together; a command is stopped after 24 hours, and what it leaves running ends with it (ADR-0248). Step 1: the stand-in's E2E test makes a custom task in the form and runs it (Run now); test_the_scheduler_runs_a_custom_task_at_its_time drives the scheduler loop on a fake clock, since the stand-in runs no background loops. Step 3: the scheduler router is administrator-only (test_scheduler_validation.py, test_authz.py), and roles.spec.ts shows that a regular user gets neither the tab nor the API. On the device, the hour of a run follows the host's time zone: the device check of system.scheduler-time-zone."
     },
     {
       "id": "system.scheduler-fixes",
@@ -2373,10 +2380,16 @@
       "steps": [
         "Set the time zone, add a task for 03:00: it runs at 03:00 local time, also across a change of daylight saving time"
       ],
+      "verified_by": [
+        "supervisor/tests/test_scheduler_time_zone.py",
+        "webui/tests/scheduler.spec.ts"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0015"
-      ]
+        "ADR-0015",
+        "ADR-0247"
+      ],
+      "notes": "Built (ADR-0247): the scheduler reads the host's zone through host.run_on_host (where /etc/localtime links below zoneinfo/) at each pass and answer, follows its clock with fixed rules for the changes of daylight saving time, and answers next_run with the zone's offset and run times in UTC with +00:00; GET /api/v1/scheduler/timezone names the zone, and the Scheduler tab shows it. The changes of daylight saving time are checked on a fake clock (test_scheduler_time_zone.py); the stand-in's host is the workstation. Open: the device check. Set the zone on the host with timedatectl set-timezone (the web interface cannot yet: system.hostname-and-time-zone); then GET /api/v1/scheduler/timezone must name it, a daily task's next_run must carry its offset, and a custom task made for a minute ahead on the host's clock must start in that minute (its run's started_at, read in that zone); after a change of the zone, within a minute the next_run follows it. The same after a reboot (ADR-0018)."
     },
     {
       "id": "system.health-check",

@@ -36,6 +36,11 @@ USER = SimpleNamespace(id=2, username="user", is_admin=False)
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    yield from make_env(tmp_path, monkeypatch)
+
+
+def make_env(tmp_path, monkeypatch):
+    """The env fixture, also of test_custom_tasks.py and test_scheduler_time_zone.py."""
     base = tmp_path.resolve() / "pools"
     (base / "data").mkdir(parents=True)
     (tmp_path / "outside").mkdir()
@@ -90,6 +95,8 @@ def test_non_admin_cannot_use_any_scheduler_endpoint(env):
         ("POST", f"/api/v1/scheduler/tasks/{task['id']}/run", None),
         ("POST", f"/api/v1/scheduler/tasks/{task['id']}/toggle", None),
         ("GET", "/api/v1/scheduler/runs", None),
+        ("GET", f"/api/v1/scheduler/runs/{task['id']}", None),
+        ("GET", "/api/v1/scheduler/timezone", None),
     ]
     for method, url, body in calls:
         response = env.client.request(method, url, json=body)
@@ -1110,9 +1117,23 @@ def _gunzip(src, dest):
     return dest
 
 
-async def test_custom_command_runs_in_a_thread_with_shell(env):
-    env.run.return_value = MagicMock(returncode=0, stdout="hello\n", stderr="")
-    ok, output = await scheduler.execute_task(ScheduledTask(**_task(task_type="custom", command="echo hello")))
-    assert ok and output == "hello\n"
-    call = env.run.call_args
-    assert call.args[0] == "echo hello" and call.kwargs["shell"] is True
+async def test_custom_command_runs_with_a_shell_off_the_event_loop(env):
+    """A shell command (here a pipe), waited for by the event loop, which goes on meanwhile (ADR-0248)."""
+    import asyncio
+
+    ticks = 0
+
+    async def tick():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.05)
+            ticks += 1
+
+    ticker = asyncio.create_task(tick())
+    try:
+        result = await scheduler.run_command("sleep 1; echo hello | tr a-z A-Z")
+    finally:
+        ticker.cancel()
+    assert (result.exit_code, result.output, result.error) == (0, "HELLO\n", None)
+    assert ticks >= 5
+    env.run.assert_not_called()

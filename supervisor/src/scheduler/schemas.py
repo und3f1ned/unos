@@ -46,8 +46,8 @@ class ScheduledTask(BaseModel):
     # so that a log line or an error text with a task in it never shows it.
     passphrase: Optional[str] = Field(default=None, exclude=True, repr=False)
 
+    # The start of the task's last run (ISO 8601 in UTC, with its offset) and its status.
     last_run: Optional[str] = None
-    next_run: Optional[str] = None
     last_status: Optional[str] = None
 
 
@@ -58,14 +58,22 @@ class ScheduledTaskInfo(ScheduledTask):
     # edit without a passphrase keeps (ADR-0240). None for other tasks, and
     # when the key file cannot be read.
     has_backup_key: Optional[bool] = None
+    # When the task runs next by the clock of the host's time zone, which its hour
+    # and minute follow (ISO 8601 with that zone's offset, ADR-0247); None when its
+    # schedule has no next time.
+    next_run: Optional[str] = None
 
 
 class TaskRun(BaseModel):
     id: str
     task_id: str
     task_name: str
-    started_at: str
+    started_at: str  # ISO 8601 in UTC, with its offset, as finished_at
     finished_at: Optional[str] = None
     status: str  # running, success, failed
+    # What a run of a custom task printed (its last 16 KiB), or what another task reports when it succeeded.
     output: Optional[str] = None
-    error: Optional[str] = None
+    error: Optional[str] = None  # why the run failed
+    # The exit status of the command of a custom task; None for other tasks, and for
+    # a command that did not exit by itself (stopped at its time limit, or by a signal).
+    exit_code: Optional[int] = None

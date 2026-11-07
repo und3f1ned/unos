@@ -33,7 +33,8 @@ logger = logging.getLogger(__name__)
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), and power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233). cat, test, mkdir, rmdir, rm, find,
-# sync, sleep, hostname and sh also run there but come from essential packages.
+# sync, sleep, hostname, readlink (the time zone: scheduler/router.py, ADR-0247)
+# and sh also run there but come from essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
@@ -258,3 +259,22 @@ def missing_host_binaries(names: list[str], *, timeout: float = 10) -> list[str]
         return None
     reported = set(result.stdout.splitlines())
     return [name for name in names if name in reported]
+
+
+def time_zone_name(*, timeout: float = 10) -> str | None:
+    """The name of the host's time zone, such as ``Europe/Berlin``, or None.
+
+    Read where /etc/localtime links to below a ``zoneinfo`` folder, as timedatectl reads
+    it (``timedatectl set-timezone`` writes that link); a zone of its ``posix/`` or
+    ``right/`` folder (time with leap seconds) counts as the zone itself, whose civil
+    time it shows. None when there is no such link: no /etc/localtime (the host's clock
+    then shows UTC), a copied file instead of a link, or a link elsewhere. Raises what
+    run_on_host raises when the command cannot run.
+    """
+    result = run_on_host(["readlink", "/etc/localtime"], timeout=timeout)
+    if not result.ok:
+        return None
+    _, found, name = result.stdout.strip().rpartition("zoneinfo/")
+    for folder in ("posix/", "right/"):
+        name = name.removeprefix(folder)
+    return name if found and name else None
