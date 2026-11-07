@@ -1,4 +1,5 @@
-import { api } from './client';
+import { api, getToken, handleUnauthorized } from './client';
+import { WS_CLOSE_FORBIDDEN, WS_CLOSE_UNAUTHORIZED } from '$lib/stores/stats';
 
 export type ContainerState = 'running' | 'exited' | 'paused' | 'restarting' | 'created' | 'dead';
 
@@ -33,11 +34,6 @@ export interface ContainerCreate {
   environment?: Record<string, string>;
   restart_policy?: string;
   labels?: Record<string, string>;
-}
-
-export interface ContainerLogs {
-  container_id: string;
-  logs: string;
 }
 
 export interface Image {
@@ -75,10 +71,6 @@ export async function removeContainer(id: string, force = false): Promise<void> 
   return api.delete(`/containers/${id}?force=${force}`);
 }
 
-export async function getContainerLogs(id: string, tail = 100): Promise<ContainerLogs> {
-  return api.get<ContainerLogs>(`/containers/${id}/logs?tail=${tail}`);
-}
-
 export async function getImages(): Promise<Image[]> {
   return api.get<Image[]>('/containers/images');
 }
@@ -89,4 +81,86 @@ export async function pullImage(image: string): Promise<Image> {
 
 export async function removeImage(id: string, force = false): Promise<void> {
   return api.delete(`/containers/images/${id}?force=${force}`);
+}
+
+/** How a container's log stream ended: the log ended (for example, the container stopped),
+ * the server refused it (close code 4403), or the connection was lost. */
+export type LogStreamEnd = 'ended' | 'forbidden' | 'lost';
+
+export interface ContainerLogHandlers {
+  /** The server took the token: the last lines of the log follow, then each new one. */
+  onLive(): void;
+  /** A piece of the log: one or more lines. */
+  onLog(data: string): void;
+  /** The server could not read the log, for example of a container that is gone. */
+  onError(message: string): void;
+  /** The stream is over. Not called after close(). */
+  onEnd(reason: LogStreamEnd): void;
+}
+
+export interface ContainerLogStream {
+  /** Close the stream; no handler is called after this. */
+  close(): void;
+}
+
+/**
+ * Follow a container's log over /ws/v1/logs/{id} (supervisor/src/websocket/events.py):
+ * the token goes in the first message, never in the URL (ADR-0031), and a close
+ * with 4401 ends the session like an HTTP 401 does.
+ */
+export function streamContainerLogs(id: string, handlers: ContainerLogHandlers): ContainerLogStream {
+  const token = getToken();
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(
+    `${protocol}//${window.location.host}/ws/v1/logs/${encodeURIComponent(id)}`
+  );
+  let done = false;
+
+  socket.onopen = () => {
+    socket.send(JSON.stringify({ type: 'auth', token }));
+  };
+
+  socket.onmessage = (event) => {
+    let message: { type?: unknown; data?: unknown; message?: unknown };
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (message.type === 'auth_ok') handlers.onLive();
+    else if (message.type === 'log' && typeof message.data === 'string') handlers.onLog(message.data);
+    else if (message.type === 'error' && typeof message.message === 'string') {
+      handlers.onError(message.message);
+    }
+  };
+
+  // No onerror handler: an error event is always followed by this close event.
+  socket.onclose = (event) => {
+    if (done) return;
+    done = true;
+    if (event.code === WS_CLOSE_UNAUTHORIZED) {
+      // Token expired or the account is gone: same as an HTTP 401.
+      handleUnauthorized(token);
+      handlers.onEnd('lost');
+    } else if (event.code === WS_CLOSE_FORBIDDEN) {
+      handlers.onEnd('forbidden');
+    } else {
+      // 1000: the server finished the stream: the log ended (the container stopped) or could
+      // not be read. Any other code, 1006 of a dropped connection included, is a lost one.
+      handlers.onEnd(event.code === 1000 ? 'ended' : 'lost');
+    }
+  };
+
+  return {
+    close() {
+      if (done) return;
+      done = true;
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onclose = null;
+      if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+        socket.close(1000);
+      }
+    }
+  };
 }

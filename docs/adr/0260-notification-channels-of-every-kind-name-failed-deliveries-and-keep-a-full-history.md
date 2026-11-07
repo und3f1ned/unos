@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0247: Notification channels of every kind are set up in the web UI, a delivery counts only on success, and the history lists every notification sent
+# ADR-0260: Notification channels of every kind are set up in the web UI, a delivery counts only on success, and the history lists every notification sent
 
 ## Context
 

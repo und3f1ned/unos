@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 CONFIG_FILE = "/data/notifications.json"
 LOGS_FILE = "/data/notification_logs.json"
-# The history keeps the latest notifications sent (ADR-0247).
+# The history keeps the latest notifications sent (ADR-0260).
 HISTORY_SIZE = 100
 
 # Seconds the e-mail and Telegram senders wait for each network operation
@@ -120,7 +120,7 @@ def load_logs() -> list[NotificationLog]:
     An entry that is not a notification as this version writes it (one from
     before channel_name, or one damaged from outside UNOS) is left out, and a
     file that cannot be read reads as no history. Both are logged, and the
-    next notification writes the history without them (ADR-0247).
+    next notification writes the history without them (ADR-0260).
     """
     path = Path(LOGS_FILE)
     try:
@@ -199,7 +199,7 @@ def _webhook_failure(response: httpx.Response) -> str | None:
     """None for a success (2xx); otherwise the status and the start of the body.
 
     A redirect is a failure too: the senders do not follow it, so the message
-    did not arrive (ADR-0247).
+    did not arrive (ADR-0260).
     """
     if response.is_success:
         return None
@@ -301,7 +301,7 @@ async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tup
         emoji = type_emoji.get(event.type, "📢")
 
         # HTML with the texts escaped: in Telegram's Markdown a single "_" or "*",
-        # as in a pool named e2e_tank, makes it refuse the message (ADR-0247).
+        # as in a pool named e2e_tank, makes it refuse the message (ADR-0260).
         title = html.escape(event.title, quote=False)
         text = html.escape(event.message, quote=False)
         message = f"{emoji} <b>{title}</b>\n\n{text}\n\n<i>UNOS NAS</i>"

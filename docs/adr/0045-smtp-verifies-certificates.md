@@ -19,5 +19,5 @@ E-mail notifications ran STARTTLS without an SSL context, so the mail server's c
 
 ## Consequences
 
-- The branch itself is not merged: the change of ADR-0247 brings its commit bbb773b into main without the commit's CHANGELOG hunk, so merging the branch as well would add its changes a second time. A tree deployed before that change still calls `starttls()` without a context and does not check the certificate.
+- The branch itself is not merged: the change of ADR-0260 brings its commit bbb773b into main without the commit's CHANGELOG hunk, so merging the branch as well would add its changes a second time. A tree deployed before that change still calls `starttls()` without a context and does not check the certificate.
 - After the merge, a channel whose server has a self-signed or private-CA certificate stops sending until its check is turned off.

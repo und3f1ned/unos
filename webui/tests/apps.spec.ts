@@ -1,4 +1,4 @@
-import type { Request, Route } from '@playwright/test';
+import type { Page, Request, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 test.describe('App Store', () => {
@@ -110,5 +110,134 @@ test.describe('App data outside the storage pools', () => {
     await expect(page.getByText('Not on a pool').first()).toBeVisible();
     // No pool is chosen for an installed app, so pools are not even loaded.
     expect(poolRequests).toEqual([]);
+  });
+});
+
+// Apps > Installed: Stop, Start and Uninstall of installed apps. The stand-in has
+// no Docker, so the supervisor's answers to /api/v1/apps/installed are faked
+// from memory; the catalog is the stand-in's own. The error text is the
+// supervisor's (supervisor/src/apps/router.py), word for word.
+test.describe('Installed apps', () => {
+  interface FakeInstalledApp {
+    id: string;
+    template_id: string;
+    name: string;
+    container_id: string;
+    status: string;
+    web_port: number | null;
+    created_at: string;
+    pool: string | null;
+    volumes: { host: string; container: string; readonly: boolean }[];
+    data_outside_pools: string[];
+  }
+
+  function installedApp(name: string, templateId: string, pool: string, status: string): FakeInstalledApp {
+    const config = `/mnt/pools/${pool}/apps/${templateId}/config`;
+    return {
+      id: `${name}-id`,
+      template_id: templateId,
+      name,
+      container_id: `${name}-id`,
+      status,
+      web_port: null,
+      created_at: '2026-11-01T10:00:00Z',
+      pool,
+      volumes: [{ host: config, container: '/config', readonly: false }],
+      data_outside_pools: [],
+    };
+  }
+
+  // The pool e2e_data is not mounted: the start of e2e-transmission is refused.
+  const UNMOUNTED_POOL =
+    "e2e-transmission keeps the data for /config in /mnt/pools/e2e_data/apps/transmission/config, which " +
+    "is not on a mounted storage pool. Mount the pool ('e2e_data' holds the app's data) and start the app again.";
+
+  async function fakeInstalledApps(page: Page): Promise<string[]> {
+    const transmission = installedApp('e2e-transmission', 'transmission', 'e2e_data', 'exited');
+    // As the server lists an app whose pool is not mounted.
+    transmission.data_outside_pools = transmission.volumes.map((volume) => volume.host);
+    const apps = [installedApp('e2e-jellyfin', 'jellyfin', 'e2e_media', 'running'), transmission];
+    const requests: string[] = [];
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/installed' || url.pathname.startsWith('/api/v1/apps/installed/'),
+      (route: Route) => {
+        const request = route.request();
+        const method = request.method();
+        const path = new URL(request.url()).pathname;
+        requests.push(`${method} ${path}`);
+        if (method === 'GET' && path === '/api/v1/apps/installed') return route.fulfill({ json: apps });
+        const match = path.match(/^\/api\/v1\/apps\/installed\/([^/]+)(?:\/(start|stop|restart))?$/);
+        const index = match ? apps.findIndex((a) => a.container_id === match[1]) : -1;
+        if (!match || index === -1) return route.abort();
+        const app = apps[index];
+        if (method === 'DELETE' && !match[2]) {
+          apps.splice(index, 1);
+          return route.fulfill({ json: { status: 'removed', id: app.container_id } });
+        }
+        if (method !== 'POST' || !match[2]) return route.abort();
+        if (match[2] !== 'stop' && app.pool === 'e2e_data') {
+          return route.fulfill({ status: 409, json: { detail: UNMOUNTED_POOL } });
+        }
+        app.status = match[2] === 'stop' ? 'exited' : 'running';
+        return route.fulfill({ json: { status: app.status, id: app.container_id } });
+      },
+    );
+    return requests;
+  }
+
+  function card(page: Page, name: string) {
+    return page.locator('.card', { has: page.locator('h3', { hasText: name }) });
+  }
+
+  test('Stop and Start an app: its state follows', async ({ authenticatedPage: page }) => {
+    const requests = await fakeInstalledApps(page);
+    await page.goto('/apps');
+    await page.getByRole('button', { name: /^Installed/ }).click();
+    const jellyfin = card(page, 'e2e-jellyfin');
+    await expect(jellyfin.getByText('Running', { exact: true })).toBeVisible();
+
+    await jellyfin.getByRole('button', { name: 'Stop' }).click();
+    await expect(jellyfin.getByText('Stopped', { exact: true })).toBeVisible();
+    await expect(jellyfin.getByRole('button', { name: 'Stop' })).toHaveCount(0);
+
+    await jellyfin.getByRole('button', { name: 'Start' }).click();
+    await expect(jellyfin.getByText('Running', { exact: true })).toBeVisible();
+    expect(requests.filter((r) => r.startsWith('POST'))).toEqual([
+      'POST /api/v1/apps/installed/e2e-jellyfin-id/stop',
+      'POST /api/v1/apps/installed/e2e-jellyfin-id/start',
+    ]);
+  });
+
+  test('an app whose pool is not mounted does not start, and the page says which pool to mount', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeInstalledApps(page);
+    await page.goto('/apps');
+    await page.getByRole('button', { name: /^Installed/ }).click();
+    const transmission = card(page, 'e2e-transmission');
+
+    await transmission.getByRole('button', { name: 'Start' }).click();
+
+    await expect(page.getByText(UNMOUNTED_POOL)).toBeVisible();
+    await expect(transmission.getByText('Stopped', { exact: true })).toBeVisible();
+  });
+
+  test('Uninstall removes the container and keeps the app data', async ({ authenticatedPage: page }) => {
+    const requests = await fakeInstalledApps(page);
+    await page.goto('/apps');
+    await page.getByRole('button', { name: /^Installed/ }).click();
+
+    let question = '';
+    page.once('dialog', (dialog) => {
+      question = dialog.message();
+      void dialog.accept();
+    });
+    await card(page, 'e2e-jellyfin').getByRole('button', { name: 'Uninstall' }).click();
+
+    await expect(card(page, 'e2e-jellyfin')).toHaveCount(0);
+    await expect(card(page, 'e2e-transmission')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Installed (1)' })).toBeVisible();
+    expect(question).toBe('Uninstall e2e-jellyfin? This removes its container and keeps its data folders.');
+    expect(requests).toContain('DELETE /api/v1/apps/installed/e2e-jellyfin-id');
   });
 });

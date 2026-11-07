@@ -1,10 +1,12 @@
+import logging
 import os
 import subprocess
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
@@ -22,6 +24,7 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/security", tags=["security"])
+logger = logging.getLogger(__name__)
 
 FIREWALL_RULES_FILE = "/data/firewall_rules.json"
 CERTS_DIR = "/data/certs"
@@ -755,7 +758,12 @@ async def record_login_attempt(
     request: Request | None = None,
     failure_reason: str | None = None
 ):
-    """Record a login attempt in the database."""
+    """Record a login attempt in the database.
+
+    An attempt that cannot be stored, such as on a full /data, is reported in the log and the
+    sign-in goes on (ADR-0251). The rollback then expires the rows the caller loaded with
+    ``db``: read what the sign-in needs of them before.
+    """
     ip_address = None
     user_agent = None
 
@@ -765,14 +773,22 @@ async def record_login_attempt(
         ip_address = client_ip(request)
         user_agent = request.headers.get("User-Agent", "")[:500]  # Limit length
 
-    attempt = LoginAttempt(
+    fields = {
         # Failed logins are recorded before anyone is authenticated: keep the name short.
-        username=username[:LOGIN_ATTEMPT_USERNAME_CHARS] if isinstance(username, str) else username,
-        ip_address=ip_address,
-        user_agent=user_agent,
-        success=success,
-        failure_reason=failure_reason
-    )
-
-    db.add(attempt)
-    await db.commit()
+        "username": username[:LOGIN_ATTEMPT_USERNAME_CHARS] if isinstance(username, str) else username,
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+        "success": success,
+        "failure_reason": failure_reason,
+    }
+    # The row takes its time from the database (server_default); the log line has to carry it.
+    attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    db.add(LoginAttempt(**fields))
+    try:
+        await db.commit()
+    except OperationalError as exc:
+        await db.rollback()
+        logger.error(
+            "Could not store this login attempt in the login history: %s (%s)",
+            json.dumps({"timestamp": attempted_at, **fields}), exc.orig or exc,
+        )

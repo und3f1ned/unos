@@ -36,7 +36,7 @@
     },
     shutdown: {
       title: "Shut down the host?",
-      text: "The host shuts down one minute after you confirm; until then you can cancel the shutdown here. It starts again only with its power button or a Wake-on-LAN packet.",
+      text: "The host shuts down one minute after you confirm; until then you can cancel the shutdown here. It starts again with its power button, or with a Wake-on-LAN packet where the board supports that.",
       confirm: "Shut down in 1 minute",
       failed: "The shutdown was not scheduled",
       variant: "danger",
@@ -275,7 +275,9 @@
       <p class="text-sm text-muted mt-3">
         With Wake-on-LAN on, a magic packet to the interface's MAC address, sent from a computer on the
         same network (for example <span class="mono">wakeonlan &lt;MAC address&gt;</span>), starts the host
-        after a shutdown and wakes it from suspend. UNOS sets your choice again whenever it starts.
+        after a shutdown and wakes it from suspend, but only where the board keeps the network card powered
+        while the host is off: many single-board computers do not. UNOS sets your choice again whenever it
+        starts.
       </p>
     {/if}
   </Card>

@@ -11,7 +11,7 @@ import {
   type Channel,
 } from './notifications-fakes';
 
-// System > Notifications (system.notification-channels; ADR-0045, ADR-0247). The tab has no
+// System > Notifications (system.notification-channels; ADR-0045, ADR-0260). The tab has no
 // heading of its own: it starts with summary cards ("Active Channels", ...) above its Channels
 // and History views. The stand-in reaches no mail server, Telegram or webhook receiver, so the
 // tests of deliveries answer the page with the route fakes of notifications-fakes.ts; the last

@@ -352,7 +352,7 @@ async def _deliver_alert(event: NotificationEvent) -> None:
     The senders report failures as (False, error) instead of raising; those are
     logged like timeouts and exceptions. The history of System > Notifications
     lists each alert sent, with its result, in one write per alert, made in a
-    worker thread: it is synced to the system disk (ADR-0021, ADR-0247).
+    worker thread: it is synced to the system disk (ADR-0021, ADR-0260).
     """
     loop = asyncio.get_running_loop()
     entries = []

@@ -11,7 +11,7 @@
     type ChannelKind, type EventType, type NotificationConfig, type NotificationLog
   } from "$lib/api/notifications";
 
-  // Channels of five kinds (ADR-0247). A test reports next to its channel whether the server
+  // Channels of five kinds (ADR-0260). A test reports next to its channel whether the server
   // delivered it, or why not, and the history lists every notification sent, newest first.
 
   const KINDS: Record<ChannelKind, { label: string; icon: ComponentType }> = {

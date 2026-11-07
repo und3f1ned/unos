@@ -1,6 +1,7 @@
 import enum
 import hashlib
 import json
+import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,7 @@ import pyotp
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
@@ -18,6 +20,7 @@ from ..database import get_db
 from .models import APIToken, User
 from .schemas import MAX_PASSWORD_BYTES
 
+logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
 # API Token prefix for identification
@@ -153,6 +156,17 @@ def hash_api_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+# An API token's last use is committed at most once in this interval (ADR-0252): an automation
+# would otherwise write to the database on the system disk with every request (ADR-0214).
+LAST_USE_INTERVAL = timedelta(hours=1)
+
+
+def _token_time() -> datetime:
+    """The time API tokens are checked and stamped at: UTC without a zone, as their times are
+    stored (tests replace it)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 # ==================== Recovery codes (ADR-0238) ====================
 
 RECOVERY_CODE_COUNT = 10
@@ -252,8 +266,32 @@ async def require_admin(user: User = Depends(verify_token)) -> User:
     return user
 
 
+SESSION_NEEDED = "An API token cannot create, enable, disable or delete API tokens: sign in to do it"
+
+
+async def require_session(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user: User = Depends(verify_token),
+) -> User:
+    """Allow the request only with a session token, not with an API token (ADR-0253).
+
+    For the changes that would outlast the API token that asks for them, such as a new token:
+    a token's lifetime and its revocation must bound what it can do, and a session token needs
+    the password and the second factor (ADR-0239). An API token that is not valid keeps the 401
+    of ``verify_token``; a valid one gets 403.
+    """
+    if credentials.credentials.startswith(API_TOKEN_PREFIX):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=SESSION_NEEDED)
+    return user
+
+
 async def verify_api_token(token: str, db: AsyncSession) -> User:
-    """Verify an API token and return the associated user."""
+    """Verify an API token and return the associated user.
+
+    The token's last use is committed only when the stored one is empty or LAST_USE_INTERVAL
+    old (ADR-0252). A commit that fails, such as on a full /data, is rolled back and logged,
+    and the request is answered all the same.
+    """
     token_hash = hash_api_token(token)
 
     result = await db.execute(
@@ -267,16 +305,24 @@ async def verify_api_token(token: str, db: AsyncSession) -> User:
     if not api_token.is_active:
         raise _unauthorized("API token is disabled")
 
+    now = _token_time()
     # Check expiration (stored as naive UTC)
-    if api_token.expires_at and api_token.expires_at < datetime.utcnow():
+    if api_token.expires_at and api_token.expires_at < now:
         raise _unauthorized("API token has expired")
 
-    # Update last used timestamp
-    api_token.last_used_at = datetime.utcnow()
-    await db.commit()
+    # Read before a rollback, which expires the loaded rows.
+    token_id, user_id = api_token.id, api_token.user_id
+    if api_token.last_used_at is None or now - api_token.last_used_at >= LAST_USE_INTERVAL:
+        # Set only when it is committed here: a later commit of the request would write it too.
+        api_token.last_used_at = now
+        try:
+            await db.commit()
+        except OperationalError as exc:
+            await db.rollback()
+            logger.warning("Could not store the last use of API token %d: %s", token_id, exc.orig or exc)
 
     # Get the associated user
-    result = await db.execute(select(User).where(User.id == api_token.user_id))
+    result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
     if user is None:

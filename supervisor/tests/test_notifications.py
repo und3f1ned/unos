@@ -1,6 +1,6 @@
 """Notification channels (system.notification-channels): the senders deliver to local mail and
 webhook servers or name the error, without blocking the event loop, and the history lists every
-notification sent (ADR-0045, ADR-0247)."""
+notification sent (ADR-0045, ADR-0260)."""
 import asyncio
 import builtins
 import contextlib
