@@ -75,7 +75,7 @@
   let now = Date.now();
   let ticker: ReturnType<typeof setInterval> | null = null;
   const timeouts = new Set<ReturnType<typeof setTimeout>>();
-  // The countdowns: the focus goes there after a Disable, one Tab away from Keep.
+  // The countdowns: the focus goes there after a Disable, one Tab away from its Keep.
   let pendingRegion: HTMLElement | null = null;
 
   // The interface the Disable dialog asks about, and the one being changed.
@@ -87,6 +87,9 @@
   // Get WebSocket interface stats for rates
   $: wsInterfaces = $stats?.network?.interfaces ?? [];
   $: syncTicker(Object.keys(deadlines).length > 0);
+  // The newest countdown first: after a Disable, one Tab from the focus reaches the
+  // Keep of the interface just disabled (ADR-0234).
+  $: countdowns = Object.entries(deadlines).sort(([, a], [, b]) => b - a);
 
   onMount(() => {
     loadAll();
@@ -190,18 +193,38 @@
     return Math.max(0, Math.ceil((deadline - at) / 1000));
   }
 
+  // A countdown that this page's Keep or Enable ended.
+  function endCountdown(name: string) {
+    deadlines = without(deadlines, name);
+    expiring = expiring.filter((n) => n !== name);
+  }
+
+  // The page's time to keep a disable ran out a few seconds ago: report what the
+  // host shows now, whatever it is (ADR-0232, ADR-0234).
   async function checkRevert(name: string) {
     const loaded = await loadInterfaces();
+    // Kept or enabled from this page in the meantime.
+    if (!expiring.includes(name)) return;
     expiring = expiring.filter((n) => n !== name);
     const iface = interfaces.find((i) => i.name === name);
-    if (loaded && iface?.enabled) {
+    if (!loaded) {
+      actionError = `Whether ${name} came back on by itself could not be checked: refresh to check again.`;
+    } else if (!iface) {
+      actionError = `${name} did not come back on by itself: the host no longer lists it.`;
+    } else if (iface.enabled) {
       notice = { variant: "info", text: `${name} came back on by itself.` };
-    } else if (loaded && iface && iface.revert_in !== null && iface.revert_in > 0) {
+    } else if (iface.revert_in !== null && iface.revert_in > 0) {
       // The host counts a little later than the page.
       deadlines = { ...deadlines, [name]: Date.now() + iface.revert_in * 1000 };
       return;
-    } else if (loaded && iface && iface.revert_in !== null) {
+    } else if (iface.revert_in !== null) {
       actionError = `${name} did not come back on by itself yet. Enable it, or refresh to check again.`;
+    } else {
+      // Nothing waits to be kept: the revert took its marker but could not turn the
+      // interface on, or the change was kept elsewhere.
+      actionError =
+        `${name} is still disabled: either the change was kept, or ${name} could not come back on by itself. ` +
+        `Enable it if it should be on.`;
     }
     deadlines = without(deadlines, name);
   }
@@ -232,6 +255,8 @@
       const deadline = started + result.revert_in * 1000;
       if (deadline > Date.now()) {
         deadlines = { ...deadlines, [name]: deadline };
+        // A check of an earlier disable of it that is still to come has nothing left to report.
+        expiring = expiring.filter((n) => n !== name);
         counting = true;
       } else {
         notice = {
@@ -257,28 +282,39 @@
 
   async function keep(name: string) {
     startChange(name);
+    let lost = false;
     try {
       await keepInterfaceDown(name);
       notice = { variant: "success", text: `${name} stays disabled.` };
-      deadlines = without(deadlines, name);
+      endCountdown(name);
     } catch (e) {
       if (e instanceof ApiError) {
         actionError = e.message;
-        deadlines = without(deadlines, name);
+        endCountdown(name);
       } else {
-        actionError = `The connection to UNOS was lost: the change was not kept, and ${name} comes back on by itself.`;
+        // The Keep may have reached UNOS: only the interfaces can tell.
+        lost = true;
+        actionError =
+          `The connection to UNOS was lost before it answered: unless the change was kept, ` +
+          `${name} comes back on by itself.`;
       }
     } finally {
       busy = null;
     }
-    await loadInterfaces();
+    const loaded = await loadInterfaces();
+    const iface = interfaces.find((i) => i.name === name);
+    if (lost && loaded && iface && !iface.enabled && iface.revert_in === null) {
+      actionError = null;
+      notice = { variant: "success", text: `${name} stays disabled.` };
+      endCountdown(name);
+    }
   }
 
   async function enable(name: string) {
     startChange(name);
     try {
       await bringInterfaceUp(name);
-      deadlines = without(deadlines, name);
+      endCountdown(name);
     } catch (e) {
       actionError = message(e);
     } finally {
@@ -324,9 +360,9 @@
   {/if}
 
   <!-- Disables that come back on by themselves unless they are kept (ADR-0232) -->
-  {#if Object.keys(deadlines).length > 0}
+  {#if countdowns.length > 0}
     <section class="space-y-3" aria-label="Disables waiting to be kept" tabindex="-1" bind:this={pendingRegion}>
-      {#each Object.entries(deadlines) as [name, deadline] (name)}
+      {#each countdowns as [name, deadline] (name)}
         {@const left = secondsLeft(deadline, now)}
         <Alert variant="warning" title="{name} is disabled">
           {#if left > 0}

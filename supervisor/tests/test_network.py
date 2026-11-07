@@ -9,9 +9,15 @@ link and its IPv6 addresses (its IPv4 addresses stay), up adds back only the
 routes of its IPv4 networks and an IPv6 link-local address. The default route
 and the other IPv6 addresses come back only from what UNOS saved.
 
+VLANs are links with a parent: like the kernel's 8021q module, the fake turns
+them off when their parent goes down and on again when it comes up (with only
+what any link gets back), unless they have loose binding, and refuses to turn
+one on while its parent is down.
+
 The host scripts of src/network/links.py are known to the fake by their names
 ($0, the fourth argument); test_network_scripts.py runs the scripts themselves.
-A revert timer fires when a test calls ``FakeNetworkHost.fire``.
+A revert timer fires when a test calls ``FakeNetworkHost.fire``; a test can run
+a hook of its own when a script starts (``FakeNetworkHost.before_script``).
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ import ipaddress
 import json
 import subprocess
 import time
+from collections.abc import Callable
 
 import pytest
 from fastapi.testclient import TestClient
@@ -106,6 +113,8 @@ class FakeNetworkHost:
         self.calls: list[list[str]] = []
         self.fail: dict[tuple[str, ...], tuple[int, str]] = {}
         self.timeout: set[tuple[str, ...]] = set()
+        # Host script name -> what happens on the host before it runs (a hook may raise).
+        self.before_script: dict[str, Callable[[], None]] = {}
         self.resolvectl: str | None = RESOLVECTL_STATUS
         self.ss = SS_OUTPUT
         self.hostname = "unos"
@@ -146,7 +155,8 @@ class FakeNetworkHost:
     # -- building the host ------------------------------------------------
 
     def add_link(self, name, mac, *, enabled=True, carrier=True, speed=None, kind="ether", mtu=1500,
-                 addrs=()):
+                 addrs=(), parent=None, loose=False):
+        """A link; with ``parent``, a VLAN on that link (``loose``: with loose binding)."""
         index = len(self.links) + 1
         # The IPv6 link-local address the kernel gives the link each time it comes up.
         local = next((a["local"] for a in addrs if a["family"] == "inet6" and a["scope"] == "link"),
@@ -154,7 +164,12 @@ class FakeNetworkHost:
         self.links[name] = {
             "index": index, "mac": mac, "enabled": enabled, "carrier": carrier, "speed": speed,
             "kind": kind, "mtu": mtu, "addrs": [dict(a) for a in addrs], "link_local": local,
+            "parent": parent, "loose": loose,
         }
+
+    def vlans_of(self, name) -> list[str]:
+        """The VLANs on ``name`` that the kernel turns off and on with it: those without loose binding."""
+        return [vlan for vlan, link in self.links.items() if link["parent"] == name and not link["loose"]]
 
     def addresses(self, name) -> list[str]:
         return [f"{a['local']}/{a['prefixlen']}" for a in self.links[name]["addrs"]]
@@ -207,6 +222,9 @@ class FakeNetworkHost:
             return self._one_link(cmd[5], addrs=True)
         if cmd[:5] == ["ip", "-j", "link", "show", "dev"] and len(cmd) == 6:
             return self._one_link(cmd[5], addrs=False)
+        if cmd == ["ip", "-d", "-j", "link", "show", "type", "vlan"]:
+            return self._result(stdout=json.dumps([self._vlan_json(n) for n, link in self.links.items()
+                                                   if link["parent"]]))
         if cmd == ["ip", "-j", "route", "show"]:
             return self._result(stdout=json.dumps(self._routes_json(4)))
         if cmd == ["ip", "-6", "-j", "route", "show"]:
@@ -219,6 +237,8 @@ class FakeNetworkHost:
             return self._set_link(cmd[4], cmd[5] == "up")
         if cmd[0] == "cat" and len(cmd) == 2:
             return self._cat(cmd[1])
+        if cmd[:2] == ["test", "-e"] and len(cmd) == 3:
+            return self._result(0 if cmd[2] in self.files else 1)
         if cmd == ["resolvectl", "status"]:
             if self.resolvectl is None:
                 return self._result(127, stderr="nsenter: failed to execute resolvectl: No such file or directory\n")
@@ -260,9 +280,19 @@ class FakeNetworkHost:
             "operstate": state, "group": "default", "txqlen": 1000, "link_type": link["kind"],
             "address": link["mac"], "broadcast": "ff:ff:ff:ff:ff:ff",
         }
+        if link["parent"]:
+            # The link a VLAN is on ("eth0.100@eth0").
+            entry["link"] = link["parent"]
         if addrs:
             entry["addr_info"] = copy.deepcopy(link["addrs"])
         return entry
+
+    def _vlan_json(self, name):
+        """A VLAN as `ip -d -j link show type vlan` lists it."""
+        flags = ["REORDER_HDR"] + (["LOOSE_BINDING"] if self.links[name]["loose"] else [])
+        vlan_id = int(name.rsplit(".", 1)[1]) if "." in name else 1
+        return {**self._link_json(name, addrs=False),
+                "linkinfo": {"info_kind": "vlan", "info_data": {"protocol": "802.1Q", "id": vlan_id, "flags": flags}}}
 
     def _one_link(self, name, *, addrs):
         if name not in self.links:
@@ -284,11 +314,18 @@ class FakeNetworkHost:
             link["enabled"] = False
             self.routes = [r for r in self.routes if r["dev"] != name]
             link["addrs"] = [a for a in link["addrs"] if a["family"] == "inet"]
+            for vlan in self.vlans_of(name):
+                if self.links[vlan]["enabled"]:
+                    self._set_link(vlan, False)
             return self._result()
         if link["enabled"]:
             return self._result()
+        if link["parent"] and not link["loose"] and not self.links[link["parent"]]["enabled"]:
+            return self._result(2, stderr="RTNETLINK answers: Network is down\n")
         link["enabled"] = True
         for addr in link["addrs"]:
+            if addr["family"] != "inet":
+                continue
             network = ipaddress.ip_interface(f"{addr['local']}/{addr['prefixlen']}").network
             self._add_route({"family": 4, "dst": str(network), "dev": name, "protocol": "kernel",
                              "scope": "link", "prefsrc": addr["local"], "flags": []})
@@ -297,6 +334,9 @@ class FakeNetworkHost:
                 link["addrs"].append(_inet6(link["link_local"], 64, "link"))
             self._add_route({"family": 6, "dst": "fe80::/64", "dev": name, "protocol": "kernel",
                              "metric": 256, "flags": [], "pref": "medium"})
+        # The kernel turns on every VLAN on the link with it, also one that was off before.
+        for vlan in self.vlans_of(name):
+            self._set_link(vlan, True)
         return self._result()
 
     def _cat(self, path):
@@ -327,10 +367,14 @@ class FakeNetworkHost:
         links = _links_module()
         assert cmd[2] == links.SCRIPTS[action], f"{action} does not run its script"
         assert state == STATE, cmd
+        if action in self.before_script:
+            self.before_script[action]()
         if action == "unos-network-save":
             return self._save(name, state, cmd[6])
         if action == "unos-network-cancel":
             return self._cancel(name, state)
+        if action == "unos-network-forget":
+            return self._forget(name, state)
         if action == "unos-network-restore":
             return self._restore(name, state)
         if action == "unos-network-revert":
@@ -354,6 +398,16 @@ class FakeNetworkHost:
         if self.files.pop(f"{state}/{name}/pending", None) is None:
             return self._result(3)
         self.timers.pop(f"unos-network-revert-{name}", None)
+        return self._result()
+
+    def _forget(self, name, state):
+        folder = f"{state}/{name}"
+        if self.files.pop(f"{folder}/pending", None) is not None:
+            self.timers.pop(f"unos-network-revert-{name}", None)
+        elif f"unos-network-revert-{name}" in self.running:
+            return self._result()
+        for part in ("addr", "route4", "route6"):
+            self.files.pop(f"{folder}/{part}", None)
         return self._result()
 
     def _restore(self, name, state):
@@ -488,7 +542,8 @@ class TestInterfaceList:
 
     def test_a_vlan_interface_is_listed_and_can_be_read(self, client, fake_host):
         """The kernel names VLANs <link>.<id>: the API takes every name it lists."""
-        fake_host.add_link("eth0.100", "02:00:00:00:00:10", speed=1000, addrs=[_inet("192.168.100.10", 24)])
+        fake_host.add_link("eth0.100", "02:00:00:00:00:10", speed=1000, addrs=[_inet("192.168.100.10", 24)],
+                           parent="eth0")
 
         assert _interfaces(client)["eth0.100"]["ip_addresses"] == ["192.168.100.10/24"]
         response = client.get(f"{API}/interfaces/eth0.100")
@@ -719,6 +774,64 @@ class TestDisable:
         assert fake_host.timers == {}
         assert f"{STATE}/eth1/pending" not in fake_host.files
 
+    def test_a_keep_whose_host_hangs_once_the_marker_is_gone_keeps_the_disable(self, client, fake_host):
+        """Keep removes the marker first: when `systemctl stop` then does not answer in time, the
+        disable is kept all the same, and its timer, still armed, finds nothing to undo."""
+        client.post(f"{API}/interfaces/eth1/down")
+
+        def hang_once_the_marker_is_gone():
+            fake_host.files.pop(f"{STATE}/eth1/pending")
+            raise subprocess.TimeoutExpired(["unos-network-cancel"], 15)
+
+        fake_host.before_script["unos-network-cancel"] = hang_once_the_marker_is_gone
+
+        response = client.post(f"{API}/interfaces/eth1/down/confirm")
+
+        assert response.status_code == 200, response.text
+        assert fake_host.fire("unos-network-revert-eth1").ok
+        assert fake_host.links["eth1"]["enabled"] is False
+
+    def test_a_keep_that_the_host_did_not_carry_out_says_that_the_interface_comes_back_on(self, client, fake_host):
+        client.post(f"{API}/interfaces/eth1/down")
+        fake_host.timeout.add(("/bin/sh", "-c", _links_module().CANCEL_SCRIPT))
+
+        response = client.post(f"{API}/interfaces/eth1/down/confirm")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == (
+            "The disable of eth1 could not be kept, so eth1 comes back on by itself: "
+            "the host did not answer within 15 seconds"
+        )
+        assert 55 <= _interfaces(client)["eth1"]["revert_in"] <= 60
+
+    def test_a_keep_whose_outcome_cannot_be_read_says_so(self, client, fake_host):
+        client.post(f"{API}/interfaces/eth1/down")
+        fake_host.timeout.add(("/bin/sh", "-c", _links_module().CANCEL_SCRIPT))
+        fake_host.timeout.add(("test", "-e"))
+
+        response = client.post(f"{API}/interfaces/eth1/down/confirm")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == (
+            "Whether the disable of eth1 was kept is not known: the host did not answer within 15 seconds. "
+            "Refresh the page to see."
+        )
+
+    def test_a_keep_that_its_revert_overtook_while_the_host_hung_answers_409(self, client, fake_host):
+        client.post(f"{API}/interfaces/eth1/down")
+
+        def the_revert_comes_first():
+            fake_host.fire("unos-network-revert-eth1")
+            raise subprocess.TimeoutExpired(["unos-network-cancel"], 15)
+
+        fake_host.before_script["unos-network-cancel"] = the_revert_comes_first
+
+        response = client.post(f"{API}/interfaces/eth1/down/confirm")
+
+        assert response.status_code == 409
+        assert response.json()["detail"].startswith("eth1 has no disable waiting to be kept")
+        assert fake_host.links["eth1"]["enabled"] is True
+
     def test_the_revert_and_keep_need_nothing_from_the_supervisor_that_disabled(self, client, fake_host):
         """The timer and the state live on the host: a restarted supervisor, which has nothing
         in memory (here: src.network.links loaded again), still shows the countdown and keeps
@@ -790,7 +903,7 @@ class TestDisable:
         assert fake_host.systemd_runs == []
 
     def test_a_vlan_interface_is_disabled_kept_and_enabled_like_any_other(self, client, fake_host):
-        fake_host.add_link("eth0.100", "02:00:00:00:00:10", addrs=[_inet("192.168.100.10", 24)])
+        fake_host.add_link("eth0.100", "02:00:00:00:00:10", addrs=[_inet("192.168.100.10", 24)], parent="eth0")
         fake_host.routes.append({"family": 4, "dst": "default", "gateway": "192.168.100.1", "dev": "eth0.100",
                                  "protocol": "static", "metric": 200, "flags": []})
 
@@ -804,6 +917,67 @@ class TestDisable:
         assert client.post(f"{API}/interfaces/eth0.100/up").status_code == 200
         assert fake_host.links["eth0.100"]["enabled"] is True
         assert (4, "192.168.100.1", "eth0.100") in fake_host.default_routes()
+
+    @pytest.mark.parametrize("vlan_enabled", [True, False], ids=["vlan-on", "vlan-off"])
+    def test_an_interface_that_carries_vlans_is_not_disabled(self, client, fake_host, vlan_enabled):
+        """The kernel turns the VLANs on eth0 off with it and on again with it, also one that was
+        off, without their routes and IPv6 addresses: UNOS saves only eth0's own, so a connection
+        through a VLAN would stay lost after the revert (ADR-0234)."""
+        fake_host.add_link("eth0.100", "02:00:00:00:00:10", enabled=vlan_enabled, parent="eth0",
+                           addrs=[_inet("10.100.0.10", 24)])
+        if vlan_enabled:
+            fake_host.routes.append({"family": 4, "dst": "10.20.0.0/16", "gateway": "10.100.0.1",
+                                     "dev": "eth0.100", "protocol": "static", "flags": []})
+
+        response = client.post(f"{API}/interfaces/eth0/down")
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "eth0 carries VLANs (eth0.100): they would go down with it and come back without their routes "
+            "and IPv6 addresses, so UNOS does not disable eth0"
+        )
+        assert fake_host.links["eth0"]["enabled"] is True
+        assert fake_host.links["eth0.100"]["enabled"] is vlan_enabled
+        assert _changes(fake_host) == []
+
+    def test_a_revert_that_cannot_turn_the_interface_on_leaves_it_off_with_nothing_waiting(self, client, fake_host):
+        """The revert took its marker first, so the page finds the interface off with no disable
+        waiting to be kept, and reports it (ADR-0234). Here: a VLAN whose link went off meanwhile."""
+        fake_host.add_link("eth0.100", "02:00:00:00:00:10", parent="eth0", addrs=[_inet("10.100.0.10", 24)])
+        assert client.post(f"{API}/interfaces/eth0.100/down").status_code == 200
+        fake_host.run(["ip", "link", "set", "dev", "eth0", "down"])
+
+        result = fake_host.fire("unos-network-revert-eth0.100")
+
+        assert (result.returncode, result.stderr) == (1, "RTNETLINK answers: Network is down\n")
+        vlan = _interfaces(client)["eth0.100"]
+        assert (vlan["enabled"], vlan["revert_in"]) == (False, None)
+        # What the disable saved stays for an Enable.
+        assert fake_host.saved("eth0.100") == {"addr", "route4", "route6"}
+
+    def test_vlans_with_loose_binding_stay_on_and_do_not_hold_their_link_back(self, client, fake_host):
+        fake_host.add_link("eth0.100", "02:00:00:00:00:10", parent="eth0", loose=True,
+                           addrs=[_inet("10.100.0.10", 24)])
+
+        response = client.post(f"{API}/interfaces/eth0/down")
+
+        assert response.status_code == 200, response.text
+        assert fake_host.links["eth0"]["enabled"] is False
+        assert fake_host.links["eth0.100"]["enabled"] is True
+
+    def test_when_its_vlans_cannot_be_read_the_interface_stays_enabled(self, client, fake_host):
+        fake_host.fail[("ip", "-d", "-j", "link", "show", "type", "vlan")] = (
+            2, "RTNETLINK answers: Operation not permitted\n",
+        )
+
+        response = client.post(f"{API}/interfaces/eth1/down")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == (
+            "eth1 stays enabled: which VLANs it carries could not be read (RTNETLINK answers: Operation not permitted)"
+        )
+        assert fake_host.links["eth1"]["enabled"] is True
+        assert _changes(fake_host) == []
 
     def test_when_the_state_cannot_be_saved_the_interface_stays_enabled(self, client, fake_host):
         links = _links_module()
@@ -910,7 +1084,9 @@ class TestEnable:
         response = client.post(f"{API}/interfaces/eth1/up")
 
         assert response.status_code == 200, response.text
-        assert [_summary(cmd) for cmd in _changes(fake_host)] == ["unos-network-cancel eth1"]
+        # Only what a disable of eth1 may have left on the host is called off and discarded.
+        assert [_summary(cmd) for cmd in _changes(fake_host)] == ["unos-network-forget eth1"]
+        assert fake_host.links["eth1"]["enabled"] is True
 
     def test_a_failed_enable_answers_500_with_the_reason(self, client, fake_host):
         links = _links_module()
@@ -962,6 +1138,62 @@ class TestEnable:
             "RTNETLINK answers: Invalid argument"
         )
         assert fake_host.links["eth0"]["enabled"] is True
+
+
+class TestTheSavedState:
+    """What a disable saved is put back only while that disable is in effect (ADR-0234)."""
+
+    @staticmethod
+    def _renumber(fake, name, old, new):
+        """The interface's DHCP client trades its address ``old`` for ``new``."""
+        for addr in fake.links[name]["addrs"]:
+            if addr["local"] == old:
+                addr["local"] = new
+        for route in fake.routes:
+            if route.get("prefsrc") == old:
+                route["prefsrc"] = new
+
+    def test_keep_of_an_interface_turned_on_elsewhere_forgets_what_its_disable_saved(self, client, fake_host):
+        client.post(f"{API}/interfaces/eth1/down")
+        # Turned on outside UNOS, and its DHCP client gets another address.
+        fake_host.run(["ip", "link", "set", "dev", "eth1", "up"])
+        self._renumber(fake_host, "eth1", "10.0.0.5", "10.0.0.77")
+
+        assert client.post(f"{API}/interfaces/eth1/down/confirm").status_code == 409
+
+        assert fake_host.saved("eth1") == set()
+        # Later it goes off outside UNOS, and Enable turns it on: the old address stays away.
+        fake_host.run(["ip", "link", "set", "dev", "eth1", "down"])
+        assert client.post(f"{API}/interfaces/eth1/up").status_code == 200
+        assert fake_host.addresses("eth1") == ["10.0.0.77/24", "fe80::11/64"]
+
+    def test_enable_of_an_interface_turned_on_elsewhere_forgets_what_a_kept_disable_saved(self, client, fake_host):
+        client.post(f"{API}/interfaces/eth1/down")
+        client.post(f"{API}/interfaces/eth1/down/confirm")
+        fake_host.run(["ip", "link", "set", "dev", "eth1", "up"])
+        self._renumber(fake_host, "eth1", "10.0.0.5", "10.0.0.77")
+
+        # From a page that still shows eth1 disabled.
+        assert client.post(f"{API}/interfaces/eth1/up").status_code == 200
+
+        assert fake_host.saved("eth1") == set()
+        fake_host.run(["ip", "link", "set", "dev", "eth1", "down"])
+        assert client.post(f"{API}/interfaces/eth1/up").status_code == 200
+        assert fake_host.addresses("eth1") == ["10.0.0.77/24", "fe80::11/64"]
+
+    def test_what_a_running_revert_restores_is_left_to_it(self, client, fake_host):
+        """The timer's revert took the marker, turned eth1 on and is restoring what was saved: an
+        Enable or a Keep from a page that has not seen it yet leaves that to the revert."""
+        client.post(f"{API}/interfaces/eth1/down")
+        fake_host.files.pop(f"{STATE}/eth1/pending")
+        fake_host.timers.pop("unos-network-revert-eth1")
+        fake_host.run(["ip", "link", "set", "dev", "eth1", "up"])
+        fake_host.running.add("unos-network-revert-eth1")
+
+        assert client.post(f"{API}/interfaces/eth1/up").status_code == 200
+        assert client.post(f"{API}/interfaces/eth1/down/confirm").status_code == 409
+
+        assert fake_host.saved("eth1") == {"addr", "route4", "route6"}
 
 
 class TestHostTools:

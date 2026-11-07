@@ -7,7 +7,8 @@ hosts (where it is installed, as on macOS).
 The stub ip saves "<what> of <interface>" and logs what a restore reads, and,
 like iproute2's ``ip route restore``, refuses to restore from a pipe: it seeks
 in its input. Its STUB_FAIL_<action> variables make the first calls of an action
-fail. The state folder is a temporary one. test_network.py runs the network API
+fail. ``systemctl is-active`` says that a unit runs only with STUB_ACTIVE set.
+The state folder is a temporary one. test_network.py runs the network API
 against a fake host that stands for these scripts.
 """
 
@@ -47,6 +48,8 @@ def fails(action):
 
 
 log(" ".join([tool, *args]))
+if tool == "systemctl" and args[:1] == ["is-active"]:
+    sys.exit(0 if os.environ.get("STUB_ACTIVE") else 3)
 if tool != "ip":
     sys.exit(0)
 if args[:2] == ["addr", "save"] or args[1:3] == ["route", "save"]:
@@ -256,6 +259,47 @@ class TestRestore:
         assert _saved(saved) == {"addr", "route4", "route6", "pending"}
 
 
+class TestForget:
+    """The interface is on again: what its disable saved no longer describes it (ADR-0234)."""
+
+    @pytest.fixture
+    def saved(self, stub_host):
+        assert stub_host.run("unos-network-save", "eth0", "1700000060").returncode == 0
+        return stub_host
+
+    def test_forget_calls_off_a_disable_that_waits_and_discards_what_it_saved(self, saved):
+        result = saved.run("unos-network-forget")
+
+        assert result.returncode == 0, result.stderr
+        assert saved.log()[3:] == ["systemctl stop unos-network-revert-eth0.timer"]
+        assert _saved(saved) == set()
+
+    def test_forget_discards_what_a_kept_disable_saved(self, saved):
+        assert saved.run("unos-network-cancel").returncode == 0
+        logged = len(saved.log())
+
+        result = saved.run("unos-network-forget")
+
+        assert result.returncode == 0, result.stderr
+        assert saved.log()[logged:] == ["systemctl is-active --quiet unos-network-revert-eth0.service"]
+        assert _saved(saved) == set()
+
+    def test_forget_leaves_what_a_running_revert_restores(self, saved):
+        # The revert took the marker and is restoring.
+        (saved.folder / "pending").unlink()
+
+        result = saved.run("unos-network-forget", STUB_ACTIVE="1")
+
+        assert result.returncode == 0, result.stderr
+        assert _saved(saved) == {"addr", "route4", "route6"}
+
+    def test_forget_without_a_saved_state_does_nothing(self, stub_host):
+        result = stub_host.run("unos-network-forget")
+
+        assert result.returncode == 0, result.stderr
+        assert not stub_host.folder.exists()
+
+
 class TestTheRevertTimer:
     def test_the_timer_runs_the_revert_script_on_the_host_after_60_seconds(self):
         assert links.revert_timer("eth0") == [
@@ -271,6 +315,9 @@ class TestTheRevertTimer:
         specifiers when it reads a unit file), so none of them may appear there."""
         for argument in links.revert_timer("eth0"):
             assert "${" not in argument and "$$" not in argument and "%" not in argument, argument
+        # The other scripts keep to the same rule (links.py), should one ever run in a unit.
+        for name, script in links.SCRIPTS.items():
+            assert "${" not in script and "$$" not in script, name
 
 
 class TestTheFakes:

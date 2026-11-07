@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { fakeNetworkApi, nothingToKeep, notEnabled, revertNotArmed } from './network-fakes';
+import { fakeNetworkApi, nothingToKeep, notEnabled, revertNotArmed, type FakeFailure } from './network-fakes';
 
 // System > Network with canned answers of the network API (network-fakes.ts):
 // the stand-in has no host network, and no spec may disable a real interface.
@@ -201,6 +201,69 @@ test.describe('System > Network', () => {
     ]);
   });
 
+  test('an interface that its automatic revert could not turn back on is reported', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    const network = await fakeNetworkApi(page);
+    await openNetworkTab(page);
+    await disable(page, 'eth1');
+
+    // The host's timer runs out, but its revert cannot turn eth1 on: nothing waits to be kept any more.
+    network.revertFails('eth1');
+    await page.clock.fastForward('01:01');
+    await page.clock.fastForward('00:06');
+
+    await expect(
+      page.getByText(
+        'eth1 is still disabled: either the change was kept, or eth1 could not come back on by itself. ' +
+          'Enable it if it should be on.',
+      ),
+    ).toBeVisible();
+    await expect(page.getByText('eth1 is disabled')).toBeHidden();
+    await card(page, 'eth1').getByRole('button', { name: 'Enable' }).click();
+    await expect(card(page, 'eth1')).toContainText('UP');
+  });
+
+  test('an interface that is gone when the time runs out is reported', async ({ authenticatedPage: page }) => {
+    await page.clock.install();
+    const network = await fakeNetworkApi(page);
+    await openNetworkTab(page);
+    await disable(page, 'eth1');
+
+    // Its USB network adapter was unplugged during the countdown.
+    network.unplug('eth1');
+    await page.clock.fastForward('01:01');
+    await page.clock.fastForward('00:06');
+
+    await expect(page.getByText('eth1 did not come back on by itself: the host no longer lists it.')).toBeVisible();
+    await expect(page.getByText('eth1 is disabled')).toBeHidden();
+    await expect(card(page, 'eth1')).toBeHidden();
+  });
+
+  test('when the interfaces cannot be read after the time runs out, the page says so', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    const failures: Record<string, FakeFailure> = {};
+    const network = await fakeNetworkApi(page, { failures });
+    await openNetworkTab(page);
+    await disable(page, 'eth1');
+
+    network.revert('eth1');
+    failures['GET /interfaces'] = 'abort';
+    await page.clock.fastForward('01:01');
+    await page.clock.fastForward('00:06');
+
+    await expect(
+      page.getByText('Whether eth1 came back on by itself could not be checked: refresh to check again.'),
+    ).toBeVisible();
+    await expect(page.getByText('eth1 is disabled')).toBeHidden();
+    delete failures['GET /interfaces'];
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await expect(card(page, 'eth1')).toContainText('UP');
+  });
+
   test('a second countdown starts at the full time', async ({ authenticatedPage: page }) => {
     await page.clock.install();
     await fakeNetworkApi(page);
@@ -215,6 +278,10 @@ test.describe('System > Network', () => {
 
     await expect(countdown(page, 'eth1')).toHaveText(/in 60 s/);
     await expect(countdown(page, 'eth0')).toHaveText(/in 50 s/);
+    // The newest countdown comes first: one Tab reaches the Keep of the interface just disabled.
+    await expect(page.getByRole('region', { name: 'Disables waiting to be kept' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Keep eth1 disabled' })).toBeFocused();
   });
 
   test('Keep after the host turned the interface back on shows the server\'s answer', async ({
@@ -231,6 +298,40 @@ test.describe('System > Network', () => {
     await expect(page.getByText(nothingToKeep('eth1'))).toBeVisible();
     await expect(countdown(page, 'eth1')).toBeHidden();
     await expect(card(page, 'eth1')).toContainText('UP');
+  });
+
+  test('a Keep whose answer is lost after UNOS kept the change says that the interface stays disabled', async ({
+    authenticatedPage: page,
+  }) => {
+    const network = await fakeNetworkApi(page, { failures: { 'POST /interfaces/eth1/down/confirm': 'lost' } });
+    await openNetworkTab(page);
+    await disable(page, 'eth1');
+
+    await page.getByRole('button', { name: 'Keep eth1 disabled' }).click();
+
+    await expect(page.getByText('eth1 stays disabled.')).toBeVisible();
+    await expect(page.getByText(/The connection to UNOS was lost/)).toBeHidden();
+    await expect(countdown(page, 'eth1')).toBeHidden();
+    expect(network.writes).toEqual([
+      { method: 'POST', path: '/interfaces/eth1/down' },
+      { method: 'POST', path: '/interfaces/eth1/down/confirm' },
+    ]);
+  });
+
+  test('a Keep that does not reach UNOS leaves the countdown and Keep', async ({ authenticatedPage: page }) => {
+    await fakeNetworkApi(page, { failures: { 'POST /interfaces/eth1/down/confirm': 'abort' } });
+    await openNetworkTab(page);
+    await disable(page, 'eth1');
+
+    await page.getByRole('button', { name: 'Keep eth1 disabled' }).click();
+
+    await expect(
+      page.getByText(
+        'The connection to UNOS was lost before it answered: unless the change was kept, eth1 comes back on by itself.',
+      ),
+    ).toBeVisible();
+    await expect(countdown(page, 'eth1')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Keep eth1 disabled' })).toBeEnabled();
   });
 
   test('after a reload, a disable that waits to be kept shows its countdown again', async ({

@@ -613,19 +613,28 @@ container's (feature-list entry `system.dashboard`).
    or click **Cancel**.
 2. The interface goes off, and the tab counts down 60 seconds. Click
    **Keep eth1 disabled** (with the interface's name) before the time runs
-   out to keep the change. With the keyboard: the countdown has the focus
-   when the dialog closes, and Tab reaches the button.
+   out to keep the change. With the keyboard: the countdowns have the focus
+   when the dialog closes, the newest first, and Tab reaches its button.
 3. If you do not, the interface comes back on by itself after 60 seconds,
    with the addresses and routes it had, the default route included. This
    also happens when the connection dropped: wait a minute, then reload the
-   page.
+   page. A few seconds after the time runs out, the tab says whether the
+   interface came back on. When it did not, because the host could not turn
+   it on or someone kept the change elsewhere, or when its network adapter
+   is gone, the tab says so: click **Enable** if it should be on.
 
 **Enable** turns a disabled interface back on with the addresses and routes
 it had when UNOS disabled it; an Enable that fails during the countdown
-leaves the automatic revert in place. A disabled interface comes back on
-when the host restarts, as the host's network configuration says. The host
-must run systemd: UNOS refuses to disable an interface when it cannot set
-up the automatic revert.
+leaves the automatic revert in place. Once UNOS finds such an interface
+turned back on outside UNOS, it forgets those addresses and routes, so a
+later Enable does not add them to a configuration that has changed since.
+A disabled interface comes back on when the host restarts, as the host's
+network configuration says. The host must run systemd: UNOS refuses to
+disable an interface when it cannot set up the automatic revert.
+
+UNOS does not disable an interface that carries VLANs, such as `eth0` with
+`eth0.100`: the VLANs would go down with it and come back without their
+routes. Disable the VLANs themselves, or the interface on the host.
 
 The tab does not change addresses, DNS or routes: configure them on the host
 or in your router.

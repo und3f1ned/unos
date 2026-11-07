@@ -5,8 +5,8 @@ import type { Page } from '@playwright/test';
 // fakeNetworkApi() answers every network request of the page itself: writes
 // are recorded and applied to the fake state, so the page shows their outcome,
 // unknown requests are aborted, and nothing reaches the supervisor. The fake
-// has no clock: a disable waits to be kept until the spec calls revert(), which
-// does what the host's timer does (ADR-0232).
+// has no clock: a disable waits to be kept until the spec calls revert() or
+// revertFails(), which do what the host's timer does (ADR-0232).
 
 // The texts and values of supervisor/src/network/links.py, word for word
 // (supervisor/tests/test_network_scripts.py checks them).
@@ -64,13 +64,19 @@ export interface RecordedWrite {
   path: string;
 }
 
-/** A canned error answer of the server (its JSON detail), or 'abort': the connection is lost. */
-export type FakeFailure = { status: number; detail: string } | 'abort';
+/**
+ * A canned error answer of the server (its JSON detail); 'abort': the connection is lost before the
+ * request reaches the server; 'lost': the server does what was asked, but its answer is lost.
+ */
+export type FakeFailure = { status: number; detail: string } | 'abort' | 'lost';
 
 export interface FakeNetworkOptions {
   /** Interfaces whose disable already waits to be kept: name -> seconds left (the page was reloaded). */
   pending?: Record<string, number>;
-  /** Answer these requests ('<METHOD> <path below /api/v1/network>') with an error instead. */
+  /**
+   * Answer these requests ('<METHOD> <path below /api/v1/network>') with an error instead. The fake
+   * reads the object at each request: a spec may change it while the page runs.
+   */
   failures?: Record<string, FakeFailure>;
 }
 
@@ -79,6 +85,10 @@ export interface FakeNetwork {
   interfaces: FakeInterface[];
   /** The host's timer runs out: the interface is enabled again, and nothing waits to be kept. */
   revert(name: string): void;
+  /** The host's timer runs out, but its revert cannot turn the interface on: nothing waits, and it stays off. */
+  revertFails(name: string): void;
+  /** The interface is gone from the host (a USB network adapter was unplugged), and with it its disable. */
+  unplug(name: string): void;
   /** The seconds left that the host reports, from now on, for a disable that waits to be kept. */
   waiting(name: string, seconds: number): void;
 }
@@ -109,21 +119,24 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
 
       const failure = options.failures?.[`${method} ${path}`];
       if (failure === 'abort') return route.abort();
-      if (failure) return route.fulfill({ status: failure.status, json: { detail: failure.detail } });
+      if (failure && failure !== 'lost') return route.fulfill({ status: failure.status, json: { detail: failure.detail } });
+      // The server's answer, unless it is lost on the way back.
+      const answer = (response: { status?: number; json: unknown }) =>
+        failure === 'lost' ? route.abort() : route.fulfill(response);
 
       if (method === 'GET') {
         if (path === '/interfaces') {
-          return route.fulfill({
+          return answer({
             json: {
               interfaces: interfaces.map((iface) => ({ ...iface, revert_in: pending.get(iface.name) ?? null })),
               revert_seconds: REVERT_SECONDS,
             },
           });
         }
-        if (path === '/dns') return route.fulfill({ json: FAKE_DNS });
-        if (path === '/gateway') return route.fulfill({ json: FAKE_GATEWAY });
-        if (path === '/routes') return route.fulfill({ json: { routes: FAKE_ROUTES } });
-        if (path === '/connections') return route.fulfill({ json: { connections: FAKE_CONNECTIONS } });
+        if (path === '/dns') return answer({ json: FAKE_DNS });
+        if (path === '/gateway') return answer({ json: FAKE_GATEWAY });
+        if (path === '/routes') return answer({ json: { routes: FAKE_ROUTES } });
+        if (path === '/connections') return answer({ json: { connections: FAKE_CONNECTIONS } });
         return route.abort();
       }
 
@@ -134,24 +147,38 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
       if (action[2] === 'down') {
         setEnabled(iface, false);
         pending.set(name, REVERT_SECONDS);
-        return route.fulfill({ json: { status: 'success', interface: name, state: 'down', revert_in: REVERT_SECONDS } });
+        return answer({ json: { status: 'success', interface: name, state: 'down', revert_in: REVERT_SECONDS } });
       }
       if (action[2] === 'down/confirm') {
-        if (!pending.delete(name)) return route.fulfill({ status: 409, json: { detail: nothingToKeep(name) } });
-        return route.fulfill({ json: { status: 'success', interface: name, state: 'down' } });
+        if (!pending.delete(name)) return answer({ status: 409, json: { detail: nothingToKeep(name) } });
+        return answer({ json: { status: 'success', interface: name, state: 'down' } });
       }
       pending.delete(name);
       setEnabled(iface, true);
-      return route.fulfill({ json: { status: 'success', interface: name, state: 'up' } });
+      return answer({ json: { status: 'success', interface: name, state: 'up' } });
     },
   );
+
+  const find = (name: string) => {
+    const iface = interfaces.find((i) => i.name === name);
+    if (!iface) throw new Error(`the fake host has no ${name}`);
+    return iface;
+  };
 
   return {
     writes,
     interfaces,
     revert(name: string) {
       pending.delete(name);
-      setEnabled(interfaces.find((i) => i.name === name)!, true);
+      setEnabled(find(name), true);
+    },
+    revertFails(name: string) {
+      find(name);
+      if (!pending.delete(name)) throw new Error(`no disable of ${name} waits to be kept`);
+    },
+    unplug(name: string) {
+      interfaces.splice(interfaces.indexOf(find(name)), 1);
+      pending.delete(name);
     },
     waiting(name: string, seconds: number) {
       if (!pending.has(name)) throw new Error(`no disable of ${name} waits to be kept`);
