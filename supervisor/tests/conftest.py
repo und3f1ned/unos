@@ -14,6 +14,19 @@ os.environ["UNOS_NFS_EXPORTS_PATH"] = "/tmp/test_exports"
 os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"
 
 
+@pytest.fixture(autouse=True)
+def _test_pools_count_as_mounted(monkeypatch):
+    """A share folder is created only through a pool root on the pool's mount (spec 5.4
+    rule 7): where /proc/self/mountinfo exists (Linux), the pool root's mount ID must be
+    a mount at <pools base>/<pool>. The tests' pools are plain folders, not mount
+    points, so the check is replaced here. Tests of the check itself use the function
+    as service imports it (test_share_api.REAL_POOL_ROOT_MOUNT_PROBLEM)."""
+    if os.path.exists("/proc/self/mountinfo"):
+        from src.shares import service
+
+        monkeypatch.setattr(service, "_pool_root_mount_problem", lambda root_fd, pool: None)
+
+
 @pytest.fixture
 def temp_smb_conf():
     """Create temporary smb.conf for testing."""

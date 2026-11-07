@@ -1,448 +1,732 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
-  import {
-    getUsers,
-    createUser,
-    updateUser,
-    deleteUser,
-    type User
-  } from "$lib/api/auth";
-  import { user as currentUser } from "$lib/stores/auth";
-  import {
-    Users,
-    UserPlus,
-    Shield,
-    ShieldOff,
-    Trash2,
-    RefreshCw,
-    Edit,
-    X
-  } from "lucide-svelte";
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import {
+		createUser,
+		deleteUser,
+		disableUserSmb,
+		enableUserSmb,
+		getUsers,
+		updateUser,
+		USERNAME_PATTERN,
+		type User,
+		type UserUpdate
+	} from '$lib/api/auth';
+	import { ApiError } from '$lib/api/client';
+	import { getSmbShares } from '$lib/api/shares';
+	import { user as currentUser } from '$lib/stores/auth';
+	import { Edit, Shield, ShieldOff, Trash2, UserPlus, Users } from 'lucide-svelte';
+	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
+	import { SmbStateBadge } from '$lib/components/shares';
 
-  let users: User[] = [];
-  let loading = true;
-  let error = "";
-  let success = "";
+	const USERNAME_HINT = '1–32 lowercase letters, digits, _ or -, starting with a letter';
+	const MIN_PASSWORD_LENGTH = 8;
+	const PASSWORD_NEEDED_HINT =
+		'The user turns SMB on in their Account page with their password, or set a new password here';
 
-  // Modal states
-  let showCreateModal = false;
-  let showEditModal = false;
-  let showDeleteModal = false;
+	let users: User[] = [];
+	let loading = true;
+	let error = '';
+	// Outcome of the last change: shown until dismissed.
+	let notice = '';
+	let warnings: string[] = [];
+	// A change refused after its dialog closed (the user's id names someone else now).
+	let actionError: { title: string; message: string } | null = null;
 
-  // Form data
-  let newUsername = "";
-  let newPassword = "";
-  let confirmPassword = "";
-  let editingUser: User | null = null;
-  let editPassword = "";
-  let editIsAdmin = false;
-  let deletingUser: User | null = null;
+	onMount(async () => {
+		// Redirect non-admin users
+		if (!$currentUser?.is_admin) {
+			goto('/');
+			return;
+		}
+		await loadUsers();
+	});
 
-  onMount(async () => {
-    // Redirect non-admin users
-    if (!$currentUser?.is_admin) {
-      goto("/");
-      return;
-    }
-    await loadUsers();
-  });
+	// Also watch for user changes (in case they navigate here before user loads)
+	$: if ($currentUser !== null && !$currentUser.is_admin) {
+		goto('/');
+	}
 
-  // Also watch for user changes (in case they navigate here before user loads)
-  $: if ($currentUser !== null && !$currentUser.is_admin) {
-    goto("/");
-  }
+	function messageOf(e: unknown): string {
+		return e instanceof Error ? e.message : String(e);
+	}
 
-  async function loadUsers() {
-    loading = true;
-    error = "";
-    try {
-      users = await getUsers();
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Failed to load users";
-    } finally {
-      loading = false;
-    }
-  }
+	async function loadUsers(showSpinner = true) {
+		if (showSpinner) loading = true;
+		try {
+			users = await getUsers();
+			error = '';
+		} catch (e) {
+			error = messageOf(e) || 'Failed to load users';
+		} finally {
+			loading = false;
+		}
+	}
 
-  function openCreateModal() {
-    newUsername = "";
-    newPassword = "";
-    confirmPassword = "";
-    showCreateModal = true;
-  }
+	function showOutcome(message: string, newWarnings: string[] | undefined) {
+		notice = message;
+		warnings = newWarnings ?? [];
+		actionError = null;
+	}
 
-  async function handleCreateUser() {
-    if (!newUsername || !newPassword) {
-      error = "Please fill in all fields";
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      error = "Passwords do not match";
-      return;
-    }
-    if (newPassword.length < 6) {
-      error = "Password must be at least 6 characters";
-      return;
-    }
+	/**
+	 * After a refusal that can mean the list is out of date (409, e.g. "User N
+	 * is now 'x'; reload the page", or 404), load the users again and return
+	 * `target` as stored now. null: its id names someone else now, or nobody,
+	 * so nothing a dialog prepared for `target` applies any more. Other
+	 * errors: `target` itself.
+	 */
+	async function currentAfterRefusal(e: unknown, target: User): Promise<User | null> {
+		if (!(e instanceof ApiError && (e.status === 409 || e.status === 404))) return target;
+		await loadUsers(false);
+		const now = users.find((u) => u.id === target.id);
+		return now !== undefined && now.username === target.username ? now : null;
+	}
 
-    error = "";
-    try {
-      await createUser({ username: newUsername, password: newPassword });
-      success = "User \"" + newUsername + "\" created successfully";
-      setTimeout(() => success = "", 3000);
-      showCreateModal = false;
-      await loadUsers();
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Failed to create user";
-    }
-  }
+	function formatDate(date: string | null): string {
+		if (!date) return 'Unknown';
+		return new Date(date).toLocaleString();
+	}
 
-  function openEditModal(user: User) {
-    editingUser = user;
-    editPassword = "";
-    editIsAdmin = user.is_admin;
-    showEditModal = true;
-  }
+	function smbHint(user: User): string {
+		if (user.smb?.state === 'password_needed') return PASSWORD_NEEDED_HINT;
+		if (user.smb?.state === 'unavailable') return user.smb.reason ?? '';
+		return '';
+	}
 
-  async function handleUpdateUser() {
-    if (!editingUser) return;
+	function passwordError(password: string): string {
+		return password && password.length < MIN_PASSWORD_LENGTH
+			? `Use at least ${MIN_PASSWORD_LENGTH} characters`
+			: '';
+	}
 
-    error = "";
-    try {
-      const data: { is_admin?: boolean; password?: string } = {};
-      if (editIsAdmin !== editingUser.is_admin) {
-        data.is_admin = editIsAdmin;
-      }
-      if (editPassword) {
-        if (editPassword.length < 6) {
-          error = "Password must be at least 6 characters";
-          return;
-        }
-        data.password = editPassword;
-      }
+	function confirmError(password: string, confirmation: string): string {
+		return confirmation && confirmation !== password ? 'Passwords do not match' : '';
+	}
 
-      if (Object.keys(data).length === 0) {
-        showEditModal = false;
-        return;
-      }
+	// ---- Create ----
 
-      await updateUser(editingUser.id, data);
-      success = "User \"" + editingUser.username + "\" updated successfully";
-      setTimeout(() => success = "", 3000);
-      showEditModal = false;
-      await loadUsers();
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Failed to update user";
-    }
-  }
+	let createOpen = false;
+	let newUsername = '';
+	let newPassword = '';
+	let newConfirm = '';
+	let newSmb = false;
+	let creating = false;
+	let createError = '';
 
-  function openDeleteModal(user: User) {
-    deletingUser = user;
-    showDeleteModal = true;
-  }
+	$: newUsernameError =
+		newUsername && !USERNAME_PATTERN.test(newUsername) ? `Use ${USERNAME_HINT}` : '';
+	$: canCreate =
+		USERNAME_PATTERN.test(newUsername) &&
+		newPassword.length >= MIN_PASSWORD_LENGTH &&
+		newConfirm === newPassword &&
+		!creating;
 
-  async function handleDeleteUser() {
-    if (!deletingUser) return;
+	function openCreate() {
+		newUsername = '';
+		newPassword = '';
+		newConfirm = '';
+		newSmb = false;
+		createError = '';
+		createOpen = true;
+	}
 
-    error = "";
-    try {
-      await deleteUser(deletingUser.id);
-      success = "User \"" + deletingUser.username + "\" deleted successfully";
-      setTimeout(() => success = "", 3000);
-      showDeleteModal = false;
-      await loadUsers();
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Failed to delete user";
-    }
-  }
+	function closeCreate() {
+		if (creating) return;
+		createOpen = false;
+		newPassword = '';
+		newConfirm = '';
+	}
 
-  function formatDate(date: string | null): string {
-    if (!date) return "Unknown";
-    return new Date(date).toLocaleString();
-  }
+	async function handleCreate() {
+		if (!canCreate) return;
+		const username = newUsername;
+		creating = true;
+		createError = '';
+		try {
+			const created = await createUser({ username, password: newPassword, smb_enabled: newSmb });
+			creating = false;
+			closeCreate();
+			// e.g. "User created, but SMB access could not be turned on: ..."
+			showOutcome(`User "${username}" created`, created.warnings);
+			await loadUsers(false);
+		} catch (e) {
+			createError = messageOf(e);
+		} finally {
+			creating = false;
+		}
+	}
+
+	// ---- Edit ----
+
+	// The user as the dialog was opened: every request carries this username,
+	// so a change never reaches another user who got the same id meanwhile.
+	let editing: User | null = null;
+	let editIsAdmin = false;
+	let editPassword = '';
+	let editConfirm = '';
+	let alsoTurnOnSmb = true;
+	let saving = false;
+	let smbBusy = false;
+	let editError = '';
+	let editWarnings: string[] = [];
+	let confirmSmbOff = false;
+	// Whether the user has access to a share; null while unknown.
+	let editHasShareAccess: boolean | null = null;
+	let shareAccessRequest = 0;
+
+	$: editState = editing?.smb?.state;
+	$: promoting = editing !== null && !editing.is_admin && editIsAdmin;
+	$: adminWarning =
+		promoting &&
+		(editState === 'active' || editState === 'password_needed' || editHasShareAccess !== false);
+	$: turnOnWithPassword =
+		editState === 'password_needed' && !editIsAdmin && alsoTurnOnSmb && editPassword !== '';
+	$: editPasswordReady =
+		editPassword === '' ||
+		(editPassword.length >= MIN_PASSWORD_LENGTH && editConfirm === editPassword);
+	$: editChanged = editing !== null && (editIsAdmin !== editing.is_admin || editPassword !== '');
+	$: canSave = editChanged && editPasswordReady && !saving && !smbBusy;
+	$: smbToggleDisabled = saving || smbBusy || promoting;
+
+	function openEdit(user: User) {
+		editing = user;
+		editIsAdmin = user.is_admin;
+		editPassword = '';
+		editConfirm = '';
+		alsoTurnOnSmb = true;
+		editError = '';
+		editWarnings = [];
+		confirmSmbOff = false;
+		editHasShareAccess = null;
+		void loadShareAccess(user);
+	}
+
+	async function loadShareAccess(user: User) {
+		const request = ++shareAccessRequest;
+		try {
+			const shares = await getSmbShares();
+			const hasAccess = shares.some((share) => share.access.some((a) => a.user_id === user.id));
+			if (request === shareAccessRequest) editHasShareAccess = hasAccess;
+		} catch {
+			// Unknown: the promotion warning is shown.
+			if (request === shareAccessRequest) editHasShareAccess = null;
+		}
+	}
+
+	function closeEdit(force = false) {
+		if (!force && (saving || smbBusy)) return;
+		editing = null;
+		confirmSmbOff = false;
+		editPassword = '';
+		editConfirm = '';
+	}
+
+	async function handleEditError(e: unknown, target: User) {
+		const message = messageOf(e);
+		const now = await currentAfterRefusal(e, target);
+		if (now === null) {
+			// The id names someone else now: close the dialog, so that none of
+			// its controls can act on them; the reloaded list shows who is who.
+			closeEdit(true);
+			actionError = { title: 'The change was not made', message };
+			return;
+		}
+		// The same user: show their SMB state as stored now (e.g. SMB was not
+		// turned on). The rest of the dialog keeps what it was opened with.
+		if (editing?.id === now.id) editing = { ...editing, smb: now.smb };
+		editError = message;
+	}
+
+	function smbStateText(user: User): string {
+		switch (user.smb?.state) {
+			case 'active':
+				return `SMB is on: ${user.username} signs in as ${user.smb.linux_name ?? user.username} with their UNOS password.`;
+			case 'password_needed':
+				return PASSWORD_NEEDED_HINT;
+			case 'off':
+				return `SMB is off for ${user.username}.`;
+			default:
+				return '';
+		}
+	}
+
+	async function saveEdit() {
+		if (!editing || !canSave) return;
+		const target = editing;
+		const password = editPassword;
+		saving = true;
+		editError = '';
+		try {
+			let result: User;
+			if (turnOnWithPassword) {
+				// Sets the user's UNOS and SMB password and turns SMB on.
+				result = await enableUserSmb(target.id, target.username, password);
+			} else {
+				const data: UserUpdate = { username: target.username };
+				if (editIsAdmin !== target.is_admin) data.is_admin = editIsAdmin;
+				if (password) data.password = password;
+				result = await updateUser(target.id, data);
+			}
+			saving = false;
+			closeEdit(true);
+			showOutcome(`User "${target.username}" updated`, [
+				...editWarnings,
+				...(result.warnings ?? [])
+			]);
+			await loadUsers(false);
+		} catch (e) {
+			await handleEditError(e, target);
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function onSmbToggle(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		if (!editing) return;
+		if (!input.checked) {
+			// SMB stays on until the confirmation.
+			input.checked = true;
+			editError = '';
+			confirmSmbOff = true;
+			return;
+		}
+		const target = editing;
+		smbBusy = true;
+		editError = '';
+		try {
+			const updated = await enableUserSmb(target.id, target.username);
+			editing = { ...target, smb: updated.smb ?? target.smb };
+			editWarnings = updated.warnings ?? [];
+			void loadUsers(false);
+		} catch (e) {
+			input.checked = false;
+			await handleEditError(e, target);
+		} finally {
+			smbBusy = false;
+		}
+	}
+
+	function cancelSmbOff() {
+		if (!smbBusy) confirmSmbOff = false;
+	}
+
+	async function confirmTurnOffSmb() {
+		if (!editing) return;
+		const target = editing;
+		smbBusy = true;
+		editError = '';
+		try {
+			const updated = await disableUserSmb(target.id, target.username);
+			editing = { ...target, smb: updated.smb ?? target.smb };
+			editWarnings = updated.warnings ?? [];
+			void loadUsers(false);
+		} catch (e) {
+			await handleEditError(e, target);
+		} finally {
+			smbBusy = false;
+			confirmSmbOff = false;
+		}
+	}
+
+	// ---- Delete ----
+
+	let userToDelete: User | null = null;
+	let deleting = false;
+	let deleteError = '';
+
+	function openDelete(user: User) {
+		userToDelete = user;
+		deleteError = '';
+	}
+
+	function closeDelete() {
+		if (!deleting) userToDelete = null;
+	}
+
+	async function confirmDelete() {
+		if (!userToDelete) return;
+		const target = userToDelete;
+		deleting = true;
+		deleteError = '';
+		try {
+			const result = await deleteUser(target.id, target.username);
+			deleting = false;
+			userToDelete = null;
+			showOutcome(`User "${target.username}" deleted`, result?.warnings);
+			await loadUsers(false);
+		} catch (e) {
+			const message = messageOf(e);
+			if ((await currentAfterRefusal(e, target)) === null) {
+				// From a list loaded before the id named someone else (or nobody).
+				deleting = false;
+				userToDelete = null;
+				actionError = { title: 'User was not deleted', message };
+				return;
+			}
+			deleteError = message;
+		} finally {
+			deleting = false;
+		}
+	}
 </script>
 
 <!-- Only render content if user is admin -->
 {#if $currentUser?.is_admin}
-<div class="space-y-6">
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-bold">User Management</h1>
-    <button
-      on:click={loadUsers}
-      class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-      disabled={loading}
-    >
-      <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-      Refresh
-    </button>
-  </div>
+	<div class="page-container">
+		<div class="page-header">
+			<h1 class="page-title">Users</h1>
+			<Button icon={UserPlus} on:click={openCreate}>Add user</Button>
+		</div>
 
-  {#if error}
-    <div class="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg">
-      {error}
-    </div>
-  {/if}
+		{#if error}
+			<Alert variant="error">{error}</Alert>
+		{/if}
+		{#if notice}
+			<Alert variant="success" dismissible on:dismiss={() => (notice = '')}>{notice}</Alert>
+		{/if}
+		{#if warnings.length > 0}
+			<Alert variant="warning" dismissible on:dismiss={() => (warnings = [])}>
+				{#each warnings as warning}
+					<p>{warning}</p>
+				{/each}
+			</Alert>
+		{/if}
+		{#if actionError}
+			<Alert
+				variant="error"
+				title={actionError.title}
+				dismissible
+				on:dismiss={() => (actionError = null)}>{actionError.message}</Alert
+			>
+		{/if}
 
-  {#if success}
-    <div class="bg-green-500/20 border border-green-500 text-green-400 px-4 py-3 rounded-lg">
-      {success}
-    </div>
-  {/if}
+		{#if loading}
+			<p class="loading-text">Loading...</p>
+		{:else}
+			<Card>
+				<h2 class="section-title mb-4">
+					<Users class="w-5 h-5" />
+					Users ({users.length})
+				</h2>
 
-  {#if loading}
-    <div class="flex items-center justify-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-    </div>
-  {:else}
-    <!-- Users List -->
-    <div class="bg-slate-800 rounded-lg p-6">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold flex items-center gap-2">
-          <Users class="w-5 h-5 text-blue-500" />
-          Users ({users.length})
-        </h2>
-        <button
-          on:click={openCreateModal}
-          class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
-        >
-          <UserPlus class="w-4 h-4" />
-          Add User
-        </button>
-      </div>
+				{#if users.length === 0}
+					<p class="text-muted">No users found</p>
+				{:else}
+					<div class="overflow-x-auto">
+						<table class="table">
+							<thead class="table-header">
+								<tr>
+									<th>Username</th>
+									<th>Role</th>
+									<th>2FA</th>
+									<th>SMB</th>
+									<th>Created</th>
+									<th class="text-right">Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each users as user (user.id)}
+									<tr class="table-row">
+										<td>
+											<div class="flex items-center gap-2">
+												<span class="font-medium">{user.username}</span>
+												{#if $currentUser?.id === user.id}
+													<Badge variant="info">You</Badge>
+												{/if}
+											</div>
+										</td>
+										<td>
+											{#if user.is_admin}
+												<span class="flex items-center gap-1 text-warning">
+													<Shield class="w-4 h-4" />
+													Admin
+												</span>
+											{:else}
+												<span class="flex items-center gap-1 text-secondary">
+													<ShieldOff class="w-4 h-4" />
+													User
+												</span>
+											{/if}
+										</td>
+										<td>
+											{#if user.totp_enabled}
+												<span class="text-success">Enabled</span>
+											{:else}
+												<span class="text-muted">Disabled</span>
+											{/if}
+										</td>
+										<td>
+											{#if user.smb}
+												<SmbStateBadge state={user.smb.state} hint={smbHint(user)} />
+											{:else}
+												<span class="text-muted">-</span>
+											{/if}
+										</td>
+										<td class="text-secondary">{formatDate(user.created_at)}</td>
+										<td>
+											<div class="flex items-center justify-end gap-2">
+												<Button variant="secondary" size="icon-sm" on:click={() => openEdit(user)}>
+													<Edit class="w-4 h-4" />
+													<span class="sr-only">Edit user {user.username}</span>
+												</Button>
+												{#if $currentUser?.id !== user.id}
+													<Button variant="ghost" size="icon-sm" on:click={() => openDelete(user)}>
+														<Trash2 class="w-4 h-4 text-error" />
+														<span class="sr-only">Delete user {user.username}</span>
+													</Button>
+												{/if}
+											</div>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			</Card>
 
-      {#if users.length === 0}
-        <p class="text-slate-400">No users found</p>
-      {:else}
-        <div class="overflow-x-auto">
-          <table class="w-full">
-            <thead>
-              <tr class="text-left text-slate-400 border-b border-slate-700">
-                <th class="pb-3">Username</th>
-                <th class="pb-3">Role</th>
-                <th class="pb-3">2FA</th>
-                <th class="pb-3">Created</th>
-                <th class="pb-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each users as user}
-                <tr class="border-b border-slate-700">
-                  <td class="py-3">
-                    <div class="flex items-center gap-2">
-                      <span class="font-medium">{user.username}</span>
-                      {#if $currentUser?.id === user.id}
-                        <span class="px-2 py-0.5 text-xs bg-blue-600 rounded">You</span>
-                      {/if}
-                    </div>
-                  </td>
-                  <td class="py-3">
-                    {#if user.is_admin}
-                      <span class="flex items-center gap-1 text-yellow-400">
-                        <Shield class="w-4 h-4" />
-                        Admin
-                      </span>
-                    {:else}
-                      <span class="flex items-center gap-1 text-slate-400">
-                        <ShieldOff class="w-4 h-4" />
-                        User
-                      </span>
-                    {/if}
-                  </td>
-                  <td class="py-3">
-                    {#if user.totp_enabled}
-                      <span class="text-green-400 text-sm">Enabled</span>
-                    {:else}
-                      <span class="text-slate-500 text-sm">Disabled</span>
-                    {/if}
-                  </td>
-                  <td class="py-3 text-slate-400">
-                    {formatDate(user.created_at)}
-                  </td>
-                  <td class="py-3 text-right">
-                    <div class="flex items-center justify-end gap-2">
-                      <button
-                        on:click={() => openEditModal(user)}
-                        class="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-                        title="Edit user"
-                      >
-                        <Edit class="w-4 h-4" />
-                      </button>
-                      {#if $currentUser?.id !== user.id}
-                        <button
-                          on:click={() => openDeleteModal(user)}
-                          class="p-2 bg-red-600/30 hover:bg-red-600 rounded-lg transition-colors"
-                          title="Delete user"
-                        >
-                          <Trash2 class="w-4 h-4" />
-                        </button>
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </div>
+			<Card>
+				<h2 class="section-title mb-4">About user management</h2>
+				<ul class="space-y-2 text-sm text-secondary list-disc ml-5">
+					<li>Admin users have full access to all UNOS features including user management.</li>
+					<li>Regular users can access basic features but cannot manage other users.</li>
+					<li>You cannot delete your own account.</li>
+					<li>Passwords must be at least {MIN_PASSWORD_LENGTH} characters long.</li>
+					<li>
+						SMB (network file) access is off by default. Allow it per user; administrators cannot
+						use SMB.
+					</li>
+					<li>2FA protects only the web interface.</li>
+				</ul>
+			</Card>
+		{/if}
+	</div>
 
-    <!-- Info Section -->
-    <div class="bg-slate-800 rounded-lg p-6">
-      <h2 class="text-lg font-semibold mb-4">About User Management</h2>
-      <div class="space-y-2 text-slate-400 text-sm">
-        <p>• Admin users have full access to all UNOS features including user management.</p>
-        <p>• Regular users can access basic features but cannot manage other users.</p>
-        <p>• You cannot delete your own account.</p>
-        <p>• Passwords must be at least 6 characters long.</p>
-      </div>
-    </div>
-  {/if}
-</div>
+	<!-- Create user -->
+	<Modal open={createOpen} title="Add user" size="md" closable={!creating} on:close={closeCreate}>
+		<form on:submit|preventDefault={handleCreate} class="space-y-4">
+			<Input
+				id="new-username"
+				label="Username"
+				bind:value={newUsername}
+				autocomplete="off"
+				maxlength={32}
+				hint={USERNAME_HINT}
+				error={newUsernameError}
+			/>
+			<Input
+				id="new-password"
+				type="password"
+				label="Password"
+				bind:value={newPassword}
+				autocomplete="new-password"
+				error={passwordError(newPassword)}
+			/>
+			<Input
+				id="new-password-confirm"
+				type="password"
+				label="Confirm password"
+				bind:value={newConfirm}
+				autocomplete="new-password"
+				error={confirmError(newPassword, newConfirm)}
+			/>
+			<div>
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input type="checkbox" class="form-checkbox" bind:checked={newSmb} />
+					Allow SMB (network file) access
+				</label>
+				<p class="form-hint">Uses the same password. SMB has no two-factor authentication.</p>
+			</div>
+			{#if createError}
+				<Alert variant="error" title="User was not created">{createError}</Alert>
+			{/if}
+		</form>
 
-<!-- Create User Modal -->
-{#if showCreateModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-xl font-semibold flex items-center gap-2">
-          <UserPlus class="w-5 h-5" />
-          Create New User
-        </h3>
-        <button on:click={() => showCreateModal = false} class="text-slate-400 hover:text-white">
-          <X class="w-5 h-5" />
-        </button>
-      </div>
+		<svelte:fragment slot="footer">
+			<Button variant="secondary" class="flex-1" disabled={creating} on:click={closeCreate}>
+				Cancel
+			</Button>
+			<Button class="flex-1" loading={creating} disabled={!canCreate} on:click={handleCreate}>
+				Create user
+			</Button>
+		</svelte:fragment>
+	</Modal>
 
-      <div class="space-y-4">
-        <div>
-          <label for="newUsername" class="block text-sm text-slate-400 mb-1">Username</label>
-          <input
-            type="text"
-            id="newUsername"
-            bind:value={newUsername}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="Enter username"
-          />
-        </div>
-        <div>
-          <label for="newPassword" class="block text-sm text-slate-400 mb-1">Password</label>
-          <input
-            type="password"
-            id="newPassword"
-            bind:value={newPassword}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="Enter password"
-          />
-        </div>
-        <div>
-          <label for="confirmPassword" class="block text-sm text-slate-400 mb-1">Confirm Password</label>
-          <input
-            type="password"
-            id="confirmPassword"
-            bind:value={confirmPassword}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="Confirm password"
-          />
-        </div>
-      </div>
+	<!-- Turn off SMB, asked from the edit dialog below. Declared before it on purpose: its Escape
+	     shows the edit dialog again before that dialog's key handler runs, and the edit dialog
+	     must stay open (Modal; users.spec 'Escape in the Turn off SMB confirmation ...'). -->
+	<Modal open={confirmSmbOff} title="Turn off SMB" size="md" closable={!smbBusy} on:close={cancelSmbOff}>
+		{#if editing}
+			<p>
+				Turn off SMB for <strong class="text-content">{editing.username}</strong>? Their open SMB
+				connections are ended.
+			</p>
+		{/if}
 
-      <div class="flex justify-end gap-3 mt-6">
-        <button
-          on:click={() => showCreateModal = false}
-          class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          on:click={handleCreateUser}
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
-        >
-          Create User
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+		<svelte:fragment slot="footer">
+			<Button variant="secondary" class="flex-1" disabled={smbBusy} on:click={cancelSmbOff}>
+				Cancel
+			</Button>
+			<Button variant="danger" class="flex-1" loading={smbBusy} on:click={confirmTurnOffSmb}>
+				Turn off SMB
+			</Button>
+		</svelte:fragment>
+	</Modal>
 
-<!-- Edit User Modal -->
-{#if showEditModal && editingUser}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-xl font-semibold flex items-center gap-2">
-          <Edit class="w-5 h-5" />
-          Edit User: {editingUser.username}
-        </h3>
-        <button on:click={() => showEditModal = false} class="text-slate-400 hover:text-white">
-          <X class="w-5 h-5" />
-        </button>
-      </div>
+	<!-- Edit user; hidden while its SMB confirmation is shown (one dialog at a time). -->
+	<Modal
+		open={editing !== null && !confirmSmbOff}
+		title={editing ? `Edit user ${editing.username}` : 'Edit user'}
+		size="lg"
+		closable={!saving && !smbBusy}
+		on:close={() => closeEdit()}
+	>
+		{#if editing}
+			<form
+				on:submit|preventDefault={saveEdit}
+				class="space-y-5 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
+			>
+				<section class="space-y-2">
+					<h3 class="card-title">Role</h3>
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input
+							type="checkbox"
+							class="form-checkbox"
+							bind:checked={editIsAdmin}
+							disabled={saving || smbBusy}
+						/>
+						Administrator
+					</label>
+					{#if adminWarning}
+						<Alert variant="warning">
+							Administrators cannot use SMB: making {editing.username} an administrator removes SMB
+							access and their share permissions, and ends their open SMB connections
+						</Alert>
+					{/if}
+				</section>
 
-      <div class="space-y-4">
-        <div>
-          <label class="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              bind:checked={editIsAdmin}
-              class="w-5 h-5 rounded bg-slate-700 border-slate-600"
-            />
-            <span>Administrator privileges</span>
-          </label>
-        </div>
-        <div>
-          <label for="editPassword" class="block text-sm text-slate-400 mb-1">New Password (leave blank to keep current)</label>
-          <input
-            type="password"
-            id="editPassword"
-            bind:value={editPassword}
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="Enter new password"
-          />
-        </div>
-      </div>
+				<section class="space-y-2">
+					<h3 class="card-title">Password</h3>
+					<Input
+						id="edit-password"
+						type="password"
+						label="New password"
+						bind:value={editPassword}
+						autocomplete="new-password"
+						hint="Leave empty to keep the current password"
+						error={passwordError(editPassword)}
+						disabled={saving}
+					/>
+					<Input
+						id="edit-password-confirm"
+						type="password"
+						label="Confirm new password"
+						bind:value={editConfirm}
+						autocomplete="new-password"
+						error={confirmError(editPassword, editConfirm)}
+						disabled={saving}
+					/>
+					{#if editState === 'active'}
+						<p class="form-hint">
+							Also changes the SMB password and ends the user's open SMB connections
+						</p>
+					{:else if editState === 'password_needed' && !editIsAdmin}
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								class="form-checkbox"
+								bind:checked={alsoTurnOnSmb}
+								disabled={saving}
+							/>
+							Also turn SMB on with this password
+						</label>
+					{/if}
+				</section>
 
-      <div class="flex justify-end gap-3 mt-6">
-        <button
-          on:click={() => showEditModal = false}
-          class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          on:click={handleUpdateUser}
-          class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
-        >
-          Save Changes
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+				<section class="space-y-2">
+					<h3 class="card-title">SMB access</h3>
+					{#if !editing.smb}
+						<p class="text-sm text-muted">The SMB state of this user is not known.</p>
+					{:else if editing.smb.state === 'unavailable'}
+						<p class="text-sm text-secondary">{editing.smb.reason ?? ''}</p>
+					{:else}
+						<div class="flex flex-wrap items-center gap-2 text-sm">
+							<SmbStateBadge state={editing.smb.state} />
+							<span class="text-secondary">{smbStateText(editing)}</span>
+						</div>
+						<label
+							class="flex items-center gap-2 {smbToggleDisabled ? 'opacity-60' : 'cursor-pointer'}"
+						>
+							<input
+								type="checkbox"
+								class="form-checkbox"
+								checked={editing.smb.allowed}
+								disabled={smbToggleDisabled}
+								on:change={onSmbToggle}
+							/>
+							Allow SMB access
+						</label>
+						{#if smbBusy}
+							<p class="text-sm text-muted">Saving...</p>
+						{/if}
+					{/if}
+				</section>
+			</form>
 
-<!-- Delete User Modal -->
-{#if showDeleteModal && deletingUser}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4">
-      <h3 class="text-xl font-semibold mb-4">Delete User</h3>
-      <p class="text-slate-400 mb-6">
-        Are you sure you want to delete user <strong class="text-white">{deletingUser.username}</strong>? This action cannot be undone.
-      </p>
-      <div class="flex justify-end gap-3">
-        <button
-          on:click={() => showDeleteModal = false}
-          class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          on:click={handleDeleteUser}
-          class="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg transition-colors"
-        >
-          Delete User
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+			<!-- Below the scrolling form, so that they are seen. -->
+			{#if editWarnings.length > 0}
+				<Alert variant="warning">
+					{#each editWarnings as warning}
+						<p>{warning}</p>
+					{/each}
+				</Alert>
+			{/if}
+			{#if editError}
+				<Alert variant="error" title="The change was not made">{editError}</Alert>
+			{/if}
+		{/if}
+
+		<svelte:fragment slot="footer">
+			<Button
+				variant="secondary"
+				class="flex-1"
+				disabled={saving || smbBusy}
+				on:click={() => closeEdit()}
+			>
+				Close
+			</Button>
+			<Button class="flex-1" loading={saving} disabled={!canSave} on:click={saveEdit}>Save</Button>
+		</svelte:fragment>
+	</Modal>
+
+	<Modal
+		open={userToDelete !== null}
+		title="Delete user"
+		size="md"
+		danger
+		closable={!deleting}
+		on:close={closeDelete}
+	>
+		{#if userToDelete}
+			<p>
+				Are you sure you want to delete user <strong class="text-content"
+					>{userToDelete.username}</strong
+				>? This action cannot be undone.
+			</p>
+			{#if deleteError}
+				<Alert variant="error" title="User was not deleted">{deleteError}</Alert>
+			{/if}
+		{/if}
+
+		<svelte:fragment slot="footer">
+			<Button variant="secondary" class="flex-1" disabled={deleting} on:click={closeDelete}>
+				Cancel
+			</Button>
+			<Button variant="danger" class="flex-1" loading={deleting} on:click={confirmDelete}>
+				Delete user
+			</Button>
+		</svelte:fragment>
+	</Modal>
 {/if}

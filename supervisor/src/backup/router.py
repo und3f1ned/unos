@@ -9,14 +9,18 @@ archive into arbitrary file writes on the host. Restore therefore:
   ``..`` abort the restore, and tarfile's ``data`` filter is applied as a
   second line of defence;
 * replaces the live database only after the restored copy passes
-  ``PRAGMA integrity_check`` and has a usable ``users`` table with an
-  administrator. The current database is copied first, and the copy into the
-  live file uses SQLite's online backup API, so connections that are open
-  in the running supervisor stay consistent;
-* never installs the archived smb.conf as is: its shares are validated like
-  shares created through the API and smb.conf is regenerated and checked
-  with testparm (``shares.smb.stage_backup_config``). Problems with smb.conf
-  are reported as warnings and do not stop the database restore.
+  ``PRAGMA integrity_check``, has a usable ``users`` table with an
+  administrator and no triggers or views. The current database is copied
+  first, and the copy into the live file uses SQLite's online backup API, so
+  connections that are open in the running supervisor stay consistent;
+* never installs the archived smb.conf: shares and their access are rows of
+  the database, and smb.conf is rendered from them. Before the swap, the
+  extracted database is prepared for SMB (shares/service.py and
+  shares/accounts.py, spec 4.3): its SMB tables are created or checked, and
+  a database whose shares were never imported gets its shares imported again
+  after the restore, from the archived smb.conf or else the live one. The
+  restore runs under the SMB lock, which also covers the post-restore step
+  that renders smb.conf from the restored database.
 
 An uploaded backup is checked with the same limits and member checks in one
 pass over its gzip stream, which writes nothing (``_inspect_archive``).
@@ -57,14 +61,16 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .. import database
 from ..auth.utils import verify_token
 from ..config import get_settings
 from ..database import init_db
 from ..request_limits import UPLOAD_OPENAPI, UploadSink, receive_upload
-from ..shares import smb
+from ..security.validators import sanitize_error_message
+from ..shares import accounts, service
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -135,6 +141,14 @@ _EXTENDED_HEADERS = frozenset(
 )
 
 _restore_lock = threading.Lock()
+# A restore request is running (its locked part may outlive a cancelled request).
+_restore_running = False
+
+SMB_REPAIRED_AT_START = "SMB state is repaired at the next start"
+SMB_CONF_WITHOUT_DATABASE = (
+    "smb.conf in the backup was not restored: shares are stored in the UNOS database; "
+    "restore a backup that contains the database"
+)
 
 
 class BackupValidationError(Exception):
@@ -160,7 +174,15 @@ class BackupInfo(BaseModel):
 
 class BackupConfig(BaseModel):
     include_users: bool = True
-    include_shares: bool = True
+    include_shares: bool = Field(
+        default=True,
+        description=(
+            "Also store the current smb.conf in the archive, as a copy for reference. Shares and their "
+            "access are part of the UNOS database, which every backup contains, and a restore takes them "
+            "from the database: this option does not protect shares from being restored, and the "
+            "archived smb.conf is never installed."
+        ),
+    )
     include_pools: bool = True
     include_apps: bool = True
     include_scheduler: bool = True
@@ -281,6 +303,10 @@ def _verify_database(path: Path) -> None:
         admins = conn.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1").fetchone()[0]
         if not admins:
             raise BackupValidationError("unos.db in the backup has no administrator account")
+        # UNOS creates neither. A trigger would run inside the SMB preparation
+        # of the extracted file (spec 4.3), before anything was checked.
+        if conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')").fetchone()[0]:
+            raise BackupValidationError("unos.db in the backup contains triggers or views; UNOS databases have none")
     except sqlite3.Error as e:
         raise BackupValidationError(f"unos.db in the backup cannot be read: {e}") from e
     finally:
@@ -690,19 +716,53 @@ class _BackupUpload(UploadSink):
             self.tmp.unlink(missing_ok=True)
 
 
-def _stage_smb_conf(path: Path, warnings: list[str]) -> smb.StagedSmbConf | None:
+def _archived_smb_conf(path: Path, warnings: list[str]) -> str | None:
+    """The text of the archived smb.conf (strict UTF-8, at most MAX_CONFIG_BYTES), or None with a warning.
+
+    It is never installed: the import after the restore reads its shares when
+    the restored database has none of its own (spec 4.3).
+    """
+    data = path.read_bytes()
     try:
-        content = path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError:
+        if len(data) > MAX_CONFIG_BYTES:
+            raise ValueError("too large")
+        return data.decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
         warnings.append("smb.conf in the backup is not valid UTF-8 and was not restored.")
         return None
+
+
+def _prepare_smb(db_file: Path, db_path: Path, archive_conf: str | None) -> list[str]:
+    """The SMB rules of spec 4.3 on the extracted database, before it replaces the live one.
+
+    The SMB tables are created or checked (BackupValidationError), the SMB
+    accounts of the live database are read, and then one transaction on the
+    extracted file applies the share rules (shares/service.py) and the
+    account rules (shares/accounts.py). Any failure rolls it back and the
+    restore fails: the live database never holds an unproven SMB state.
+    Returns the messages for the restore result.
+    """
+    service.ensure_smb_tables(db_file)
+    snapshot = accounts.snapshot_for_restore(db_path)
+    conn = sqlite3.connect(str(db_file), isolation_level=None)
     try:
-        staged, smb_warnings = smb.stage_backup_config(content)
-    except (smb.SambaConfigError, OSError) as e:
-        warnings.append(f"smb.conf was not restored: {e}")
-        return None
-    warnings.extend(smb_warnings)
-    return staged
+        conn.execute("PRAGMA trusted_schema = OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            authoritative = service.restored_smb_authoritative(conn)
+            guest_shares = service.prepare_restored_shares(conn, authoritative, archive_conf)
+            messages = accounts.prepare_restored_accounts(conn, snapshot, authoritative)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    except service.PoolListUnavailable as e:
+        raise HTTPException(503, f"{sanitize_error_message(e)}; nothing was restored") from e
+    finally:
+        conn.close()
+    if guest_shares:
+        logger.info("The restored database keeps guest access for: %s", ", ".join(guest_shares))
+    return list(messages)
 
 
 class RestoreInProgress(Exception):
@@ -770,38 +830,79 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
             else:
                 _verify_database(db_file)
 
-        staged = _stage_smb_conf(extract_dir / "smb.conf", warnings) if "smb.conf" in members else None
+        archive_conf = None
+        if "smb.conf" in members:
+            if db_file is None:
+                warnings.append(SMB_CONF_WITHOUT_DATABASE)
+            else:
+                archive_conf = _archived_smb_conf(extract_dir / "smb.conf", warnings)
+        if db_file is not None:
+            warnings.extend(_prepare_smb(db_file, db_path, archive_conf))
 
-        try:
-            if db_file is not None:
-                previous_db = _keep_copy_of_database(db_path)
-                _replace_database(db_file, db_path)
-                restored.append("database")
-            if staged is not None:
-                try:
-                    staged.install()
-                    restored.append("smb_config")
-                except OSError as e:
-                    warnings.append(f"smb.conf was not restored: {e}")
-        finally:
-            if staged is not None:
-                staged.discard()
+        if db_file is not None:
+            previous_db = _keep_copy_of_database(db_path)
+            _replace_database(db_file, db_path)
+            restored.append("database")
 
         for name in _NOT_RESTORED:
             if name in members:
                 warnings.append(f"{name} is included in the backup but is not restored automatically.")
 
-    message = f"Backup restored: {', '.join(restored)}." if restored else "Nothing was restored."
-    if warnings:
-        message += " " + " ".join(warnings)
     return {
         "status": "success",
         "restored": restored,
         "manifest": manifest,
-        "message": message,
+        "message": _restore_message(restored, warnings),
         "warnings": warnings,
         "previous_database": str(previous_db) if previous_db else None,
     }
+
+
+def _restore_message(restored: list[str], warnings: list[str]) -> str:
+    message = f"Backup restored: {', '.join(restored)}." if restored else "Nothing was restored."
+    if warnings:
+        message += " " + " ".join(warnings)
+    return message
+
+
+async def _after_database_restore(result: dict) -> None:
+    """The post-restore step (spec 4.3), under smb_lock: missing tables, then the SMB reconcile.
+
+    A failure is the warning SMB_REPAIRED_AT_START: the startup reconcile does
+    the same work. When smb.conf was rendered from the restored database,
+    "smb_config" is added to the restored items.
+    """
+    warnings: list[str] = []
+    applied = False
+    try:
+        await init_db()  # older backups may lack tables added since
+    except Exception:
+        logger.exception("Could not create missing tables after the database restore")
+        warnings.append(SMB_REPAIRED_AT_START)
+    else:
+        try:
+            async with database.async_session() as db:
+                warnings, applied = await service.after_database_restore_locked(db)
+        except Exception:
+            logger.exception("The SMB state could not be updated after the database restore")
+            warnings, applied = [SMB_REPAIRED_AT_START], False
+    result["warnings"].extend(warnings)
+    if applied:
+        result["restored"].append("smb_config")
+    result["message"] = _restore_message(result["restored"], result["warnings"])
+
+
+async def _restore_and_reconcile(backup_path: Path, passphrase: str | None) -> dict:
+    """The restore and its post-restore step, holding smb_lock (a restore is an SMB state change)."""
+    global _restore_running
+    try:
+        async with service.smb_lock():
+            result = await asyncio.to_thread(_restore, backup_path, passphrase)
+            if "database" in result["restored"]:
+                await _after_database_restore(result)
+            return result
+    finally:
+        _restore_running = False
 
 
 # --- endpoints ----------------------------------------------------------------
@@ -1049,8 +1150,19 @@ async def restore_backup(
     if is_encrypted and not passphrase:
         raise HTTPException(400, "Passphrase required for encrypted backup")
 
+    # The locked part runs in its own task, awaited through shield: a request
+    # that is cancelled cannot release smb_lock while the restore thread runs.
+    global _restore_running
+    if _restore_running:
+        raise HTTPException(409, "Another restore is already running")
+    _restore_running = True
     try:
-        result = await asyncio.to_thread(_restore, backup_path, passphrase if is_encrypted else None)
+        task = asyncio.ensure_future(_restore_and_reconcile(backup_path, passphrase if is_encrypted else None))
+    except BaseException:
+        _restore_running = False
+        raise
+    try:
+        result = await asyncio.shield(task)
     except RestoreInProgress:
         raise HTTPException(409, "Another restore is already running") from None
     except BackupValidationError as e:
@@ -1063,13 +1175,6 @@ async def restore_backup(
     except Exception as e:
         logger.exception("Backup restore failed")
         raise HTTPException(500, f"Failed to restore backup: {e}") from e
-
-    if "database" in result["restored"]:
-        # Older backups may lack tables added since; create them.
-        try:
-            await init_db()
-        except Exception:
-            logger.exception("Could not create missing tables after the database restore")
     return result
 
 

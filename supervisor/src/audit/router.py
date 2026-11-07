@@ -17,6 +17,17 @@ router = APIRouter(prefix="/audit", tags=["audit"], dependencies=[Depends(requir
 AUDIT_FILE = "/data/audit_log.json"
 MAX_ENTRIES = 10000  # Keep last 10000 entries
 
+# Longest values one entry keeps (in characters). Some entries are written before
+# anyone is authenticated (a failed login), and every entry rewrites the whole file.
+MAX_USERNAME_CHARS = 128
+MAX_USER_AGENT_CHARS = 256
+MAX_RESOURCE_ID_CHARS = 256
+MAX_DETAILS_CHARS = 1024
+
+
+def _bounded(value: Optional[str], limit: int) -> Optional[str]:
+    return value[:limit] if isinstance(value, str) else value
+
 
 def load_audit_log() -> list[AuditEntry]:
     """Load audit log from file."""
@@ -69,12 +80,12 @@ async def log_action(
         timestamp=datetime.now().isoformat(),
         action=action,
         severity=severity,
-        username=actual_username,
+        username=_bounded(actual_username, MAX_USERNAME_CHARS),
         ip_address=ip_address,
-        user_agent=user_agent,
+        user_agent=_bounded(user_agent, MAX_USER_AGENT_CHARS),
         resource_type=resource_type,
-        resource_id=resource_id,
-        details=details,
+        resource_id=_bounded(resource_id, MAX_RESOURCE_ID_CHARS),
+        details=_bounded(details, MAX_DETAILS_CHARS),
         success=success
     )
 

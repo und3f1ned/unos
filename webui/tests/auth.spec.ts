@@ -58,6 +58,36 @@ test.describe('Authentication', () => {
     expect(answers).toEqual([]);
   });
 
+  test('a two-factor code that was already used keeps the code form and says to wait', async ({ page }) => {
+    // Codes are single-use: the server refuses a code of a time step it accepted already.
+    const reused = 'This two-factor code was already used; wait for the next one';
+    const answers = [
+      { status: 200, json: { access_token: '', token_type: 'bearer', requires_totp: true } },
+      { status: 401, json: { detail: reused } },
+    ];
+    const sent: unknown[] = [];
+    await page.route('**/api/v1/auth/login', (route) => {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill(answers.shift()!);
+    });
+    await page.goto('/login');
+    await page.fill('#username', 'e2e_totp_user');
+    await page.fill('#password', 'e2e-password');
+    await page.click('button[type="submit"]');
+    await page.fill('#totp', '123456');
+    await page.click('button[type="submit"]');
+
+    await expect(page.getByText(reused)).toBeVisible();
+    // The next code can be typed at once: no need to enter the password again.
+    await expect(page.locator('#totp')).toBeVisible();
+    await expect(page.locator('#password')).toHaveCount(0);
+    expect(answers).toEqual([]);
+    expect(sent).toEqual([
+      { username: 'e2e_totp_user', password: 'e2e-password' },
+      { username: 'e2e_totp_user', password: 'e2e-password', totp_code: '123456' },
+    ]);
+  });
+
   test('should logout by clearing session', async ({ page }) => {
     // Login first
     await page.goto('/login');

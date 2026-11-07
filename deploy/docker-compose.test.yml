@@ -98,6 +98,9 @@ services:
       - CI=true
       # A throwaway stack: the tests that restore a backup may run (tests/backup-restore.spec.ts).
       - E2E_ALLOW_RESTORE=1
+      # The stand-in (no Samba, seeded share [e2e_seed]): the SMB activation
+      # and seeded-share tests may run. Never set against the device.
+      - E2E_STAND_IN=1
     # A fresh stack has no account. Before the command runs, create the one
     # the tests sign in with (admin/admin123, webui/tests/fixtures.ts) through
     # the first-run setup API, as scripts/test-cycle.sh does; 400 means that an

@@ -163,9 +163,10 @@ run_e2e_tests() {
     npx playwright install chromium --with-deps 2>/dev/null || true
 
     # Run tests. HTTP_URL is the plain-HTTP port for the redirect and health
-    # checks in tests/https.spec.ts.
+    # checks in tests/https.spec.ts. E2E_STAND_IN=1: this is the test stack (no
+    # Samba, seeded share), so the SMB activation and seeded-share tests run.
     log_info "Executing Playwright tests..."
-    BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test --reporter=list
+    E2E_STAND_IN=1 BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test --reporter=list
 
     log_success "E2E tests passed!"
 }
@@ -180,7 +181,7 @@ run_quick_test() {
     fi
 
     # Run only auth and API tests as smoke test
-    BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test auth.spec.ts api.spec.ts --reporter=list
+    E2E_STAND_IN=1 BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test auth.spec.ts api.spec.ts --reporter=list
 
     log_success "Smoke test passed!"
 }

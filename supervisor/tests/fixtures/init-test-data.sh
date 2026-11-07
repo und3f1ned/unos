@@ -19,6 +19,21 @@ cat > /data/smb.conf << 'EOF'
    max log size = 50
 EOF
 
+# A share for the E2E tests of the one-time smb.conf import (webui/tests/
+# shares.spec.ts, "Seeded SMB share"). UNOS imports it at its first start, as
+# a share that is not served (testpool is not a pool that UNOS manages here),
+# with notes for the unknown user and the dropped option. After that the
+# database is the source of smb.conf and the import never runs again.
+cat >> /data/smb.conf << 'EOF'
+
+[e2e_seed]
+   path = /mnt/pools/testpool/e2e-seed
+   comment = Seeded for E2E
+   read only = no
+   valid users = e2e_nobody
+   vfs objects = fruit
+EOF
+
 # Create empty NFS exports file
 touch /data/exports
 

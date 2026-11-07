@@ -328,6 +328,11 @@ def _managed_entries_or_none() -> dict[str, ManagedFstabEntry] | None:
         return None
 
 
+def managed_pool_names() -> set[str]:
+    """Names of the pools UNOS manages (the fstab markers). Raises when the host's fstab cannot be read."""
+    return set(parse_managed_fstab(_read_fstab()))
+
+
 # --------------------------------------------------------------------------
 # btrfs facts
 # --------------------------------------------------------------------------

@@ -18,6 +18,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from ..config import get_settings
+from ..shares.constants import linux_name_problem
 
 settings = get_settings()
 
@@ -39,9 +40,11 @@ USERNAME_PATTERN = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}\Z')
 # Snapshot names become a path component below <subvolume>/.snapshots.
 SNAPSHOT_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9 _.@:+-]{0,127}\Z')
 
-# Reserved SMB share names that should not be used
+# Reserved SMB share names that should not be used (compared in lower case).
+# Samba reads a section named [global] or [globals], in any case, as the global
+# section (source3/param/loadparm.c, GLOBAL_NAME and GLOBAL_NAME2).
 RESERVED_SMB_NAMES = frozenset({
-    'global', 'homes', 'printers', 'print$', 'ipc$', 'admin$', 'c$', 'd$'
+    'global', 'globals', 'homes', 'printers', 'print$', 'ipc$', 'admin$', 'c$', 'd$'
 })
 
 # List of known valid timezones (subset - full list would be loaded from system)
@@ -434,6 +437,25 @@ def validate_username(name: str) -> str:
     return name
 
 
+def validate_new_username(name: str) -> str:
+    """
+    Validate the name of a new UNOS user (first-run setup and user creation).
+
+    New users get names that SMB accounts can use (shares.constants): 1 to 32
+    lowercase letters, digits, '_' and '-', starting with a letter, and not a
+    name reserved for the system. Existing users keep their names; SMB is
+    unavailable for names that break the rule. Checked in the handlers (not by
+    a Pydantic validator), so a bad name is a 400 with a plain message.
+
+    Raises:
+        HTTPException(400): If the name breaks the rule
+    """
+    problem = linux_name_problem(name)
+    if problem is not None:
+        raise HTTPException(status_code=400, detail=f"Invalid username. {problem}")
+    return name
+
+
 def validate_snapshot_name(name: str) -> str:
     """
     Validate a btrfs snapshot name (a single path component below .snapshots).
@@ -676,11 +698,44 @@ def open_dir_nofollow(
         ValueError: If a component is not a single, normal path component
         OSError: ``ENOENT``, ``ENOTDIR``, ``ELOOP`` (symlink), ...
     """
+    _check_parts(parts)
+    fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    return _walk_nofollow(fd, parts, create=create, mode=mode)
+
+
+def open_subdirs_nofollow(
+    dir_fd: int,
+    parts: Sequence[str],
+    *,
+    create: bool = False,
+    mode: int = 0o777,
+) -> int:
+    """Like :func:`open_dir_nofollow`, but starting at the open directory ``dir_fd``.
+
+    ``dir_fd`` stays open and is not changed. Every component below it is
+    opened relative to its parent's descriptor with ``O_NOFOLLOW``, so what
+    is opened or created is below the directory ``dir_fd`` refers to, even
+    when that directory was renamed or unmounted from its path meanwhile.
+
+    Returns:
+        A new file descriptor for the directory; the caller must close it
+
+    Raises:
+        ValueError: If a component is not a single, normal path component
+        OSError: ``ENOENT``, ``ENOTDIR``, ``ELOOP`` (symlink), ...
+    """
+    _check_parts(parts)
+    return _walk_nofollow(os.dup(dir_fd), parts, create=create, mode=mode)
+
+
+def _check_parts(parts: Sequence[str]) -> None:
     for part in parts:
         if not part or part in (".", "..") or "/" in part or "\x00" in part:
             raise ValueError(f"Invalid path component: {part!r}")
 
-    fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+
+def _walk_nofollow(fd: int, parts: Sequence[str], *, create: bool, mode: int) -> int:
+    """Open ``parts`` below the directory ``fd``, which this takes over (it is closed)."""
     try:
         for part in parts:
             try:

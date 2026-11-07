@@ -23,8 +23,11 @@ def pin_temporary_directory() -> None:
 pin_temporary_directory()
 
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -42,6 +45,7 @@ from .auth.router import router as auth_router
 from .system.router import router as system_router
 from .storage.router import router as storage_router
 from .shares.router import router as shares_router
+from .shares.repair_router import router as shares_repair_router
 from .containers.router import router as containers_router
 from .apps.router import router as apps_router
 from .files.router import router as files_router
@@ -64,6 +68,7 @@ from .health.router import start_health_monitors, stop_health_monitors
 from .power.router import start_ups_monitor, stop_ups_monitor
 from .storage import pools as storage_pools
 from .storage.pools import reconcile_pools_on_startup
+from .shares.service import reconcile_smb_on_startup
 
 # Seconds the startup check for missing host programs may take.
 HOST_TOOL_CHECK_TIMEOUT = 10
@@ -118,6 +123,7 @@ async def lifespan(app: FastAPI):
     # mount check below, because it mounts filesystems on the host.
     run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"
     host_tool_check: asyncio.Task | None = None
+    smb_reconcile: asyncio.Task | None = None
     if run_background:
         # Runs beside the rest of startup (in a worker thread, bounded by
         # HOST_TOOL_CHECK_TIMEOUT), so a slow host neither delays nor fails it.
@@ -126,6 +132,12 @@ async def lifespan(app: FastAPI):
         # "nofail" gives up on slow or missing disks) before the scheduler and
         # apps start writing to /mnt/pools. Logs the outcome, never raises.
         await reconcile_pools_on_startup()
+        # The SMB startup reconcile (shares/service.py) runs beside the rest of
+        # startup and holds smb_lock while it runs: SMB changes, and the first
+        # read of the shares before their one-time import, wait for it. The
+        # startup never waits for its host commands. Logs, never raises.
+        smb_reconcile = asyncio.create_task(reconcile_smb_on_startup(), name="unos-smb-reconcile")
+        await asyncio.sleep(0)  # the task takes smb_lock before the app serves its first request
     # Background loops must be started here. FastAPI ignores router-level
     # @router.on_event hooks when the app defines a lifespan, which silently
     # disabled the scheduler and all monitors in earlier releases.
@@ -143,6 +155,9 @@ async def lifespan(app: FastAPI):
         if host_tool_check is not None:
             host_tool_check.cancel()
             await asyncio.gather(host_tool_check, return_exceptions=True)
+        if smb_reconcile is not None:
+            smb_reconcile.cancel()
+            await asyncio.gather(smb_reconcile, return_exceptions=True)
 
 
 app = FastAPI(
@@ -155,6 +170,19 @@ app = FastAPI(
 # Add rate limiter to app state and exception handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_without_input(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 answers without the values that were sent.
+
+    FastAPI's default answer repeats each rejected value (``input``, and
+    ``ctx`` with the error), so a rejected password would come back in the
+    body and end up wherever answers are logged.
+    """
+    errors = [{k: v for k, v in error.items() if k not in ("input", "ctx")} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
 
 # FastAPI reads a request body before it checks the credentials, so every
 # body is limited (src/request_limits.py). The two uploads read their form
@@ -205,6 +233,7 @@ _ADMIN_ONLY = [Depends(require_admin)]
 for _router in (
     storage_router,
     shares_router,
+    shares_repair_router,
     containers_router,
     apps_router,
     files_router,

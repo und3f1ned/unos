@@ -99,7 +99,8 @@ function signInAndCleanUp() {
     const response = await request.get('/api/v1/auth/users', { headers: auth() });
     for (const user of (await response.json()) as { id: number; username: string }[]) {
       if (created.users.includes(user.username)) {
-        await request.delete(`/api/v1/auth/users/${user.id}`, { headers: auth() });
+        const name = encodeURIComponent(user.username);
+        await request.delete(`/api/v1/auth/users/${user.id}?username=${name}`, { headers: auth() });
       }
     }
   });

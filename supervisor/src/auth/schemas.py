@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+from ..shares.account_state import SmbAccountStatus
 
 # bcrypt only reads the first 72 bytes of a password. New passwords longer than
 # that are rejected instead of being silently truncated; see auth.utils for how
@@ -24,8 +26,12 @@ NewPassword = Annotated[str, AfterValidator(_fits_bcrypt)]
 
 
 class UserCreate(BaseModel):
-    username: str
+    # The name rule of new users (security.validators.validate_new_username)
+    # runs in the handlers, so that a bad name is a 400 with a plain message.
+    username: str = Field(max_length=64)
     password: NewPassword
+    # Also turn SMB on with this password (POST /auth/users only).
+    smb_enabled: bool = False
 
 
 class UserResponse(BaseModel):
@@ -36,6 +42,10 @@ class UserResponse(BaseModel):
     is_admin: bool
     totp_enabled: bool = False
     created_at: datetime | None = None
+    # Set by the user management endpoints; GET /auth/me keeps it null (the
+    # Account page uses GET /auth/me/smb).
+    smb: SmbAccountStatus | None = None
+    warnings: list[str] = []
 
 
 class Token(BaseModel):
@@ -45,9 +55,12 @@ class Token(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
-    totp_code: str | None = None
+    # Bounded: a failed login is recorded (login_attempts, audit_log.json) before
+    # anyone is authenticated. The limits are far above any real name, password
+    # (bcrypt reads 72 bytes) or code; the 422 handler leaves the values out.
+    username: str = Field(max_length=255)
+    password: str = Field(max_length=1024)
+    totp_code: str | None = Field(default=None, max_length=16)
 
 
 class PasswordChange(BaseModel):
@@ -58,6 +71,47 @@ class PasswordChange(BaseModel):
 class UserUpdate(BaseModel):
     is_admin: bool | None = None
     password: NewPassword | None = None
+    # The username the request was built for: users.id is a plain rowid that
+    # SQLite reuses after a deletion (409 when it is not the user's name).
+    username: str | None = Field(default=None, max_length=64)
+
+
+# SMB access (spec 4.1)
+class SmbEnableRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(max_length=64)       # must be the user's current username (409)
+    password: NewPassword | None = None
+
+
+class SmbDisableRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(max_length=64)       # must be the user's current username (409)
+
+
+class SmbSelfEnableRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(max_length=1024)
+    totp_code: str | None = Field(default=None, max_length=16)
+
+
+class MySmbShare(BaseModel):
+    name: str
+    comment: str
+    level: Literal["read", "write"]
+    guest_ok: bool
+    usable: bool          # the account is active (or it is a guest share). Database only: whether
+                          # the share is served (5.4) is not checked, since that needs the host's pool list
+
+
+class MySmbStatus(BaseModel):
+    account: SmbAccountStatus
+    totp_required: bool        # the user has 2FA: POST /auth/me/smb/enable needs totp_code
+    shares: list[MySmbShare]   # shares with an access row for this user, plus guest shares; sorted by name; no paths
+
+
+class MySmbChange(MySmbStatus):
+    """Answer of POST /auth/me/smb/enable and /disable: the new status and the warnings of the change."""
+    warnings: list[str] = []
 
 
 # TOTP 2FA schemas

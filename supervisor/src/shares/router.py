@@ -1,14 +1,36 @@
+"""Share endpoints: SMB shares (spec 5.2) and NFS exports. Administrator-only (main.py).
+
+SMB shares are rows of the UNOS database; shares/service.py changes them
+under smb_lock() and renders smb.conf from them. Every mutation is audited
+(spec 5.6). PUT /shares/smb/{name} is gone (405): PATCH changes only the
+fields it sends.
+"""
+
 import asyncio
+import inspect
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..audit.router import log_action
+from ..audit.schemas import AuditAction
 from ..auth.utils import verify_token
+from ..database import get_db
 from ..security.validators import sanitize_error_message
-from .schemas import SmbShareCreate, SmbShareInfo, NfsExportCreate, NfsExportInfo
-from . import smb, nfs
 from ..storage import pools
+from . import nfs, service, smb
+from .schemas import (
+    NfsExportCreate,
+    NfsExportInfo,
+    SmbServiceStatus,
+    SmbShareCreate,
+    SmbShareDeleted,
+    SmbShareInfo,
+    SmbShareUpdate,
+)
 
 # Rate limiter for shares endpoints
 limiter = Limiter(key_func=get_remote_address)
@@ -20,28 +42,61 @@ class SharePath(BaseModel):
     path: str
     label: str
     type: str  # "pool" or "volume"
+    # The pool is one that UNOS manages (its fstab marker): only such folders can be SMB
+    # shares (spec 5.4 rule 4). A volume has its pool's value; false for every path when
+    # the pool list cannot be read.
+    managed: bool
 
 
 async def _call(func, *args, not_found_status: int = 400):
-    """Run a blocking share operation in a worker thread and map its errors.
+    """Run a share operation and map its errors (spec 5.2).
 
-    ValueError carries a user-facing message (unknown or duplicate share);
-    validation errors arrive as HTTPException and are passed through.
+    Coroutine functions are awaited; blocking functions run in a worker
+    thread. HTTPException passes through (validation errors arrive as 400).
     """
     try:
+        if inspect.iscoroutinefunction(func):
+            return await func(*args)
         return await asyncio.to_thread(func, *args)
     except HTTPException:
         raise
+    except service.PoolListUnavailable as e:
+        raise HTTPException(status_code=503, detail=sanitize_error_message(e)) from e
     except smb.SambaConfigError as e:
         raise HTTPException(status_code=500, detail=sanitize_error_message(e)) from e
+    except pools.PoolNotFoundError as e:
+        raise HTTPException(status_code=400, detail=f"Share path must be on a storage pool: {e}") from e
+    except pools.PoolConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=not_found_status, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=sanitize_error_message(e)) from e
 
 
+async def _audit(request: Request, actor: str | None, action: AuditAction, change: service.ShareChange) -> None:
+    """The audit entry of a share mutation (spec 5.6); none when nothing changed."""
+    if change.details is None:
+        return
+    await log_action(
+        action,
+        request=request,
+        username=actor,
+        resource_type="share",
+        resource_id=change.name,
+        details=change.details,
+        severity=change.severity,
+    )
+
+
 def _available_paths() -> list[SharePath]:
     available = []
+    try:
+        managed = pools.managed_pool_names()
+    except Exception:
+        managed = set()  # unknown: no path counts as one of a managed pool
 
     try:
         pool_list = pools.list_pools()
@@ -50,7 +105,8 @@ def _available_paths() -> list[SharePath]:
                 available.append(SharePath(
                     path=pool.mountpoint,
                     label=f"{pool.name} (Pool)",
-                    type="pool"
+                    type="pool",
+                    managed=pool.name in managed,
                 ))
                 # Also list volumes in this pool
                 try:
@@ -59,7 +115,8 @@ def _available_paths() -> list[SharePath]:
                         available.append(SharePath(
                             path=vol.path,
                             label=f"{pool.name}/{vol.name} (Volume)",
-                            type="volume"
+                            type="volume",
+                            managed=pool.name in managed,
                         ))
                 except Exception:
                     pass
@@ -77,39 +134,77 @@ async def list_available_paths(_=Depends(verify_token)):
 
 # SMB Endpoints
 @router.get("/smb", response_model=list[SmbShareInfo])
-async def list_smb_shares(_=Depends(verify_token)):
-    """List all SMB shares."""
-    return await _call(smb.list_shares)
+async def list_smb_shares(_=Depends(verify_token), db: AsyncSession = Depends(get_db)):
+    """List all SMB shares (the shares of smb.conf are imported first, once)."""
+    return await _call(service.list_share_infos, db)
 
 
 @router.post("/smb", response_model=SmbShareInfo)
 @limiter.limit("10/minute")  # Rate limit share creation
-async def create_smb_share(request: Request, share: SmbShareCreate, _=Depends(verify_token)):
-    """Create a new SMB share."""
-    return await _call(smb.create_share, share)
+async def create_smb_share(
+    request: Request,
+    share: SmbShareCreate,
+    user=Depends(verify_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create an SMB share; a missing folder is created (root:unos-smb 2770)."""
+    actor = user.username
+    change = await _call(service.create_share, db, share)
+    await _audit(request, actor, AuditAction.SHARE_CREATED, change)
+    return change.info
+
+
+@router.get("/smb-status", response_model=SmbServiceStatus)
+async def get_smb_status(_=Depends(verify_token), db: AsyncSession = Depends(get_db)):
+    """Samba on the host, problems of smb.conf and of the shares, the import report."""
+    return await _call(service.service_status, db)
+
+
+@router.delete("/smb-status/import-report")
+async def clear_smb_import_report(_=Depends(verify_token), db: AsyncSession = Depends(get_db)):
+    """Dismiss the report of the one-time smb.conf import."""
+    await _call(service.clear_import_report, db)
+    return {"status": "ok"}
 
 
 @router.get("/smb/{name}", response_model=SmbShareInfo)
-async def get_smb_share(name: str, _=Depends(verify_token)):
-    """Get a specific SMB share."""
-    share = await _call(smb.get_share, name)
-    if not share:
-        raise HTTPException(status_code=404, detail="Share not found")
-    return share
+async def get_smb_share(name: str, _=Depends(verify_token), db: AsyncSession = Depends(get_db)):
+    """Get one SMB share (the name is not case-sensitive)."""
+    return await _call(service.get_share_info, db, name)
 
 
-@router.put("/smb/{name}", response_model=SmbShareInfo)
-async def update_smb_share(name: str, share: SmbShareCreate, _=Depends(verify_token)):
-    """Update an SMB share."""
-    return await _call(smb.update_share, name, share)
+@router.patch("/smb/{name}", response_model=SmbShareInfo)
+async def update_smb_share(
+    request: Request,
+    name: str,
+    changes: SmbShareUpdate,
+    user=Depends(verify_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change an SMB share: only the fields that are sent change.
+
+    Send expected_version (the version of the share as loaded): 409 when the
+    share was changed meanwhile. ``access`` replaces the whole list.
+    """
+    actor = user.username
+    change = await _call(service.update_share, db, name, changes)
+    await _audit(request, actor, AuditAction.SHARE_UPDATED, change)
+    return change.info
 
 
-@router.delete("/smb/{name}")
+@router.delete("/smb/{name}", response_model=SmbShareDeleted)
 @limiter.limit("10/minute")  # Rate limit share deletion
-async def delete_smb_share(request: Request, name: str, _=Depends(verify_token)):
-    """Delete an SMB share."""
-    await _call(smb.delete_share, name, not_found_status=404)
-    return {"status": "deleted"}
+async def delete_smb_share(
+    request: Request,
+    name: str,
+    user=Depends(verify_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an SMB share. Its folder and files are kept; open connections to it are closed."""
+    actor = user.username
+    change = await _call(service.delete_share, db, name)
+    await _audit(request, actor, AuditAction.SHARE_DELETED, change)
+    return SmbShareDeleted(warnings=change.warnings)
 
 
 # NFS Endpoints

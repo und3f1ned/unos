@@ -26,6 +26,8 @@ router = APIRouter(prefix="/security", tags=["security"])
 FIREWALL_RULES_FILE = "/data/firewall_rules.json"
 CERTS_DIR = "/data/certs"
 CADDY_CERTS_DIR = "/data/caddy/certificates"
+# Longest username a login attempt keeps (in characters).
+LOGIN_ATTEMPT_USERNAME_CHARS = 128
 
 
 # ==================== Login History ====================
@@ -764,7 +766,8 @@ async def record_login_attempt(
         user_agent = request.headers.get("User-Agent", "")[:500]  # Limit length
 
     attempt = LoginAttempt(
-        username=username,
+        # Failed logins are recorded before anyone is authenticated: keep the name short.
+        username=username[:LOGIN_ATTEMPT_USERNAME_CHARS] if isinstance(username, str) else username,
         ip_address=ip_address,
         user_agent=user_agent,
         success=success,

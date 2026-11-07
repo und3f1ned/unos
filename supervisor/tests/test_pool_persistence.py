@@ -1552,6 +1552,10 @@ class TestLifespanRunsReconcile:
                      "stop_health_monitors", "start_ups_monitor", "stop_ups_monitor",
                      "check_host_tools"):
             monkeypatch.setattr(main, name, noop)
+        # The SMB startup reconcile would import /tmp/test_smb.conf and run host commands.
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setattr(main, "reconcile_smb_on_startup", AsyncMock(return_value=None))
         return main
 
     def test_lifespan_reconciles_pools(self, quiet_loops, monkeypatch):

@@ -150,41 +150,170 @@ included unless it is an SD card or eMMC.
 
 ### SMB Shares (Windows/Mac Compatible)
 
-SMB shares allow you to access files from Windows, macOS, and Linux.
+SMB shares give Windows, macOS and Linux computers on your network access to
+folders of your pools. UNOS writes the whole Samba configuration
+(`/etc/samba/smb.conf`) from its database; changes made to that file by hand
+are overwritten.
+
+#### How Access Works
+
+- **SMB is off for every user until an administrator allows it** on the
+  **Users** page (see [SMB Access](#smb-access)). Users then open shares
+  with their UNOS username and password.
+- **Each share has its own access list:** for each user **No access**,
+  **Read only** or **Read & write**. New users have no access to any share.
+- **Administrators cannot use SMB.** Their password controls the whole NAS,
+  and SMB has neither two-factor authentication nor a limit on login
+  attempts. Use a regular account for your files.
+- Everyone with **Read & write** on a share can create, change, rename and
+  delete every file in it, and everyone with **Read only** can read all of
+  it. For files that only some people may see, use separate shares.
+
+#### What Can Be Shared
+
+A share is a folder inside a pool, or a volume. UNOS refuses:
+- the top level of a pool, which holds app data (`apps/`), the volumes and
+  the snapshots;
+- `apps` and everything below it, and `.snapshots`;
+- folders outside the pools that UNOS manages;
+- a folder inside another share's folder, or one that contains another
+  share's folder: shares do not overlap.
+
+A share marked **Not served** breaks one of these rules, for example a share
+of a whole pool made by an earlier release. Nobody can open it until you give
+it a new folder with **Edit**; it cannot be given access until then.
+
+A share's folder must also be inside folders that only root can change:
+whoever can change a folder above it can put another folder in its place.
+Earlier releases made the folder of a writable guest share writable by every
+account (mode 0777), also when that folder was the top folder of a pool.
+Below such a folder UNOS creates no new share folder and does not run
+**Repair permissions**: the message names the folder and the command to run
+on the NAS, for example `sudo chmod 755 /mnt/pools/data`. A share of a folder
+that exists already is created with a warning, and the status panel of the
+**Shares** page lists every served share below such a folder until the
+command has run.
 
 #### Creating a Share
 
-1. Go to **Shares**
-2. Click **Add Share**
-3. Configure:
-   - **Name** - Share name (appears in network)
-   - **Pool** - Which storage pool to use
-   - **Path** - Folder path within the pool
-   - **Guest Access** - Allow anonymous access
-   - **Read Only** - Prevent modifications
-4. Click **Create**
+1. Go to **Shares** and click **Add SMB share**
+2. Configure:
+   - **Name** - The share name that computers on the network see: up to 32
+     letters, digits, `_` and `-`, not starting with `-`. `global`,
+     `globals`, `homes` and `printers` are reserved, in any letter case.
+   - **Location** - A pool or a volume, and a **Folder** inside it. The folder
+     is required for a pool; for a volume, leave it empty to share the whole
+     volume. A missing folder is created (see
+     [What Can Be Shared](#what-can-be-shared) for when it is not). Only pools
+     that UNOS manages are listed: a pool marked **Not mounted at boot** on
+     the **Storage** page is not, until you stop the apps that use it and
+     press **Unmount** and then **Mount** there (or reboot and press
+     **Mount**).
+   - **Comment** - Optional description
+   - **Show in network browsing** - Whether the share appears in the list of
+     shares (a hidden share can still be opened by its name)
+   - **Guests can read this share without a password** - See
+     [Guest Shares](#guest-shares)
+   - **Access** - For each user: No access, Read only or Read & write
+3. Click **Create**
+
+Folders that apps use (downloads, media) can be shared. SMB users with write
+access then change what the app sees: they can add, change, rename or delete
+its files there.
+
+#### Guest Shares
+
+Anyone on your network can read a guest share without a password, and so can
+every SMB account, also one made by hand on the NAS. Its name is visible to
+anyone on your network. Guests can never write. While a guest share exists,
+connections to the NAS are not required to be signed: guest connections
+cannot be signed, and clients may refuse to connect as a guest to a NAS that
+requires signing. Windows 11 refuses guest access by default, and guest
+connections are neither signed nor encrypted. Use guest shares only for
+files everyone on your network may read, and keep them few.
+
+#### Editing a Share
+
+- **Edit** changes the comment, network browsing, guest access and the
+  access list (and the folder of a share marked **Not served**). Removing or
+  lowering someone's access, and turning guest access off, disconnect every
+  open connection to that share; the computers reconnect by themselves.
+  Adding access disconnects nobody.
+- **Repair permissions** fixes the permissions of the files that are already
+  in the share (see below).
+- **Delete** removes the share; the folder and its files are kept. Open
+  connections to the share are closed.
+
+#### Repair Permissions
+
+UNOS creates share folders with the group `unos-smb` and the mode 2770, and
+files created over SMB get that group and the mode 660. Files that were in
+the folder before (from an earlier release, from an app or from the File
+Browser) keep their permissions until you press **Repair permissions** on
+the share. A share marked **Permissions need repair** needs it. Repairing:
+- gives every file and folder of the share the group `unos-smb` and group
+  read and write access (folders 2770, files 660, or 770 for files their
+  owner may run);
+- **removes the access that the group and other permissions gave every
+  other account**, including apps that run as their own user (for example
+  PUID 1000): they can no longer read the folder;
+- does not change ACL entries (set with `setfacl`; `ls -l` shows a `+`): the
+  users and groups named in them keep their access, and can get more (up to
+  what their entry gives), because the group permissions that Repair sets
+  become the ACL's mask. On such a file or folder the group `unos-smb` gets
+  only what the ACL's entry for the owning group gives, and the entries of a
+  folder's default ACL are also given to new files in it. Remove the entries
+  you do not need (for example `sudo setfacl -R -b FOLDER` removes those of
+  FOLDER and everything in it), then repair again;
+- leaves private files and folders alone: those only their owner can use,
+  such as 0600 keys or a 0700 folder;
+- changes no owner and no file content;
+- skips snapshots, volumes and other mounts inside the share, symbolic
+  links, and files with more than one hard link;
+- can take minutes, and stops after 4 minutes: run it again to continue
+  (entries that are already right are skipped quickly).
+
+It changes the permissions of existing files and cannot be undone
+automatically. It is refused while a folder above the share's folder can be
+changed by other accounts (see [What Can Be Shared](#what-can-be-shared)).
 
 #### Accessing Shares
 
+Sign in with your UNOS username and password, after SMB is turned on for your
+account. Use the NAS's address on your local network (IPv4, or an IPv6 ULA or
+link-local address): SMB refuses public addresses. **Account** → **Network
+file access (SMB)** lists the shares you can use and how to connect to them.
+
 **Windows:**
 1. Open File Explorer
-2. Type `\\YOUR_NAS_IP` in the address bar
+2. Type `\\YOUR_NAS_IP\sharename` in the address bar
 3. Enter your UNOS username and password
+
+For an IPv6 address, Windows needs the ipv6-literal.net form: the address
+with `-` instead of each `:` (and `s` instead of the `%` of a zone index),
+followed by `.ipv6-literal.net`, for example
+`\\fd00--103.ipv6-literal.net\sharename` for `fd00::103`. The `smb://`
+addresses below take the address in brackets: `smb://[fd00::103]/sharename`.
 
 **macOS:**
 1. Open Finder
-2. Press `Cmd+K`
-3. Enter `smb://YOUR_NAS_IP`
-4. Enter credentials
+2. Choose **Go** → **Connect to Server** (`Cmd+K`)
+3. Enter `smb://YOUR_NAS_IP/sharename`
+4. Sign in as a registered user with your UNOS username and password
 
 **Linux:**
 ```bash
-# Mount temporarily
-sudo mount -t cifs //YOUR_NAS_IP/sharename /mnt/nas -o username=admin
+# Mount (asks for your UNOS password)
+sudo mount -t cifs //YOUR_NAS_IP/sharename /mnt/sharename -o username=YOUR_USERNAME
 
-# Or browse with file manager
-smb://YOUR_NAS_IP
+# Or open in a file manager
+smb://YOUR_NAS_IP/sharename
 ```
+
+If a computer connected as a guest or with another account before, remove
+the saved sign-in first, or it keeps using it: on macOS in **Keychain
+Access** (the entry with the NAS's address), on Windows in **Credential
+Manager** → **Windows Credentials**.
 
 ---
 
@@ -309,23 +438,78 @@ Go to **App Store** → **Installed** to:
 1. Go to **Users** (administrators only)
 2. Click **Add User**
 3. Enter:
-   - Username
-   - Password (twice)
+   - Username: 1 to 32 lowercase letters, digits, `_` or `-`, starting with a
+     letter. It must differ from every other username in more than letter
+     case (`Bob` and `bob` are one name for SMB). Names that start with `s-`
+     and a digit (such as `s-1-1-0`) are reserved: Samba reads them as
+     security identifiers (SIDs).
+   - Password (twice, at least 8 characters)
+   - **Allow SMB (network file) access** (optional): turns SMB on for the new
+     user with this password (see [SMB Access](#smb-access))
 4. Click **Create User**
 
 New accounts are regular users. To make one an administrator, edit it and
-tick **Administrator privileges**.
+tick **Administrator privileges**. Accounts created before these username
+rules keep their names and keep working; a name that breaks the rules (with
+capitals or a dot, or starting with `s-` and a digit, say) cannot use SMB:
+create a new account for that.
 
 ### User Roles
 
 | Role | Permissions |
 |------|-------------|
-| Admin | Full access to all features |
-| User | **Dashboard** (system overview and live statistics) and **Account** (own password, two-factor authentication and login history) |
+| Admin | Full access to all features, except SMB: administrators cannot use SMB |
+| User | **Dashboard** (system overview and live statistics) and **Account** (own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted
-or deleted.
+or deleted. Making a user an administrator removes the user's SMB access and
+share permissions and ends the user's open SMB connections.
+
+### SMB Access
+
+SMB (network file access) is off for every user until an administrator allows
+it. The **SMB** column of the **Users** page shows each user's state:
+
+| State | Meaning |
+|-------|---------|
+| Active | The user can open shares over SMB with their UNOS username and password |
+| Password needed | SMB is allowed, but Samba does not have the user's password yet |
+| Off | SMB is not allowed for the user |
+| Not available | Administrators, and usernames that SMB cannot use |
+
+To allow SMB for a user, edit the user and turn on **Allow SMB access**. The
+state is then **Password needed**, and SMB is turned on with a password in
+one of two ways:
+- the user goes to **Account** → **Network file access (SMB)**, enters their
+  current password (and their two-factor code, if they use 2FA) and clicks
+  **Turn on SMB**: the SMB password is the UNOS password;
+- or you set a new password for the user in the edit dialog, with **Also turn
+  SMB on with this password** ticked.
+
+Then give the user access to shares on the **Shares** page.
+
+SMB passwords need at least 8 characters. A user whose UNOS password is
+shorter (earlier releases, and scripts that use the API, can set shorter
+ones) first changes it under **Change Password**, then turns SMB on. A two-factor code works only once:
+the code the user signed in with cannot turn SMB on as well, so wait until
+the authenticator app shows the next one.
+
+SMB cannot be turned on while Samba still uses an smb.conf that this release
+of UNOS did not write (HTTP 409), as right after an update until UNOS has
+written its own at its first start. When importing the shares of the old
+file or writing the new one failed, the status panel of the **Shares** page
+says why: "Shares were not imported from smb.conf: ..." (UNOS writes its
+smb.conf only after that import) or "smb.conf was not updated: ...".
+Allowing SMB and turning it off are not affected.
+
+Turning **Allow SMB access** off (or the user's own **Turn off SMB**) ends the
+user's open SMB connections. When Samba could not apply a user's own change
+at once, the **Account** page shows a short warning without details; the
+details are in the supervisor's log.
+
+After a backup is restored, a user whose password changed since the backup
+was made shows **Password needed** and must turn SMB on again.
 
 ### Changing Passwords
 
@@ -334,6 +518,15 @@ Users can change their own password:
 2. Under **Change Password**, enter the current and the new password
 
 Admins can reset any user's password via **Users** page.
+
+When SMB is on for the user, the SMB password changes too, and the user's open
+SMB connections are ended: the computers sign in again with the new password.
+Update the saved password on every computer and app that connects over SMB
+(mapped drives, media players, sync apps, `cifs` credential files): Samba
+writes each failed sign-in of an SMB account to the system disk, and SMB has
+no limit on sign-in attempts, so a device that keeps trying the old password
+keeps writing. If open SMB connections could not be ended, **Change
+Password** shows a warning that stays until you dismiss it.
 
 ### Two-Factor Authentication (2FA)
 
@@ -350,6 +543,14 @@ To disable 2FA:
 1. Go to **Account** (administrators: **System** → **Security**)
 2. Under **Two-Factor Authentication**, click **Disable**
 3. Enter a current 2FA code and click **Disable 2FA**
+
+Each code works once: a code that was accepted (to sign in, to turn SMB on,
+or to turn 2FA on or off) is refused when it is used again, with "This
+two-factor code was already used; wait for the next one". The app shows a new
+code every 30 seconds.
+
+2FA protects only the web interface, not SMB: SMB signs in with the password
+alone. Turning SMB on yourself needs your two-factor code as well.
 
 ### API Tokens
 
@@ -444,12 +645,13 @@ it with the pool's **Volumes** on the **Storage** page (see
 
 ### System Backup
 
-Go to **System** → **Backup & Restore**. A backup holds the UNOS database
-(user accounts with their passwords, two-factor authentication, API tokens
-and the login history) and the SMB share configuration. It does not hold the
-files in your pools, nor settings kept elsewhere, such as notification
-channels, scheduled tasks, firewall rules and UPS settings. Each backup in
-the list has **Restore**, **Download** and **Delete** buttons.
+Go to **System** → **Backup & Restore**. A backup holds the UNOS database:
+user accounts with their passwords, two-factor authentication, API tokens,
+the login history, and the SMB shares with their access lists. It does not
+hold the files in your pools, Samba's own password database, nor settings
+kept elsewhere, such as notification channels, scheduled tasks, firewall
+rules and UPS settings. Each backup in the list has **Restore**, **Download**
+and **Delete** buttons.
 
 - **Create Backup** - Makes an unencrypted backup (`.tar.gz`).
 - **Upload Backup** - Adds a backup file of at most 256 MiB: `.tar.gz`, or
@@ -457,13 +659,25 @@ the list has **Restore**, **Download** and **Delete** buttons.
   `uploaded_<date>_<time>` with the same extension. An unencrypted backup
   named `.tar.gz.enc` is refused.
 - **Restore** - Type the backup's file name to confirm; an encrypted backup
-  also needs its passphrase. Restoring replaces the database and the SMB
-  share configuration with those in the backup: the user accounts with their
-  passwords, two-factor authentication, API tokens and the login history are
-  then those of the backup, so an API token revoked after the backup was made
-  works again.
+  also needs its passphrase. Restoring replaces the database with the one in
+  the backup: the user accounts with their passwords, two-factor
+  authentication, API tokens and the login history are then those of the
+  backup, so an API token revoked after the backup was made works again.
   Other files in a backup, such as `fstab`, are not restored; the result
   lists them.
+
+SMB after a restore:
+- The shares and their access lists come back with the database, and UNOS
+  writes smb.conf from them. The copy of smb.conf in a backup (the
+  `include_shares` option of the API) is for older releases; UNOS reads it
+  only to import the shares of a backup made before UNOS kept shares in its
+  database.
+- SMB keeps working for users whose password did not change since the backup
+  was made. Everyone else shows **Password needed** and must turn SMB on
+  again (see [SMB Access](#smb-access)), and so must a user whose SMB user id
+  belongs to another account on this NAS (for example in a backup of another
+  installation).
+- Guest access is never turned back on by the smb.conf of an old backup.
 
 Encrypted backups (`.tar.gz.enc`) are made through the API, with
 `POST /api/v1/backup/create` and the body
@@ -519,11 +733,18 @@ Choose which events trigger notifications:
 
 1. ✅ Create the administrator account right after installing, with a strong password
 2. ✅ Enable two-factor authentication (2FA)
-3. ✅ Use strong, unique passwords
-4. ✅ Keep UNOS updated
-5. ✅ Don't expose to the internet without VPN
-6. ✅ Use API tokens instead of passwords for scripts
-7. ✅ Review audit logs periodically
+3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
+   no limit on login attempts and no two-factor authentication, and UNOS does
+   not refuse common passwords
+4. ✅ After a password change, update the saved password on every computer
+   and app that connects over SMB: Samba writes each failed sign-in to the
+   system disk
+5. ✅ Use a regular account, not an administrator, for your files
+6. ✅ Keep guest shares few (guests can only read)
+7. ✅ Keep UNOS updated
+8. ✅ Don't expose to the internet without VPN
+9. ✅ Use API tokens instead of passwords for scripts
+10. ✅ Review audit logs periodically
 
 ### Storage
 

@@ -86,7 +86,8 @@ test.describe('Regular user account', () => {
 
   test.afterAll(async ({ request }) => {
     if (userId === undefined) return;
-    await request.delete(`/api/v1/auth/users/${userId}`, {
+    // The name the request is meant for: the server refuses it (409) if the id names someone else.
+    await request.delete(`/api/v1/auth/users/${userId}?username=${encodeURIComponent(REGULAR.username)}`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
   });

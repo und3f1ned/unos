@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
-# storage/disks.py, shares/smb.py and health/router.py. cat, test, mkdir,
-# rmdir, find, sync and sh also run there but come from essential packages.
+# storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
+# and the shadow tools, smbpasswd, pdbedit, smbstatus) and health/router.py.
+# cat, test, mkdir, rmdir, find, sync and sh also run there but come from
+# essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
@@ -45,6 +47,13 @@ HOST_TOOLS: dict[str, str] = {
     "systemctl": "systemd",
     "testparm": "samba-common-bin",
     "smbcontrol": "samba-common-bin",
+    "getent": "libc-bin",
+    "groupadd": "passwd",
+    "useradd": "passwd",
+    "userdel": "passwd",
+    "smbpasswd": "samba-common-bin",
+    "pdbedit": "samba",
+    "smbstatus": "samba",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.

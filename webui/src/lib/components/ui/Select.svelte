@@ -57,8 +57,13 @@
 				}
 				break;
 			case 'Escape':
-				e.preventDefault();
-				open = false;
+				// Closes only the list, not the dialog around it; a closed list
+				// leaves Escape to the dialog.
+				if (open) {
+					e.preventDefault();
+					e.stopPropagation();
+					open = false;
+				}
 				break;
 			case 'ArrowDown':
 				e.preventDefault();
@@ -174,7 +179,7 @@
 			role="listbox"
 			aria-labelledby={label ? `${inputId}-label` : undefined}
 			class="select-dropdown scrollbar-thin"
-			transition:fly={{ y: -8, duration: 150 }}
+			in:fly={{ y: -8, duration: 150 }}
 		>
 			{#each options as option, index}
 				<li

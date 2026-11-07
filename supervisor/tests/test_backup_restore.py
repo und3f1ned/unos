@@ -9,9 +9,10 @@ import os
 import sqlite3
 import tarfile
 import tempfile
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,7 @@ from fastapi.testclient import TestClient
 from src.auth.utils import verify_token
 from src.host import HostResult
 from src.main import app
+from src.shares import accounts, interfaces, service
 
 backup_router = importlib.import_module("src.backup.router")
 
@@ -88,11 +90,19 @@ def _usernames(db_path) -> set[str]:
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    yield from make_env(tmp_path, monkeypatch)
+    yield from make_env(tmp_path, monkeypatch, smb_applied=True)
 
 
-def make_env(tmp_path, monkeypatch):
-    """The env fixture: backup directory, live database and smb.conf in tmp_path."""
+def make_env(tmp_path, monkeypatch, *, smb_applied: bool = False):
+    """The env fixture: backup directory, live database and smb.conf in tmp_path.
+
+    The SMB steps of a database restore are mocked: P2's account rules on the
+    extracted database (accounts.snapshot_for_restore and
+    accounts.prepare_restored_accounts) and the post-restore step
+    (service.after_database_restore_locked, returning no warnings and
+    ``smb_applied``). The SMB tests at the end of this file use the real
+    post-restore step (smb_env).
+    """
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
     data_dir = tmp_path / "data"
@@ -112,7 +122,13 @@ def make_env(tmp_path, monkeypatch):
     monkeypatch.setattr(backup_router.settings, "db_path", str(db_path))
     init_db = AsyncMock()
     monkeypatch.setattr(backup_router, "init_db", init_db)
-    host = patch("src.shares.smb.run_on_host", return_value=HostResult(0, "", ""))
+    after_restore = AsyncMock(return_value=([], smb_applied))
+    monkeypatch.setattr(service, "after_database_restore_locked", after_restore)
+    snapshot = MagicMock(return_value=interfaces.RestoreSnapshot())
+    prepare_accounts = MagicMock(return_value=[])
+    monkeypatch.setattr(accounts, "snapshot_for_restore", snapshot)
+    monkeypatch.setattr(accounts, "prepare_restored_accounts", prepare_accounts)
+    host = patch("src.host.run_on_host", return_value=HostResult(0, "", ""))
     with patch("src.shares.smb.settings", share_settings), patch("src.security.validators.settings", share_settings):
         with host as run_on_host:
             app.dependency_overrides[verify_token] = lambda: ADMIN
@@ -127,6 +143,9 @@ def make_env(tmp_path, monkeypatch):
                 samba=samba,
                 host=run_on_host,
                 init_db=init_db,
+                after_restore=after_restore,
+                snapshot=snapshot,
+                prepare_accounts=prepare_accounts,
             )
     app.dependency_overrides.pop(verify_token, None)
 
@@ -177,11 +196,10 @@ def test_restore_database_and_shares(env):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "success"
-    assert body["restored"] == ["database", "smb_config"]
+    assert body["restored"] == ["database", "smb_config"]  # smb.conf is rendered from the restored database
     assert body["manifest"]["version"] == "1.0"
-    assert any("fstab" in w for w in body["warnings"])
-    assert any("escape" in w for w in body["warnings"])
-    assert "fstab" in body["message"]
+    assert body["warnings"] == ["fstab is included in the backup but is not restored automatically."]
+    assert body["message"] == "Backup restored: database, smb_config. " + body["warnings"][0]
 
     # The live database was replaced in place and open connections see it.
     assert {row[0] for row in reader.execute("SELECT username FROM users")} == {"admin2", "bob"}
@@ -191,13 +209,17 @@ def test_restore_database_and_shares(env):
     assert body["previous_database"] == str(copy)
     assert _usernames(copy) == {"admin"}
     env.init_db.assert_awaited_once()
+    env.after_restore.assert_awaited_once()
 
-    # smb.conf was regenerated from validated shares only.
-    content = env.smb_conf.read_text()
-    assert "[docs]" in content
-    assert "root preexec" not in content and "EVIL" not in content and "[escape]" not in content
+    # The archived smb.conf is never installed: the database it came with had no
+    # SMB state, so its shares are imported from it after the restore.
+    assert env.smb_conf.read_text() == INITIAL_SMB_CONF
     assert sorted(os.listdir(env.samba)) == ["smb.conf"]
-    assert ["smbcontrol", "smbd", "reload-config"] in [c.args[0] for c in env.host.call_args_list]
+    assert env.host.call_args_list == []
+    with closing(sqlite3.connect(env.db_path)) as conn:
+        assert conn.execute(
+            "SELECT shares_imported_at, pending_import_source, pending_import_conf FROM smb_state"
+        ).fetchall() == [(None, "backup", archived_smb)]
 
 
 def test_create_then_restore_roundtrip(env):
@@ -214,7 +236,7 @@ def test_create_then_restore_roundtrip(env):
 
     response = _restore(env, name)
     assert response.status_code == 200, response.text
-    assert response.json()["restored"] == ["database"]
+    assert response.json()["restored"] == ["database", "smb_config"]
     assert _usernames(env.db_path) == {"admin"}
 
 
@@ -525,7 +547,7 @@ def test_a_time_out_of_range_does_not_stop_a_restore(env, manifest):
     response = _restore(env, "times.tar.gz")
 
     assert response.status_code == 200, response.text
-    assert response.json()["restored"] == ["database"]
+    assert response.json()["restored"] == ["database", "smb_config"]
     assert _usernames(env.db_path) == {"admin2", "bob"}
 
 
@@ -764,17 +786,14 @@ def test_bad_databases_are_rejected(env, make):
 # --- smb.conf from the archive ----------------------------------------------------------
 
 
-def test_smb_conf_rejected_by_testparm_is_skipped_with_warning(env):
-    env.host.side_effect = lambda cmd, **kw: (
-        HostResult(1, "", "Error loading services.") if cmd[0] == "testparm" else HostResult(0, "", "")
-    )
+def test_the_archived_smb_conf_is_never_tested_or_installed(env):
+    """The restore stages no smb.conf: shares come from the database (spec 4.3)."""
+    env.host.side_effect = AssertionError("no host command during the restore")
     name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env)),
                         _file("smb.conf", f"[docs]\n   path = {env.pools}/data/docs\n".encode())])
     response = _restore(env, name)
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["restored"] == ["database"]
-    assert any("smb.conf was not restored" in w for w in body["warnings"])
+    assert response.json()["warnings"] == []
     assert env.smb_conf.read_text() == INITIAL_SMB_CONF
     assert sorted(os.listdir(env.samba)) == ["smb.conf"]
 
@@ -784,6 +803,7 @@ def test_smb_conf_not_utf8_is_skipped(env):
     response = _restore(env, name)
     assert response.status_code == 200
     assert response.json()["restored"] == []
+    assert response.json()["warnings"] == [backup_router.SMB_CONF_WITHOUT_DATABASE]
     assert env.smb_conf.read_text() == INITIAL_SMB_CONF
 
 
@@ -859,3 +879,720 @@ def test_upload_too_large_is_rejected(env, monkeypatch):
 
 def test_upload_wrong_extension_is_rejected(env):
     assert _upload(env, b"x", filename="backup.zip").status_code == 400
+
+
+# --- SMB state (spec 4.3): the extracted database is prepared before the swap ---------------------
+#
+# The restored database is untrusted: triggers and views are refused, SMB
+# tables of an unknown layout too, and its SMB state is proven before it
+# replaces the live database. A database whose shares were never imported is
+# not authoritative: its shares are imported again after the restore, from
+# the archived smb.conf (else the live one), and never with guest access.
+
+import asyncio  # noqa: E402
+import contextlib  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+import httpx  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.pool import NullPool  # noqa: E402
+
+import src.database  # noqa: E402
+from src.audit import router as audit_router  # noqa: E402
+from src.auth import models as auth_models  # noqa: E402,F401  (registers the tables)
+from src.database import Base  # noqa: E402
+from src.security import models as security_models  # noqa: E402,F401
+from src.shares import smbconf  # noqa: E402
+from src.shares import models as smb_models  # noqa: E402,F401
+from src.storage import pools as storage_pools  # noqa: E402
+
+REAL_AFTER_RESTORE = service.after_database_restore_locked
+HASH = "$2b$12$" + "y" * 53
+# Users of the backups below: id, name, administrator.
+BACKUP_USERS = ((1, "admin2", True), (2, "alice", False), (3, "bob", False))
+IMPORTED_AT = "2026-11-06 12:00:00.000000"
+RELOAD = ["smbcontrol", "all", "reload-config"]
+PRE_PHASE0_CONF = """[global]
+   workgroup = WORKGROUP
+   server string = UNOS NAS
+   security = user
+   map to guest = Bad Password
+
+[public]
+   path = {path}
+   browseable = yes
+   read only = no
+   guest ok = yes
+   force user = nobody
+   force group = nogroup
+   create mask = 0666
+   directory mask = 0777
+"""
+
+
+class FakeSmbHost:
+    """The host commands of the post-restore apply."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def run(self, cmd, **kwargs):
+        cmd = list(cmd)
+        self.calls.append(cmd)
+        assert "close-denied-share" not in cmd
+        if cmd[0] in ("mkdir", "testparm", "smbcontrol", "systemctl"):
+            return HostResult(0, "", "")
+        raise AssertionError(f"unexpected host command: {cmd}")
+
+
+def _create_all(path) -> None:
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    engine.dispose()
+
+
+def _smb_db(path, *, imported=True, users=BACKUP_USERS, shares=(), access=(), smb_accounts=(), sql=(),
+            checks=True) -> bytes:
+    """A database of this release: every table, the users, and the SMB rows given.
+
+    imported: True (marker set), False (an smb_state row without the marker) or
+    None (no smb_state row). shares: (id, name, path, guest_ok); access: (share
+    id, user id, username, level); smb_accounts: (user id, linux name, uid,
+    enabled, password state). checks=False: the CHECK constraints are ignored
+    (a hostile database need not have them).
+    """
+    _create_all(path)
+    with closing(sqlite3.connect(path)) as conn:
+        if not checks:
+            conn.execute("PRAGMA ignore_check_constraints = ON")
+        conn.executemany("INSERT INTO users (id, username, hashed_password, is_admin) VALUES (?, ?, ?, ?)",
+                         [(user_id, name, HASH, int(admin)) for user_id, name, admin in users])
+        if imported is not None:
+            conn.execute("INSERT INTO smb_state (id, next_uid, shares_imported_at) VALUES (1, 70010, ?)",
+                         (IMPORTED_AT if imported else None,))
+        conn.executemany(
+            "INSERT INTO smb_shares (id, name, path, comment, browseable, guest_ok, version) VALUES (?, ?, ?, '', 1, ?, 1)",
+            [(share_id, name, share_path, int(guest)) for share_id, name, share_path, guest in shares])
+        conn.executemany("INSERT INTO smb_share_access (share_id, user_id, username, level) VALUES (?, ?, ?, ?)",
+                         list(access))
+        conn.executemany(
+            "INSERT INTO smb_accounts (user_id, linux_name, uid, enabled, password_state) VALUES (?, ?, ?, ?, ?)",
+            list(smb_accounts))
+        for statement in sql:
+            conn.execute(statement)
+        conn.commit()
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _db_rows(env, query):
+    with closing(sqlite3.connect(env.db_path)) as conn:
+        return conn.execute(query).fetchall()
+
+
+@pytest.fixture
+def smb_env(env, monkeypatch):
+    """The real post-restore step, on a live database of this release (admin and alice)."""
+    env.db_path.unlink()
+    _smb_db(env.db_path, users=((1, "admin", True), (2, "alice", False)))
+    monkeypatch.setattr(service, "after_database_restore_locked", REAL_AFTER_RESTORE)
+    env.init_db.side_effect = lambda: _create_all(env.db_path)
+    maker = async_sessionmaker(create_async_engine(f"sqlite+aiosqlite:///{env.db_path}", poolclass=NullPool),
+                               expire_on_commit=False)
+    monkeypatch.setattr(src.database, "async_session", maker)
+    monkeypatch.setattr(storage_pools, "managed_pool_names", lambda: {"data"})
+    fake = FakeSmbHost()
+    env.host.side_effect = fake.run
+    reconcile = AsyncMock(return_value=interfaces.ReconcileResult())
+    sessions = MagicMock(return_value=[])
+    end = MagicMock(return_value=[])
+    monkeypatch.setattr(accounts, "reconcile_accounts", reconcile)
+    monkeypatch.setattr(accounts, "read_smb_sessions", sessions)
+    monkeypatch.setattr(accounts, "end_smb_sessions", end)
+    audit = env.tmp / "audit_log.json"
+    monkeypatch.setattr(audit_router, "AUDIT_FILE", str(audit))
+    monkeypatch.setattr(service, "_last_apply", service.LastApply())
+    monkeypatch.setattr(service, "_last_import_problem", None)
+    monkeypatch.setattr(service, "_last_reconcile", service.LastReconcile())
+    env.fake, env.reconcile, env.sessions, env.end, env.audit, env.maker = fake, reconcile, sessions, end, audit, maker
+    env.data = env.pools / "data"
+    return env
+
+
+def _restore_smb(env, db: bytes, conf: bytes | None = None):
+    entries = [_file("manifest.json", MANIFEST), _file("unos.db", db)]
+    if conf is not None:
+        entries.append(_file("smb.conf", conf))
+    return _restore(env, _store(env, entries))
+
+
+def _render(env, *shares) -> str:
+    return smbconf.render_config([service.ShareRender(*share) for share in shares])
+
+
+class TestRestoredSchema:
+    @pytest.mark.parametrize("statement", [
+        "CREATE VIEW everyone AS SELECT username FROM users",
+        "CREATE TRIGGER grant_all AFTER INSERT ON smb_shares BEGIN UPDATE smb_shares SET guest_ok = 1; END",
+    ])
+    def test_triggers_and_views_are_refused(self, env, statement):
+        db = _smb_db(env.tmp / "hostile.db", sql=[statement])
+        response = _restore_smb(env, db)
+        assert (response.status_code, response.json()["detail"]) == (
+            400, "unos.db in the backup contains triggers or views; UNOS databases have none")
+        _assert_untouched(env)
+        env.snapshot.assert_not_called()
+
+    def test_a_table_without_a_model_column(self, env):
+        path = env.tmp / "old.db"
+        _make_db(path, users=[("admin2", 1)])
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("CREATE TABLE smb_shares (id INTEGER PRIMARY KEY, name TEXT, path TEXT)")
+            conn.commit()
+        response = _restore_smb(env, path.read_bytes())
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "unos.db in the backup has SMB tables of an unknown layout (missing: smb_shares.browseable, "
+            "smb_shares.comment, smb_shares.created_at, smb_shares.guest_ok, smb_shares.import_notes, "
+            "smb_shares.updated_at, smb_shares.version)")
+        _assert_untouched(env)
+
+    @pytest.mark.parametrize("extra, status", [("secret TEXT NOT NULL", 400), ("note TEXT", 200),
+                                               ("flag INTEGER NOT NULL DEFAULT 0", 200)])
+    def test_extra_columns(self, env, extra, status):
+        path = env.tmp / "extra.db"
+        _make_db(path, users=[("admin2", 1)])
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute(
+                "CREATE TABLE smb_accounts (user_id INTEGER PRIMARY KEY, linux_name VARCHAR(32) NOT NULL UNIQUE, "
+                "uid INTEGER UNIQUE, enabled BOOLEAN NOT NULL DEFAULT 0, password_state VARCHAR(8) NOT NULL "
+                "DEFAULT 'needed', password_set_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                f"updated_at DATETIME, {extra})")
+            conn.commit()
+        response = _restore_smb(env, path.read_bytes())
+        assert response.status_code == status, response.text
+        if status == 400:
+            assert response.json()["detail"] == (
+                "unos.db in the backup has SMB tables of an unknown layout (extra NOT NULL: smb_accounts.secret)")
+            _assert_untouched(env)
+        else:
+            assert _usernames(env.db_path) == {"admin2"}
+
+    def test_old_databases_get_the_tables(self, env):
+        response = _restore_smb(env, _good_db(env))
+        assert response.status_code == 200, response.text
+        with closing(sqlite3.connect(env.db_path)) as conn:
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        assert {"smb_shares", "smb_share_access", "smb_accounts", "smb_state"} <= tables
+
+
+class TestAccountStep:
+    @pytest.mark.parametrize("imported", [True, False])
+    def test_account_rules_run_inside_the_preparation(self, env, imported):
+        order = []
+        snapshot = interfaces.RestoreSnapshot(next_uid=70042)
+
+        def take_snapshot(db_path):
+            order.append(("snapshot", db_path))
+            return snapshot
+
+        def prepare(conn, given, authoritative):
+            order.append(("prepare", conn.in_transaction, given, authoritative))
+            return ["SMB must be turned on again for alice"]
+
+        env.snapshot.side_effect = take_snapshot
+        env.prepare_accounts.side_effect = prepare
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=imported))
+
+        assert response.status_code == 200, response.text
+        assert order == [("snapshot", env.db_path), ("prepare", True, snapshot, imported)]
+        assert "SMB must be turned on again for alice" in response.json()["warnings"]
+
+    def test_a_failing_account_step_restores_nothing(self, env):
+        env.prepare_accounts.side_effect = sqlite3.OperationalError("boom")
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db"))
+        assert response.status_code == 500
+        _assert_untouched(env)
+
+
+class TestAuthoritative:
+    def test_rows_are_kept_and_the_file_comes_from_them(self, smb_env):
+        env = smb_env
+        db = _smb_db(env.tmp / "b.db", shares=[(1, "docs", f"{env.data}/docs", False)],
+                     access=[(1, 2, "alice", "write")], smb_accounts=[(2, "alice", 70002, 1, "set")])
+        response = _restore_smb(env, db, "[evil]\n   path = /etc\n   guest ok = yes\n".encode())
+
+        assert response.status_code == 200, response.text
+        assert response.json()["restored"] == ["database", "smb_config"]
+        assert env.smb_conf.read_text() == _render(env, ("docs", f"{env.data}/docs", "", True, False, (), ("alice",)))
+        assert _db_rows(env, "SELECT name FROM smb_shares") == [("docs",)]
+        assert _db_rows(env, "SELECT pending_import_source, pending_import_conf FROM smb_state") == [(None, None)]
+        env.reconcile.assert_awaited_once()
+        (entry,) = json.loads(env.audit.read_text())
+        assert (entry["action"], entry["username"], entry["resource_type"], entry["severity"]) == (
+            "other", "system", "smb", "info")
+        assert entry["details"].startswith("SMB state after restore: the shares of the restored database were kept")
+
+    def test_an_smb_conf_that_cannot_be_installed_is_not_reported_as_restored(self, smb_env, monkeypatch):
+        env = smb_env
+        real_replace = os.replace
+
+        def replace(src, dst, *args, **kwargs):
+            if str(dst) == str(env.smb_conf):
+                raise PermissionError(13, "Permission denied")
+            return real_replace(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", replace)
+        db = _smb_db(env.tmp / "b.db", shares=[(1, "docs", f"{env.data}/docs", False)],
+                     access=[(1, 2, "alice", "write")], smb_accounts=[(2, "alice", 70002, 1, "set")])
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["restored"] == ["database"]
+        assert ("smb.conf could not be installed: [Errno 13] Permission denied; it is written at the next change "
+                "or restart") in body["warnings"]
+        assert env.smb_conf.read_text() == INITIAL_SMB_CONF
+        assert sorted(os.listdir(env.samba)) == ["smb.conf"]  # the staged file was removed
+
+    def test_guest_shares_are_kept_with_a_warning(self, smb_env):
+        env = smb_env
+        db = _smb_db(env.tmp / "b.db", shares=[(1, "public", f"{env.data}/public", True)])
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        assert "Guest access is on for: public (as in the backup). Anyone on your network can read these shares " \
+               "without a password." in response.json()["warnings"]
+        assert _db_rows(env, "SELECT guest_ok FROM smb_shares") == [(1,)]
+        assert "   map to guest = Bad User\n" in env.smb_conf.read_text()
+        (entry,) = json.loads(env.audit.read_text())
+        assert entry["severity"] == "warning"
+        assert "shares served with guest access: public" in entry["details"]
+
+    def test_a_pool_root_share_loses_its_access(self, smb_env):
+        env = smb_env
+        db = _smb_db(env.tmp / "b.db", shares=[(1, "DATA", str(env.data), True)], access=[(1, 2, "alice", "write")])
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        assert _db_rows(env, "SELECT guest_ok, version, import_notes FROM smb_shares") == [
+            (0, 2, json.dumps([f"Not served: {service.POOL_ROOT_PROBLEM}; its access was removed at the restore"]))]
+        assert _db_rows(env, "SELECT * FROM smb_share_access") == []
+        assert "[DATA]" not in env.smb_conf.read_text()
+
+    def test_the_preparation_alone_removes_the_access_of_unserved_shares(self, smb_env, monkeypatch):
+        """The post-restore step removes this access too, but it can fail ("repaired at the next
+        start"), and the startup reconcile never removes it: the dormant grant would go live once
+        the folder becomes valid (the pool gets its fstab marker)."""
+        env = smb_env
+
+        async def broken(db):
+            raise RuntimeError("post-restore exploded")
+
+        monkeypatch.setattr(service, "after_database_restore_locked", broken)
+        tank = env.pools / "tank"  # not a pool that UNOS manages here
+        (tank / "docs").mkdir(parents=True)
+        db = _smb_db(env.tmp / "b.db", shares=[(1, "docs", f"{tank}/docs", True)], access=[(1, 2, "alice", "write")])
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["warnings"] == ["SMB state is repaired at the next start"]
+        note = "Not served: Share path must be on a storage pool that UNOS manages: 'tank' is not one; its access " \
+               "was removed at the restore"
+        assert _db_rows(env, "SELECT guest_ok, version, import_notes FROM smb_shares") == [(0, 2, json.dumps([note]))]
+        assert _db_rows(env, "SELECT * FROM smb_share_access") == []
+
+    def test_the_preparation_removes_it_when_the_post_restore_step_cannot_read_the_pool_list(
+        self, smb_env, monkeypatch
+    ):
+        env = smb_env
+
+        async def no_pool_list():
+            raise service.PoolListUnavailable("The pool list could not be read: cat: /etc/fstab: Input/output error")
+
+        monkeypatch.setattr(service, "_pool_names", no_pool_list)  # after the swap only
+        db = _smb_db(env.tmp / "b.db", shares=[(1, "DATA", str(env.data), True)], access=[(1, 2, "alice", "write")])
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        assert ("The access of shares that are not served could not be checked: The pool list could not be read: "
+                "cat: /etc/fstab: Input/output error") in response.json()["warnings"]
+        assert _db_rows(env, "SELECT guest_ok, version FROM smb_shares") == [(0, 2)]
+        assert _db_rows(env, "SELECT * FROM smb_share_access") == []
+
+    @pytest.mark.parametrize("statement", [
+        "UPDATE smb_shares SET created_at = 'yesterday'",
+        "UPDATE smb_shares SET updated_at = 12345",
+        "UPDATE smb_share_access SET created_at = 'soon'",
+        "UPDATE smb_state SET shares_imported_at = 'once'",
+    ])
+    def test_datetime_values_that_cannot_be_read_are_replaced(self, smb_env, statement):
+        """A DateTime value that SQLAlchemy cannot read makes every ORM load of its row fail:
+        the share could not be changed or deleted, nor the import report dismissed. The rows
+        and their access are kept."""
+        env = smb_env
+        db = _smb_db(env.tmp / "b.db", shares=[(1, "docs", f"{env.data}/docs", False)],
+                     access=[(1, 2, "alice", "write")], smb_accounts=[(2, "alice", 70002, 1, "set")],
+                     sql=[statement, "UPDATE smb_state SET import_report = '[\"Imported 1 share(s)\"]'"])
+        response = _restore_smb(env, db)
+        assert response.status_code == 200, response.text
+
+        smb_pages = "/api/v1/shares"
+        for answer in (env.client.get(f"{smb_pages}/smb"), env.client.get(f"{smb_pages}/smb/docs"),
+                       env.client.get(f"{smb_pages}/smb-status"),
+                       env.client.patch(f"{smb_pages}/smb/docs", json={"comment": "Team"}),
+                       env.client.delete(f"{smb_pages}/smb-status/import-report")):
+            assert answer.status_code == 200, (answer.request.method, answer.request.url, answer.text)
+        assert _db_rows(env, "SELECT shares_imported_at IS NOT NULL FROM smb_state") == [(1,)]  # still authoritative
+        assert _db_rows(env, "SELECT comment FROM smb_shares") == [("Team",)]
+        assert _db_rows(env, "SELECT user_id, level FROM smb_share_access") == [(2, "write")]
+        for column, table in (("created_at", "smb_shares"), ("updated_at", "smb_shares"),
+                              ("created_at", "smb_share_access"), ("shares_imported_at", "smb_state")):
+            assert [service._unreadable_datetime(value) for (value,) in _db_rows(env, f"SELECT {column} FROM {table}")
+                    if value is not None] in ([0], []), (table, column)
+        assert env.client.delete(f"{smb_pages}/smb/docs").status_code == 200
+        assert _db_rows(env, "SELECT * FROM smb_shares") == []
+
+    def test_paths_not_in_normal_form_lose_their_access(self, smb_env):
+        env = smb_env
+        written = [f"{env.data}/", f"{env.data}/.", f"{env.data}//apps", f"{env.data}/./apps/x"]
+        normal = [str(env.data), str(env.data), f"{env.data}/apps", f"{env.data}/apps/x"]
+        db = _smb_db(env.tmp / "b.db", shares=[(i + 1, f"s{i + 1}", path, False) for i, path in enumerate(written)],
+                     access=[(i + 1, 2, "alice", "read") for i in range(4)],
+                     smb_accounts=[(2, "alice", 70002, 1, "set")])
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        rows = _db_rows(env, "SELECT path, guest_ok, import_notes FROM smb_shares ORDER BY id")
+        assert rows == [(path, 0, json.dumps([f"Not served: Write the folder as {fixed}; its access was removed at "
+                                              "the restore"]))
+                        for path, fixed in zip(written, normal)]
+        assert _db_rows(env, "SELECT * FROM smb_share_access") == []
+        assert env.smb_conf.read_text() == _render(env)
+
+    def test_an_unreadable_pool_list_restores_nothing(self, smb_env, monkeypatch):
+        env = smb_env
+        live = env.db_path.read_bytes()
+
+        def broken():
+            raise OSError("cat: /etc/fstab: Input/output error")
+
+        monkeypatch.setattr(storage_pools, "managed_pool_names", broken)
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", shares=[(1, "docs", f"{env.data}/docs", False)]))
+
+        assert (response.status_code, response.json()["detail"]) == (
+            503, "The pool list could not be read: cat: /etc/fstab: Input/output error; nothing was restored")
+        assert env.db_path.read_bytes() == live
+        assert not list(env.data_dir.glob("unos.db.pre-restore-*"))
+
+    def test_a_hostile_database_never_reaches_smb_conf_or_argv(self, smb_env):
+        env = smb_env
+        users = BACKUP_USERS + ((4, "-o", False), (5, "zed", False))
+        db = _smb_db(
+            env.tmp / "b.db", users=users,
+            shares=[(1, "etc", "/etc", True), (2, "bad\nname", f"{env.data}/x", False),
+                    (3, "docs", f"{env.data}/docs", False)],
+            access=[(1, 2, "alice", "write"), (3, 4, "-o", "write"), (3, 5, "zed", "read")],
+            smb_accounts=[(4, "-o", 70004, 1, "set"), (5, "zed", 0, 1, "set")],
+            checks=False,
+        )
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        text = env.smb_conf.read_text()
+        assert text == _render(env, ("docs", f"{env.data}/docs", "", True, False, (), ()))
+        hostile = {"/etc", "etc", "bad\nname", "-o", "zed", "0"}
+        assert [arg for call in env.fake.calls for arg in call if arg in hostile or "\n" in arg] == []
+        assert {tuple(call[:2]) for call in env.fake.calls} <= {("mkdir", "-p"), ("testparm", "-s"), ("smbcontrol", "all")}
+        assert _db_rows(env, "SELECT share_id FROM smb_share_access ORDER BY id") == [(3,), (3,)]
+
+
+class TestNotAuthoritative:
+    def test_shares_are_imported_from_the_archived_smb_conf(self, smb_env):
+        env = smb_env
+        db = _smb_db(env.tmp / "b.db", imported=False, shares=[(1, "stale", f"{env.data}/stale", True)],
+                     smb_accounts=[(2, "alice", 70002, 1, "set")])
+        conf = f"[global]\n   workgroup = HOME\n[media]\n   path = {env.data}/media\n   valid users = alice\n" \
+               "   read only = no\n"
+        response = _restore_smb(env, db, conf.encode())
+
+        assert response.status_code == 200, response.text
+        assert response.json()["restored"] == ["database", "smb_config"]
+        assert _db_rows(env, "SELECT name, guest_ok FROM smb_shares") == [("media", 0)]
+        assert _db_rows(env, "SELECT username, level FROM smb_share_access") == [("alice", "write")]
+        state = _db_rows(env, "SELECT shares_imported_at IS NOT NULL, pending_import_source, pending_import_conf "
+                              "FROM smb_state")
+        assert state == [(1, None, None)]
+        assert env.smb_conf.read_text() == _render(env, ("media", f"{env.data}/media", "", True, False, (), ("alice",)))
+        assert not Path(str(env.smb_conf) + ".unos-import-backup").exists()  # the live file was not read
+        (entry,) = [e for e in json.loads(env.audit.read_text()) if e["resource_type"] == "smb"]
+        assert "imported 1 share(s) from smb.conf" in entry["details"]
+
+    def test_without_an_archived_smb_conf_the_live_file_is_imported(self, smb_env):
+        env = smb_env
+        env.smb_conf.write_text(f"[global]\n   workgroup = HOME\n[live]\n   path = {env.data}/live\n"
+                                "   valid users = alice\n")
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=None))
+
+        assert response.status_code == 200, response.text
+        assert _db_rows(env, "SELECT name FROM smb_shares") == [("live",)]
+        assert Path(str(env.smb_conf) + ".unos-import-backup").read_text().startswith("[global]\n   workgroup = HOME")
+
+    def test_an_archived_smb_conf_that_is_not_utf8_is_not_used(self, smb_env):
+        env = smb_env
+        env.smb_conf.write_text(f"[live]\n   path = {env.data}/live\n   valid users = alice\n")
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False),
+                                f"[media]\n   path = {env.data}/media\n   comment = caf\xe9\n".encode("latin-1"))
+
+        assert response.status_code == 200, response.text
+        assert "smb.conf in the backup is not valid UTF-8 and was not restored." in response.json()["warnings"]
+        assert _db_rows(env, "SELECT name FROM smb_shares") == [("live",)]
+
+    def test_guest_access_in_the_backup_is_not_restored(self, smb_env):
+        env = smb_env
+        conf = PRE_PHASE0_CONF.format(path=f"{env.data}/public")
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False), conf.encode())
+
+        assert response.status_code == 200, response.text
+        (row,) = _db_rows(env, "SELECT name, guest_ok, import_notes FROM smb_shares")
+        assert row[:2] == ("public", 0)
+        assert "Guest access in the backup was not restored" in json.loads(row[2])
+        assert "map to guest = Never" in env.smb_conf.read_text()
+
+    def test_smb_conf_without_a_database_changes_nothing(self, smb_env):
+        env = smb_env
+        live = env.db_path.read_bytes()
+        name = _store(env, [_file("manifest.json", MANIFEST),
+                            _file("smb.conf", f"[media]\n   path = {env.data}/media\n".encode())])
+        response = _restore(env, name)
+        assert response.status_code == 200
+        assert (response.json()["restored"], response.json()["warnings"]) == (
+            [], [backup_router.SMB_CONF_WITHOUT_DATABASE])
+        assert env.db_path.read_bytes() == live
+        assert env.smb_conf.read_text() == INITIAL_SMB_CONF
+        assert env.fake.calls == []
+
+    def test_a_failed_import_still_ends_the_sessions_of_accounts_that_are_not_active(self, smb_env, monkeypatch):
+        env = smb_env
+        env.smb_conf.write_text(f"[media]\n   path = {env.data}/media\n   valid users = alice\n")
+        before = env.smb_conf.read_bytes()
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("import exploded")
+
+        monkeypatch.setattr(service, "_plan_import", broken)
+        # The preparation made alice's account not active; she still has a session on media.
+        env.sessions.return_value = [interfaces.SmbSession(pid=4242, username="alice", shares=("media",))]
+        db = _smb_db(env.tmp / "b.db", imported=False, smb_accounts=[(2, "alice", 70002, 1, "needed")])
+        response = _restore_smb(env, db, f"[media]\n   path = {env.data}/media\n   valid users = alice\n".encode())
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["restored"] == ["database"]
+        assert "Shares were not imported from smb.conf: import exploded" in body["warnings"]
+        assert env.smb_conf.read_bytes() == before
+        assert env.fake.calls == [RELOAD]  # no testparm, no close-share
+        env.end.assert_called_once_with(["alice"])
+        env.reconcile.assert_awaited_once()
+
+
+class TestCrashSafety:
+    def test_a_failed_swap_leaves_the_live_database_unchanged(self, smb_env, monkeypatch):
+        env = smb_env
+        live = env.db_path.read_bytes()
+
+        def fail(restored, db_path):
+            raise OSError("disk gone")
+
+        monkeypatch.setattr(backup_router, "_replace_database", fail)
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False), b"[media]\n   path = /x\n")
+        assert response.status_code == 500
+        env.prepare_accounts.assert_called_once()  # the preparation ran on the extracted file only
+        assert env.db_path.read_bytes() == live
+
+    def test_a_failed_post_restore_step_is_finished_by_the_next_start(self, smb_env, monkeypatch):
+        env = smb_env
+
+        async def broken(db):
+            raise RuntimeError("post-restore exploded")
+
+        monkeypatch.setattr(service, "after_database_restore_locked", broken)
+        conf = f"[media]\n   path = {env.data}/media\n   valid users = alice\n"
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False), conf.encode())
+
+        assert response.status_code == 200, response.text
+        assert response.json()["restored"] == ["database"]
+        assert response.json()["warnings"] == ["SMB state is repaired at the next start"]
+        assert _db_rows(env, "SELECT pending_import_source FROM smb_state") == [("backup",)]
+        assert _db_rows(env, "SELECT * FROM smb_shares") == []
+
+        asyncio.run(service.reconcile_smb_on_startup())
+
+        assert _db_rows(env, "SELECT name FROM smb_shares") == [("media",)]
+        assert _db_rows(env, "SELECT pending_import_source FROM smb_state") == [(None,)]
+        env.reconcile.assert_awaited_once()
+        assert "[media]" in env.smb_conf.read_text()
+
+    def test_a_failed_init_db_is_a_warning(self, smb_env):
+        env = smb_env
+        env.init_db.side_effect = RuntimeError("no tables")
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db"))
+        assert response.status_code == 200, response.text
+        assert (response.json()["restored"], response.json()["warnings"]) == (
+            ["database"], ["SMB state is repaired at the next start"])
+
+
+async def test_a_restore_waits_for_smb_lock(env, monkeypatch):
+    """A restore is an SMB state change: it starts only when smb_lock is free (spec 4.3)."""
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
+    started = []
+    real_restore = backup_router._restore
+
+    def restore(*args):
+        started.append(time.monotonic())
+        return real_restore(*args)
+
+    monkeypatch.setattr(backup_router, "_restore", restore)
+    release = asyncio.Event()
+    released = []
+
+    async def hold_the_lock():
+        async with service.smb_lock():
+            await release.wait()
+            released.append(time.monotonic())
+
+    holder = asyncio.create_task(hold_the_lock())
+    await asyncio.sleep(0)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://unos") as client:
+        request = asyncio.create_task(client.post(f"/api/v1/backup/restore/{name}", json={}))
+        await asyncio.sleep(0.3)
+        assert started == []
+        release.set()
+        await holder
+        response = await asyncio.wait_for(request, timeout=30)
+    assert response.status_code == 200, response.text
+    assert started and started[0] >= released[0]
+    assert response.json()["restored"] == ["database", "smb_config"]
+
+
+async def test_the_post_restore_step_runs_under_smb_lock(env, monkeypatch):
+    """Spec 4.3, I5: smb_lock is held from before the restore thread until the post-restore
+    step returns, so an SMB flow that queued on the lock during the restore runs after it."""
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
+    entered, release = asyncio.Event(), asyncio.Event()
+    seen: dict[str, object] = {}
+    order: list[str] = []
+
+    async def after(db):
+        seen["locked inside"] = service.smb_lock().locked()
+        entered.set()
+        await release.wait()
+        order.append("post-restore done")
+        return [], True
+
+    monkeypatch.setattr(service, "after_database_restore_locked", after)
+
+    async def queued_flow():
+        async with service.smb_lock():
+            order.append("queued flow")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://unos") as client:
+        request = asyncio.create_task(client.post(f"/api/v1/backup/restore/{name}", json={}))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=30)
+            flow = asyncio.create_task(queued_flow())
+            await asyncio.sleep(0.2)
+            seen["flow ran during the post-restore step"] = "queued flow" in order
+        finally:
+            release.set()
+        response = await asyncio.wait_for(request, timeout=30)
+        await asyncio.wait_for(flow, timeout=5)
+    assert response.status_code == 200, response.text
+    assert seen == {"locked inside": True, "flow ran during the post-restore step": False}
+    assert order == ["post-restore done", "queued flow"]
+
+
+async def test_a_cancelled_restore_request_keeps_smb_lock_until_the_restore_ends(env, monkeypatch):
+    """The locked part runs in its own task, awaited through shield: cancelling the request
+    (a forced shutdown) does not release smb_lock while the restore thread swaps the database."""
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
+    in_thread, release_thread = threading.Event(), threading.Event()
+    real_restore = backup_router._restore
+    post_restore: list[bool] = []
+
+    def blocking_restore(*args):
+        in_thread.set()
+        assert release_thread.wait(30)
+        return real_restore(*args)
+
+    async def after(db):
+        post_restore.append(service.smb_lock().locked())
+        return [], True
+
+    monkeypatch.setattr(backup_router, "_restore", blocking_restore)
+    monkeypatch.setattr(service, "after_database_restore_locked", after)
+    observed: dict[str, object] = {}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://unos") as client:
+            request = asyncio.create_task(client.post(f"/api/v1/backup/restore/{name}", json={}))
+            deadline = time.monotonic() + 30
+            while not in_thread.is_set() and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            assert in_thread.is_set()
+            request.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await request
+            await asyncio.sleep(0.1)
+            observed["locked after the cancel"] = service.smb_lock().locked()
+            observed["running after the cancel"] = backup_router._restore_running
+    finally:
+        release_thread.set()  # a regression must not leave the thread (and the suite) hanging
+    deadline = time.monotonic() + 30
+    while backup_router._restore_running and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    await asyncio.sleep(0.1)
+    observed["locked at the end"] = service.smb_lock().locked()
+    observed["running at the end"] = backup_router._restore_running
+    observed["post-restore step ran locked"] = post_restore
+    assert observed == {
+        "locked after the cancel": True,
+        "running after the cancel": True,
+        "locked at the end": False,
+        "running at the end": False,
+        "post-restore step ran locked": [True],
+    }
+    assert _usernames(env.db_path) == {"admin2", "bob"}  # the restore finished
+
+
+def test_a_second_restore_while_one_runs_is_refused(env, monkeypatch):
+    name = _store(env, [_file("manifest.json", MANIFEST)])
+    monkeypatch.setattr(backup_router, "_restore_running", True)
+    response = _restore(env, name)
+    assert (response.status_code, response.json()["detail"]) == (409, "Another restore is already running")
+
+
+def test_include_shares_false_still_restores_the_shares_of_the_database(smb_env):
+    """R-F18: shares are rows of the database, which every backup contains."""
+    env = smb_env
+    with closing(sqlite3.connect(env.db_path)) as conn:
+        conn.execute("UPDATE smb_state SET shares_imported_at = ?", (IMPORTED_AT,))
+        conn.execute("INSERT INTO smb_shares (id, name, path, comment, browseable, guest_ok, version) "
+                     f"VALUES (1, 'docs', '{env.data}/docs', '', 1, 0, 1)")
+        conn.commit()
+    response = env.client.post("/api/v1/backup/create",
+                               json={"include_shares": False, "include_pools": False, "include_network": False})
+    assert response.status_code == 200, response.text
+    name = response.json()["backup"]["filename"]
+    with closing(sqlite3.connect(env.db_path)) as conn:
+        conn.execute("DELETE FROM smb_shares")
+        conn.commit()
+
+    response = _restore(env, name)
+
+    assert response.status_code == 200, response.text
+    assert _db_rows(env, "SELECT name FROM smb_shares") == [("docs",)]
+    assert "[docs]" in env.smb_conf.read_text()
+    description = backup_router.BackupConfig.model_fields["include_shares"].description
+    assert "every backup contains" in description and "never installed" in description

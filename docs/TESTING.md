@@ -190,6 +190,42 @@ def test_list_disks(fake_host):
     assert [d.name for d in disks.list_disks()] == ["sdb"]
 ```
 
+`tests/test_share_repair.py` (Repair permissions) walks real temporary
+folders with `os.O_PATH`, `/proc/self/fd` and `/proc/self/fdinfo`, which only
+Linux has: it is skipped on macOS and runs on Linux, as in CI.
+
+A new share folder is created only through a pool root that is on the pool's
+mount, which UNOS checks in `/proc/self/mountinfo` where that file exists. The
+tests' pools are plain folders, not mount points, so on Linux
+`tests/conftest.py` replaces that check (`service._pool_root_mount_problem`)
+in every test; the tests of the check call the real function.
+
+### Samba's testparm
+
+`tests/test_smbconf_testparm.py` checks the smb.conf that UNOS renders (both
+`[global]` variants, a share of every kind, many users and a long comment)
+with the real `testparm`, and is skipped where `testparm` is not installed.
+To run it with the Samba of Debian 13 (trixie) in a container (this downloads
+a Python image and Samba's tools):
+
+```bash
+docker run --rm -v "$PWD/supervisor:/s:ro" -w /s python:3.11-slim-trixie sh -c \
+  'apt-get -qq update && apt-get -qq install -y samba-common-bin >/dev/null && \
+   mkdir -p /run/samba && \
+   pip -q install -r requirements.txt -r requirements-dev.txt && \
+   PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider tests/test_smbconf_testparm.py'
+```
+
+`mkdir -p /run/samba` is needed: the rendered smb.conf keeps Samba's cache
+there (`cache directory = /run/samba`), and testparm fails when that folder is
+missing (smbd creates it when it starts).
+
+The test refuses every parameter that testparm does not know. Older Samba
+releases may not know `server smb encrypt` or `smb3 unix extensions`, two
+lines of the rendered `[global]` that restate Samba's defaults: UNOS installs
+its smb.conf there all the same (smbd ignores such a line, and UNOS accepts
+testparm's message about exactly these two), but this test fails on them.
+
 ## E2E Tests (Playwright)
 
 E2E tests use Playwright to test the full application stack.
@@ -281,6 +317,19 @@ npm test
 # Container mode
 BASE_URL=https://localhost:3443 HTTP_URL=http://localhost:3080 npm test
 ```
+
+`E2E_STAND_IN=1` marks a run against the deviceless test stack (the
+"stand-in"): `scripts/test-cycle.sh` sets it on both of its Playwright runs,
+and so does the `test-runner` service. Only then do the tests run that turn
+SMB on for a new user; the stand-in has no Samba, so they check that this
+fails with a clear message (503). Never set it against the device, where they
+would create real host accounts. The stand-in has no Samba, no pools that
+UNOS manages and runs host commands inside its container
+(`UNOS_HOST_EXEC=local`), so it cannot check real SMB accounts, Samba's
+password database, smbd itself, SMB sessions, the closing of connections,
+`testparm` or Repair permissions on btrfs: the backend tests (with fake
+hosts), the testparm check of [Samba's testparm](#sambas-testparm) and checks
+on a real device cover those.
 
 ### Test Structure
 

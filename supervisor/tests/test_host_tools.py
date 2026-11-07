@@ -146,6 +146,30 @@ def test_host_tools_list_names_the_programs_run_on_the_host():
             "findmnt", "lsblk", "wipefs", "blkid", "mount", "umount"} <= set(host.HOST_TOOLS)
 
 
+def test_host_tools_list_the_smb_account_programs():
+    """The startup check names the packages of the SMB account commands (spec 3.2)."""
+    assert {
+        "getent": "libc-bin",
+        "groupadd": "passwd",
+        "useradd": "passwd",
+        "userdel": "passwd",
+        "smbpasswd": "samba-common-bin",
+        "pdbedit": "samba",
+        "smbstatus": "samba",
+    }.items() <= host.HOST_TOOLS.items()
+
+
+def test_the_account_tool_check_is_one_host_command(host_commands):
+    from src.shares import accounts
+
+    assert set(accounts.SAMBA_TOOLS) <= set(host.HOST_TOOLS)
+    missing = accounts.missing_samba_tools()
+
+    assert missing is not None
+    [cmd] = host_commands
+    assert cmd[3:] == ["sh", "getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus"]
+
+
 # ---------------------------------------------------------------------------
 # run_on_host: decoding the output
 # ---------------------------------------------------------------------------

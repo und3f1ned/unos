@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { toDataURL } from "qrcode";
   import { user } from "$lib/stores/auth";
+  import SmbAccessCard from "$lib/components/account/SmbAccessCard.svelte";
+  import { Alert } from "$lib/components/ui";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
     getLoginHistory, clearLoginHistory,
@@ -21,6 +23,8 @@
   let confirmPassword = "";
   let passwordError = "";
   let passwordSuccess = "";
+  // E.g. open SMB connections that could not be ended: shown until dismissed.
+  let passwordWarnings: string[] = [];
   let changingPassword = false;
   let showCurrentPassword = false;
   let showNewPassword = false;
@@ -39,6 +43,9 @@
   // The otpauth:// URI contains the TOTP secret, so the QR code is rendered in
   // the browser and never sent to a third-party service.
   let qrDataUrl = "";
+  // Turning SMB on needs the two-factor code exactly while 2FA is on: the
+  // SMB card reloads its status when 2FA changes here.
+  let smbCard: SmbAccessCard | undefined;
 
   // Login History state
   let loginHistory: LoginAttempt[] = [];
@@ -103,6 +110,7 @@
   async function handlePasswordChange() {
     passwordError = "";
     passwordSuccess = "";
+    passwordWarnings = [];
 
     if (newPassword !== confirmPassword) {
       passwordError = "New passwords do not match";
@@ -116,11 +124,12 @@
 
     changingPassword = true;
     try {
-      await changePassword({
+      const result = await changePassword({
         current_password: currentPassword,
         new_password: newPassword,
       });
       passwordSuccess = "Password changed successfully";
+      passwordWarnings = result?.warnings ?? [];
       currentPassword = "";
       newPassword = "";
       confirmPassword = "";
@@ -168,6 +177,7 @@
       await enableTOTP(totpCode);
       totpEnabled = true;
       totpSuccess = "Two-Factor Authentication enabled successfully";
+      void smbCard?.refresh();
       showSetupModal = false;
       totpSetupData = null;
       qrDataUrl = "";
@@ -191,6 +201,7 @@
       await disableTOTP(disableCode);
       totpEnabled = false;
       totpSuccess = "Two-Factor Authentication disabled";
+      void smbCard?.refresh();
       showDisableModal = false;
       disableCode = "";
     } catch (e: any) {
@@ -483,6 +494,14 @@
       </div>
     {/if}
 
+    {#if passwordWarnings.length > 0}
+      <Alert variant="warning" class="mb-4" dismissible on:dismiss={() => (passwordWarnings = [])}>
+        {#each passwordWarnings as warning}
+          <p>{warning}</p>
+        {/each}
+      </Alert>
+    {/if}
+
     {#if passwordError}
       <div class="mb-4 p-3 bg-red-500/20 border border-red-500 text-red-400 rounded-lg flex items-center gap-2">
         <AlertCircle class="w-5 h-5" />
@@ -588,6 +607,8 @@
       </button>
     </form>
   </div>
+
+  <SmbAccessCard bind:this={smbCard} />
 
   {#if isAdmin}
   <!-- Firewall -->

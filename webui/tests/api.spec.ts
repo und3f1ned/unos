@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 
 // Same default as playwright.config.ts: the UI and API are served over HTTPS.
 const BASE_URL = process.env.BASE_URL || 'https://10.1.1.103';
@@ -465,5 +465,283 @@ test.describe('API Tests', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(response.ok()).toBeTruthy();
+  });
+});
+
+// ==================== SMB shares and accounts ====================
+// Safe everywhere, the device included: nothing below creates a share, a
+// folder or an SMB account (every share request is refused before that).
+// That holds for the API of this release only: the share requests are sent
+// only when the target has it (see "SMB API").
+
+// Pools base of the stand-in the specs run against (the local one differs).
+const POOLS = process.env.E2E_POOLS_BASE || '/mnt/pools';
+const POOL_ROOT_MESSAGE =
+  'Share a folder inside the pool or a volume: the top level of a pool holds app data (apps/), volumes and snapshots';
+
+async function loginToken(
+  request: APIRequestContext,
+  credentials: { username: string; password: string },
+): Promise<string> {
+  const response = await request.post(`${BASE_URL}/api/v1/auth/login`, { data: credentials });
+  expect(response.ok(), `login as ${credentials.username}: HTTP ${response.status()}`).toBeTruthy();
+  return (await response.json()).access_token;
+}
+
+test.describe('SMB API', () => {
+  let adminToken = '';
+  // Status of GET /shares/smb-status, which only the API of this release has.
+  // An older supervisor (404) accepts the share requests below as they are:
+  // it would create the shares and their folders, and rewrite smb.conf.
+  let smbStatus = 0;
+  const auth = () => ({ Authorization: `Bearer ${adminToken}` });
+
+  test.beforeAll(async ({ request }) => {
+    adminToken = await loginToken(request, { username: 'admin', password: 'admin123' });
+    smbStatus = (await request.get(`${BASE_URL}/api/v1/shares/smb-status`, { headers: auth() })).status();
+  });
+
+  test.beforeEach(() => {
+    test.skip(
+      smbStatus === 404,
+      'The target runs a supervisor without the SMB API of this release (no GET /shares/smb-status): ' +
+        'its share API would create the shares and folders these tests send.',
+    );
+  });
+
+  // Should a share have been created after all, it is removed (its folder stays).
+  test.afterAll(async ({ request }) => {
+    if (smbStatus === 404) return;
+    const response = await request.get(`${BASE_URL}/api/v1/shares/smb`, { headers: auth() });
+    if (!response.ok()) return;
+    for (const share of (await response.json()) as { name?: unknown }[]) {
+      if (typeof share.name === 'string' && share.name.toLowerCase().startsWith('e2e_api_')) {
+        await request.delete(`${BASE_URL}/api/v1/shares/smb/${encodeURIComponent(share.name)}`, {
+          headers: auth(),
+        });
+      }
+    }
+  });
+
+  test('GET /shares/smb lists shares with their access, state and version', async ({ request }) => {
+    const response = await request.get(`${BASE_URL}/api/v1/shares/smb`, { headers: auth() });
+    expect(response.ok()).toBeTruthy();
+    const shares = await response.json();
+    expect(Array.isArray(shares)).toBeTruthy();
+    for (const share of shares) {
+      expect(Array.isArray(share.access), share.name).toBeTruthy();
+      expect(typeof share.available, share.name).toBe('boolean');
+      expect(typeof share.served, share.name).toBe('boolean');
+      expect(Number.isInteger(share.version), share.name).toBeTruthy();
+      // The fields of the old API are gone.
+      expect(share).not.toHaveProperty('readonly');
+      expect(share).not.toHaveProperty('valid_users');
+    }
+  });
+
+  test('GET /shares/smb-status reports the state of SMB', async ({ request }) => {
+    const response = await request.get(`${BASE_URL}/api/v1/shares/smb-status`, { headers: auth() });
+    expect(response.ok()).toBeTruthy();
+    const status = await response.json();
+    for (const key of ['problems', 'guest_shares', 'import_report', 'unmanaged_samba_users']) {
+      expect(Array.isArray(status[key]), key).toBeTruthy();
+    }
+    expect(status).toHaveProperty('samba_tools_missing');
+    expect(status).toHaveProperty('group_ok');
+    expect(Number.isInteger(status.active_smb_users)).toBeTruthy();
+  });
+
+  test('PATCH of an unknown share answers 404', async ({ request }) => {
+    const response = await request.patch(`${BASE_URL}/api/v1/shares/smb/e2e_no_such_share`, {
+      headers: auth(),
+      data: { comment: 'e2e' },
+    });
+    expect(response.status()).toBe(404);
+  });
+
+  test('POST with the old readonly field answers 422', async ({ request }) => {
+    const response = await request.post(`${BASE_URL}/api/v1/shares/smb`, {
+      headers: auth(),
+      data: { name: 'e2e_api_ro', path: `${POOLS}/testpool/e2e-api`, readonly: true },
+    });
+    expect(response.status()).toBe(422);
+  });
+
+  test('POST on a pool that UNOS does not manage answers 400', async ({ request }) => {
+    const response = await request.post(`${BASE_URL}/api/v1/shares/smb`, {
+      headers: auth(),
+      data: { name: 'e2e_api_pool', path: `${POOLS}/e2e-no-such-pool/x` },
+    });
+    expect(response.status()).toBe(400);
+    expect((await response.json()).detail).toMatch(/storage pool that UNOS manages/);
+  });
+
+  test('POST on the top level of a pool answers 400', async ({ request }) => {
+    const response = await request.post(`${BASE_URL}/api/v1/shares/smb`, {
+      headers: auth(),
+      data: { name: 'e2e_api_root', path: `${POOLS}/testpool` },
+    });
+    expect(response.status()).toBe(400);
+    expect((await response.json()).detail).toContain(POOL_ROOT_MESSAGE);
+  });
+
+  test('PUT /shares/smb/{name} is gone (405)', async ({ request }) => {
+    const response = await request.put(`${BASE_URL}/api/v1/shares/smb/x`, {
+      headers: auth(),
+      data: { name: 'x', path: `${POOLS}/testpool/x` },
+    });
+    expect(response.status()).toBe(405);
+  });
+
+  test('a refused password is not sent back in the 422 answer', async ({ request }) => {
+    const password = `e2e-${'p'.repeat(96)}`; // 100 bytes: bcrypt takes at most 72
+    const response = await request.post(`${BASE_URL}/api/v1/auth/users`, {
+      headers: auth(),
+      data: { username: 'e2e_long_password', password },
+    });
+    expect(response.status()).toBe(422);
+    expect(await response.text()).not.toContain(password);
+  });
+});
+
+test.describe('SMB API as a regular user', () => {
+  const regular = { username: `e2e_api_${Date.now().toString(36)}`, password: 'e2e-Regular-Password-1' };
+  let adminToken = '';
+  let userToken = '';
+  let userId: number | undefined;
+  const asAdmin = () => ({ Authorization: `Bearer ${adminToken}` });
+  const asUser = () => ({ Authorization: `Bearer ${userToken}` });
+
+  test.beforeAll(async ({ request }) => {
+    adminToken = await loginToken(request, { username: 'admin', password: 'admin123' });
+    const created = await request.post(`${BASE_URL}/api/v1/auth/users`, { headers: asAdmin(), data: regular });
+    expect(created.ok(), `create ${regular.username}: HTTP ${created.status()}`).toBeTruthy();
+    userId = (await created.json()).id;
+    userToken = await loginToken(request, regular);
+  });
+
+  test.afterAll(async ({ request }) => {
+    if (userId !== undefined) {
+      const name = encodeURIComponent(regular.username);
+      await request.delete(`${BASE_URL}/api/v1/auth/users/${userId}?username=${name}`, { headers: asAdmin() });
+    }
+  });
+
+  test('GET /auth/me/smb: SMB is off, and no two-factor code is needed', async ({ request }) => {
+    const response = await request.get(`${BASE_URL}/api/v1/auth/me/smb`, { headers: asUser() });
+    expect(response.status()).toBe(200);
+    const status = await response.json();
+    expect(status.account.state).toBe('off');
+    expect(status.totp_required).toBe(false);
+    expect(Array.isArray(status.shares)).toBeTruthy();
+  });
+
+  test('POST /auth/me/smb/enable needs the password and an administrator', async ({ request }) => {
+    const wrong = await request.post(`${BASE_URL}/api/v1/auth/me/smb/enable`, {
+      headers: asUser(),
+      data: { current_password: 'e2e-Wrong-Password-1' },
+    });
+    expect(wrong.status()).toBe(400);
+    const notAllowed = await request.post(`${BASE_URL}/api/v1/auth/me/smb/enable`, {
+      headers: asUser(),
+      data: { current_password: regular.password },
+    });
+    expect(notAllowed.status()).toBe(403);
+  });
+
+  test('the share and SMB administration APIs answer 403', async ({ request }) => {
+    const shares = await request.get(`${BASE_URL}/api/v1/shares/smb`, { headers: asUser() });
+    expect(shares.status()).toBe(403);
+    const enable = await request.post(`${BASE_URL}/api/v1/auth/users/${userId}/smb/enable`, {
+      headers: asUser(),
+      data: { username: regular.username },
+    });
+    expect(enable.status()).toBe(403);
+  });
+});
+
+// DELETE /auth/users/{id} and POST /auth/users/{id}/smb/disable name the user
+// they were prepared for: user ids are reused after a deletion. The users made
+// here have no SMB account, so no host account is touched.
+test.describe('User API: requests name the user', () => {
+  let adminToken = '';
+  let smbStatus = 0;
+  const asAdmin = () => ({ Authorization: `Bearer ${adminToken}` });
+  let made: { id: number; username: string }[] = [];
+
+  async function makeUser(request: APIRequestContext, tag: string) {
+    const username = `e2e_${tag}_${Date.now().toString(36)}`;
+    const response = await request.post(`${BASE_URL}/api/v1/auth/users`, {
+      headers: asAdmin(),
+      data: { username, password: 'e2e-Named-Password-1' },
+    });
+    expect(response.ok(), `create ${username}: HTTP ${response.status()}`).toBeTruthy();
+    const user = { id: (await response.json()).id as number, username };
+    made.push(user);
+    return user;
+  }
+
+  test.beforeAll(async ({ request }) => {
+    adminToken = await loginToken(request, { username: 'admin', password: 'admin123' });
+    smbStatus = (await request.get(`${BASE_URL}/api/v1/shares/smb-status`, { headers: asAdmin() })).status();
+  });
+
+  test.beforeEach(() => {
+    test.skip(smbStatus === 404, 'The target runs a supervisor without the SMB API of this release');
+  });
+
+  test.afterEach(async ({ request }) => {
+    for (const user of made) {
+      const name = encodeURIComponent(user.username);
+      await request.delete(`${BASE_URL}/api/v1/auth/users/${user.id}?username=${name}`, { headers: asAdmin() });
+    }
+    made = [];
+  });
+
+  test('DELETE without the username answers 422 and deletes nobody', async ({ request }) => {
+    const user = await makeUser(request, 'del_none');
+    const response = await request.delete(`${BASE_URL}/api/v1/auth/users/${user.id}`, { headers: asAdmin() });
+    expect(response.status()).toBe(422);
+    const users = (await (await request.get(`${BASE_URL}/api/v1/auth/users`, { headers: asAdmin() })).json()) as {
+      id: number;
+    }[];
+    expect(users.map((u) => u.id)).toContain(user.id);
+  });
+
+  test("DELETE with another user's name answers 409 and deletes nobody", async ({ request }) => {
+    const user = await makeUser(request, 'del_other');
+    const response = await request.delete(`${BASE_URL}/api/v1/auth/users/${user.id}?username=e2e_someone_else`, {
+      headers: asAdmin(),
+    });
+    expect(response.status()).toBe(409);
+    expect((await response.json()).detail).toBe(`User ${user.id} is now '${user.username}'; reload the page`);
+    const users = (await (await request.get(`${BASE_URL}/api/v1/auth/users`, { headers: asAdmin() })).json()) as {
+      id: number;
+    }[];
+    expect(users.map((u) => u.id)).toContain(user.id);
+  });
+
+  test('DELETE with the username deletes the user', async ({ request }) => {
+    const user = await makeUser(request, 'del_named');
+    const name = encodeURIComponent(user.username);
+    const response = await request.delete(`${BASE_URL}/api/v1/auth/users/${user.id}?username=${name}`, {
+      headers: asAdmin(),
+    });
+    expect(response.status()).toBe(200);
+    expect((await response.json()).warnings).toEqual([]);
+  });
+
+  test('POST .../smb/disable without a body answers 422, with the name of another user 409', async ({ request }) => {
+    const user = await makeUser(request, 'smb_off');
+    const url = `${BASE_URL}/api/v1/auth/users/${user.id}/smb/disable`;
+    expect((await request.post(url, { headers: asAdmin() })).status()).toBe(422);
+    const other = await request.post(url, { headers: asAdmin(), data: { username: 'e2e_someone_else' } });
+    expect(other.status()).toBe(409);
+    expect((await other.json()).detail).toBe(`User ${user.id} is now '${user.username}'; reload the page`);
+    const extra = await request.post(url, { headers: asAdmin(), data: { username: user.username, force: true } });
+    expect(extra.status()).toBe(422);
+    const named = await request.post(url, { headers: asAdmin(), data: { username: user.username } });
+    expect(named.status()).toBe(200);
+    expect((await named.json()).smb.state).toBe('off');
   });
 });

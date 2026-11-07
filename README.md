@@ -47,7 +47,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Pool Scrubbing** - Data integrity verification with scheduled scrubs
 
 ### File Sharing
-- **SMB/CIFS Shares** - Windows, macOS, and Linux compatible file sharing
+- **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux
 - **NFS Exports** - Unix/Linux native network file system
 - **Web File Browser** - Upload, download, copy, move, and manage files via browser
 
@@ -100,7 +100,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Scheduled Power** - Configure auto-shutdown and wake times
 
 ### Backup & Recovery
-- **Configuration Backup** - Back up the UNOS database (accounts, 2FA, API tokens) and the SMB share configuration
+- **Configuration Backup** - Back up the UNOS database (accounts, 2FA, API tokens, SMB shares and their access)
 - **Encrypted Backups** - Optional AES-256 encryption with passphrase
 - **Restore** - Import backups to restore configuration
 
@@ -222,7 +222,7 @@ sudo systemctl restart unos   # docker compose up -d with /etc/unos/secrets.env
 ```
 
 Updating from 1.0.0 or earlier needs a few steps once (HTTPS, mounting existing
-pools): see [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from-100-or-earlier).
+pools, SMB shares): see [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from-100-or-earlier).
 
 ## Uninstalling
 
@@ -231,6 +231,18 @@ sudo /opt/unos/deploy/uninstall.sh
 ```
 
 This removes UNOS containers and configuration but preserves your storage pools and data.
+
+It also removes the Samba passwords of the SMB accounts that UNOS created
+and, when it removed one, restarts Samba so that open connections end. It
+keeps those host accounts and the group `unos-smb`: files on the pools
+belong to them, and while the accounts exist, a new installation gives its
+SMB accounts other user ids. The script prints how to remove them, and names
+the accounts whose Samba password it could not remove.
+`/etc/samba/smb.conf` stays, and Samba still serves the shares it lists,
+unless `install.sh` kept the file it replaced (`smb.conf.original`), which
+is then restored. After an upgrade from 1.0.0 or earlier, or a manual
+installation, the smb.conf that UNOS replaced with its own (and imported its
+shares from) is `/etc/samba/smb.conf.unos-import-backup`.
 
 ## Contributing
 

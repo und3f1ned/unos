@@ -37,7 +37,7 @@
 			{disabled}
 			{autocomplete}
 			{maxlength}
-			class="form-input"
+			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:input
 			on:change
@@ -54,7 +54,7 @@
 			{disabled}
 			{autocomplete}
 			{maxlength}
-			class="form-input"
+			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:input
 			on:change
@@ -71,7 +71,7 @@
 			{disabled}
 			{autocomplete}
 			{maxlength}
-			class="form-input"
+			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:input
 			on:change
@@ -88,7 +88,7 @@
 			{required}
 			{disabled}
 			{autocomplete}
-			class="form-input"
+			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:change
 			on:focus
@@ -104,7 +104,7 @@
 			{disabled}
 			{autocomplete}
 			{maxlength}
-			class="form-input"
+			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:input
 			on:change

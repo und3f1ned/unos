@@ -77,6 +77,10 @@ USER_ALLOWED = {
     ("POST", f"{API}/auth/tokens/{{token_id}}/toggle"),
     ("POST", f"{API}/auth/recovery-codes/generate"),
     ("GET", f"{API}/auth/recovery-codes/status"),
+    # Own SMB access: status, turn on with the current password (and 2FA code), turn off
+    ("GET", f"{API}/auth/me/smb"),
+    ("POST", f"{API}/auth/me/smb/enable"),
+    ("POST", f"{API}/auth/me/smb/disable"),
     # Read-only system information for the dashboard
     ("GET", f"{API}/system/info"),
     ("GET", f"{API}/system/stats"),
@@ -280,6 +284,42 @@ class TestRouteMatrix:
                 problems.append(f"{method} {path}: regular user got {response.status_code}, expected 403")
         assert problems == []
 
+    def test_a_user_without_smb_reaches_the_smb_routes_without_host_commands(self, client, alice_headers):
+        """alice has no SMB account row: her three SMB routes answer from the
+        database only (no_side_effects makes any host command fail the request)."""
+        status = client.get(f"{API}/auth/me/smb", headers=alice_headers)
+        assert status.status_code == 200, status.text
+        assert status.json() == {
+            "account": {"state": "off", "allowed": False, "linux_name": None, "uid": None,
+                        "password_set_at": None, "reason": None},
+            "totp_required": False,
+            "shares": [],
+        }
+
+        disabled = client.post(f"{API}/auth/me/smb/disable", headers=alice_headers)
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["account"]["state"] == "off"
+        assert disabled.json()["warnings"] == []
+
+        # Not allowed by an administrator: refused before any host command.
+        refused = client.post(
+            f"{API}/auth/me/smb/enable", json={"current_password": PASSWORD}, headers=alice_headers
+        )
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["detail"] == "An administrator must allow SMB access for your account first"
+
+    def test_regular_users_cannot_manage_smb_of_others(self, client, authz_db, alice_headers, bob_headers):
+        assert client.post(
+            f"{API}/auth/users/{authz_db.bob_id}/smb/enable", json={"username": "bob"}, headers=alice_headers
+        ).status_code == 403
+        assert client.post(
+            f"{API}/auth/users/{authz_db.bob_id}/smb/disable", json={"username": "bob"}, headers=alice_headers
+        ).status_code == 403
+        # Not even for themselves.
+        assert client.post(
+            f"{API}/auth/users/{authz_db.alice_id}/smb/enable", json={"username": "alice"}, headers=alice_headers
+        ).status_code == 403
+
     @pytest.mark.parametrize(
         "method,path",
         [
@@ -361,7 +401,9 @@ class TestUserManagement:
         assert client.put(
             f"{API}/auth/users/{authz_db.alice_id}", json={"is_admin": True}, headers=alice_headers
         ).status_code == 403
-        assert client.delete(f"{API}/auth/users/{authz_db.admin_id}", headers=alice_headers).status_code == 403
+        assert client.delete(
+            f"{API}/auth/users/{authz_db.admin_id}", params={"username": "admin"}, headers=alice_headers
+        ).status_code == 403
         with Session(authz_db.engine) as session:
             assert session.get(User, authz_db.alice_id).is_admin is False
             assert session.get(User, authz_db.admin_id) is not None
@@ -376,7 +418,9 @@ class TestUserManagement:
             assert session.get(User, authz_db.admin_id).is_admin is True
 
     def test_last_admin_cannot_delete_themselves(self, client, authz_db, admin_headers):
-        response = client.delete(f"{API}/auth/users/{authz_db.admin_id}", headers=admin_headers)
+        response = client.delete(
+            f"{API}/auth/users/{authz_db.admin_id}", params={"username": "admin"}, headers=admin_headers
+        )
 
         assert response.status_code == 409
         with Session(authz_db.engine) as session:
@@ -402,7 +446,9 @@ class TestUserManagement:
             session.add(User(username="admin2", hashed_password=_PASSWORD_HASH, is_admin=True))
             session.commit()
 
-        response = client.delete(f"{API}/auth/users/{authz_db.admin_id}", headers=admin_headers)
+        response = client.delete(
+            f"{API}/auth/users/{authz_db.admin_id}", params={"username": "admin"}, headers=admin_headers
+        )
         assert response.status_code == 400
 
     def test_admin_can_delete_another_admin_while_one_remains(self, client, authz_db, admin_headers):
@@ -412,7 +458,39 @@ class TestUserManagement:
             session.commit()
             second_id = second.id
 
-        assert client.delete(f"{API}/auth/users/{second_id}", headers=admin_headers).status_code == 200
+        assert client.delete(
+            f"{API}/auth/users/{second_id}", params={"username": "admin2"}, headers=admin_headers
+        ).status_code == 200
+
+    def test_a_delete_names_the_user(self, client, authz_db, admin_headers):
+        """users.id is a rowid that SQLite reuses: DELETE carries the username it was built for."""
+        url = f"{API}/auth/users/{authz_db.bob_id}"
+
+        missing = client.delete(url, headers=admin_headers)
+        stale = client.delete(url, params={"username": "carol"}, headers=admin_headers)
+
+        assert missing.status_code == 422
+        assert (stale.status_code, stale.json()["detail"]) == (
+            409, f"User {authz_db.bob_id} is now 'bob'; reload the page"
+        )
+        with Session(authz_db.engine) as session:
+            assert session.get(User, authz_db.bob_id) is not None
+        assert client.delete(url, params={"username": "bob"}, headers=admin_headers).status_code == 200
+        with Session(authz_db.engine) as session:
+            assert session.get(User, authz_db.bob_id) is None
+
+    @pytest.mark.parametrize("body, status", [
+        pytest.param(None, 422, id="no-body"),
+        pytest.param({}, 422, id="no-username"),
+        pytest.param({"username": "bob", "enabled": False}, 422, id="extra-field"),
+        pytest.param({"username": "carol"}, 409, id="stale-username"),
+    ])
+    def test_an_smb_disable_names_the_user(self, client, authz_db, admin_headers, body, status):
+        response = client.post(f"{API}/auth/users/{authz_db.bob_id}/smb/disable", json=body, headers=admin_headers)
+
+        assert response.status_code == status, response.text
+        if status == 409:
+            assert response.json()["detail"] == f"User {authz_db.bob_id} is now 'bob'; reload the page"
 
     def test_new_passwords_longer_than_bcrypt_limit_are_rejected(self, client, admin_headers, alice_headers):
         too_long = "a" * 73
