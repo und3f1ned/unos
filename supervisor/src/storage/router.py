@@ -13,6 +13,7 @@ from ..security.validators import (
     validate_pool_name,
     validate_volume_name,
 )
+from ..shares import service as shares_service
 from . import disks, pools
 from .schemas import (
     DiskInfo,
@@ -55,6 +56,20 @@ async def _call(func: Callable[..., T], *args: Any) -> T:
         raise _http_error(exc) from exc
 
 
+async def _change_pools(func: Callable[..., T], *args: Any) -> T:
+    """_call for an operation that can add or remove a managed fstab entry, then apply smb.conf.
+
+    The managed pools decide which SMB shares are served (ADR-0247). The apply
+    runs also when the operation failed, which may have changed the fstab
+    before it failed; an unchanged rendering writes nothing, and the apply
+    never changes the answer.
+    """
+    try:
+        return await _call(func, *args)
+    finally:
+        await shares_service.apply_after_pool_change()
+
+
 @router.get("/disks", response_model=list[DiskInfo])
 async def list_disks_endpoint(_=Depends(verify_token)):
     """List physical disks with their host state (system, in use, data)."""
@@ -91,13 +106,14 @@ async def create_pool_endpoint(request: Request, pool: PoolCreate, _=Depends(ver
     ``force``, or no longer matches its ``device_identities`` entry, or when
     the mountpoint directory holds files; 400 for invalid input, including
     ``confirm_name != name`` and ``force`` without a ``device_identities``
-    entry for every selected device.
+    entry for every selected device. Then smb.conf is applied again: SMB
+    shares that a forgotten pool of this name kept are served (ADR-0247).
     """
     validate_pool_name(pool.name)
     if pool.confirm_name != pool.name:
         raise HTTPException(status_code=400, detail="confirm_name must match the pool name")
 
-    return await _call(pools.create_pool, pool)
+    return await _change_pools(pools.create_pool, pool)
 
 
 @router.get("/pools/{name}", response_model=PoolInfo)
@@ -114,12 +130,13 @@ async def get_pool_endpoint(name: str, _=Depends(verify_token)):
 async def delete_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
     """Forget a pool: unmount it on the host and drop its fstab entry.
 
-    The disks are not wiped; the filesystem can be mounted again later.
+    The disks are not wiped; the filesystem can be mounted again later. As
+    after an unmount, its SMB shares stop being served (ADR-0247).
     """
     # Validate pool name
     validated_name = validate_pool_name(name)
 
-    await _call(pools.delete_pool, validated_name)
+    await _change_pools(pools.delete_pool, validated_name)
     return {"status": "deleted"}
 
 
@@ -130,11 +147,12 @@ async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_toke
 
     409 when the mountpoint directory holds files (they would be hidden).
     The pool's apps that could not start without it are started in the
-    background; the response does not wait for them.
+    background; the response does not wait for them. Its SMB shares are
+    served again before it answers (ADR-0247).
     """
     validated_name = validate_pool_name(name)
 
-    return await _call(pools.mount_pool, validated_name)
+    return await _change_pools(pools.mount_pool, validated_name)
 
 
 @router.post("/pools/{name}/unmount", response_model=PoolInfo)
@@ -142,11 +160,14 @@ async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_toke
 async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
     """Unmount a pool on the host and remove its managed fstab entry.
 
-    409 while host processes or running containers use the pool.
+    409 while host processes or running containers use the pool, such as
+    smbd for an SMB client that has one of its shares open. Before it
+    answers, smb.conf no longer serves the pool's shares, and their open
+    connections are closed (ADR-0247).
     """
     validated_name = validate_pool_name(name)
 
-    return await _call(pools.unmount_pool, validated_name)
+    return await _change_pools(pools.unmount_pool, validated_name)
 
 
 @router.get("/pools/{pool_name}/volumes", response_model=list[VolumeInfo])

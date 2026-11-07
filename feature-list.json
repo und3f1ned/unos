@@ -1516,10 +1516,17 @@
       "steps": [
         "Replace smb.conf by hand after an apply: GET /api/v1/shares/smb-status names the replaced file as a problem"
       ],
+      "verified_by": [
+        "supervisor/tests/test_smb_integration.py",
+        "supervisor/tests/test_share_api.py",
+        "webui/tests/shares.spec.ts"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0195"
-      ]
+        "ADR-0195",
+        "ADR-0248"
+      ],
+      "notes": "Built: after an apply that left UNOS's file in place, GET /shares/smb-status reads the live smb.conf and names a file without UNOS's header, or none, as a problem (ADR-0248). test_smb_integration.py replaces and removes the file after the startup apply, test_share_api.py (TestStatus) adds an unreadable file and the next change, and shares.spec.ts shows the problem on the Shares page. The step only reads: the status reads smb.conf through the /etc/samba bind mount with the function the activation check uses (ADR-0248), and changes nothing on the host, so it needs no device check. Open: the review in a fresh context (ADR-0017), then passes can turn true."
     },
     {
       "id": "shares.reapply-on-pool-unmount",
@@ -1529,10 +1536,17 @@
         "Unmount a pool with shares: smb.conf no longer serves them, and the Shares page lists them as not served",
         "Mount it again: they are served again"
       ],
+      "verified_by": [
+        "supervisor/tests/test_smb_integration.py",
+        "supervisor/tests/test_pool_persistence.py",
+        "webui/tests/storage.spec.ts"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0195"
-      ]
+        "ADR-0195",
+        "ADR-0247"
+      ],
+      "notes": "Built: create, mount, unmount and remove on the Storage page apply smb.conf before they answer, also after a failure (ADR-0247). test_smb_integration.py runs the real pool and SMB code on the fake hosts (unmount and mount, remove, a busy unmount and the mount of a mounted pool that write nothing, a failed apply), test_pool_persistence.py (TestPoolEndpoints) checks which requests apply, and storage.spec.ts the Shares page after Unmount and Mount, with route fakes. Open: the review in a fresh context (ADR-0017), the device check (btrfs and Samba) and the re-check after a reboot (ADR-0018): with the share DATA served from /mnt/pools/data/shared, an account with access, transmission stopped and no SMB client connected, Unmount data on the Storage page: /etc/samba/smb.conf has no [DATA] section, smbclient -L lists no DATA, and the Shares page shows DATA as Not served and Pool not mounted; Mount data: smb.conf has the same [DATA] section again and the account opens DATA with smbclient. With an SMB client connected to DATA, Unmount answers 409 (busy) and smb.conf is unchanged. Report the SD MiB of each step."
     },
     {
       "id": "shares.keep-every-replaced-copy",

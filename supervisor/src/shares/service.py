@@ -1321,6 +1321,30 @@ async def apply_smb_config(db: AsyncSession) -> interfaces.ApplyResult:
     return await install_smb_config(staged)
 
 
+async def apply_after_pool_change() -> None:
+    """Apply smb.conf after a storage endpoint created, mounted, unmounted or forgot a pool (ADR-0247).
+
+    The pools that UNOS manages (the fstab markers) decide which shares are
+    served (rule 4 of share_path_problem): the shares of a pool that was
+    unmounted or forgotten leave smb.conf, and their open connections are
+    closed after the reload (ADR-0103); mounting the pool serves them again.
+    An unchanged rendering writes nothing (ADR-0082). Takes smb_lock() and a
+    database session of its own. Never raises: the pool change stands, and a
+    failure is logged and shown by GET /shares/smb-status until the next
+    change or restart applies again.
+    """
+    try:
+        async with smb_lock():
+            async with database.async_session() as db:
+                await apply_smb_config(db)
+    except smb.SambaConfigError:
+        pass  # logged and recorded for the status by apply_smb_config
+    except Exception as exc:
+        logger.warning(
+            "smb.conf could not be updated after a pool change: %s: %s", type(exc).__name__, _reason(exc)
+        )
+
+
 # --- rows -------------------------------------------------------------------------
 
 
@@ -2477,6 +2501,25 @@ def last_reconcile() -> LastReconcile:
     return _last_reconcile
 
 
+# The status problem of an smb.conf that no longer starts with UNOS's header after UNOS wrote it (ADR-0248).
+SMB_CONF_REPLACED = (
+    "smb.conf was replaced or removed after UNOS wrote it; it is written again at the next change or "
+    "restart, and SMB cannot be turned on until then"
+)
+
+
+def _live_conf_problem() -> str | None:
+    """SMB_CONF_REPLACED when the live smb.conf does not start with smbconf.HEADER, as the
+    activations judge it (accounts._require_unos_smb_conf), or why it could not be read (sync)."""
+    try:
+        data = smb.read_conf_bytes()
+    except OSError as exc:
+        return f"smb.conf could not be read: {_reason(exc)}"
+    if data is None or not data.startswith(smbconf.HEADER.encode("utf-8")):
+        return SMB_CONF_REPLACED
+    return None
+
+
 def _host_checks() -> tuple[interfaces.AccountHostStatus | None, str | None, bool, list[str]]:
     """accounts.host_status() and accounts.gid_problem(), in one worker thread; never raises."""
     problems: list[str] = []
@@ -2538,6 +2581,11 @@ async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
 
     if _last_apply.ok is False and _last_apply.message:
         problems.append(f"smb.conf was not updated: {_last_apply.message}")
+    elif _last_apply.ok is True:
+        # The last apply left UNOS's file in place; it may have been replaced since (ADR-0248).
+        replaced = await asyncio.to_thread(_live_conf_problem)
+        if replaced is not None:
+            problems.append(replaced)
     if _last_apply.reload_pending and _last_apply.reload_partial:
         problems.append(
             "Samba was reloaded with systemctl only: open connections apply the last change within a few "

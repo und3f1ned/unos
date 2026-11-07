@@ -174,7 +174,9 @@ os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"
 Commands that run on the host (lsblk, findmnt, mkfs.btrfs, mount, ...) go
 through `src/host.py`. Tests answer them with a fake host (ADR-0189): the in-memory `FakeHost` of
 `tests/test_pool_persistence.py`, or `FakeSambaHost` of `tests/samba_fake.py` for Samba;
-`install_fake_host` also blocks real subprocesses and Docker:
+`install_fake_host` also blocks real subprocesses and Docker, and only counts the apply of smb.conf
+that the storage endpoints run after a pool change (`FakeHost.smb_applies`, ADR-0247), which
+`tests/test_smb_integration.py` runs with both fakes (`PoolsAndSambaHost`):
 
 ```python
 import pytest

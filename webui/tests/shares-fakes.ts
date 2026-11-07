@@ -24,6 +24,13 @@ export const GUEST_WARNING =
   'guest connections are neither signed nor encrypted.';
 // A change sent with an outdated expected_version (ADR-0135).
 export const VERSION_CONFLICT = 'The share was changed meanwhile; reload';
+// Why a share of a pool that UNOS does not manage, or no longer manages after an unmount, is not
+// served (ADR-0148), and the status problem of an smb.conf replaced after UNOS wrote it
+// (ADR-0248); supervisor/tests/test_share_api.py checks both against the server.
+export const unmanagedPoolProblem = (pool: string) =>
+  `Share path must be on a storage pool that UNOS manages: '${pool}' is not one`;
+export const SMB_CONF_REPLACED =
+  'smb.conf was replaced or removed after UNOS wrote it; it is written again at the next change or restart, and SMB cannot be turned on until then';
 
 export type SmbState = 'active' | 'password_needed' | 'off' | 'unavailable';
 export type Level = 'read' | 'write';
@@ -223,6 +230,23 @@ export function accessOf(
       return { ...entry, smb_state: state, effective: served && state === 'active' };
     })
     .sort((a, b) => a.username.localeCompare(b.username));
+}
+
+/**
+ * As the server after an unmount or a mount on the Storage page (ADR-0247): the shares of a pool
+ * that is not mounted, which UNOS then no longer manages, are not served and their access does
+ * not count; once the pool is mounted again they are served again, with the access they kept.
+ */
+export function setPoolMounted(fake: FakeSmbApi, pool: string, mounted: boolean): void {
+  for (const share of fake.shares) {
+    if (share.pool !== pool) continue;
+    share.served = mounted;
+    share.path_problem = mounted ? null : unmanagedPoolProblem(pool);
+    share.pool_mounted = mounted;
+    share.permissions_ok = mounted ? true : null;
+    share.access = accessOf(fake.users, share.access, mounted);
+    share.available = mounted && (share.guest_ok || share.access.some((entry) => entry.effective));
+  }
 }
 
 export function repairResult(share: string, extra: Partial<FakeRepairResult> = {}): FakeRepairResult {

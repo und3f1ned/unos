@@ -1,7 +1,9 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { POOLS, accessOf, fakeShare, fakeSmbApi, fakeUser, setPoolMounted, unmanagedPoolProblem } from './shares-fakes';
 import {
   FAKE_DISKS,
+  FAKE_POOLS,
   SWAPPED_DISKS,
   fakeStorageApi,
   type FakeStorageOptions,
@@ -54,6 +56,8 @@ test.describe('Storage Management', () => {
 test.describe('Storage pools (fake data)', () => {
   const poolCard = (page: Page, name: string) =>
     page.locator('.card-nested').filter({ has: page.locator('h3', { hasText: new RegExp(`^${name}$`) }) });
+  /** A share's card on the Shares page (shares.spec.ts), which has the markup of a pool's card. */
+  const shareCard = poolCard;
   /** A "Label: value" field of a pool card. */
   const field = (card: Locator, label: string) =>
     card.locator(`xpath=.//div[span[normalize-space(.)="${label}:"]]`);
@@ -122,6 +126,79 @@ test.describe('Storage pools (fake data)', () => {
     await dialog.getByRole('button', { name: 'Mount', exact: true }).click();
     await expect(dialog).toBeHidden();
     expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_tank/mount', body: {} }]);
+  });
+
+  // ADR-0247: the storage endpoints apply smb.conf after a pool change, so the shares of an
+  // unmounted pool stop being served at once. The fakes answer as the server does
+  // (supervisor/tests/test_smb_integration.py runs the server's side).
+  test('unmounting a pool stops serving its shares, and mounting it serves them again', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = [fakeUser(1, 'admin', 'unavailable', { is_admin: true }), fakeUser(2, 'alice', 'active')];
+    const smb = await fakeSmbApi(page, {
+      users,
+      shares: [
+        fakeShare('docs', {
+          path: `${POOLS}/e2e_data/docs`,
+          pool: 'e2e_data',
+          available: true,
+          access: accessOf(users, [{ user_id: 2, username: 'alice', level: 'write' }]),
+        }),
+      ],
+    });
+    const pools = [
+      {
+        ...FAKE_POOLS[0],
+        name: 'e2e_data',
+        mountpoint: '/mnt/pools/e2e_data',
+        raid_level: 'single',
+        mounted: true,
+        persistent: true,
+        health: 'healthy',
+      },
+    ];
+    const writes = await fakeStorageApi(page, {
+      pools,
+      onPoolChange: (name, change) => setPoolMounted(smb, name, change === 'mount'),
+    });
+    const docs = shareCard(page, 'docs');
+
+    await page.goto('/shares');
+    await expect(docs.getByText(/^Connect:/)).toBeVisible();
+    await expect(docs.locator('.badge', { hasText: /^Not served$/ })).toHaveCount(0);
+
+    await page.goto('/storage');
+    const pool = poolCard(page, 'e2e_data');
+    await pool.getByRole('button', { name: 'Unmount', exact: true }).click();
+    const unmount = page.getByRole('dialog', { name: 'Unmount Pool' });
+    await expect(unmount).toContainText('Shares, apps and scheduled tasks that use /mnt/pools/e2e_data lose access');
+    await unmount.getByRole('button', { name: 'Unmount', exact: true }).click();
+    await expect(unmount).toBeHidden();
+    await expect(pool.locator('.badge', { hasText: /^Not mounted$/ })).toBeVisible();
+
+    await page.goto('/shares');
+    await expect(docs.locator('.badge', { hasText: /^Not served$/ })).toBeVisible();
+    await expect(docs.locator('.badge', { hasText: /^Pool not mounted$/ })).toBeVisible();
+    await expect(docs.getByText(unmanagedPoolProblem('e2e_data'), { exact: true })).toBeVisible();
+    await expect(docs.getByText(/^Connect:/)).toHaveCount(0);
+    // alice keeps her access, but it does not count while the share is not served.
+    await expect(docs.locator('.line-through')).toHaveText(['alice']);
+
+    await page.goto('/storage');
+    await pool.getByRole('button', { name: 'Mount', exact: true }).click();
+    const mount = page.getByRole('dialog', { name: 'Mount Pool' });
+    await mount.getByRole('button', { name: 'Mount', exact: true }).click();
+    await expect(mount).toBeHidden();
+    await expect(pool.locator('.badge', { hasText: /^Mounted at boot$/ })).toBeVisible();
+
+    await page.goto('/shares');
+    await expect(docs.getByText(/^Connect:/)).toBeVisible();
+    await expect(docs.locator('.badge', { hasText: /^(Not served|Pool not mounted)$/ })).toHaveCount(0);
+    await expect(docs.locator('.line-through')).toHaveCount(0);
+    expect(writes).toEqual([
+      { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
+      { method: 'POST', path: '/pools/e2e_data/mount', body: {} },
+    ]);
   });
 
   test('create pool stays disabled until name and erase are confirmed', async ({ authenticatedPage: page }) => {

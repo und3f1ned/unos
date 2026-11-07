@@ -180,7 +180,7 @@ and this index, and `make check-fast` runs it.
 | [0127](0127-inactive-accounts-have-no-passdb-entry.md) | An account that is not active has no passdb entry, never a disabled one | accepted | 2026-11-06 |
 | [0128](0128-reconcile-creates-all-host-accounts.md) | The reconcile creates host accounts for every SMB-enabled user | superseded by [0129](0129-host-accounts-created-at-first-activation.md) | 2026-11-06 |
 | [0129](0129-host-accounts-created-at-first-activation.md) | Host accounts are created at the first activation | accepted | 2026-11-06 |
-| [0130](0130-no-smb-activation-before-unos-smb-conf.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write | accepted | 2026-11-06 |
+| [0130](0130-no-smb-activation-before-unos-smb-conf.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write | superseded by [0248](0248-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | 2026-11-06 |
 | [0131](0131-self-flows-answer-fixed-texts.md) | A regular user's own SMB and password flows answer only fixed texts | accepted | 2026-11-06 |
 | [0132](0132-new-users-never-inherit-smb-rows.md) | Creating a user clears the SMB rows left for its id | accepted | 2026-11-06 |
 | [0133](0133-requests-by-user-id-carry-the-username.md) | Requests that name a user by id also carry the username | accepted | 2026-11-06 |
@@ -219,6 +219,8 @@ and this index, and `make check-fast` runs it.
 | [0193](0193-acl-entries-and-sticky-folders-in-the-parent-chain.md) | ACL entries and sticky folders count in the parent-chain rule | proposed | 2026-11-07 |
 | [0194](0194-reduce-samba-runtime-writes.md) | Reduce Samba's remaining writes to the system disk | proposed | 2026-11-07 |
 | [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | proposed | 2026-11-07 |
+| [0247](0247-pool-changes-apply-smb-conf.md) | The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once | accepted | 2026-11-07 |
+| [0248](0248-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
 
 ## Apps
 
