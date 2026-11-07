@@ -1,10 +1,11 @@
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import delete, select, func
+from sqlalchemy import delete, select, func, update
 import pyotp
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -24,17 +25,19 @@ from .schemas import (
     UserCreate, UserResponse, Token, LoginRequest, PasswordChange,
     UserUpdate, TOTPSetupResponse, TOTPVerifyRequest, TOTPEnableRequest,
     APITokenCreate, APITokenResponse, APITokenCreated,
-    RecoveryCodesResponse, RecoveryCodeVerify,
+    RecoveryCodesResponse, RecoveryCodesStatus,
     SmbEnableRequest, SmbDisableRequest, SmbSelfEnableRequest, MySmbShare, MySmbStatus, MySmbChange,
 )
 from .utils import (
     hash_password, verify_password, create_access_token, verify_token,
     require_admin, generate_api_token, generate_recovery_codes,
     TOTP_CODE_REUSED, TotpCheck, check_totp_code, forget_totp_steps,
+    RECOVERY_CODE_INVALID, recovery_code_hash, recovery_code_hashes, recovery_codes_left,
 )
 from ..security.router import record_login_attempt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 LAST_ADMIN_DETAIL = "At least one administrator account must remain"
 
@@ -203,8 +206,17 @@ async def login(
             detail="Incorrect username or password",
         )
 
-    # Check if 2FA is enabled
-    if user.totp_enabled:
+    # Check if 2FA is enabled. A recovery code takes the place of a code of the
+    # authenticator app, and each one signs in once (ADR-0238).
+    used_recovery_code = False
+    if user.totp_enabled and login_request.recovery_code:
+        if not await _use_recovery_code(db, user.id, login_request.recovery_code):
+            await record_login_attempt(
+                db, login_request.username, False, request, failure_reason=RECOVERY_CODE_INVALID
+            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=RECOVERY_CODE_INVALID)
+        used_recovery_code = True
+    elif user.totp_enabled:
         if not login_request.totp_code:
             return Token(access_token="", requires_totp=True)
 
@@ -230,7 +242,9 @@ async def login(
         action=AuditAction.LOGIN_SUCCESS,
         request=request,
         username=user.username,
-        success=True
+        details="Signed in with a recovery code" if used_recovery_code else None,
+        success=True,
+        severity=AuditSeverity.WARNING if used_recovery_code else AuditSeverity.INFO,
     )
 
     access_token = create_access_token(data={"sub": user.username})
@@ -329,6 +343,8 @@ async def enable_totp(
         )
 
     current_user.totp_enabled = True
+    # A new setup starts without recovery codes: none of an earlier one comes back (ADR-0238).
+    current_user.recovery_codes = None
     await db.commit()
 
     return {"status": "ok", "message": "2FA enabled successfully"}
@@ -350,8 +366,14 @@ async def disable_totp(
             status_code=400, detail=TOTP_CODE_REUSED if check is TotpCheck.REUSED else "Invalid TOTP code"
         )
 
-    current_user.totp_enabled = False
-    current_user.totp_secret = None
+    # One statement writes all three columns. Assigning None to the loaded user would leave
+    # recovery_codes out of the UPDATE when it was loaded as None, and then codes that a
+    # generation stored after that load would outlive 2FA: they belong to this setup (ADR-0238).
+    await db.execute(
+        update(User)
+        .where(User.id == current_user.id)
+        .values(totp_enabled=False, totp_secret=None, recovery_codes=None)
+    )
     await db.commit()
 
     return {"status": "ok", "message": "2FA disabled successfully"}
@@ -847,7 +869,9 @@ async def toggle_api_token(
     }
 
 
-# ==================== 2FA Recovery Codes ====================
+# ==================== 2FA Recovery Codes (ADR-0238) ====================
+
+RECOVERY_CODES_NEED_2FA = "2FA must be enabled before generating recovery codes"
 
 @router.post("/recovery-codes/generate", response_model=RecoveryCodesResponse)
 async def generate_new_recovery_codes(
@@ -855,64 +879,80 @@ async def generate_new_recovery_codes(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Generate new recovery codes. Replaces any existing codes."""
+    """Replace the user's recovery codes with ten new ones, answered only this once."""
     if not current_user.totp_enabled:
-        raise HTTPException(
-            status_code=400,
-            detail="2FA must be enabled before generating recovery codes"
-        )
+        raise HTTPException(status_code=400, detail=RECOVERY_CODES_NEED_2FA)
 
-    # Generate new codes
-    plain_codes, hashed_codes = generate_recovery_codes(10)
-
-    # Store hashed codes
-    current_user.recovery_codes = json.dumps(hashed_codes)
-    await db.commit()
-
-    # Audit log
-    await log_action(
-        action=AuditAction.OTHER,
-        request=request,
-        user=current_user,
-        resource_type="recovery_codes",
-        details="Generated new 2FA recovery codes",
-        severity=AuditSeverity.WARNING
+    plain_codes, hashed_codes = generate_recovery_codes()
+    # Written only while 2FA is still on: codes stored after it was turned off would outlive it.
+    result = await db.execute(
+        update(User)
+        .where(User.id == current_user.id, User.totp_enabled.is_(True))
+        .values(recovery_codes=json.dumps(hashed_codes))
+        .execution_options(synchronize_session=False)
     )
+    await db.commit()
+    if result.rowcount != 1:
+        raise HTTPException(status_code=400, detail=RECOVERY_CODES_NEED_2FA)
+
+    # The new codes are stored and the earlier ones no longer work: an audit entry that cannot
+    # be written (a full disk) is logged, and the codes, answered only now, still reach the user.
+    try:
+        await log_action(
+            action=AuditAction.OTHER,
+            request=request,
+            user=current_user,
+            resource_type="recovery_codes",
+            details="Generated new 2FA recovery codes",
+            severity=AuditSeverity.WARNING
+        )
+    except Exception as exc:
+        logger.error(
+            "Could not write the audit entry of new recovery codes for %s: %s", current_user.username, exc
+        )
 
     return RecoveryCodesResponse(codes=plain_codes)
 
 
-@router.get("/recovery-codes/status")
-async def recovery_codes_status(
-    current_user: User = Depends(verify_token),
-    db: AsyncSession = Depends(get_db)
-):
-    """Check how many recovery codes are remaining."""
-    if not current_user.recovery_codes:
-        return {"remaining": 0, "generated": False}
-
-    try:
-        codes = json.loads(current_user.recovery_codes)
-        # Count non-null entries (used codes are set to null)
-        remaining = len([c for c in codes if c is not None])
-        return {"remaining": remaining, "generated": True}
-    except json.JSONDecodeError:
-        return {"remaining": 0, "generated": False}
-
-
-@router.post("/recovery-codes/verify")
-async def verify_recovery_code_endpoint(
-    request: Request,
-    data: RecoveryCodeVerify,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Use a recovery code to log in when 2FA device is unavailable.
-    This endpoint is for login, not for authenticated users.
-    """
-    # This is similar to login but uses recovery code instead of TOTP
-    # For simplicity, we'll require username in a header or the code format includes it
-    raise HTTPException(
-        status_code=501,
-        detail="Recovery code login should be done via /login endpoint with recovery_code field"
+@router.get("/recovery-codes/status", response_model=RecoveryCodesStatus)
+async def recovery_codes_status(current_user: User = Depends(verify_token)):
+    """How many of the user's recovery codes are left: none while 2FA is off, when no code
+    signs in (codes stored then come only from a restored database)."""
+    stored = current_user.recovery_codes if current_user.totp_enabled else None
+    return RecoveryCodesStatus(
+        remaining=recovery_codes_left(stored),
+        generated=bool(recovery_code_hashes(stored)),
     )
+
+
+async def _stored_recovery_codes(db: AsyncSession, user_id: int) -> str | None:
+    """users.recovery_codes of user ``user_id`` as the database holds it now."""
+    return await db.scalar(select(User.recovery_codes).where(User.id == user_id))
+
+
+async def _use_recovery_code(db: AsyncSession, user_id: int, code: str) -> bool:
+    """Use up recovery code ``code`` of user ``user_id``; False when it is not one of the
+    user's unused codes.
+
+    The used code's hash becomes null in a compare-and-swap UPDATE, committed here: it
+    changes the column only while it still holds what was read. Of two sign-ins with one
+    code that read the codes at the same moment, the second updates nothing and fails, and
+    so does a sign-in that read them before new codes were generated (which stay as they
+    are).
+    """
+    wanted = recovery_code_hash(code)
+    if wanted is None:
+        return False
+    stored = await _stored_recovery_codes(db, user_id)
+    hashes = recovery_code_hashes(stored)
+    left = [None if h == wanted else h for h in hashes]
+    if left == hashes:
+        return False
+    result = await db.execute(
+        update(User)
+        .where(User.id == user_id, User.recovery_codes == stored)
+        .values(recovery_codes=json.dumps(left))
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    return result.rowcount == 1

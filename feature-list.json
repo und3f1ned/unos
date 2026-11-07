@@ -209,15 +209,37 @@
         "GET /api/v1/audit/logs/export downloads the filtered entries"
       ],
       "verified_by": [
-        "supervisor/tests/test_login_bounds.py"
+        "supervisor/tests/test_audit_log.py",
+        "supervisor/tests/test_login_bounds.py",
+        "supervisor/tests/test_authz.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0065",
         "ADR-0066",
+        "ADR-0224",
+        "ADR-0237"
+      ],
+      "notes": "Step 1: TestSignInAndUserManagementAreListed in tests/test_audit_log.py signs in, creates and deletes a user through the API and reads the three entries from GET /api/v1/audit/logs, newest first, with the user, the action, the time and the client address. Step 2: TestFilters and TestSearch filter by user, action, severity, time and text, at the edges of a day and of a second, on entries with microseconds as log_action writes them, and /logs/count counts the same entries; a bound covers the whole day, hour, minute, second or fraction it names, and one in another form or with a zone gets 422 (ADR-0237). Step 3: TestExport downloads the filtered entries as CSV and JSON, the same entries the list shows, and in the CSV a ' keeps a spreadsheet from reading a value as a formula, the user name of a failed sign-in included. Recorded today: sign-ins, users and their SMB access, shares, API tokens, recovery codes and the clearing of the log (docs/USER_GUIDE.md, Audit Log); storage, snapshots, containers, apps, backups, power, scheduled tasks, the network, system settings and a user's own password and two-factor changes write no entries yet (security.audit-admin-actions). Writing entries is tested in tests/test_login_bounds.py and tests/test_audit_log.py, the administrator-only routes in tests/test_authz.py. Not host-level (GLOSSARY.md): no device check needed. The page is webui.audit-log-page."
+    },
+    {
+      "id": "security.audit-admin-actions",
+      "category": "security",
+      "description": "Every administrative action and every change of a user's own sign-in is recorded in the audit log, not only sign-ins, users, shares and API tokens",
+      "steps": [
+        "Creating and deleting pools and volumes, and creating, deleting and restoring snapshots, write audit entries with the user, the client address and the resource",
+        "Starting, stopping and removing containers, and installing and uninstalling apps, write audit entries",
+        "Creating, restoring and deleting backups, restarting and shutting down, and changing scheduled tasks, the network and the system settings write audit entries",
+        "A user's own password change and turning two-factor authentication on or off write audit entries",
+        "Every AuditAction value that the Action filter of the Audit Log page offers is written by the action it names, or is removed"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0157",
+        "ADR-0203",
         "ADR-0224"
       ],
-      "notes": "Writing entries is tested (tests/test_login_bounds.py, tests/test_audit_log.py), and so are listing, counting and exporting across the rotated files (tests/test_audit_log.py); the filters by user, action and time are not, and no page shows the log (webui.audit-log-page)."
+      "notes": "A side finding of security.audit-log (ADR-0203): only the auth, shares and audit code call log_action (supervisor/src/audit/router.py), so POOL_*, VOLUME_*, SNAPSHOT_*, CONTAINER_*, APP_*, BACKUP_*, SYSTEM_*, SETTINGS_CHANGED, TASK_*, FIREWALL_*, SSL_CERT_UPLOADED, NETWORK_CONFIG_CHANGED, PASSWORD_CHANGE, TOTP_* and LOGOUT are never written. Entries record real changes only (ADR-0157)."
     },
     {
       "id": "security.append-only-audit-log",
@@ -362,7 +384,7 @@
       "passes": true,
       "adr": [
         "ADR-0009",
-        "ADR-0032"
+        "ADR-0233"
       ],
       "notes": "Step 4: auth.spec.ts 'Logout ends the session' clicks Logout and checks that the token is gone (added on 2026-11-07, after a review found the step unasserted)."
     },
@@ -489,7 +511,7 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0032",
+        "ADR-0233",
         "ADR-0027"
       ],
       "notes": "Untested: that a disabled or an expired token is refused. API only: no page manages tokens."
@@ -557,11 +579,17 @@
         "At the code step of the sign-in, a recovery code opens the session, and the same code never works again",
         "The Account page shows how many codes are left"
       ],
-      "passes": false,
-      "adr": [
-        "ADR-0033"
+      "verified_by": [
+        "supervisor/tests/test_recovery_codes.py",
+        "webui/tests/recovery-codes.spec.ts"
       ],
-      "notes": "Codes can be generated through the API, but nothing signs in with one: the sign-in takes no recovery code, and POST /api/v1/auth/recovery-codes/verify answers 501. No page shows them."
+      "passes": true,
+      "adr": [
+        "ADR-0033",
+        "ADR-0238",
+        "ADR-0239"
+      ],
+      "notes": "Against the stand-in's real supervisor, recovery-codes.spec.ts generates ten codes on the Account page, which a reload no longer shows and of which one signs in (step 1), signs in at the code step with a code that a second time answers 'Invalid recovery code' (step 2), and reads 10, 9 and 8 codes left (step 3). It also checks what a failed generation says: no codes were generated after a refusal, and after a lost answer that the saved codes may no longer work. test_recovery_codes.py adds two sign-ins with one code at the same moment, codes typed in any case or without dashes, new codes generated meanwhile, codes removed with two-factor authentication also when a generation commits while it is being turned off, and codes answered when their audit entry cannot be written. Database only: not host-level (GLOSSARY.md). Turning 2FA off still needs a code of the authenticator app, and no administrator can reset 2FA."
     },
     {
       "id": "auth.mandatory-two-factor",
@@ -810,9 +838,10 @@
       "passes": false,
       "adr": [
         "ADR-0069",
-        "ADR-0070"
+        "ADR-0070",
+        "ADR-0243"
       ],
-      "notes": "Device check: 2026-11-06 (slice 1 deploy). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-06 (slice 1 deploy). 2026-11-07: the Volumes dialog sends the optional quota, typed in GiB, in bytes and shows the 409 when quotas are not enabled (ADR-0243, which superseded ADR-0241; storage.spec.ts). Open: the device check of a create with a quota (the 409 while quotas are off on the pool data; once the owner enabled them, the limit on the new volume's quota group) and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "storage.snapshots",
@@ -828,13 +857,16 @@
       "verified_by": [
         "supervisor/tests/test_snapshots.py",
         "supervisor/tests/test_scheduler_validation.py",
-        "webui/tests/snapshots.spec.ts"
+        "webui/tests/snapshots.spec.ts",
+        "webui/tests/scheduler.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0011"
+        "ADR-0011",
+        "ADR-0242",
+        "ADR-0243"
       ],
-      "notes": "The E2E spec only checks that the page renders, and the scheduler spec covers SMART tasks only. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built 2026-11-07 (ADR-0243, which superseded ADR-0241): GET /snapshots/subvolumes lists each mounted pool and its volumes, read through src/host.py, a pool whose volumes cannot be read alone with volumes_error, and the Snapshots page picks one; times come in UTC with their offset, the names snap_, restore_ and auto_ take UTC, the list runs no du and needs its pool or volume, and create, restore and delete use dialogs. Create, restore and delete, the scheduled ones included, act on the folders they opened, through /proc/self/fd paths, and delete by subvolume id (ADR-0242). Asserted on fakes: steps 1 to 3 by test_snapshots.py and snapshots.spec.ts, steps 4 and 5 by test_scheduler_validation.py and scheduler.spec.ts. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step; it is also the first run of the real btrfs-progs with /proc/self/fd paths, subvolid-resolve and delete --subvolid: GET /snapshots/subvolumes lists /mnt/pools/data and its volumes; a snapshot of a volume and one of the pool are listed with their local time; restoring the pool's snapshot makes the volume restore_<time>, which the Volumes dialog deletes (a volume's copy stays undeletable in the web UI, storage.restore-copies-deletable); delete removes a snapshot; a snapshot task with keep count 3 run four times keeps three auto_ snapshots; a run while the pool is unmounted fails with Pool data is not mounted."
     },
     {
       "id": "storage.scrub",
@@ -879,9 +911,10 @@
       "passes": false,
       "adr": [
         "ADR-0072",
-        "ADR-0172"
+        "ADR-0172",
+        "ADR-0235"
       ],
-      "notes": "Device check: 2026-11-06 (slice 1 deploy: SMART data and a short test of the pool's disk). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Disk Health opens each disk's SMART data in a dialog, from what GET /health/disks returned (ADR-0235): health, temperature, power-on hours and cycles, serial, firmware, the last self-test (of the ATA or the NVMe self-test log), the ATA attributes with their status, and the SMART/Health Information log of NVMe disks (test_health_smart.py, health.spec.ts on route fakes). smartctl runs in the container (architecture.host-command-layer), and GET /health/disks runs it without -n standby, so opening Disk Health wakes sleeping disks (storage.disk-spindown). Device check: 2026-11-06 (slice 1 deploy: SMART data and a short test of the pool's disk). Open: the device check of the dialog (System > Disk Health on the device: the pool's disk /dev/sda opens with its attributes, temperature and PASSED; an NVMe disk, if one is connected, with its health log) and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "storage.smart-trend-alerts",
@@ -909,7 +942,18 @@
         "A disk with a predicted failure shows replace soon with the reason",
         "The mark goes away when the prediction does"
       ],
-      "passes": false
+      "verified_by": [
+        "supervisor/tests/test_smart_predictions.py",
+        "supervisor/tests/test_health_monitor.py",
+        "webui/tests/health.spec.ts",
+        "webui/tests/dashboard.spec.ts",
+        "webui/tests/roles.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0235"
+      ],
+      "notes": "GET /health/smart/predictions scores the SMART history as ADR-0235 fixes it (the rate over the last 24 snapshots; no prediction for NVMe disks or the shared 'unknown' history) and covers the disks connected now, found by the lsblk serial the monitor stores with each snapshot when it names one disk and one history, else by path. A counter is read from the snapshots that hold it, and the history file is written atomically; one that cannot be read answers 500. Disk Health marks a disk Replace soon by its serial, with the risk factors and the recommendation, and lists a prediction that matches no listed disk apart; the dashboard lists such disks for administrators and links to Disk Health; both say when the predictions cannot be read. Proven here, 2026-11-07: test_smart_predictions.py (the threshold, the window, snapshots without the counters, the disks covered, the mark going a day after the last rise, the history file), health.spec.ts and dashboard.spec.ts on route fakes, roles.spec.ts (no request for regular users); reviewed in a fresh context twice (ADR-0017), the findings of the second fixed on 2026-11-07. No host-level change, and no failing disk can be shown on the device. A sanity check there after the next deploy: GET /api/v1/health/smart/predictions answers 200 for the connected disks, new snapshots in /data/smart_history.json hold lsblk_serial, and the dashboard shows no mark and no warning."
     },
     {
       "id": "storage.restore-copies-deletable",
@@ -1844,7 +1888,7 @@
       "description": "A scheduled backup task makes backups and keeps only the newest N scheduled ones",
       "steps": [
         "Add a backup task with retention 3 in System > Scheduler",
-        "Each run stores auto_backup_<date>_<time>.tar.gz, complete before it is listed, and two runs at once both succeed",
+        "Each run stores auto_backup_<date>_<time>.tar.gz.enc, complete before it is listed, and two runs at once both succeed",
         "The fourth run deletes the oldest scheduled backup and never a manual one"
       ],
       "verified_by": [
@@ -1853,9 +1897,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0172"
+        "ADR-0172",
+        "ADR-0240"
       ],
-      "notes": "The scheduler E2E spec covers SMART tasks only. Device check: 2026-11-06 (two scheduled backups at once)."
+      "notes": "The E2E specs run a backup task on the stand-in, without the Keep Count (webui/tests/scheduler.spec.ts, webui/tests/backup-restore.spec.ts). Device check: 2026-11-06 (two scheduled backups at once), before scheduled backups were encrypted (ADR-0240)."
     },
     {
       "id": "backup.off-device-copies",
@@ -1923,10 +1968,18 @@
         "A backup task encrypts what it stores with AES-256-GCM and a passphrase, as a manual backup with a passphrase is (.tar.gz.enc)",
         "A scheduled backup restores with that passphrase and is refused without it"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0041"
-      ]
+        "ADR-0041",
+        "ADR-0240"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_scheduler_validation.py",
+        "supervisor/tests/test_backup_files.py",
+        "webui/tests/scheduler.spec.ts",
+        "webui/tests/backup-restore.spec.ts"
+      ],
+      "notes": "A backup task needs a passphrase, which no answer of the API and no file holds; the device keeps the key derived from it in /data/scheduled_backup_keys.json, mode 0600 (ADR-0240). The stand-in runs a backup task and restores its backup with the passphrase (webui/tests/backup-restore.spec.ts). Not checked on the device: the RAM a run takes there, and that backup tasks made before ADR-0240 fail until a passphrase is set."
     },
     {
       "id": "files.browse-and-download",
@@ -1998,13 +2051,15 @@
         "A name that exists or breaks the name rules is refused"
       ],
       "verified_by": [
+        "webui/tests/files.spec.ts",
         "supervisor/tests/test_files_security.py"
       ],
       "passes": false,
       "adr": [
-        "ADR-0168"
+        "ADR-0168",
+        "ADR-0232"
       ],
-      "notes": "No E2E test renames an item."
+      "notes": "Step 1: files.spec.ts 'renames a file and a folder in the open folder', also from the keyboard, by leaving the field, and after a switch to another window as Chromium reports one; test_files_security.py test_rename_a_file_and_a_folder. Step 2: files.spec.ts 'refuses a name that exists or breaks the name rules, and Escape keeps the name'; test_rename_rejects_bad_names, test_rename_existing_target_is_refused, test_rename_never_replaces_a_name_that_appears_after_the_check. Missing: these backend tests on Linux. On Linux, which the dev device runs, the exclusive rename of ADR-0232 is renameat2 with RENAME_NOREPLACE, and no run has reached it: the tests ran renameatx_np on macOS. passes turns true once the owner's run of scripts/dev/linux-tests.sh tests/test_files_security.py -k rename is green."
     },
     {
       "id": "files.protects-volumes-and-mounts",
@@ -2137,9 +2192,9 @@
       "passes": false,
       "adr": [
         "ADR-0015",
-        "ADR-0233"
+        "ADR-0245"
       ],
-      "notes": "Built (ADR-0233): every command of the network API runs on the host through src/host.py. GET /network/interfaces lists each interface's IPv4 and IPv6 addresses, its operational state, whether it is enabled, and its link speed from the host's sysfs; VLANs (eth0.100) are listed and changed like the others; the routes are the IPv4 and IPv6 tables; DNS reads all of resolvectl's servers and leaves out its fallback servers; a failed request answers 500 with the host's message (a host that does not answer in time: \"the host did not answer within N seconds\"), and the page shows it. The tab is built from the UI components and tokens. Disable and Enable follow ADR-0232 (system.network-disable-confirmation). The fake-host tests and the E2E spec (route fakes: the stand-in has no host network) pass. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): System > Network on the dev device lists its NICs and the Hurricane Electric tunnel with the addresses, states and speeds that `ip addr` and `cat /sys/class/net/<if>/speed` show on the host, and the DNS servers, search domains, gateway and routes of `resolvectl status`, `ip route` and `ip -6 route`; Disable and Enable of a NIC that does not carry the connection, and carries no VLANs (ADR-0234), follow on the host (`ip link`). The live rates on the page still come from the supervisor container's interfaces, matched by name (system.dashboard). PUT /network/hostname duplicates PUT /system/hostname (system.hostname-and-time-zone), and GET /system/network, which no page calls, duplicates GET /network/interfaces with ethtool speeds."
+      "notes": "Built (ADR-0245): every command of the network API runs on the host through src/host.py. GET /network/interfaces lists each interface's IPv4 and IPv6 addresses, its operational state, whether it is enabled, and its link speed from the host's sysfs; VLANs (eth0.100) are listed and changed like the others; the routes are the IPv4 and IPv6 tables; DNS reads all of resolvectl's servers and leaves out its fallback servers; a failed request answers 500 with the host's message (a host that does not answer in time: \"the host did not answer within N seconds\"), and the page shows it. The tab is built from the UI components and tokens. Disable and Enable follow ADR-0244 (system.network-disable-confirmation). The fake-host tests and the E2E spec (route fakes: the stand-in has no host network) pass. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): System > Network on the dev device lists its NICs and the Hurricane Electric tunnel with the addresses, states and speeds that `ip addr` and `cat /sys/class/net/<if>/speed` show on the host, and the DNS servers, search domains, gateway and routes of `resolvectl status`, `ip route` and `ip -6 route`; Disable and Enable of a NIC that does not carry the connection, and carries no VLANs (ADR-0246), follow on the host (`ip link`). The live rates on the page still come from the supervisor container's interfaces, matched by name (system.dashboard). PUT /network/hostname duplicates PUT /system/hostname (system.hostname-and-time-zone), and GET /system/network, which no page calls, duplicates GET /network/interfaces with ethtool speeds."
     },
     {
       "id": "system.hostname-and-time-zone",
@@ -2169,13 +2224,15 @@
         "Turn Wake-on-LAN on for an interface: ethtool on the host shows it, and a magic packet wakes the host"
       ],
       "verified_by": [
+        "supervisor/tests/test_power.py",
         "webui/tests/power.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0015"
+        "ADR-0015",
+        "ADR-0233"
       ],
-      "notes": "No backend test, and the E2E spec only checks the confirmation dialogs. Reboots of the dev device are owner actions (ADR-0211). Open: the device check and the re-check after a reboot (ADR-0018). In the supervisor container is_in_container() (supervisor/src/power/router.py) is always true, because /.dockerenv exists: reboot, shutdown and suspend answer status unavailable, and the Power tab does not show that answer (architecture.host-command-layer)."
+      "notes": "Built (ADR-0233): reboot, shutdown, cancel, suspend and Wake-on-LAN run on the host through src/host.py; GET /api/v1/power/pending reads logind's ScheduledShutdown, and Cancel runs shutdown -c only while something is pending; the Wake-on-LAN choice per interface is kept in /data/wol_config.json and set again at each start of the supervisor; with UNOS_HOST_EXEC=local (the stand-in, the test stack) every power endpoint answers 503 and runs nothing; POST /system/reboot, /system/shutdown and /system/cancel-shutdown are gone. System > Power shows each answer, the pending action with its Cancel button, and the interfaces with their MAC address and an on or off button; Suspend asks first too. Proven on a fake host and with route fakes only: every step acts on the host, so the entry passes after the device check and the re-check after a reboot (ADR-0018), and reboots of the dev device are owner actions (ADR-0211). The device check must show: Reboot in the tab makes busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager ScheduledShutdown name reboot one minute ahead, and the host reboots then; Cancel empties it and nothing happens; Shutdown powers the host off a minute later; Turn on for the board's NIC makes ethtool <nic> on the host show Wake-on: g, a magic packet from a second machine on the LAN starts the host after a shutdown (whether the NIC and the board support it is unknown), and after a reboot ethtool still shows g. The host needs ethtool; the startup check names it when it is missing. The UPS monitor still shuts down only outside a container (system.ups-monitoring)."
     },
     {
       "id": "system.ups-monitoring",
@@ -2299,10 +2356,15 @@
         "Edit a task that ran: its last run and last status stay",
         "Every control of the task form is reached through its label"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0175"
-      ]
+      ],
+      "verified_by": [
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/scheduler.spec.ts"
+      ],
+      "notes": "The task form keeps its native controls, each named by its label through a for/id pair; the passphrase fields of backup tasks are Input components (ADR-0240)."
     },
     {
       "id": "system.scheduler-time-zone",
@@ -2376,10 +2438,17 @@
         "System > Updates shows the current and the latest version, and no Install Update or Rollback button",
         "The tab names sudo /opt/unos/deploy/update.sh as the way to update"
       ],
+      "verified_by": [
+        "webui/tests/updates.spec.ts",
+        "supervisor/tests/test_updates.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0173"
-      ]
+        "ADR-0173",
+        "ADR-0234"
+      ],
+      "notes": "The supervisor image carries its version: UNOS_VERSION, git describe --tags --always of the checkout that deploy/install.sh or deploy/update.sh built; update.sh fetches its branch with the tags in its history, so a release tagged after the install was cloned names the images (ADR-0234). The tab shows it, the latest release on GitHub or that none is published, and names sudo /opt/unos/deploy/update.sh; Install Update, Rollback, the update progress, the history and the settings left it, while their routes stay until system.in-app-updater. General shows the same version. Proven with route fakes and in the scripts' sandbox only, so passes stays false until the dev device shows its version: scripts/dev/deploy.sh, which builds the device's images, does not pass UNOS_VERSION yet, so System > Updates and General read unknown there. Missing: that script change (the owner's), then a deploy after which GET /api/v1/updates/current on the device (scripts/dev/api.py) and both tabs name the deployed tree's version."
     },
     {
       "id": "system.no-legacy-log-endpoints",
@@ -2447,15 +2516,15 @@
       "passes": false,
       "adr": [
         "ADR-0035",
-        "ADR-0232",
-        "ADR-0234"
+        "ADR-0244",
+        "ADR-0246"
       ],
       "verified_by": [
         "supervisor/tests/test_network.py",
         "supervisor/tests/test_network_scripts.py",
         "webui/tests/network.spec.ts"
       ],
-      "notes": "Built (ADR-0232, ADR-0234): Disable asks in a dialog that names the interface and warns that the connection may drop. POST /network/interfaces/{name}/down saves the interface's addresses and routes in /run/unos/network on the host, arms the transient systemd timer unos-network-revert-<if> (60 seconds) and only then disables it; it refuses (the interface stays enabled) when the state cannot be saved or the timer cannot be armed, and (409) for an interface that carries VLANs without loose binding, which the kernel turns off and on with it. The page counts down, the newest countdown first and with the focus on the countdowns, and offers Keep (POST .../down/confirm); a Keep whose host command fails or does not answer in time answers from the marker on the host. Without Keep the timer turns the interface back on with its saved addresses and routes, also when the supervisor restarts. When the page's time runs out it looks again 5 seconds later and reports what it finds: back on, still counting on the host (countdown and Keep again), still off with nothing waiting (a revert that could not turn it on, or a Keep elsewhere: reported, with Enable), gone from the host, or not readable. Wherever UNOS finds the interface on again (Enable, Keep), it discards the saved state, unless the revert is restoring it. The fake-host tests, the tests of the host scripts under sh and dash and the E2E spec pass. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): disable a NIC that does not carry the connection and wait: after 60 seconds `ip link` shows it up again, `ip route` and `ip -6 addr` show its default route and IPv6 addresses again, `journalctl -u unos-network-revert-<if>` shows the revert and /run/unos/network/<if> holds no pending file; disable it and press Keep: it is still down after 60 seconds, `systemctl list-timers` lists no unos-network-revert timer, and Enable brings back its routes; disable it, press Keep, turn it on on the host (`ip link set dev <if> up`) and send `POST /network/interfaces/<if>/up`: it answers 200 and /run/unos/network/<if> holds no saved files; disable the NIC that carries the web UI: the page reaches UNOS again within about a minute; after a reboot every interface is up. Whether the dev device's network manager turns a kept disable back on by itself is unknown until then."
+      "notes": "Built (ADR-0244, ADR-0246): Disable asks in a dialog that names the interface and warns that the connection may drop. POST /network/interfaces/{name}/down saves the interface's addresses and routes in /run/unos/network on the host, arms the transient systemd timer unos-network-revert-<if> (60 seconds) and only then disables it; it refuses (the interface stays enabled) when the state cannot be saved or the timer cannot be armed, and (409) for an interface that carries VLANs without loose binding, which the kernel turns off and on with it. The page counts down, the newest countdown first and with the focus on the countdowns, and offers Keep (POST .../down/confirm); a Keep whose host command fails or does not answer in time answers from the marker on the host. Without Keep the timer turns the interface back on with its saved addresses and routes, also when the supervisor restarts. When the page's time runs out it looks again 5 seconds later and reports what it finds: back on, still counting on the host (countdown and Keep again), still off with nothing waiting (a revert that could not turn it on, or a Keep elsewhere: reported, with Enable), gone from the host, or not readable. Wherever UNOS finds the interface on again (Enable, Keep), it discards the saved state, unless the revert is restoring it. The fake-host tests, the tests of the host scripts under sh and dash and the E2E spec pass. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): disable a NIC that does not carry the connection and wait: after 60 seconds `ip link` shows it up again, `ip route` and `ip -6 addr` show its default route and IPv6 addresses again, `journalctl -u unos-network-revert-<if>` shows the revert and /run/unos/network/<if> holds no pending file; disable it and press Keep: it is still down after 60 seconds, `systemctl list-timers` lists no unos-network-revert timer, and Enable brings back its routes; disable it, press Keep, turn it on on the host (`ip link set dev <if> up`) and send `POST /network/interfaces/<if>/up`: it answers 200 and /run/unos/network/<if> holds no saved files; disable the NIC that carries the web UI: the page reaches UNOS again within about a minute; after a reboot every interface is up. Whether the dev device's network manager turns a kept disable back on by itself is unknown until then."
     },
     {
       "id": "system.boot-time-field",
@@ -2556,10 +2625,17 @@
         "Search and filters by user, action and time narrow the list",
         "Export downloads the filtered entries"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0066"
-      ]
+        "ADR-0066",
+        "ADR-0237"
+      ],
+      "verified_by": [
+        "webui/tests/audit.spec.ts",
+        "webui/tests/roles.spec.ts",
+        "supervisor/tests/test_audit_log.py"
+      ],
+      "notes": "The page /audit (webui/src/routes/audit/+page.svelte, $lib/api/audit.ts) is in the administrator's sidebar and in ADMIN_ONLY_ROUTES. webui/tests/audit.spec.ts on the stand-in's real audit log: step 1, the entries newest first on a timeline grouped by day, with the time, the action, the user, the address and the details; step 2, Search, User, Action, From and To narrow the list and its count, and From and To include their whole day: each step waits for the server's answers (list and count) to exactly the filters it set and changes what the timeline shows; step 3, Export CSV and Export JSON download the filtered entries with the session token. Route fakes cover Show more (100 entries at a time) and the errors of loading and exporting; tests/roles.spec.ts sends a regular user from /audit to the dashboard. Times are the server's local time as the entries carry them (architecture.times-with-time-zones). The page shows what the log records, which leaves out storage, containers, apps, backups and system settings for now (security.audit-admin-actions). Not host-level (GLOSSARY.md): no device check needed."
     },
     {
       "id": "webui.light-theme",

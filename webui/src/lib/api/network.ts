@@ -13,7 +13,7 @@ export interface NetworkInterface {
   speed: number | null;
   mtu: number;
   type: string;
-  /** Seconds until a disable that waits to be kept comes back on by itself (ADR-0232). */
+  /** Seconds until a disable that waits to be kept comes back on by itself (ADR-0244). */
   revert_in: number | null;
 }
 

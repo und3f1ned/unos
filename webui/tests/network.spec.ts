@@ -4,7 +4,7 @@ import { fakeNetworkApi, nothingToKeep, notEnabled, revertNotArmed, type FakeFai
 
 // System > Network with canned answers of the network API (network-fakes.ts):
 // the stand-in has no host network, and no spec may disable a real interface.
-// The host's side, the saved state and the revert timer (ADR-0232), is tested in
+// The host's side, the saved state and the revert timer (ADR-0244), is tested in
 // supervisor/tests/test_network.py and test_network_scripts.py. The tests of the
 // countdown move the page's clock (page.clock); the fake's revert() stands for
 // the host's timer.

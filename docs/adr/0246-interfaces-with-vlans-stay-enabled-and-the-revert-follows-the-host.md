@@ -5,11 +5,11 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0234: An interface that carries VLANs is not disabled, and a disable's saved state and the page's reports follow what the host shows
+# ADR-0246: An interface that carries VLANs is not disabled, and a disable's saved state and the page's reports follow what the host shows
 
 ## Context
 
-The automatic revert of ADR-0232 saves and restores the state of the named interface only, but the kernel takes the VLANs on a link down with it, so a connection through a VLAN would stay lost after the revert. The saved state of a kept disable outlived the disable once the interface was on again, so a later Enable could add old addresses and routes to a renumbered interface. A Keep whose host command timed out said that the interface comes back on, though the command's first step may have kept it, and the page said nothing when the revert removed its marker but could not turn the interface on.
+The automatic revert of ADR-0244 saves and restores the state of the named interface only, but the kernel takes the VLANs on a link down with it, so a connection through a VLAN would stay lost after the revert. The saved state of a kept disable outlived the disable once the interface was on again, so a later Enable could add old addresses and routes to a renumbered interface. A Keep whose host command timed out said that the interface comes back on, though the command's first step may have kept it, and the page said nothing when the revert removed its marker but could not turn the interface on.
 
 ## Decision
 

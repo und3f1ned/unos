@@ -1,4 +1,4 @@
-"""System > Network: the network API against a fake host (ADR-0232, ADR-0233).
+"""System > Network: the network API against a fake host (ADR-0244, ADR-0245).
 
 Every host command reaches ``FakeNetworkHost`` through a patched
 ``src.host.run_on_host``; ``subprocess.run`` is blocked, so a command that does
@@ -922,7 +922,7 @@ class TestDisable:
     def test_an_interface_that_carries_vlans_is_not_disabled(self, client, fake_host, vlan_enabled):
         """The kernel turns the VLANs on eth0 off with it and on again with it, also one that was
         off, without their routes and IPv6 addresses: UNOS saves only eth0's own, so a connection
-        through a VLAN would stay lost after the revert (ADR-0234)."""
+        through a VLAN would stay lost after the revert (ADR-0246)."""
         fake_host.add_link("eth0.100", "02:00:00:00:00:10", enabled=vlan_enabled, parent="eth0",
                            addrs=[_inet("10.100.0.10", 24)])
         if vlan_enabled:
@@ -942,7 +942,7 @@ class TestDisable:
 
     def test_a_revert_that_cannot_turn_the_interface_on_leaves_it_off_with_nothing_waiting(self, client, fake_host):
         """The revert took its marker first, so the page finds the interface off with no disable
-        waiting to be kept, and reports it (ADR-0234). Here: a VLAN whose link went off meanwhile."""
+        waiting to be kept, and reports it (ADR-0246). Here: a VLAN whose link went off meanwhile."""
         fake_host.add_link("eth0.100", "02:00:00:00:00:10", parent="eth0", addrs=[_inet("10.100.0.10", 24)])
         assert client.post(f"{API}/interfaces/eth0.100/down").status_code == 200
         fake_host.run(["ip", "link", "set", "dev", "eth0", "down"])
@@ -1141,7 +1141,7 @@ class TestEnable:
 
 
 class TestTheSavedState:
-    """What a disable saved is put back only while that disable is in effect (ADR-0234)."""
+    """What a disable saved is put back only while that disable is in effect (ADR-0246)."""
 
     @staticmethod
     def _renumber(fake, name, old, new):

@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0233: System > Network shows IPv6, link speeds from sysfs and each interface's administrative state
+# ADR-0245: System > Network shows IPv6, link speeds from sysfs and each interface's administrative state
 
 ## Context
 

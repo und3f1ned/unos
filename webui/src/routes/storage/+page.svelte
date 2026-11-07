@@ -15,6 +15,8 @@
 		getVolumes,
 		createVolume,
 		deleteVolume,
+		quotaBytes,
+		MAX_QUOTA_GIB,
 		VOLUME_NAME_PATTERN,
 		type DeviceIdentity,
 		type Disk,
@@ -414,6 +416,8 @@
 	let volumesLoading = false;
 	let volumesError = '';
 	let newVolumeName = '';
+	// In GiB, as typed; empty for no limit (ADR-0243).
+	let newVolumeQuota = '';
 	let creatingVolume = false;
 	let createVolumeError = '';
 	let volumeToDelete: Volume | null = null;
@@ -429,11 +433,18 @@
 		newVolumeName && !newVolumeNameValid
 			? "Use letters, numbers, '-' and '_' (up to 63), starting with a letter or number"
 			: '';
+	// null: no quota; NaN: one that cannot be sent.
+	$: newVolumeQuotaBytes =
+		newVolumeQuota.trim() === '' ? null : (quotaBytes(newVolumeQuota.trim()) ?? Number.NaN);
+	$: newVolumeQuotaError = Number.isNaN(newVolumeQuotaBytes)
+		? `Enter a number of GiB greater than 0, such as 10 or 0.5 (at most ${MAX_QUOTA_GIB})`
+		: '';
 
 	async function openVolumes(pool: Pool) {
 		volumesPool = pool;
 		volumes = [];
 		newVolumeName = '';
+		newVolumeQuota = '';
 		createVolumeError = '';
 		volumeToDelete = null;
 		await loadVolumes();
@@ -466,17 +477,27 @@
 	}
 
 	async function handleCreateVolume() {
-		if (!volumesPool || !newVolumeNameValid || volumeBusy || volumesReadOnly) return;
+		if (!volumesPool || !newVolumeNameValid || newVolumeQuotaError || volumeBusy || volumesReadOnly) {
+			return;
+		}
 		creatingVolume = true;
 		createVolumeError = '';
 		try {
-			// The pool is part of the URL; the body only names the volume.
-			await createVolume(volumesPool.name, { name: newVolumeName });
+			// The pool is part of the URL; the body names the volume and, if one is set, its quota.
+			await createVolume(
+				volumesPool.name,
+				newVolumeQuotaBytes === null
+					? { name: newVolumeName }
+					: { name: newVolumeName, quota: newVolumeQuotaBytes }
+			);
 			newVolumeName = '';
+			newVolumeQuota = '';
 			creatingVolume = false;
 			await loadVolumes();
 		} catch (e) {
-			// 409: not mounted, read-only or not at its top level, or the name is taken; 400: invalid name
+			// 409: not mounted, read-only or not at its top level, the name is taken, or a quota
+			// was asked for and quotas are not enabled on the pool (the message says how to
+			// enable them); 400: invalid name
 			createVolumeError = messageOf(e);
 		} finally {
 			creatingVolume = false;
@@ -1165,13 +1186,14 @@
 >
 	{#if volumesPool}
 		<div class="space-y-4">
-			<!-- btrfs snapshots are not recursive, and the Snapshots page and scheduled
-			     snapshot tasks only offer pools: say so before files move into a volume. -->
+			<!-- btrfs snapshots are not recursive, and scheduled snapshot tasks only take
+			     pools: say so before files move into a volume (ADR-0243). -->
 			<p class="text-sm text-secondary">
 				A volume is a btrfs subvolume in
 				<span class="mono-xs">{volumesPool.mountpoint || `/mnt/pools/${volumesPool.name}`}</span>
 				that can be shared on its own. Snapshots of the pool do not include the files in its
-				volumes.
+				volumes: take snapshots of each volume as well, on the Snapshots page. Scheduled snapshot
+				tasks take pools only.
 			</p>
 
 			{#if volumesReadOnly}
@@ -1255,6 +1277,15 @@
 						disabled={volumesReadOnly}
 						error={newVolumeNameError}
 					/>
+					<Input
+						label="Quota in GiB (optional)"
+						bind:value={newVolumeQuota}
+						placeholder="No limit"
+						autocomplete="off"
+						disabled={volumesReadOnly}
+						error={newVolumeQuotaError}
+						hint="Empty for no limit. A quota needs quotas enabled on the pool."
+					/>
 					{#if createVolumeError}
 						<Alert variant="error" title="Volume was not created">{createVolumeError}</Alert>
 					{/if}
@@ -1262,7 +1293,10 @@
 						type="submit"
 						icon={Plus}
 						loading={creatingVolume}
-						disabled={!newVolumeNameValid || volumeBusy || volumesReadOnly}
+						disabled={!newVolumeNameValid ||
+							!!newVolumeQuotaError ||
+							volumeBusy ||
+							volumesReadOnly}
 					>
 						Create Volume
 					</Button>

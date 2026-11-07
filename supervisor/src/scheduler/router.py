@@ -15,14 +15,22 @@ intended, but only for administrators:
 Do not expose task creation or editing to regular users. Task targets (pool
 names, disks) are validated when a task is saved and again before it runs,
 because the tasks file may predate validation or have been edited by hand.
+
+Backup tasks encrypt their backups (ADR-0240). Their passphrase is never
+stored: BACKUP_KEYS_FILE (0600) keeps the key derived from it, apart from
+TASKS_FILE, which the API returns and every scheduled backup contains.
 """
 
+import base64
+import io
 import json
+import logging
 import os
 import secrets
 import stat
 import subprocess
 import tempfile
+import threading
 import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,8 +40,12 @@ from croniter import croniter
 
 from ..auth.utils import require_admin, verify_token
 from ..backup.router import (
+    BACKUP_KEY_SIZE,
+    ENCRYPTED_EXTENSION,
     backup_temp_file,
     copy_database,
+    encrypt_with_key,
+    new_backup_key,
     publish_backup_file,
     remove_stale_temp_files,
 )
@@ -43,14 +55,16 @@ from ..security.validators import (
     validate_disk_target,
     validate_pool_name,
 )
+from ..snapshots.router import delete_snapshot_by_id, make_snapshot, utc_stamp
 from ..storage import disks as storage_disks
-from .schemas import ScheduledTask, TaskRun, TaskType, ScheduleFrequency
+from .schemas import ScheduledTask, ScheduledTaskInfo, TaskRun, TaskType, ScheduleFrequency
 
 router = APIRouter(
     prefix="/scheduler",
     tags=["scheduler"],
     dependencies=[Depends(require_admin)],
 )
+logger = logging.getLogger(__name__)
 
 SNAPSHOT_DIR_NAME = ".snapshots"
 MAX_TASK_NAME_LENGTH = 100
@@ -70,6 +84,13 @@ TASKS_FILE = "/data/scheduled_tasks.json"
 RUNS_FILE = "/data/task_runs.json"
 SCHEDULED_BACKUP_DIR = "/data/backups"
 DB_FILE = "/data/unos.db"
+# The keys of the backup tasks by task id, base64 of backup.router.new_backup_key.
+BACKUP_KEYS_FILE = "/data/scheduled_backup_keys.json"
+MIN_PASSPHRASE_LENGTH = 8  # as for passwords and SMB passwords
+NO_PASSPHRASE = "A backup task needs a passphrase: its backups are encrypted with it"
+NO_BACKUP_KEY = "No passphrase is set for this backup task: edit the task and set one"
+# Held while BACKUP_KEYS_FILE is read and written again (set_backup_key runs in worker threads).
+_backup_keys_lock = threading.Lock()
 
 # In-memory scheduler state
 _scheduler_running = False
@@ -121,6 +142,78 @@ def save_run(run: TaskRun) -> None:
     path = Path(RUNS_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps([r.model_dump() for r in runs], indent=2))
+
+
+def load_backup_keys() -> dict[str, bytes]:
+    """The keys of the backup tasks by task id; an entry that is not a key is left out.
+
+    A file that is not JSON counts as empty, since none of its keys can be
+    used: the runs of the backup tasks fail with NO_BACKUP_KEY, and the next
+    passphrase that is set replaces the file. A file that cannot be read is
+    HTTPException(500), so that no write replaces the keys it may still hold.
+    """
+    try:
+        raw = Path(BACKUP_KEYS_FILE).read_bytes()
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        raise HTTPException(500, f"The keys of the backup tasks cannot be read: {e}") from e
+    try:
+        data = json.loads(raw)
+    except ValueError as e:  # also not UTF-8 text
+        logger.warning("%s is not JSON (%s): no backup task has a key", BACKUP_KEYS_FILE, e)
+        return {}
+    keys = {}
+    for task_id, value in data.items() if isinstance(data, dict) else ():
+        try:
+            key = base64.b64decode(value, validate=True)
+        except (TypeError, ValueError):  # not a string, not ASCII, not base64 (binascii.Error)
+            continue
+        if len(key) == BACKUP_KEY_SIZE:
+            keys[task_id] = key
+    return keys
+
+
+def save_backup_keys(keys: dict[str, bytes]) -> None:
+    """Replace BACKUP_KEYS_FILE with ``keys``: a new file, readable and writable by root only (0600).
+
+    The file and its folder are synced before this returns: after a power
+    cut, a passphrase that was set must not turn out to be the one before.
+    """
+    path = Path(BACKUP_KEYS_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps({task_id: base64.b64encode(key).decode() for task_id, key in keys.items()}, indent=2)
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    folder = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(folder)
+    finally:
+        os.close(folder)
+
+
+def set_backup_key(task_id: str, key: bytes | None) -> None:
+    """Store the key of a backup task, or with ``None`` remove the key of ``task_id``.
+
+    Blocking (fsync): call it in a worker thread. Writes only a change, one
+    at a time; HTTPException(500) when the file cannot be read.
+    """
+    with _backup_keys_lock:
+        keys = load_backup_keys()
+        if key is None:
+            if keys.pop(task_id, None) is None:
+                return
+        else:
+            keys[task_id] = key
+        save_backup_keys(keys)
 
 
 def get_cron_expression(task: ScheduledTask) -> str:
@@ -233,6 +326,27 @@ def validate_task(task: ScheduledTask, *, kept_disk: str | None = None) -> Sched
     return task
 
 
+def new_task_key(task: ScheduledTask, *, has_key: bool) -> bytes | None:
+    """The key of a backup task from the passphrase sent with it, or None when there is none to store.
+
+    Blocking (PBKDF2): call it in a worker thread. Without a passphrase, a
+    task that has a key (``has_key``) keeps it; any other backup task is
+    refused with HTTPException(400).
+    """
+    if task.task_type != TaskType.BACKUP:
+        return None
+    if not task.passphrase:
+        if has_key:
+            return None
+        raise _bad_task(NO_PASSPHRASE)
+    if len(task.passphrase) < MIN_PASSPHRASE_LENGTH:
+        raise _bad_task(f"The passphrase must have at least {MIN_PASSPHRASE_LENGTH} characters")
+    try:
+        return new_backup_key(task.passphrase)
+    except UnicodeEncodeError:
+        raise _bad_task("The passphrase must be valid Unicode text") from None
+
+
 def _run(cmd: list[str] | str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
@@ -264,26 +378,24 @@ def _real_dir(path: Path) -> bool:
         return False
 
 
-def _snapshot_dir(pool: Path, *, create: bool) -> Path | None:
-    """``<pool>/.snapshots`` if it is a real directory (not a symlink), optionally created."""
+def _snapshot_dir(pool: Path) -> Path | None:
+    """``<pool>/.snapshots`` if it exists and is a real directory (not a symlink)."""
     snap_dir = pool / SNAPSHOT_DIR_NAME
     if os.path.islink(snap_dir):
         raise _bad_task(f"{snap_dir} must not be a symbolic link")
     if not os.path.lexists(snap_dir):
-        if not create:
-            return None
-        os.mkdir(snap_dir, 0o755)
+        return None
     if not _real_dir(snap_dir):
         raise _bad_task(f"{snap_dir} is not a directory")
     return snap_dir
 
 
-async def create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
-    """Create a scheduled backup and optionally cleanup old ones."""
-    return await asyncio.to_thread(_create_scheduled_backup, keep_count)
+async def create_scheduled_backup(keep_count: int | None, key: bytes) -> tuple[bool, str]:
+    """Create a scheduled backup encrypted with ``key`` (new_backup_key) and optionally cleanup old ones."""
+    return await asyncio.to_thread(_create_scheduled_backup, keep_count, key)
 
 
-def _create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
+def _create_scheduled_backup(keep_count: int | None, key: bytes) -> tuple[bool, str]:
     import tarfile
     import tempfile
     import shutil
@@ -336,19 +448,24 @@ def _create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
             if tasks_file.exists():
                 shutil.copy2(tasks_file, tmpdir_path / "scheduled_tasks.json")
 
-            # Create tarball, the manifest first: the backup list reads each
-            # backup only up to it (a tmpfs lists the newest file first).
-            with tarfile.open(tmp, "w:gz") as tar:
+            # Create tarball, the manifest first: the backup list reads a plain
+            # backup, such as a decrypted copy, only up to it (a tmpfs lists
+            # the newest file first). It is encrypted in memory, as an
+            # encrypted manual backup is (backup.router._create_backup).
+            plain = io.BytesIO()
+            with tarfile.open(fileobj=plain, mode="w:gz") as tar:
                 for item in sorted(tmpdir_path.iterdir(), key=lambda p: (p.name != "manifest.json", p.name)):
                     tar.add(item, arcname=item.name)
-        backup_name = publish_backup_file(tmp, "auto_backup", ".tar.gz")
+        with open(tmp, "xb") as out:
+            out.write(encrypt_with_key(plain.getbuffer(), key))
+        backup_name = publish_backup_file(tmp, "auto_backup", ENCRYPTED_EXTENSION)
 
         # Cleanup old auto backups if keep_count is set. A backup that is gone
         # meanwhile was removed by a scheduled backup running at the same time.
         cleanup_msg = ""
         if keep_count and keep_count > 0:
             auto_backups = []
-            for path in BACKUP_DIR.glob("auto_backup_*.tar.gz"):
+            for path in BACKUP_DIR.glob(f"auto_backup_*{ENCRYPTED_EXTENSION}"):
                 try:
                     auto_backups.append((path.stat().st_mtime, path))
                 except FileNotFoundError:
@@ -373,7 +490,13 @@ def _create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
 
 
 def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
-    snapshots_dir = _snapshot_dir(pool_path(pool_name), create=False)
+    """Delete the oldest ``auto_`` snapshots of a pool beyond ``keep_count``, by creation time.
+
+    Each is deleted by its subvolume id after the snapshot router's checks
+    (delete_snapshot_by_id, ADR-0242); one that fails them is kept.
+    """
+    pool = pool_path(pool_name)
+    snapshots_dir = _snapshot_dir(pool)
     if snapshots_dir is None:
         return ""
 
@@ -402,9 +525,11 @@ def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
     # Delete snapshots beyond keep_count
     deleted_count = 0
     for snap, _ in auto_snapshots[keep_count:]:
-        result = _run(["btrfs", "subvolume", "delete", str(snap)])
-        if result.returncode == 0:
-            deleted_count += 1
+        try:
+            delete_snapshot_by_id(pool, snap.name, snap.name)
+        except HTTPException:
+            continue
+        deleted_count += 1
 
     if deleted_count > 0:
         return f"Cleaned up {deleted_count} old snapshot(s)"
@@ -421,16 +546,19 @@ def _pool_is_mounted(pool: Path) -> bool:
 
 
 def _create_snapshot(pool_name: str) -> tuple[bool, str]:
+    """A read-only snapshot ``auto_<date>_<time>`` (UTC, ADR-0243) of a mounted pool.
+
+    Made like those of the Snapshots page, by make_snapshot of the snapshot
+    router (ADR-0242); its HTTPException becomes the run's error in
+    execute_task.
+    """
     pool = pool_path(pool_name)
     # Checked before .snapshots is created, so an unmounted pool does not get
     # a directory on the root filesystem under its mount point.
     if not _pool_is_mounted(pool):
         return False, f"Pool {pool_name} is not mounted at {pool}"
-    snap_dir = _snapshot_dir(pool, create=True)
-    name = f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    result = _run(["btrfs", "subvolume", "snapshot", "-r", str(pool), str(snap_dir / name)])
-    if result.returncode != 0:
-        return False, result.stderr
+    name = f"auto_{utc_stamp()}"
+    make_snapshot(pool, name)
     return True, name
 
 
@@ -495,9 +623,11 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             return True, "SMART test started"
 
         elif task.task_type == TaskType.BACKUP:
-            # Create automated backup
-            backup_result = await create_scheduled_backup(task.keep_count)
-            return backup_result
+            # Encrypted with the key of the task (ADR-0240); never unencrypted.
+            key = load_backup_keys().get(task.id or "")
+            if key is None:
+                return False, NO_BACKUP_KEY
+            return await create_scheduled_backup(task.keep_count, key)
 
         elif task.task_type == TaskType.CUSTOM:
             if not task.command:
@@ -591,56 +721,84 @@ async def stop_scheduler():
         _scheduler_task.cancel()
 
 
-@router.get("/tasks", response_model=list[ScheduledTask])
+def _task_info(task: ScheduledTask, has_key: bool | None) -> ScheduledTaskInfo:
+    """``task`` as the API answers with it; ``has_key`` (whether it has a key) counts for a backup task only."""
+    has_backup_key = has_key if task.task_type == TaskType.BACKUP else None
+    return ScheduledTaskInfo(**task.model_dump(), has_backup_key=has_backup_key)
+
+
+@router.get("/tasks", response_model=list[ScheduledTaskInfo])
 async def list_tasks(_: dict = Depends(verify_token)):
-    """List all scheduled tasks."""
+    """List all scheduled tasks; a backup task says whether it has a key (has_backup_key)."""
     tasks = load_tasks()
+    try:
+        keys = load_backup_keys()
+    except HTTPException:
+        # The key file cannot be read: the edits and runs of the backup tasks
+        # fail with the reason, but the tasks are still listed.
+        keys = None
     # Update next_run for each task
     for task in tasks:
         task.next_run = get_next_run(task)
-    return tasks
+    return [_task_info(task, None if keys is None else task.id in keys) for task in tasks]
 
 
-@router.post("/tasks", response_model=ScheduledTask)
+@router.post("/tasks", response_model=ScheduledTaskInfo)
 async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
-    """Create a new scheduled task."""
-    # In a worker thread: the disk of a SMART task is looked up on the host.
+    """Create a new scheduled task; a backup task needs a passphrase."""
+    # In a worker thread: the disk of a SMART task is looked up on the host,
+    # and the key of a backup task is derived from its passphrase.
     await asyncio.to_thread(validate_task, task)
-    tasks = load_tasks()
+    key = await asyncio.to_thread(new_task_key, task, has_key=False)
 
     # Random suffix: tasks created in the same second must not share an id.
     task.id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}"
     task.next_run = get_next_run(task)
 
+    # The key first: a task that is then not saved leaves only an unused key.
+    if key is not None:
+        await asyncio.to_thread(set_backup_key, task.id, key)
+    tasks = load_tasks()
     tasks.append(task)
     save_tasks(tasks)
 
-    return task
+    return _task_info(task, key is not None)
 
 
-@router.put("/tasks/{task_id}", response_model=ScheduledTask)
+@router.put("/tasks/{task_id}", response_model=ScheduledTaskInfo)
 async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verify_token)):
-    """Update a scheduled task."""
+    """Update a scheduled task. Its last run and last status stay; a backup task
+    without a passphrase keeps the one it has."""
     stored = next((t for t in load_tasks() if t.id == task_id), None)
     kept_disk = stored.target_disk if stored and stored.task_type == TaskType.SMART_TEST else None
     await asyncio.to_thread(validate_task, task, kept_disk=kept_disk)
+    has_key = task_id in load_backup_keys()
+    key = await asyncio.to_thread(new_task_key, task, has_key=has_key)
+    # A new key, or none for a task that is no longer a backup task; written
+    # before the task, as when a task is created.
+    if stored is not None and (task.task_type != TaskType.BACKUP or key is not None):
+        await asyncio.to_thread(set_backup_key, task_id, key)
     # Read again: a run may have saved its result while the disk was checked.
     tasks = load_tasks()
 
     for i, t in enumerate(tasks):
         if t.id == task_id:
             task.id = task_id
+            # Results of the runs, not of the edit (ADR-0175).
+            task.last_run, task.last_status = t.last_run, t.last_status
             task.next_run = get_next_run(task)
             tasks[i] = task
             save_tasks(tasks)
-            return task
+            # A backup task has the new key now, or kept the one it had.
+            return _task_info(task, key is not None or has_key)
 
     raise HTTPException(404, f"Task not found: {task_id}")
 
 
 @router.delete("/tasks/{task_id}")
 async def delete_task(task_id: str, _: dict = Depends(verify_token)):
-    """Delete a scheduled task."""
+    """Delete a scheduled task, and first the key of a backup task."""
+    await asyncio.to_thread(set_backup_key, task_id, None)
     tasks = load_tasks()
     tasks = [t for t in tasks if t.id != task_id]
     save_tasks(tasks)

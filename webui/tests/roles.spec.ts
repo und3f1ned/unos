@@ -12,7 +12,7 @@ const REGULAR = {
   username: `e2e_user_${Date.now().toString(36)}`,
   password: 'e2e-Regular-Password-1',
 };
-const ADMIN_ONLY_PAGES = ['/storage', '/snapshots', '/shares', '/files', '/containers', '/apps', '/users'];
+const ADMIN_ONLY_PAGES = ['/storage', '/snapshots', '/shares', '/files', '/containers', '/apps', '/users', '/audit'];
 
 let adminToken = '';
 let userToken = '';
@@ -106,6 +106,29 @@ test.describe('Regular user account', () => {
     // No storage, container or notification widgets (and no calls for them).
     await expect(page.getByText('Storage Pools')).toHaveCount(0);
     expect(forbidden).toEqual([]);
+  });
+
+  test('the dashboard asks a regular user for no disk predictions', async ({ page }) => {
+    // The replace-soon alert is for administrators, and so is its API (ADR-0235).
+    const health: string[] = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/v1/health/')) health.push(`${request.method()} ${url.pathname}`);
+    });
+    await page.goto('/login');
+    await page.evaluate((value) => localStorage.setItem('token', value), userToken);
+    // The dashboard sends all of its requests at once: a prediction request
+    // would go out before the answer of this one comes in.
+    const systemInfo = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/api/v1/system/info',
+    );
+    await page.goto('/');
+    await systemInfo;
+
+    await expect(page.getByText(`Signed in as ${REGULAR.username}`)).toBeVisible();
+    expect(health).toEqual([]);
+    await expect(page.getByText('Replace soon', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Could not check the disks for a predicted failure')).toHaveCount(0);
   });
 
   test('administrator pages redirect to the dashboard', async ({ page }) => {

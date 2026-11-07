@@ -3,6 +3,7 @@
   import { toDataURL } from "qrcode";
   import { user } from "$lib/stores/auth";
   import SmbAccessCard from "$lib/components/account/SmbAccessCard.svelte";
+  import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
   import { Alert } from "$lib/components/ui";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
@@ -478,6 +479,11 @@
         {/if}
       </div>
     </div>
+
+    <!-- Turning 2FA off removes the codes, and a new setup starts without any. -->
+    {#if totpEnabled}
+      <RecoveryCodes />
+    {/if}
   </div>
 
   <!-- Change Password -->

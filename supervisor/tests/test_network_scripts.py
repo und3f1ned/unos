@@ -1,4 +1,4 @@
-"""The host scripts of src/network/links.py, run against stub tools (ADR-0232).
+"""The host scripts of src/network/links.py, run against stub tools (ADR-0244).
 
 Each test runs with /bin/sh and with dash, the /bin/sh of Debian and Ubuntu
 hosts (where it is installed, as on macOS).
@@ -260,7 +260,7 @@ class TestRestore:
 
 
 class TestForget:
-    """The interface is on again: what its disable saved no longer describes it (ADR-0234)."""
+    """The interface is on again: what its disable saved no longer describes it (ADR-0246)."""
 
     @pytest.fixture
     def saved(self, stub_host):

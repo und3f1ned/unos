@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0232: A disabled network interface comes back on by itself after 60 seconds unless the change is kept
+# ADR-0244: A disabled network interface comes back on by itself after 60 seconds unless the change is kept
 
 ## Context
 

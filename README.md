@@ -48,7 +48,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### File Sharing
 - **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux
-- **Web File Browser** - Upload, download, copy, move, and manage files via browser
+- **Web File Browser** - Upload, download, copy, move, rename, and manage files via browser
 
 ### Application Platform
 - **70+ Curated Apps** - One-click installation of popular self-hosted applications
@@ -66,9 +66,9 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 ### User Management & Security
 - **HTTPS by Default** - The web interface is served over HTTPS with certificates from a built-in local CA; plain HTTP redirects
 - **Multi-user Support** - Administrators and regular users (who see only the dashboard and their own account)
-- **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps
+- **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps, and ten single-use recovery codes for a lost app
 - **API Tokens** - Generate tokens for scripts through the API
-- **Audit Logging** - Sign-ins and administrative actions are recorded; administrators list, filter and export them through the API
+- **Audit Logging** - Sign-ins, the management of users and their SMB access, shares, API tokens and recovery codes are recorded (storage, containers, apps, backups and system settings not yet); administrators search, filter and export them on the Audit Log page or through the API
 - **Rate Limiting** - Protection against brute-force attacks
 
 ### Notifications
@@ -79,7 +79,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Automated Snapshots** - Schedule periodic snapshot creation with retention
 - **Scheduled Scrubs** - Automate BTRFS data integrity checks
 - **SMART Tests** - Schedule disk health tests
-- **Configuration Backups** - Automated system backup with cleanup
+- **Configuration Backups** - Automated system backups, always encrypted with the task's passphrase, with cleanup
 - **Custom Commands** - Run a shell command in the supervisor container on a schedule
 
 ### Network Management
@@ -92,15 +92,18 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Encrypted Backups** - Optional AES-256 encryption with passphrase
 - **Restore** - Import backups to restore configuration
 
+### Power Management
+- **Reboot, shutdown and suspend** - From System > Power after a confirmation; reboot and shutdown act on the host one minute later and can be cancelled until then
+- **Wake-on-LAN** - Turned on or off per Ethernet interface, and set again after every reboot
+
 ### System Updates
 - **Update script** - `sudo /opt/unos/deploy/update.sh` updates UNOS from its git branch, backs up the database and the data volume first, and rolls back automatically if the new version does not start
+- **Version check** - System > Updates shows the installed version and the latest release on GitHub, and names the update script
 
 ### Planned
 
 Not working yet; each has an entry in [feature-list.json](feature-list.json), named in parentheses:
-- **Recovery codes** (`auth.recovery-codes`) - Codes can be generated through the API, but the sign-in does not take one yet
 - **NFS exports** (`shares.nfs-exports`) - Exports are written inside the supervisor container and do not reach the host
-- **Power control** (`system.power`) - Reboot, shutdown and suspend from the web interface, and Wake-on-LAN: inside the supervisor container they are refused or reach only the container
 - **UPS monitoring** (`system.ups-monitoring`) - The UPS state and the shutdown on low battery: the supervisor image has no NUT client, and the shutdown is skipped inside a container
 - **Scheduled power** (`system.scheduled-power`) - Shutdown and wake times are stored, and nothing acts on them
 - **Alerts for every event and channel** (`system.alert-events`) - Discord, Slack and webhook channels get no alerts, and the events chosen for a channel have no effect

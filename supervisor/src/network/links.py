@@ -1,4 +1,4 @@
-"""Disabling and enabling host network interfaces, with an automatic revert (ADR-0232).
+"""Disabling and enabling host network interfaces, with an automatic revert (ADR-0244).
 
 A Disable saves the interface's addresses and routes on the host, arms a
 transient systemd timer there that turns the interface back on after
@@ -14,7 +14,7 @@ undoes a disable the same way.
 The saved state is put back only while its disable is in effect: once UNOS
 finds the interface on again, it discards it (FORGET_SCRIPT). An interface that
 carries VLANs is not disabled, because the kernel turns them off and on with it
-and their routes would not come back (ADR-0234).
+and their routes would not come back (ADR-0246).
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ REVERT_SCRIPT = 'rm "$2/$1/pending" 2> /dev/null || exit 0\n' + RESTORE_SCRIPT
 
 # The interface is on again, turned on outside UNOS or by its revert: a disable
 # of it has nothing left to undo, and what the disable saved no longer
-# describes the interface, so no later Enable may put it back (ADR-0234). The
+# describes the interface, so no later Enable may put it back (ADR-0246). The
 # revert is called off and the saved state discarded, unless the revert is
 # restoring it right now: it removed the marker first, and its unit still runs.
 FORGET_SCRIPT = """\
@@ -230,7 +230,7 @@ async def _vlans_on(name: str) -> list[str]:
 
     The kernel's 8021q module closes them when their link goes down, and opens
     every one of them, also one that was off, when it comes up: with the routes
-    of their IPv4 networks only (ADR-0234).
+    of their IPv4 networks only (ADR-0246).
     """
     result = await run(["ip", "-d", "-j", "link", "show", "type", "vlan"])
     if not result.ok:
@@ -257,7 +257,7 @@ async def disable(name: str) -> int:
 
     It is never disabled without its revert: when the state cannot be saved or
     the timer cannot be armed, the interface stays enabled. Neither is one that
-    carries VLANs, whose state the revert would not bring back (ADR-0234).
+    carries VLANs, whose state the revert would not bring back (ADR-0246).
     """
     async with _lock():
         link = await _link(name)
@@ -313,7 +313,7 @@ async def keep(name: str) -> None:
 
     An interface that is on again, turned on outside UNOS or by its revert, has
     no disable to keep: its revert is called off all the same, and what the
-    disable saved is discarded (ADR-0234).
+    disable saved is discarded (ADR-0246).
     """
     async with _lock():
         link = await _link(name)
@@ -332,7 +332,7 @@ async def _answer_a_failed_keep(name: str, failed: host.HostResult) -> None:
 
     The cancel's first step, the removal of the marker, is what keeps the
     disable. It may have run all the same: a timeout does not stop the command
-    on the host (ADR-0234).
+    on the host (ADR-0246).
     """
     marker = await run(["test", "-e", f"{STATE_DIR}/{name}/pending"])
     if marker.ok:
@@ -357,7 +357,7 @@ async def enable(name: str) -> None:
     then its timer stays armed: when the restore cannot turn the link on, or
     does not answer, the timer tries again at its time. An interface that is
     enabled already is left as it is: its addresses and routes are live, and no
-    saved state is put over them, now or by a later Enable (ADR-0234).
+    saved state is put over them, now or by a later Enable (ADR-0246).
     """
     async with _lock():
         link = await _link(name)

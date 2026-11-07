@@ -44,7 +44,7 @@
   } from "lucide-svelte";
 
   // Once the time to keep a disable has run out, the page reads the interfaces
-  // again after the host's revert had a few seconds to turn it back on (ADR-0232).
+  // again after the host's revert had a few seconds to turn it back on (ADR-0244).
   const REVERT_GRACE_MS = 5000;
 
   type View = "interfaces" | "routes" | "connections";
@@ -88,7 +88,7 @@
   $: wsInterfaces = $stats?.network?.interfaces ?? [];
   $: syncTicker(Object.keys(deadlines).length > 0);
   // The newest countdown first: after a Disable, one Tab from the focus reaches the
-  // Keep of the interface just disabled (ADR-0234).
+  // Keep of the interface just disabled (ADR-0246).
   $: countdowns = Object.entries(deadlines).sort(([, a], [, b]) => b - a);
 
   onMount(() => {
@@ -200,7 +200,7 @@
   }
 
   // The page's time to keep a disable ran out a few seconds ago: report what the
-  // host shows now, whatever it is (ADR-0232, ADR-0234).
+  // host shows now, whatever it is (ADR-0244, ADR-0246).
   async function checkRevert(name: string) {
     const loaded = await loadInterfaces();
     // Kept or enabled from this page in the meantime.
@@ -359,7 +359,7 @@
     </Alert>
   {/if}
 
-  <!-- Disables that come back on by themselves unless they are kept (ADR-0232) -->
+  <!-- Disables that come back on by themselves unless they are kept (ADR-0244) -->
   {#if countdowns.length > 0}
     <section class="space-y-3" aria-label="Disables waiting to be kept" tabindex="-1" bind:this={pendingRegion}>
       {#each countdowns as [name, deadline] (name)}
@@ -692,7 +692,7 @@
   {/if}
 </div>
 
-<!-- Disable asks first: the connection to UNOS may go through the interface (ADR-0232) -->
+<!-- Disable asks first: the connection to UNOS may go through the interface (ADR-0244) -->
 <Modal
   open={confirming !== null}
   title={confirming ? `Disable ${confirming}` : "Disable"}

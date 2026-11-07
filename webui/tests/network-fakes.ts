@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test';
 // are recorded and applied to the fake state, so the page shows their outcome,
 // unknown requests are aborted, and nothing reaches the supervisor. The fake
 // has no clock: a disable waits to be kept until the spec calls revert() or
-// revertFails(), which do what the host's timer does (ADR-0232).
+// revertFails(), which do what the host's timer does (ADR-0244).
 
 // The texts and values of supervisor/src/network/links.py, word for word
 // (supervisor/tests/test_network_scripts.py checks them).

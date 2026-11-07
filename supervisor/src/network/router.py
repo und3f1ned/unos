@@ -1,8 +1,8 @@
-"""System > Network: the host's interfaces, DNS, gateway, routes and connections (ADR-0233).
+"""System > Network: the host's interfaces, DNS, gateway, routes and connections (ADR-0245).
 
 Every command runs on the host through src/host.py (ADR-0020). Disable and
 Enable are in links.py: a Disable comes back on by itself unless it is kept
-(ADR-0232).
+(ADR-0244).
 """
 
 import asyncio
@@ -146,7 +146,7 @@ async def get_interface(name: str, _=Depends(verify_token)):
 @router.post("/interfaces/{name}/down")
 async def bring_interface_down(name: str, _=Depends(verify_token)):
     """Disable an interface. It comes back on by itself after revert_in seconds unless the
-    change is kept with POST .../down/confirm (ADR-0232)."""
+    change is kept with POST .../down/confirm (ADR-0244)."""
     revert_in = await links.disable(name)
     return {"status": "success", "interface": name, "state": "down", "revert_in": revert_in}
 
