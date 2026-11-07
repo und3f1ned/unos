@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Server, RefreshCw, Clock, UserCog } from "lucide-svelte";
-  import { Card } from "$lib/components/ui";
+  import { Alert, Button, Card } from "$lib/components/ui";
   import SystemStatsWidget from "$lib/components/widgets/SystemStatsWidget.svelte";
   import StorageWidget from "$lib/components/widgets/StorageWidget.svelte";
   import ContainersWidget from "$lib/components/widgets/ContainersWidget.svelte";
@@ -12,6 +12,7 @@
   import { getPools, type Pool } from "$lib/api/storage";
   import { getContainers, type Container } from "$lib/api/containers";
   import { getLogs, type NotificationLog } from "$lib/api/notifications";
+  import { getDiskPredictions, replaceSoon, type DiskPrediction } from "$lib/api/health";
   import { stats, wsConnected, wsForbidden, type WebSocketStats } from "$lib/stores/stats";
   import { user } from "$lib/stores/auth";
 
@@ -19,6 +20,9 @@
   let pools: Pool[] = [];
   let containers: Container[] = [];
   let notificationLogs: NotificationLog[] = [];
+  // The disks whose SMART trend says replace soon (ADR-0235).
+  let toReplace: DiskPrediction[] = [];
+  let predictionsError = "";
   let loading = true;
   let lastUpdate: Date | null = null;
 
@@ -38,6 +42,21 @@
   // accounts get the system overview and the live stats only.
   $: isAdmin = $user?.is_admin === true;
 
+  // The predictions read the stored SMART history only: no disk is woken. A
+  // failure is shown, unlike those of the widgets, so that a disk to replace is
+  // not taken for one without a mark.
+  async function loadPredictions() {
+    if (!isAdmin) return;
+    try {
+      toReplace = replaceSoon((await getDiskPredictions()).predictions);
+      predictionsError = "";
+    } catch (e) {
+      toReplace = [];
+      predictionsError =
+        e instanceof Error && e.message ? e.message : "Could not load the failure predictions";
+    }
+  }
+
   async function loadData() {
     loading = true;
     try {
@@ -48,7 +67,8 @@
         }),
         isAdmin ? getPools().catch(() => []) : [],
         isAdmin ? getContainers().catch(() => []) : [],
-        isAdmin ? getLogs().catch(() => []) : []
+        isAdmin ? getLogs().catch(() => []) : [],
+        loadPredictions()
       ]);
 
       systemInfo = infoData;
@@ -145,13 +165,10 @@
           Updated {formatTime(lastUpdate)}
         </span>
       {/if}
-      <button
-        on:click={handleRefresh}
-        class="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-        disabled={loading}
-      >
+      <Button variant="secondary" size="icon" on:click={handleRefresh} disabled={loading}>
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-      </button>
+        <span class="sr-only">Refresh</span>
+      </Button>
     </div>
   </div>
 
@@ -174,6 +191,23 @@
     {/if}
 
     {#if isAdmin}
+      {#if toReplace.length > 0}
+        <Alert variant="error" title="Replace soon">
+          <ul class="space-y-1 text-sm">
+            {#each toReplace as prediction}
+              <li>
+                <span class="mono">{prediction.device}</span> (serial {prediction.serial}): {prediction.risk_factors.join("; ")}
+              </li>
+            {/each}
+          </ul>
+          <a href="/system#health" class="text-sm text-info hover:underline">Disk Health</a>
+        </Alert>
+      {:else if predictionsError}
+        <Alert variant="warning" title="Could not check the disks for a predicted failure">
+          {predictionsError}
+        </Alert>
+      {/if}
+
       <!-- Main Grid -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- Storage -->
