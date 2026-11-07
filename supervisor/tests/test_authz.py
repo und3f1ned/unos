@@ -59,7 +59,6 @@ PUBLIC = {
     ("POST", f"{API}/auth/login"),
     ("POST", f"{API}/auth/setup"),  # refuses once any user exists
     ("GET", f"{API}/auth/status"),
-    ("POST", f"{API}/auth/recovery-codes/verify"),  # stub, always 501
     ("GET", f"{API}/health"),
 }
 

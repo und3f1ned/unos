@@ -93,15 +93,29 @@ export interface TOTPStatus {
   enabled: boolean;
 }
 
+/** GET /auth/recovery-codes/status. */
+export interface RecoveryCodesStatus {
+  /** Codes not used yet. */
+  remaining: number;
+  /** Codes were generated for the current two-factor setup (also when all are used). */
+  generated: boolean;
+}
+
+/**
+ * Sign in. At the code step of an account with 2FA, send either the code of
+ * the authenticator app or a recovery code, never both.
+ */
 export async function login(
   username: string,
   password: string,
-  totp_code?: string
+  totp_code?: string,
+  recovery_code?: string
 ): Promise<Token> {
   const token = await api.post<Token>("/auth/login", {
     username,
     password,
     totp_code,
+    recovery_code,
   });
   if (token.access_token) {
     setToken(token.access_token);
@@ -236,4 +250,17 @@ export async function disableTOTP(
 
 export async function getTOTPStatus(): Promise<TOTPStatus> {
   return api.get<TOTPStatus>("/auth/totp/status");
+}
+
+// Recovery codes (only while 2FA is on): each one signs in once in place of a
+// code of the authenticator app.
+
+/** Ten new codes that replace the earlier ones; the server answers them only this once. */
+export async function generateRecoveryCodes(): Promise<string[]> {
+  const result = await api.post<{ codes: string[] }>("/auth/recovery-codes/generate");
+  return result.codes;
+}
+
+export async function getRecoveryCodesStatus(): Promise<RecoveryCodesStatus> {
+  return api.get<RecoveryCodesStatus>("/auth/recovery-codes/status");
 }

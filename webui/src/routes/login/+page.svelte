@@ -5,7 +5,8 @@
   import { ApiError } from "$lib/api/client";
   import { user, isLoggedIn } from "$lib/stores/auth";
   import { connectWebSocket } from "$lib/stores/stats";
-  import { Server, ShieldCheck } from "lucide-svelte";
+  import { Button, Input } from "$lib/components/ui";
+  import { KeyRound, Server, ShieldCheck } from "lucide-svelte";
 
   let username = "";
   let password = "";
@@ -13,6 +14,9 @@
   let error = "";
   let loading = false;
   let requiresTOTP = false;
+  // At the code step: a recovery code in place of the authenticator app's code.
+  let useRecoveryCode = false;
+  let recoveryCode = "";
 
   onMount(async () => {
     try {
@@ -33,7 +37,8 @@
       const result = await login(
         username,
         password,
-        requiresTOTP ? totpCode : undefined
+        requiresTOTP && !useRecoveryCode ? totpCode : undefined,
+        requiresTOTP && useRecoveryCode ? recoveryCode : undefined
       );
 
       if (result.requires_totp && !result.access_token) {
@@ -53,9 +58,9 @@
       error = e.message || "Login failed";
       // Only a rejected password leads back to the password form. An invalid
       // or already used code ("Invalid 2FA code", "This two-factor code was
-      // already used; wait for the next one"), too many attempts (429) or a
-      // server error keep the 2FA step.
-      if (e instanceof ApiError && e.status === 401 && !/2FA|two-factor/i.test(error)) {
+      // already used; wait for the next one", "Invalid recovery code"), too
+      // many attempts (429) or a server error keep the 2FA step.
+      if (e instanceof ApiError && e.status === 401 && !/2FA|two-factor|recovery code/i.test(error)) {
         requiresTOTP = false;
       }
     } finally {
@@ -66,6 +71,15 @@
   function resetForm() {
     requiresTOTP = false;
     totpCode = "";
+    useRecoveryCode = false;
+    recoveryCode = "";
+    error = "";
+  }
+
+  function switchCode() {
+    useRecoveryCode = !useRecoveryCode;
+    totpCode = "";
+    recoveryCode = "";
     error = "";
   }
 </script>
@@ -120,6 +134,24 @@
             required
           />
         </div>
+      {:else if useRecoveryCode}
+        <div class="text-center mb-4">
+          <KeyRound class="w-12 h-12 text-status-info mx-auto mb-2" />
+          <h2 class="text-lg font-semibold">Recovery Code</h2>
+          <p class="text-sm text-secondary">
+            Enter one of your recovery codes. Each code works only once.
+          </p>
+        </div>
+
+        <Input
+          id="recovery-code"
+          label="Recovery code"
+          bind:value={recoveryCode}
+          placeholder="XXXX-XXXX-XXXX"
+          autocomplete="off"
+          maxlength={32}
+          required
+        />
       {:else}
         <!-- TOTP Input -->
         <div class="text-center mb-4">
@@ -151,6 +183,12 @@
             required
           />
         </div>
+      {/if}
+
+      {#if requiresTOTP}
+        <Button variant="ghost" class="w-full" on:click={switchCode}>
+          {useRecoveryCode ? "Use a code from your authenticator app" : "Use a recovery code"}
+        </Button>
 
         <button
           type="button"
