@@ -20,7 +20,6 @@
     Server,
     Shield,
     Box,
-    Globe,
     Calendar,
     X,
     ChevronDown,
@@ -55,10 +54,12 @@
     { value: "1000", label: "1000" }
   ];
 
-  $: limit = parseInt(limitStr, 10);
   let autoRefresh = false;
   let refreshInterval: ReturnType<typeof setInterval> | null = null;
   let showFilters = true;
+  // The number of the newest request: the answer of an older one (a source picked
+  // before, an earlier refresh) arrives too late to be shown.
+  let latestRequest = 0;
 
   // Source icons mapping
   const sourceIcons: Record<string, typeof FileText> = {
@@ -67,8 +68,6 @@
     docker: Box,
     samba: FileText,
     auth: Shield,
-    supervisor: Server,
-    caddy: Globe,
     cron: Calendar
   };
 
@@ -86,25 +85,30 @@
   async function loadSources() {
     try {
       const result = await getLogSources();
-      sources = result.sources.filter(s => s.available);
+      sources = result.sources;
     } catch (e) {
       console.error("Failed to load log sources:", e);
     }
   }
 
+  // The entries as the server lists them: the newest first (ADR-0247).
   async function loadLogs() {
+    const request = ++latestRequest;
     loading = true;
     error = "";
     try {
       const result = await getLogEntries({
         source,
-        limit,
+        // Read here, not from a $: statement, which would update only after this call.
+        limit: Number(limitStr),
         priority: priority || undefined,
         search: search || undefined,
         since: since || undefined
       });
+      if (request !== latestRequest) return;
       entries = result.entries;
     } catch (e) {
+      if (request !== latestRequest) return;
       console.error("Failed to load logs:", e);
       error = e instanceof Error ? e.message : "Failed to load logs";
     }
@@ -140,7 +144,9 @@
     autoRefresh = !autoRefresh;
     if (autoRefresh) {
       refreshInterval = setInterval(() => {
-        loadLogs();
+        // A slow answer, such as a search through a large journal, is waited
+        // for: asking again would start another journalctl on the host.
+        if (!loading) loadLogs();
       }, 5000);
     } else if (refreshInterval) {
       clearInterval(refreshInterval);
@@ -168,13 +174,11 @@
     }
   }
 
+  // The server gives UTC times with their offset; the browser shows them in its own time zone.
   function formatTimestamp(ts: string): string {
     if (!ts) return "";
-    // Handle ISO format
-    if (ts.includes("T")) {
-      return ts.replace("T", " ");
-    }
-    return ts;
+    const date = new Date(ts);
+    return Number.isNaN(date.getTime()) ? ts : date.toLocaleString();
   }
 
   // Split a log message around case-insensitive matches of the search term.
@@ -371,7 +375,7 @@
         {#if loading}
           Loading...
         {:else}
-          Showing {entries.length} log entries
+          Showing {entries.length} log entries, newest first
         {/if}
       </span>
       {#if autoRefresh}

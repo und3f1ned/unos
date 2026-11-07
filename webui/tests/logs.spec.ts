@@ -1,4 +1,97 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+
+// The sources as GET /api/v1/logs/sources lists them: parts of the host's journal, with the
+// server's texts word for word (supervisor/src/logs/router.py, ADR-0247; ADR-0189).
+// supervisor/tests/test_logs_sources.py checks that this file holds them.
+const SOURCES = [
+  { name: 'journal', label: 'System Journal', description: "Everything in the host's systemd journal" },
+  { name: 'dmesg', label: 'Kernel', description: "The kernel's messages since the host started" },
+  { name: 'docker', label: 'Docker', description: 'The Docker daemon' },
+  { name: 'samba', label: 'Samba', description: 'The SMB file server: smbd and nmbd' },
+  {
+    name: 'auth',
+    label: 'Authentication',
+    description: 'Sign-ins, sudo and the other messages of the auth and authpriv facilities',
+  },
+  { name: 'cron', label: 'Cron Jobs', description: "The host's cron daemon" },
+];
+
+const LEVELS = ['emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info', 'debug'];
+
+type Entry = { timestamp: string; facility: string; priority: string; message: string; source: string; unit: string };
+
+function entry(source: string, timestamp: string, priority: string, unit: string, message: string): Entry {
+  return { timestamp, facility: '', priority, message, source, unit };
+}
+
+const OOM = 'Out of memory: Killed process 4242 (python3) total-vm:812345kB';
+const FAILED_PASSWORD = 'Failed password for invalid user admin from 198.51.100.7 port 4422 ssh2';
+const NO_EXIT = 'Container failed to exit within 10s of signal 15 - using the force';
+const EXT4 = 'EXT4-fs warning (device sda1): ext4_dx_add_entry:2379: Directory index full!';
+const USB_DEVICE = 'usb 1-1: new high-speed USB device number 2 using xhci-hcd';
+const USB_ERROR = 'usb 1-1: device descriptor read/64, error -71';
+
+// What GET /api/v1/logs/entries answers for each source without filters: the newest entries
+// first, as journalctl --reverse prints them, with the times in UTC and their offset.
+const ANSWERS: Record<string, Entry[]> = {
+  journal: [
+    entry('journal', '2026-11-07T09:59:00+00:00', 'err', 'kernel', OOM),
+    entry('journal', '2026-11-07T09:55:00+00:00', 'info', 'sshd', FAILED_PASSWORD),
+    entry('journal', '2026-11-07T09:40:00+00:00', 'warning', 'dockerd', NO_EXIT),
+  ],
+  dmesg: [
+    entry('dmesg', '2026-11-07T09:59:00+00:00', 'err', 'kernel', OOM),
+    entry('dmesg', '2026-11-07T09:50:00+00:00', 'warning', 'kernel', EXT4),
+    entry('dmesg', '2026-11-07T08:20:00+00:00', 'info', 'kernel', USB_DEVICE),
+    entry('dmesg', '2026-11-07T08:10:00+00:00', 'err', 'kernel', USB_ERROR),
+  ],
+};
+
+/**
+ * Answer the tab's requests as the server does, from ANSWERS: a severity lists that level and
+ * the more severe ones, and the limit the newest entries. Other requests of the logs API are
+ * aborted. Returns the query of every entries request, and lets a test hold the answers for one
+ * source until it releases them.
+ */
+async function fakeLogsApi(page: Page) {
+  const requests: URLSearchParams[] = [];
+  let held: string | null = null;
+  let release: () => void = () => {};
+  let released = Promise.resolve();
+  await page.route('**/api/v1/logs/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/v1/logs/sources') {
+      return route.fulfill({ json: { sources: SOURCES } });
+    }
+    if (url.pathname !== '/api/v1/logs/entries') return route.abort();
+    const query = url.searchParams;
+    requests.push(query);
+    const source = query.get('source') ?? '';
+    if (source === held) await released;
+    if (!(source in ANSWERS)) return route.fulfill({ status: 400, json: { detail: `Unknown log source: ${source}` } });
+    const priority = query.get('priority');
+    const listed = ANSWERS[source]
+      .filter((e) => !priority || LEVELS.indexOf(e.priority) <= LEVELS.indexOf(priority))
+      .slice(0, Number(query.get('limit')));
+    return route.fulfill({ json: { entries: listed, total: listed.length } });
+  });
+  return {
+    requests,
+    hold(source: string) {
+      held = source;
+      released = new Promise((resolve) => (release = resolve));
+    },
+    release: () => release(),
+  };
+}
+
+const cells = (page: Page, column: number) => page.locator(`main table tbody tr td:nth-child(${column})`);
+
+async function choose(page: Page, filter: string, option: string) {
+  await page.getByRole('combobox', { name: filter, exact: true }).click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+}
 
 test.describe('System Logs', () => {
   test('should display logs tab', async ({ authenticatedPage: page }) => {
@@ -10,10 +103,10 @@ test.describe('System Logs', () => {
   test('should have source filter', async ({ authenticatedPage: page }) => {
     await page.goto('/system#logs');
     await page.waitForTimeout(1000);
-    // One button per available source (GET /api/v1/logs/sources); the journal
-    // and the kernel log are always available.
-    await expect(page.getByRole('button', { name: 'System Journal' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Kernel' })).toBeVisible();
+    // One button per source of GET /api/v1/logs/sources: every part of the journal the tab reads.
+    for (const source of SOURCES) {
+      await expect(page.getByRole('button', { name: source.label, exact: true })).toBeVisible();
+    }
   });
 
   test('should have severity filter', async ({ authenticatedPage: page }) => {
@@ -69,15 +162,13 @@ test.describe('System Logs', () => {
     const message = `Failed password for ${payload} from 192.0.2.7`;
     await page.route(
       (url) => url.pathname === '/api/v1/logs/sources',
-      (route) => route.fulfill({
-        json: { sources: [{ name: 'journal', label: 'System Journal', description: 'systemd journal', path: null, available: true }] },
-      }),
+      (route) => route.fulfill({ json: { sources: SOURCES } }),
     );
     await page.route(
       (url) => url.pathname === '/api/v1/logs/entries',
       (route) => route.fulfill({
         json: {
-          entries: [{ timestamp: '2026-01-01T00:00:00', facility: 'auth', priority: 'warning', message, source: 'journal', unit: 'sshd' }],
+          entries: [{ timestamp: '2026-01-01T00:00:00+00:00', facility: '10', priority: 'warning', message, source: 'journal', unit: 'sshd' }],
           total: 1,
         },
       }),
@@ -91,5 +182,99 @@ test.describe('System Logs', () => {
     await expect(table).toContainText(message);
     await expect(table.locator('img')).toHaveCount(0);
     expect(await page.title()).not.toBe('xss');
+  });
+});
+
+test.describe('System Logs with a fake journal', () => {
+  // Fixed, so that the times the tab shows can be compared: Moscow is UTC+3 all year.
+  test.use({ locale: 'en-US', timezoneId: 'Europe/Moscow' });
+
+  test('pick a source and a severity: the entries are listed, newest first', async ({ authenticatedPage: page }) => {
+    const api = await fakeLogsApi(page);
+    await page.goto('/system#logs');
+
+    // The whole journal first, newest first, at the browser's time.
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+    await expect(cells(page, 1)).toHaveText(['11/7/2026, 12:59:00 PM', '11/7/2026, 12:55:00 PM', '11/7/2026, 12:40:00 PM']);
+    await expect(page.getByText('Showing 3 log entries, newest first')).toBeVisible();
+    expect(api.requests[0].get('source')).toBe('journal');
+    expect(api.requests[0].get('priority')).toBeNull();
+
+    // A source: its entries, newest first.
+    await page.getByRole('button', { name: 'Kernel', exact: true }).click();
+    await expect(page.getByText("The kernel's messages since the host started")).toBeVisible();
+    await expect(cells(page, 4)).toHaveText([OOM, EXT4, USB_DEVICE, USB_ERROR]);
+    await expect(cells(page, 1)).toHaveText([
+      '11/7/2026, 12:59:00 PM', '11/7/2026, 12:50:00 PM', '11/7/2026, 11:20:00 AM', '11/7/2026, 11:10:00 AM',
+    ]);
+
+    // A severity: the entries at that level and the more severe ones, still newest first.
+    await choose(page, 'Priority Level', 'Warning');
+    await expect(cells(page, 4)).toHaveText([OOM, EXT4, USB_ERROR]);
+    await expect(cells(page, 2)).toHaveText(['err', 'warning', 'err']);
+    await expect(cells(page, 3)).toHaveText(['kernel', 'kernel', 'kernel']);
+    await expect(page.getByText('Showing 3 log entries, newest first')).toBeVisible();
+    const last = api.requests[api.requests.length - 1];
+    expect([last.get('source'), last.get('priority'), last.get('limit')]).toEqual(['dmesg', 'warning', '200']);
+  });
+
+  test('the limit and the time range reach the server with the request they change', async ({ authenticatedPage: page }) => {
+    const api = await fakeLogsApi(page);
+    await page.goto('/system#logs');
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+
+    await choose(page, 'Limit', '50');
+    await expect.poll(() => api.requests[api.requests.length - 1].get('limit')).toBe('50');
+
+    await choose(page, 'Time Range', 'Last hour');
+    await expect.poll(() => api.requests[api.requests.length - 1].get('since')).toBe('1 hour ago');
+    expect(api.requests[api.requests.length - 1].get('limit')).toBe('50');
+  });
+
+  test('Auto asks again every 5 seconds, but not while an answer is still coming', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.clock.install();
+    const api = await fakeLogsApi(page);
+    await page.goto('/system#logs');
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+
+    await page.getByRole('button', { name: 'Auto', exact: true }).click();
+    await expect(page.getByText('Auto-refreshing every 5s')).toBeVisible();
+    await page.clock.fastForward('00:05');
+    await expect.poll(() => api.requests.length).toBe(2);
+
+    // A search through a large journal takes long: Auto waits for its answer.
+    api.hold('journal');
+    await page.clock.fastForward('00:05');
+    await expect.poll(() => api.requests.length).toBe(3);
+    await page.clock.fastForward('00:15');
+    await page.waitForTimeout(500);
+    expect(api.requests.length).toBe(3);
+
+    api.release();
+    await expect(page.getByText('Showing 3 log entries, newest first')).toBeVisible();
+    await page.clock.fastForward('00:05');
+    await expect.poll(() => api.requests.length).toBe(4);
+  });
+
+  test('a late answer for the source picked before does not replace the entries of the one picked last', async ({
+    authenticatedPage: page,
+  }) => {
+    const api = await fakeLogsApi(page);
+    api.hold('journal');
+    await page.goto('/system#logs');
+    await expect.poll(() => api.requests.length).toBe(1);
+
+    await page.getByRole('button', { name: 'Kernel', exact: true }).click();
+    await expect(cells(page, 4)).toHaveText([OOM, EXT4, USB_DEVICE, USB_ERROR]);
+
+    // The journal's answer arrives now, after the kernel's: the tab keeps the kernel's entries.
+    const late = page.waitForResponse((response) => response.url().includes('source=journal'));
+    api.release();
+    await late;
+    await page.waitForTimeout(300);
+    await expect(cells(page, 4)).toHaveText([OOM, EXT4, USB_DEVICE, USB_ERROR]);
+    await expect(page.getByText('Showing 4 log entries, newest first')).toBeVisible();
   });
 });

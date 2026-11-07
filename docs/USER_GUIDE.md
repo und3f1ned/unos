@@ -856,9 +856,42 @@ yet (feature-list entries `system.scheduled-power` and
 
 ### Logs
 
-- View system logs
-- Filter by type and date
-- Export logs for troubleshooting
+**System Logs** lists the entries of the host's systemd journal, the newest
+first. The buttons above the filters choose what it lists:
+
+- **System Journal**: everything in the journal
+- **Kernel**: the kernel's messages since the host started
+- **Docker**: the Docker daemon
+- **Samba**: the SMB file server, smbd and nmbd
+- **Authentication**: sign-ins, sudo and the other messages of the syslog
+  facilities auth and authpriv, which hosts with rsyslog also write to
+  `/var/log/auth.log`
+- **Cron Jobs**: the host's cron daemon
+
+Each entry shows its time in your browser's time zone, its level, the program
+that logged it and its message. The filters narrow the list:
+
+- **Priority Level**: the entries at that level or a more severe one; for
+  example, **Warning** lists warnings, errors and worse. An entry's level is
+  the one its program gave it: sshd logs a failed password as Info.
+- **Time Range**: the entries of the last 5 minutes, 15 minutes, hour,
+  6 hours, 24 hours or 7 days, or of all time.
+- **Limit**: at most 50, 100, 200 (at first), 500 or 1000 entries.
+- **Search**: type a text and press Enter or click **Search**: the tab lists
+  the newest entries whose message contains it, in the chosen source, level
+  and time range, also when they are older than the newest entries. The case
+  of the letters A to Z does not matter. The matches are highlighted in the
+  messages, also while you type; log messages are always shown as text.
+
+**Auto** reloads the list every 5 seconds, and waits while an answer is still
+coming. When the journal cannot be read, the tab shows why. A search through
+a large journal can take long: after 30 seconds the tab reports that
+journalctl did not answer, and a shorter time range helps.
+
+The output of the UNOS containers themselves is not in the journal: run
+`docker logs unos-supervisor` or `docker logs unos-webui` on the host. Log
+files that the journal does not hold, such as `/var/log/dpkg.log`, are not
+shown.
 
 ---
 
