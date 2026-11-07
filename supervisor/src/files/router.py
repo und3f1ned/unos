@@ -25,6 +25,10 @@ Neither can volumes and other btrfs subvolumes or the mount points of other
 filesystems (``_refuse_separate_filesystem``), and a folder that contains one,
 or a bind mount, cannot be deleted, or moved to another pool or volume
 (``_refuse_nested_filesystems``).
+
+Delete moves items into the trash of their pool or volume, from where they
+are restored, deleted for good, or deleted for good by the daily expiry
+after TRASH_RETENTION_DAYS (ADR-0247, "the trash" below).
 """
 
 import asyncio
@@ -40,7 +44,8 @@ import shutil
 import stat
 import sys
 from collections.abc import Callable, Iterator
-from datetime import datetime
+from contextlib import closing, contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import BinaryIO
 from urllib.parse import quote
 
@@ -50,8 +55,16 @@ from fastapi.responses import StreamingResponse
 from ..auth.utils import verify_token
 from ..config import get_settings
 from ..request_limits import UPLOAD_OPENAPI, UploadSink, receive_upload
-from ..security.validators import open_dir_nofollow
-from .schemas import CreateDirectoryRequest, DirectoryListing, FileInfo, FileType, RenameRequest
+from ..security.validators import open_dir_nofollow, open_subdirs_nofollow
+from .schemas import (
+    CreateDirectoryRequest,
+    DirectoryListing,
+    FileInfo,
+    FileType,
+    RenameRequest,
+    TrashItem,
+    TrashListing,
+)
 
 router = APIRouter(prefix="/files", tags=["files"])
 logger = logging.getLogger(__name__)
@@ -91,6 +104,26 @@ _GONE = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
 _MOUNTINFO_ESCAPE = re.compile(rb"\\([0-3][0-7]{2})")
 _MOVED_ELSEWHERE = "moved to another pool or volume"
 
+# The trash (ADR-0247): the folder in the top folder of each pool and volume
+# that takes what is deleted there. Its name is reserved: the file manager
+# lists, opens and makes no entry of that name, and copies leave it out.
+TRASH = ".unos-trash"
+# Days that a deleted item stays in the trash before the expiry deletes it for good.
+TRASH_RETENTION_DAYS = 30
+# Seconds between two passes of the expiry (the first one runs at the start).
+TRASH_EXPIRY_INTERVAL = 24 * 60 * 60
+# In the trash, each deleted item has a folder of its own, named after the
+# time of its deletion in UTC and 16 random hex digits: the item is in it as
+# _TRASH_ITEM, and its path below the pool or volume, as bytes, in _TRASH_ORIGIN.
+_TRASH_ENTRY = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{16}")
+_TRASH_STAMP = "%Y%m%dT%H%M%SZ"
+_TRASH_ITEM = "item"
+_TRASH_ORIGIN = "origin"
+# More than any path can be (PATH_MAX is 4096 bytes): a longer origin is damaged.
+_ORIGIN_MAX_BYTES = 64 * 1024
+_FOR_GOOD = "deleted for good"
+_TRASH_REFUSED = f"The trash ({TRASH}) is reached through Trash, not as a folder"
+
 
 # --- paths -----------------------------------------------------------------
 
@@ -99,7 +132,7 @@ def _base_dir() -> str:
     return os.path.realpath(BASE_PATH)
 
 
-def _split(path: str) -> list[str]:
+def _components(path: str) -> list[str]:
     """Return the components of a client path below the base directory.
 
     The path must be absolute and lie below the base (component-wise, so
@@ -120,6 +153,17 @@ def _split(path: str) -> list[str]:
     raise HTTPException(403, "Access denied")
 
 
+def _split(path: str) -> list[str]:
+    """The components (_components) of a path of the file manager, which never leads into a trash.
+
+    The trash API alone reads and changes the trash (ADR-0247).
+    """
+    parts = _components(path)
+    if TRASH in parts:
+        raise HTTPException(403, _TRASH_REFUSED)
+    return parts
+
+
 def _display_path(parts: list[str]) -> str:
     return os.path.join(_base_dir(), *parts)
 
@@ -130,6 +174,8 @@ def _validate_name(name: str) -> str:
         raise HTTPException(400, "Invalid name")
     if "/" in name or any(ord(c) < 0x20 or ord(c) == 0x7F for c in name):
         raise HTTPException(400, "Invalid name: '/' and control characters are not allowed")
+    if name == TRASH:
+        raise HTTPException(400, f"Invalid name: {TRASH} is the name of the trash")
     try:
         encoded = name.encode("utf-8")
     except UnicodeEncodeError:
@@ -401,14 +447,18 @@ def _open_parent_or_none(parts: list[str]) -> int | None:
         return None
 
 
+def _file_type(st: os.stat_result) -> FileType:
+    """What an entry is, from its lstat() result."""
+    if stat.S_ISLNK(st.st_mode):
+        return FileType.SYMLINK
+    if stat.S_ISDIR(st.st_mode):
+        return FileType.DIRECTORY
+    return FileType.FILE
+
+
 def get_file_info(name: str, path: str, st: os.stat_result) -> FileInfo:
     """Describe a directory entry from its lstat() result (links are not followed)."""
-    if stat.S_ISLNK(st.st_mode):
-        file_type = FileType.SYMLINK
-    elif stat.S_ISDIR(st.st_mode):
-        file_type = FileType.DIRECTORY
-    else:
-        file_type = FileType.FILE
+    file_type = _file_type(st)
 
     try:
         owner = pwd.getpwuid(st.st_uid).pw_name
@@ -442,6 +492,8 @@ def _list_directory(path: str | None) -> DirectoryListing:
         items = []
         with os.scandir(fd) as entries:
             for entry in entries:
+                if entry.name == TRASH:  # listed with GET /files/trash (ADR-0247)
+                    continue
                 try:
                     st = entry.stat(follow_symlinks=False)
                 except OSError:
@@ -681,13 +733,13 @@ def _create_directory(path: str, name: str) -> FileInfo:
     return get_file_info(name, _display_path([*parts, name]), st)
 
 
-def _c_exclusive_rename() -> Callable[[int, str, str], None] | None:
+def _c_exclusive_rename() -> Callable[[int, str, int, str], None] | None:
     """The C library's rename that fails with EEXIST instead of replacing an entry; None if it has none.
 
     renameat2 with RENAME_NOREPLACE on Linux (glibc 2.28 and later), and
     renameatx_np with RENAME_EXCL on macOS, where the stand-in runs. The
-    function takes a directory descriptor, a name in it and its new name,
-    and raises OSError.
+    function takes a directory descriptor and a name in it, then the
+    directory descriptor and the name it goes to, and raises OSError.
     """
     try:
         name, flag = {"linux": ("renameat2", 0x1), "darwin": ("renameatx_np", 0x4)}[sys.platform]
@@ -697,8 +749,8 @@ def _c_exclusive_rename() -> Callable[[int, str, str], None] | None:
     function.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
     function.restype = ctypes.c_int
 
-    def exclusive_rename(dir_fd: int, old: str, new: str) -> None:
-        if function(dir_fd, os.fsencode(old), dir_fd, os.fsencode(new), flag) != 0:
+    def exclusive_rename(src_dir_fd: int, old: str, dst_dir_fd: int, new: str) -> None:
+        if function(src_dir_fd, os.fsencode(old), dst_dir_fd, os.fsencode(new), flag) != 0:
             code = ctypes.get_errno()
             raise OSError(code, os.strerror(code))
 
@@ -712,24 +764,25 @@ _EXCLUSIVE_RENAME = _c_exclusive_rename()
 _NO_EXCLUSIVE_RENAME = frozenset({errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP})
 
 
-def _rename_exclusive(dir_fd: int, name: str, new_name: str) -> None:
-    """Rename ``name`` to ``new_name`` in the directory ``dir_fd``; FileExistsError if ``new_name`` exists.
+def _rename_exclusive(src_dir_fd: int, name: str, dst_dir_fd: int, new_name: str) -> None:
+    """Rename ``name`` in the directory ``src_dir_fd`` to ``new_name`` in ``dst_dir_fd``.
 
-    rename(2) replaces an entry that has the new name, and between a look for
-    it and the rename an SMB user or an app can create one: the C library's
-    exclusive rename refuses it in the same step (ADR-0232). Where there is
-    none, or the filesystem cannot, the name is looked for first.
+    FileExistsError if ``new_name`` exists. rename(2) replaces an entry that
+    has the new name, and between a look for it and the rename an SMB user or
+    an app can create one: the C library's exclusive rename refuses it in the
+    same step (ADR-0232). Where there is none, or the filesystem cannot, the
+    name is looked for first.
     """
     if _EXCLUSIVE_RENAME is not None:
         try:
-            _EXCLUSIVE_RENAME(dir_fd, name, new_name)
+            _EXCLUSIVE_RENAME(src_dir_fd, name, dst_dir_fd, new_name)
             return
         except OSError as exc:
             if exc.errno not in _NO_EXCLUSIVE_RENAME:
                 raise
-    if _lstat_at(dir_fd, new_name) is not None:
+    if _lstat_at(dst_dir_fd, new_name) is not None:
         raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST))
-    os.rename(name, new_name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    os.rename(name, new_name, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
 
 def _rename(path: str, new_name: str) -> FileInfo:
@@ -744,7 +797,7 @@ def _rename(path: str, new_name: str) -> FileInfo:
         _refuse_separate_filesystem(dir_fd, st, parts, "renamed")
         if new_name != parts[-1]:
             try:
-                _rename_exclusive(dir_fd, parts[-1], new_name)
+                _rename_exclusive(dir_fd, parts[-1], dir_fd, new_name)
             except FileExistsError:
                 raise HTTPException(400, f"Already exists: {new_name}") from None
         st = os.stat(new_name, dir_fd=dir_fd, follow_symlinks=False)
@@ -753,7 +806,7 @@ def _rename(path: str, new_name: str) -> FileInfo:
     return get_file_info(new_name, _display_path([*parts[:-1], new_name]), st)
 
 
-def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int) -> None:
+def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int, without_trash: bool = False) -> None:
     """Copy ``name`` between two directories without following symlinks.
 
     Symlinks are recreated as symlinks, directories are copied recursively,
@@ -761,7 +814,10 @@ def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int) -> None:
     created exclusively, so nothing that appears in the destination while the
     copy runs (e.g. a symlink planted by another user) is written through.
     Copies are owned by root, so set-user-ID and set-group-ID bits are
-    dropped from files.
+    dropped from files. ``without_trash`` leaves out every entry named TRASH:
+    a copy of a pool or a volume does not take what was deleted there
+    (ADR-0247). A move to another filesystem copies everything, because it
+    deletes the source afterwards.
     """
     st = os.stat(name, dir_fd=src_dir_fd, follow_symlinks=False)
     times = (st.st_atime_ns, st.st_mtime_ns)
@@ -777,9 +833,9 @@ def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int) -> None:
             dst_fd = os.open(name, _DIR_FLAGS, dir_fd=dst_dir_fd)
             try:
                 with os.scandir(src_fd) as entries:
-                    children = [entry.name for entry in entries]
+                    children = [entry.name for entry in entries if not (without_trash and entry.name == TRASH)]
                 for child in children:
-                    _copy_entry(src_fd, child, dst_fd)
+                    _copy_entry(src_fd, child, dst_fd, without_trash)
                 os.fchmod(dst_fd, stat.S_IMODE(st.st_mode))
                 os.utime(dst_fd, ns=times)
             finally:
@@ -807,15 +863,17 @@ def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int) -> None:
             os.close(src_fd)
 
 
-def _remove_entry(dir_fd: int, parts: list[str], action: str, expected: os.stat_result | None = None) -> None:
-    """Delete ``parts[-1]`` from ``dir_fd`` (recursively for directories) without following symlinks.
+def _recheck_entry(
+    dir_fd: int, parts: list[str], action: str, expected: os.stat_result | None = None
+) -> os.stat_result:
+    """Check ``parts[-1]`` in ``dir_fd`` right before it is deleted or moved into the trash; its lstat().
 
-    A directory is checked for subvolumes and mount points below it right
-    before (refused as not ``action``). That takes a while, so the entry is
-    then checked again: it must still be the same directory, and not a
-    subvolume or mount point itself. ``expected`` is an earlier lstat() of
-    the entry (the source of a move, before it was copied): an entry that
-    has replaced it since is not deleted either.
+    A directory is checked for subvolumes and mount points below it (refused
+    as not ``action``). That takes a while, so the entry is then checked
+    again: it must still be the same directory, and not a subvolume or mount
+    point itself. ``expected`` is an earlier lstat() of the entry (the source
+    of a move, before it was copied): an entry that has replaced it since is
+    refused too.
     """
     name = parts[-1]
     st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
@@ -827,6 +885,16 @@ def _remove_entry(dir_fd: int, parts: list[str], action: str, expected: os.stat_
         _refuse_separate_filesystem(dir_fd, st, parts, action)
     if not os.path.samestat(st, expected):
         raise HTTPException(409, f"'{_shown(name)}' was replaced in the meantime, so it was not {action}.")
+    return st
+
+
+def _remove_entry(dir_fd: int, parts: list[str], action: str, expected: os.stat_result | None = None) -> None:
+    """Delete ``parts[-1]`` from ``dir_fd`` (recursively for directories) without following symlinks.
+
+    After the checks of _recheck_entry.
+    """
+    name = parts[-1]
+    st = _recheck_entry(dir_fd, parts, action, expected)
     if stat.S_ISDIR(st.st_mode):
         # rmtree with dir_fd uses the fd-based, symlink-attack-safe walk.
         shutil.rmtree(name, dir_fd=dir_fd)
@@ -888,7 +956,7 @@ def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str
                         _copy_entry(src_dir_fd, name, dest_fd)
                         _remove_entry(src_dir_fd, parts, _MOVED_ELSEWHERE, expected=st)
                 else:
-                    _copy_entry(src_dir_fd, name, dest_fd)
+                    _copy_entry(src_dir_fd, name, dest_fd, True)
             finally:
                 os.close(src_dir_fd)
             done.append(_display_path([*dest_parts, name]))
@@ -897,13 +965,28 @@ def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str
         os.close(dest_fd)
 
 
-def _delete(paths: list[str]) -> list[str]:
+def _delete(paths: list[str], permanent: bool = False) -> list[str]:
+    """Move the items ``paths`` into the trash of their pool or volume; with ``permanent``, delete them for good.
+
+    Every item is checked before any is changed: also, unless ``permanent``,
+    that it has a trash (_open_trash_scope).
+    """
     targets = []
     for path in paths:
         parts = _split(path)
         _refuse_protected(parts)
         targets.append((path, parts))
-    _refuse_separate_filesystems([parts for _, parts in targets], "deleted")
+    plan = [parts for _, parts in targets]
+    _refuse_separate_filesystems(plan, "deleted")
+    if not permanent:
+        for parts in plan:
+            dir_fd = _open_parent_or_none(parts)
+            if dir_fd is None:
+                continue
+            try:
+                os.close(_open_trash_scope(dir_fd, parts)[0])
+            finally:
+                os.close(dir_fd)
 
     deleted = []
     for path, parts in targets:
@@ -915,11 +998,602 @@ def _delete(paths: list[str]) -> list[str]:
             if st is None:
                 continue
             _refuse_separate_filesystem(dir_fd, st, parts, "deleted")
-            _remove_entry(dir_fd, parts, "deleted")
+            if permanent:
+                _remove_entry(dir_fd, parts, "deleted")
+            else:
+                _move_to_trash(dir_fd, parts)
         finally:
             os.close(dir_fd)
         deleted.append(path)
     return deleted
+
+
+# --- the trash (ADR-0247) ------------------------------------------------------
+#
+# Delete moves an item into the trash of the pool or volume that holds it,
+# <pool>/.unos-trash or <pool>/<volume>/.unos-trash, with one rename on its
+# filesystem: btrfs renames nothing into another subvolume, so a volume has a
+# trash of its own. The trash and each entry in it are private folders (mode
+# 0700), which Repair permissions never enters. What a trash holds is
+# untrusted, as the rest of a volume is: apps and NFS clients that use the
+# volume can change it. So origin is checked before a restore and leads only
+# below the trash's own pool or volume, the item is renamed back without
+# replacing anything, and an entry is deleted for good only after the checks
+# of ADR-0170.
+
+
+def _now() -> datetime:
+    """The current time in UTC. Module level so tests can move it."""
+    return datetime.now(timezone.utc)
+
+
+def _entry_time(name: str) -> datetime | None:
+    """When the trash entry ``name`` was deleted; None for a name that is not a trash entry's."""
+    if not _TRASH_ENTRY.fullmatch(name):
+        return None
+    try:
+        return datetime.strptime(name[:16], _TRASH_STAMP).replace(tzinfo=timezone.utc)
+    except ValueError:  # e.g. month 13
+        return None
+
+
+def _no_trash_detail(name: str) -> str:
+    return (
+        f"'{_shown(name)}' is in a separate subvolume or filesystem (such as a snapshot or a mount point) "
+        "that has no trash, so it was not deleted. Delete it for good instead."
+    )
+
+
+def _not_a_folder_detail(scope: list[str]) -> str:
+    return (
+        f"{_shown(_display_path([*scope, TRASH]))} is not a folder, so nothing can be moved to the trash "
+        f"of {_shown(_display_path(scope))}."
+    )
+
+
+def _unreadable(path: list[str], exc: OSError) -> str:
+    return f"{_shown(_display_path(path))} could not be read: {os.strerror(exc.errno) if exc.errno else exc}"
+
+
+def _open_trash_scope(dir_fd: int, parts: list[str]) -> tuple[int, int]:
+    """Open the pool or volume whose trash takes the entry ``parts``, which is in the folder ``dir_fd``.
+
+    Returns its descriptor and the number of its components: 1 for the pool,
+    2 for a volume, a folder directly in the pool's top folder on another
+    subvolume or filesystem (as _refuse_separate_filesystem tells them). The
+    entry must be on the filesystem of that folder: one in a deeper subvolume
+    (a snapshot, a restored copy in a volume) or below another mount point
+    has no trash (409).
+    """
+    scope_fd = _open_dir(parts[:1])
+    scope_len = 1
+    try:
+        if len(parts) > 2:
+            volume_fd = os.open(parts[1], _DIR_FLAGS, dir_fd=scope_fd)
+            try:
+                in_volume = os.fstat(volume_fd).st_dev != os.fstat(scope_fd).st_dev
+            except BaseException:
+                os.close(volume_fd)
+                raise
+            if in_volume:
+                scope_fd, volume_fd = volume_fd, scope_fd
+                scope_len = 2
+            os.close(volume_fd)
+        if os.fstat(dir_fd).st_dev != os.fstat(scope_fd).st_dev:
+            raise HTTPException(409, _no_trash_detail(parts[-1]))
+        return scope_fd, scope_len
+    except BaseException:
+        os.close(scope_fd)
+        raise
+
+
+def _open_trash(scope_fd: int, scope: list[str], *, create: bool) -> int | None:
+    """Open the trash folder of the pool or volume ``scope`` (open as ``scope_fd``); None when it has none.
+
+    With ``create`` a missing one is made (mode 0700). One that is not a
+    folder (a symlink, a file) is refused (409): nothing is followed.
+    """
+    if create:
+        try:
+            os.mkdir(TRASH, 0o700, dir_fd=scope_fd)
+        except FileExistsError:
+            pass
+    try:
+        return os.open(TRASH, _DIR_FLAGS, dir_fd=scope_fd)
+    except FileNotFoundError:
+        if create:
+            raise
+        return None
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise HTTPException(409, _not_a_folder_detail(scope)) from None
+        raise
+
+
+def _write_origin(entry_fd: int, below_scope: list[str]) -> None:
+    """Write the path of a deleted item below its pool or volume into its trash entry, and flush it.
+
+    Flushed before the item is renamed into the entry: after a power cut the
+    rename may be on the disk while the content of a new file is not yet.
+    """
+    data = memoryview(os.fsencode("/".join(below_scope)))
+    fd = os.open(_TRASH_ORIGIN, _CREATE_FLAGS, 0o600, dir_fd=entry_fd)
+    try:
+        while data:
+            data = data[os.write(fd, data):]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _read_origin(entry_fd: int) -> list[str] | None:
+    """The path below its pool or volume that the item of a trash entry was deleted from; None if not known.
+
+    The file can have been changed (see above): a path that is empty, has an
+    empty, '.', '..', NUL or over-long component, or leads into a trash is
+    not known either.
+    """
+    try:
+        fd = os.open(_TRASH_ORIGIN, _READ_FLAGS, dir_fd=entry_fd)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        data = b""
+        while len(data) <= _ORIGIN_MAX_BYTES and (chunk := os.read(fd, _ORIGIN_MAX_BYTES + 1 - len(data))):
+            data += chunk
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    if len(data) > _ORIGIN_MAX_BYTES:
+        return None
+    parts = os.fsdecode(data).split("/")
+    for part in parts:
+        if part in ("", ".", "..", TRASH) or "\x00" in part or len(os.fsencode(part)) > _NAME_MAX_BYTES:
+            return None
+    return parts
+
+
+def _discard_trash_entry(trash_fd: int, entry: str) -> None:
+    """Remove the folder of a trash entry whose item is not in it (any more): its origin, then the folder.
+
+    Leaves what it cannot remove; the expiry or Empty trash deletes it later.
+    """
+    try:
+        entry_fd = os.open(entry, _DIR_FLAGS, dir_fd=trash_fd)
+    except OSError:
+        return
+    try:
+        os.unlink(_TRASH_ORIGIN, dir_fd=entry_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(entry_fd)
+    try:
+        os.rmdir(entry, dir_fd=trash_fd)
+    except OSError:
+        pass
+
+
+def _move_to_trash(dir_fd: int, parts: list[str]) -> None:
+    """Move the entry ``parts`` (in the folder ``dir_fd``) into the trash of its pool or volume.
+
+    The entry is checked right before, as before it is deleted for good
+    (_recheck_entry). It gets a new folder in the trash, with its origin;
+    a move that fails leaves no folder behind.
+    """
+    _recheck_entry(dir_fd, parts, "deleted")
+    scope_fd, scope_len = _open_trash_scope(dir_fd, parts)
+    try:
+        trash_fd = _open_trash(scope_fd, parts[:scope_len], create=True)
+        try:
+            entry = f"{_now().strftime(_TRASH_STAMP)}-{secrets.token_hex(8)}"
+            os.mkdir(entry, 0o700, dir_fd=trash_fd)
+            moved = False
+            try:
+                entry_fd = os.open(entry, _DIR_FLAGS, dir_fd=trash_fd)
+                try:
+                    _write_origin(entry_fd, parts[scope_len:])
+                    _rename_exclusive(dir_fd, parts[-1], entry_fd, _TRASH_ITEM)
+                    moved = True
+                finally:
+                    os.close(entry_fd)
+            except OSError as exc:
+                if exc.errno == errno.EXDEV:  # e.g. below a bind mount of the same filesystem
+                    raise HTTPException(409, _no_trash_detail(parts[-1])) from None
+                raise
+            finally:
+                if not moved:
+                    _discard_trash_entry(trash_fd, entry)
+        finally:
+            os.close(trash_fd)
+    finally:
+        os.close(scope_fd)
+
+
+def _trash_scopes(problems: list[str]) -> list[list[str]]:
+    """Every pool, each followed by its volumes: the places that can have a trash, by name.
+
+    A pool whose top folder cannot be read is left out, with the reason in ``problems``.
+    """
+    base_fd = _open_dir([])
+    try:
+        pools = sorted(_subdirectories(base_fd))
+    finally:
+        os.close(base_fd)
+    scopes = []
+    for pool in pools:
+        if pool == TRASH:
+            continue
+        try:
+            pool_fd = _open_dir([pool])
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            problems.append(_unreadable([pool], exc))
+            continue
+        try:
+            scopes.append([pool])
+            device = os.fstat(pool_fd).st_dev
+            for name in sorted(_subdirectories(pool_fd)):
+                st = _lstat_at(pool_fd, name)
+                if name != TRASH and st is not None and stat.S_ISDIR(st.st_mode) and st.st_dev != device:
+                    scopes.append([pool, name])
+        except OSError as exc:
+            problems.append(_unreadable([pool], exc))
+        finally:
+            os.close(pool_fd)
+    return scopes
+
+
+def _open_scope(scope: list[str]) -> int | None:
+    """Open the pool or the volume ``scope``; None when it is a folder that is neither, which has no trash."""
+    pool_fd = _open_dir(scope[:1])
+    if len(scope) == 1:
+        return pool_fd
+    try:
+        volume_fd = os.open(scope[1], _DIR_FLAGS, dir_fd=pool_fd)
+        try:
+            in_volume = os.fstat(volume_fd).st_dev != os.fstat(pool_fd).st_dev
+        except BaseException:
+            os.close(volume_fd)
+            raise
+        if not in_volume:
+            os.close(volume_fd)
+            return None
+        return volume_fd
+    finally:
+        os.close(pool_fd)
+
+
+def _each_trash(problems: list[str]) -> Iterator[tuple[list[str], int]]:
+    """(the pool or volume, its open trash folder) for each trash; what cannot be read goes to ``problems``.
+
+    Close the iterator when done with it (contextlib.closing): it holds descriptors.
+    """
+    for scope in _trash_scopes(problems):
+        try:
+            scope_fd = _open_scope(scope)
+        except FileNotFoundError:
+            continue  # gone since _trash_scopes
+        except OSError as exc:
+            problems.append(_unreadable(scope, exc))
+            continue
+        if scope_fd is None:
+            continue  # no longer a volume
+        try:
+            try:
+                trash_fd = _open_trash(scope_fd, scope, create=False)
+            except HTTPException as exc:
+                problems.append(exc.detail)
+                continue
+            except OSError as exc:
+                problems.append(_unreadable([*scope, TRASH], exc))
+                continue
+            if trash_fd is None:
+                continue
+            try:
+                yield scope, trash_fd
+            finally:
+                os.close(trash_fd)
+        finally:
+            os.close(scope_fd)
+
+
+def _trash_entries(trash_fd: int) -> list[str]:
+    """The names of the entries in a trash folder, oldest first; other names are not UNOS's and stay."""
+    with os.scandir(trash_fd) as entries:
+        return sorted(entry.name for entry in entries if _entry_time(entry.name) is not None)
+
+
+def _trash_item(scope: list[str], trash_fd: int, entry: str) -> TrashItem | None:
+    """How GET /files/trash lists the entry ``entry``; None when its item is not in it (any more)."""
+    try:
+        entry_fd = os.open(entry, _DIR_FLAGS, dir_fd=trash_fd)
+    except OSError as exc:
+        if exc.errno in _GONE:
+            return None  # removed meanwhile, or not a folder: not UNOS's
+        raise
+    try:
+        st = _lstat_at(entry_fd, _TRASH_ITEM)
+        origin = _read_origin(entry_fd)
+    finally:
+        os.close(entry_fd)
+    if st is None:
+        return None
+    deleted = _entry_time(entry)
+    file_type = _file_type(st)
+    # Shown: an origin that someone changed may hold bytes that are not UTF-8, which JSON cannot carry.
+    return TrashItem(
+        path=_display_path([*scope, TRASH, entry]),
+        name=_shown(origin[-1]) if origin else entry,
+        type=file_type,
+        size=st.st_size if file_type == FileType.FILE else 0,
+        original_path=_shown(_display_path([*scope, *origin])) if origin else None,
+        deleted=deleted.isoformat(),
+        expires=(deleted + timedelta(days=TRASH_RETENTION_DAYS)).isoformat(),
+    )
+
+
+def _list_trash() -> TrashListing:
+    """What GET /files/trash answers: the items of every trash, newest first, and what could not be read."""
+    problems: list[str] = []
+    items = []
+    with closing(_each_trash(problems)) as trashes:
+        for scope, trash_fd in trashes:
+            try:
+                names = _trash_entries(trash_fd)
+            except OSError as exc:
+                problems.append(_unreadable([*scope, TRASH], exc))
+                continue
+            for entry in names:
+                try:
+                    item = _trash_item(scope, trash_fd, entry)
+                except OSError as exc:
+                    problems.append(_unreadable([*scope, TRASH, entry], exc))
+                    continue
+                if item is not None:
+                    items.append(item)
+    items.sort(key=lambda item: item.path)
+    items.sort(key=lambda item: item.deleted, reverse=True)
+    return TrashListing(items=items, retention_days=TRASH_RETENTION_DAYS, problems=problems)
+
+
+def _trash_path(path: str) -> tuple[list[str], str]:
+    """The pool or volume and the entry of a path that GET /files/trash listed; 400 for any other path."""
+    parts = _components(path)
+    if (
+        len(parts) not in (3, 4)
+        or parts[-2] != TRASH
+        or TRASH in parts[:-2]
+        or _entry_time(parts[-1]) is None
+    ):
+        raise HTTPException(400, f"Not an item in the trash: {_shown(path)}")
+    return parts[:-2], parts[-1]
+
+
+@contextmanager
+def _opened_entry(path: str, scope: list[str], entry: str) -> Iterator[tuple[int, int, int]]:
+    """The pool or volume, its trash and the entry of the path ``path`` of the trash, open.
+
+    400 when ``scope`` is neither a pool nor a volume, 404 when the entry is gone.
+    """
+    gone = HTTPException(404, f"Not in the trash: {_shown(path)}")
+    scope_fd = _open_scope(scope)
+    if scope_fd is None:
+        raise HTTPException(400, f"Not an item in the trash: {_shown(path)}")
+    try:
+        trash_fd = _open_trash(scope_fd, scope, create=False)
+        if trash_fd is None:
+            raise gone
+        try:
+            try:
+                entry_fd = os.open(entry, _DIR_FLAGS, dir_fd=trash_fd)
+            except FileNotFoundError:
+                raise gone from None
+            try:
+                yield scope_fd, trash_fd, entry_fd
+            finally:
+                os.close(entry_fd)
+        finally:
+            os.close(trash_fd)
+    finally:
+        os.close(scope_fd)
+
+
+def _restore_target(scope: list[str], entry: str, scope_fd: int, entry_fd: int) -> tuple[list[str], int]:
+    """Where the item of a trash entry goes back to: its origin, and the folder it was in, open.
+
+    409 when that is not known or the folder is gone; a symlink on the way
+    is never followed (403).
+    """
+    origin = _read_origin(entry_fd)
+    if origin is None:
+        raise HTTPException(
+            409,
+            f"It is not known where {_shown(_display_path([*scope, TRASH, entry]))} was deleted from, "
+            "so it cannot be restored. Delete it for good instead.",
+        )
+    if _lstat_at(entry_fd, _TRASH_ITEM) is None:
+        raise HTTPException(404, f"Not in the trash: {_shown(_display_path([*scope, TRASH, entry]))}")
+    try:
+        return origin, open_subdirs_nofollow(scope_fd, origin[:-1])
+    except (FileNotFoundError, NotADirectoryError):
+        raise HTTPException(
+            409,
+            f"Could not restore '{_shown(origin[-1])}': the folder {_shown(_display_path([*scope, *origin[:-1]]))} "
+            "it was deleted from is gone. Restore or create that folder first.",
+        ) from None
+
+
+def _restore_from_trash(paths: list[str]) -> list[str]:
+    """Rename the items of the trash entries ``paths`` back to where they were deleted from.
+
+    Every item is checked before any is restored: its origin, its folder,
+    and that its name is free there (400 "Already exists: <name>"). The
+    exclusive rename also refuses a name that appears after that check.
+    """
+    entries = [(path, *_trash_path(path)) for path in paths]
+    targets = set()
+    for path, scope, entry in entries:
+        with _opened_entry(path, scope, entry) as (scope_fd, _, entry_fd):
+            origin, parent_fd = _restore_target(scope, entry, scope_fd, entry_fd)
+            try:
+                if _lstat_at(parent_fd, origin[-1]) is not None:
+                    raise HTTPException(400, f"Already exists: {_shown(origin[-1])}")
+            finally:
+                os.close(parent_fd)
+        target = _display_path([*scope, *origin])
+        if target in targets:
+            raise HTTPException(400, f"More than one item would go back to {_shown(target)}")
+        targets.add(target)
+
+    restored = []
+    for path, scope, entry in entries:
+        with _opened_entry(path, scope, entry) as (scope_fd, trash_fd, entry_fd):
+            origin, parent_fd = _restore_target(scope, entry, scope_fd, entry_fd)
+            try:
+                _rename_exclusive(entry_fd, _TRASH_ITEM, parent_fd, origin[-1])
+            except FileExistsError:
+                raise HTTPException(400, f"Already exists: {_shown(origin[-1])}") from None
+            except OSError as exc:
+                if exc.errno == errno.EXDEV:
+                    raise HTTPException(
+                        409,
+                        f"Could not restore '{_shown(origin[-1])}': the folder "
+                        f"{_shown(_display_path([*scope, *origin[:-1]]))} is on another subvolume or "
+                        "filesystem now.",
+                    ) from None
+                raise
+            finally:
+                os.close(parent_fd)
+            _discard_trash_entry(trash_fd, entry)
+        restored.append(_shown(_display_path([*scope, *origin])))
+    return restored
+
+
+def _delete_trash_entry(scope: list[str], trash_fd: int, entry: str) -> bool:
+    """Delete the trash entry ``entry`` for good, after the checks of ADR-0170; False when it is gone already."""
+    if _lstat_at(trash_fd, entry) is None:
+        return False
+    _remove_entry(trash_fd, [*scope, TRASH, entry], _FOR_GOOD)
+    return True
+
+
+def _delete_from_trash(paths: list[str]) -> list[str]:
+    """Delete the trash entries ``paths`` for good; the ones that are gone already are left out of the answer."""
+    entries = [(path, *_trash_path(path)) for path in paths]
+    deleted = []
+    for path, scope, entry in entries:
+        try:
+            scope_fd = _open_scope(scope)
+        except FileNotFoundError:
+            continue
+        if scope_fd is None:
+            raise HTTPException(400, f"Not an item in the trash: {_shown(path)}")
+        try:
+            trash_fd = _open_trash(scope_fd, scope, create=False)
+            if trash_fd is None:
+                continue
+            try:
+                if _delete_trash_entry(scope, trash_fd, entry):
+                    deleted.append(path)
+            finally:
+                os.close(trash_fd)
+        finally:
+            os.close(scope_fd)
+    return deleted
+
+
+def _empty_trash() -> int:
+    """Delete everything in the trash of every pool and volume for good; how many items.
+
+    Stops at the first entry that cannot be deleted. A trash that cannot be
+    read answers 500 once the others are empty.
+    """
+    problems: list[str] = []
+    count = 0
+    with closing(_each_trash(problems)) as trashes:
+        for scope, trash_fd in trashes:
+            for entry in _trash_entries(trash_fd):
+                if _delete_trash_entry(scope, trash_fd, entry):
+                    count += 1
+    if problems:
+        raise HTTPException(500, " ".join(problems))
+    return count
+
+
+def _expire_trash(now: datetime) -> tuple[int, list[str]]:
+    """Delete for good what was deleted TRASH_RETENTION_DAYS or more before ``now``.
+
+    Returns how many entries it deleted and the problems: the trashes it
+    could not read and the entries it could not delete, which stay.
+    """
+    cutoff = now - timedelta(days=TRASH_RETENTION_DAYS)
+    problems: list[str] = []
+    count = 0
+    with closing(_each_trash(problems)) as trashes:
+        for scope, trash_fd in trashes:
+            try:
+                names = _trash_entries(trash_fd)
+            except OSError as exc:
+                problems.append(_unreadable([*scope, TRASH], exc))
+                continue
+            for entry in names:
+                if _entry_time(entry) > cutoff:
+                    continue
+                where = _shown(_display_path([*scope, TRASH, entry]))
+                try:
+                    if _delete_trash_entry(scope, trash_fd, entry):
+                        count += 1
+                except HTTPException as exc:
+                    problems.append(f"{where}: {exc.detail}")
+                except OSError as exc:
+                    problems.append(f"{where}: {os.strerror(exc.errno) if exc.errno else exc}")
+    return count, problems
+
+
+_trash_expiry_task: asyncio.Task | None = None
+
+
+async def trash_expiry_loop() -> None:
+    """Delete for good what has been in the trash for TRASH_RETENTION_DAYS: at the start, then once a day.
+
+    Each pass reads the pools in a worker thread, without a timeout: a pool
+    that hangs holds that one thread, and the next pass waits for it. A pass
+    logs what it deleted, and its problems when they differ from the last
+    pass's; one that finds nothing to do writes nothing (ADR-0214).
+    """
+    reported: list[str] = []
+    while True:
+        try:
+            count, problems = await asyncio.to_thread(_expire_trash, _now())
+        except Exception as exc:  # e.g. the pools directory cannot be read
+            count, problems = 0, [str(exc) or type(exc).__name__]
+        if count:
+            logger.info(
+                "Deleted %d item(s) for good that had been in the trash for %d days", count, TRASH_RETENTION_DAYS
+            )
+        if problems and problems != reported:
+            logger.warning("The trash could not be cleared out completely: %s", "; ".join(problems))
+        reported = problems
+        await asyncio.sleep(TRASH_EXPIRY_INTERVAL)
+
+
+async def start_trash_expiry() -> None:
+    """Start the expiry of the trash (main.py's lifespan, ADR-0043)."""
+    global _trash_expiry_task
+    _trash_expiry_task = asyncio.create_task(trash_expiry_loop(), name="unos-trash-expiry")
+
+
+async def stop_trash_expiry() -> None:
+    """Stop the expiry of the trash at shutdown."""
+    task = _trash_expiry_task
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 # --- endpoints -------------------------------------------------------------
@@ -1009,6 +1683,40 @@ async def move_items(
 
 
 @router.delete("/delete")
-async def delete_items(paths: list[str], _: dict = Depends(verify_token)):
-    """Delete files/directories. Symlinks are removed, never their targets."""
-    return {"deleted": await _run(_delete, paths)}
+async def delete_items(paths: list[str], permanent: bool = False, _: dict = Depends(verify_token)):
+    """Move files/directories into the trash of their pool or volume (ADR-0247); with permanent=true, delete them
+    for good. Symlinks are moved or removed, never their targets.
+
+    An item that one rename cannot take into a trash (in a deeper subvolume,
+    or below a mount point) is refused with 409 and can be deleted for good.
+    """
+    return {"deleted": await _run(_delete, paths, permanent)}
+
+
+@router.get("/trash", response_model=TrashListing)
+async def list_trash(_: dict = Depends(verify_token)):
+    """The items in the trash of every pool and volume, newest first, and the trashes that could not be read."""
+    return await _run(_list_trash)
+
+
+@router.post("/trash/restore")
+async def restore_from_trash(paths: list[str], _: dict = Depends(verify_token)):
+    """Put items of the trash (their paths as GET /files/trash lists them) back where they were deleted from.
+
+    Nothing is replaced: a name that is taken there answers 400 "Already
+    exists: <name>", and a folder that is gone 409. Every item is checked
+    before any is restored.
+    """
+    return {"restored": await _run(_restore_from_trash, paths)}
+
+
+@router.delete("/trash")
+async def delete_from_trash(paths: list[str], _: dict = Depends(verify_token)):
+    """Delete items of the trash for good (their paths as GET /files/trash lists them)."""
+    return {"deleted": await _run(_delete_from_trash, paths)}
+
+
+@router.post("/trash/empty")
+async def empty_trash(_: dict = Depends(verify_token)):
+    """Delete everything in the trash of every pool and volume for good; answers how many items."""
+    return {"deleted": await _run(_empty_trash)}

@@ -41,3 +41,21 @@ class CreateDirectoryRequest(BaseModel):
 class RenameRequest(BaseModel):
     path: str
     new_name: str
+
+
+class TrashItem(BaseModel):
+    """An item in the trash of a pool or a volume (ADR-0247)."""
+
+    path: str  # the item's folder in the trash: what restore and delete for good take
+    name: str  # the name it had; the entry's own name when its origin is not known
+    type: FileType
+    size: int
+    original_path: str | None  # where it was deleted from; None when that is not known
+    deleted: str  # UTC with its offset, as 2026-11-07T12:00:00+00:00
+    expires: str  # deleted plus the retention period: it is deleted for good after that
+
+
+class TrashListing(BaseModel):
+    items: list[TrashItem]  # newest first
+    retention_days: int
+    problems: list[str]  # the trashes that could not be read, each with the reason

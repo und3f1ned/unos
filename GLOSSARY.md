@@ -53,6 +53,10 @@ Avoid: subvolume (snapshots are subvolumes too), dataset.
 **Snapshot**: A read-only btrfs snapshot of a pool or a volume. Restoring one makes a writable copy
 and overwrites nothing (ADR-0011). Avoid: backup.
 
+**Trash**: The hidden folder `.unos-trash` at the top of each pool and volume that takes what Delete
+in Files deletes there, until it is restored, deleted for good, or deleted for good 30 days after
+its deletion (ADR-0247). Avoid: recycle bin, snapshot.
+
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
 hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0235). Avoid: SMART
 log (smartctl's own self-test and error logs).

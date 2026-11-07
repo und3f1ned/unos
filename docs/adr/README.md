@@ -247,6 +247,7 @@ and this index, and `make check-fast` runs it.
 | [0169](0169-uploads-stream-into-their-folder.md) | Uploads stream into their folder and stay unnamed until complete | accepted | 2026-11-06 |
 | [0170](0170-file-manager-protects-volumes-and-mounts.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts | accepted | 2026-11-06 |
 | [0232](0232-file-manager-renames-in-the-row-and-never-replaces.md) | The file manager renames one selected item in its row and never replaces an entry | accepted | 2026-11-07 |
+| [0247](0247-deleted-items-go-to-the-trash-of-their-pool-or-volume-for-30-days.md) | Deleted items go to the trash of their pool or volume for 30 days, unless they are restored or deleted for good | accepted | 2026-11-07 |
 
 ## System
 

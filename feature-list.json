@@ -2113,14 +2113,24 @@
       "category": "files",
       "description": "Items deleted in the file manager can be brought back for a while",
       "steps": [
-        "Delete items in Files: they go to a trash of their pool, or a snapshot is taken first, as an ADR decides",
-        "The deleted items can be restored to where they were",
-        "They are gone for good only after a set time, or when an administrator empties the trash or deletes the snapshot"
+        "Delete items in Files and choose Move to trash: they go to the trash of their pool or volume, and their folder no longer lists them",
+        "On the Trash page, restore deleted items: they are back where they were, and a name that is taken there again is refused",
+        "They are deleted for good 30 days after their deletion, or at once when an administrator deletes them for good or empties the trash"
       ],
       "passes": false,
       "adr": [
-        "ADR-0035"
-      ]
+        "ADR-0035",
+        "ADR-0247"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_files_security.py",
+        "supervisor/tests/test_lifespan.py",
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_share_api.py",
+        "webui/tests/files.spec.ts",
+        "webui/tests/roles.spec.ts"
+      ],
+      "notes": "Built 2026-11-07 (ADR-0247, which rewrote the steps for the trash it chose): Delete in Files moves items into <pool>/.unos-trash or <pool>/<volume>/.unos-trash with one rename, a folder of mode 0700 per item with the item and its origin; the dialog's Delete for good (?permanent=true) deletes at once; GET /files/trash, POST /files/trash/restore, DELETE /files/trash and POST /files/trash/empty; trash_expiry_loop in the lifespan, at the start and once a day; the name .unos-trash is hidden, refused and left out of copies, every share section vetoes it and it cannot be shared. Asserted on this machine: step 1 by test_files_security.py (the trash tests, volumes and deeper subvolumes through st_dev fakes) and files.spec.ts ('deletes the selected items', 'Delete for good deletes at once, without the trash', the keyboard and refusal tests of the Delete dialog); step 2 by the test_restore_ and test_a_restore_ tests and files.spec.ts ('the Trash page lists deleted items, and Restore puts them back where they were', 'a restore is refused while the name is taken again, and the item stays in the trash'); step 3 by test_deleted_items_are_deleted_for_good_30_days_after_their_deletion, test_an_administrator_deletes_items_for_good_or_empties_the_trash, the expiry loop tests, test_lifespan.py and files.spec.ts ('the Trash page deletes items for good, and Empty trash deletes everything'). Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step: every share section of the rendered smb.conf has veto files = /.snapshots/.unos-trash/ and testparm takes it; a file and a folder deleted in /mnt/pools/data/shared land in /mnt/pools/data/.unos-trash (mode 0700) and Restore brings them back; a file deleted in a volume lands in that volume's .unos-trash through the real btrfs rename, not in the pool's, and comes back; a file in a snapshot or in the restored copy of a volume's snapshot answers 409 (no trash) and Delete for good removes the latter; smbclient lists no .unos-trash in the share of a volume; a delete, a restore and an expiry pass write 0 MiB to the SD card; after a reboot the items are still listed, and an entry renamed to a time 31 days back is gone after the pass at the start. The backend tests ran on macOS (renameatx_np, and APFS takes only UTF-8 names): scripts/dev/linux-tests.sh tests/test_files_security.py runs them with renameat2 across two folders and restores a name that is not UTF-8. roles.spec.ts keeps regular users off the Trash page."
     },
     {
       "id": "system.dashboard",

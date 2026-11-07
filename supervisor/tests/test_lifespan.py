@@ -20,6 +20,7 @@ from src import host, main
 
 # The packages re-export their APIRouter as ``router``, so import the modules
 # explicitly instead of ``from src.x import router``.
+files = importlib.import_module("src.files.router")
 health = importlib.import_module("src.health.router")
 power = importlib.import_module("src.power.router")
 scheduler = importlib.import_module("src.scheduler.router")
@@ -29,6 +30,8 @@ LOOPS = {
     "raid_monitor": (health, "raid_monitor_loop", "_raid_monitor_task"),
     "smart_monitor": (health, "smart_monitor_loop", "_smart_monitor_task"),
     "ups_monitor": (power, "ups_monitor_loop", "_ups_monitor_task"),
+    # Deletes for good what has been in the trash for 30 days (ADR-0247).
+    "trash_expiry": (files, "trash_expiry_loop", "_trash_expiry_task"),
 }
 
 

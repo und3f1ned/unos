@@ -14,7 +14,7 @@
     type FileInfo,
     type DirectoryListing,
   } from "$lib/api/files";
-  import { Alert, Button, Input } from "$lib/components/ui";
+  import { Alert, Button, Input, Modal } from "$lib/components/ui";
   import {
     Folder,
     File,
@@ -25,6 +25,7 @@
     ChevronRight,
     ArrowUp,
     Plus,
+    Trash,
     Trash2,
     Upload,
     Download,
@@ -190,18 +191,51 @@
     }
   }
 
-  async function handleDelete() {
+  // The Delete dialog (ADR-0247): the items it is about while it is open, which
+  // of its choices is on its way, and the server's refusal.
+  let deleting: string[] | null = null;
+  let deleteSending: "trash" | "permanent" | null = null;
+  let deleteError = "";
+  // The toolbar's Delete button and the dialog's Move to trash, for the keyboard focus.
+  let deleteButtonSlot: HTMLSpanElement | null = null;
+  let moveToTrashSlot: HTMLSpanElement | null = null;
+
+  // The dialog's first choice takes the keyboard focus, as the browser's own
+  // confirmation did: Enter moves the items to the trash, Escape keeps them.
+  async function askDelete() {
     if (selected.size === 0) return;
-    if (!confirm(`Delete ${selected.size} item(s)?`)) return;
+    deleting = Array.from(selected);
+    deleteError = "";
+    await tick();
+    moveToTrashSlot?.querySelector("button")?.focus();
+  }
+
+  async function closeDelete() {
+    if (deleteSending) return;
+    deleting = null;
+    await tick();
+    deleteButtonSlot?.querySelector("button")?.focus();
+  }
+
+  // Into the trash, or with `permanent` deleted for good at once. A refusal
+  // keeps the dialog open with the server's reason: an item that has no trash
+  // (in a snapshot, say), or a pool without the space for one more entry, can
+  // still be deleted for good.
+  async function handleDelete(permanent: boolean) {
+    if (!deleting || deleteSending) return;
     error = "";
+    deleteError = "";
     busy = true;
+    deleteSending = permanent ? "permanent" : "trash";
     try {
-      await deleteItems(Array.from(selected));
+      await deleteItems(deleting, permanent);
+      deleting = null;
       selected = new Set();
     } catch (e) {
-      showError("Could not delete", e);
+      if (!(e instanceof ApiError && e.status === 401)) deleteError = e instanceof Error ? e.message : String(e);
     } finally {
       busy = false;
+      deleteSending = null;
     }
     await refresh();
   }
@@ -413,6 +447,7 @@
       >
         <RefreshCw class="w-5 h-5 {loading ? 'animate-spin' : ''}" />
       </button>
+      <Button variant="secondary" icon={Trash} href="/files/trash">Trash</Button>
     </div>
   </div>
 
@@ -479,15 +514,17 @@
     >
       Rename
     </Button>
-    <Button
-      variant="danger"
-      size="sm"
-      icon={Trash2}
-      disabled={working || selected.size === 0}
-      on:click={handleDelete}
-    >
-      Delete
-    </Button>
+    <span bind:this={deleteButtonSlot} class="contents">
+      <Button
+        variant="danger"
+        size="sm"
+        icon={Trash2}
+        disabled={working || selected.size === 0}
+        on:click={askDelete}
+      >
+        Delete
+      </Button>
+    </span>
   </div>
 
   <!-- Copy or move in progress: the destination is the folder that is open -->
@@ -638,3 +675,65 @@
     </div>
   {/if}
 </div>
+
+<Modal
+  open={deleting !== null}
+  title={deleting?.length === 1 ? "Delete 1 item" : `Delete ${deleting?.length ?? 0} items`}
+  closable={deleteSending === null}
+  on:close={closeDelete}
+>
+  {#if deleting}
+    <div class="space-y-3">
+      {#if deleting.length === 1}
+        <p class="text-sm">
+          Move the selected item to the trash? You can restore it on the Trash page until it is deleted for
+          good; until then it still takes up space in its pool.
+        </p>
+        <p class="text-sm text-secondary">
+          Delete for good deletes it at once and frees its space. This cannot be undone.
+        </p>
+      {:else}
+        <p class="text-sm">
+          Move the {deleting.length} selected items to the trash? You can restore them on the Trash page
+          until they are deleted for good; until then they still take up space in their pool.
+        </p>
+        <p class="text-sm text-secondary">
+          Delete for good deletes them at once and frees their space. This cannot be undone.
+        </p>
+      {/if}
+      {#if deleteError}
+        <!-- role="alert": screen readers announce the server's refusal. -->
+        <div role="alert">
+          <Alert variant="error" title="Could not delete">{deleteError}</Alert>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  <svelte:fragment slot="footer">
+    <Button variant="secondary" class="flex-1" disabled={deleteSending !== null} on:click={closeDelete}>
+      Cancel
+    </Button>
+    <Button
+      variant="danger"
+      class="flex-1"
+      icon={Trash2}
+      loading={deleteSending === "permanent"}
+      disabled={deleteSending !== null}
+      on:click={() => handleDelete(true)}
+    >
+      Delete for good
+    </Button>
+    <span bind:this={moveToTrashSlot} class="contents">
+      <Button
+        class="flex-1"
+        icon={Trash}
+        loading={deleteSending === "trash"}
+        disabled={deleteSending !== null}
+        on:click={() => handleDelete(false)}
+      >
+        Move to trash
+      </Button>
+    </span>
+  </svelte:fragment>
+</Modal>
