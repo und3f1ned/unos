@@ -17,12 +17,14 @@ import stat
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import database
 from src import host as host_module
 from src.config import get_settings
+from src.main import app
 from src.security import validators
 from src.shares import service, smb, smbconf
 from src.storage import disks, pools
@@ -31,7 +33,7 @@ from src.storage.disks import HostMount
 
 from .samba_fake import DATA_UUID, FakeSambaHost
 from .test_pool_persistence import BASE_FSTAB, install_fake_host, wait_for_app_starts
-from .test_smb_accounts import World
+from .test_smb_accounts import World, _wait_for_lock_waiter
 
 API = "/api/v1"
 TEST_PW = "Test-pass-2026"
@@ -528,6 +530,13 @@ def served_state(info: dict) -> tuple:
             [entry["effective"] for entry in info["access"]])
 
 
+def status_problems(c) -> list[str]:
+    """The problems of GET /shares/smb-status (the alert of the Shares page)."""
+    response = c.client.get(f"{API}/shares/smb-status", headers=c.admin)
+    assert response.status_code == 200, response.text
+    return response.json()["problems"]
+
+
 def test_unmounting_a_pool_stops_serving_its_shares_and_mounting_serves_them_again(pool_cycle):
     """ADR-0247: the managed pools decide which shares are served, so a pool change applies
     smb.conf again: the shares of an unmounted pool leave smb.conf at once, and their open
@@ -536,6 +545,8 @@ def test_unmounting_a_pool_stops_serving_its_shares_and_mounting_serves_them_aga
     served = section(c.conf.read_text(), "docs")
     assert "   valid users = alice" in served and "   available = yes" in served
     assert served_state(docs_info(c)) == (True, None, True, True, [True])
+    problems = status_problems(c)  # the imported DATA, the pool's root, is not served either
+    assert not [problem for problem in problems if "docs" in problem]
 
     mark = len(fake.calls)
     unmounted = c.client.post(f"{API}/storage/pools/data/unmount", headers=c.admin)
@@ -548,6 +559,7 @@ def test_unmounting_a_pool_stops_serving_its_shares_and_mounting_serves_them_aga
         ["smbcontrol", "smbd", "close-share", "docs"])
     assert [session["shares"] for session in fake.sessions] == [["IPC$"]]
     assert served_state(docs_info(c)) == (False, UNMANAGED, False, False, [False])
+    assert status_problems(c) == [*problems, f"Share docs is not served: {UNMANAGED}"]
 
     mark = len(fake.calls)
     mounted = c.client.post(f"{API}/storage/pools/data/mount", headers=c.admin)
@@ -558,6 +570,7 @@ def test_unmounting_a_pool_stops_serving_its_shares_and_mounting_serves_them_aga
     assert ["smbcontrol", "all", "reload-config"] in calls
     assert not [argv for argv in calls if argv[:3] == ["smbcontrol", "smbd", "close-share"]]
     assert served_state(docs_info(c)) == (True, None, True, True, [True])
+    assert status_problems(c) == problems
 
 
 def test_forgetting_a_pool_stops_serving_its_shares(pool_cycle):
@@ -613,3 +626,36 @@ def test_an_apply_that_fails_after_an_unmount_is_shown_in_the_status(pool_cycle)
     assert "[docs]" not in c.conf.read_text()
     problems = c.client.get(f"{API}/shares/smb-status", headers=c.admin).json()["problems"]
     assert not [problem for problem in problems if problem.startswith("smb.conf was not updated")]
+
+
+async def test_the_apply_after_a_pool_change_waits_for_smb_lock(pool_cycle, monkeypatch):
+    """ADR-0247, ADR-0080: the apply after a pool change is a change of SMB state. While another one
+    (a share change, an account flow, a restore, the startup reconcile) holds smb_lock, the unmount
+    is answered only after it: smb.conf is not rendered, checked or installed meanwhile, and then
+    the apply runs with the lock held. Without the lock, it could render the shares before a share
+    change commits and install that text over the share change's own."""
+    c, fake = pool_cycle, pool_cycle.fake
+    lock = service.smb_lock()  # the lock of this test's event loop, in which the request runs too
+    applies: list[bool] = []
+
+    async def apply(db):
+        applies.append(lock.locked())
+        return await REAL_APPLY(db)
+
+    monkeypatch.setattr(service, "apply_smb_config", apply)
+    before, mark = c.conf.read_bytes(), len(fake.calls)
+    await lock.acquire()  # dies with this test's event loop if the test fails
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://unos") as client:
+        request = asyncio.create_task(client.post(f"{API}/storage/pools/data/unmount", headers=c.admin))
+        try:
+            await _wait_for_lock_waiter()
+            held = (list(applies), c.conf.read_bytes() == before, since(fake, mark), request.done())
+        finally:
+            lock.release()
+        response = await asyncio.wait_for(request, timeout=30)
+
+    assert held == ([], True, [], False), "the apply after the unmount ran while smb_lock was held"
+    assert response.status_code == 200, response.text
+    assert response.json()["mounted"] is False
+    assert applies == [True]
+    assert "[docs]" not in c.conf.read_text()

@@ -218,9 +218,10 @@ and this index, and `make check-fast` runs it.
 | [0192](0192-reread-host-facts-before-destructive-commands.md) | Host facts are read again right before destructive commands, and doubt fails closed | accepted | 2026-11-07 |
 | [0193](0193-acl-entries-and-sticky-folders-in-the-parent-chain.md) | ACL entries and sticky folders count in the parent-chain rule | proposed | 2026-11-07 |
 | [0194](0194-reduce-samba-runtime-writes.md) | Reduce Samba's remaining writes to the system disk | proposed | 2026-11-07 |
-| [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | proposed | 2026-11-07 |
+| [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | superseded by [0249](0249-smb-follow-ups-still-open-after-slice-2.md) | 2026-11-07 |
 | [0247](0247-pool-changes-apply-smb-conf.md) | The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once | accepted | 2026-11-07 |
 | [0248](0248-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
+| [0249](0249-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | proposed | 2026-11-07 |
 
 ## Apps
 

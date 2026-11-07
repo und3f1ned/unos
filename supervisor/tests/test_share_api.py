@@ -1118,10 +1118,11 @@ class TestStatus:
         assert "problems" in api.client.get(f"{API}/smb-status").json()
 
 
-def test_the_e2e_fakes_answer_with_the_servers_texts(api):
+def test_the_e2e_fakes_answer_with_the_servers_texts(api, monkeypatch):
     """webui/tests/shares-fakes.ts answers with these texts word for word (ADR-0189): why a share
     of a pool that UNOS does not manage, or no longer manages after an unmount, is not served
-    (ADR-0247), and the status problem of a replaced smb.conf (ADR-0248)."""
+    (ADR-0247), the status problem that names such a share, and the status problem of a replaced
+    smb.conf (ADR-0248)."""
     fakes = (Path(__file__).resolve().parents[2] / "webui" / "tests" / "shares-fakes.ts").read_text(encoding="utf-8")
     unmanaged = service.share_path_problem(
         str(validators.pools_base() / "e2e_data" / "docs"), other_paths={}, pool_names={"data"}
@@ -1129,6 +1130,18 @@ def test_the_e2e_fakes_answer_with_the_servers_texts(api):
     assert unmanaged == "Share path must be on a storage pool that UNOS manages: 'e2e_data' is not one"
     assert f"`{unmanaged.replace('e2e_data', '${pool}')}`" in fakes
     assert f"'{service.SMB_CONF_REPLACED}'" in fakes
+
+    # The status once the pool of two shares is no longer one that UNOS manages, as setPoolMounted
+    # changes it: each share is named, in the order of the shares, and none is a guest share.
+    assert api.create().status_code == 200
+    assert api.create("public", "public", guest_ok=True).status_code == 200
+    assert api.client.get(f"{API}/smb-status").json()["guest_shares"] == ["public"]
+    monkeypatch.setattr(pools, "managed_pool_names", lambda: {"ghost"})
+    problem = unmanaged.replace("e2e_data", "data")
+    status = api.client.get(f"{API}/smb-status").json()
+    assert (status["problems"], status["guest_shares"]) == (
+        [f"Share docs is not served: {problem}", f"Share public is not served: {problem}"], [])
+    assert "`Share ${share} is not served: ${problem}`" in fakes
 
 
 # --- audit (ADR-0157) ------------------------------------------------------------------------------------
