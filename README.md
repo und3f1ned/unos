@@ -66,7 +66,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 ### User Management & Security
 - **HTTPS by Default** - The web interface is served over HTTPS with certificates from a built-in local CA; plain HTTP redirects
 - **Multi-user Support** - Administrators and regular users (who see only the dashboard and their own account)
-- **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps
+- **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps, and ten single-use recovery codes for a lost app
 - **API Tokens** - Generate tokens for scripts through the API
 - **Audit Logging** - Sign-ins and administrative actions are recorded; administrators list, filter and export them through the API
 - **Rate Limiting** - Protection against brute-force attacks
@@ -98,7 +98,6 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 ### Planned
 
 Not working yet; each has an entry in [feature-list.json](feature-list.json), named in parentheses:
-- **Recovery codes** (`auth.recovery-codes`) - Codes can be generated through the API, but the sign-in does not take one yet
 - **NFS exports** (`shares.nfs-exports`) - Exports are written inside the supervisor container and do not reach the host
 - **Power control** (`system.power`) - Reboot, shutdown and suspend from the web interface, and Wake-on-LAN: inside the supervisor container they are refused or reach only the container
 - **UPS monitoring** (`system.ups-monitoring`) - The UPS state and the shutdown on low battery: the supervisor image has no NUT client, and the shutdown is skipped inside a container

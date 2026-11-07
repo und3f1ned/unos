@@ -95,6 +95,7 @@ and this index, and `make check-fast` runs it.
 | [0067](0067-two-factor-codes-are-single-use.md) | Two-factor codes are single-use, remembered in memory | accepted | 2026-11-06 |
 | [0068](0068-own-smb-activation-needs-the-two-factor-code.md) | Turning on one's own SMB access needs the two-factor code | accepted | 2026-11-06 |
 | [0191](0191-throttle-api-token-last-used-writes.md) | Throttle the commit of an API token's last use | proposed | 2026-11-07 |
+| [0232](0232-recovery-codes-sign-in-once-in-place-of-a-two-factor-code.md) | Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication | accepted | 2026-11-07 |
 
 ## Storage
 

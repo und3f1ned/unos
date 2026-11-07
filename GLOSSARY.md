@@ -113,6 +113,10 @@ it expires (ADR-0009, ADR-0028). Avoid: cookie, API token.
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
 once (ADR-0032). Avoid: session token, API key.
 
+**Recovery code**: One of the ten codes that a user with two-factor authentication generates on the
+Account page and keeps; each one signs in once in place of a code of the authenticator app
+(ADR-0232). Avoid: backup code.
+
 ## Apps and backups
 
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039).

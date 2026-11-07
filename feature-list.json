@@ -557,11 +557,16 @@
         "At the code step of the sign-in, a recovery code opens the session, and the same code never works again",
         "The Account page shows how many codes are left"
       ],
-      "passes": false,
-      "adr": [
-        "ADR-0033"
+      "verified_by": [
+        "supervisor/tests/test_recovery_codes.py",
+        "webui/tests/recovery-codes.spec.ts"
       ],
-      "notes": "Codes can be generated through the API, but nothing signs in with one: the sign-in takes no recovery code, and POST /api/v1/auth/recovery-codes/verify answers 501. No page shows them."
+      "passes": true,
+      "adr": [
+        "ADR-0033",
+        "ADR-0232"
+      ],
+      "notes": "Against the stand-in's real supervisor, recovery-codes.spec.ts generates ten codes on the Account page, which a reload no longer shows (step 1), signs in at the code step with a code that a second time answers 'Invalid recovery code' (step 2), and reads 10, 9 and 8 codes left (step 3). test_recovery_codes.py adds two sign-ins with one code at the same moment, codes typed in any case or without dashes, new codes generated meanwhile, and codes removed with two-factor authentication. Database only: not host-level (GLOSSARY.md). Turning 2FA off still needs a code of the authenticator app, and no administrator can reset 2FA."
     },
     {
       "id": "auth.mandatory-two-factor",

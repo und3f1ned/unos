@@ -549,6 +549,38 @@ code every 30 seconds.
 2FA protects only the web interface, not SMB: SMB signs in with the password
 alone. Turning SMB on yourself needs your two-factor code as well.
 
+#### Recovery Codes
+
+A recovery code signs you in when you have lost your authenticator app.
+Generate them as soon as 2FA is on:
+
+1. Go to **Account** (administrators: **System** → **Security**)
+2. Under **Two-Factor Authentication** → **Recovery codes**, click
+   **Generate recovery codes**
+3. Save the ten codes (they look like `5251-6486-2F69`) somewhere safe, away
+   from the devices you sign in with, and click **Done**. They are shown only
+   this once: UNOS keeps a hash of each code, not the code.
+
+**Recovery codes** then says how many codes are left. **Generate new codes**
+replaces all of them after a confirmation: the codes you had stop working.
+
+To sign in with one, enter your username and password, click **Use a
+recovery code** at the code step and enter one of your codes; letter case,
+dashes and spaces do not matter. Each code works once: a used code is refused
+with "Invalid recovery code", as a wrong one is. A refused code appears in the
+login history as a failed sign-in, and the audit log records each sign-in with
+a recovery code.
+
+Turning 2FA off deletes the recovery codes, and after turning it on again you
+generate new ones. Turning 2FA off needs a code from the authenticator app:
+with recovery codes alone you can sign in and generate new codes, but not turn
+2FA off, and an administrator cannot reset it for you.
+
+Scripts send the code as `recovery_code` in place of `totp_code` to
+`POST /api/v1/auth/login`; `POST /api/v1/auth/recovery-codes/generate`
+answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
+left.
+
 ### API Tokens
 
 Tokens give scripts access to the UNOS API with the rights of the account that
@@ -728,7 +760,8 @@ notification.
 ### Security
 
 1. ✅ Create the administrator account right after installing, with a strong password
-2. ✅ Enable two-factor authentication (2FA)
+2. ✅ Enable two-factor authentication (2FA), and keep its recovery codes
+   somewhere safe
 3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
    no limit on login attempts and no two-factor authentication, and UNOS does
    not refuse common passwords

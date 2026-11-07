@@ -1,5 +1,7 @@
 import enum
 import hashlib
+import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -151,28 +153,51 @@ def hash_api_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def generate_recovery_codes(count: int = 10) -> tuple[list[str], list[str]]:
-    """Generate recovery codes. Returns (plain_codes, hashed_codes)."""
-    plain_codes = []
-    hashed_codes = []
-    for _ in range(count):
-        # Format: XXXX-XXXX-XXXX
-        code = "-".join(secrets.token_hex(2).upper() for _ in range(3))
-        plain_codes.append(code)
-        hashed_codes.append(hashlib.sha256(code.encode()).hexdigest())
-    return plain_codes, hashed_codes
+# ==================== Recovery codes (ADR-0232) ====================
+
+RECOVERY_CODE_COUNT = 10
+RECOVERY_CODE_INVALID = "Invalid recovery code"
+# 12 hex digits (48 random bits), shown as XXXX-XXXX-XXXX.
+_RECOVERY_CODE_DIGITS = re.compile(r"[0-9A-F]{12}")
 
 
-def verify_recovery_code(code: str, hashed_codes: list[str]) -> int | None:
-    """Verify a recovery code. Returns index if valid, None otherwise."""
-    code_hash = hashlib.sha256(code.upper().replace("-", "").encode()).hexdigest()
-    # Also try with dashes
-    code_hash_with_dashes = hashlib.sha256(code.upper().encode()).hexdigest()
+def recovery_code_hash(code: object) -> str | None:
+    """The stored form of recovery code ``code``: the SHA-256 of its 12 hex digits in upper
+    case, however it was typed (any case, with or without dashes and spaces). None for
+    anything that is not a recovery code."""
+    if not isinstance(code, str):
+        return None
+    digits = re.sub(r"[\s-]", "", code).upper()
+    if not _RECOVERY_CODE_DIGITS.fullmatch(digits):
+        return None
+    return hashlib.sha256(digits.encode()).hexdigest()
 
-    for i, hashed in enumerate(hashed_codes):
-        if hashed == code_hash or hashed == code_hash_with_dashes:
-            return i
-    return None
+
+def generate_recovery_codes(count: int = RECOVERY_CODE_COUNT) -> tuple[list[str], list[str]]:
+    """``count`` distinct new recovery codes as shown (XXXX-XXXX-XXXX), and their hashes."""
+    digits: list[str] = []
+    while len(digits) < count:
+        candidate = secrets.token_hex(6).upper()
+        if candidate not in digits:  # two equal codes would make one code sign in twice
+            digits.append(candidate)
+    shown = [f"{d[:4]}-{d[4:8]}-{d[8:]}" for d in digits]
+    return shown, [recovery_code_hash(code) for code in shown]
+
+
+def recovery_code_hashes(stored: object) -> list:
+    """The list that users.recovery_codes holds: a hash per code, null once the code is used.
+    An empty list for anything else (the column of a restored database is not trusted)."""
+    if not isinstance(stored, str):
+        return []
+    try:
+        hashes = json.loads(stored)
+    except ValueError:
+        return []
+    return hashes if isinstance(hashes, list) else []
+
+
+def recovery_codes_left(stored: object) -> int:
+    return sum(isinstance(h, str) for h in recovery_code_hashes(stored))
 
 
 def _unauthorized(detail: str) -> HTTPException:

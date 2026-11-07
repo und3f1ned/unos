@@ -16,7 +16,7 @@ class User(Base):
     # TOTP 2FA fields
     totp_secret = Column(String, nullable=True)
     totp_enabled = Column(Boolean, default=False)
-    # Recovery codes for 2FA (JSON array of hashed codes)
+    # Recovery codes for 2FA: a JSON array of their SHA-256 hashes, null once used (ADR-0232)
     recovery_codes = Column(Text, nullable=True)
 
     # Relationship to API tokens
