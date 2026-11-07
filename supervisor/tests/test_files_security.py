@@ -867,7 +867,10 @@ def test_a_mount_point_that_appears_after_the_first_check_is_still_refused(env, 
     monkeypatch.setattr(files_router, "_refuse_separate_filesystems", check_all_then_mount)
     response = _delete(env.client, [env.pool / "first.txt", env.pool / "later"], permanent=permanent)
 
-    assert (response.status_code, response.json()["detail"]) == (409, CONTAINS.format("later", "disk", "deleted"))
+    # With what went before it (ADR-0247): the client can tell that first.txt is gone.
+    done = "deleted for good" if permanent else "moved to the trash"
+    detail = f"{CONTAINS.format('later', 'disk', 'deleted')} 1 of the 2 items was {done} before that."
+    assert (response.status_code, response.json()["detail"]) == (409, detail)
     assert _untrashed_tree(env.pool) == ["later", "later/disk"]
     assert _trash(env.pool) == ([] if permanent else [("first.txt", "file", b"1")])
 
@@ -1206,6 +1209,8 @@ NO_TRASH = (
 TRASH_REFUSED = "The trash (.unos-trash) is reached through Trash, not as a folder"
 RESERVED = "Invalid name: .unos-trash is the name of the trash"
 NOT_A_FOLDER = "{} is not a folder, so nothing can be moved to the trash of {}."
+NOT_PRIVATE = "{} could not be made private (only UNOS may open it), so nothing can be moved to the trash of {}."
+ELSEWHERE_NOW = "Could not restore '{}': the folder {} is on another subvolume or filesystem now."
 UNKNOWN_ORIGIN = "It is not known where {} was deleted from, so it cannot be restored. Delete it for good instead."
 GONE = "Could not restore '{}': the folder {} it was deleted from is gone. Restore or create that folder first."
 T0 = datetime(2026, 11, 7, 12, 0, 0, tzinfo=timezone.utc)
@@ -1442,6 +1447,213 @@ def test_a_trash_that_is_a_symlink_is_never_followed(env):
     assert (listing["items"], listing["problems"]) == ([], [detail])
 
 
+# A trash that someone else made first, e.g. an app or an NFS client that can
+# write the top folder of a volume, is made private (the supervisor's, mode
+# 0700) before it is used: otherwise they could rename the entries in it, to
+# an older time for the expiry or out of the list. Only private folders in it
+# are entries. The tests do not run as root: another user's folders are faked.
+
+
+class _StatWithOwner:
+    """An lstat() result with another st_uid."""
+
+    def __init__(self, st, st_uid):
+        self._st = st
+        self.st_uid = st_uid
+
+    def __getattr__(self, name):
+        return getattr(self._st, name)
+
+
+class _OsWithOwners:
+    """The files router's os module, in which the given entries belong to another user until they are chowned.
+
+    That user's uid is the test's own plus one. fchown of such an entry is
+    recorded, and from then on it is the test's own, as the real one makes
+    it the supervisor's. Everything else is ``base``: the real os module,
+    or another of these fakes.
+    """
+
+    def __init__(self, paths, base=os):
+        self._os = base
+        self._inodes = {self._key(base.stat(path, follow_symlinks=False)) for path in paths}
+        self._uid = os.geteuid() + 1
+        self.chowned = []
+
+    def __getattr__(self, name):
+        return getattr(self._os, name)
+
+    @staticmethod
+    def _key(st):
+        return st.st_dev, st.st_ino
+
+    def _owned(self, st):
+        return _StatWithOwner(st, self._uid) if self._key(st) in self._inodes else st
+
+    def stat(self, path, *args, **kwargs):
+        return self._owned(self._os.stat(path, *args, **kwargs))
+
+    def fstat(self, fd):
+        return self._owned(self._os.fstat(fd))
+
+    def fchown(self, fd, uid, gid):
+        key = self._key(self._os.fstat(fd))
+        if key not in self._inodes:
+            return self._os.fchown(fd, uid, gid)
+        self._inodes.discard(key)
+        self.chowned.append((uid, gid))
+
+
+class _OsWithoutChown(_OsWithOwners):
+    """Also no entry can be given to the supervisor, e.g. on vfat or over NFS with root_squash."""
+
+    def fchown(self, fd, uid, gid):
+        raise PermissionError(errno.EPERM, os.strerror(errno.EPERM))
+
+
+class _OsKeepingModesOfItsOwn:
+    """The files router's os module on a filesystem that keeps modes of its own (vfat): folders get 0755."""
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def mkdir(self, path, mode=0o777, *, dir_fd=None):
+        os.mkdir(path, 0o755, dir_fd=dir_fd)
+
+    def fchmod(self, fd, mode):
+        raise PermissionError(errno.EPERM, os.strerror(errno.EPERM))
+
+
+def test_a_trash_that_others_can_change_is_made_private_and_what_they_put_there_is_no_entry(env, clock):
+    trash = env.pool / TRASH
+    planted = trash / "20200101T000000Z-0000000000000000"  # an old time: due for the expiry
+    planted.mkdir(parents=True)
+    (planted / "item").write_text("planted")
+    (planted / "origin").write_text("secret/x.txt")
+    os.chmod(planted, 0o777)
+    os.chmod(trash, 0o777)
+
+    # The listing, as every use of the trash, makes it private first; the planted folder is no entry.
+    assert _trash_listing(env.client) == {"items": [], "retention_days": 30, "problems": []}
+    assert stat.S_IMODE(trash.lstat().st_mode) == 0o700
+    os.chmod(trash, 0o777)
+    (env.pool / "a.txt").write_text("a")
+    assert _delete(env.client, [env.pool / "a.txt"]).status_code == 200
+    assert stat.S_IMODE(trash.lstat().st_mode) == 0o700
+    assert [item["original_path"] for item in _trash_listing(env.client)["items"]] == [str(env.pool / "a.txt")]
+
+    # It is not restored, deleted for good, expired or emptied: it stays as it is.
+    response = _restore(env.client, [planted])
+    assert (response.status_code, response.json()["detail"]) == (404, f"Not in the trash: {planted}")
+    assert _delete_for_good(env.client, [planted]).json() == {"deleted": []}
+    assert files_router._expire_trash(T0 + timedelta(days=30)) == (1, [])  # a.txt
+    assert _empty(env.client).json() == {"deleted": 0}
+    assert sorted(p.name for p in trash.iterdir()) == [planted.name]
+    assert (planted / "item").read_text() == "planted"
+    assert _untrashed_tree(env.pool) == []
+
+
+def test_a_trash_of_another_user_is_made_the_supervisors_own(env, monkeypatch, clock):
+    trash = env.pool / TRASH
+    planted = trash / "20200101T000000Z-0000000000000000"  # private, but not the supervisor's
+    planted.mkdir(parents=True)
+    (planted / "item").write_text("planted")
+    (planted / "origin").write_text("a.txt")
+    os.chmod(planted, 0o700)
+    os.chmod(trash, 0o700)
+    owners = _OsWithOwners([trash, planted])
+    monkeypatch.setattr(files_router, "os", owners)
+    (env.pool / "a.txt").write_text("a")
+
+    assert _delete(env.client, [env.pool / "a.txt"]).status_code == 200
+
+    assert owners.chowned == [(os.geteuid(), os.getegid())]  # the trash's, before a.txt went in
+    assert [item["original_path"] for item in _trash_listing(env.client)["items"]] == [str(env.pool / "a.txt")]
+    assert files_router._expire_trash(T0 + timedelta(days=30)) == (1, [])
+    assert sorted(p.name for p in trash.iterdir()) == [planted.name]
+
+
+def test_a_trash_that_cannot_be_made_private_is_not_used(env, volume, monkeypatch):
+    trash = volume / TRASH
+    trash.mkdir(mode=0o700)
+    monkeypatch.setattr(files_router, "os", _OsWithoutChown([trash], base=files_router.os))
+    (env.pool / "a.txt").write_text("a")
+    img = volume / "album" / "img.jpg"
+    detail = NOT_PRIVATE.format(trash, volume)
+
+    # Checked with every other item before anything is moved: a.txt, whose trash is fine, stays too.
+    response = _delete(env.client, [env.pool / "a.txt", img])
+
+    assert (response.status_code, response.json()["detail"]) == (409, detail)
+    assert _tree(env.pool) == ["a.txt", "photos", f"photos/{TRASH}", "photos/album", "photos/album/img.jpg"]
+    listing = _trash_listing(env.client)
+    assert (listing["items"], listing["problems"]) == ([], [detail])
+    response = _delete(env.client, [img], permanent=True)
+    assert response.status_code == 200, response.text
+    assert _tree(volume) == [TRASH, "album"]
+
+
+def test_no_trash_stays_where_it_cannot_be_kept_private(env, monkeypatch):
+    monkeypatch.setattr(files_router, "os", _OsKeepingModesOfItsOwn())
+    (env.pool / "a.txt").write_text("a")
+
+    response = _delete(env.client, [env.pool / "a.txt"])
+
+    assert (response.status_code, response.json()["detail"]) == (409, NOT_PRIVATE.format(env.pool / TRASH, env.pool))
+    assert _tree(env.pool) == ["a.txt"]
+
+
+def _cross_mount_rename(monkeypatch, *names):
+    """The router's exclusive rename of an entry named in ``names`` fails with EXDEV, as across two mounts."""
+    rename_exclusive = files_router._rename_exclusive
+
+    def cross_mount(src_dir_fd, name, dst_dir_fd, new_name):
+        if name in names or new_name in names:
+            raise OSError(errno.EXDEV, os.strerror(errno.EXDEV))
+        rename_exclusive(src_dir_fd, name, dst_dir_fd, new_name)
+
+    monkeypatch.setattr(files_router, "_rename_exclusive", cross_mount)
+
+
+def test_items_below_a_bind_mount_are_refused_before_anything_is_moved(env, monkeypatch):
+    """The st_dev of the pool, so only the mount table shows it; one rename cannot take the item to the trash."""
+    (env.pool / "a.txt").write_text("a")
+    usb = env.pool / "media" / "usb"
+    usb.mkdir(parents=True)
+    (usb / "song.mp3").write_bytes(b"mp3")
+    env.mounts.mount(usb, root="/music")
+    _cross_mount_rename(monkeypatch, "song.mp3")
+
+    response = _delete(env.client, [env.pool / "a.txt", usb / "song.mp3"])
+
+    assert (response.status_code, response.json()["detail"]) == (409, NO_TRASH.format("song.mp3"))
+    assert _tree(env.pool) == ["a.txt", "media", "media/usb", "media/usb/song.mp3"]
+
+
+def test_a_delete_that_fails_part_way_says_how_many_items_went_before(env, monkeypatch):
+    """E.g. the pool has no space left for the second item's entry: the first is in the trash, the second stays."""
+    for name in ("a.txt", "b.txt"):
+        (env.pool / name).write_text(name)
+    write_origin = files_router._write_origin
+    written = []
+
+    def write_origin_until_the_pool_is_full(entry_fd, below_scope):
+        written.append(below_scope)
+        if len(written) == 2:
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        write_origin(entry_fd, below_scope)
+
+    monkeypatch.setattr(files_router, "_write_origin", write_origin_until_the_pool_is_full)
+    response = _delete(env.client, [env.pool / "a.txt", env.pool / "b.txt"])
+
+    # The web UI's fake of this answer (webui/tests/files.spec.ts) has this text, word for word.
+    assert (response.status_code, response.json()["detail"]) == (
+        507, "No space left on device. 1 of the 2 items was moved to the trash before that."
+    )
+    assert _untrashed_tree(env.pool) == ["b.txt"]
+    assert _trash(env.pool) == [("a.txt", "file", b"a.txt")]
+
+
 # Step 2: deleted items are restored to where they were.
 
 
@@ -1515,6 +1727,28 @@ def test_a_restore_of_several_items_restores_none_when_one_cannot_go_back(env):
     assert _trash(env.pool) == [("x.txt", "file", b"second x"), ("x.txt", "file", b"x.txt"), ("y.txt", "file", b"y.txt")]
 
 
+def test_a_restore_that_fails_part_way_says_how_many_items_went_back_before(env, monkeypatch):
+    """E.g. a name that appears after every item was checked: the exclusive rename refuses it (ADR-0232)."""
+    for name in ("a.txt", "b.txt"):
+        (env.pool / name).write_text(name)
+    assert _delete(env.client, [env.pool / "a.txt", env.pool / "b.txt"]).status_code == 200
+    trashed = _trashed(env.client)
+    (env.pool / "b.txt").write_text("new b")
+    lstat_at = files_router._lstat_at
+    monkeypatch.setattr(
+        files_router, "_lstat_at", lambda dir_fd, name: None if name == "b.txt" else lstat_at(dir_fd, name)
+    )
+
+    response = _restore(env.client, [trashed[str(env.pool / "a.txt")], trashed[str(env.pool / "b.txt")]])
+
+    assert (response.status_code, response.json()["detail"]) == (
+        400, "Already exists: b.txt. 1 of the 2 items was restored before that."
+    )
+    assert (env.pool / "a.txt").read_text() == "a.txt"
+    assert (env.pool / "b.txt").read_text() == "new b"
+    assert _trash(env.pool) == [("b.txt", "file", b"b.txt")]
+
+
 def test_a_restore_into_a_folder_that_is_gone_is_refused(env):
     docs = env.pool / "docs"
     docs.mkdir()
@@ -1547,6 +1781,27 @@ def test_a_restore_follows_no_symlinks(env):
     assert (response.status_code, response.json()["detail"]) == (403, "Access denied: symbolic links are not followed")
     assert _tree(env.outside) == ["secret.txt"]
     assert _trash(env.pool) == [("docs/a.txt", "file", b"a")]
+
+
+@pytest.mark.parametrize("mount", ["another filesystem", "a bind mount"])
+def test_a_restore_of_several_items_restores_none_when_a_folder_is_on_another_filesystem_now(env, monkeypatch, mount):
+    """E.g. a disk was mounted on usb since: one rename cannot take its item back there (EXDEV)."""
+    for folder in ("docs", "usb"):
+        (env.pool / folder).mkdir()
+        (env.pool / folder / f"{folder}.txt").write_text(folder)
+    assert _delete(env.client, [env.pool / "docs" / "docs.txt", env.pool / "usb" / "usb.txt"]).status_code == 200
+    trashed = _trashed(env.client)
+    if mount == "another filesystem":
+        monkeypatch.setattr(files_router, "os", _OsWithSubvolumes([env.pool / "usb"]))
+    else:  # the st_dev of the pool: only the mount table shows it
+        env.mounts.mount(env.pool / "usb", root="/elsewhere")
+    _cross_mount_rename(monkeypatch, "usb.txt")
+
+    response = _restore(env.client, [trashed[str(env.pool / "docs" / "docs.txt")], trashed[str(env.pool / "usb" / "usb.txt")]])
+
+    assert (response.status_code, response.json()["detail"]) == (409, ELSEWHERE_NOW.format("usb.txt", env.pool / "usb"))
+    assert _untrashed_tree(env.pool) == ["docs", "usb"]
+    assert _trash(env.pool) == [("docs/docs.txt", "file", b"docs"), ("usb/usb.txt", "file", b"usb")]
 
 
 @pytest.mark.parametrize(
@@ -1662,9 +1917,10 @@ def test_deleted_items_are_deleted_for_good_30_days_after_their_deletion(env, cl
     assert _delete(env.client, [env.pool / "old.txt"]).status_code == 200
     clock.now = T0 + timedelta(days=29)
     assert _delete(env.client, [env.pool / "new.txt"]).status_code == 200
-    # An entry whose item never came (a stop right after its folder was made), and a folder UNOS did not make.
+    # An entry whose item never came (a stop right after UNOS made its private folder), and a folder UNOS did
+    # not make.
     incomplete = env.pool / TRASH / "20261001T000000Z-0123456789abcdef"
-    incomplete.mkdir()
+    incomplete.mkdir(mode=0o700)
     (incomplete / "origin").write_text("gone.txt")
     (env.pool / TRASH / "keep-me").mkdir()
 

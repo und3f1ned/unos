@@ -221,9 +221,14 @@ async function moveToTrash(page: Page, ...names: string[]) {
   for (const name of names) await expect(row(page, name)).toHaveCount(0);
 }
 
+const literally = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The checkbox of the trash's item `name` on the Trash page: its label says where and when it was deleted from. */
+const trashCheckbox = (page: Page, name: string) =>
+  page.getByRole('checkbox', { name: new RegExp(`^Select ${literally(name)}, deleted from `) });
+
 /** The row of `name` on the Trash page. */
-const trashRow = (page: Page, name: string) =>
-  page.getByRole('row').filter({ has: page.getByRole('checkbox', { name: `Select ${name}`, exact: true }) });
+const trashRow = (page: Page, name: string) => page.getByRole('row').filter({ has: trashCheckbox(page, name) });
 
 const trashToolbar = (page: Page) => page.getByRole('toolbar', { name: 'Selected items' });
 
@@ -344,24 +349,33 @@ test.describe('File Browser operations', () => {
     expect(await listNames(page, scratch!.pool.path)).not.toContain('.unos-trash');
   });
 
-  test('Delete for good deletes at once, without the trash', async ({ authenticatedPage: page }) => {
+  test('Delete offers no Delete for good until the trash has refused the items', async ({
+    authenticatedPage: page,
+  }) => {
     const dir = scratch!.path;
-    await putFile(page, dir, 'gone.txt', Buffer.from('gone'));
+    await putFile(page, dir, 'kept.txt', Buffer.from('kept'));
     await openScratch(page);
+    const sent: string[] = [];
+    page.on('request', (request) => {
+      if (isApi('/files/delete')(request)) sent.push(request.url());
+    });
 
-    await row(page, 'gone.txt').getByRole('checkbox').check();
+    await row(page, 'kept.txt').getByRole('checkbox').check();
     await selectionBar(page).getByRole('button', { name: 'Delete' }).click();
     const dialog = deleteDialog(page, 1);
     await expect(dialog).toContainText('Move the selected item to the trash?');
-    await expect(dialog).toContainText('Delete for good deletes it at once and frees its space. This cannot be undone.');
-    const requestSent = page.waitForRequest(isApi('/files/delete'));
-    await dialog.getByRole('button', { name: 'Delete for good' }).click();
+    // Cancel and Move to trash, besides the dialog's close button: no click deletes for good (ADR-0247).
+    await expect(dialog.getByRole('button')).toHaveCount(3);
+    await expect(dialog.getByRole('button', { name: 'Close modal' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Move to trash' })).toBeFocused();
+    await expect(dialog.getByRole('button', { name: 'Delete for good' })).toHaveCount(0);
+    await expect(dialog).not.toContainText('Delete for good');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
 
-    expect(new URL((await requestSent).url()).searchParams.get('permanent')).toBe('true');
     await expect(dialog).toHaveCount(0);
-    await expect(row(page, 'gone.txt')).toHaveCount(0);
-    expect(await listNames(page, dir)).toEqual([]);
-    expect(await trashedFrom(page, dir)).toEqual([]);
+    expect(sent).toEqual([]);
+    expect(await listNames(page, dir)).toEqual(['kept.txt']);
   });
 
   test('the Delete dialog works from the keyboard, and Escape keeps the items', async ({
@@ -406,15 +420,65 @@ test.describe('File Browser operations', () => {
     await row(page, 'big.iso').getByRole('checkbox').check();
     await selectionBar(page).getByRole('button', { name: 'Delete' }).click();
     const dialog = deleteDialog(page, 1);
+    const forGood = dialog.getByRole('button', { name: 'Delete for good' });
+    await expect(forGood).toHaveCount(0);
     await dialog.getByRole('button', { name: 'Move to trash' }).click();
+    await expect(dialog.getByRole('alert')).toContainText('Could not move to the trash');
     await expect(dialog.getByRole('alert')).toContainText('No space left on device');
     await expect(row(page, 'big.iso')).toBeVisible();
+    // Now Delete for good is on offer, and what cannot be undone starts at Cancel.
+    await expect(dialog).toContainText(
+      'Delete for good deletes it at once, without the trash, and frees its space. This cannot be undone.',
+    );
+    await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
 
-    await dialog.getByRole('button', { name: 'Delete for good' }).click();
+    const requestSent = page.waitForRequest(isApi('/files/delete'));
+    await forGood.click();
+    expect(new URL((await requestSent).url()).searchParams.get('permanent')).toBe('true');
     await expect(dialog).toHaveCount(0);
     await expect(row(page, 'big.iso')).toHaveCount(0);
     expect(await listNames(page, dir)).toEqual([]);
     expect(await trashedFrom(page, dir)).toEqual([]);
+  });
+
+  test('a refusal part-way keeps the items that are still in the folder in the Delete dialog', async ({
+    authenticatedPage: page,
+  }) => {
+    const dir = scratch!.path;
+    for (const name of ['a.txt', 'b.txt']) await putFile(page, dir, name, Buffer.from(name));
+    await openScratch(page);
+    // As the server answers when the pool fills up at the second item: the first is in the trash already.
+    const intoTheTrash = (url: URL) => url.pathname === '/api/v1/files/delete' && !url.searchParams.has('permanent');
+    await page.route(intoTheTrash, async (route) => {
+      const [first] = route.request().postDataJSON() as string[];
+      const moved = await page.request.delete('/api/v1/files/delete', { headers: auth(), data: [first] });
+      expect(moved.ok(), `move ${first} to the trash: HTTP ${moved.status()}`).toBeTruthy();
+      await route.fulfill({
+        status: 507,
+        json: { detail: 'No space left on device. 1 of the 2 items was moved to the trash before that.' },
+      });
+    });
+
+    await row(page, 'a.txt').getByRole('checkbox').check();
+    await row(page, 'b.txt').getByRole('checkbox').check();
+    await selectionBar(page).getByRole('button', { name: 'Delete' }).click();
+    await deleteDialog(page, 2).getByRole('button', { name: 'Move to trash' }).click();
+
+    // About b.txt alone now, and it says where a.txt went.
+    const dialog = deleteDialog(page, 1);
+    await expect(dialog.getByRole('alert')).toContainText('1 of the 2 items was moved to the trash before that.');
+    await expect(dialog).toContainText('Move the selected item to the trash?');
+    await expect(row(page, 'a.txt')).toHaveCount(0);
+    await expect(selectionBar(page)).toContainText('1 selected');
+    const requestSent = page.waitForRequest(isApi('/files/delete'));
+    await dialog.getByRole('button', { name: 'Delete for good' }).click();
+
+    const request = await requestSent;
+    expect(new URL(request.url()).searchParams.get('permanent')).toBe('true');
+    expect(request.postDataJSON()).toEqual([`${dir}/b.txt`]);
+    await expect(dialog).toHaveCount(0);
+    expect(await listNames(page, dir)).toEqual([]);
+    expect(await trashedFrom(page, dir)).toEqual(['a.txt']);
   });
 
   test('the Trash page lists deleted items, and Restore puts them back where they were', async ({
@@ -486,6 +550,38 @@ test.describe('File Browser operations', () => {
       headers: auth(),
     });
     expect((await info.json()).size).toBe('newer'.length);
+  });
+
+  test('the Trash page tells items of the same name apart by where and when they were deleted', async ({
+    authenticatedPage: page,
+  }) => {
+    const dir = scratch!.path;
+    const paths: string[] = [];
+    for (const folder of ['x', 'y']) {
+      const made = await makeFolder(page, dir, folder);
+      await putFile(page, made, 'notes.txt', Buffer.from(folder));
+      paths.push(`${made}/notes.txt`);
+    }
+    const moved = await page.request.delete('/api/v1/files/delete', { headers: auth(), data: paths });
+    expect(moved.ok(), `move to the trash: HTTP ${moved.status()}`).toBeTruthy();
+    await page.goto('/files/trash');
+
+    // Each checkbox says which one it selects, as the row shows it (ADR-0197).
+    const labelOf = async (folder: string) => {
+      const item = await trashed(page, `${dir}/${folder}/notes.txt`);
+      const when = await page.evaluate((deleted) => new Date(deleted).toLocaleString(), item.deleted);
+      return `Select notes.txt, deleted from ${dir}/${folder} on ${when}`;
+    };
+    const [x, y] = [await labelOf('x'), await labelOf('y')];
+    expect(x).not.toEqual(y);
+    await expect(page.getByRole('checkbox', { name: x, exact: true })).toHaveCount(1);
+    await page.getByRole('checkbox', { name: y, exact: true }).check();
+    await trashToolbar(page).getByRole('button', { name: 'Restore' }).click();
+
+    await expect(page.getByText(`Restored to ${dir}/y/notes.txt.`)).toBeVisible();
+    expect(await listNames(page, `${dir}/y`)).toEqual(['notes.txt']);
+    expect(await listNames(page, `${dir}/x`)).toEqual([]);
+    expect(await trashedFrom(page, dir)).toEqual(['x/notes.txt']);
   });
 
   test('the Trash page deletes items for good, and Empty trash deletes everything', async ({

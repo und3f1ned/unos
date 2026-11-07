@@ -146,6 +146,13 @@
     return cut > 0 ? item.original_path.slice(0, cut) : "/";
   }
 
+  // What a screen reader says for an item's checkbox: items of the same name
+  // differ in where and when they were deleted (ADR-0197).
+  function checkboxLabel(item: TrashItem): string {
+    const from = item.original_path === null ? "an unknown folder" : folderOf(item);
+    return `Select ${item.name}, deleted from ${from} on ${formatTime(item.deleted)}`;
+  }
+
   function iconOf(item: TrashItem) {
     if (item.type === "directory") return Folder;
     if (item.type === "symlink") return Link;
@@ -248,7 +255,7 @@
                 <td>
                   <input
                     type="checkbox"
-                    aria-label="Select {item.name}"
+                    aria-label={checkboxLabel(item)}
                     checked={selected.has(item.path)}
                     on:change={() => toggle(item.path)}
                     class="w-4 h-4 rounded bg-surface-overlay border-border"

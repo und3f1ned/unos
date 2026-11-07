@@ -251,29 +251,36 @@ def _refuse_separate_filesystem(dir_fd: int, st: os.stat_result, parts: list[str
     raise HTTPException(409, _separate_detail(parts[-1], action))
 
 
-def _mount_points(name: str, action: str) -> list[bytes]:
-    """The mount points in MOUNTINFO, decoded.
-
-    The mount point is the fifth field of a line. If the table cannot be
-    read, ``name`` is refused (HTTP 500): nothing is deleted or moved
-    without the check.
-    """
+def _read_mount_points() -> list[bytes]:
+    """The mount points in MOUNTINFO, decoded (the fifth field of a line); OSError if it cannot be read."""
     try:
         with open(MOUNTINFO, "rb") as table:
             lines = table.read().split(b"\n")
     except OSError as exc:
         logger.error("Cannot read the mount table %s: %s", MOUNTINFO, exc)
-        raise HTTPException(
-            500,
-            f"Could not check '{_shown(name)}' for mount points (the mount table cannot be read), "
-            f"so it was not {action}.",
-        ) from None
+        raise
     points = []
     for line in lines:
         fields = line.split(b" ")
         if len(fields) > 4:
             points.append(_MOUNTINFO_ESCAPE.sub(lambda m: bytes([int(m[1], 8)]), fields[4]))
     return points
+
+
+def _mount_points(name: str, action: str) -> list[bytes]:
+    """The mount points in MOUNTINFO, decoded.
+
+    If the table cannot be read, ``name`` is refused (HTTP 500): nothing is
+    deleted or moved without the check.
+    """
+    try:
+        return _read_mount_points()
+    except OSError:
+        raise HTTPException(
+            500,
+            f"Could not check '{_shown(name)}' for mount points (the mount table cannot be read), "
+            f"so it was not {action}.",
+        ) from None
 
 
 def _subdirectories(fd: int) -> list[str]:
@@ -969,7 +976,9 @@ def _delete(paths: list[str], permanent: bool = False) -> list[str]:
     """Move the items ``paths`` into the trash of their pool or volume; with ``permanent``, delete them for good.
 
     Every item is checked before any is changed: also, unless ``permanent``,
-    that it has a trash (_open_trash_scope).
+    that one rename can take it into its trash, which must be a folder that
+    is private or can be made so (_check_trash_of). An item that fails
+    after others went is refused with how many went before it (_done_before).
     """
     targets = []
     for path in paths:
@@ -979,33 +988,52 @@ def _delete(paths: list[str], permanent: bool = False) -> list[str]:
     plan = [parts for _, parts in targets]
     _refuse_separate_filesystems(plan, "deleted")
     if not permanent:
+        mount_points = _readable_mount_points()
         for parts in plan:
-            dir_fd = _open_parent_or_none(parts)
-            if dir_fd is None:
-                continue
-            try:
-                os.close(_open_trash_scope(dir_fd, parts)[0])
-            finally:
-                os.close(dir_fd)
+            _check_trash_of(parts, mount_points)
 
     deleted = []
     for path, parts in targets:
-        dir_fd = _open_parent_or_none(parts)
-        if dir_fd is None:
-            continue
         try:
-            st = _lstat_at(dir_fd, parts[-1])
-            if st is None:
-                continue
-            _refuse_separate_filesystem(dir_fd, st, parts, "deleted")
-            if permanent:
-                _remove_entry(dir_fd, parts, "deleted")
-            else:
-                _move_to_trash(dir_fd, parts)
-        finally:
-            os.close(dir_fd)
-        deleted.append(path)
+            done = _delete_one(parts, permanent)
+        except (HTTPException, OSError) as exc:
+            if not deleted:
+                raise
+            how = "deleted for good" if permanent else "moved to the trash"
+            raise _done_before(exc, len(deleted), len(paths), how) from exc
+        if done:
+            deleted.append(path)
     return deleted
+
+
+def _delete_one(parts: list[str], permanent: bool) -> bool:
+    """Move the item ``parts`` into its trash, or delete it for good; False when it is not there (any more)."""
+    dir_fd = _open_parent_or_none(parts)
+    if dir_fd is None:
+        return False
+    try:
+        st = _lstat_at(dir_fd, parts[-1])
+        if st is None:
+            return False
+        _refuse_separate_filesystem(dir_fd, st, parts, "deleted")
+        if permanent:
+            _remove_entry(dir_fd, parts, "deleted")
+        else:
+            _move_to_trash(dir_fd, parts)
+        return True
+    finally:
+        os.close(dir_fd)
+
+
+def _done_before(exc: HTTPException | OSError, done: int, total: int, how: str) -> HTTPException:
+    """The refusal ``exc`` of a request that failed after ``done`` of its ``total`` items had been ``how``.
+
+    Its message says so: the client cannot tell otherwise which items went.
+    """
+    error = exc if isinstance(exc, HTTPException) else _http_error(exc)
+    items = f"{done} of the {total} items {'was' if done == 1 else 'were'}"
+    detail = f"{error.detail}{'' if error.detail.endswith('.') else '.'} {items} {how} before that."
+    return HTTPException(error.status_code, detail)
 
 
 # --- the trash (ADR-0247) ------------------------------------------------------
@@ -1013,13 +1041,16 @@ def _delete(paths: list[str], permanent: bool = False) -> list[str]:
 # Delete moves an item into the trash of the pool or volume that holds it,
 # <pool>/.unos-trash or <pool>/<volume>/.unos-trash, with one rename on its
 # filesystem: btrfs renames nothing into another subvolume, so a volume has a
-# trash of its own. The trash and each entry in it are private folders (mode
-# 0700), which Repair permissions never enters. What a trash holds is
-# untrusted, as the rest of a volume is: apps and NFS clients that use the
-# volume can change it. So origin is checked before a restore and leads only
-# below the trash's own pool or volume, the item is renamed back without
-# replacing anything, and an entry is deleted for good only after the checks
-# of ADR-0170.
+# trash of its own. The trash and each entry in it are private folders (the
+# supervisor's, mode 0700), which Repair permissions never enters and which
+# no app or NFS client that is not root can change: a trash that someone
+# else made first is made private before it is used, and only private
+# folders in it count as its entries (_open_trash, _unos_entry). What a
+# trash holds is still untrusted, as the rest of a volume is: apps that run
+# as root can change it. So origin is checked before a restore and leads
+# only below the trash's own pool or volume, the item is renamed back
+# without replacing anything, and an entry is deleted for good only after
+# the checks of ADR-0170.
 
 
 def _now() -> datetime:
@@ -1051,8 +1082,58 @@ def _not_a_folder_detail(scope: list[str]) -> str:
     )
 
 
+def _not_private_detail(scope: list[str]) -> str:
+    return (
+        f"{_shown(_display_path([*scope, TRASH]))} could not be made private (only UNOS may open it), so nothing "
+        f"can be moved to the trash of {_shown(_display_path(scope))}."
+    )
+
+
 def _unreadable(path: list[str], exc: OSError) -> str:
     return f"{_shown(_display_path(path))} could not be read: {os.strerror(exc.errno) if exc.errno else exc}"
+
+
+def _private(st: os.stat_result) -> bool:
+    """Whether only the supervisor can use the entry ``st``: its own (root's on the device), no group or other bits.
+
+    Repair permissions does not enter a private folder (ADR-0155), and an
+    app or an NFS client that is not root cannot change what is in it.
+    """
+    return st.st_uid == os.geteuid() and not st.st_mode & 0o077
+
+
+def _unos_entry(st: os.stat_result | None) -> bool:
+    """Whether the lstat() ``st`` of a name in a trash is one of UNOS's entries there: a private folder.
+
+    Such a name that is not one was not made by UNOS (_open_trash makes a
+    trash private before it uses it): it is never listed, restored or deleted.
+    """
+    return st is not None and stat.S_ISDIR(st.st_mode) and _private(st)
+
+
+def _made_private(fd: int, scope: list[str]) -> bool:
+    """Make the trash folder ``fd`` of ``scope`` private (_private) if it is not; whether it is now.
+
+    E.g. an app or an NFS client that can write the top folder of a volume
+    made it first, with its owner and mode: it could then rename the
+    entries, to an older time for the expiry or out of the list.
+    """
+    st = os.fstat(fd)
+    if _private(st):
+        return True
+    try:
+        if st.st_uid != os.geteuid():
+            os.fchown(fd, os.geteuid(), os.getegid())
+        os.fchmod(fd, 0o700)
+    except OSError:  # e.g. vfat, or NFS with root_squash
+        return False
+    if not _private(os.fstat(fd)):  # e.g. a filesystem that keeps its own modes
+        return False
+    logger.warning(
+        "Made %s private (only UNOS may open it): it was uid %d's, with mode %o",
+        _shown(_display_path([*scope, TRASH])), st.st_uid, stat.S_IMODE(st.st_mode),
+    )
+    return True
 
 
 def _open_trash_scope(dir_fd: int, parts: list[str]) -> tuple[int, int]:
@@ -1062,8 +1143,10 @@ def _open_trash_scope(dir_fd: int, parts: list[str]) -> tuple[int, int]:
     2 for a volume, a folder directly in the pool's top folder on another
     subvolume or filesystem (as _refuse_separate_filesystem tells them). The
     entry must be on the filesystem of that folder: one in a deeper subvolume
-    (a snapshot, a restored copy in a volume) or below another mount point
-    has no trash (409).
+    (a snapshot, a restored copy in a volume) or below the mount point of
+    another filesystem has no trash (409). Below a bind mount of the same
+    filesystem the st_dev is the same: _check_trash_of looks for those in
+    the mount table.
     """
     scope_fd = _open_dir(parts[:1])
     scope_len = 1
@@ -1091,15 +1174,20 @@ def _open_trash(scope_fd: int, scope: list[str], *, create: bool) -> int | None:
     """Open the trash folder of the pool or volume ``scope`` (open as ``scope_fd``); None when it has none.
 
     With ``create`` a missing one is made (mode 0700). One that is not a
-    folder (a symlink, a file) is refused (409): nothing is followed.
+    folder (a symlink, a file) is refused (409): nothing is followed. One
+    that is not private is made so first, whoever made it (_made_private);
+    one that cannot be made so is refused (409), and one made just now is
+    removed again.
     """
+    made = False
     if create:
         try:
             os.mkdir(TRASH, 0o700, dir_fd=scope_fd)
+            made = True
         except FileExistsError:
             pass
     try:
-        return os.open(TRASH, _DIR_FLAGS, dir_fd=scope_fd)
+        fd = os.open(TRASH, _DIR_FLAGS, dir_fd=scope_fd)
     except FileNotFoundError:
         if create:
             raise
@@ -1108,6 +1196,18 @@ def _open_trash(scope_fd: int, scope: list[str], *, create: bool) -> int | None:
         if exc.errno in (errno.ELOOP, errno.ENOTDIR):
             raise HTTPException(409, _not_a_folder_detail(scope)) from None
         raise
+    try:
+        if not _made_private(fd, scope):
+            raise HTTPException(409, _not_private_detail(scope))
+    except BaseException:
+        os.close(fd)
+        if made:  # on a filesystem that cannot keep it private: no trash stays
+            try:
+                os.rmdir(TRASH, dir_fd=scope_fd)
+            except OSError:
+                pass
+        raise
+    return fd
 
 
 def _write_origin(entry_fd: int, below_scope: list[str]) -> None:
@@ -1181,8 +1281,9 @@ def _move_to_trash(dir_fd: int, parts: list[str]) -> None:
     """Move the entry ``parts`` (in the folder ``dir_fd``) into the trash of its pool or volume.
 
     The entry is checked right before, as before it is deleted for good
-    (_recheck_entry). It gets a new folder in the trash, with its origin;
-    a move that fails leaves no folder behind.
+    (_recheck_entry). It gets a new folder in the trash, which is made
+    private first (_open_trash), with its origin; a move that fails leaves
+    no folder behind.
     """
     _recheck_entry(dir_fd, parts, "deleted")
     scope_fd, scope_len = _open_trash_scope(dir_fd, parts)
@@ -1208,6 +1309,56 @@ def _move_to_trash(dir_fd: int, parts: list[str]) -> None:
                 if not moved:
                     _discard_trash_entry(trash_fd, entry)
         finally:
+            os.close(trash_fd)
+    finally:
+        os.close(scope_fd)
+
+
+def _readable_mount_points() -> list[bytes] | None:
+    """The mount points of MOUNTINFO (_read_mount_points); None when the table cannot be read.
+
+    For checks that only refuse earlier what a rename refuses anyway
+    (_mounted_between): without the table, the rename tells.
+    """
+    try:
+        return _read_mount_points()
+    except OSError:
+        return None
+
+
+def _mounted_between(scope: list[str], folder: list[str], mount_points: list[bytes] | None) -> bool:
+    """Whether a mount point lies below the pool or volume ``scope``, at or above its folder ``folder``.
+
+    rename(2) takes nothing across a mount point (EXDEV), also not one of a
+    bind mount of the same filesystem, which has the st_dev of the rest:
+    only the mount table shows it.
+    """
+    if mount_points is None:
+        return False
+    top = os.fsencode(_display_path(scope)) + b"/"
+    path = os.fsencode(_display_path(folder))
+    return any(point.startswith(top) and (path == point or path.startswith(point + b"/")) for point in mount_points)
+
+
+def _check_trash_of(parts: list[str], mount_points: list[bytes] | None) -> None:
+    """Before a delete changes anything: whether one rename can take the entry ``parts`` into its trash.
+
+    Refused (409): an entry in a deeper subvolume or below a mount point,
+    which has no trash, and a trash that is not a folder or cannot be made
+    private. A trash that is missing is made when the first item goes there.
+    """
+    dir_fd = _open_parent_or_none(parts)
+    if dir_fd is None:
+        return
+    try:
+        scope_fd, scope_len = _open_trash_scope(dir_fd, parts)
+    finally:
+        os.close(dir_fd)
+    try:
+        if _mounted_between(parts[:scope_len], parts[:-1], mount_points):
+            raise HTTPException(409, _no_trash_detail(parts[-1]))
+        trash_fd = _open_trash(scope_fd, parts[:scope_len], create=False)
+        if trash_fd is not None:
             os.close(trash_fd)
     finally:
         os.close(scope_fd)
@@ -1303,9 +1454,10 @@ def _each_trash(problems: list[str]) -> Iterator[tuple[list[str], int]]:
 
 
 def _trash_entries(trash_fd: int) -> list[str]:
-    """The names of the entries in a trash folder, oldest first; other names are not UNOS's and stay."""
+    """The names of UNOS's entries in a trash folder, oldest first (_unos_entry); what else is there stays."""
     with os.scandir(trash_fd) as entries:
-        return sorted(entry.name for entry in entries if _entry_time(entry.name) is not None)
+        names = [entry.name for entry in entries if _entry_time(entry.name) is not None]
+    return sorted(name for name in names if _unos_entry(_lstat_at(trash_fd, name)))
 
 
 def _trash_item(scope: list[str], trash_fd: int, entry: str) -> TrashItem | None:
@@ -1378,7 +1530,8 @@ def _trash_path(path: str) -> tuple[list[str], str]:
 def _opened_entry(path: str, scope: list[str], entry: str) -> Iterator[tuple[int, int, int]]:
     """The pool or volume, its trash and the entry of the path ``path`` of the trash, open.
 
-    400 when ``scope`` is neither a pool nor a volume, 404 when the entry is gone.
+    400 when ``scope`` is neither a pool nor a volume, 404 when the entry is
+    gone or is not one of UNOS's (_unos_entry).
     """
     gone = HTTPException(404, f"Not in the trash: {_shown(path)}")
     scope_fd = _open_scope(scope)
@@ -1391,9 +1544,13 @@ def _opened_entry(path: str, scope: list[str], entry: str) -> Iterator[tuple[int
         try:
             try:
                 entry_fd = os.open(entry, _DIR_FLAGS, dir_fd=trash_fd)
-            except FileNotFoundError:
-                raise gone from None
+            except OSError as exc:
+                if exc.errno in _GONE:  # also a file or a symlink: not UNOS's
+                    raise gone from None
+                raise
             try:
+                if not _unos_entry(os.fstat(entry_fd)):
+                    raise gone
                 yield scope_fd, trash_fd, entry_fd
             finally:
                 os.close(entry_fd)
@@ -1428,19 +1585,35 @@ def _restore_target(scope: list[str], entry: str, scope_fd: int, entry_fd: int) 
         ) from None
 
 
+def _elsewhere_now_detail(scope: list[str], origin: list[str]) -> str:
+    return (
+        f"Could not restore '{_shown(origin[-1])}': the folder {_shown(_display_path([*scope, *origin[:-1]]))} "
+        "is on another subvolume or filesystem now."
+    )
+
+
 def _restore_from_trash(paths: list[str]) -> list[str]:
     """Rename the items of the trash entries ``paths`` back to where they were deleted from.
 
     Every item is checked before any is restored: its origin, its folder,
-    and that its name is free there (400 "Already exists: <name>"). The
-    exclusive rename also refuses a name that appears after that check.
+    that one rename can take it there (the folder is on the filesystem of
+    the pool or volume and below no mount point in it, 409), and that its
+    name is free there (400 "Already exists: <name>"). The exclusive rename
+    also refuses a name that appears after that check; such a refusal after
+    other items went back says how many (_done_before).
     """
     entries = [(path, *_trash_path(path)) for path in paths]
+    mount_points = _readable_mount_points() if entries else None
     targets = set()
     for path, scope, entry in entries:
         with _opened_entry(path, scope, entry) as (scope_fd, _, entry_fd):
             origin, parent_fd = _restore_target(scope, entry, scope_fd, entry_fd)
             try:
+                # As _open_trash_scope checks for a delete: on the filesystem of the pool or volume.
+                if os.fstat(parent_fd).st_dev != os.fstat(scope_fd).st_dev or _mounted_between(
+                    scope, [*scope, *origin[:-1]], mount_points
+                ):
+                    raise HTTPException(409, _elsewhere_now_detail(scope, origin))
                 if _lstat_at(parent_fd, origin[-1]) is not None:
                     raise HTTPException(400, f"Already exists: {_shown(origin[-1])}")
             finally:
@@ -1452,31 +1625,39 @@ def _restore_from_trash(paths: list[str]) -> list[str]:
 
     restored = []
     for path, scope, entry in entries:
-        with _opened_entry(path, scope, entry) as (scope_fd, trash_fd, entry_fd):
-            origin, parent_fd = _restore_target(scope, entry, scope_fd, entry_fd)
-            try:
-                _rename_exclusive(entry_fd, _TRASH_ITEM, parent_fd, origin[-1])
-            except FileExistsError:
-                raise HTTPException(400, f"Already exists: {_shown(origin[-1])}") from None
-            except OSError as exc:
-                if exc.errno == errno.EXDEV:
-                    raise HTTPException(
-                        409,
-                        f"Could not restore '{_shown(origin[-1])}': the folder "
-                        f"{_shown(_display_path([*scope, *origin[:-1]]))} is on another subvolume or "
-                        "filesystem now.",
-                    ) from None
+        try:
+            restored.append(_restore_one(path, scope, entry))
+        except (HTTPException, OSError) as exc:  # e.g. a name or a mount that appeared since the check
+            if not restored:
                 raise
-            finally:
-                os.close(parent_fd)
-            _discard_trash_entry(trash_fd, entry)
-        restored.append(_shown(_display_path([*scope, *origin])))
+            raise _done_before(exc, len(restored), len(paths), "restored") from exc
     return restored
 
 
+def _restore_one(path: str, scope: list[str], entry: str) -> str:
+    """Rename the item of the trash entry ``path`` back to where it was deleted from; that path, as shown."""
+    with _opened_entry(path, scope, entry) as (scope_fd, trash_fd, entry_fd):
+        origin, parent_fd = _restore_target(scope, entry, scope_fd, entry_fd)
+        try:
+            _rename_exclusive(entry_fd, _TRASH_ITEM, parent_fd, origin[-1])
+        except FileExistsError:
+            raise HTTPException(400, f"Already exists: {_shown(origin[-1])}") from None
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:  # a mount since the check
+                raise HTTPException(409, _elsewhere_now_detail(scope, origin)) from None
+            raise
+        finally:
+            os.close(parent_fd)
+        _discard_trash_entry(trash_fd, entry)
+    return _shown(_display_path([*scope, *origin]))
+
+
 def _delete_trash_entry(scope: list[str], trash_fd: int, entry: str) -> bool:
-    """Delete the trash entry ``entry`` for good, after the checks of ADR-0170; False when it is gone already."""
-    if _lstat_at(trash_fd, entry) is None:
+    """Delete the trash entry ``entry`` for good, after the checks of ADR-0170.
+
+    False when it is gone already, or is not one of UNOS's (_unos_entry), which stays.
+    """
+    if not _unos_entry(_lstat_at(trash_fd, entry)):
         return False
     _remove_entry(trash_fd, [*scope, TRASH, entry], _FOR_GOOD)
     return True
@@ -1688,7 +1869,10 @@ async def delete_items(paths: list[str], permanent: bool = False, _: dict = Depe
     for good. Symlinks are moved or removed, never their targets.
 
     An item that one rename cannot take into a trash (in a deeper subvolume,
-    or below a mount point) is refused with 409 and can be deleted for good.
+    or below a mount point) is refused with 409 and can be deleted for good;
+    so is every item while its trash is not a folder or cannot be made
+    private. Every item is checked before any is changed; one that fails
+    after others went answers with how many went before it.
     """
     return {"deleted": await _run(_delete, paths, permanent)}
 
@@ -1704,8 +1888,8 @@ async def restore_from_trash(paths: list[str], _: dict = Depends(verify_token)):
     """Put items of the trash (their paths as GET /files/trash lists them) back where they were deleted from.
 
     Nothing is replaced: a name that is taken there answers 400 "Already
-    exists: <name>", and a folder that is gone 409. Every item is checked
-    before any is restored.
+    exists: <name>", and a folder that is gone, or on another subvolume or
+    filesystem now, 409. Every item is checked before any is restored.
     """
     return {"restored": await _run(_restore_from_trash, paths)}
 
