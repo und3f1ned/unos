@@ -5,8 +5,10 @@ import asyncio
 import logging
 import os
 import re
+import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
@@ -97,6 +99,8 @@ RAID_CHECK_INTERVAL = 300  # Check every 5 minutes
 RAID_STATUS_FILE = "/data/raid_status.json"
 SMART_HISTORY_FILE = "/data/smart_history.json"
 SMART_CHECK_INTERVAL = 3600  # Check SMART every hour
+# Snapshots kept per disk: 30 days of hourly passes (ADR-0235).
+SMART_HISTORY_LIMIT = 720
 SMARTCTL_TIMEOUT = 30
 # The history key of every disk that smartctl reports without a serial: the
 # counters of different disks mix there, so it gets no prediction (ADR-0235).
@@ -156,6 +160,27 @@ class SmartHistoryUnreadable(Exception):
     """SMART_HISTORY_FILE exists but holds no SMART history that can be read."""
 
 
+@dataclass
+class _SmartHistoryState:
+    """The SMART history as the monitor keeps it in RAM (ADR-0247).
+
+    The monitor's first pass reads SMART_HISTORY_FILE; from then on the
+    history lives here and the file is written only when a pass changed it,
+    and at shutdown. Each pass replaces ``history`` with a new dict of new
+    lists, so that the endpoints can read the one they got without a lock.
+    """
+
+    history: Optional[dict[str, list[dict]]] = None  # None until the monitor's first pass
+    unsaved: bool = False  # holds snapshots that SMART_HISTORY_FILE does not
+    changed: bool = False  # one of them changed the history: written at the next pass if not yet
+    stopped: bool = False  # written at shutdown: a pass that ends later keeps nothing
+
+
+_smart_history = _SmartHistoryState()
+# Serialises the monitor's passes and the write at shutdown.
+_smart_history_lock = threading.Lock()
+
+
 def load_smart_history() -> dict[str, list[dict]]:
     """The SMART history: smartctl's serial -> its snapshots, oldest first.
 
@@ -180,6 +205,14 @@ def load_smart_history() -> dict[str, list[dict]]:
 
 
 def _smart_history_or_500() -> dict[str, list[dict]]:
+    """The SMART history the endpoints report: the monitor's in RAM (ADR-0247).
+
+    Before the monitor's first pass, the history in SMART_HISTORY_FILE; one
+    that cannot be read answers 500 (ADR-0235).
+    """
+    history = _smart_history.history
+    if history is not None:
+        return history
     try:
         return load_smart_history()
     except SmartHistoryUnreadable as exc:
@@ -187,17 +220,15 @@ def _smart_history_or_500() -> dict[str, list[dict]]:
 
 
 def save_smart_history(history: dict[str, list[dict]]):
-    """Write the SMART history to SMART_HISTORY_FILE, the last 720 snapshots of each disk.
+    """Write the SMART history to SMART_HISTORY_FILE.
 
     Staged next to the file, then renamed over it: a reader, or a power loss
     during the write, finds the old history or the new one, never a part
-    (ADR-0235).
+    (ADR-0235). The monitor writes only when a pass changed the history,
+    and at shutdown (ADR-0247).
     """
     path = Path(SMART_HISTORY_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Keep only last 30 days of data per disk (720 entries at hourly checks)
-    for serial in history:
-        history[serial] = history[serial][-720:]
     staged = path.with_name(path.name + ".new")
     try:
         with open(staged, "w") as f:
@@ -227,7 +258,11 @@ def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
             return None
 
         data = json.loads(result.stdout)
-        serial = data.get("serial_number", _NO_SERIAL)
+        # As smartctl prints it, the serial Disk Health shows; an empty or blank one is
+        # none: such disks share the history "unknown" (ADR-0248).
+        serial = data.get("serial_number")
+        if not isinstance(serial, str) or not serial.strip():
+            serial = _NO_SERIAL
 
         # Extract critical attributes
         attributes = {}
@@ -282,61 +317,110 @@ def _attribute_value(entry: dict, attr_id: int) -> int:
         return 0
 
 
+def _reports_attribute(entry: dict, attr_id: int) -> bool:
+    attributes = entry.get("attributes") or {}
+    return str(attr_id) in attributes or attr_id in attributes
+
+
+def _counter_values(history: list[dict], attr_id: int) -> list[int]:
+    """The values of counter ``attr_id`` in the snapshots that hold it, oldest first.
+
+    A snapshot without it (smartctl could not read the attribute table, and
+    the monitor stored none) tells nothing of it: it is no value of 0
+    (ADR-0235, ADR-0248).
+    """
+    return [_attribute_value(entry, attr_id) for entry in history if _reports_attribute(entry, attr_id)]
+
+
+def _latest_counters(entries: list[dict]) -> dict[int, int]:
+    """The latest value of each counter of CRITICAL_ATTRIBUTES in a disk's snapshots.
+
+    Read from the newest snapshot that holds the counter (ADR-0235, ADR-0248);
+    a counter that none holds is missing.
+    """
+    latest: dict[int, int] = {}
+    for entry in reversed(entries):
+        for attr_id in CRITICAL_ATTRIBUTES:
+            if attr_id not in latest and _reports_attribute(entry, attr_id):
+                latest[attr_id] = _attribute_value(entry, attr_id)
+        if len(latest) == len(CRITICAL_ATTRIBUTES):
+            break
+    return latest
+
+
+def _snapshots_of_one_disk(serial: str, entries: list[dict], device: Optional[str]) -> list[dict]:
+    """The snapshots of the disk at ``device`` in the history of ``serial`` (ADR-0248).
+
+    A serial names one disk wherever it was: all of its snapshots. The disks
+    that smartctl reports without a serial share the history "unknown", in
+    which only the snapshots taken at one path are of one disk.
+    """
+    if serial and serial != _NO_SERIAL:
+        return entries
+    return [entry for entry in entries if entry.get("device") == device]
+
+
+def _trend_alert(serial: str, device: str, attr_id: int, previous: int, current: int) -> SmartTrendAlert:
+    """The alert of counter ``attr_id`` of CRITICAL_ATTRIBUTES that rose from ``previous`` to ``current``."""
+    attr_name = CRITICAL_ATTRIBUTES[attr_id]
+    change = current - previous
+
+    # Determine severity based on attribute and change rate
+    severity = "warning"
+    if attr_id in [5, 197, 198]:  # Critical sector issues
+        if change > 10:
+            severity = "critical"
+    elif change > 100:
+        severity = "critical"
+
+    # Generate recommendation
+    if attr_id == 5:
+        recommendation = "Disk is reallocating bad sectors. Consider replacing soon."
+    elif attr_id == 197:
+        recommendation = "Pending sectors detected. Run extended SMART test."
+    elif attr_id == 198:
+        recommendation = "Uncorrectable sectors found. Backup data immediately."
+    elif attr_id == 199:
+        recommendation = "Cable or connection issues detected. Check SATA cable."
+    else:
+        recommendation = "Monitor closely and consider replacement if trend continues."
+
+    return SmartTrendAlert(
+        device=device,
+        serial=serial,
+        model="",  # Filled in later
+        attribute_name=attr_name,
+        attribute_id=attr_id,
+        current_value=current,
+        previous_value=previous,
+        change=change,
+        severity=severity,
+        message=f"{attr_name} increased by {change} (from {previous} to {current})",
+        recommendation=recommendation
+    )
+
+
 def analyze_smart_trends(serial: str, history: list[dict]) -> list[SmartTrendAlert]:
-    """Analyze SMART history for concerning trends."""
+    """The counters of CRITICAL_ATTRIBUTES that rose over one disk's last day (ADR-0248).
+
+    Each counter's latest value is compared with the first of its last 24
+    values (a day of hourly snapshots), or with its oldest one: of the
+    snapshots that hold the counter.
+    """
     alerts = []
 
     if len(history) < 2:
         return alerts
 
-    # Get latest and compare with oldest in window
-    latest = history[-1]
-    # Compare with 24 hours ago if available, otherwise oldest
-    compare_idx = max(0, len(history) - 24)
-    compare = history[compare_idx]
+    device = history[-1].get("device", "unknown")
 
-    device = latest.get("device", "unknown")
-
-    for attr_id, attr_name in CRITICAL_ATTRIBUTES.items():
-        current = _attribute_value(latest, attr_id)
-        previous = _attribute_value(compare, attr_id)
-
-        if current > previous:
-            change = current - previous
-
-            # Determine severity based on attribute and change rate
-            severity = "warning"
-            if attr_id in [5, 197, 198]:  # Critical sector issues
-                if change > 10:
-                    severity = "critical"
-            elif change > 100:
-                severity = "critical"
-
-            # Generate recommendation
-            if attr_id == 5:
-                recommendation = "Disk is reallocating bad sectors. Consider replacing soon."
-            elif attr_id == 197:
-                recommendation = "Pending sectors detected. Run extended SMART test."
-            elif attr_id == 198:
-                recommendation = "Uncorrectable sectors found. Backup data immediately."
-            elif attr_id == 199:
-                recommendation = "Cable or connection issues detected. Check SATA cable."
-            else:
-                recommendation = "Monitor closely and consider replacement if trend continues."
-
-            alerts.append(SmartTrendAlert(
-                device=device,
-                serial=serial,
-                model="",  # Filled in later
-                attribute_name=attr_name,
-                attribute_id=attr_id,
-                current_value=current,
-                previous_value=previous,
-                change=change,
-                severity=severity,
-                message=f"{attr_name} increased by {change} (from {previous} to {current})",
-                recommendation=recommendation
-            ))
+    for attr_id in CRITICAL_ATTRIBUTES:
+        values = _counter_values(history, attr_id)
+        if len(values) < 2:
+            continue
+        previous = values[max(0, len(values) - 24)]
+        if values[-1] > previous:
+            alerts.append(_trend_alert(serial, device, attr_id, previous, values[-1]))
 
     return alerts
 
@@ -388,20 +472,65 @@ async def send_smart_alert(alert: SmartTrendAlert):
 
 
 def _new_trend_alerts(serial: str, history: list[dict]) -> list[SmartTrendAlert]:
-    """The trend alerts of ``history`` whose attribute rose since the previous snapshot.
+    """The alerts of the counters that one disk's newest snapshot saw rise (ADR-0248).
 
-    analyze_smart_trends compares with a snapshot up to a day old, so a single
-    increase stays in its result for a day. The monitor runs every hour and
-    alerts when the value rises, not again on every pass after it.
+    A counter rose when the newest snapshot holds a value above the one of
+    the latest earlier snapshot that holds it. The monitor runs every hour and
+    alerts when a value rises, not again on every pass after it. The alert
+    reports the counter's rise over its last day, as analyze_smart_trends
+    does; when it shows none (the counter fell below its value of a day ago
+    and rose again), the rise since that earlier value.
     """
     if len(history) < 2:
         return []
-    previous = history[-2]
-    return [
-        alert
-        for alert in analyze_smart_trends(serial, history)
-        if alert.current_value > _attribute_value(previous, alert.attribute_id)
+    *earlier, newest = history
+    latest = _latest_counters(earlier)
+    rises = [
+        attr_id for attr_id in CRITICAL_ATTRIBUTES
+        if attr_id in latest and _reports_attribute(newest, attr_id)
+        and _attribute_value(newest, attr_id) > latest[attr_id]
     ]
+    if not rises:
+        return []
+    trend = {alert.attribute_id: alert for alert in analyze_smart_trends(serial, history)}
+    device = newest.get("device", "unknown")
+    return [
+        trend.get(attr_id) or _trend_alert(serial, device, attr_id, latest[attr_id], _attribute_value(newest, attr_id))
+        for attr_id in rises
+    ]
+
+
+def _changes_the_history(earlier: list[dict], snapshot: dict) -> bool:
+    """Whether a new snapshot tells what the disk's earlier snapshots do not (ADR-0247).
+
+    The disk's first snapshot, a counter of CRITICAL_ATTRIBUTES with another
+    value than in the latest earlier snapshot that holds it, or another path
+    or lsblk serial than in the previous snapshot. The time, the temperature
+    and the power-on hours change at every pass and are no change, and a
+    snapshot without the counters tells nothing of them.
+    """
+    if not earlier:
+        return True
+    previous = earlier[-1]
+    if (snapshot.get("device"), snapshot.get("lsblk_serial")) != (
+        previous.get("device"), previous.get("lsblk_serial")
+    ):
+        return True
+    latest = _latest_counters(earlier)
+    return any(
+        _reports_attribute(snapshot, attr_id) and latest.get(attr_id) != _attribute_value(snapshot, attr_id)
+        for attr_id in CRITICAL_ATTRIBUTES
+    )
+
+
+def _write_smart_history(state: _SmartHistoryState) -> None:
+    """Write the history in RAM to SMART_HISTORY_FILE; a failure is logged and tried again later."""
+    try:
+        save_smart_history(state.history or {})
+    except OSError as exc:
+        logger.warning("SMART monitor: could not write the SMART history %s: %s", SMART_HISTORY_FILE, exc)
+        return
+    state.unsaved = state.changed = False
 
 
 def _smart_monitor_pass() -> list[SmartTrendAlert]:
@@ -409,36 +538,68 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
 
     Records a snapshot of every whole disk of the host that is awake (the
     disks of GET /health/disks, storage.disks.host_disks) and returns the
-    trend alerts of the attributes that rose since the disk's previous
+    trend alerts of the counters that rose since the disk's previous
     snapshot. When the host's disks cannot be listed, the pass is logged
-    and skipped. A history file that cannot be read is logged and replaced
-    by a new history, so that a damaged file does not stop the recording
-    (ADR-0235).
+    and skipped. The history stays in RAM, and SMART_HISTORY_FILE is written
+    only when a snapshot changed it, or one of an earlier pass whose write
+    failed (ADR-0247). The first pass reads the file: one that cannot be
+    read is logged and replaced by a new history, so that a damaged file
+    does not stop the recording (ADR-0235).
     """
     try:
         disks = storage_disks.host_disks()
     except Exception as exc:
         logger.warning("SMART monitor: pass skipped, could not list the host's disks: %s", exc)
         return []
-    try:
-        history = load_smart_history()
-    except SmartHistoryUnreadable as exc:
-        logger.warning("SMART monitor: %s; starting a new history", exc)
-        history = {}
-    alerts: list[SmartTrendAlert] = []
-
+    snapshots = []
     for disk in disks:
         snapshot = collect_smart_snapshot(disk.path)
         if snapshot:
             snapshot.lsblk_serial = disk.serial
-            serial = snapshot.serial
-            entries = history.setdefault(serial, [])
             # JSON form (str attribute keys), like the entries read from the file.
-            entries.append(snapshot.model_dump(mode="json"))
-            alerts.extend(_new_trend_alerts(serial, entries))
+            snapshots.append(snapshot.model_dump(mode="json"))
 
-    save_smart_history(history)
+    alerts: list[SmartTrendAlert] = []
+    with _smart_history_lock:
+        state = _smart_history
+        if state.stopped:
+            # A pass that ran when the supervisor stopped: its alerts can no longer be
+            # sent. Nothing of it is kept, so the next start compares with the history
+            # written at shutdown and alerts a rise of this pass then (ADR-0247).
+            return []
+        if state.history is None:
+            try:
+                history = load_smart_history()
+            except SmartHistoryUnreadable as exc:
+                logger.warning("SMART monitor: %s; starting a new history", exc)
+                history = {}
+        else:
+            # New lists: the endpoints may be reading the ones they got.
+            history = {serial: list(entries) for serial, entries in state.history.items()}
+        for snapshot in snapshots:
+            serial = snapshot["serial"]
+            entries = history.setdefault(serial, [])
+            if _changes_the_history(_snapshots_of_one_disk(serial, entries, snapshot["device"]), snapshot):
+                state.changed = True
+            entries.append(snapshot)
+            del entries[:-SMART_HISTORY_LIMIT]
+            alerts.extend(_new_trend_alerts(serial, _snapshots_of_one_disk(serial, entries, snapshot["device"])))
+        state.history = history
+        state.unsaved = state.unsaved or bool(snapshots)
+        if state.changed:
+            _write_smart_history(state)
     return alerts
+
+
+def save_unsaved_smart_history() -> None:
+    """At shutdown: write the snapshots that only the history in RAM holds (ADR-0247).
+
+    A pass that ends after this keeps nothing (_SmartHistoryState.stopped).
+    """
+    with _smart_history_lock:
+        if _smart_history.history is not None and _smart_history.unsaved:
+            _write_smart_history(_smart_history)
+        _smart_history.stopped = True
 
 
 async def smart_monitor_loop():
@@ -1029,8 +1190,10 @@ async def get_raid_monitor_status(_: dict = Depends(verify_token)):
 
 # ==================== SMART Trend Monitoring ====================
 
+# Plain functions, like the trends and predictions below: a history that the
+# monitor has not read yet is read from its file, in FastAPI's thread pool.
 @router.get("/smart/history/{serial}")
-async def get_smart_history(serial: str, _: dict = Depends(verify_token)):
+def get_smart_history(serial: str, _: dict = Depends(verify_token)):
     """Get SMART history for a specific disk by serial number."""
     history = _smart_history_or_500()
     if serial not in history:
@@ -1046,22 +1209,57 @@ async def get_smart_history(serial: str, _: dict = Depends(verify_token)):
     }
 
 
-@router.get("/smart/trends")
-async def get_smart_trends(_: dict = Depends(verify_token)):
-    """Get current SMART trend analysis for all disks."""
-    history = _smart_history_or_500()
-    all_alerts = []
+class SmartDiskTrend(BaseModel):
+    serial: str  # smartctl's: the key of the disk's history ("unknown" without one)
+    device: str  # the path of the disk's latest snapshot
+    data_points: int  # the disk's snapshots in the history
+    # The counters that rose over the disk's last 24 values (analyze_smart_trends); none: steady.
+    alerts: list[SmartTrendAlert]
 
+
+class SmartTrends(BaseModel):
+    disks: list[SmartDiskTrend]
+    critical_count: int
+    warning_count: int
+
+
+def _disk_trends(history: dict[str, list[dict]]) -> list[SmartDiskTrend]:
+    """The trend of every disk in the SMART history, in its order (ADR-0248).
+
+    The disks of the shared history "unknown" (no serial) are told apart by
+    their paths.
+    """
+    trends = []
     for serial, entries in history.items():
-        alerts = analyze_smart_trends(serial, entries)
-        all_alerts.extend([a.model_dump() for a in alerts])
+        shared = not serial or serial == _NO_SERIAL
+        devices = list(dict.fromkeys(e.get("device") for e in entries)) if shared else [None]
+        for device in devices:
+            snapshots = _snapshots_of_one_disk(serial, entries, device)
+            if not snapshots:
+                continue
+            trends.append(SmartDiskTrend(
+                serial=serial,
+                device=str(snapshots[-1].get("device", "")),
+                data_points=len(snapshots),
+                alerts=analyze_smart_trends(serial, snapshots),
+            ))
+    return trends
 
-    return {
-        "disks_tracked": len(history),
-        "alerts": all_alerts,
-        "critical_count": len([a for a in all_alerts if a["severity"] == "critical"]),
-        "warning_count": len([a for a in all_alerts if a["severity"] == "warning"])
-    }
+
+@router.get("/smart/trends", response_model=SmartTrends)
+def get_smart_trends(_: dict = Depends(verify_token)):
+    """The SMART trend of every disk in the history, steady ones included (ADR-0248).
+
+    Removed disks stay in the history and are listed too; 500 when the
+    history cannot be read.
+    """
+    disks = _disk_trends(_smart_history_or_500())
+    severities = Counter(alert.severity for disk in disks for alert in disk.alerts)
+    return SmartTrends(
+        disks=disks,
+        critical_count=severities["critical"],
+        warning_count=severities["warning"],
+    )
 
 
 class DiskPrediction(BaseModel):
@@ -1079,15 +1277,10 @@ class DiskPredictions(BaseModel):
 
 
 # A day of hourly snapshots: the least history a prediction needs, and the
-# window of its rate. The history keeps 720 snapshots (save_smart_history).
+# window of its rate. The history keeps SMART_HISTORY_LIMIT snapshots per disk.
 MIN_PREDICTION_SNAPSHOTS = 24
 # The status of the replace-soon mark in Disk Health and on the dashboard (ADR-0235).
 REPLACE_SOON_SCORE = 50
-
-
-def _reports_attribute(entry: dict, attr_id: int) -> bool:
-    attributes = entry.get("attributes") or {}
-    return str(attr_id) in attributes or attr_id in attributes
 
 
 def predict_disk_failure(serial: str, entries: list[dict], device: str) -> Optional[DiskPrediction]:
@@ -1228,7 +1421,7 @@ def get_disk_predictions(_: dict = Depends(verify_token)):
 
 
 @router.get("/smart-monitor/status")
-async def get_smart_monitor_status(_: dict = Depends(verify_token)):
+def get_smart_monitor_status(_: dict = Depends(verify_token)):
     """Get SMART trend monitor status."""
     history = _smart_history_or_500()
     return {
@@ -1248,6 +1441,7 @@ async def start_health_monitors():
     _raid_monitor_task = asyncio.create_task(raid_monitor_loop())
 
     _smart_monitor_running = True
+    _smart_history.stopped = False
     _smart_monitor_task = asyncio.create_task(smart_monitor_loop())
 
 
@@ -1263,3 +1457,5 @@ async def stop_health_monitors():
     _smart_monitor_running = False
     if _smart_monitor_task:
         _smart_monitor_task.cancel()
+    # The snapshots since the history was last written (ADR-0247).
+    await asyncio.to_thread(save_unsaved_smart_history)

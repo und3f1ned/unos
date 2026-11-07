@@ -647,3 +647,66 @@ class TestCreatePoolEndpoint:
         assert sdc["in_use"] is True and sdc["in_use_reason"] == "Mounted at /srv/backup"
         assert sdc["partitions"][0]["mountpoints"] == ["/srv/backup"]
         assert {"fstype", "label", "pttype", "has_data", "is_system", "pool", "wwn"} <= set(sdc)
+
+
+# ---------------------------------------------------------------------------
+# GET /storage/disks: the Physical Disks table of the Storage page
+# ---------------------------------------------------------------------------
+
+
+class TestDisksEndpoint:
+    """storage.disk-list: every whole disk of the host, with what UNOS knows about each.
+
+    The texts are the ones webui/tests/storage.spec.ts gives its route fakes.
+    """
+
+    def test_lists_every_whole_disk_with_model_size_and_serial(self, api, nas):
+        response = api.get("/api/v1/storage/disks")
+
+        assert response.status_code == 200, response.text
+        # The boot SD card and zram are no disks of the Storage page.
+        assert [(d["path"], d["model"], d["size"], d["serial"]) for d in response.json()] == [
+            ("/dev/sda", "WDC WD40EFRX", 4_000_787_030_016, "WD-1"),
+            ("/dev/sdb", "WDC WD40EFRX", 4_000_787_030_016, "WD-2"),
+            ("/dev/sdc", None, 2_000_398_934_016, None),
+            ("/dev/nvme0n1", "Samsung SSD 980", 512_110_190_592, None),
+        ]
+
+    def test_each_disk_says_what_uses_it_and_which_pool_it_belongs_to(self, api, nvme_root):
+        # nvme0n1 holds the host's /boot/efi and /, sdb is blank (nvme_root).
+        nvme_root.add_disk("sda", model="WDC WD40EFRX", serial="WD-1")
+        nvme_root.add_btrfs("data", DATA_UUID, ["/dev/sda"])
+        nvme_root.add_disk("sdc", pttype="gpt")
+        nvme_root.add_partition("sdc", "sdc1", fstype="ext4", label="backup", uuid=BACKUP_UUID)
+        nvme_root.add_mount("/srv/backup", "/dev/sdc1", "ext4", BACKUP_UUID)
+        nvme_root.add_disk("sdd", fstype="exfat", label="CAMERA")
+        nvme_root.add_disk("sdf")
+        nvme_root.add_disk("sdg")
+        nvme_root.add_btrfs("media", MEDIA_UUID, ["/dev/sdf", "/dev/sdg"], profile="raid1")
+        nvme_root.mount_pool("media")
+
+        response = api.get("/api/v1/storage/disks")
+
+        assert response.status_code == 200, response.text
+        fields = ("is_system", "in_use", "in_use_reason", "has_data", "pool")
+        assert {d["name"]: tuple(d[f] for f in fields) for d in response.json()} == {
+            "nvme0n1": (True, True, "Mounted at /boot/efi", True, None),
+            "sdb": (False, False, None, False, None),
+            # A pool that is not mounted: its disk holds data and is free to mount.
+            "sda": (False, False, None, True, "data"),
+            "sdc": (False, True, "Mounted at /srv/backup", True, None),
+            "sdd": (False, False, None, True, None),
+            # The members of a mounted pool.
+            "sdf": (False, True, "Mounted at /mnt/pools/media", True, "media"),
+            "sdg": (False, True, "Member of pool 'media'", True, "media"),
+        }
+
+    def test_a_disk_list_that_cannot_be_read_answers_500_with_the_reason(self, api, nas):
+        nas.fail[("lsblk",)] = (1, "lsblk: failed to access sysfs directory: /sys/dev/block")
+
+        response = api.get("/api/v1/storage/disks")
+
+        # The Storage page shows the reason instead of "No disks found" (ADR-0249).
+        assert (response.status_code, response.json()) == (
+            500, {"detail": "lsblk failed: lsblk: failed to access sysfs directory: /sys/dev/block"})
+        assert not any(call[0] == "wipefs" for call in nas.calls)

@@ -1784,6 +1784,41 @@ class TestPoolEndpoints:
         assert "transmission" in response.json()["detail"]
         assert data_pool.mounted("/mnt/pools/data")
 
+    # The texts the Unmount and Remove Pool dialogs show (webui/tests/storage.spec.ts).
+    @pytest.mark.parametrize(
+        ("method", "url"),
+        [("post", "/api/v1/storage/pools/data/unmount"), ("delete", "/api/v1/storage/pools/data")],
+    )
+    def test_a_pool_that_running_apps_use_answers_which_ones(self, api, data_pool, method, url):
+        pools.mount_pool("data")
+        data_pool.docker.add("transmission", sources=["/mnt/pools/data/apps/transmission"])
+        data_pool.docker.add("jellyfin", labels={"unos.app": "jellyfin", "unos.app.pool": "data"})
+
+        response = getattr(api, method)(url)
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "Pool 'data' is used by running containers (jellyfin, transmission). "
+                      "Stop them and try again."})
+        assert data_pool.mounted("/mnt/pools/data")
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+
+    @pytest.mark.parametrize(
+        ("method", "url"),
+        [("post", "/api/v1/storage/pools/data/unmount"), ("delete", "/api/v1/storage/pools/data")],
+    )
+    def test_a_pool_that_host_processes_use_answers_409(self, api, data_pool, method, url):
+        pools.mount_pool("data")
+        data_pool.busy.add("/mnt/pools/data")
+
+        response = getattr(api, method)(url)
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "/mnt/pools/data is busy (umount: /mnt/pools/data: target is busy.). Stop the "
+                      "shares, apps and containers that use the pool and try again."})
+        assert data_pool.mounted("/mnt/pools/data")
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+        assert "/mnt/pools/data" in data_pool.dirs
+
     def test_pool_still_in_use_after_unmounting_is_409(self, api, data_pool):
         pools.mount_pool("data")
         data_pool.held.add(DATA_UUID)

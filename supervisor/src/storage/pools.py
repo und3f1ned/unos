@@ -1928,11 +1928,19 @@ def start_scrub(pool_name: str) -> ScrubStatus:
     if result.returncode != 0:
         raise RuntimeError(f"Scrub start failed: {error}")
 
-    return get_scrub_status(pool_name)
+    try:
+        return get_scrub_status(pool_name)
+    except RuntimeError as exc:
+        # btrfs started it: the scrub runs, and its progress is read at the next request.
+        logger.warning("Started the scrub of %s, but could not read its status: %s", pool_name, exc)
+        return ScrubStatus(pool=pool_name, status="running")
 
 
 def get_scrub_status(pool_name: str) -> ScrubStatus:
-    """Get the scrub status for a pool."""
+    """The pool's scrub as ``btrfs scrub status`` reports it (ADR-0250).
+
+    idle when no scrub is recorded; RuntimeError when btrfs cannot report it.
+    """
     mountpoint = os.path.join(settings.pools_base_path, pool_name)
 
     result = subprocess.run(
@@ -1958,11 +1966,16 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
         if status_match:
             status = status_match.group(1).lower()
 
-    # Check if no scrub has been run
-    if "no stats available" in output.lower() or result.returncode != 0:
+    # No scrub recorded.
+    if "no stats available" in output.lower():
         return ScrubStatus(
             pool=pool_name,
             status="idle",
+        )
+    # Not "idle": btrfs could not report the status (ADR-0250).
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Scrub status failed: {result.stderr.strip() or f'exit status {result.returncode}'}"
         )
 
     # Parse duration (format: 0:05:30 or similar)
@@ -1997,17 +2010,13 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
         unit = rate_match.group(2).lower()
         rate = _parse_size_to_bytes(value, unit)
 
-    # Parse errors
+    # "Error summary:    read=1 csum=12", or "no errors found": every kind counts (ADR-0250).
     error_match = re.search(r"Error summary:\s*(.+?)(?:\n|$)", output)
     if error_match:
         error_text = error_match.group(1).strip()
         if "no errors" not in error_text.lower():
-            # Try to extract number of errors
-            num_match = re.search(r"(\d+)", error_text)
-            if num_match:
-                errors = int(num_match.group(1))
-            else:
-                errors = 1  # Some error occurred
+            counts = [int(count) for count in re.findall(r"\w+=(\d+)", error_text)]
+            errors = sum(counts) if counts else 1  # some error, in a form not known here
 
     return ScrubStatus(
         pool=pool_name,
@@ -2035,7 +2044,14 @@ def cancel_scrub(pool_name: str) -> ScrubStatus:
     if result.returncode != 0 and "not running" not in result.stderr.lower():
         raise RuntimeError(f"Scrub cancel failed: {result.stderr}")
 
-    return get_scrub_status(pool_name)
+    try:
+        return get_scrub_status(pool_name)
+    except RuntimeError as exc:
+        if result.returncode != 0:
+            raise  # it was not running: nothing tells how it ended
+        # btrfs cancelled it, and the kernel has stopped it.
+        logger.warning("Cancelled the scrub of %s, but could not read its status: %s", pool_name, exc)
+        return ScrubStatus(pool=pool_name, status="aborted")
 
 
 def _parse_size_to_bytes(value: float, unit: str) -> int:
