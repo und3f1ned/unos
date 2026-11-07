@@ -3,6 +3,7 @@
   import { getSystemInfo, type SystemInfo } from "$lib/api/system";
   import { getCurrentVersion, type CurrentVersion } from "$lib/api/updates";
   import { user } from "$lib/stores/auth";
+  import { Badge, Button, Card } from "$lib/components/ui";
   import { Server, User, Package } from "lucide-svelte";
 
   let systemInfo: SystemInfo | null = null;
@@ -76,39 +77,28 @@
     {/if}
   </div>
 
-  <!-- UNOS Version -->
-  <div class="bg-slate-800 rounded-lg p-4">
-    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-      <Package class="w-5 h-5 text-blue-400" />
+  <!-- UNOS Version: the version the supervisor image was built with (ADR-0233) -->
+  <Card>
+    <h3 class="section-title mb-4">
+      <Package class="w-5 h-5" />
       UNOS Version
     </h3>
 
     {#if loading}
-      <p class="text-slate-500">Loading...</p>
+      <p class="text-sm text-muted">Loading...</p>
     {:else if currentVersion}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-        <div>
-          <span class="text-slate-400">Version:</span>
-          <span class="ml-2 font-mono font-medium">{currentVersion.version}</span>
-          {#if currentVersion.is_development}
-            <span class="ml-2 px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs">dev</span>
-          {/if}
-        </div>
-        <div>
-          <span class="text-slate-400">Commit:</span>
-          <span class="ml-2 font-mono text-xs">{currentVersion.commit_hash}</span>
-        </div>
-      </div>
-      <a
-        href="#updates"
-        class="inline-block mt-3 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
-      >
-        Check for Updates
-      </a>
+      <p class="text-sm flex flex-wrap items-center gap-2">
+        <span class="text-secondary">Version:</span>
+        <span class="mono">{currentVersion.version}</span>
+        {#if currentVersion.is_development}
+          <Badge variant="warning">dev</Badge>
+        {/if}
+      </p>
+      <Button href="#updates" variant="secondary" size="sm" class="mt-3">Check for Updates</Button>
     {:else}
-      <p class="text-slate-500">Version info unavailable</p>
+      <p class="text-sm text-muted">Version info unavailable</p>
     {/if}
-  </div>
+  </Card>
 
   <!-- User Account -->
   <div class="bg-slate-800 rounded-lg p-4">

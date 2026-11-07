@@ -149,6 +149,7 @@ print(json.dumps({
         "DOCKER_HOST", "DOCKER_TLS_VERIFY", "UNOS_HOST_EXEC", "UNOS_DISABLE_BACKGROUND_TASKS",
         "UNOS_INSTALL_DIR", "UNOS_DEBUG_MODE", "container", "TMPDIR")},
     "login_limit": importlib.import_module("src.auth.router").limiter.enabled,
+    "power_off": importlib.import_module("src.host").runs_locally(),
     "gitignore": (state / ".gitignore").read_text(),
     "seeded": (data / "smb.conf").read_text(),
 }))
@@ -272,7 +273,10 @@ class TestIsolation:
         env, state = configured["env"], configured["state"]
         assert env["UNOS_HOST_EXEC"] == "local"
         assert env["UNOS_DISABLE_BACKGROUND_TASKS"] == "1"
-        # The power API refuses to reboot or shut down a container.
+        # With host commands on this machine, the power API refuses every power action: no
+        # reboot, shutdown, suspend or Wake-on-LAN change of this machine (ADR-0232).
+        assert configured["power_off"] is True
+        # The UPS monitor shuts nothing down inside a container (system.ups-monitoring).
         assert env["container"] == "docker"
         assert _inside(env["UNOS_INSTALL_DIR"], state) and not Path(env["UNOS_INSTALL_DIR"]).exists()
         assert _inside(env["TMPDIR"], state)

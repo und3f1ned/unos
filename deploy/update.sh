@@ -395,8 +395,9 @@ restore_previous() {
 build_images() {
     log_info "Building the new images (UNOS keeps running meanwhile)..."
 
-    # Build with no cache to ensure fresh build
-    if ! compose build --no-cache; then
+    # Build with no cache to ensure fresh build. The supervisor image carries
+    # the version of the new checkout, which the web interface shows (ADR-0233).
+    if ! UNOS_VERSION=$NEW_VERSION compose build --no-cache; then
         log_error "Building the new images failed. UNOS keeps running $CURRENT_VERSION; nothing was changed."
         restore_previous
         exit 1

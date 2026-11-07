@@ -534,7 +534,9 @@ The script:
    backup fails, nothing has changed yet: the script asks whether to update
    without a backup, and stops if the answer is no or there is no terminal.
 3. Tags the running images `:previous`, pulls the update and builds the new
-   images while UNOS keeps running. If the build fails, nothing changes.
+   images while UNOS keeps running. If the build fails, nothing changes. The
+   supervisor's image carries the version of the new checkout
+   (`git describe --tags --always`), which **System → Updates** shows.
 4. Restarts UNOS (`docker compose down`, then `up -d`). `docker compose up`
    starts the web interface once the supervisor answers its health check. The
    supervisor first mounts the pools the host has not mounted, up to two

@@ -1,17 +1,22 @@
 import subprocess
 import json
+import logging
 import os
 import asyncio
+import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from .. import host
 from ..auth.utils import verify_token
-from ..security.validators import validate_interface_name, sanitize_error_message
+from ..security.validators import INTERFACE_NAME_PATTERN, validate_interface_name
+
+logger = logging.getLogger(__name__)
 
 # Rate limiter for power endpoints
 limiter = Limiter(key_func=get_remote_address)
@@ -20,6 +25,43 @@ router = APIRouter(prefix="/power", tags=["power"])
 
 CONFIG_FILE = "/data/power_config.json"
 UPS_CONFIG_FILE = "/data/ups_config.json"
+# The Wake-on-LAN state an administrator chose per interface name, applied
+# again at every start of the supervisor (reapply_wol_settings, ADR-0232).
+WOL_FILE = "/data/wol_config.json"
+# One Wake-on-LAN change at a time: each reads the file, changes it and writes it.
+_wol_lock = threading.Lock()
+
+# Reboot, shutdown, cancel, suspend and Wake-on-LAN act on the host through
+# src/host.py (ADR-0232). With UNOS_HOST_EXEC=local the supervisor runs its
+# host commands on its own machine: the local stand-in on a workstation or the
+# unprivileged test stack. There every power endpoint answers 503 with this
+# text and runs nothing.
+POWER_OFF_DETAIL = (
+    "Power actions are off: this supervisor runs its host commands on its own machine "
+    "(UNOS_HOST_EXEC=local), not on a NAS host"
+)
+# Seconds a power command on the host may take.
+HOST_TIMEOUT = 30
+# The command that schedules each action one minute from now, with the wall
+# message that the host's logged-in users see, and the answer.
+_SCHEDULE = {
+    "reboot": (["shutdown", "-r", "+1", "UNOS: reboot requested in the web interface"],
+               "The host reboots in 1 minute"),
+    "shutdown": (["shutdown", "-h", "+1", "UNOS: shutdown requested in the web interface"],
+                 "The host shuts down in 1 minute"),
+}
+# logind's scheduled action and its time (microseconds since the epoch); ("", 0) when none.
+_SCHEDULED_SHUTDOWN = [
+    "busctl", "--json=short", "get-property", "org.freedesktop.login1", "/org/freedesktop/login1",
+    "org.freedesktop.login1.Manager", "ScheduledShutdown",
+]
+# logind's actions as the web UI names them. Dry runs (shutdown -k) only send
+# the wall message: nothing is pending.
+_PENDING_ACTIONS = {
+    "reboot": "reboot", "kexec": "reboot", "soft-reboot": "reboot",
+    "poweroff": "shutdown", "halt": "shutdown",
+}
+NOTHING_PENDING = "No reboot or shutdown is pending"
 
 # UPS monitoring state
 _ups_monitor_running = False
@@ -71,6 +113,35 @@ class PowerStatus(BaseModel):
     uptime_seconds: int
     last_boot: str
     load_average: list[float]
+
+
+class PendingAction(BaseModel):
+    """The reboot or shutdown that logind has scheduled on the host; both None when there is none."""
+    action: Optional[Literal["reboot", "shutdown"]] = None
+    at: Optional[datetime] = None
+
+
+class PowerAnswer(BaseModel):
+    status: Literal["scheduled", "cancelled", "none", "suspending"]
+    message: str
+    # What is pending after a reboot, shutdown or cancel; None after a suspend.
+    pending: Optional[PendingAction] = None
+
+
+class WolInterface(BaseModel):
+    """An Ethernet interface of the host and its Wake-on-LAN state, as ethtool reports it."""
+    name: str
+    mac_address: Optional[str] = None
+    # Whether it can wake the host by magic packet ("g" in ethtool's "Supports Wake-on").
+    supported: bool
+    # ethtool's "Wake-on" letters ("d": nothing wakes the host), "" when ethtool shows none.
+    wol: str
+    # Whether a magic packet wakes the host.
+    enabled: bool
+
+
+class WolStatus(BaseModel):
+    interfaces: list[WolInterface]
 
 
 def load_config() -> PowerConfig:
@@ -209,7 +280,12 @@ async def ups_monitor_loop():
 
 
 def is_in_container() -> bool:
-    """Check if running inside a Docker container."""
+    """Check if running inside a Docker container.
+
+    Only the UPS monitor's shutdown checks it, which therefore never runs
+    in the supervisor's container (system.ups-monitoring). The power actions
+    reach the host through src/host.py instead (ADR-0232).
+    """
     return os.path.exists("/.dockerenv") or os.environ.get("container") == "docker"
 
 
@@ -270,166 +346,295 @@ async def update_power_config(config: PowerConfig, _: dict = Depends(verify_toke
     return config
 
 
-@router.post("/reboot")
+# ==================== Reboot, shutdown and suspend (ADR-0232) ====================
+
+
+def _refuse_local() -> None:
+    """Refuse a power action where host commands would run on the supervisor's own machine."""
+    if host.runs_locally():
+        raise HTTPException(503, POWER_OFF_DETAIL)
+
+
+def _run(cmd: list[str]) -> host.HostResult:
+    """Run ``cmd`` on the host. A command that cannot start or hangs fails like one that exits non-zero."""
+    try:
+        return host.run_on_host(cmd, timeout=HOST_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return host.HostResult(124, "", f"{cmd[0]} did not answer within {HOST_TIMEOUT} seconds")
+    except OSError as exc:
+        return host.HostResult(126, "", str(exc))
+
+
+def _why(result: host.HostResult) -> str:
+    """What the host said about a failed command."""
+    text = (result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}")
+    return text if len(text) <= 300 else text[:300] + "..."
+
+
+def _read_pending() -> PendingAction:
+    """The reboot or shutdown that logind has scheduled on the host. Raises HTTPException(500)."""
+    result = _run(_SCHEDULED_SHUTDOWN)
+    if not result.ok:
+        raise HTTPException(500, f"Could not read the pending reboot or shutdown: {_why(result)}")
+    try:
+        action, usec = json.loads(result.stdout)["data"]
+        pending = _PENDING_ACTIONS.get(action)
+        at = datetime.fromtimestamp(int(usec) / 1_000_000, tz=timezone.utc) if pending and usec else None
+    except (ValueError, KeyError, TypeError, OverflowError, OSError):
+        raise HTTPException(
+            500, f"Could not read the pending reboot or shutdown: busctl answered {result.stdout.strip()[:100]!r}"
+        )
+    if at is None:
+        return PendingAction()
+    return PendingAction(action=pending, at=at)
+
+
+def _schedule(action: str) -> PowerAnswer:
+    """Reboot or shut down the host one minute from now."""
+    cmd, message = _SCHEDULE[action]
+    result = _run(cmd)
+    if not result.ok:
+        raise HTTPException(500, f"Could not schedule the {action}: {_why(result)}")
+    try:
+        pending = _read_pending()
+    except HTTPException as exc:
+        # Scheduled all the same: the answer must not say otherwise.
+        logger.warning("The %s is scheduled, but %s", action, exc.detail)
+        pending = PendingAction(action=action)
+    return PowerAnswer(status="scheduled", message=message, pending=pending)
+
+
+def _cancel() -> PowerAnswer:
+    """Cancel the pending reboot or shutdown, if there is one."""
+    pending = _read_pending()
+    if pending.action is None:
+        return PowerAnswer(status="none", message=NOTHING_PENDING, pending=pending)
+    result = _run(["shutdown", "-c"])
+    if not result.ok:
+        raise HTTPException(500, f"Could not cancel the pending {pending.action}: {_why(result)}")
+    after = _read_pending()
+    if after.action is not None:
+        raise HTTPException(500, f"The pending {after.action} is still scheduled")
+    return PowerAnswer(status="cancelled", message=f"The pending {pending.action} was cancelled", pending=after)
+
+
+def _suspend() -> PowerAnswer:
+    """Suspend the host to RAM, if its kernel offers it."""
+    try:
+        states = host.read_host_file("/sys/power/state", timeout=HOST_TIMEOUT)
+    except (host.HostCommandError, OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(500, f"Could not read the host's sleep states: {exc}")
+    if "mem" not in states.split():
+        raise HTTPException(409, "The host cannot suspend: its kernel offers no suspend to RAM")
+    result = _run(["systemctl", "suspend"])
+    if not result.ok:
+        raise HTTPException(500, f"Could not suspend the host: {_why(result)}")
+    return PowerAnswer(status="suspending", message="The host is suspending")
+
+
+@router.get("/pending", response_model=PendingAction)
+async def get_pending_action(_: dict = Depends(verify_token)):
+    """The reboot or shutdown pending on the host, and when it acts."""
+    _refuse_local()
+    return await asyncio.to_thread(_read_pending)
+
+
+@router.post("/reboot", response_model=PowerAnswer)
 @limiter.limit("2/minute")  # Rate limit reboot requests
 async def reboot_system(request: Request, _: dict = Depends(verify_token)):
-    """Reboot the system."""
-    if is_in_container():
-        return {"status": "unavailable", "message": "Reboot not available in container mode. Use host system to reboot."}
-    try:
-        subprocess.Popen(["shutdown", "-r", "+1", "System reboot requested via UNOS"])
-        return {"status": "scheduled", "message": "System will reboot in 1 minute"}
-    except FileNotFoundError:
-        # Try systemctl
-        try:
-            subprocess.Popen(["systemctl", "reboot"])
-            return {"status": "scheduled", "message": "System reboot initiated"}
-        except Exception as e:
-            raise HTTPException(500, f"Failed to schedule reboot: {e}")
-    except Exception as e:
-        raise HTTPException(500, f"Failed to schedule reboot: {e}")
+    """Reboot the host one minute from now."""
+    _refuse_local()
+    return await asyncio.to_thread(_schedule, "reboot")
 
 
-@router.post("/shutdown")
+@router.post("/shutdown", response_model=PowerAnswer)
 @limiter.limit("2/minute")  # Rate limit shutdown requests
 async def shutdown_system(request: Request, _: dict = Depends(verify_token)):
-    """Shutdown the system."""
-    if is_in_container():
-        return {"status": "unavailable", "message": "Shutdown not available in container mode. Use host system to shutdown."}
-    try:
-        subprocess.Popen(["shutdown", "-h", "+1", "System shutdown requested via UNOS"])
-        return {"status": "scheduled", "message": "System will shutdown in 1 minute"}
-    except FileNotFoundError:
-        # Try systemctl
-        try:
-            subprocess.Popen(["systemctl", "poweroff"])
-            return {"status": "scheduled", "message": "System shutdown initiated"}
-        except Exception as e:
-            raise HTTPException(500, f"Failed to schedule shutdown: {e}")
-    except Exception as e:
-        raise HTTPException(500, f"Failed to schedule shutdown: {e}")
+    """Shut the host down one minute from now."""
+    _refuse_local()
+    return await asyncio.to_thread(_schedule, "shutdown")
 
 
-@router.post("/cancel")
+@router.post("/cancel", response_model=PowerAnswer)
 async def cancel_shutdown(_: dict = Depends(verify_token)):
-    """Cancel scheduled shutdown/reboot."""
-    if is_in_container():
-        return {"status": "none", "message": "No shutdown scheduled (container mode)"}
+    """Cancel the pending reboot or shutdown of the host."""
+    _refuse_local()
+    return await asyncio.to_thread(_cancel)
+
+
+@router.post("/suspend", response_model=PowerAnswer)
+@limiter.limit("2/minute")  # Rate limit suspend requests
+async def suspend_system(request: Request, _: dict = Depends(verify_token)):
+    """Suspend the host to RAM now."""
+    _refuse_local()
+    return await asyncio.to_thread(_suspend)
+
+
+# ==================== Wake-on-LAN (ADR-0232) ====================
+
+
+def _read_wol(name: str, mac_address: Optional[str]) -> WolInterface:
+    """The Wake-on-LAN state of one interface, from ethtool on the host. Raises HTTPException(500)."""
+    result = _run(["ethtool", name])
+    # 124: no answer in time, 126 and 127: ethtool could not start (nsenter's exit status when
+    # the host lacks it). ethtool itself prints what it can, also when it exits non-zero.
+    if result.returncode in (124, 126, 127):
+        raise HTTPException(500, f"Could not read the Wake-on-LAN settings of {name}: {_why(result)}")
+    supports = wake_on = ""
+    for line in result.stdout.splitlines():
+        key, _, value = line.strip().partition(":")
+        if key == "Supports Wake-on":
+            supports = value.strip()
+        elif key == "Wake-on":
+            wake_on = value.strip()
+    return WolInterface(
+        name=name, mac_address=mac_address, supported="g" in supports, wol=wake_on, enabled="g" in wake_on
+    )
+
+
+def _list_wol() -> list[WolInterface]:
+    """The host's Ethernet interfaces with their Wake-on-LAN state. Raises HTTPException(500).
+
+    Physical devices only: Ethernet links without a link kind of their own,
+    so no loopback, veth, bridge, bond, VLAN or tunnel, and only names that
+    validate_interface_name accepts (they reach ethtool as arguments).
+    """
+    result = _run(["ip", "-d", "-j", "link", "show"])
+    if not result.ok:
+        raise HTTPException(500, f"Could not list the network interfaces: {_why(result)}")
     try:
-        result = subprocess.run(["shutdown", "-c"], capture_output=True, text=True)
-        if result.returncode == 0:
-            return {"status": "cancelled", "message": "Scheduled shutdown cancelled"}
+        links = json.loads(result.stdout)
+        if not isinstance(links, list):
+            raise ValueError("not a list")
+    except ValueError:
+        raise HTTPException(500, "Could not list the network interfaces: ip answered no list in JSON")
+    interfaces = []
+    for link in links:
+        if not isinstance(link, dict) or link.get("link_type") != "ether":
+            continue
+        linkinfo = link.get("linkinfo")
+        if isinstance(linkinfo, dict) and linkinfo.get("info_kind"):
+            continue
+        name = link.get("ifname")
+        if not isinstance(name, str) or not INTERFACE_NAME_PATTERN.fullmatch(name):
+            continue
+        address = link.get("address")
+        interfaces.append(_read_wol(name, address if isinstance(address, str) else None))
+    return interfaces
+
+
+def _load_wol_choices() -> dict[str, bool]:
+    """The Wake-on-LAN state chosen per interface name; entries that are not a name and a bool are left out."""
+    path = Path(WOL_FILE)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        logger.warning("Ignoring the Wake-on-LAN settings in %s: %s", WOL_FILE, exc)
+        return {}
+    if not isinstance(data, dict):
+        logger.warning("Ignoring the Wake-on-LAN settings in %s: not an object", WOL_FILE)
+        return {}
+    return {
+        name: on for name, on in data.items()
+        if isinstance(name, str) and INTERFACE_NAME_PATTERN.fullmatch(name) and isinstance(on, bool)
+    }
+
+
+def _remember_wol(name: str, on: bool) -> None:
+    """Keep the choice for the next start; the file is written only when it changes (ADR-0214)."""
+    choices = _load_wol_choices()
+    if choices.get(name) is on:
+        return
+    choices[name] = on
+    path = Path(WOL_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(choices, indent=2, sort_keys=True) + "\n")
+
+
+def _set_wol(name: str, on: bool) -> WolInterface:
+    """Turn magic-packet wake on (``wol g``) or every wake event off (``wol d``) for one interface."""
+    with _wol_lock:
+        return _set_wol_locked(name, on)
+
+
+def _set_wol_locked(name: str, on: bool) -> WolInterface:
+    current = next((iface for iface in _list_wol() if iface.name == name), None)
+    if current is None:
+        raise HTTPException(404, f"No network interface named {name}")
+    if not current.supported:
+        raise HTTPException(409, f"{name} does not support Wake-on-LAN by magic packet")
+    if current.enabled != on:
+        state = "on" if on else "off"
+        result = _run(["ethtool", "-s", name, "wol", "g" if on else "d"])
+        if not result.ok:
+            raise HTTPException(500, f"Could not turn Wake-on-LAN {state} for {name}: {_why(result)}")
+        current = _read_wol(name, current.mac_address)
+        if current.enabled != on:
+            raise HTTPException(500, f"Wake-on-LAN is still {'off' if on else 'on'} on {name}")
+    _remember_wol(name, on)
+    return current
+
+
+def _reapply_wol(choices: dict[str, bool]) -> None:
+    with _wol_lock:
+        _reapply_wol_locked(choices)
+
+
+def _reapply_wol_locked(choices: dict[str, bool]) -> None:
+    interfaces = {iface.name: iface for iface in _list_wol()}
+    for name, on in sorted(choices.items()):
+        state = "on" if on else "off"
+        current = interfaces.get(name)
+        if current is None:
+            logger.warning("Wake-on-LAN was turned %s for %s, which the host no longer has", state, name)
+            continue
+        if not current.supported or current.enabled == on:
+            continue
+        result = _run(["ethtool", "-s", name, "wol", "g" if on else "d"])
+        if result.ok:
+            logger.info("Wake-on-LAN is %s again for %s", state, name)
         else:
-            return {"status": "none", "message": "No shutdown scheduled"}
-    except FileNotFoundError:
-        return {"status": "none", "message": "No shutdown scheduled"}
-    except Exception as e:
-        raise HTTPException(500, f"Failed to cancel shutdown: {e}")
+            logger.warning("Could not turn Wake-on-LAN %s again for %s: %s", state, name, _why(result))
 
 
-@router.post("/suspend")
-async def suspend_system(_: dict = Depends(verify_token)):
-    """Suspend the system to RAM."""
-    if is_in_container():
-        return {"status": "unavailable", "message": "Suspend not available in container mode. Use host system to suspend."}
+async def reapply_wol_settings() -> None:
+    """Give each interface the Wake-on-LAN state an administrator chose for it.
+
+    Many drivers forget it at a reboot. Runs once beside the startup, in
+    main.py's lifespan (ADR-0043), off the event loop; logs, never raises.
+    """
+    choices = _load_wol_choices()
+    if not choices or host.runs_locally():
+        return
     try:
-        # Check if suspend is supported
-        with open("/sys/power/state") as f:
-            states = f.read().strip()
-        if "mem" not in states:
-            raise HTTPException(400, "Suspend not supported on this system")
-
-        subprocess.Popen(["systemctl", "suspend"])
-        return {"status": "suspending", "message": "System is suspending"}
-    except FileNotFoundError:
-        raise HTTPException(400, "Suspend not supported on this system")
-    except Exception as e:
-        raise HTTPException(500, f"Failed to suspend: {e}")
+        await asyncio.to_thread(_reapply_wol, choices)
+    except HTTPException as exc:
+        logger.warning("Could not apply the Wake-on-LAN settings: %s", exc.detail)
+    except Exception as exc:
+        logger.warning("Could not apply the Wake-on-LAN settings: %s", exc)
 
 
-@router.get("/wol")
+@router.get("/wol", response_model=WolStatus)
 async def get_wol_status(_: dict = Depends(verify_token)):
-    """Get Wake-on-LAN status for network interfaces."""
-    try:
-        result = subprocess.run(
-            ["ip", "link", "show"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            raise HTTPException(500, "Failed to get network interfaces")
-
-        interfaces = []
-        current_iface = None
-
-        for line in result.stdout.split("\n"):
-            if ": " in line and not line.startswith(" "):
-                parts = line.split(": ")
-                if len(parts) >= 2:
-                    name = parts[1].split("@")[0]
-                    if name not in ["lo", "docker0"] and not name.startswith("veth") and not name.startswith("br-"):
-                        current_iface = {"name": name, "wol": "unknown", "enabled": False}
-                        interfaces.append(current_iface)
-
-        # Get WOL status for each interface
-        for iface in interfaces:
-            try:
-                wol_result = subprocess.run(
-                    ["ethtool", iface["name"]],
-                    capture_output=True, text=True
-                )
-                for line in wol_result.stdout.split("\n"):
-                    if "Wake-on:" in line:
-                        wol = line.split(":")[1].strip()
-                        iface["wol"] = wol
-                        iface["enabled"] = "g" in wol.lower()
-            except Exception:
-                pass
-
-        return {"interfaces": interfaces}
-    except FileNotFoundError:
-        return {"interfaces": []}
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get WOL status: {e}")
+    """The host's Ethernet interfaces and their Wake-on-LAN state."""
+    _refuse_local()
+    return WolStatus(interfaces=await asyncio.to_thread(_list_wol))
 
 
-@router.post("/wol/{interface}/enable")
+@router.post("/wol/{interface}/enable", response_model=WolInterface)
 async def enable_wol(interface: str, _: dict = Depends(verify_token)):
-    """Enable Wake-on-LAN for an interface."""
-    # Validate interface name to prevent command injection
-    validated_interface = validate_interface_name(interface)
-
-    try:
-        result = subprocess.run(
-            ["ethtool", "-s", validated_interface, "wol", "g"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            raise HTTPException(500, "Failed to enable WOL")
-        return {"status": "enabled", "interface": validated_interface}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, sanitize_error_message(e))
+    """Let a magic packet to this interface wake the host."""
+    _refuse_local()
+    return await asyncio.to_thread(_set_wol, validate_interface_name(interface), True)
 
 
-@router.post("/wol/{interface}/disable")
+@router.post("/wol/{interface}/disable", response_model=WolInterface)
 async def disable_wol(interface: str, _: dict = Depends(verify_token)):
-    """Disable Wake-on-LAN for an interface."""
-    # Validate interface name to prevent command injection
-    validated_interface = validate_interface_name(interface)
-
-    try:
-        result = subprocess.run(
-            ["ethtool", "-s", validated_interface, "wol", "d"],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            raise HTTPException(500, "Failed to disable WOL")
-        return {"status": "disabled", "interface": validated_interface}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, sanitize_error_message(e))
+    """Let nothing that reaches this interface wake the host."""
+    _refuse_local()
+    return await asyncio.to_thread(_set_wol, validate_interface_name(interface), False)
 
 
 # ==================== UPS Monitoring ====================

@@ -21,6 +21,13 @@ COPY src/ ./src/
 # No .pyc files: the container's writable layer is on the system disk (SD card).
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# The version System > Updates and General show: `git describe --tags --always`
+# of the checkout, which deploy/install.sh and deploy/update.sh pass through
+# deploy/docker-compose.yml (ADR-0233). After the code and the packages, so
+# that a new version rebuilds only these layers.
+ARG UNOS_VERSION=unknown
+ENV UNOS_VERSION=${UNOS_VERSION}
+
 EXPOSE 8080
 
 # Every request reaches the supervisor through Caddy (the webui container), so

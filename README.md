@@ -92,15 +92,19 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Encrypted Backups** - Optional AES-256 encryption with passphrase
 - **Restore** - Import backups to restore configuration
 
+### Power Management
+- **Reboot, shutdown and suspend** - From System > Power after a confirmation; reboot and shutdown act on the host one minute later and can be cancelled until then
+- **Wake-on-LAN** - Turned on or off per Ethernet interface, and set again after every reboot
+
 ### System Updates
 - **Update script** - `sudo /opt/unos/deploy/update.sh` updates UNOS from its git branch, backs up the database and the data volume first, and rolls back automatically if the new version does not start
+- **Version check** - System > Updates shows the installed version and the latest release on GitHub, and names the update script
 
 ### Planned
 
 Not working yet; each has an entry in [feature-list.json](feature-list.json), named in parentheses:
 - **Recovery codes** (`auth.recovery-codes`) - Codes can be generated through the API, but the sign-in does not take one yet
 - **NFS exports** (`shares.nfs-exports`) - Exports are written inside the supervisor container and do not reach the host
-- **Power control** (`system.power`) - Reboot, shutdown and suspend from the web interface, and Wake-on-LAN: inside the supervisor container they are refused or reach only the container
 - **UPS monitoring** (`system.ups-monitoring`) - The UPS state and the shutdown on low battery: the supervisor image has no NUT client, and the shutdown is skipped inside a container
 - **Scheduled power** (`system.scheduled-power`) - Shutdown and wake times are stored, and nothing acts on them
 - **Alerts for every event and channel** (`system.alert-events`) - Discord, Slack and webhook channels get no alerts, and the events chosen for a channel have no effect
