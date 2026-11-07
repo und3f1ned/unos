@@ -5,7 +5,9 @@ devices, btrfs filesystems and a mount table) through a patched
 ``src.host.run_on_host``; ``subprocess.run`` itself is blocked, so no test can
 reach the real machine. ``FakeHost.changes`` records the commands that change
 the host so tests can assert them exactly. Docker is replaced by
-``FakeDocker`` (``FakeHost.docker``), so no test talks to a Docker daemon.
+``FakeDocker`` (``FakeHost.docker``), so no test talks to a Docker daemon,
+and the apply of smb.conf after a pool change is only counted
+(``FakeHost.smb_applies``).
 Apps of a pool are started by background threads after it is mounted; the
 ``fake_host`` fixture waits for them, so none outlives a test's patches.
 """
@@ -35,6 +37,7 @@ from src.auth.utils import verify_token
 from src.config import get_settings
 from src.host import HostCommandError, HostResult
 from src.main import app
+from src.shares import service as shares_service
 from src.storage import disks as disks_module
 from src.storage import pools
 from src.storage.schemas import PoolInfo
@@ -183,6 +186,8 @@ class FakeHost:
         self.changes: list[list[str]] = []
         self.mkfs_uuid = NEW_UUID
         self.docker = FakeDocker()
+        # How often the storage endpoints applied smb.conf after a pool change (install_fake_host).
+        self.smb_applies = 0
         self._minor = 0
         # The host boots from the SD card (ext4 root on mmcblk1p1), like the
         # ArmSoM board, and swaps to zram.
@@ -540,6 +545,10 @@ class FakeHost:
     def _systemctl(self, cmd):
         return self._result()
 
+    async def count_smb_apply(self) -> None:
+        """Stands in for shares.service.apply_after_pool_change (install_fake_host)."""
+        self.smb_applies += 1
+
 
 def install_fake_host(monkeypatch) -> FakeHost:
     """Route all host commands to a new FakeHost and block real subprocesses and Docker."""
@@ -552,6 +561,11 @@ def install_fake_host(monkeypatch) -> FakeHost:
     # at the pools below /mnt/pools of the machine running the tests, and create
     # folders there; on the device those pools are real. No pool is mounted for them.
     monkeypatch.setattr(apps_router, "list_mounted_pools", lambda: [])
+    # The apply of smb.conf after a pool change (ADR-0248) would read the smb.conf
+    # and the database of the machine running the tests, and run Samba's commands,
+    # which FakeHost does not know: it is only counted here. test_smb_integration.py
+    # runs it, with the Samba fake.
+    monkeypatch.setattr(shares_service, "apply_after_pool_change", fake.count_smb_apply)
     return fake
 
 
@@ -1825,6 +1839,31 @@ class TestPoolEndpoints:
         assert response.json() == {"status": "deleted"}
         assert not any(c[0] in ("mkfs.btrfs", "wipefs") for c in data_pool.calls)
         assert data_pool.fstab == BASE_FSTAB
+
+    def test_the_endpoints_that_change_the_managed_pools_apply_smb_conf(self, api, data_pool):
+        """ADR-0248: the managed pools decide which SMB shares are served, so create, mount,
+        unmount and remove apply smb.conf, also when they fail (an operation may change the fstab
+        before it fails); reads and requests refused before the operation do not. What the apply
+        does is tested in test_smb_integration.py."""
+        def applies(method, url, status, **kwargs) -> int:
+            before = data_pool.smb_applies
+            response = getattr(api, method)(url, **kwargs)
+            assert response.status_code == status, response.text
+            return data_pool.smb_applies - before
+
+        data_pool.add_disk("sdb")
+        tank = {"name": "tank", "devices": ["/dev/sdb"], "raid_level": "single", "confirm_name": "tank"}
+        assert applies("get", "/api/v1/storage/pools", 200) == 0
+        assert applies("get", "/api/v1/storage/pools/data", 200) == 0
+        assert applies("post", "/api/v1/storage/pools/data/mount", 200) == 1
+        data_pool.busy.add("/mnt/pools/data")
+        assert applies("post", "/api/v1/storage/pools/data/unmount", 409) == 1
+        data_pool.busy.clear()
+        assert applies("post", "/api/v1/storage/pools/data/unmount", 200) == 1
+        assert applies("delete", "/api/v1/storage/pools/data", 200) == 1
+        assert applies("post", "/api/v1/storage/pools", 400, json={**tank, "confirm_name": "other"}) == 0
+        assert applies("post", "/api/v1/storage/pools", 200, json=tank) == 1
+        assert applies("post", "/api/v1/storage/pools/bad%20name/unmount", 400) == 0
 
     def test_non_admin_is_forbidden(self, api, data_pool):
         api.user.is_admin = False
