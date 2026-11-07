@@ -31,6 +31,10 @@ dev device's is an SD card), boot disk.
 commits and pushes, opens pull requests and holds the credentials (ADR-0208, ADR-0024).
 Avoid: user (a UNOS user), admin.
 
+**Automatic revert**: What turns a network interface that UNOS disabled back on, with its saved
+addresses and routes: a timer on the host that runs unless the administrator keeps the disable
+within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` do), undo.
+
 ## Storage
 
 **Pool**: A btrfs filesystem on one or more disks that UNOS mounts under `/mnt/pools` (ADR-0034).

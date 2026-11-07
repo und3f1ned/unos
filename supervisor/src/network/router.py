@@ -1,38 +1,48 @@
-import subprocess
+"""System > Network: the host's interfaces, DNS, gateway, routes and connections (ADR-0245).
+
+Every command runs on the host through src/host.py (ADR-0020). Disable and
+Enable are in links.py: a Disable comes back on by itself unless it is kept
+(ADR-0244).
+"""
+
+import asyncio
 import json
 import re
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from typing import Optional
 
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from . import links
 from ..auth.utils import verify_token
-from ..security.validators import validate_interface_name, sanitize_error_message
+from ..security.validators import validate_interface_name
 
 router = APIRouter(prefix="/network", tags=["network"])
 
-
-def run_host_cmd(cmd: list[str], timeout: int = 10) -> subprocess.CompletedProcess:
-    """Run a command in the host's network and mount namespace using nsenter."""
-    full_cmd = ["nsenter", "--target", "1", "--net", "--mount"] + cmd
-    return subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
+# The host's /etc/hostname, mounted into the container (deploy/docker-compose.yml).
+HOSTNAME_FILE = "/host/hostname"
 
 
 class NetworkInterface(BaseModel):
     name: str
     mac: str
+    # The operational state the kernel reports: UP, DOWN (also without a link), UNKNOWN, ...
     state: str
+    # Administratively up: what Disable and Enable change.
+    enabled: bool
+    # IPv4 and IPv6, with their prefix lengths.
     ip_addresses: list[str]
+    # Mb/s, while the link is up and the driver knows it.
+    speed: int | None
     mtu: int
     type: str
+    # Seconds until a disable that waits to be kept comes back on by itself.
+    revert_in: int | None
 
 
-class InterfaceConfig(BaseModel):
-    name: str
-    dhcp: bool = True
-    ip_address: Optional[str] = None
-    netmask: Optional[str] = None
-    gateway: Optional[str] = None
-    dns_servers: list[str] = []
+class InterfaceList(BaseModel):
+    interfaces: list[NetworkInterface]
+    # How long a disable waits to be kept.
+    revert_seconds: int
 
 
 class DNSConfig(BaseModel):
@@ -54,316 +64,253 @@ class NetworkStats(BaseModel):
     tx_errors: int
 
 
-@router.get("/interfaces")
-async def get_interfaces(_: dict = Depends(verify_token)):
-    """Get all network interfaces from the host."""
+def _is_dockers(dev: str) -> bool:
+    return dev.startswith(("docker", "br-", "veth"))
+
+
+def _json_list(text: str, what: str) -> list:
     try:
-        result = run_host_cmd(["ip", "-j", "addr", "show"])
-        if result.returncode != 0:
-            raise HTTPException(500, "Failed to get network interfaces")
-
-        interfaces_data = json.loads(result.stdout)
-        interfaces = []
-
-        for iface in interfaces_data:
-            name = iface.get("ifname", "")
-            # Skip loopback, docker, veth, and bridge interfaces
-            if name in ["lo", "docker0", "dummy0"] or name.startswith("veth") or name.startswith("br-"):
-                continue
-
-            # Get IP addresses
-            ip_addresses = []
-            for addr_info in iface.get("addr_info", []):
-                if addr_info.get("family") == "inet":
-                    ip_addresses.append(f"{addr_info.get('local')}/{addr_info.get('prefixlen')}")
-
-            interfaces.append(NetworkInterface(
-                name=name,
-                mac=iface.get("address", ""),
-                state=iface.get("operstate", "unknown"),
-                ip_addresses=ip_addresses,
-                mtu=iface.get("mtu", 1500),
-                type=iface.get("link_type", "unknown")
-            ))
-
-        return {"interfaces": interfaces}
+        data = json.loads(text or "[]")
     except json.JSONDecodeError:
-        raise HTTPException(500, "Failed to parse network data")
-    except FileNotFoundError:
-        raise HTTPException(500, "ip command not found")
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get interfaces: {e}")
+        raise HTTPException(500, f"Failed to parse {what}")
+    if not isinstance(data, list):
+        raise HTTPException(500, f"Failed to parse {what}")
+    return data
 
 
-@router.get("/interfaces/{name}")
-async def get_interface(name: str, _: dict = Depends(verify_token)):
-    """Get details for a specific interface from the host."""
-    # Validate interface name to prevent command injection
-    validated_name = validate_interface_name(name)
-
+async def _speed(name: str) -> int | None:
+    """The link speed in Mb/s from the host's sysfs: None without a link, for Wi-Fi and when unknown."""
+    if "/" in name or name in ("", ".", ".."):
+        return None
+    result = await links.run(["cat", f"/sys/class/net/{name}/speed"], timeout=5)
     try:
-        result = run_host_cmd(["ip", "-j", "addr", "show", validated_name])
-        if result.returncode != 0:
-            raise HTTPException(404, f"Interface {validated_name} not found")
+        speed = int(result.stdout.strip()) if result.ok else 0
+    except ValueError:
+        return None
+    return speed if speed > 0 else None
 
-        data = json.loads(result.stdout)
-        if not data:
+
+async def _interface(entry: dict) -> NetworkInterface:
+    """An interface of `ip -j addr show`, with its speed and a disable that waits to be kept."""
+    name = entry.get("ifname", "")
+    enabled = links.is_enabled(entry)
+    state = entry.get("operstate", "unknown")
+    return NetworkInterface(
+        name=name,
+        mac=entry.get("address", ""),
+        state=state,
+        enabled=enabled,
+        ip_addresses=[
+            f"{addr['local']}/{addr.get('prefixlen')}"
+            for addr in entry.get("addr_info", [])
+            if addr.get("family") in ("inet", "inet6") and addr.get("local")
+        ],
+        speed=await _speed(name) if state == "UP" else None,
+        mtu=entry.get("mtu", 1500),
+        type=entry.get("link_type", "unknown"),
+        revert_in=None if enabled else await links.revert_in(name),
+    )
+
+
+@router.get("/interfaces", response_model=InterfaceList)
+async def get_interfaces(_=Depends(verify_token)):
+    """The host's interfaces, without the loopback and Docker's."""
+    result = await links.run(["ip", "-j", "addr", "show"])
+    if not result.ok:
+        raise HTTPException(500, f"Failed to get network interfaces: {links.reason(result)}")
+    entries = [
+        e for e in _json_list(result.stdout, "network data")
+        if isinstance(e, dict) and not links.is_hidden(e.get("ifname", ""))
+    ]
+    interfaces = await asyncio.gather(*(_interface(entry) for entry in entries))
+    return InterfaceList(interfaces=list(interfaces), revert_seconds=links.REVERT_SECONDS)
+
+
+@router.get("/interfaces/{name}", response_model=NetworkInterface)
+async def get_interface(name: str, _=Depends(verify_token)):
+    """One interface of the host."""
+    validate_interface_name(name)
+    if links.is_hidden(name):
+        raise HTTPException(404, f"Interface {name} not found")
+    result = await links.run(["ip", "-j", "addr", "show", "dev", name])
+    if not result.ok:
+        if "does not exist" in result.stderr:
             raise HTTPException(404, f"Interface {name} not found")
-
-        iface = data[0]
-        ip_addresses = []
-        for addr_info in iface.get("addr_info", []):
-            if addr_info.get("family") == "inet":
-                ip_addresses.append(f"{addr_info.get('local')}/{addr_info.get('prefixlen')}")
-
-        return NetworkInterface(
-            name=iface.get("ifname", name),
-            mac=iface.get("address", ""),
-            state=iface.get("operstate", "unknown"),
-            ip_addresses=ip_addresses,
-            mtu=iface.get("mtu", 1500),
-            type=iface.get("link_type", "unknown")
-        )
-    except json.JSONDecodeError:
-        raise HTTPException(500, "Failed to parse network data")
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get interface: {e}")
-
-
-@router.get("/stats")
-async def get_network_stats(_: dict = Depends(verify_token)):
-    """Get network statistics for all host interfaces."""
-    try:
-        # Read from host's /proc/net/dev via nsenter
-        result = run_host_cmd(["cat", "/proc/net/dev"])
-        if result.returncode != 0:
-            return {"stats": []}
-
-        stats = []
-        lines = result.stdout.strip().split("\n")[2:]  # Skip headers
-
-        for line in lines:
-            parts = line.split()
-            if len(parts) < 17:
-                continue
-
-            name = parts[0].rstrip(":")
-            # Skip loopback, docker, veth, and bridge interfaces
-            if name in ["lo", "docker0", "dummy0"] or name.startswith("veth") or name.startswith("br-"):
-                continue
-
-            stats.append(NetworkStats(
-                interface=name,
-                rx_bytes=int(parts[1]),
-                tx_bytes=int(parts[9]),
-                rx_packets=int(parts[2]),
-                tx_packets=int(parts[10]),
-                rx_errors=int(parts[3]),
-                tx_errors=int(parts[11])
-            ))
-
-        return {"stats": stats}
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get network stats: {e}")
-
-
-@router.get("/dns")
-async def get_dns_config(_: dict = Depends(verify_token)):
-    """Get DNS configuration from the host."""
-    try:
-        nameservers = []
-        search_domains = []
-
-        # Try resolvectl first (systemd-resolved)
-        result = run_host_cmd(["resolvectl", "status"])
-        if result.returncode == 0:
-            # Parse resolvectl output for DNS servers from all sections
-            for line in result.stdout.split("\n"):
-                line = line.strip()
-                if "DNS Servers:" in line:
-                    # Extract DNS servers (format: "DNS Servers: 10.1.1.1 fe80::...")
-                    parts = line.split(":", 1)
-                    if len(parts) > 1:
-                        servers = parts[1].strip().split()
-                        # Filter out IPv6 link-local addresses for cleaner display
-                        for s in servers:
-                            if not s.startswith("fe80::") and s not in nameservers:
-                                nameservers.append(s)
-                elif "DNS Domain:" in line or "Search Domains:" in line:
-                    parts = line.split(":", 1)
-                    if len(parts) > 1:
-                        domains = parts[1].strip().split()
-                        for d in domains:
-                            if d != "~." and d not in search_domains:
-                                search_domains.append(d)
-
-        # Fallback to resolv.conf if resolvectl didn't find anything
-        if not nameservers:
-            result = run_host_cmd(["cat", "/etc/resolv.conf"])
-            if result.returncode == 0:
-                for line in result.stdout.split("\n"):
-                    line = line.strip()
-                    if line.startswith("nameserver"):
-                        parts = line.split()
-                        if len(parts) >= 2 and parts[1] not in ("127.0.0.53", "127.0.0.11"):
-                            nameservers.append(parts[1])
-                    elif line.startswith("search"):
-                        parts = line.split()
-                        search_domains.extend(parts[1:])
-
-        return DNSConfig(nameservers=nameservers, search_domains=search_domains)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get DNS config: {e}")
-
-
-@router.get("/hostname")
-async def get_hostname(_: dict = Depends(verify_token)):
-    """Get system hostname from the host."""
-    try:
-        # Read from mounted /host/hostname first
-        try:
-            with open("/host/hostname") as f:
-                hostname = f.read().strip()
-                return HostnameConfig(hostname=hostname)
-        except:
-            pass
-        
-        # Fallback to nsenter
-        result = run_host_cmd(["hostname"])
-        hostname = result.stdout.strip() if result.returncode == 0 else "unknown"
-        return HostnameConfig(hostname=hostname)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get hostname: {e}")
-
-
-@router.put("/hostname")
-async def set_hostname(config: HostnameConfig, _: dict = Depends(verify_token)):
-    """Set system hostname on the host."""
-    # Validate hostname
-    if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$', config.hostname):
-        raise HTTPException(400, "Invalid hostname format")
-
-    try:
-        # Try using hostnamectl on the host
-        result = run_host_cmd(["hostnamectl", "set-hostname", config.hostname])
-        if result.returncode != 0:
-            # Fallback to hostname command
-            result = run_host_cmd(["hostname", config.hostname])
-            if result.returncode != 0:
-                raise HTTPException(500, f"Failed to set hostname: {result.stderr}")
-
-        return {"status": "success", "hostname": config.hostname}
-    except FileNotFoundError:
-        raise HTTPException(500, "hostname command not found")
-    except Exception as e:
-        raise HTTPException(500, f"Failed to set hostname: {e}")
-
-
-@router.get("/routes")
-async def get_routes(_: dict = Depends(verify_token)):
-    """Get routing table from the host."""
-    try:
-        result = run_host_cmd(["ip", "-j", "route", "show"])
-        if result.returncode != 0:
-            raise HTTPException(500, "Failed to get routes")
-
-        routes = json.loads(result.stdout)
-        # Filter out docker-related routes
-        filtered_routes = [
-            r for r in routes 
-            if not r.get("dev", "").startswith("docker") 
-            and not r.get("dev", "").startswith("br-")
-            and not r.get("dev", "").startswith("veth")
-        ]
-        return {"routes": filtered_routes}
-    except json.JSONDecodeError:
-        raise HTTPException(500, "Failed to parse routing data")
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get routes: {e}")
-
-
-@router.get("/gateway")
-async def get_default_gateway(_: dict = Depends(verify_token)):
-    """Get default gateway from the host."""
-    try:
-        result = run_host_cmd(["ip", "-j", "route", "show", "default"])
-        if result.returncode != 0:
-            return {"gateway": None, "interface": None}
-
-        routes = json.loads(result.stdout)
-        if routes:
-            # Find the real gateway (not docker)
-            for route in routes:
-                dev = route.get("dev", "")
-                if not dev.startswith("docker") and not dev.startswith("br-"):
-                    return {
-                        "gateway": route.get("gateway"),
-                        "interface": route.get("dev")
-                    }
-            # Fallback to first route
-            return {
-                "gateway": routes[0].get("gateway"),
-                "interface": routes[0].get("dev")
-            }
-        return {"gateway": None, "interface": None}
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get gateway: {e}")
-
-
-@router.post("/interfaces/{name}/up")
-async def bring_interface_up(name: str, _: dict = Depends(verify_token)):
-    """Bring a network interface up on the host."""
-    # Validate interface name to prevent command injection
-    validated_name = validate_interface_name(name)
-
-    try:
-        result = run_host_cmd(["ip", "link", "set", validated_name, "up"])
-        if result.returncode != 0:
-            raise HTTPException(500, "Failed to bring interface up")
-        return {"status": "success", "interface": validated_name, "state": "up"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, sanitize_error_message(e))
+        raise HTTPException(500, f"Failed to get interface {name}: {links.reason(result)}")
+    entries = [e for e in _json_list(result.stdout, "network data") if isinstance(e, dict)]
+    if not entries:
+        raise HTTPException(404, f"Interface {name} not found")
+    return await _interface(entries[0])
 
 
 @router.post("/interfaces/{name}/down")
-async def bring_interface_down(name: str, _: dict = Depends(verify_token)):
-    """Bring a network interface down on the host."""
-    # Validate interface name to prevent command injection
-    validated_name = validate_interface_name(name)
+async def bring_interface_down(name: str, _=Depends(verify_token)):
+    """Disable an interface. It comes back on by itself after revert_in seconds unless the
+    change is kept with POST .../down/confirm (ADR-0244)."""
+    revert_in = await links.disable(name)
+    return {"status": "success", "interface": name, "state": "down", "revert_in": revert_in}
 
+
+@router.post("/interfaces/{name}/down/confirm")
+async def keep_interface_down(name: str, _=Depends(verify_token)):
+    """Keep a disable that waits to be kept; 409 when none waits (it was turned back on)."""
+    await links.keep(name)
+    return {"status": "success", "interface": name, "state": "down"}
+
+
+@router.post("/interfaces/{name}/up")
+async def bring_interface_up(name: str, _=Depends(verify_token)):
+    """Enable an interface, with the addresses and routes its disable saved."""
+    await links.enable(name)
+    return {"status": "success", "interface": name, "state": "up"}
+
+
+@router.get("/stats")
+async def get_network_stats(_=Depends(verify_token)):
+    """Traffic counters of the host's interfaces, from its /proc/net/dev."""
+    result = await links.run(["cat", "/proc/net/dev"])
+    if not result.ok:
+        raise HTTPException(500, f"Failed to get network stats: {links.reason(result)}")
+    stats = []
+    for line in result.stdout.splitlines()[2:]:  # two header lines
+        name, _sep, counters = line.partition(":")
+        name, parts = name.strip(), counters.split()
+        if len(parts) < 16 or links.is_hidden(name):
+            continue
+        try:
+            stats.append(NetworkStats(
+                interface=name,
+                rx_bytes=int(parts[0]), rx_packets=int(parts[1]), rx_errors=int(parts[2]),
+                tx_bytes=int(parts[8]), tx_packets=int(parts[9]), tx_errors=int(parts[10]),
+            ))
+        except ValueError:
+            continue
+    return {"stats": stats}
+
+
+# A field of `resolvectl status`: "DNS Servers: 192.168.1.1". Its further values
+# follow on the next lines, indented and without a name. IPv6 addresses are
+# lower-case hexadecimal and have no space after a colon, so none looks like a field.
+_RESOLVECTL_FIELD = re.compile(r"\s*([A-Za-z][A-Za-z.]*(?: [A-Za-z.]+)*):(?:\s+|$)(.*)")
+
+
+def parse_resolvectl(text: str) -> tuple[list[str], list[str]]:
+    """The DNS servers and search domains in the output of `resolvectl status`.
+
+    Fallback servers (used only when no other is known), IPv6 link-local
+    servers and routing-only domains ("~.", "~example.org") are left out.
+    """
+    servers: list[str] = []
+    domains: list[str] = []
+    field = None
+    for line in text.splitlines():
+        match = _RESOLVECTL_FIELD.match(line)
+        if match:
+            field, values = match.group(1), match.group(2).split()
+        elif line[:1].isspace() and line.strip():
+            values = line.split()
+        else:
+            # A section ("Global", "Link 2 (eth0)") or an empty line.
+            field, values = None, []
+        if field == "DNS Servers":
+            for value in values:
+                server = value.split("#", 1)[0]  # "1.1.1.1#cloudflare-dns.com" (DNS over TLS)
+                if not server.lower().startswith("fe80:") and server not in servers:
+                    servers.append(server)
+        elif field in ("DNS Domain", "Search Domains"):
+            domains.extend(d for d in values if not d.startswith("~") and d not in domains)
+    return servers, domains
+
+
+@router.get("/dns", response_model=DNSConfig)
+async def get_dns_config(_=Depends(verify_token)):
+    """The host's DNS servers and search domains: systemd-resolved's, else /etc/resolv.conf's."""
+    servers: list[str] = []
+    domains: list[str] = []
+    resolvectl = await links.run(["resolvectl", "status"])
+    if resolvectl.ok:
+        servers, domains = parse_resolvectl(resolvectl.stdout)
+    if not servers:
+        resolv_conf = await links.run(["cat", "/etc/resolv.conf"])
+        if not resolv_conf.ok and not resolvectl.ok:
+            raise HTTPException(500, f"Failed to get DNS config: {links.reason(resolv_conf)}")
+        for line in resolv_conf.stdout.splitlines() if resolv_conf.ok else []:
+            parts = line.split()
+            if parts[:1] == ["nameserver"] and len(parts) > 1 and parts[1] not in ("127.0.0.53", "127.0.0.11"):
+                servers.append(parts[1])
+            elif parts[:1] == ["search"]:
+                domains.extend(d for d in parts[1:] if d not in domains)
+    return DNSConfig(nameservers=servers, search_domains=domains)
+
+
+@router.get("/hostname", response_model=HostnameConfig)
+async def get_hostname(_=Depends(verify_token)):
+    """The host's name: its /etc/hostname, else what `hostname` says on the host."""
     try:
-        result = run_host_cmd(["ip", "link", "set", validated_name, "down"])
-        if result.returncode != 0:
-            raise HTTPException(500, "Failed to bring interface down")
-        return {"status": "success", "interface": validated_name, "state": "down"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, sanitize_error_message(e))
+        with open(HOSTNAME_FILE) as f:
+            name = f.read().strip()
+        if name:
+            return HostnameConfig(hostname=name)
+    except OSError:
+        pass
+    result = await links.run(["hostname"])
+    return HostnameConfig(hostname=result.stdout.strip() if result.ok else "unknown")
+
+
+@router.put("/hostname")
+async def set_hostname(config: HostnameConfig, _=Depends(verify_token)):
+    """Set the host's name (hostnamectl, else hostname)."""
+    if not re.fullmatch(r"[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", config.hostname):
+        raise HTTPException(400, "Invalid hostname format")
+    result = await links.run(["hostnamectl", "set-hostname", config.hostname])
+    if not result.ok:
+        result = await links.run(["hostname", config.hostname])
+        if not result.ok:
+            raise HTTPException(500, f"Failed to set hostname: {links.reason(result)}")
+    return {"status": "success", "hostname": config.hostname}
+
+
+@router.get("/routes")
+async def get_routes(_=Depends(verify_token)):
+    """The host's IPv4 and IPv6 routing tables (main), without Docker's interfaces."""
+    ipv4 = await links.run(["ip", "-j", "route", "show"])
+    if not ipv4.ok:
+        raise HTTPException(500, f"Failed to get routes: {links.reason(ipv4)}")
+    routes = _json_list(ipv4.stdout, "routing data")
+    # A host without IPv6 has no IPv6 table.
+    ipv6 = await links.run(["ip", "-6", "-j", "route", "show"])
+    if ipv6.ok:
+        routes += _json_list(ipv6.stdout, "routing data")
+    return {"routes": [r for r in routes if isinstance(r, dict) and not _is_dockers(r.get("dev", ""))]}
+
+
+@router.get("/gateway")
+async def get_default_gateway(_=Depends(verify_token)):
+    """The host's IPv4 default route."""
+    result = await links.run(["ip", "-j", "route", "show", "default"])
+    if not result.ok:
+        raise HTTPException(500, f"Failed to get gateway: {links.reason(result)}")
+    routes = [r for r in _json_list(result.stdout, "routing data") if isinstance(r, dict)]
+    route = next((r for r in routes if not _is_dockers(r.get("dev", ""))), routes[0] if routes else None)
+    if route is None:
+        return {"gateway": None, "interface": None}
+    return {"gateway": route.get("gateway"), "interface": route.get("dev")}
 
 
 @router.get("/connections")
-async def get_connections(_: dict = Depends(verify_token)):
-    """Get active network connections from the host."""
-    try:
-        result = run_host_cmd(["ss", "-tunap"])
-        if result.returncode != 0:
-            return {"connections": []}
-
-        connections = []
-        lines = result.stdout.strip().split("\n")[1:]  # Skip header
-        for line in lines:
-            parts = line.split()
-            if len(parts) >= 5:
-                connections.append({
-                    "protocol": parts[0],
-                    "state": parts[1],
-                    "local": parts[4],
-                    "remote": parts[5] if len(parts) > 5 else ""
-                })
-
-        return {"connections": connections[:50]}  # Limit to 50
-    except Exception as e:
-        raise HTTPException(500, f"Failed to get connections: {e}")
+async def get_connections(_=Depends(verify_token)):
+    """The host's TCP and UDP sockets (`ss -tunap`), the first 50."""
+    result = await links.run(["ss", "-tunap"])
+    if not result.ok:
+        raise HTTPException(500, f"Failed to get connections: {links.reason(result)}")
+    connections = []
+    for line in result.stdout.strip().splitlines()[1:]:  # a header line
+        parts = line.split()
+        if len(parts) >= 5:
+            connections.append({
+                "protocol": parts[0],
+                "state": parts[1],
+                "local": parts[4],
+                "remote": parts[5] if len(parts) > 5 else "",
+            })
+    return {"connections": connections[:50]}

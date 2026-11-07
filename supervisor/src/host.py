@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
 # storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
-# power/router.py (shutdown, busctl, systemctl, ip, ethtool: ADR-0233).
-# cat, test, mkdir, rmdir, find, sync and sh also run there but come from
-# essential packages.
+# network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
+# systemd-resolved runs, else /etc/resolv.conf), and power/router.py (shutdown,
+# busctl, systemctl, ip, ethtool: ADR-0233). cat, test, mkdir, rmdir, rm, find,
+# sync, sleep, hostname and sh also run there but come from essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
@@ -55,9 +56,12 @@ HOST_TOOLS: dict[str, str] = {
     "smbpasswd": "samba-common-bin",
     "pdbedit": "samba",
     "smbstatus": "samba",
+    "ip": "iproute2",
+    "ss": "iproute2",
+    "systemd-run": "systemd",
+    "hostnamectl": "systemd",
     "shutdown": "systemd-sysv",
     "busctl": "systemd",
-    "ip": "iproute2",
     "ethtool": "ethtool",
 }
 

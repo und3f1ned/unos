@@ -2185,13 +2185,16 @@
         "Bring an interface down and up again: its state follows on the host"
       ],
       "verified_by": [
+        "supervisor/tests/test_network.py",
+        "supervisor/tests/test_validators.py",
         "webui/tests/network.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0015"
+        "ADR-0015",
+        "ADR-0245"
       ],
-      "notes": "The stand-in has no host network, and the E2E spec only opens the tab. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built (ADR-0245): every command of the network API runs on the host through src/host.py. GET /network/interfaces lists each interface's IPv4 and IPv6 addresses, its operational state, whether it is enabled, and its link speed from the host's sysfs; VLANs (eth0.100) are listed and changed like the others; the routes are the IPv4 and IPv6 tables; DNS reads all of resolvectl's servers and leaves out its fallback servers; a failed request answers 500 with the host's message (a host that does not answer in time: \"the host did not answer within N seconds\"), and the page shows it. The tab is built from the UI components and tokens. Disable and Enable follow ADR-0244 (system.network-disable-confirmation). The fake-host tests and the E2E spec (route fakes: the stand-in has no host network) pass. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): System > Network on the dev device lists its NICs and the Hurricane Electric tunnel with the addresses, states and speeds that `ip addr` and `cat /sys/class/net/<if>/speed` show on the host, and the DNS servers, search domains, gateway and routes of `resolvectl status`, `ip route` and `ip -6 route`; Disable and Enable of a NIC that does not carry the connection, and carries no VLANs (ADR-0246), follow on the host (`ip link`). The live rates on the page still come from the supervisor container's interfaces, matched by name (system.dashboard). PUT /network/hostname duplicates PUT /system/hostname (system.hostname-and-time-zone), and GET /system/network, which no page calls, duplicates GET /network/interfaces with ethtool speeds."
     },
     {
       "id": "system.hostname-and-time-zone",
@@ -2512,8 +2515,16 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0035"
-      ]
+        "ADR-0035",
+        "ADR-0244",
+        "ADR-0246"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_network.py",
+        "supervisor/tests/test_network_scripts.py",
+        "webui/tests/network.spec.ts"
+      ],
+      "notes": "Built (ADR-0244, ADR-0246): Disable asks in a dialog that names the interface and warns that the connection may drop. POST /network/interfaces/{name}/down saves the interface's addresses and routes in /run/unos/network on the host, arms the transient systemd timer unos-network-revert-<if> (60 seconds) and only then disables it; it refuses (the interface stays enabled) when the state cannot be saved or the timer cannot be armed, and (409) for an interface that carries VLANs without loose binding, which the kernel turns off and on with it. The page counts down, the newest countdown first and with the focus on the countdowns, and offers Keep (POST .../down/confirm); a Keep whose host command fails or does not answer in time answers from the marker on the host. Without Keep the timer turns the interface back on with its saved addresses and routes, also when the supervisor restarts. When the page's time runs out it looks again 5 seconds later and reports what it finds: back on, still counting on the host (countdown and Keep again), still off with nothing waiting (a revert that could not turn it on, or a Keep elsewhere: reported, with Enable), gone from the host, or not readable. Wherever UNOS finds the interface on again (Enable, Keep), it discards the saved state, unless the revert is restoring it. The fake-host tests, the tests of the host scripts under sh and dash and the E2E spec pass. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): disable a NIC that does not carry the connection and wait: after 60 seconds `ip link` shows it up again, `ip route` and `ip -6 addr` show its default route and IPv6 addresses again, `journalctl -u unos-network-revert-<if>` shows the revert and /run/unos/network/<if> holds no pending file; disable it and press Keep: it is still down after 60 seconds, `systemctl list-timers` lists no unos-network-revert timer, and Enable brings back its routes; disable it, press Keep, turn it on on the host (`ip link set dev <if> up`) and send `POST /network/interfaces/<if>/up`: it answers 200 and /run/unos/network/<if> holds no saved files; disable the NIC that carries the web UI: the page reaches UNOS again within about a minute; after a reboot every interface is up. Whether the dev device's network manager turns a kept disable back on by itself is unknown until then."
     },
     {
       "id": "system.boot-time-field",

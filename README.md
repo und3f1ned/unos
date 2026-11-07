@@ -83,9 +83,9 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Custom Commands** - Run a shell command in the supervisor container on a schedule
 
 ### Network Management
-- **Interfaces** - View network interfaces and their addresses, and bring them up or down
+- **Interfaces** - View network interfaces with their IPv4 and IPv6 addresses, state and link speed, and bring them up or down; a disabled interface comes back on by itself after 60 seconds unless the change is kept
 - **DNS Configuration** - View DNS servers and search domains
-- **Routing Table** - View network routes, the gateway and active connections
+- **Routing Table** - View the IPv4 and IPv6 routes, the gateway and active connections
 
 ### Backup & Recovery
 - **Configuration Backup** - Back up the UNOS database (accounts, 2FA, API tokens, SMB shares and their access)

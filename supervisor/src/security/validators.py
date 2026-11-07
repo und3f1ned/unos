@@ -34,7 +34,9 @@ VOLUME_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}\Z')
 SHARE_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}\Z')
 DISK_NAME_PATTERN = re.compile(r'^[a-z]{2,4}[0-9]*\Z')  # sda, sdb1, nvme0n1, etc.
 NVME_DISK_PATTERN = re.compile(r'^nvme[0-9]+n[0-9]+(p[0-9]+)?\Z')  # nvme0n1, nvme0n1p1
-INTERFACE_NAME_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_-]{0,14}\Z')  # eth0, enp3s0, etc.
+# eth0, enp3s0, he-ipv6, and VLANs as the kernel names them (eth0.100). A leading
+# letter keeps out ".", ".." and option-like names.
+INTERFACE_NAME_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.-]{0,14}\Z')
 # POSIX-style account names (also what Samba accepts in "valid users").
 USERNAME_PATTERN = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}\Z')
 # Snapshot names become a path component below <subvolume>/.snapshots.

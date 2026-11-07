@@ -310,11 +310,10 @@ access): allow it for regular accounts (see the next steps).
 
 ### 4. Configure Network (Optional)
 
-For a NAS, a static IP is recommended:
-
-1. Go to **System** → **Network**
-2. Configure your network interface
-3. Set a static IP address
+For a NAS, a fixed address is recommended. UNOS does not change addresses:
+reserve one for the NAS in your router's DHCP settings, or set a static IP
+address in the host's own network configuration. **System** → **Network**
+shows the addresses, DNS servers, gateway and routes the host uses.
 
 ### 5. Add Storage
 
