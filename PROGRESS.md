@@ -12,8 +12,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   UI, the network interface's disable confirmation with its automatic revert, and power actions
   on the host with an Updates tab that works. Before them: the audit log, the device's security,
   the upload fix for ext4, Dependabot's Actions and pip updates (#23 to #30).
-- The batch passed on the dev device (2026-11-07) except the magic-packet wake of
-  `system.power`, which needs a second machine on the LAN.
+- The batch passed on the dev device (2026-11-07). A magic packet from the workstation did not
+  start the device after a shutdown: its board cuts the network card's power (ADR-0247), so only
+  its power button starts it again; a reboot is the remote restart.
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
