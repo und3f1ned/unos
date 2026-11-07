@@ -30,7 +30,20 @@
 		Box
 	} from 'lucide-svelte';
 	import { Button, Card, Badge, Input, Select, Modal, Alert, EmptyState } from '$lib/components/ui';
-	import { ContainerDetailDrawer } from '$lib/components/containers';
+	import { ContainerDetailDrawer, ImageList } from '$lib/components/containers';
+
+	const tabs = [
+		{ id: 'containers', label: 'Containers' },
+		{ id: 'images', label: 'Images' }
+	] as const;
+	type TabId = (typeof tabs)[number]['id'];
+
+	let activeTab: TabId = 'containers';
+	// The Images tab loads its list when it is first shown, and keeps it (and a
+	// pull in progress) while the other tab is shown.
+	let imagesShown = false;
+	let imageList: ImageList | undefined;
+	$: if (activeTab === 'images') imagesShown = true;
 
 	let containers: Container[] = [];
 	let loading = true;
@@ -89,6 +102,29 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function refresh() {
+		if (activeTab === 'images') imageList?.refresh();
+		else loadData();
+	}
+
+	/**
+	 * Keyboard of the Containers / Images tabs: the arrow keys move to the
+	 * previous or next tab (wrapping around), Home and End to the first or
+	 * last; the tab reached is selected and focused.
+	 */
+	function tabKeydown(event: KeyboardEvent, from: TabId) {
+		const index = tabs.findIndex((tab) => tab.id === from);
+		let next: number;
+		if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+		else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+		else if (event.key === 'Home') next = 0;
+		else if (event.key === 'End') next = tabs.length - 1;
+		else return;
+		event.preventDefault();
+		activeTab = tabs[next].id;
+		document.getElementById(`docker-tab-${activeTab}`)?.focus();
 	}
 
 	function openCreateModal() {
@@ -262,325 +298,372 @@
 			</div>
 			<div>
 				<h1 class="page-title">Containers</h1>
-				<p class="text-sm text-secondary">Manage Docker containers</p>
+				<p class="text-sm text-secondary">Manage Docker containers and images</p>
 			</div>
 		</div>
 		<div class="flex items-center gap-2">
-			<Button variant="secondary" size="icon" on:click={loadData} disabled={loading}>
-				<RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
+			<Button
+				variant="secondary"
+				size="icon"
+				on:click={refresh}
+				disabled={activeTab === 'containers' && loading}
+			>
+				<RefreshCw class="w-4 h-4 {activeTab === 'containers' && loading ? 'animate-spin' : ''}" />
+				<span class="sr-only">Refresh</span>
 			</Button>
-			<Button variant="primary" icon={Plus} on:click={openCreateModal}>Create Container</Button>
-		</div>
-	</div>
-
-	<!-- Stats Cards -->
-	<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-		<button
-			class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
-			'running'
-				? 'ring-2 ring-green-500'
-				: ''}"
-			on:click={() => (stateFilter = stateFilter === 'running' ? '' : 'running')}
-		>
-			<div class="flex items-center justify-between">
-				<div>
-					<p class="text-secondary text-sm">Running</p>
-					<p class="text-2xl font-bold text-success">{runningCount}</p>
-				</div>
-				<div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
-					<CheckCircle2 class="w-5 h-5 text-success" />
-				</div>
-			</div>
-		</button>
-
-		<button
-			class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
-			'exited'
-				? 'ring-2 ring-red-500'
-				: ''}"
-			on:click={() => (stateFilter = stateFilter === 'exited' ? '' : 'exited')}
-		>
-			<div class="flex items-center justify-between">
-				<div>
-					<p class="text-secondary text-sm">Stopped</p>
-					<p class="text-2xl font-bold text-error">{stoppedCount}</p>
-				</div>
-				<div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
-					<XCircle class="w-5 h-5 text-error" />
-				</div>
-			</div>
-		</button>
-
-		<button
-			class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
-			''
-				? 'ring-2 ring-blue-500'
-				: ''}"
-			on:click={() => (stateFilter = '')}
-		>
-			<div class="flex items-center justify-between">
-				<div>
-					<p class="text-secondary text-sm">Total</p>
-					<p class="text-2xl font-bold">{containers.length}</p>
-				</div>
-				<div class="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
-					<Box class="w-5 h-5 text-info" />
-				</div>
-			</div>
-		</button>
-	</div>
-
-	{#if error}
-		<Alert variant="error">{error}</Alert>
-	{/if}
-
-	<!-- Search and View Toggle -->
-	<Card>
-		<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-			<div class="relative flex-1">
-				<Search
-					class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-content-muted pointer-events-none"
-				/>
-				<input
-					type="text"
-					placeholder="Search containers..."
-					bind:value={searchQuery}
-					class="form-input pl-10"
-				/>
-			</div>
-			<div class="flex items-center gap-2">
-				<select bind:value={stateFilter} class="form-select w-auto">
-					<option value="">All States</option>
-					<option value="running">Running</option>
-					<option value="exited">Stopped</option>
-					<option value="paused">Paused</option>
-					<option value="restarting">Restarting</option>
-				</select>
-				<div class="flex border border-border rounded-lg overflow-hidden">
-					<button
-						class="p-2 {viewMode === 'table' ? 'bg-surface-overlay' : 'bg-transparent'}"
-						on:click={() => (viewMode = 'table')}
-						title="Table view"
-					>
-						<List class="w-4 h-4" />
-					</button>
-					<button
-						class="p-2 {viewMode === 'cards' ? 'bg-surface-overlay' : 'bg-transparent'}"
-						on:click={() => (viewMode = 'cards')}
-						title="Card view"
-					>
-						<LayoutGrid class="w-4 h-4" />
-					</button>
-				</div>
-			</div>
-		</div>
-	</Card>
-
-	<!-- Container List -->
-	{#if loading}
-		<p class="loading-text">Loading containers...</p>
-	{:else if filteredContainers.length === 0}
-		<EmptyState
-			icon={ContainerIcon}
-			title="No containers found"
-			description={searchQuery || stateFilter
-				? 'Try adjusting your search or filter'
-				: 'Create your first container to get started'}
-		>
-			{#if !searchQuery && !stateFilter}
+			{#if activeTab === 'containers'}
 				<Button variant="primary" icon={Plus} on:click={openCreateModal}>Create Container</Button>
-			{:else}
-				<Button
-					variant="secondary"
-					on:click={() => {
-						searchQuery = '';
-						stateFilter = '';
-					}}>Clear Filters</Button
-				>
 			{/if}
-		</EmptyState>
-	{:else if viewMode === 'table'}
-		<!-- Table View -->
+		</div>
+	</div>
+
+	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit" role="tablist" aria-label="Docker">
+		{#each tabs as tab (tab.id)}
+			<button
+				type="button"
+				role="tab"
+				id="docker-tab-{tab.id}"
+				aria-selected={activeTab === tab.id}
+				aria-controls="docker-panel-{tab.id}"
+				tabindex={activeTab === tab.id ? 0 : -1}
+				class="px-4 py-2 rounded-md text-sm font-medium transition-colors {activeTab === tab.id
+					? 'bg-blue-600 text-white'
+					: 'text-secondary hover:text-content'}"
+				on:click={() => (activeTab = tab.id)}
+				on:keydown={(event) => tabKeydown(event, tab.id)}
+			>
+				{tab.label}
+			</button>
+		{/each}
+	</div>
+
+	<div
+		role="tabpanel"
+		id="docker-panel-containers"
+		aria-labelledby="docker-tab-containers"
+		hidden={activeTab !== 'containers'}
+		class="space-y-6"
+	>
+		<!-- Stats Cards -->
+		<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+			<button
+				class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
+				'running'
+					? 'ring-2 ring-green-500'
+					: ''}"
+				on:click={() => (stateFilter = stateFilter === 'running' ? '' : 'running')}
+			>
+				<div class="flex items-center justify-between">
+					<div>
+						<p class="text-secondary text-sm">Running</p>
+						<p class="text-2xl font-bold text-success">{runningCount}</p>
+					</div>
+					<div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+						<CheckCircle2 class="w-5 h-5 text-success" />
+					</div>
+				</div>
+			</button>
+
+			<button
+				class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
+				'exited'
+					? 'ring-2 ring-red-500'
+					: ''}"
+				on:click={() => (stateFilter = stateFilter === 'exited' ? '' : 'exited')}
+			>
+				<div class="flex items-center justify-between">
+					<div>
+						<p class="text-secondary text-sm">Stopped</p>
+						<p class="text-2xl font-bold text-error">{stoppedCount}</p>
+					</div>
+					<div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+						<XCircle class="w-5 h-5 text-error" />
+					</div>
+				</div>
+			</button>
+
+			<button
+				class="card hover:bg-surface-overlay transition-colors text-left cursor-pointer {stateFilter ===
+				''
+					? 'ring-2 ring-blue-500'
+					: ''}"
+				on:click={() => (stateFilter = '')}
+			>
+				<div class="flex items-center justify-between">
+					<div>
+						<p class="text-secondary text-sm">Total</p>
+						<p class="text-2xl font-bold">{containers.length}</p>
+					</div>
+					<div class="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
+						<Box class="w-5 h-5 text-info" />
+					</div>
+				</div>
+			</button>
+		</div>
+
+		{#if error}
+			<Alert variant="error">{error}</Alert>
+		{/if}
+
+		<!-- Search and View Toggle -->
 		<Card>
-			<div class="overflow-x-auto">
-				<table class="table">
-					<thead class="table-header">
-						<tr>
-							<th class="w-12"></th>
-							<th>Name</th>
-							<th>Image</th>
-							<th>State</th>
-							<th>Ports</th>
-							<th class="text-right">Actions</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each filteredContainers as container}
-							<tr
-								class="table-row hover:bg-surface-overlay cursor-pointer transition-colors"
-								on:click={() => openDrawer(container)}
-							>
-								<td>
-									<div
-										class="w-8 h-8 rounded bg-surface-muted flex items-center justify-center"
-									>
-										<ContainerIcon class="w-4 h-4 icon-container" />
-									</div>
-								</td>
-								<td>
-									<div class="font-medium">{container.name}</div>
-									<div class="text-xs text-muted mono-xs truncate max-w-48">
-										{container.id.substring(0, 12)}
-									</div>
-								</td>
-								<td>
-									<div class="mono text-sm truncate max-w-48">{container.image}</div>
-								</td>
-								<td>
-									<Badge variant={getStateVariant(container.state)}>{container.state}</Badge>
-								</td>
-								<td>
-									<div class="flex items-center gap-2">
-										<span class="text-sm text-secondary mono-xs">{formatPorts(container)}</span>
-										{#if getWebUrl(container)}
-											<a
-												href={getWebUrl(container)}
-												target="_blank"
-												rel="noopener"
-												on:click|stopPropagation
-												class="text-info hover:text-blue-300"
-												title="Open in browser"
-											>
-												<ExternalLink class="w-3.5 h-3.5" />
-											</a>
-										{/if}
-									</div>
-								</td>
-								<td>
-									<div class="flex items-center justify-end gap-1">
-										{#if container.state === 'running'}
-											<button
-												on:click={(e) => handleQuickAction(e, container.id, 'stop')}
-												class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
-												title="Stop"
-											>
-												<Square class="w-4 h-4" />
-											</button>
-											<button
-												on:click={(e) => handleQuickAction(e, container.id, 'restart')}
-												class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-info transition-colors"
-												title="Restart"
-											>
-												<RotateCw class="w-4 h-4" />
-											</button>
-										{:else}
-											<button
-												on:click={(e) => handleQuickAction(e, container.id, 'start')}
-												class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
-												title="Start"
-											>
-												<Play class="w-4 h-4" />
-											</button>
-										{/if}
-										<button
-											on:click={(e) => handleQuickAction(e, container.id, 'remove')}
-											class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
-											title="Remove"
-										>
-											<Trash2 class="w-4 h-4" />
-										</button>
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+			<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+				<div class="relative flex-1">
+					<Search
+						class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-content-muted pointer-events-none"
+					/>
+					<input
+						type="text"
+						placeholder="Search containers..."
+						bind:value={searchQuery}
+						class="form-input pl-10"
+					/>
+				</div>
+				<div class="flex items-center gap-2">
+					<select bind:value={stateFilter} class="form-select w-auto">
+						<option value="">All States</option>
+						<option value="running">Running</option>
+						<option value="exited">Stopped</option>
+						<option value="paused">Paused</option>
+						<option value="restarting">Restarting</option>
+					</select>
+					<div class="flex border border-border rounded-lg overflow-hidden">
+						<button
+							class="p-2 {viewMode === 'table' ? 'bg-surface-overlay' : 'bg-transparent'}"
+							on:click={() => (viewMode = 'table')}
+							title="Table view"
+						>
+							<List class="w-4 h-4" />
+						</button>
+						<button
+							class="p-2 {viewMode === 'cards' ? 'bg-surface-overlay' : 'bg-transparent'}"
+							on:click={() => (viewMode = 'cards')}
+							title="Card view"
+						>
+							<LayoutGrid class="w-4 h-4" />
+						</button>
+					</div>
+				</div>
 			</div>
 		</Card>
-	{:else}
-		<!-- Cards View -->
-		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-			{#each filteredContainers as container}
-				<div
-					class="card hover:bg-surface-overlay cursor-pointer transition-colors"
-					on:click={() => openDrawer(container)}
-					role="button"
-					tabindex="0"
-					on:keypress={(e) => e.key === 'Enter' && openDrawer(container)}
-				>
-					<div class="flex items-start justify-between mb-3">
-						<div class="flex items-center gap-3 min-w-0">
-							<div
-								class="w-10 h-10 rounded-lg bg-surface-muted flex items-center justify-center flex-shrink-0"
-							>
-								<ContainerIcon class="w-5 h-5 icon-container" />
-							</div>
-							<div class="min-w-0">
-								<h3 class="font-semibold truncate">{container.name}</h3>
-								<p class="text-sm text-secondary truncate">{container.image}</p>
-							</div>
-						</div>
-						<Badge variant={getStateVariant(container.state)}>{container.state}</Badge>
-					</div>
 
-					{#if container.ports.length > 0}
-						<div class="mb-3">
-							<p class="text-xs text-muted mb-1">Ports</p>
-							<div class="flex flex-wrap gap-1">
-								{#each container.ports.filter((p) => p.host_port) as port}
-									<span class="badge badge-info">
-										{port.host_port}:{port.container_port}
-									</span>
-								{/each}
-							</div>
-						</div>
-					{/if}
-
-					<div class="flex items-center justify-between pt-3 border-t border-border">
-						<span class="mono-xs text-muted">{container.id.substring(0, 12)}</span>
-						<div class="flex items-center gap-1">
-							{#if getWebUrl(container)}
-								<a
-									href={getWebUrl(container)}
-									target="_blank"
-									rel="noopener"
-									on:click|stopPropagation
-									class="p-1.5 rounded hover:bg-surface-muted text-info transition-colors"
-									title="Open in browser"
+		<!-- Container List -->
+		{#if loading}
+			<p class="loading-text">Loading containers...</p>
+		{:else if filteredContainers.length === 0}
+			<EmptyState
+				icon={ContainerIcon}
+				title="No containers found"
+				description={searchQuery || stateFilter
+					? 'Try adjusting your search or filter'
+					: 'Create your first container to get started'}
+			>
+				{#if !searchQuery && !stateFilter}
+					<Button variant="primary" icon={Plus} on:click={openCreateModal}>Create Container</Button>
+				{:else}
+					<Button
+						variant="secondary"
+						on:click={() => {
+							searchQuery = '';
+							stateFilter = '';
+						}}>Clear Filters</Button
+					>
+				{/if}
+			</EmptyState>
+		{:else if viewMode === 'table'}
+			<!-- Table View -->
+			<Card>
+				<div class="overflow-x-auto">
+					<table class="table">
+						<thead class="table-header">
+							<tr>
+								<th class="w-12"></th>
+								<th>Name</th>
+								<th>Image</th>
+								<th>State</th>
+								<th>Ports</th>
+								<th class="text-right">Actions</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each filteredContainers as container}
+								<tr
+									class="table-row hover:bg-surface-overlay cursor-pointer transition-colors"
+									on:click={() => openDrawer(container)}
 								>
-									<ExternalLink class="w-4 h-4" />
-								</a>
-							{/if}
-							{#if container.state === 'running'}
-								<button
-									on:click={(e) => handleQuickAction(e, container.id, 'stop')}
-									class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
-									title="Stop"
-								>
-									<Square class="w-4 h-4" />
-								</button>
-							{:else}
-								<button
-									on:click={(e) => handleQuickAction(e, container.id, 'start')}
-									class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
-									title="Start"
-								>
-									<Play class="w-4 h-4" />
-								</button>
-							{/if}
-							<button
-								on:click={(e) => handleQuickAction(e, container.id, 'remove')}
-								class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
-								title="Remove"
-							>
-								<Trash2 class="w-4 h-4" />
-							</button>
-						</div>
-					</div>
+									<td>
+										<div
+											class="w-8 h-8 rounded bg-surface-muted flex items-center justify-center"
+										>
+											<ContainerIcon class="w-4 h-4 icon-container" />
+										</div>
+									</td>
+									<td>
+										<div class="font-medium">{container.name}</div>
+										<div class="text-xs text-muted mono-xs truncate max-w-48">
+											{container.id.substring(0, 12)}
+										</div>
+									</td>
+									<td>
+										<div class="mono text-sm truncate max-w-48">{container.image}</div>
+									</td>
+									<td>
+										<Badge variant={getStateVariant(container.state)}>{container.state}</Badge>
+									</td>
+									<td>
+										<div class="flex items-center gap-2">
+											<span class="text-sm text-secondary mono-xs">{formatPorts(container)}</span>
+											{#if getWebUrl(container)}
+												<a
+													href={getWebUrl(container)}
+													target="_blank"
+													rel="noopener"
+													on:click|stopPropagation
+													class="text-info hover:text-blue-300"
+													title="Open in browser"
+												>
+													<ExternalLink class="w-3.5 h-3.5" />
+												</a>
+											{/if}
+										</div>
+									</td>
+									<td>
+										<div class="flex items-center justify-end gap-1">
+											{#if container.state === 'running'}
+												<button
+													on:click={(e) => handleQuickAction(e, container.id, 'stop')}
+													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
+													title="Stop"
+												>
+													<Square class="w-4 h-4" />
+												</button>
+												<button
+													on:click={(e) => handleQuickAction(e, container.id, 'restart')}
+													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-info transition-colors"
+													title="Restart"
+												>
+													<RotateCw class="w-4 h-4" />
+												</button>
+											{:else}
+												<button
+													on:click={(e) => handleQuickAction(e, container.id, 'start')}
+													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
+													title="Start"
+												>
+													<Play class="w-4 h-4" />
+												</button>
+											{/if}
+											<button
+												on:click={(e) => handleQuickAction(e, container.id, 'remove')}
+												class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
+												title="Remove"
+											>
+												<Trash2 class="w-4 h-4" />
+											</button>
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
 				</div>
-			{/each}
-		</div>
-	{/if}
+			</Card>
+		{:else}
+			<!-- Cards View -->
+			<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+				{#each filteredContainers as container}
+					<div
+						class="card hover:bg-surface-overlay cursor-pointer transition-colors"
+						on:click={() => openDrawer(container)}
+						role="button"
+						tabindex="0"
+						on:keypress={(e) => e.key === 'Enter' && openDrawer(container)}
+					>
+						<div class="flex items-start justify-between mb-3">
+							<div class="flex items-center gap-3 min-w-0">
+								<div
+									class="w-10 h-10 rounded-lg bg-surface-muted flex items-center justify-center flex-shrink-0"
+								>
+									<ContainerIcon class="w-5 h-5 icon-container" />
+								</div>
+								<div class="min-w-0">
+									<h3 class="font-semibold truncate">{container.name}</h3>
+									<p class="text-sm text-secondary truncate">{container.image}</p>
+								</div>
+							</div>
+							<Badge variant={getStateVariant(container.state)}>{container.state}</Badge>
+						</div>
+
+						{#if container.ports.length > 0}
+							<div class="mb-3">
+								<p class="text-xs text-muted mb-1">Ports</p>
+								<div class="flex flex-wrap gap-1">
+									{#each container.ports.filter((p) => p.host_port) as port}
+										<span class="badge badge-info">
+											{port.host_port}:{port.container_port}
+										</span>
+									{/each}
+								</div>
+							</div>
+						{/if}
+
+						<div class="flex items-center justify-between pt-3 border-t border-border">
+							<span class="mono-xs text-muted">{container.id.substring(0, 12)}</span>
+							<div class="flex items-center gap-1">
+								{#if getWebUrl(container)}
+									<a
+										href={getWebUrl(container)}
+										target="_blank"
+										rel="noopener"
+										on:click|stopPropagation
+										class="p-1.5 rounded hover:bg-surface-muted text-info transition-colors"
+										title="Open in browser"
+									>
+										<ExternalLink class="w-4 h-4" />
+									</a>
+								{/if}
+								{#if container.state === 'running'}
+									<button
+										on:click={(e) => handleQuickAction(e, container.id, 'stop')}
+										class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
+										title="Stop"
+									>
+										<Square class="w-4 h-4" />
+									</button>
+								{:else}
+									<button
+										on:click={(e) => handleQuickAction(e, container.id, 'start')}
+										class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
+										title="Start"
+									>
+										<Play class="w-4 h-4" />
+									</button>
+								{/if}
+								<button
+									on:click={(e) => handleQuickAction(e, container.id, 'remove')}
+									class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
+									title="Remove"
+								>
+									<Trash2 class="w-4 h-4" />
+								</button>
+							</div>
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</div>
+
+	<div
+		role="tabpanel"
+		id="docker-panel-images"
+		aria-labelledby="docker-tab-images"
+		hidden={activeTab !== 'images'}
+	>
+		{#if imagesShown}
+			<ImageList bind:this={imageList} />
+		{/if}
+	</div>
 </div>
 
 <!-- Create Container Modal -->

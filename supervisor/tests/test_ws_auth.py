@@ -1,4 +1,5 @@
 """WebSocket authentication handshake (first-message auth, 4401/4403 close codes)."""
+import json
 import logging
 import queue
 import threading
@@ -10,12 +11,15 @@ from unittest.mock import patch
 import bcrypt
 import jwt
 import pytest
+from docker.errors import NotFound
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 from starlette.websockets import WebSocketDisconnect
+from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import connect as ws_connect
 
 from src.auth import utils as auth_utils
 from src.auth.models import APIToken, User
@@ -26,6 +30,7 @@ from src.main import app
 from src.websocket import events
 
 from .test_api_token_last_use import FAILURES, START
+from .test_containers import served_by_uvicorn
 
 _FAST_HASH = bcrypt.hashpw(b"irrelevant", bcrypt.gensalt(rounds=4)).decode()
 
@@ -242,6 +247,87 @@ class TestContainerLogsSocket:
                 time.sleep(0.01)
         assert stream.closed.is_set()
         assert _FakeDockerClient.instances and _FakeDockerClient.instances[0].closed
+
+    def test_the_stream_starts_with_the_last_lines_and_follows_the_log(self, client, admin_token):
+        # The container drawer of the web UI shows what this socket sends: the
+        # last LOG_STREAM_TAIL_LINES lines, then each new one, each line with the
+        # time Docker received it, as GET /containers/{id}/logs has it (ADR-0255).
+        stream = _BlockingLogStream([b"line 1\n"])
+        asked = []
+
+        class _AskedDockerClient(_FakeDockerClient):
+            def _get(self, container_id):
+                asked.append(container_id)
+
+                def logs(**kwargs):
+                    asked.append(kwargs)
+                    return self.stream
+
+                return SimpleNamespace(logs=logs)
+
+        with patch("docker.DockerClient", lambda *a, **kw: _AskedDockerClient(stream, *a, **kw)):
+            with client.websocket_connect("/ws/v1/logs/abc") as ws:
+                _auth(ws, admin_token)
+                assert ws.receive_json() == {"type": "auth_ok"}
+                assert ws.receive_json() == {"type": "log", "container_id": "abc", "data": "line 1\n"}
+
+        assert events.LOG_STREAM_TAIL_LINES == 200
+        assert asked == ["abc", {"stream": True, "follow": True, "tail": 200, "timestamps": True}]
+
+
+class _GoneDockerClient(_FakeDockerClient):
+    """Docker that no longer knows the container."""
+
+    def _get(self, container_id):
+        raise NotFound(f"No such container: {container_id}")
+
+
+class TestTheLogSocketClosesWhenItsLogEnds:
+    """What a browser sees of the end of a log, through uvicorn as in the image.
+
+    The web UI shows a close with 1000 as "The log stream ended" and any other end
+    as a lost connection (streamContainerLogs of webui/src/lib/api/containers.ts,
+    ADR-0255). An endpoint that returns without closing makes uvicorn drop the
+    connection without a close frame, which a browser reports as 1006.
+    """
+
+    @pytest.mark.parametrize(
+        "docker_client,last_message",
+        [
+            # Docker's follow stream of a stopped container ends after its last lines.
+            (
+                lambda stream: _FakeDockerClient(stream),
+                {"type": "log", "container_id": "abc", "data": "line 1\n"},
+            ),
+            (
+                lambda stream: _GoneDockerClient(stream),
+                {"type": "error", "message": "No such container: abc"},
+            ),
+        ],
+        ids=["the-log-ends", "the-log-cannot-be-read"],
+    )
+    def test_the_server_closes_the_socket_with_1000(self, ws_db, admin_token, docker_client, last_message):
+        stream = _FedLogStream()
+        stream.feed(b"line 1\n")
+        stream.feed(None)  # the end of the log
+        made = []
+
+        def make_client(*args, **kwargs):
+            made.append(docker_client(stream))
+            return made[-1]
+
+        with patch("docker.DockerClient", make_client), served_by_uvicorn() as address:
+            with ws_connect(f"ws://{address}/ws/v1/logs/abc", proxy=None, open_timeout=10, close_timeout=5) as ws:
+                ws.send(json.dumps({"type": "auth", "token": admin_token}))
+                assert json.loads(ws.recv(timeout=10)) == {"type": "auth_ok"}
+                assert json.loads(ws.recv(timeout=10)) == last_message
+                with pytest.raises(ConnectionClosed) as closed:
+                    ws.recv(timeout=10)
+            # The end released Docker too.
+            _wait_for(lambda: made and made[0].closed)
+
+        assert closed.value.rcvd is not None, "the server dropped the connection without a close frame (1006)"
+        assert closed.value.rcvd.code == 1000
 
 
 # ---------------------------------------------------------------------------
