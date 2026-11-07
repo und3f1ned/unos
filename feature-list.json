@@ -1844,7 +1844,7 @@
       "description": "A scheduled backup task makes backups and keeps only the newest N scheduled ones",
       "steps": [
         "Add a backup task with retention 3 in System > Scheduler",
-        "Each run stores auto_backup_<date>_<time>.tar.gz, complete before it is listed, and two runs at once both succeed",
+        "Each run stores auto_backup_<date>_<time>.tar.gz.enc, complete before it is listed, and two runs at once both succeed",
         "The fourth run deletes the oldest scheduled backup and never a manual one"
       ],
       "verified_by": [
@@ -1853,9 +1853,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0172"
+        "ADR-0172",
+        "ADR-0232"
       ],
-      "notes": "The scheduler E2E spec covers SMART tasks only. Device check: 2026-11-06 (two scheduled backups at once)."
+      "notes": "The E2E specs run a backup task on the stand-in, without the Keep Count (webui/tests/scheduler.spec.ts, webui/tests/backup-restore.spec.ts). Device check: 2026-11-06 (two scheduled backups at once), before scheduled backups were encrypted (ADR-0232)."
     },
     {
       "id": "backup.off-device-copies",
@@ -1923,10 +1924,18 @@
         "A backup task encrypts what it stores with AES-256-GCM and a passphrase, as a manual backup with a passphrase is (.tar.gz.enc)",
         "A scheduled backup restores with that passphrase and is refused without it"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0041"
-      ]
+        "ADR-0041",
+        "ADR-0232"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_scheduler_validation.py",
+        "supervisor/tests/test_backup_files.py",
+        "webui/tests/scheduler.spec.ts",
+        "webui/tests/backup-restore.spec.ts"
+      ],
+      "notes": "A backup task needs a passphrase, which no answer of the API and no file holds; the device keeps the key derived from it in /data/scheduled_backup_keys.json, mode 0600 (ADR-0232). The stand-in runs a backup task and restores its backup with the passphrase (webui/tests/backup-restore.spec.ts). Not checked on the device: the RAM a run takes there, and that backup tasks made before ADR-0232 fail until a passphrase is set."
     },
     {
       "id": "files.browse-and-download",
@@ -2296,10 +2305,15 @@
         "Edit a task that ran: its last run and last status stay",
         "Every control of the task form is reached through its label"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0175"
-      ]
+      ],
+      "verified_by": [
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/scheduler.spec.ts"
+      ],
+      "notes": "The task form keeps its native controls, each named by its label through a for/id pair; the passphrase fields of backup tasks are Input components (ADR-0232)."
     },
     {
       "id": "system.scheduler-time-zone",

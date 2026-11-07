@@ -124,6 +124,10 @@ one or more containers. Avoid: app.
 **Backup**: An archive of the UNOS database, encrypted if wanted, without the pools' files
 (ADR-0040). Avoid: snapshot.
 
+**Scheduled backup**: A backup that a backup task of the Scheduler makes,
+`auto_backup_<date>_<time>.tar.gz.enc`, always encrypted with the task's passphrase, of which the
+device keeps only a derived key (ADR-0232). Avoid: auto backup.
+
 **Restore**: Replacing the live database with a backup's after the archive and the database are
 checked (ADR-0040, ADR-0144). Restoring a snapshot is another action: it makes a copy.
 Avoid: rollback (what `update.sh` and `deploy.sh` do).

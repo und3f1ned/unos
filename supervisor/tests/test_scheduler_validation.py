@@ -2,15 +2,21 @@
 
 import contextlib
 import importlib
+import io
 import json
 import os
+import re
 import signal
+import sqlite3
+import stat
 import subprocess
+import tarfile
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cryptography.exceptions import InvalidTag
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -21,6 +27,7 @@ from src.scheduler.schemas import ScheduledTask
 from .test_pool_persistence import install_fake_host
 
 scheduler = importlib.import_module("src.scheduler.router")
+backup_router = importlib.import_module("src.backup.router")
 
 ADMIN = SimpleNamespace(id=1, username="admin", is_admin=True)
 USER = SimpleNamespace(id=2, username="user", is_admin=False)
@@ -33,6 +40,7 @@ def env(tmp_path, monkeypatch):
     (tmp_path / "outside").mkdir()
     monkeypatch.setattr(scheduler, "TASKS_FILE", str(tmp_path / "tasks.json"))
     monkeypatch.setattr(scheduler, "RUNS_FILE", str(tmp_path / "runs.json"))
+    monkeypatch.setattr(scheduler, "BACKUP_KEYS_FILE", str(tmp_path / "backup_keys.json"))
     app.dependency_overrides[verify_token] = lambda: ADMIN
     # Temporary directories are not mount points; treat existing pool directories as mounted.
     monkeypatch.setattr(scheduler, "_pool_is_mounted", scheduler._real_dir)
@@ -308,6 +316,344 @@ def test_stored_tasks_that_predate_validation_still_load(env):
     assert [t["id"] for t in response.json()] == ["task_1", "task_2"]
 
 
+# --- editing a task that ran ------------------------------------------------------------
+
+
+def test_editing_a_task_that_ran_keeps_its_last_run_and_last_status(env):
+    """PUT stored the task as sent, and the Scheduler tab sends neither field: an edit cleared both (ADR-0175).
+
+    They are the results of runs: what a client sends for them is ignored.
+    """
+    task = _create_custom_task(env)
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+    (ran,) = _stored(env)
+    assert ran["last_status"] == "success" and ran["last_run"]
+    url = f"/api/v1/scheduler/tasks/{task['id']}"
+
+    edits = {
+        5: _task(task_type="custom", target_pool=None, command="true", hour=5),  # as the Scheduler tab sends it
+        6: _task(task_type="custom", target_pool=None, command="true", hour=6, last_run=None, last_status=None),
+        7: _task(task_type="custom", target_pool=None, command="true", hour=7,
+                 last_run="2020-01-01T00:00:00", last_status="failed"),
+    }
+    for hour, body in edits.items():
+        response = env.client.put(url, json=body)
+        assert response.status_code == 200, response.text
+        assert (response.json()["last_run"], response.json()["last_status"]) == (ran["last_run"], "success")
+        (stored,) = _stored(env)
+        assert (stored["hour"], stored["last_run"], stored["last_status"]) == (hour, ran["last_run"], "success")
+    (listed,) = env.client.get("/api/v1/scheduler/tasks").json()
+    assert (listed["last_run"], listed["last_status"]) == (ran["last_run"], "success")
+
+
+def test_an_edit_keeps_the_result_of_a_run_that_ends_while_the_disk_is_checked(env, monkeypatch):
+    """update_task reads the tasks again after the disk check; the run's result comes from that read."""
+    task = _create_smart_task(env, "/dev/sda")
+    real_disk_device = scheduler.disk_device
+
+    def a_run_ends_during_the_check(target_disk):
+        tasks = scheduler.load_tasks()
+        tasks[0].last_run, tasks[0].last_status = "2026-01-02T03:04:05", "failed"
+        scheduler.save_tasks(tasks)
+        return real_disk_device(target_disk)
+
+    monkeypatch.setattr(scheduler, "disk_device", a_run_ends_during_the_check)
+    response = env.client.put(
+        f"/api/v1/scheduler/tasks/{task['id']}",
+        json=_task(task_type="smart_test", target_pool=None, target_disk="/dev/nvme0n1"),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["last_status"] == "failed"
+    (stored,) = _stored(env)
+    assert (stored["target_disk"], stored["last_run"], stored["last_status"]) == (
+        "/dev/nvme0n1", "2026-01-02T03:04:05", "failed"
+    )
+
+
+# --- backup tasks and their passphrase (ADR-0232) ---------------------------------------
+
+PASSPHRASE = "correct horse battery"
+NO_PASSPHRASE = "A backup task needs a passphrase: its backups are encrypted with it"
+
+
+def _backup_task(**overrides) -> dict:
+    return _task(**{"task_type": "backup", "target_pool": None, "keep_count": 3, "passphrase": PASSPHRASE,
+                    **overrides})
+
+
+def _keys(env) -> dict:
+    """The stored keys of the backup tasks, by task id."""
+    return json.loads((env.tmp / "backup_keys.json").read_text())
+
+
+@pytest.fixture
+def backup_env(env, monkeypatch):
+    """env with a database to back up (kept open, as the running supervisor does) and a backup directory."""
+    db_file = env.tmp / "unos.db"
+    conn = sqlite3.connect(db_file)
+    conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, hashed_password TEXT, is_admin BOOLEAN)")
+    conn.execute("INSERT INTO users (username, hashed_password, is_admin) VALUES ('admin', 'h', 1)")
+    conn.commit()
+    monkeypatch.setattr(scheduler, "SCHEDULED_BACKUP_DIR", str(env.tmp / "backups"))
+    monkeypatch.setattr(scheduler, "DB_FILE", str(db_file))
+    env.backups = env.tmp / "backups"
+    yield env
+    conn.close()
+
+
+def _run_now(env, task_id: str) -> dict:
+    """Run the task now and return its run."""
+    assert env.client.post(f"/api/v1/scheduler/tasks/{task_id}/run").status_code == 200
+    return env.client.get(f"/api/v1/scheduler/runs/{task_id}").json()[-1]
+
+
+def _decrypted(path, passphrase: str) -> bytes:
+    return backup_router.decrypt_file(path.read_bytes(), passphrase)
+
+
+@pytest.mark.parametrize("passphrase", [None, ""])
+def test_a_backup_task_needs_a_passphrase(env, passphrase):
+    response = env.client.post("/api/v1/scheduler/tasks", json=_backup_task(passphrase=passphrase))
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == NO_PASSPHRASE
+    assert _stored(env) == []
+    assert not (env.tmp / "backup_keys.json").exists()
+
+
+def test_a_passphrase_has_at_least_8_characters(env):
+    response = env.client.post("/api/v1/scheduler/tasks", json=_backup_task(passphrase="7 chars"))
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "The passphrase must have at least 8 characters"
+    assert _stored(env) == []
+
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task(passphrase="8 chars!")).json()
+    keys = _keys(env)
+    response = env.client.put(f"/api/v1/scheduler/tasks/{task['id']}", json=_backup_task(passphrase="short"))
+    assert response.status_code == 400, response.text
+    assert _keys(env) == keys
+
+
+def test_a_passphrase_that_is_not_unicode_text_is_refused(env):
+    # A lone surrogate, which JSON can carry and UTF-8 cannot encode.
+    body = json.dumps(_backup_task(passphrase="PLACEHOLDER")).replace("PLACEHOLDER", "passphrase \\ud800")
+    response = env.client.post(
+        "/api/v1/scheduler/tasks", content=body, headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "The passphrase must be valid Unicode text"
+    assert _stored(env) == []
+
+
+def test_the_passphrase_is_write_only(env):
+    """No answer of the API and not the tasks file (every scheduled backup holds a copy) contains it."""
+    created = env.client.post("/api/v1/scheduler/tasks", json=_backup_task())
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    listed = env.client.get("/api/v1/scheduler/tasks")
+    updated = env.client.put(f"/api/v1/scheduler/tasks/{task_id}", json=_backup_task(hour=4))
+    assert updated.status_code == 200, updated.text
+
+    for answer in (created, listed, updated):
+        assert PASSPHRASE not in answer.text and "passphrase" not in answer.text
+    tasks_file = (env.tmp / "tasks.json").read_text()
+    assert PASSPHRASE not in tasks_file and "passphrase" not in tasks_file
+    # The key derived from it is kept apart, readable by root only, without the passphrase.
+    keys_file = env.tmp / "backup_keys.json"
+    assert stat.S_IMODE(keys_file.stat().st_mode) == 0o600
+    assert list(_keys(env)) == [task_id]
+    assert PASSPHRASE not in keys_file.read_text()
+
+
+def test_a_backup_task_stores_encrypted_backups(backup_env):
+    env = backup_env
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task()).json()
+
+    run = _run_now(env, task["id"])
+
+    assert run["status"] == "success", run
+    (backup,) = env.backups.iterdir()
+    assert re.fullmatch(r"auto_backup_\d{8}_\d{6}\.tar\.gz\.enc", backup.name)
+    assert run["output"] == f"Backup {backup.name} created."
+    with pytest.raises(InvalidTag):
+        _decrypted(backup, "not the passphrase")
+    with tarfile.open(fileobj=io.BytesIO(_decrypted(backup, PASSPHRASE)), mode="r:gz") as tar:
+        names = tar.getnames()
+        archived_tasks = json.load(tar.extractfile("scheduled_tasks.json"))
+    assert names[0] == "manifest.json" and "unos.db" in names
+    assert set(names) <= {"manifest.json", "unos.db", "smb.conf", "fstab", "scheduled_tasks.json"}
+    assert [t["id"] for t in archived_tasks] == [task["id"]]
+    assert "passphrase" not in archived_tasks[0]
+    (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
+    assert stored["last_status"] == "success"
+
+
+def test_an_edit_without_a_passphrase_keeps_it_and_a_new_one_applies_to_later_backups(backup_env):
+    env = backup_env
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task()).json()
+    url = f"/api/v1/scheduler/tasks/{task['id']}"
+    keys_file = env.tmp / "backup_keys.json"
+    written = (keys_file.stat().st_ino, keys_file.stat().st_mtime_ns, keys_file.read_text())
+
+    # The Scheduler tab sends no passphrase when the field is left empty.
+    for body in (_backup_task(passphrase=None, hour=5), _backup_task(passphrase="", hour=6)):
+        response = env.client.put(url, json=body)
+        assert response.status_code == 200, response.text
+    assert (keys_file.stat().st_ino, keys_file.stat().st_mtime_ns, keys_file.read_text()) == written
+    assert _run_now(env, task["id"])["status"] == "success"
+    (first,) = env.backups.iterdir()
+    _decrypted(first, PASSPHRASE)
+
+    assert env.client.put(url, json=_backup_task(passphrase="a new passphrase")).status_code == 200
+    assert _run_now(env, task["id"])["status"] == "success"
+    (second,) = set(env.backups.iterdir()) - {first}
+    _decrypted(second, "a new passphrase")
+    with pytest.raises(InvalidTag):
+        _decrypted(second, PASSPHRASE)
+    _decrypted(first, PASSPHRASE)  # a backup keeps the passphrase it was made with
+
+
+def test_a_task_changed_to_a_backup_task_needs_a_passphrase(env):
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task()).json()
+    url = f"/api/v1/scheduler/tasks/{task['id']}"
+    before = _stored(env)
+
+    response = env.client.put(url, json=_backup_task(passphrase=None))
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == NO_PASSPHRASE
+    assert _stored(env) == before
+    assert not (env.tmp / "backup_keys.json").exists()
+
+    assert env.client.put(url, json=_backup_task()).status_code == 200
+    assert list(_keys(env)) == [task["id"]]
+
+
+def test_the_key_goes_with_its_backup_task(env):
+    """Deleting a backup task, or making it another kind of task, removes its key."""
+    first, second = (env.client.post("/api/v1/scheduler/tasks", json=_backup_task(name=name)).json()
+                     for name in ("A", "B"))
+    assert sorted(_keys(env)) == sorted([first["id"], second["id"]])
+
+    assert env.client.put(f"/api/v1/scheduler/tasks/{first['id']}", json=_task()).status_code == 200
+    assert list(_keys(env)) == [second["id"]]
+    assert env.client.delete(f"/api/v1/scheduler/tasks/{second['id']}").status_code == 200
+    assert _keys(env) == {}
+
+
+def test_a_key_file_that_cannot_be_read_is_never_replaced(backup_env):
+    """A read error is not an empty file: writing then would drop the keys of the other tasks."""
+    env = backup_env
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task(name="A")).json()
+    keys_file = env.tmp / "backup_keys.json"
+    keys = keys_file.read_bytes()
+    keys_file.unlink()
+    keys_file.mkdir()  # reading it fails with an OSError (EISDIR)
+    stored = _stored(env)
+
+    for method, url, body in [
+        ("POST", "/api/v1/scheduler/tasks", _backup_task(name="B")),
+        ("PUT", f"/api/v1/scheduler/tasks/{task['id']}", _backup_task(passphrase="a new passphrase")),
+        ("PUT", f"/api/v1/scheduler/tasks/{task['id']}", _task()),
+        ("DELETE", f"/api/v1/scheduler/tasks/{task['id']}", None),
+    ]:
+        response = env.client.request(method, url, json=body)
+        assert response.status_code == 500, (method, url, response.text)
+        assert "The keys of the backup tasks cannot be read" in response.json()["detail"]
+        # Nothing changed: neither the tasks nor the key file.
+        assert _stored(env) == stored and keys_file.is_dir()
+    run = _run_now(env, task["id"])
+    assert run["status"] == "failed" and "The keys of the backup tasks cannot be read" in run["error"]
+    assert not env.backups.exists()
+
+    keys_file.rmdir()
+    keys_file.write_bytes(keys)
+    assert _run_now(env, task["id"])["status"] == "success"
+
+
+def test_a_key_file_that_is_not_json_counts_as_empty_until_a_passphrase_is_set(backup_env):
+    """Its keys cannot be used; the next passphrase replaces the file (written by hand, for example)."""
+    env = backup_env
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task()).json()
+    keys_file = env.tmp / "backup_keys.json"
+    keys_file.write_bytes(b"\xff not json")
+
+    run = _run_now(env, task["id"])
+    assert (run["status"], run["error"]) == ("failed", scheduler.NO_BACKUP_KEY)
+
+    response = env.client.put(f"/api/v1/scheduler/tasks/{task['id']}", json=_backup_task())
+    assert response.status_code == 200, response.text
+    assert list(_keys(env)) == [task["id"]]
+    assert _run_now(env, task["id"])["status"] == "success"
+
+
+def test_the_key_file_is_written_off_the_event_loop_and_reaches_the_disk(env, monkeypatch):
+    """fsync of the file and of its folder: after a power cut, a new passphrase must not turn into the old one."""
+    import asyncio
+
+    writes: list[bool] = []
+    synced: list[str] = []
+    real_save, real_fsync = scheduler.save_backup_keys, os.fsync
+
+    def save(keys):
+        try:
+            asyncio.get_running_loop()
+            writes.append(True)  # on the event loop
+        except RuntimeError:
+            writes.append(False)
+        real_save(keys)
+
+    def fsync(fd):
+        synced.append("folder" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_fsync(fd)
+
+    monkeypatch.setattr(scheduler, "save_backup_keys", save)
+    monkeypatch.setattr(scheduler.os, "fsync", fsync)
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task()).json()
+    env.client.put(f"/api/v1/scheduler/tasks/{task['id']}", json=_backup_task(passphrase="a new passphrase"))
+    env.client.delete(f"/api/v1/scheduler/tasks/{task['id']}")
+
+    assert writes == [False, False, False]
+    assert synced == ["file", "folder"] * 3
+
+
+def test_keys_set_at_the_same_time_are_all_kept(env, monkeypatch):
+    """Two keys stored at once: each write reads the file after the other one wrote it."""
+    import threading
+
+    both_read = threading.Barrier(2, timeout=0.5)
+    real_load = scheduler.load_backup_keys
+
+    def load():
+        keys = real_load()
+        with contextlib.suppress(threading.BrokenBarrierError):
+            both_read.wait()  # without the lock, both writes start from the same keys
+        return keys
+
+    monkeypatch.setattr(scheduler, "load_backup_keys", load)
+    keys = {f"task_{n}": backup_router.new_backup_key(f"passphrase {n}") for n in range(2)}
+    threads = [threading.Thread(target=scheduler.set_backup_key, args=item) for item in keys.items()]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(_keys(env)) == sorted(keys)
+
+
+def test_a_backup_task_without_a_key_fails_and_stores_no_backup(backup_env):
+    """A backup task in a tasks file written by hand, or whose key file was lost."""
+    env = backup_env
+    (env.tmp / "tasks.json").write_text(json.dumps([_task(id="task_by_hand", task_type="backup", target_pool=None)]))
+
+    run = _run_now(env, "task_by_hand")
+
+    assert (run["status"], run["error"]) == (
+        "failed", "No passphrase is set for this backup task: edit the task and set one"
+    )
+    assert not env.backups.exists()
+
+
 # --- validation when running ---------------------------------------------------------
 
 
@@ -326,6 +672,15 @@ async def test_smart_test_runs_on_normalized_device(env):
 def _create_smart_task(env, disk: str) -> dict:
     response = env.client.post(
         "/api/v1/scheduler/tasks", json=_task(task_type="smart_test", target_pool=None, target_disk=disk)
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _create_custom_task(env) -> dict:
+    """A custom task running `true` (subprocess.run is mocked: it succeeds)."""
+    response = env.client.post(
+        "/api/v1/scheduler/tasks", json=_task(task_type="custom", target_pool=None, command="true")
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -574,29 +929,20 @@ async def test_cleanup_only_deletes_real_auto_snapshots(env):
     assert "Cleaned up 2" in message
 
 
-async def test_scheduled_backup_passes_restore_validation(env, monkeypatch):
+def test_scheduled_backup_passes_restore_validation(backup_env):
     """Scheduled backups copy the DB consistently and are accepted by the hardened restore."""
-    import sqlite3
+    env = backup_env
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task()).json()
 
-    backup_router = importlib.import_module("src.backup.router")
-    db_file = env.tmp / "unos.db"
-    conn = sqlite3.connect(db_file)
-    conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, hashed_password TEXT, is_admin BOOLEAN)")
-    conn.execute("INSERT INTO users (username, hashed_password, is_admin) VALUES ('admin', 'h', 1)")
-    conn.commit()  # keep the connection open, as the running supervisor does
-    backups = env.tmp / "backups"
-    monkeypatch.setattr(scheduler, "SCHEDULED_BACKUP_DIR", str(backups))
-    monkeypatch.setattr(scheduler, "DB_FILE", str(db_file))
+    assert _run_now(env, task["id"])["status"] == "success"
 
-    ok, message = await scheduler.execute_task(ScheduledTask(**_task(task_type="backup", target_pool=None)))
-    conn.close()
-
-    assert ok, message
-    (archive,) = backups.glob("auto_backup_*.tar.gz")
-    assert backup_router._inspect_archive(archive)["type"] == "scheduled"
+    (archive,) = env.backups.glob("auto_backup_*.tar.gz.enc")
+    plain = env.tmp / "decrypted.tar.gz"
+    plain.write_bytes(_decrypted(archive, PASSPHRASE))
+    assert backup_router._inspect_archive(plain)["type"] == "scheduled"
     extracted = env.tmp / "extracted"
     extracted.mkdir()
-    with backup_router._open_tar(_gunzip(archive, env.tmp / "a.tar")) as tar:
+    with backup_router._open_tar(_gunzip(plain, env.tmp / "a.tar")) as tar:
         backup_router._extract(tar, backup_router._scan_members(tar), extracted)
     backup_router._verify_database(extracted / "unos.db")
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from enum import Enum
 from typing import Optional
 
@@ -38,6 +38,12 @@ class ScheduledTask(BaseModel):
 
     # Retention
     keep_count: Optional[int] = None  # For snapshots - how many to keep
+
+    # For backup tasks: the passphrase their backups are encrypted with.
+    # Write-only (exclude): accepted in requests, but never in an answer or in
+    # the tasks file; the task keeps a key derived from it (ADR-0232). An edit
+    # without one keeps the stored key.
+    passphrase: Optional[str] = Field(default=None, exclude=True)
 
     last_run: Optional[str] = None
     next_run: Optional[str] = None

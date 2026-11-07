@@ -18,6 +18,11 @@ export interface ScheduledTask {
   target_disk?: string;
   command?: string;
   keep_count?: number;
+  /**
+   * Backup tasks: the passphrase their backups are encrypted with. Write-only:
+   * sent to set it, never returned; an update without it keeps the stored one.
+   */
+  passphrase?: string;
   last_run?: string;
   next_run?: string;
   last_status?: string;

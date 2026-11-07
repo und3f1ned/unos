@@ -79,6 +79,7 @@ logger = logging.getLogger(__name__)
 SALT_SIZE = 16
 NONCE_SIZE = 12
 KEY_SIZE = 32  # AES-256
+BACKUP_KEY_SIZE = SALT_SIZE + KEY_SIZE  # new_backup_key
 ITERATIONS = 100000
 GCM_TAG_SIZE = 16  # AES-GCM appends a 16-byte authentication tag to the ciphertext
 
@@ -208,15 +209,28 @@ def derive_key(passphrase: str, salt: bytes) -> bytes:
     return kdf.derive(passphrase.encode())
 
 
-def encrypt_file(data: bytes | memoryview, passphrase: str) -> bytes:
-    """Encrypt data using AES-256-GCM."""
+def new_backup_key(passphrase: str) -> bytes:
+    """A new salt and the key derived from ``passphrase`` with it: salt + key (BACKUP_KEY_SIZE bytes).
+
+    Blocking (PBKDF2). What encrypt_with_key writes with it, decrypt_file opens
+    with the passphrase: the salt is stored at the start of each file. A
+    scheduled backup task keeps this instead of its passphrase (ADR-0232).
+    """
     salt = secrets.token_bytes(SALT_SIZE)
-    key = derive_key(passphrase, salt)
+    return salt + derive_key(passphrase, salt)
+
+
+def encrypt_with_key(data: bytes | memoryview, backup_key: bytes) -> bytes:
+    """Encrypt data using AES-256-GCM with a key of new_backup_key and a new nonce."""
+    salt, key = backup_key[:SALT_SIZE], backup_key[SALT_SIZE:]
     nonce = secrets.token_bytes(NONCE_SIZE)
-    aesgcm = AESGCM(key)
-    ciphertext = aesgcm.encrypt(nonce, data, None)
     # Format: salt + nonce + ciphertext
-    return salt + nonce + ciphertext
+    return salt + nonce + AESGCM(key).encrypt(nonce, data, None)
+
+
+def encrypt_file(data: bytes | memoryview, passphrase: str) -> bytes:
+    """Encrypt data using AES-256-GCM, with a key derived from the passphrase and a new salt."""
+    return encrypt_with_key(data, new_backup_key(passphrase))
 
 
 def decrypt_file(encrypted_data: bytes, passphrase: str) -> bytes:
