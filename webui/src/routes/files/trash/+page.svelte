@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The trash of every pool and volume (ADR-0247): what Delete in Files moved
+  // The trash of every pool and volume (ADR-0259): what Delete in Files moved
   // there, until it is restored, deleted for good, or deleted for good by the
   // daily expiry.
   import { onMount, tick } from "svelte";

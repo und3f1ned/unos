@@ -55,7 +55,7 @@ and overwrites nothing (ADR-0011). Avoid: backup.
 
 **Trash**: The hidden folder `.unos-trash` at the top of each pool and volume that takes what Delete
 in Files deletes there, until it is restored, deleted for good, or deleted for good 30 days after
-its deletion (ADR-0247). Avoid: recycle bin, snapshot.
+its deletion (ADR-0259). Avoid: recycle bin, snapshot.
 
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
 hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0235). Avoid: SMART
@@ -127,7 +127,8 @@ accounts; UNOS leaves every other one alone (ADR-0108). Avoid: user.
 it expires (ADR-0009, ADR-0028). Avoid: cookie, API token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
-once (ADR-0239). Avoid: session token, API key.
+once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). Avoid:
+session token, API key.
 
 **Recovery code**: One of the ten codes that a user with two-factor authentication generates on the
 Account page and keeps; each one signs in once in place of a code of the authenticator app

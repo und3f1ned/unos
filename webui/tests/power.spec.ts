@@ -184,7 +184,7 @@ test.describe('Power Management', () => {
 
     await button(page, 'Shutdown').click();
     const dialog = page.getByRole('dialog', { name: 'Shut down the host?' });
-    await expect(dialog).toContainText('It starts again only with its power button or a Wake-on-LAN packet');
+    await expect(dialog).toContainText('It starts again with its power button, or with a Wake-on-LAN packet where the board supports that');
     await dialog.getByRole('button', { name: 'Shut down in 1 minute' }).click();
 
     await expect(page.getByRole('status')).toContainText(SHUTS_DOWN);
@@ -316,6 +316,17 @@ test.describe('Power Management', () => {
     await expect(row('eth0')).toContainText('Off');
     await expect(page.getByRole('status')).toContainText('Wake-on-LAN is off for eth0');
     expect(host.changes).toEqual(['POST /wol/eth0/enable', 'POST /wol/eth0/disable']);
+  });
+
+  test('the tab says that a magic packet wakes the host only where the board powers the network card', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakePowerApi(page);
+    await openPowerTab(page);
+
+    // ADR-0247: many single-board computers, the dev device's among them, cut the network card's
+    // power when the host is off, so a magic packet cannot start them.
+    await expect(page.getByText(/only where the board keeps the network card powered/)).toBeVisible();
   });
 
   test('a Wake-on-LAN change the host refused is shown, with the state read again', async ({

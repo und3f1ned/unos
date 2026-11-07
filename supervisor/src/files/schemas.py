@@ -44,7 +44,7 @@ class RenameRequest(BaseModel):
 
 
 class TrashItem(BaseModel):
-    """An item in the trash of a pool or a volume (ADR-0247)."""
+    """An item in the trash of a pool or a volume (ADR-0259)."""
 
     path: str  # the item's folder in the trash: what restore and delete for good take
     name: str  # the name it had; the entry's own name when its origin is not known

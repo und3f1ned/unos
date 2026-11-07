@@ -30,7 +30,7 @@ LOOPS = {
     "raid_monitor": (health, "raid_monitor_loop", "_raid_monitor_task"),
     "smart_monitor": (health, "smart_monitor_loop", "_smart_monitor_task"),
     "ups_monitor": (power, "ups_monitor_loop", "_ups_monitor_task"),
-    # Deletes for good what has been in the trash for 30 days (ADR-0247).
+    # Deletes for good what has been in the trash for 30 days (ADR-0259).
     "trash_expiry": (files, "trash_expiry_loop", "_trash_expiry_task"),
 }
 

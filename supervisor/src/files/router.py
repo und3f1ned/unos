@@ -28,7 +28,7 @@ or a bind mount, cannot be deleted, or moved to another pool or volume
 
 Delete moves items into the trash of their pool or volume, from where they
 are restored, deleted for good, or deleted for good by the daily expiry
-after TRASH_RETENTION_DAYS (ADR-0247, "the trash" below).
+after TRASH_RETENTION_DAYS (ADR-0259, "the trash" below).
 """
 
 import asyncio
@@ -104,7 +104,7 @@ _GONE = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
 _MOUNTINFO_ESCAPE = re.compile(rb"\\([0-3][0-7]{2})")
 _MOVED_ELSEWHERE = "moved to another pool or volume"
 
-# The trash (ADR-0247): the folder in the top folder of each pool and volume
+# The trash (ADR-0259): the folder in the top folder of each pool and volume
 # that takes what is deleted there. Its name is reserved: the file manager
 # lists, opens and makes no entry of that name, and copies leave it out.
 TRASH = ".unos-trash"
@@ -156,7 +156,7 @@ def _components(path: str) -> list[str]:
 def _split(path: str) -> list[str]:
     """The components (_components) of a path of the file manager, which never leads into a trash.
 
-    The trash API alone reads and changes the trash (ADR-0247).
+    The trash API alone reads and changes the trash (ADR-0259).
     """
     parts = _components(path)
     if TRASH in parts:
@@ -499,7 +499,7 @@ def _list_directory(path: str | None) -> DirectoryListing:
         items = []
         with os.scandir(fd) as entries:
             for entry in entries:
-                if entry.name == TRASH:  # listed with GET /files/trash (ADR-0247)
+                if entry.name == TRASH:  # listed with GET /files/trash (ADR-0259)
                     continue
                 try:
                     st = entry.stat(follow_symlinks=False)
@@ -823,7 +823,7 @@ def _copy_entry(src_dir_fd: int, name: str, dst_dir_fd: int, without_trash: bool
     Copies are owned by root, so set-user-ID and set-group-ID bits are
     dropped from files. ``without_trash`` leaves out every entry named TRASH:
     a copy of a pool or a volume does not take what was deleted there
-    (ADR-0247). A move to another filesystem copies everything, because it
+    (ADR-0259). A move to another filesystem copies everything, because it
     deletes the source afterwards.
     """
     st = os.stat(name, dir_fd=src_dir_fd, follow_symlinks=False)
@@ -1036,7 +1036,7 @@ def _done_before(exc: HTTPException | OSError, done: int, total: int, how: str) 
     return HTTPException(error.status_code, detail)
 
 
-# --- the trash (ADR-0247) ------------------------------------------------------
+# --- the trash (ADR-0259) ------------------------------------------------------
 #
 # Delete moves an item into the trash of the pool or volume that holds it,
 # <pool>/.unos-trash or <pool>/<volume>/.unos-trash, with one rename on its
@@ -1865,7 +1865,7 @@ async def move_items(
 
 @router.delete("/delete")
 async def delete_items(paths: list[str], permanent: bool = False, _: dict = Depends(verify_token)):
-    """Move files/directories into the trash of their pool or volume (ADR-0247); with permanent=true, delete them
+    """Move files/directories into the trash of their pool or volume (ADR-0259); with permanent=true, delete them
     for good. Symlinks are moved or removed, never their targets.
 
     An item that one rename cannot take into a trash (in a deeper subvolume,

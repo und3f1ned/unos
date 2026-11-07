@@ -151,7 +151,7 @@ async def lifespan(app: FastAPI):
         await start_scheduler()
         await start_health_monitors()
         await start_ups_monitor()
-        # Deletes for good what has been in the trash for 30 days (ADR-0247).
+        # Deletes for good what has been in the trash for 30 days (ADR-0259).
         await start_trash_expiry()
     try:
         yield

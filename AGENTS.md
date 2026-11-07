@@ -4,10 +4,11 @@ UNOS (Universal NAS Open Software) turns an existing Debian or Ubuntu host into 
 interface (ADR-0002), in two Docker containers: `unos-webui`, the SvelteKit app as static files
 behind Caddy (HTTPS only), and `unos-supervisor`, FastAPI with SQLite, privileged, with
 `pid: host` and the Docker socket. Storage, SMB, the network and power change the host through
-`supervisor/src/host.py` (ADR-0020), Docker apps through the Docker socket; the system, security,
-logs and NFS routers still run their commands in the container or call nsenter themselves
-(architecture.host-command-layer). New host code uses `host.py`. UNOS has one dev
-device and no other installations to keep working (ADR-0207).
+`supervisor/src/host.py` (ADR-0020) and the logs read the host's journal through it, Docker apps
+go through the Docker socket; the system, security and NFS routers still run their commands in
+the container or call nsenter themselves, and the log files of the logs router are the
+container's `/var/log` (architecture.host-command-layer). New host code uses `host.py`. UNOS has
+one dev device and no other installations to keep working (ADR-0207).
 
 Read the nested file before you change its area:
 - `supervisor/AGENTS.md`: backend code and backend tests.

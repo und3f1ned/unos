@@ -5,7 +5,7 @@ area: files
 decided-by: agent
 ---
 
-# ADR-0247: Deleted items go to the trash of their pool or volume for 30 days, unless they are restored or deleted for good
+# ADR-0259: Deleted items go to the trash of their pool or volume for 30 days, unless they are restored or deleted for good
 
 ## Context
 

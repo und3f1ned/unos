@@ -71,7 +71,7 @@ export async function moveItems(sources: string[], destination: string): Promise
 }
 
 /**
- * Move items into the trash of their pool or volume (ADR-0247), or with
+ * Move items into the trash of their pool or volume (ADR-0259), or with
  * `permanent` delete them for good at once.
  */
 export async function deleteItems(paths: string[], permanent = false): Promise<{ deleted: string[] }> {

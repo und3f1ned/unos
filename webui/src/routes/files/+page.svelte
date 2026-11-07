@@ -191,7 +191,7 @@
     }
   }
 
-  // The Delete dialog (ADR-0247): the items it is about while it is open, which
+  // The Delete dialog (ADR-0259): the items it is about while it is open, which
   // of its choices is on its way, and the server's refusal. Delete for good is
   // on offer only once the server refused to move the items to the trash
   // because they have none there, or it cannot be used (409), or their pool

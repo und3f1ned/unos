@@ -714,7 +714,7 @@ def test_a_volume_can_be_copied_and_its_content_changed(env, volume):
     assert response.status_code == 200, response.text
     response = env.client.request("DELETE", "/api/v1/files/delete", json=[str(volume / "2024")])
     assert response.status_code == 200, response.text
-    # Into the volume's own trash (ADR-0247).
+    # Into the volume's own trash (ADR-0259).
     assert _untrashed_tree(volume) == ["img.jpg"]
     assert _trash(volume) == [("2024", "directory", [])]
     assert not (env.pool / TRASH).exists()
@@ -775,7 +775,7 @@ PROJECTS_TREE = [
 
 
 def _delete(client, paths, *, permanent=False):
-    """Delete ``paths``: into the trash, or for good (ADR-0247)."""
+    """Delete ``paths``: into the trash, or for good (ADR-0259)."""
     params = {"permanent": "true"} if permanent else {}
     return client.request("DELETE", "/api/v1/files/delete", params=params, json=[str(p) for p in paths])
 
@@ -804,7 +804,7 @@ def test_delete_refuses_a_folder_that_contains_a_subvolume_and_deletes_nothing(e
     assert (response.status_code, response.json()["detail"]) == (409, CONTAINS.format("2024", "snapshot", "deleted"))
     assert _tree(env.pool) == ["a.txt", "old", "old/drafts", *PROJECTS_TREE]
 
-    # The subvolume's own content is ordinary, but has no trash (ADR-0247): it is deleted for good.
+    # The subvolume's own content is ordinary, but has no trash (ADR-0259): it is deleted for good.
     response = _delete(env.client, [projects / "2024" / "snapshot" / "docs"])
     assert (response.status_code, response.json()["detail"]) == (409, NO_TRASH.format("docs"))
     assert _tree(env.pool) == ["a.txt", "old", "old/drafts", *PROJECTS_TREE]
@@ -867,7 +867,7 @@ def test_a_mount_point_that_appears_after_the_first_check_is_still_refused(env, 
     monkeypatch.setattr(files_router, "_refuse_separate_filesystems", check_all_then_mount)
     response = _delete(env.client, [env.pool / "first.txt", env.pool / "later"], permanent=permanent)
 
-    # With what went before it (ADR-0247): the client can tell that first.txt is gone.
+    # With what went before it (ADR-0259): the client can tell that first.txt is gone.
     done = "deleted for good" if permanent else "moved to the trash"
     detail = f"{CONTAINS.format('later', 'disk', 'deleted')} 1 of the 2 items was {done} before that."
     assert (response.status_code, response.json()["detail"]) == (409, detail)
@@ -1193,7 +1193,7 @@ def test_mount_table_escapes_are_decoded(tmp_path, monkeypatch):
     ]
 
 
-# --- the trash (ADR-0247) --------------------------------------------------------------
+# --- the trash (ADR-0259) --------------------------------------------------------------
 #
 # Delete moves an item into the trash of the pool or volume that holds it,
 # <pool>/.unos-trash or <pool>/<volume>/.unos-trash: one private folder per

@@ -190,7 +190,7 @@ const NO_POOL_FOLDER = 'No folder of the pools directory takes a new folder: the
 const deleteDialog = (page: Page, count: number) =>
   page.getByRole('dialog', { name: count === 1 ? 'Delete 1 item' : `Delete ${count} items`, exact: true });
 
-/** An item of GET /api/v1/files/trash (ADR-0247). */
+/** An item of GET /api/v1/files/trash (ADR-0259). */
 type TrashEntry = { path: string; name: string; original_path: string | null; deleted: string; expires: string };
 
 async function trashItems(page: Page): Promise<TrashEntry[]> {
@@ -344,7 +344,7 @@ test.describe('File Browser operations', () => {
     await expect(row(page, 'keep.txt')).toBeVisible();
     await expect(selectionBar(page)).toContainText('0 selected');
     expect(await listNames(page, dir)).toEqual(['keep.txt']);
-    // Into the trash of the pool (ADR-0247), which the folder of the pool does not list.
+    // Into the trash of the pool (ADR-0259), which the folder of the pool does not list.
     expect(await trashedFrom(page, dir)).toEqual(['a.txt', 'sub']);
     expect(await listNames(page, scratch!.pool.path)).not.toContain('.unos-trash');
   });
@@ -364,7 +364,7 @@ test.describe('File Browser operations', () => {
     await selectionBar(page).getByRole('button', { name: 'Delete' }).click();
     const dialog = deleteDialog(page, 1);
     await expect(dialog).toContainText('Move the selected item to the trash?');
-    // Cancel and Move to trash, besides the dialog's close button: no click deletes for good (ADR-0247).
+    // Cancel and Move to trash, besides the dialog's close button: no click deletes for good (ADR-0259).
     await expect(dialog.getByRole('button')).toHaveCount(3);
     await expect(dialog.getByRole('button', { name: 'Close modal' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
