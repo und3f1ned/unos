@@ -410,7 +410,8 @@ def test_a_disk_without_smart_data_is_listed_with_what_lsblk_reports(board_api, 
         "device": "/dev/nvme0n1", "model": "Samsung SSD 980 1TB", "serial": "Unknown",
         "firmware": "Unknown", "capacity": "931.51 GB", "temperature": None,
         "power_on_hours": None, "power_cycle_count": None, "health_status": "UNKNOWN",
-        "attributes": [], "self_test_status": None, "last_test_result": None,
+        "attributes": [], "nvme_health": None, "self_test_status": None,
+        "last_test_result": None,
     }
 
 
@@ -427,6 +428,92 @@ def test_a_disk_smartctl_cannot_open_is_listed_with_what_lsblk_reports(board_api
         ("/dev/nvme0n1", "Samsung SSD 980 1TB", "931.51 GB", "UNKNOWN"),
     ]
     assert board.smartctl == smartctl_reads("/dev/sda", "/dev/nvme0n1")
+
+
+# What a disk's dialog in Disk Health shows (webui/src/routes/system/tabs/HealthTab.svelte):
+# the data of GET /health/disks, so that opening it runs no smartctl.
+ATA_ATTRIBUTES = [
+    # Within 10 of its threshold: a warning.
+    {"id": 1, "name": "Raw_Read_Error_Rate", "value": 55, "worst": 50, "thresh": 51,
+     "raw": {"value": 1234, "string": "1234"}},
+    # At its threshold: failing.
+    {"id": 3, "name": "Spin_Up_Time", "value": 21, "worst": 21, "thresh": 21, "raw": {"value": 9000}},
+    {"id": 5, "name": "Reallocated_Sector_Ct", "value": 100, "worst": 100, "thresh": 10,
+     "raw": {"value": 3}},
+    {"id": 9, "name": "Power_On_Hours", "value": 30, "worst": 30, "thresh": 0, "raw": {"value": 51775}},
+    {"id": 12, "name": "Power_Cycle_Count", "value": 100, "worst": 100, "thresh": 0,
+     "raw": {"value": 120}},
+    {"id": 194, "name": "Temperature_Celsius", "value": 116, "worst": 100, "thresh": 0,
+     "raw": {"value": 34, "string": "34 (Min/Max 20/45)"}},
+]
+
+NVME_LOG = {
+    "critical_warning": 0, "temperature": 40, "available_spare": 100,
+    "available_spare_threshold": 10, "percentage_used": 2, "data_units_read": 1_234_567,
+    "data_units_written": 2_345_678, "host_reads": 34_567_890, "host_writes": 45_678_901,
+    "controller_busy_time": 123, "power_cycles": 45, "power_on_hours": 1200,
+    "unsafe_shutdowns": 12, "media_errors": 0, "num_err_log_entries": 0,
+    "warning_temp_time": 0, "critical_comp_time": 0, "temperature_sensors": [40, 45],
+}
+
+
+def test_a_sata_disk_reports_its_attributes_and_last_self_test(board_api, board):
+    board.smart["/dev/sda"] = {
+        **BOARD_SMART["/dev/sda"],
+        "firmware_version": "82.00A82",
+        "ata_smart_attributes": {"revision": 16, "table": ATA_ATTRIBUTES},
+        "ata_smart_self_test_log": {"standard": {"table": [
+            {"type": {"string": "Short offline"},
+             "status": {"string": "Completed without error", "passed": True}},
+            {"type": {"string": "Extended offline"},
+             "status": {"string": "Aborted by host", "passed": False}},
+        ]}},
+    }
+
+    sata, _nvme = disk_health(board_api)
+
+    assert sata["attributes"] == [
+        {"id": 1, "name": "Raw_Read_Error_Rate", "value": 55, "worst": 50, "thresh": 51,
+         "raw_value": "1234", "status": "warning"},
+        {"id": 3, "name": "Spin_Up_Time", "value": 21, "worst": 21, "thresh": 21,
+         "raw_value": "9000", "status": "critical"},
+        {"id": 5, "name": "Reallocated_Sector_Ct", "value": 100, "worst": 100, "thresh": 10,
+         "raw_value": "3", "status": "ok"},
+        {"id": 9, "name": "Power_On_Hours", "value": 30, "worst": 30, "thresh": 0,
+         "raw_value": "51775", "status": "ok"},
+        {"id": 12, "name": "Power_Cycle_Count", "value": 100, "worst": 100, "thresh": 0,
+         "raw_value": "120", "status": "ok"},
+        {"id": 194, "name": "Temperature_Celsius", "value": 116, "worst": 100, "thresh": 0,
+         "raw_value": "34", "status": "ok"},
+    ]
+    assert (sata["health_status"], sata["temperature"], sata["power_on_hours"],
+            sata["power_cycle_count"], sata["firmware"]) == ("PASSED", 34, 51775, 120, "82.00A82")
+    # The newest self-test comes first in smartctl's log.
+    assert (sata["self_test_status"], sata["last_test_result"]) == (
+        "Short offline", "Completed without error")
+    assert sata["nvme_health"] is None
+    assert board.smartctl == smartctl_reads("/dev/sda", "/dev/nvme0n1")
+
+
+def test_an_nvme_disk_reports_its_health_information_log(board_api, board):
+    # NVMe disks have no ATA attributes: their SMART data is the SMART/Health
+    # Information log, which Disk Health showed nothing of.
+    board.smart["/dev/nvme0n1"] = {
+        **BOARD_SMART["/dev/nvme0n1"], "nvme_smart_health_information_log": NVME_LOG,
+    }
+    numbers = {key: value for key, value in NVME_LOG.items() if key != "temperature_sensors"}
+
+    sata, nvme = disk_health(board_api)
+
+    assert nvme["attributes"] == []
+    assert nvme["nvme_health"] == numbers
+    assert list(nvme["nvme_health"]) == list(numbers)  # in smartctl's order
+    assert (nvme["health_status"], nvme["temperature"], nvme["power_on_hours"],
+            nvme["power_cycle_count"]) == ("PASSED", 40, 1200, 45)
+    assert sata["nvme_health"] is None
+    single = board_api.get("/api/v1/health/disk/nvme0n1")
+    assert single.status_code == 200, single.text
+    assert single.json()["nvme_health"] == numbers
 
 
 def test_overview_counts_the_same_disks(board_api, board):

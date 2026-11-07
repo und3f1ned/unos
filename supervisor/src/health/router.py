@@ -4,6 +4,7 @@ import json
 import asyncio
 import logging
 import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +46,11 @@ class SmartInfo(BaseModel):
     power_on_hours: Optional[int]
     power_cycle_count: Optional[int]
     health_status: str  # PASSED, FAILED, UNKNOWN
-    attributes: list[SmartAttribute]
+    attributes: list[SmartAttribute]  # ATA attributes; NVMe disks have none
+    # The numbers of an NVMe disk's SMART/Health Information log, by smartctl's
+    # names and in its order (critical_warning, available_spare, media_errors,
+    # ...); None for other disks.
+    nvme_health: Optional[dict[str, int]] = None
     self_test_status: Optional[str]
     last_test_result: Optional[str]
 
@@ -92,6 +97,9 @@ RAID_STATUS_FILE = "/data/raid_status.json"
 SMART_HISTORY_FILE = "/data/smart_history.json"
 SMART_CHECK_INTERVAL = 3600  # Check SMART every hour
 SMARTCTL_TIMEOUT = 30
+# The history key of every disk that smartctl reports without a serial: the
+# counters of different disks mix there, so it gets no prediction (ADR-0232).
+_NO_SERIAL = "unknown"
 
 # Alerts are sent from their own small thread pool and each delivery is bounded
 # by ALERT_TIMEOUT. send_email itself runs smtplib on the notifications SMTP
@@ -119,7 +127,11 @@ _smart_monitor_task: Optional[asyncio.Task] = None
 class SmartHistoryEntry(BaseModel):
     timestamp: str
     device: str
-    serial: str
+    serial: str  # smartctl's: the key of the disk's history
+    # The disk's serial as lsblk reported it with this snapshot, which tells
+    # which connected disk the history belongs to (ADR-0232); None when lsblk
+    # reports none (some USB bridges).
+    lsblk_serial: Optional[str] = None
     attributes: dict[int, int]  # attr_id -> raw_value
     temperature: Optional[int] = None
     power_on_hours: Optional[int] = None
@@ -177,7 +189,7 @@ def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
             return None
 
         data = json.loads(result.stdout)
-        serial = data.get("serial_number", "unknown")
+        serial = data.get("serial_number", _NO_SERIAL)
 
         # Extract critical attributes
         attributes = {}
@@ -374,6 +386,7 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
     for disk in disks:
         snapshot = collect_smart_snapshot(disk.path)
         if snapshot:
+            snapshot.lsblk_serial = disk.serial
             serial = snapshot.serial
             entries = history.setdefault(serial, [])
             # JSON form (str attribute keys), like the entries read from the file.
@@ -709,6 +722,7 @@ def parse_smart_data(device: str) -> SmartInfo:
 
     # NVMe handling
     nvme_health = data.get("nvme_smart_health_information_log", {})
+    nvme_numbers = None
     if nvme_health:
         if temperature is None:
             temperature = nvme_health.get("temperature")
@@ -716,6 +730,12 @@ def parse_smart_data(device: str) -> SmartInfo:
             power_on_hours = nvme_health.get("power_on_hours")
         if power_cycle_count is None:
             power_cycle_count = nvme_health.get("power_cycles")
+        # Without lists such as temperature_sensors.
+        nvme_numbers = {
+            key: value
+            for key, value in nvme_health.items()
+            if isinstance(value, int) and not isinstance(value, bool)
+        }
 
     # Self-test status
     self_test_status = None
@@ -739,6 +759,7 @@ def parse_smart_data(device: str) -> SmartInfo:
         power_cycle_count=power_cycle_count,
         health_status=health_status,
         attributes=attributes,
+        nvme_health=nvme_numbers or None,
         self_test_status=self_test_status,
         last_test_result=last_test_result
     )
@@ -995,75 +1016,154 @@ async def get_smart_trends(_: dict = Depends(verify_token)):
     }
 
 
-@router.get("/smart/predictions")
-async def get_disk_predictions(_: dict = Depends(verify_token)):
-    """Get disk failure predictions based on SMART trends."""
-    history = load_smart_history()
-    predictions = []
+class DiskPrediction(BaseModel):
+    serial: str  # smartctl's, as GET /health/disks reports it
+    device: str  # the path of the disk now
+    risk_score: int  # 0 to 100
+    status: str  # healthy, watch, monitor_closely, replace_soon
+    risk_factors: list[str]  # the reasons: one for each addition to the score
+    recommendation: str
+    data_points: int  # snapshots in the disk's history
 
+
+class DiskPredictions(BaseModel):
+    predictions: list[DiskPrediction]
+
+
+# A day of hourly snapshots: the least history a prediction needs, and the
+# window of its rate. The history keeps 720 snapshots (save_smart_history).
+MIN_PREDICTION_SNAPSHOTS = 24
+# The status of the replace-soon mark in Disk Health and on the dashboard (ADR-0232).
+REPLACE_SOON_SCORE = 50
+
+
+def _reports_attribute(entry: dict, attr_id: int) -> bool:
+    attributes = entry.get("attributes") or {}
+    return str(attr_id) in attributes or attr_id in attributes
+
+
+def predict_disk_failure(serial: str, entries: list[dict], device: str) -> Optional[DiskPrediction]:
+    """The failure prediction of the disk now at ``device`` from its SMART history (ADR-0232).
+
+    None with fewer than MIN_PREDICTION_SNAPSHOTS snapshots, or when no
+    snapshot holds any of CRITICAL_ATTRIBUTES (NVMe disks: the monitor records
+    ATA attributes only). Each of the sector counts 5, 197 and 198 that rose
+    over the history adds 30, and 20 more when it rose by more than 0.1 per
+    snapshot over the last MIN_PREDICTION_SNAPSHOTS; each of 187, 188 and 199
+    that rose above 100 adds 10. REPLACE_SOON_SCORE or more is replace_soon.
+    """
+    if len(entries) < MIN_PREDICTION_SNAPSHOTS:
+        return None
+    if not any(_reports_attribute(e, attr_id) for e in entries for attr_id in CRITICAL_ATTRIBUTES):
+        return None
+
+    # Calculate trend scores for critical attributes
+    risk_score = 0
+    risk_factors = []
+
+    for attr_id, attr_name in CRITICAL_ATTRIBUTES.items():
+        # Get values over time
+        values = [_attribute_value(e, attr_id) for e in entries]
+        current = values[-1]
+        first = values[0]
+
+        # Check if attribute is increasing
+        if current > first:
+            # Per snapshot (hourly) over the last day, whatever the length of
+            # the history: a month of quiet history does not hide a fast rise.
+            recent = values[-MIN_PREDICTION_SNAPSHOTS]
+            increase_rate = (current - recent) / MIN_PREDICTION_SNAPSHOTS
+
+            if attr_id in [5, 197, 198]:  # Critical sector issues
+                if current > 0:
+                    risk_score += 30
+                    risk_factors.append(f"{attr_name}: {current} (was {first})")
+                if increase_rate > 0.1:
+                    risk_score += 20
+                    risk_factors.append(f"{attr_name} increasing rapidly")
+            elif current > 100:
+                risk_score += 10
+                risk_factors.append(f"{attr_name}: {current}")
+
+    # Determine health status
+    if risk_score >= REPLACE_SOON_SCORE:
+        status = "replace_soon"
+        recommendation = "Disk showing signs of failure. Replace within 30 days."
+    elif risk_score >= 30:
+        status = "monitor_closely"
+        recommendation = "Disk health degrading. Monitor daily and prepare replacement."
+    elif risk_score >= 10:
+        status = "watch"
+        recommendation = "Minor issues detected. Continue monitoring."
+    else:
+        status = "healthy"
+        recommendation = "No concerning trends detected."
+
+    return DiskPrediction(
+        serial=serial,
+        device=device,
+        risk_score=min(risk_score, 100),
+        status=status,
+        risk_factors=risk_factors,
+        recommendation=recommendation,
+        data_points=len(entries),
+    )
+
+
+def _histories_of_connected_disks(
+    history: dict[str, list[dict]], disks: list[storage_disks.HostDisk]
+) -> dict[str, tuple[str, list[dict]]]:
+    """The histories of the disks connected now: serial -> (the disk's path now, history).
+
+    The history keeps the serials of removed and replaced disks (ADR-0232). A
+    serial whose latest snapshot holds lsblk's serial belongs to the disk that
+    lsblk lists with that serial now, wherever it is. One without (a USB
+    bridge without a serial), or with a serial that several disks report
+    (identical USB bridges), belongs to the disk now at the path of that
+    snapshot, unless another history claims that disk by its lsblk serial.
+    Two histories that claim one disk: the later latest snapshot wins. Disks
+    that smartctl reports without a serial share one history and get none.
+    """
+    reported = Counter(disk.serial for disk in disks if disk.serial)
+    by_lsblk_serial = {disk.serial: disk for disk in disks if disk.serial and reported[disk.serial] == 1}
+    by_path = {path: disk for disk in disks for path in disk.paths}
+    by_identity: dict[str, tuple[str, str]] = {}  # disk path -> (timestamp, serial)
+    by_place: dict[str, tuple[str, str]] = {}
     for serial, entries in history.items():
-        if len(entries) < 24:  # Need at least a day of data
+        if not entries or not serial or serial == _NO_SERIAL:
             continue
-
         latest = entries[-1]
-        device = latest.get("device", "unknown")
-
-        # Calculate trend scores for critical attributes
-        risk_score = 0
-        risk_factors = []
-
-        for attr_id, attr_name in CRITICAL_ATTRIBUTES.items():
-            # Get values over time
-            values = [_attribute_value(e, attr_id) for e in entries]
-            if not values:
-                continue
-
-            current = values[-1]
-            first = values[0]
-
-            # Check if attribute is increasing
-            if current > first:
-                increase_rate = (current - first) / len(values)  # per hour
-
-                if attr_id in [5, 197, 198]:  # Critical sector issues
-                    if current > 0:
-                        risk_score += 30
-                        risk_factors.append(f"{attr_name}: {current} (was {first})")
-                    if increase_rate > 0.1:
-                        risk_score += 20
-                        risk_factors.append(f"{attr_name} increasing rapidly")
-                elif current > 100:
-                    risk_score += 10
-                    risk_factors.append(f"{attr_name}: {current}")
-
-        # Determine health status
-        if risk_score >= 50:
-            status = "replace_soon"
-            recommendation = "Disk showing signs of failure. Replace within 30 days."
-        elif risk_score >= 30:
-            status = "monitor_closely"
-            recommendation = "Disk health degrading. Monitor daily and prepare replacement."
-        elif risk_score >= 10:
-            status = "watch"
-            recommendation = "Minor issues detected. Continue monitoring."
+        taken = str(latest.get("timestamp", ""))
+        lsblk_serial = latest.get("lsblk_serial")
+        # Reported by one disk: that disk; by none: the disk is gone.
+        if lsblk_serial and reported[lsblk_serial] <= 1:
+            disk, claims = by_lsblk_serial.get(lsblk_serial), by_identity
         else:
-            status = "healthy"
-            recommendation = "No concerning trends detected."
+            disk, claims = by_path.get(latest.get("device")), by_place
+        if disk is not None and (disk.path not in claims or taken > claims[disk.path][0]):
+            claims[disk.path] = (taken, serial)
+    owners = {path: serial for path, (_, serial) in by_place.items() if path not in by_identity}
+    owners.update({path: serial for path, (_, serial) in by_identity.items()})
+    return {serial: (path, history[serial]) for path, serial in owners.items()}
 
-        predictions.append({
-            "serial": serial,
-            "device": device,
-            "risk_score": min(risk_score, 100),
-            "status": status,
-            "risk_factors": risk_factors,
-            "recommendation": recommendation,
-            "data_points": len(entries)
-        })
 
-    # Sort by risk score descending
-    predictions.sort(key=lambda x: x["risk_score"], reverse=True)
+# A plain function, like the SMART endpoints above: lsblk runs on the host in
+# FastAPI's thread pool. It reads the stored history only and runs no smartctl.
+@router.get("/smart/predictions", response_model=DiskPredictions)
+def get_disk_predictions(_: dict = Depends(verify_token)):
+    """Failure predictions from the SMART trends of the disks connected now (ADR-0232).
 
-    return {"predictions": predictions}
+    The disks of GET /health/disks; 500 when the host's disks cannot be listed.
+    """
+    disks = storage_disks.host_disks_or_500()
+    histories = _histories_of_connected_disks(load_smart_history(), disks)
+    predictions = [
+        prediction
+        for serial, (device, entries) in histories.items()
+        if (prediction := predict_disk_failure(serial, entries, device)) is not None
+    ]
+    predictions.sort(key=lambda prediction: prediction.risk_score, reverse=True)
+    return DiskPredictions(predictions=predictions)
 
 
 @router.get("/smart-monitor/status")

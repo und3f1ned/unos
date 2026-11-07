@@ -60,8 +60,9 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `supervisor/tests/test_standin.py` checks every such skip. A failing spec gets fixed: no list of
   known failures, no added retries.
 - Specs that must not change real disks, shares or accounts answer the page's requests with the
-  route fakes of `tests/storage-fakes.ts` (`fakeStorageApi`) and `tests/shares-fakes.ts`
-  (`fakeSmbApi`), which abort unknown requests. Their texts are the server's, word for word:
+  route fakes of `tests/storage-fakes.ts` (`fakeStorageApi`), `tests/shares-fakes.ts`
+  (`fakeSmbApi`) and `tests/health-fakes.ts` (`fakeHealthApi`: SMART data and failure
+  predictions), which abort unknown requests. Their texts are the server's, word for word:
   change the fake with the server (ADR-0189).
 - Signed-in specs use the `authenticatedPage` fixture of `tests/fixtures.ts`. `E2E_POOLS_BASE` is
   the stand-in's pools folder. Restore specs run only on a local target or with

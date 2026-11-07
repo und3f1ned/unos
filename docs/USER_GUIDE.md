@@ -60,6 +60,13 @@ Shows all your storage pools with:
 - Health status
 - Quick access to pool details
 
+### Disks to Replace
+When a disk is marked **Replace soon**, administrators see an alert above the
+widgets that lists each such disk with its path, serial number and the
+reasons, and links to **System** → **Disk Health** (see
+[Replace Soon](#replace-soon)). When UNOS cannot read the predictions, a
+warning says why instead.
+
 ### Containers
 Lists running Docker containers with status indicators
 
@@ -142,7 +149,47 @@ For each pool, you can:
 
 **System** → **Disk Health** shows the model, size, temperature and SMART
 health status of each disk that the **Storage** page lists, the system disk
-included unless it is an SD card or eMMC.
+included unless it is an SD card or eMMC. Opening the tab, or its refresh
+button, reads the SMART data of every disk, which wakes disks that sleep.
+
+**SMART data** opens a disk: its overall health, temperature, power-on hours
+and power cycles, serial number, firmware, capacity, the last self-test and
+its SMART attributes, each with its status: **OK**, **Warning** (within 10 of
+the attribute's failure threshold) or **Failing** (at or below it). NVMe disks
+have no SMART attributes; the dialog lists their SMART/Health Information log
+instead (available spare, percentage used, media errors and the rest). The
+dialog shows the values the tab loaded.
+
+#### Replace Soon
+
+Every hour UNOS records, for each disk that is awake, the SMART counters of
+failing sectors and errors, and keeps the last 720 records of each disk (30
+days for a disk that never sleeps). From 24 records on (a day), it scores how
+the counters rise:
+
+- each of the reallocated, current pending and offline uncorrectable sector
+  counts that rose within the kept records adds 30 points, and 20 more if it
+  rose by 3 or more within the last 24 records;
+- each of the reported uncorrectable errors, command timeouts and UDMA CRC
+  errors that rose above 100 adds 10 points.
+
+With 50 points or more the disk is marked **Replace soon**: in **Disk Health**
+with the reasons and a recommendation, and on the **Dashboard** (see
+[Disks to Replace](#disks-to-replace)). The mark goes away by itself once the
+score is below 50, for example a day after a single sector count stopped
+rising. A disk that is removed or replaced loses its mark. Only behind a USB
+bridge that reports no serial number, or the same one for several disks, does
+UNOS go by the disk's path (such as `/dev/sdb`): when another disk takes that
+place, the dashboard keeps the old disk's mark until the hourly check has
+recorded the new one. A disk that sleeps is not recorded and keeps its last
+score.
+
+The score follows rises, not levels: a disk that arrives with many
+reallocated sectors gets no mark, so check the SMART data of a used disk
+yourself. NVMe disks get no score, as the hourly records hold no NVMe
+counters: **SMART data** shows their health log, and their health turns
+**FAILED** when the disk reports a critical warning. A rising counter also
+sends an alert (see [Notifications](#notifications)).
 
 ---
 
@@ -604,7 +651,8 @@ entries `system.power`, `system.scheduled-power` and `system.ups-monitoring`).
 
 ### Disk Health
 
-- SMART health status and temperature of each disk (see
+- SMART health status and temperature of each disk, its SMART data under
+  **SMART data**, and the **Replace soon** mark (see
   [SMART Monitoring](#smart-monitoring))
 
 ### Logs
