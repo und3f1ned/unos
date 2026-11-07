@@ -1,26 +1,34 @@
-"""The append-only audit log (ADR-0224; feature-list.json: security.append-only-audit-log).
+"""The audit log: append-only (ADR-0224; feature-list.json: security.append-only-audit-log), and
+listed, filtered, searched, counted and exported through the API (ADR-0232; security.audit-log).
 
 Entries are JSON lines appended to the log, written in a worker thread, read back without
 the lines that are damaged, and the log rotates by size into a fixed number of old files.
+GET /audit/logs, /logs/count and /logs/export take the same filters.
 """
 from __future__ import annotations
 
 import asyncio
+import csv
 import errno
+import io
 import json
 import os
+import re
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from src.audit import router as audit_router
 from src.audit.schemas import AuditAction
 from src.auth import router as auth_router
+from src.main import app
 
 from .audit_helpers import audit_entries
-from .test_smb_accounts import ADMIN_PW, API, World
+from .test_smb_accounts import ADMIN_PW, API, RecordingClient, World
 
 
 @pytest.fixture
@@ -358,3 +366,208 @@ class TestLock:
         # stays. A file read mid-shift would be missed or read twice; behind the lock it is not.
         assert seen == [count]
         assert len(audit_router.load_audit_log()) == count
+
+
+# ==================== The API (ADR-0232; feature-list.json: security.audit-log) ====================
+
+CLIENT = "192.0.2.10"  # the address the test client connects from
+LISTED_ROUTES = ["/logs", "/logs/count", "/logs/export"]  # the routes that take the filters
+BOUND_REFUSED = "{name} must be a date (YYYY-MM-DD) or a date and time (YYYY-MM-DDTHH:MM:SS) without a time zone"
+
+# Entries at the edges of 2026-11-06, in the order written. Their times are the server's local
+# time without a zone, as log_action writes them.
+DAY = "2026-11-06"
+SEEDED = [
+    {"timestamp": "2026-11-05T23:59:59.999999", "action": "login_failed", "username": "mallory",
+     "severity": "warning", "success": False, "ip_address": "198.51.100.4",
+     "details": "Incorrect username or password"},
+    {"timestamp": "2026-11-06T00:00:00", "action": "login_success", "username": "admin", "ip_address": CLIENT},
+    {"timestamp": "2026-11-06T12:00:00", "action": "user_created", "username": "admin", "ip_address": CLIENT,
+     "resource_type": "user", "resource_id": "carol", "details": "Created new user: carol"},
+    {"timestamp": "2026-11-06T23:59:59.999999", "action": "user_deleted", "username": "admin",
+     "severity": "warning", "ip_address": CLIENT, "resource_type": "user", "resource_id": "carol",
+     "details": "Deleted user: carol"},
+    {"timestamp": "2026-11-07T00:00:00", "action": "login_success", "username": "alice",
+     "ip_address": "203.0.113.7", "user_agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Firefox/140.0"},
+]
+# The times of the entries of SEEDED, which name them in the tests.
+FAILED, ADMIN_IN, CREATED, DELETED, ALICE_IN = (e["timestamp"] for e in SEEDED)
+
+
+@pytest.fixture
+def seeded(world):
+    world.audit_file.parent.mkdir(parents=True, exist_ok=True)
+    world.audit_file.write_text(
+        "".join(json.dumps({"id": f"audit_{e['timestamp']}", **e}) + "\n" for e in SEEDED)
+    )
+    return world
+
+
+def stamps(entries: list[dict]) -> list[str]:
+    return [e["timestamp"] for e in entries]
+
+
+def ask(world: World, path: str, **params):
+    return world.client.get(f"{API}/audit{path}", headers=world.headers("admin"), params=params)
+
+
+class TestSignInAndUserManagementAreListed:
+    def test_the_entries_name_the_user_the_action_the_time_and_the_client_address(self, world):
+        world.client = RecordingClient(TestClient(app, raise_server_exceptions=False, client=(CLIENT, 50000)))
+        auth_router.limiter.reset()  # the login rate limit is not under test here
+        before = datetime.now()
+
+        signed_in = world.client.post(f"{API}/auth/login", json={"username": "admin", "password": ADMIN_PW})
+        assert signed_in.status_code == 200, signed_in.text
+        headers = {"Authorization": f"Bearer {signed_in.json()['access_token']}"}
+        created = world.client.post(
+            f"{API}/auth/users", json={"username": "carol", "password": "Carol-pass-2026"}, headers=headers
+        )
+        assert created.status_code == 200, created.text
+        deleted = world.client.delete(
+            f"{API}/auth/users/{created.json()['id']}", params={"username": "carol"}, headers=headers
+        )
+        assert deleted.status_code == 200, deleted.text
+        after = datetime.now()
+
+        response = world.client.get(f"{API}/audit/logs", headers=headers)
+
+        assert response.status_code == 200, response.text
+        entries = response.json()
+        assert [(e["action"], e["username"], e["resource_id"], e["ip_address"]) for e in entries] == [
+            ("user_deleted", "admin", "carol", CLIENT),
+            ("user_created", "admin", "carol", CLIENT),
+            ("login_success", "admin", None, CLIENT),
+        ]
+        moments = [datetime.fromisoformat(e["timestamp"]) for e in entries]
+        assert moments == sorted(moments, reverse=True)  # newest first
+        assert before <= moments[-1] and moments[0] <= after
+
+
+class TestFilters:
+    @pytest.mark.parametrize("params, expected", [
+        pytest.param({"username": "admin"}, [DELETED, CREATED, ADMIN_IN], id="user"),
+        pytest.param({"username": "Admin"}, [], id="user-by-the-exact-name"),
+        pytest.param({"action": "login_success"}, [ALICE_IN, ADMIN_IN], id="action"),
+        pytest.param({"severity": "warning"}, [DELETED, FAILED], id="severity"),
+        # A date covers its whole day, as the first and as the last day.
+        pytest.param({"start_date": DAY, "end_date": DAY}, [DELETED, CREATED, ADMIN_IN], id="one-day"),
+        pytest.param({"start_date": DAY}, [ALICE_IN, DELETED, CREATED, ADMIN_IN], id="from-a-day"),
+        pytest.param({"end_date": DAY}, [DELETED, CREATED, ADMIN_IN, FAILED], id="up-to-a-day"),
+        # A date and time is an instant, and both ends include it.
+        pytest.param({"start_date": CREATED, "end_date": CREATED}, [CREATED], id="one-instant"),
+        pytest.param({"start_date": "2026-11-06T00:00:00.000001", "end_date": "2026-11-06T23:59:59.999998"},
+                     [CREATED], id="between-two-instants"),
+        pytest.param({"start_date": "2026-11-06T12:00", "end_date": "2026-11-07"}, [ALICE_IN, DELETED, CREATED],
+                     id="from-a-minute-up-to-a-day"),
+        pytest.param({"start_date": "2026-11-07", "end_date": DAY}, [], id="an-empty-range"),
+        pytest.param({"username": "admin", "action": "user_deleted", "start_date": DAY, "end_date": DAY},
+                     [DELETED], id="together"),
+    ])
+    def test_filters_narrow_the_list_and_the_count_counts_it(self, seeded, params, expected):
+        assert stamps(get(seeded, "/logs", **params)) == expected
+        assert get(seeded, "/logs/count", **params) == {"count": len(expected)}
+
+    @pytest.mark.parametrize("path", LISTED_ROUTES)
+    @pytest.mark.parametrize("params", [
+        pytest.param({"start_date": "yesterday"}, id="not-a-date"),
+        pytest.param({"end_date": "2026-11-31"}, id="no-such-day"),
+        pytest.param({"start_date": "2026-11-06T12:00:00+01:00"}, id="an-offset"),
+        pytest.param({"end_date": "2026-11-06T12:00:00Z"}, id="utc"),
+    ])
+    def test_a_bound_that_is_not_a_date_or_a_time_without_a_zone_is_refused(self, seeded, path, params):
+        response = ask(seeded, path, **params)
+
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == BOUND_REFUSED.format(name=next(iter(params)))
+
+    def test_the_list_comes_a_page_at_a_time(self, seeded):
+        assert stamps(get(seeded, "/logs", limit=2)) == [ALICE_IN, DELETED]
+        assert stamps(get(seeded, "/logs", limit=2, offset=1)) == [DELETED, CREATED]
+        assert stamps(get(seeded, "/logs", username="admin", limit=2, offset=2)) == [ADMIN_IN]
+
+    @pytest.mark.parametrize("path, params", [
+        pytest.param("/logs", {"limit": 0}, id="no-entry"),
+        pytest.param("/logs", {"limit": -1}, id="a-negative-limit"),
+        pytest.param("/logs", {"offset": -1}, id="a-negative-offset"),
+        pytest.param("/logs/export", {"format": "xml"}, id="an-unknown-format"),
+    ])
+    def test_a_page_or_a_format_that_means_nothing_is_refused(self, seeded, path, params):
+        assert ask(seeded, path, **params).status_code == 422
+
+    @pytest.mark.parametrize("path", LISTED_ROUTES)
+    def test_only_an_administrator_gets_an_answer_whatever_the_filters(self, seeded, path):
+        params = {"start_date": "yesterday", "search": "carol"}
+
+        assert seeded.client.get(f"{API}/audit{path}", params=params).status_code == 401
+        assert seeded.client.get(
+            f"{API}/audit{path}", params=params, headers=seeded.headers("alice")
+        ).status_code == 403
+
+
+class TestSearch:
+    @pytest.mark.parametrize("search, expected", [
+        pytest.param("CAROL", [DELETED, CREATED], id="resource-and-details-in-any-case"),
+        pytest.param("  carol ", [DELETED, CREATED], id="without-its-surrounding-spaces"),
+        pytest.param("mallory", [FAILED], id="user"),
+        pytest.param("198.51.100", [FAILED], id="client-address"),
+        pytest.param("user_deleted", [DELETED], id="action"),
+        pytest.param("login failed", [FAILED], id="action-as-the-page-names-it"),
+        pytest.param("firefox", [ALICE_IN], id="browser"),
+        pytest.param("no such text", [], id="nothing"),
+    ])
+    def test_search_finds_the_text_in_any_field_of_an_entry(self, seeded, search, expected):
+        assert stamps(get(seeded, "/logs", search=search)) == expected
+        assert get(seeded, "/logs/count", search=search) == {"count": len(expected)}
+
+    def test_search_narrows_the_filtered_list(self, seeded):
+        assert stamps(get(seeded, "/logs", search="carol", action="user_created")) == [CREATED]
+        assert stamps(get(seeded, "/logs", search="login", username="admin")) == [ADMIN_IN]
+
+    @pytest.mark.parametrize("path", LISTED_ROUTES)
+    def test_a_search_of_more_than_256_characters_is_refused(self, seeded, path):
+        assert ask(seeded, path, search="x" * 256).status_code == 200
+        assert ask(seeded, path, search="x" * 257).status_code == 422
+
+
+class TestExport:
+    def test_the_csv_export_downloads_the_filtered_entries(self, seeded):
+        response = ask(seeded, "/logs/export", format="csv", username="admin", start_date=DAY, end_date=DAY,
+                       search="carol")
+
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith("text/csv")
+        assert re.fullmatch(r"attachment; filename=audit_log_\d{8}\.csv", response.headers["content-disposition"])
+        header, *rows = csv.reader(io.StringIO(response.text))
+        assert header == ["ID", "Timestamp", "Action", "Severity", "Username", "IP Address", "Resource Type",
+                          "Resource ID", "Details", "Success"]
+        assert [(row[1], row[2], row[4], row[5], row[7]) for row in rows] == [
+            (DELETED, "user_deleted", "admin", CLIENT, "carol"),
+            (CREATED, "user_created", "admin", CLIENT, "carol"),
+        ]
+
+    def test_the_json_export_downloads_the_filtered_entries(self, seeded):
+        response = ask(seeded, "/logs/export", action="login_success", end_date=DAY)
+
+        assert response.status_code == 200, response.text
+        assert re.fullmatch(r"attachment; filename=audit_log_\d{8}\.json", response.headers["content-disposition"])
+        body = response.json()
+        assert body["count"] == 1
+        assert stamps(body["entries"]) == [ADMIN_IN]
+
+    @pytest.mark.parametrize("params", [
+        pytest.param({"username": "admin"}, id="user"),
+        pytest.param({"action": "login_success"}, id="action"),
+        pytest.param({"severity": "warning"}, id="severity"),
+        pytest.param({"start_date": DAY, "end_date": DAY}, id="time"),
+        pytest.param({"search": "carol"}, id="search"),
+        pytest.param({"username": "admin", "action": "user_deleted", "start_date": DAY, "end_date": DAY,
+                      "search": "carol"}, id="together"),
+    ])
+    def test_the_export_holds_the_entries_the_list_shows(self, seeded, params):
+        shown = get(seeded, "/logs", limit=10_000, **params)
+        exported = get(seeded, "/logs/export", **params)
+
+        assert 0 < len(shown) < len(SEEDED)  # the filter narrowed the list
+        assert exported["entries"] == shown
+        assert exported["count"] == len(shown)

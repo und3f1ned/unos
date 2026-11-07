@@ -209,15 +209,18 @@
         "GET /api/v1/audit/logs/export downloads the filtered entries"
       ],
       "verified_by": [
-        "supervisor/tests/test_login_bounds.py"
+        "supervisor/tests/test_audit_log.py",
+        "supervisor/tests/test_login_bounds.py",
+        "supervisor/tests/test_authz.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0065",
         "ADR-0066",
-        "ADR-0224"
+        "ADR-0224",
+        "ADR-0232"
       ],
-      "notes": "Writing entries is tested (tests/test_login_bounds.py, tests/test_audit_log.py), and so are listing, counting and exporting across the rotated files (tests/test_audit_log.py); the filters by user, action and time are not, and no page shows the log (webui.audit-log-page)."
+      "notes": "Step 1: TestSignInAndUserManagementAreListed in tests/test_audit_log.py signs in, creates and deletes a user through the API and reads the three entries from GET /api/v1/audit/logs, newest first, with the user, the action, the time and the client address. Step 2: TestFilters and TestSearch filter by user, action, severity, time and text, at the edges of a day, and /logs/count counts the same entries; a bound that is not a date or a date and time without a zone gets 422. Step 3: TestExport downloads the filtered entries as CSV and JSON, the same entries the list shows. Date bounds include their whole day (ADR-0232). Writing entries is tested in tests/test_login_bounds.py and tests/test_audit_log.py, the administrator-only routes in tests/test_authz.py. Not host-level (GLOSSARY.md): no device check needed. The page is webui.audit-log-page."
     },
     {
       "id": "security.append-only-audit-log",
@@ -2545,10 +2548,17 @@
         "Search and filters by user, action and time narrow the list",
         "Export downloads the filtered entries"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0066"
-      ]
+        "ADR-0066",
+        "ADR-0232"
+      ],
+      "verified_by": [
+        "webui/tests/audit.spec.ts",
+        "webui/tests/roles.spec.ts",
+        "supervisor/tests/test_audit_log.py"
+      ],
+      "notes": "The page /audit (webui/src/routes/audit/+page.svelte, $lib/api/audit.ts) is in the administrator's sidebar and in ADMIN_ONLY_ROUTES. webui/tests/audit.spec.ts on the stand-in's real audit log: step 1, the entries newest first on a timeline grouped by day, with the time, the action, the user, the address and the details; step 2, Search, User, Action, From and To narrow the list and its count, a day includes its whole day; step 3, Export CSV and Export JSON download the filtered entries with the session token. Route fakes cover Show more (100 entries at a time) and the errors of loading and exporting; tests/roles.spec.ts sends a regular user from /audit to the dashboard. Times are the server's local time as the entries carry them (architecture.times-with-time-zones). Not host-level (GLOSSARY.md): no device check needed."
     },
     {
       "id": "webui.light-theme",

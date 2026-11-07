@@ -81,13 +81,3 @@ class AuditEntry(BaseModel):
     resource_id: Optional[str] = None    # e.g., pool name, share name
     details: Optional[str] = None        # Additional context
     success: bool = True
-
-
-class AuditQuery(BaseModel):
-    action: Optional[AuditAction] = None
-    username: Optional[str] = None
-    severity: Optional[AuditSeverity] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    limit: int = 100
-    offset: int = 0

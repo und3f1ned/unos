@@ -5,6 +5,8 @@ rewritten, and nothing is fsynced (the kernel writes appends out together, spari
 disk; ADR-0214). Before an append would grow the file past MAX_FILE_BYTES, it becomes
 AUDIT_FILE.1 and the older files move one number up; KEEP_ROTATED old files are kept. Readers go
 through the old files and then the current one, and skip every line that is not a valid entry.
+
+Listing, counting and exporting take the same filters (AuditFilter, ADR-0232).
 """
 import asyncio
 import csv
@@ -12,12 +14,13 @@ import io
 import logging
 import os
 import threading
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from ..auth.utils import client_ip, require_admin
@@ -40,6 +43,8 @@ MAX_USERNAME_CHARS = 128
 MAX_USER_AGENT_CHARS = 256
 MAX_RESOURCE_ID_CHARS = 256
 MAX_DETAILS_CHARS = 1024
+# Longest text the search of the listing takes.
+MAX_SEARCH_CHARS = 256
 
 # Appends, rotations, reads and clearing take this lock: a reader never sees a rotation halfway.
 _lock = threading.Lock()
@@ -216,89 +221,135 @@ async def log_action(
     return entry
 
 
+# ==================== Filters (ADR-0232) ====================
+
+def _bound(name: str, value: Optional[str], *, last: bool) -> Optional[str]:
+    """The timestamp text that start_date (last=False) or end_date (last=True) stands for.
+
+    Entries carry the server's local time without a zone, as datetime.isoformat() writes it,
+    and texts in that form sort as their times do. Both bounds include what they name: a date
+    its whole day, a date and time that instant. For start_date the result is the first time in
+    range; for end_date the first time after it (None: nothing comes after it). Any ISO 8601
+    form is accepted and written in the entries' form; a time zone is refused.
+    """
+    if not value:
+        return None
+    try:
+        day: Optional[date] = date.fromisoformat(value)
+    except ValueError:
+        day = None
+    try:
+        if day is not None:
+            moment = datetime.combine(day + timedelta(days=1) if last else day, time.min)
+        else:
+            moment = datetime.fromisoformat(value)
+            if moment.tzinfo is not None:
+                raise ValueError(f"{name} has a time zone")
+            if last:
+                moment += timedelta(microseconds=1)
+    except OverflowError:
+        return None  # the end of the calendar: no upper bound
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{name} must be a date (YYYY-MM-DD) or a date and time (YYYY-MM-DDTHH:MM:SS) "
+                   "without a time zone",
+        ) from None
+    return moment.isoformat()
+
+
+@dataclass(frozen=True)
+class AuditFilter:
+    """What GET /logs, /logs/count and /logs/export select: every condition that is set."""
+
+    action: Optional[AuditAction] = None
+    username: Optional[str] = None
+    severity: Optional[AuditSeverity] = None
+    first: Optional[str] = None  # timestamps from this one on
+    after: Optional[str] = None  # timestamps before this one
+    search: Optional[str] = None  # casefolded
+
+    def matches(self, entry: AuditEntry) -> bool:
+        if self.action is not None and entry.action != self.action:
+            return False
+        if self.username and entry.username != self.username:
+            return False
+        if self.severity is not None and entry.severity != self.severity:
+            return False
+        if self.first is not None and entry.timestamp < self.first:
+            return False
+        if self.after is not None and entry.timestamp >= self.after:
+            return False
+        if self.search:
+            action = entry.action.value
+            fields = (entry.username, action, action.replace("_", " "), entry.ip_address, entry.user_agent,
+                      entry.resource_type, entry.resource_id, entry.details)
+            return any(self.search in field.casefold() for field in fields if field)
+        return True
+
+
+def audit_filter(
+    action: Optional[AuditAction] = None,
+    username: Optional[str] = None,
+    severity: Optional[AuditSeverity] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    search: Optional[str] = Query(None, max_length=MAX_SEARCH_CHARS),
+) -> AuditFilter:
+    """The filters of the query: action, user name and severity exactly; start_date and
+    end_date inclusive (_bound); search case-insensitively in the user, the action, the client
+    address, the browser, the resource and the details."""
+    return AuditFilter(
+        action=action,
+        username=username,
+        severity=severity,
+        first=_bound("start_date", start_date, last=False),
+        after=_bound("end_date", end_date, last=True),
+        search=(search or "").strip().casefold() or None,
+    )
+
+
+def _selected(selection: AuditFilter) -> list[AuditEntry]:
+    """The entries that match, newest first (blocking: runs in a worker thread)."""
+    entries = [e for e in load_audit_log() if selection.matches(e)]
+    entries.sort(key=lambda e: e.timestamp, reverse=True)
+    return entries
+
+
 # ==================== API Endpoints ====================
 
 @router.get("/logs", response_model=list[AuditEntry])
 async def get_audit_logs(
-    action: Optional[AuditAction] = None,
-    username: Optional[str] = None,
-    severity: Optional[AuditSeverity] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    limit: int = 100,
-    offset: int = 0,
+    selection: AuditFilter = Depends(audit_filter),
+    limit: int = Query(100, ge=1),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(require_admin)
 ):
-    """Get audit logs with optional filtering. Admin only."""
-    entries = await asyncio.to_thread(load_audit_log)
-
-    # Apply filters
-    if action:
-        entries = [e for e in entries if e.action == action]
-    if username:
-        entries = [e for e in entries if e.username == username]
-    if severity:
-        entries = [e for e in entries if e.severity == severity]
-    if start_date:
-        entries = [e for e in entries if e.timestamp >= start_date]
-    if end_date:
-        entries = [e for e in entries if e.timestamp <= end_date]
-
-    # Sort by timestamp descending (newest first)
-    entries.sort(key=lambda x: x.timestamp, reverse=True)
-
-    # Apply pagination
-    entries = entries[offset:offset + limit]
-
-    return entries
+    """The entries that match, newest first, a page at a time. Admin only."""
+    entries = await asyncio.to_thread(_selected, selection)
+    return entries[offset:offset + limit]
 
 
 @router.get("/logs/count")
 async def get_audit_count(
-    action: Optional[AuditAction] = None,
-    username: Optional[str] = None,
-    severity: Optional[AuditSeverity] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
+    selection: AuditFilter = Depends(audit_filter),
     current_user: User = Depends(require_admin)
 ):
-    """Get count of audit logs matching filters. Admin only."""
-    entries = await asyncio.to_thread(load_audit_log)
-
-    # Apply filters
-    if action:
-        entries = [e for e in entries if e.action == action]
-    if username:
-        entries = [e for e in entries if e.username == username]
-    if severity:
-        entries = [e for e in entries if e.severity == severity]
-    if start_date:
-        entries = [e for e in entries if e.timestamp >= start_date]
-    if end_date:
-        entries = [e for e in entries if e.timestamp <= end_date]
-
-    return {"count": len(entries)}
+    """The number of entries that match. Admin only."""
+    return {"count": len(await asyncio.to_thread(_selected, selection))}
 
 
 @router.get("/logs/export")
 async def export_audit_logs(
-    format: str = "json",
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
+    format: Literal["json", "csv"] = "json",
+    selection: AuditFilter = Depends(audit_filter),
     current_user: User = Depends(require_admin)
 ):
-    """Export audit logs as JSON or CSV. Admin only."""
-    entries = await asyncio.to_thread(load_audit_log)
+    """The entries that match, newest first, as a JSON or CSV file. Admin only."""
+    entries = await asyncio.to_thread(_selected, selection)
+    filename = f"audit_log_{datetime.now().strftime('%Y%m%d')}"
 
-    # Apply date filters
-    if start_date:
-        entries = [e for e in entries if e.timestamp >= start_date]
-    if end_date:
-        entries = [e for e in entries if e.timestamp <= end_date]
-
-    entries.sort(key=lambda x: x.timestamp, reverse=True)
-
-    if format.lower() == "csv":
+    if format == "csv":
         # Generate CSV
         output = io.StringIO()
         writer = csv.writer(output)
@@ -318,15 +369,16 @@ async def export_audit_logs(
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename=audit_log_{datetime.now().strftime('%Y%m%d')}.csv"}
+            headers={"Content-Disposition": f"attachment; filename={filename}.csv"}
         )
-    else:
-        # Return JSON
-        return {
+    return JSONResponse(
+        {
             "exported_at": datetime.now().isoformat(),
             "count": len(entries),
-            "entries": [e.model_dump() for e in entries]
-        }
+            "entries": [e.model_dump(mode="json") for e in entries],
+        },
+        headers={"Content-Disposition": f"attachment; filename={filename}.json"},
+    )
 
 
 @router.get("/logs/summary")
