@@ -173,6 +173,15 @@ async def setup_admin(request: Request, user: UserCreate, db: AsyncSession = Dep
     return db_user
 
 
+async def _audit_sign_in(**entry) -> None:
+    """The audit entry of a sign-in. One that cannot be written, such as on a full /data, is in
+    the supervisor's log (log_action), and the sign-in still answers (ADR-0247)."""
+    try:
+        await log_action(**entry)
+    except OSError:
+        pass  # log_action reported the entry
+
+
 @router.post("/login", response_model=Token)
 @limiter.limit("5/minute")  # 5 login attempts per minute per IP
 async def login(
@@ -193,7 +202,7 @@ async def login(
             failure_reason="Incorrect username or password"
         )
         # Audit log
-        await log_action(
+        await _audit_sign_in(
             action=AuditAction.LOGIN_FAILED,
             request=request,
             username=login_request.username,
@@ -234,20 +243,23 @@ async def login(
                 detail=TOTP_CODE_REUSED if reused else "Invalid 2FA code",
             )
 
+    # A login attempt that cannot be stored rolls the session back, which expires the user.
+    username = user.username
+
     # Record successful login
     await record_login_attempt(db, login_request.username, True, request)
 
     # Audit log
-    await log_action(
+    await _audit_sign_in(
         action=AuditAction.LOGIN_SUCCESS,
         request=request,
-        username=user.username,
+        username=username,
         details="Signed in with a recovery code" if used_recovery_code else None,
         success=True,
         severity=AuditSeverity.WARNING if used_recovery_code else AuditSeverity.INFO,
     )
 
-    access_token = create_access_token(data={"sub": user.username})
+    access_token = create_access_token(data={"sub": username})
     return Token(access_token=access_token, requires_totp=False)
 
 

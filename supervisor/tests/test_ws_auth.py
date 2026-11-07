@@ -10,7 +10,7 @@ import bcrypt
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
@@ -42,7 +42,7 @@ def ws_db(tmp_path):
     async_engine = create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool)
     maker = async_sessionmaker(async_engine, expire_on_commit=False)
     with patch.object(events, "async_session", maker):
-        yield SimpleNamespace(engine=sync_engine)
+        yield SimpleNamespace(engine=sync_engine, async_engine=async_engine)
     sync_engine.dispose()
 
 
@@ -398,6 +398,29 @@ class TestReauthentication:
             closed, _ = _read_until_closed(ws)
 
         assert closed.code == 4401
+
+    def test_rechecks_of_an_api_token_do_not_commit_its_last_use_again(self, client, ws_db, fast_recheck):
+        """The handshake stores the token's last use; the re-checks, every minute (here every
+        0.1 s), store it again only once it is an hour old (ADR-0248)."""
+        full_token, token_hash = generate_api_token()
+        with Session(ws_db.engine) as session:
+            user = session.query(User).filter_by(username="ws_user").one()
+            session.add(APIToken(name="t", token_hash=token_hash, token_prefix=full_token[:12], user_id=user.id))
+            session.commit()
+        commits = []
+        event.listen(ws_db.async_engine.sync_engine, "commit", lambda connection: commits.append(connection))
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, full_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            deadline = time.monotonic() + 5
+            while len(fast_recheck) < 4:
+                assert ws.receive_json()["type"] == "stats"
+                assert time.monotonic() < deadline, "credentials were not re-checked"
+
+        assert len(commits) == 1
+        with Session(ws_db.engine) as session:
+            assert session.query(APIToken).filter_by(token_hash=token_hash).one().last_used_at is not None
 
     def test_expired_jwt_is_disconnected_from_events(self, client, fast_recheck):
         token = jwt.encode({"sub": "ws_user", "exp": int(time.time()) + 2},

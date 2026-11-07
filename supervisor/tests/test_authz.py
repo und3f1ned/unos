@@ -6,6 +6,7 @@ in USER_ALLOWED (any signed-in user), or it must depend on ``require_admin``
 ``test_every_route_has_an_explicit_authorization_decision``.
 """
 import asyncio
+import hashlib
 import importlib
 import ipaddress
 import json
@@ -37,6 +38,7 @@ from sqlalchemy.pool import NullPool
 from starlette.requests import Request
 
 import src.host
+from src.auth import utils as auth_utils
 from src.auth.models import APIToken, User
 from src.auth.router import limiter as auth_limiter
 from src.auth.utils import create_access_token, require_admin, verify_token
@@ -525,6 +527,92 @@ class TestApiTokenOwnership:
         assert client.delete(f"{API}/auth/tokens/{token_id}", headers=admin_headers).status_code == 404
         with Session(authz_db.engine) as session:
             assert session.get(APIToken, token_id) is not None
+
+
+class TestApiTokenUse:
+    """A token is answered once and acts with its owner's rights until it is disabled or expires
+    (feature auth.api-tokens; ADR-0239)."""
+
+    @staticmethod
+    def _create(client, headers, **body) -> dict:
+        response = client.post(f"{API}/auth/tokens", json={"name": "backup-script", **body}, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def test_the_token_is_answered_once_and_kept_as_its_hash(self, client, authz_db, alice_headers):
+        created = self._create(client, alice_headers, expires_in_days=30)
+        token = created["token"]
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        assert token.startswith("unos_") and created["token_prefix"] == token[:12]
+        listed = client.get(f"{API}/auth/tokens", headers=alice_headers)
+        [entry] = listed.json()
+        assert entry["id"] == created["id"] and "token" not in entry
+        assert token not in listed.text and token_hash not in listed.text
+        with Session(authz_db.engine) as session:
+            [stored] = session.scalars(select(APIToken)).all()
+            assert stored.token_hash == token_hash
+            assert token not in (stored.name, stored.token_prefix, stored.permissions)
+
+    def test_an_administrators_token_has_the_administrators_rights(self, client, admin_headers):
+        token_headers = _auth(self._create(client, admin_headers)["token"])
+
+        assert client.get(f"{API}/auth/me", headers=token_headers).json()["username"] == "admin"
+        assert client.get(f"{API}/auth/users", headers=token_headers).status_code == 200
+
+    def test_a_disabled_token_answers_401_until_it_is_enabled_again(self, client, alice_headers):
+        created = self._create(client, alice_headers)
+        token_headers = _auth(created["token"])
+        toggle = f"{API}/auth/tokens/{created['id']}/toggle"
+        assert client.get(f"{API}/auth/me", headers=token_headers).status_code == 200
+
+        disabled = client.post(toggle, headers=alice_headers)
+
+        assert (disabled.status_code, disabled.json()["is_active"]) == (200, False)
+        for method, path in (("GET", f"{API}/auth/me"), ("GET", f"{API}/auth/tokens"), ("POST", toggle)):
+            refused = client.request(method, path, headers=token_headers)
+            assert (refused.status_code, refused.json()["detail"]) == (401, "API token is disabled"), path
+        enabled = client.post(toggle, headers=alice_headers)
+        assert (enabled.status_code, enabled.json()["is_active"]) == (200, True)
+        assert client.get(f"{API}/auth/me", headers=token_headers).status_code == 200
+
+    def test_an_expired_token_answers_401(self, client, authz_db, alice_headers):
+        created = self._create(client, alice_headers, expires_in_days=1)
+        token_headers = _auth(created["token"])
+        assert client.get(f"{API}/auth/me", headers=token_headers).status_code == 200
+        with Session(authz_db.engine) as session:
+            session.get(APIToken, created["id"]).expires_at = datetime.utcnow() - timedelta(seconds=1)
+            session.commit()
+
+        refused = client.get(f"{API}/auth/me", headers=token_headers)
+
+        assert (refused.status_code, refused.json()["detail"]) == (401, "API token has expired")
+
+    def test_a_token_works_until_its_lifetime_is_over(self, client, alice_headers, monkeypatch):
+        created = self._create(client, alice_headers, expires_in_days=1)
+        expires_at = datetime.fromisoformat(created["expires_at"])
+        token_headers = _auth(created["token"])
+
+        monkeypatch.setattr(auth_utils, "_token_time", lambda: expires_at - timedelta(seconds=1))
+        assert client.get(f"{API}/auth/me", headers=token_headers).status_code == 200
+        monkeypatch.setattr(auth_utils, "_token_time", lambda: expires_at + timedelta(seconds=1))
+        refused = client.get(f"{API}/auth/me", headers=token_headers)
+
+        assert (refused.status_code, refused.json()["detail"]) == (401, "API token has expired")
+
+    def test_others_reach_only_their_own_tokens(self, client, authz_db, alice_headers, bob_headers, admin_headers):
+        alices = self._create(client, alice_headers)
+        bobs_token = _auth(self._create(client, bob_headers)["token"])
+
+        for others in (bobs_token, admin_headers):
+            listed = client.get(f"{API}/auth/tokens", headers=others)
+            assert listed.status_code == 200
+            assert alices["id"] not in [t["id"] for t in listed.json()]
+            assert client.post(f"{API}/auth/tokens/{alices['id']}/toggle", headers=others).status_code == 404
+            assert client.delete(f"{API}/auth/tokens/{alices['id']}", headers=others).status_code == 404
+        with Session(authz_db.engine) as session:
+            assert session.get(APIToken, alices["id"]).is_active is True
+        assert client.get(f"{API}/auth/me", headers=_auth(alices["token"])).status_code == 200
 
 
 class TestApiTokenExpiry:

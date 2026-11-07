@@ -191,7 +191,12 @@ async def log_action(
     success: bool = True,
     severity: AuditSeverity = AuditSeverity.INFO
 ) -> AuditEntry:
-    """Log an audit action."""
+    """Log an audit action.
+
+    An entry that cannot be appended, such as on a full /data, is reported in the supervisor's
+    log as its JSON line, and the OSError goes to the caller, which decides whether its request
+    still answers: a sign-in does (ADR-0247).
+    """
     # Get IP address and user agent from request
     ip_address = None
     user_agent = None
@@ -219,7 +224,12 @@ async def log_action(
         success=success
     )
 
-    await asyncio.to_thread(_append_line, entry.model_dump_json() + "\n")
+    line = entry.model_dump_json()
+    try:
+        await asyncio.to_thread(_append_line, line + "\n")
+    except OSError as exc:
+        logger.error("Could not write this audit entry to the audit log: %s (%s)", line, exc)
+        raise
     return entry
 
 
