@@ -50,11 +50,11 @@ Avoid: subvolume (snapshots are subvolumes too), dataset.
 and overwrites nothing (ADR-0011). Avoid: backup.
 
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
-hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0232). Avoid: SMART
+hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0235). Avoid: SMART
 log (smartctl's own self-test and error logs).
 
 **Replace soon**: The mark of a connected disk whose failure prediction, a score of the rises in
-its SMART history, reaches 50; Disk Health and the dashboard show it with its reasons (ADR-0232).
+its SMART history, reaches 50; Disk Health and the dashboard show it with its reasons (ADR-0235).
 Avoid: failing (the disk's own SMART health check), degraded (a pool's health).
 
 ## Shares and SMB

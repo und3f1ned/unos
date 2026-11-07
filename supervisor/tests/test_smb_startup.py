@@ -460,7 +460,7 @@ def _quiet_lifespan(monkeypatch):
         return None
 
     for name in ("start_scheduler", "stop_scheduler", "start_health_monitors", "stop_health_monitors",
-                 "start_ups_monitor", "stop_ups_monitor", "check_host_tools"):
+                 "start_ups_monitor", "stop_ups_monitor", "check_host_tools", "reapply_wol_settings"):
         monkeypatch.setattr(main, name, noop)
     monkeypatch.setattr(main, "reconcile_pools_on_startup", AsyncMock(return_value=[]))
     monkeypatch.delenv("UNOS_DISABLE_BACKGROUND_TASKS", raising=False)

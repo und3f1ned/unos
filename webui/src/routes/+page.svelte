@@ -20,7 +20,7 @@
   let pools: Pool[] = [];
   let containers: Container[] = [];
   let notificationLogs: NotificationLog[] = [];
-  // The disks whose SMART trend says replace soon (ADR-0232).
+  // The disks whose SMART trend says replace soon (ADR-0235).
   let toReplace: DiskPrediction[] = [];
   let predictionsError = "";
   let loading = true;

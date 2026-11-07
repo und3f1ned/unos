@@ -34,7 +34,7 @@ export interface SmartInfo {
 
 export type PredictionStatus = "healthy" | "watch" | "monitor_closely" | "replace_soon";
 
-/** The failure prediction of a connected disk from its SMART history (ADR-0232). */
+/** The failure prediction of a connected disk from its SMART history (ADR-0235). */
 export interface DiskPrediction {
   /** smartctl's serial number, as SmartInfo.serial reports it. */
   serial: string;
@@ -83,7 +83,7 @@ export async function getDiskPredictions(): Promise<{ predictions: DiskPredictio
   return api.get<{ predictions: DiskPrediction[] }>("/health/smart/predictions");
 }
 
-/** The predictions that mark a disk "Replace soon" (ADR-0232). */
+/** The predictions that mark a disk "Replace soon" (ADR-0235). */
 export function replaceSoon(predictions: DiskPrediction[]): DiskPrediction[] {
   return predictions.filter((prediction) => prediction.status === "replace_soon");
 }

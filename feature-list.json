@@ -880,9 +880,9 @@
       "adr": [
         "ADR-0072",
         "ADR-0172",
-        "ADR-0232"
+        "ADR-0235"
       ],
-      "notes": "Disk Health opens each disk's SMART data in a dialog, from what GET /health/disks returned (ADR-0232): health, temperature, power-on hours and cycles, serial, firmware, the last self-test (of the ATA or the NVMe self-test log), the ATA attributes with their status, and the SMART/Health Information log of NVMe disks (test_health_smart.py, health.spec.ts on route fakes). smartctl runs in the container (architecture.host-command-layer), and GET /health/disks runs it without -n standby, so opening Disk Health wakes sleeping disks (storage.disk-spindown). Device check: 2026-11-06 (slice 1 deploy: SMART data and a short test of the pool's disk). Open: the device check of the dialog (System > Disk Health on the device: the pool's disk /dev/sda opens with its attributes, temperature and PASSED; an NVMe disk, if one is connected, with its health log) and the re-check after a reboot (ADR-0018)."
+      "notes": "Disk Health opens each disk's SMART data in a dialog, from what GET /health/disks returned (ADR-0235): health, temperature, power-on hours and cycles, serial, firmware, the last self-test (of the ATA or the NVMe self-test log), the ATA attributes with their status, and the SMART/Health Information log of NVMe disks (test_health_smart.py, health.spec.ts on route fakes). smartctl runs in the container (architecture.host-command-layer), and GET /health/disks runs it without -n standby, so opening Disk Health wakes sleeping disks (storage.disk-spindown). Device check: 2026-11-06 (slice 1 deploy: SMART data and a short test of the pool's disk). Open: the device check of the dialog (System > Disk Health on the device: the pool's disk /dev/sda opens with its attributes, temperature and PASSED; an NVMe disk, if one is connected, with its health log) and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "storage.smart-trend-alerts",
@@ -919,9 +919,9 @@
       ],
       "passes": true,
       "adr": [
-        "ADR-0232"
+        "ADR-0235"
       ],
-      "notes": "GET /health/smart/predictions scores the SMART history as ADR-0232 fixes it (the rate over the last 24 snapshots; no prediction for NVMe disks or the shared 'unknown' history) and covers the disks connected now, found by the lsblk serial the monitor stores with each snapshot when it names one disk and one history, else by path. A counter is read from the snapshots that hold it, and the history file is written atomically; one that cannot be read answers 500. Disk Health marks a disk Replace soon by its serial, with the risk factors and the recommendation, and lists a prediction that matches no listed disk apart; the dashboard lists such disks for administrators and links to Disk Health; both say when the predictions cannot be read. Proven here, 2026-11-07: test_smart_predictions.py (the threshold, the window, snapshots without the counters, the disks covered, the mark going a day after the last rise, the history file), health.spec.ts and dashboard.spec.ts on route fakes, roles.spec.ts (no request for regular users); reviewed in a fresh context twice (ADR-0017), the findings of the second fixed on 2026-11-07. No host-level change, and no failing disk can be shown on the device. A sanity check there after the next deploy: GET /api/v1/health/smart/predictions answers 200 for the connected disks, new snapshots in /data/smart_history.json hold lsblk_serial, and the dashboard shows no mark and no warning."
+      "notes": "GET /health/smart/predictions scores the SMART history as ADR-0235 fixes it (the rate over the last 24 snapshots; no prediction for NVMe disks or the shared 'unknown' history) and covers the disks connected now, found by the lsblk serial the monitor stores with each snapshot when it names one disk and one history, else by path. A counter is read from the snapshots that hold it, and the history file is written atomically; one that cannot be read answers 500. Disk Health marks a disk Replace soon by its serial, with the risk factors and the recommendation, and lists a prediction that matches no listed disk apart; the dashboard lists such disks for administrators and links to Disk Health; both say when the predictions cannot be read. Proven here, 2026-11-07: test_smart_predictions.py (the threshold, the window, snapshots without the counters, the disks covered, the mark going a day after the last rise, the history file), health.spec.ts and dashboard.spec.ts on route fakes, roles.spec.ts (no request for regular users); reviewed in a fresh context twice (ADR-0017), the findings of the second fixed on 2026-11-07. No host-level change, and no failing disk can be shown on the device. A sanity check there after the next deploy: GET /api/v1/health/smart/predictions answers 200 for the connected disks, new snapshots in /data/smart_history.json hold lsblk_serial, and the dashboard shows no mark and no warning."
     },
     {
       "id": "storage.restore-copies-deletable",
@@ -2010,13 +2010,15 @@
         "A name that exists or breaks the name rules is refused"
       ],
       "verified_by": [
+        "webui/tests/files.spec.ts",
         "supervisor/tests/test_files_security.py"
       ],
       "passes": false,
       "adr": [
-        "ADR-0168"
+        "ADR-0168",
+        "ADR-0232"
       ],
-      "notes": "No E2E test renames an item."
+      "notes": "Step 1: files.spec.ts 'renames a file and a folder in the open folder', also from the keyboard, by leaving the field, and after a switch to another window as Chromium reports one; test_files_security.py test_rename_a_file_and_a_folder. Step 2: files.spec.ts 'refuses a name that exists or breaks the name rules, and Escape keeps the name'; test_rename_rejects_bad_names, test_rename_existing_target_is_refused, test_rename_never_replaces_a_name_that_appears_after_the_check. Missing: these backend tests on Linux. On Linux, which the dev device runs, the exclusive rename of ADR-0232 is renameat2 with RENAME_NOREPLACE, and no run has reached it: the tests ran renameatx_np on macOS. passes turns true once the owner's run of scripts/dev/linux-tests.sh tests/test_files_security.py -k rename is green."
     },
     {
       "id": "files.protects-volumes-and-mounts",
@@ -2178,13 +2180,15 @@
         "Turn Wake-on-LAN on for an interface: ethtool on the host shows it, and a magic packet wakes the host"
       ],
       "verified_by": [
+        "supervisor/tests/test_power.py",
         "webui/tests/power.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0015"
+        "ADR-0015",
+        "ADR-0233"
       ],
-      "notes": "No backend test, and the E2E spec only checks the confirmation dialogs. Reboots of the dev device are owner actions (ADR-0211). Open: the device check and the re-check after a reboot (ADR-0018). In the supervisor container is_in_container() (supervisor/src/power/router.py) is always true, because /.dockerenv exists: reboot, shutdown and suspend answer status unavailable, and the Power tab does not show that answer (architecture.host-command-layer)."
+      "notes": "Built (ADR-0233): reboot, shutdown, cancel, suspend and Wake-on-LAN run on the host through src/host.py; GET /api/v1/power/pending reads logind's ScheduledShutdown, and Cancel runs shutdown -c only while something is pending; the Wake-on-LAN choice per interface is kept in /data/wol_config.json and set again at each start of the supervisor; with UNOS_HOST_EXEC=local (the stand-in, the test stack) every power endpoint answers 503 and runs nothing; POST /system/reboot, /system/shutdown and /system/cancel-shutdown are gone. System > Power shows each answer, the pending action with its Cancel button, and the interfaces with their MAC address and an on or off button; Suspend asks first too. Proven on a fake host and with route fakes only: every step acts on the host, so the entry passes after the device check and the re-check after a reboot (ADR-0018), and reboots of the dev device are owner actions (ADR-0211). The device check must show: Reboot in the tab makes busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager ScheduledShutdown name reboot one minute ahead, and the host reboots then; Cancel empties it and nothing happens; Shutdown powers the host off a minute later; Turn on for the board's NIC makes ethtool <nic> on the host show Wake-on: g, a magic packet from a second machine on the LAN starts the host after a shutdown (whether the NIC and the board support it is unknown), and after a reboot ethtool still shows g. The host needs ethtool; the startup check names it when it is missing. The UPS monitor still shuts down only outside a container (system.ups-monitoring)."
     },
     {
       "id": "system.ups-monitoring",
@@ -2385,10 +2389,17 @@
         "System > Updates shows the current and the latest version, and no Install Update or Rollback button",
         "The tab names sudo /opt/unos/deploy/update.sh as the way to update"
       ],
+      "verified_by": [
+        "webui/tests/updates.spec.ts",
+        "supervisor/tests/test_updates.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0173"
-      ]
+        "ADR-0173",
+        "ADR-0234"
+      ],
+      "notes": "The supervisor image carries its version: UNOS_VERSION, git describe --tags --always of the checkout that deploy/install.sh or deploy/update.sh built; update.sh fetches its branch with the tags in its history, so a release tagged after the install was cloned names the images (ADR-0234). The tab shows it, the latest release on GitHub or that none is published, and names sudo /opt/unos/deploy/update.sh; Install Update, Rollback, the update progress, the history and the settings left it, while their routes stay until system.in-app-updater. General shows the same version. Proven with route fakes and in the scripts' sandbox only, so passes stays false until the dev device shows its version: scripts/dev/deploy.sh, which builds the device's images, does not pass UNOS_VERSION yet, so System > Updates and General read unknown there. Missing: that script change (the owner's), then a deploy after which GET /api/v1/updates/current on the device (scripts/dev/api.py) and both tabs name the deployed tree's version."
     },
     {
       "id": "system.no-legacy-log-endpoints",

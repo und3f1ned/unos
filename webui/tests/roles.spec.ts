@@ -109,7 +109,7 @@ test.describe('Regular user account', () => {
   });
 
   test('the dashboard asks a regular user for no disk predictions', async ({ page }) => {
-    // The replace-soon alert is for administrators, and so is its API (ADR-0232).
+    // The replace-soon alert is for administrators, and so is its API (ADR-0235).
     const health: string[] = [];
     page.on('request', (request) => {
       const url = new URL(request.url());

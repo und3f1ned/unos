@@ -26,8 +26,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `networkStats`, `diskIOStats`, `processes`, `statsHistory`, `temperatures`, `wsConnected`), which
   `/ws/v1/events` feeds every 2 seconds (ADR-0006). Rates come from the server; format them with
   `formatBytes` and `formatBytesPerSecond`.
-- The `setInterval` polling in `ContainerDetailDrawer.svelte`, `LogsTab.svelte`, the storage page
-  and `UpdateTab.svelte` predates that rule: new live data comes over the WebSocket.
+- The `setInterval` polling in `ContainerDetailDrawer.svelte`, `LogsTab.svelte` and the storage
+  page predates that rule: new live data comes over the WebSocket.
 - A WebSocket authenticates with its first message, `{"type": "auth", "token": ...}`; tokens stay
   out of URLs (ADR-0031). Close code 4401 ends the session, 4403 means forbidden.
 - HTTP goes through `$lib/api/client.ts`, one module per API area in `$lib/api/`: `api.get`,

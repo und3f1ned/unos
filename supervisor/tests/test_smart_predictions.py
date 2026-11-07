@@ -1,4 +1,4 @@
-"""Failure predictions from the SMART history, and the disks that get one (ADR-0232).
+"""Failure predictions from the SMART history, and the disks that get one (ADR-0235).
 
 GET /health/smart/predictions scores the SMART history that the hourly
 monitor stores per serial (storage.smart-trend-alerts). A disk needs at
@@ -382,7 +382,7 @@ def test_a_disk_replaced_inside_its_usb_enclosure(api, disks):
     old = snapshots(FAILING, serial="WD-OLD", device="/dev/sdc", lsblk_serial="BRIDGE-1")
     disks.write({"WD-OLD": old})
     # Until the monitor has recorded the new disk nothing tells the two apart:
-    # the old disk's mark stays (ADR-0232).
+    # the old disk's mark stays (ADR-0235).
     assert placed(api) == [("WD-OLD", "/dev/sdc")]
 
     # The new disk's first snapshot: both histories hold the bridge's serial at

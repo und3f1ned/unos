@@ -90,7 +90,7 @@ test.describe('Dashboard', () => {
     await expect(widget.locator('.badge', { hasText: /^Healthy$/ })).toHaveCount(1);
   });
 
-  // storage.smart-replace-soon (ADR-0232): the dashboard shows no disks, so
+  // storage.smart-replace-soon (ADR-0235): the dashboard shows no disks, so
   // the disks to replace soon get an alert of their own.
   test('lists the disks to replace soon with the reason, until the prediction changes', async ({
     authenticatedPage: page,

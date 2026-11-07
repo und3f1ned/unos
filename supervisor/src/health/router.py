@@ -99,7 +99,7 @@ SMART_HISTORY_FILE = "/data/smart_history.json"
 SMART_CHECK_INTERVAL = 3600  # Check SMART every hour
 SMARTCTL_TIMEOUT = 30
 # The history key of every disk that smartctl reports without a serial: the
-# counters of different disks mix there, so it gets no prediction (ADR-0232).
+# counters of different disks mix there, so it gets no prediction (ADR-0235).
 _NO_SERIAL = "unknown"
 
 # Alerts are sent from their own small thread pool and each delivery is bounded
@@ -130,7 +130,7 @@ class SmartHistoryEntry(BaseModel):
     device: str
     serial: str  # smartctl's: the key of the disk's history
     # The disk's serial as lsblk reported it with this snapshot, which tells
-    # which connected disk the history belongs to (ADR-0232); None when lsblk
+    # which connected disk the history belongs to (ADR-0235); None when lsblk
     # reports none (some USB bridges).
     lsblk_serial: Optional[str] = None
     attributes: dict[int, int]  # attr_id -> raw_value
@@ -160,7 +160,7 @@ def load_smart_history() -> dict[str, list[dict]]:
     """The SMART history: smartctl's serial -> its snapshots, oldest first.
 
     {} without a file. A file that cannot be read or holds no history raises
-    SmartHistoryUnreadable: that is not an empty history (ADR-0232).
+    SmartHistoryUnreadable: that is not an empty history (ADR-0235).
     """
     path = Path(SMART_HISTORY_FILE)
     try:
@@ -191,7 +191,7 @@ def save_smart_history(history: dict[str, list[dict]]):
 
     Staged next to the file, then renamed over it: a reader, or a power loss
     during the write, finds the old history or the new one, never a part
-    (ADR-0232).
+    (ADR-0235).
     """
     path = Path(SMART_HISTORY_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -413,7 +413,7 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
     snapshot. When the host's disks cannot be listed, the pass is logged
     and skipped. A history file that cannot be read is logged and replaced
     by a new history, so that a damaged file does not stop the recording
-    (ADR-0232).
+    (ADR-0235).
     """
     try:
         disks = storage_disks.host_disks()
@@ -1081,7 +1081,7 @@ class DiskPredictions(BaseModel):
 # A day of hourly snapshots: the least history a prediction needs, and the
 # window of its rate. The history keeps 720 snapshots (save_smart_history).
 MIN_PREDICTION_SNAPSHOTS = 24
-# The status of the replace-soon mark in Disk Health and on the dashboard (ADR-0232).
+# The status of the replace-soon mark in Disk Health and on the dashboard (ADR-0235).
 REPLACE_SOON_SCORE = 50
 
 
@@ -1091,7 +1091,7 @@ def _reports_attribute(entry: dict, attr_id: int) -> bool:
 
 
 def predict_disk_failure(serial: str, entries: list[dict], device: str) -> Optional[DiskPrediction]:
-    """The failure prediction of the disk now at ``device`` from its SMART history (ADR-0232).
+    """The failure prediction of the disk now at ``device`` from its SMART history (ADR-0235).
 
     None with fewer than MIN_PREDICTION_SNAPSHOTS snapshots, or when no
     snapshot holds any of CRITICAL_ATTRIBUTES (NVMe disks: the monitor records
@@ -1167,7 +1167,7 @@ def _histories_of_connected_disks(
 ) -> dict[str, tuple[str, list[dict]]]:
     """The histories of the disks connected now: serial -> (the disk's path now, history).
 
-    The history keeps the serials of removed and replaced disks (ADR-0232).
+    The history keeps the serials of removed and replaced disks (ADR-0235).
     Each history goes by its latest snapshot and the lsblk serial stored with
     it. A history whose lsblk serial no connected disk reports belongs to a
     disk that is gone. One whose lsblk serial one connected disk reports and
@@ -1211,7 +1211,7 @@ def _histories_of_connected_disks(
 # FastAPI's thread pool. It reads the stored history only and runs no smartctl.
 @router.get("/smart/predictions", response_model=DiskPredictions)
 def get_disk_predictions(_: dict = Depends(verify_token)):
-    """Failure predictions from the SMART trends of the disks connected now (ADR-0232).
+    """Failure predictions from the SMART trends of the disks connected now (ADR-0235).
 
     The disks of GET /health/disks; 500 when the host's disks cannot be
     listed or the SMART history cannot be read.

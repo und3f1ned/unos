@@ -112,7 +112,7 @@ test.describe('Disk Health', () => {
   });
 
   // storage.smart: open a disk. The dialog shows what GET /health/disks
-  // returned, so opening it runs no smartctl (ADR-0232).
+  // returned, so opening it runs no smartctl (ADR-0235).
   test('opens a disk with its SMART attributes, temperature and overall health', async ({
     authenticatedPage: page,
   }) => {
@@ -170,7 +170,7 @@ test.describe('Disk Health', () => {
     expect([...requested].sort()).toEqual(['GET /disks', 'GET /smart/predictions']);
   });
 
-  // storage.smart-replace-soon (ADR-0232).
+  // storage.smart-replace-soon (ADR-0235).
   test('marks a disk to replace soon with the reason, until the prediction changes', async ({
     authenticatedPage: page,
   }) => {

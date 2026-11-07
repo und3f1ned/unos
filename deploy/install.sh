@@ -17,7 +17,6 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-UNOS_VERSION="${UNOS_VERSION:-latest}"
 UNOS_INSTALL_DIR="${UNOS_INSTALL_DIR:-/opt/unos}"
 UNOS_DATA_DIR="${UNOS_DATA_DIR:-/var/lib/unos}"
 UNOS_REPO="${UNOS_REPO:-https://github.com/und3f1ned/unos.git}"
@@ -352,8 +351,10 @@ start_unos() {
         set -a; . /etc/unos/secrets.env; set +a
     fi
     
-    # Build containers
-    docker compose build
+    # Build containers. The supervisor image carries the version of the
+    # checkout, which the web interface shows (ADR-0234).
+    UNOS_VERSION=$(git -C "$UNOS_INSTALL_DIR" describe --tags --always 2>/dev/null || echo unknown) \
+        docker compose build
 
     # Re-running over an older install: its network lacks the fixed subnet
     # (172.31.254.0/24) and must be recreated. Does nothing on a fresh system.

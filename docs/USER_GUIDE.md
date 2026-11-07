@@ -398,6 +398,16 @@ in your storage pools from the web interface. It starts in the pools directory
 - **Copy and Move** - Select the items and click **Copy** or **Move**, open
   the destination folder, then click **Copy here** or **Move here**. If an
   item with the same name is already there, nothing is copied or moved.
+- **Rename** - Select one item and click **Rename**: its name becomes a field
+  with the name selected. Type the new name, then press Enter or click
+  elsewhere; Escape keeps the old name. Switching to another window or tab
+  keeps the field as it is. A name that is already used in the folder is
+  refused, and so are `.`, `..`, names with `/` or control characters, and
+  names longer than 255 bytes: the message says why, and the field stays open
+  for another name. Spaces at the start and the end of the name are dropped.
+  The item stays selected under its new name. Until the list shows the new
+  name, the buttons for the selected items and **Copy here** or **Move here**
+  wait.
 - **Delete** - Select the items, click **Delete** and confirm. Folders are
   deleted with everything in them.
 - **Upload** - Click the upload arrow at the top right and choose one or more
@@ -409,13 +419,17 @@ in your storage pools from the web interface. It starts in the pools directory
 - **Keyboard and screen readers** - The name of each folder and file is a
   button: Tab to it, then press Enter or Space to open the folder or download
   the file. After a folder opens, the focus is on **..**. The checkbox selects
-  the item.
+  the item. After a rename, or Escape in the name field, the focus is on the
+  item's checkbox, unless Tab or a click took it to another control. Screen
+  readers announce error messages.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
-subvolumes or filesystems mounted in a pool cannot be deleted or moved here:
-delete volumes on the **Storage** page (see
-[Pool Operations](#pool-operations)).
+subvolumes or filesystems mounted in a pool cannot be deleted, renamed or
+moved here: delete volumes on the **Storage** page (see
+[Pool Operations](#pool-operations)). Renaming a folder that a share, an NFS
+export or an app uses is not refused, but they keep using the old name, which
+no longer exists: rename the folder back to restore them.
 
 A folder that contains a subvolume (such as a snapshot) or a mounted
 filesystem cannot be deleted here, or moved to another pool or volume.
@@ -642,8 +656,28 @@ Access via **System** in the sidebar.
 ### General
 
 - Shows the host name, the operating system, the kernel and the architecture
+- Shows the UNOS version, as the Updates tab does
 - The host name and the time zone cannot be changed in the web interface yet
   (feature-list entry `system.hostname-and-time-zone`)
+
+### Updates
+
+- **Current version**: the version UNOS was built from, as `git describe`
+  named its checkout at the build: a release tag such as `v1.2.0`, or, marked
+  **dev**, a tag with the commits after it such as `v1.2.0-3-g712fc3a` or only
+  the commit while no tag was in its history. A release tagged later on the
+  commit UNOS runs shows after a rebuild (see [Upgrading](INSTALL.md#upgrading)).
+  An installation whose images were built without `install.sh` or `update.sh`
+  shows `unknown`.
+- **Latest release**: checked on GitHub when the tab opens, and again with
+  **Check again**; **Include pre-releases** checks for pre-releases too. The
+  tab says when an update is available, with the release's notes and a link
+  to it, when you run the latest release, when no release is published yet,
+  and why a check failed (GitHub answers 60 checks an hour per address).
+- **How to update**: UNOS is updated on the host, with
+  `sudo /opt/unos/deploy/update.sh` (see
+  [Upgrading](INSTALL.md#upgrading)). The web interface cannot install updates
+  or roll them back yet (feature-list entry `system.in-app-updater`).
 
 ### Network
 
@@ -654,12 +688,27 @@ Access via **System** in the sidebar.
 
 ### Power Management
 
-The tab has **Reboot** and **Shutdown** buttons, but they do not work yet:
-inside the supervisor's container the API answers that they are not
-available, and the tab does not show that answer. Reboot or shut down the
-host from its console or over SSH. There are no scheduled shutdown or wake
-times, and suspend, Wake-on-LAN and the UPS state have no page (feature-list
-entries `system.power`, `system.scheduled-power` and `system.ups-monitoring`).
+**Reboot** and **Shutdown** ask for confirmation, then act on the host one
+minute later. Until then the tab shows the pending reboot or shutdown with its
+time and a **Cancel reboot** or **Cancel shutdown** button, also after a
+reload; a shutdown or reboot scheduled on the host's console shows there too.
+**Suspend** asks for confirmation and suspends the host at once, if its kernel
+offers suspend to RAM; the host then sleeps until its power button or a
+Wake-on-LAN packet wakes it. The tab shows each answer, and the host's error
+when it refused.
+
+**Wake-on-LAN** lists the host's Ethernet interfaces with their MAC
+addresses. **Turn on** lets a magic packet to the interface's address start
+the host after a shutdown or wake it from suspend; **Turn off** lets nothing
+wake the host through it. An interface that cannot wake the host by magic
+packet shows **Not supported**. UNOS sets your choice again each time it
+starts, because many network drivers forget it at a reboot. Send the magic
+packet from a computer on the same network, for example with
+`wakeonlan <MAC address>`.
+
+There are no scheduled shutdown or wake times, and the UPS state has no page
+yet (feature-list entries `system.scheduled-power` and
+`system.ups-monitoring`).
 
 ### Disk Health
 

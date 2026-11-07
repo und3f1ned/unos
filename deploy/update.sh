@@ -232,7 +232,12 @@ check_for_updates() {
     log_info "Checking for updates..."
 
     cd "$UNOS_INSTALL_DIR" || exit 1
-    git fetch --quiet origin "$UNOS_BRANCH"
+    # A refspec with a destination, so that git also fetches the tags that
+    # point into the branch's history: git describe names the new images
+    # after a release tagged since the install was cloned (ADR-0234).
+    # `git fetch origin <branch>` fetches no tags. A tag that exists here
+    # already stays as it is, where --tags would fail on one that moved.
+    git fetch --quiet origin "+refs/heads/$UNOS_BRANCH:refs/remotes/origin/$UNOS_BRANCH"
 
     local behind ahead
     behind=$(git rev-list --count "HEAD..origin/$UNOS_BRANCH")
@@ -395,8 +400,9 @@ restore_previous() {
 build_images() {
     log_info "Building the new images (UNOS keeps running meanwhile)..."
 
-    # Build with no cache to ensure fresh build
-    if ! compose build --no-cache; then
+    # Build with no cache to ensure fresh build. The supervisor image carries
+    # the version of the new checkout, which the web interface shows (ADR-0234).
+    if ! UNOS_VERSION=$NEW_VERSION compose build --no-cache; then
         log_error "Building the new images failed. UNOS keeps running $CURRENT_VERSION; nothing was changed."
         restore_previous
         exit 1

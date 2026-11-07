@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0232: Disk Health opens each disk's SMART data, and disks whose SMART trend scores 50 are marked replace soon
+# ADR-0235: Disk Health opens each disk's SMART data, and disks whose SMART trend scores 50 are marked replace soon
 
 ## Context
 

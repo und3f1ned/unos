@@ -13,7 +13,7 @@
   import { HardDrive, Thermometer, Check, X, AlertTriangle, RefreshCw } from "lucide-svelte";
 
   let disks: SmartInfo[] = [];
-  // The predictions that say replace soon (ADR-0232).
+  // The predictions that say replace soon (ADR-0235).
   let toReplace: DiskPrediction[] = [];
   let loading = true;
   let error = "";
@@ -53,7 +53,7 @@
   }
 
   // By smartctl's serial, which the SMART monitor records too: a disk's path
-  // can change (ADR-0232).
+  // can change (ADR-0235).
   function predictionOf(disk: SmartInfo, predictions: DiskPrediction[]): DiskPrediction | undefined {
     return predictions.find((prediction) => prediction.serial === disk.serial);
   }
