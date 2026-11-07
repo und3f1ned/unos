@@ -2168,13 +2168,15 @@
         "Turn Wake-on-LAN on for an interface: ethtool on the host shows it, and a magic packet wakes the host"
       ],
       "verified_by": [
+        "supervisor/tests/test_power.py",
         "webui/tests/power.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0015"
+        "ADR-0015",
+        "ADR-0233"
       ],
-      "notes": "No backend test, and the E2E spec only checks the confirmation dialogs. Reboots of the dev device are owner actions (ADR-0211). Open: the device check and the re-check after a reboot (ADR-0018). In the supervisor container is_in_container() (supervisor/src/power/router.py) is always true, because /.dockerenv exists: reboot, shutdown and suspend answer status unavailable, and the Power tab does not show that answer (architecture.host-command-layer)."
+      "notes": "Built (ADR-0233): reboot, shutdown, cancel, suspend and Wake-on-LAN run on the host through src/host.py; GET /api/v1/power/pending reads logind's ScheduledShutdown, and Cancel runs shutdown -c only while something is pending; the Wake-on-LAN choice per interface is kept in /data/wol_config.json and set again at each start of the supervisor; with UNOS_HOST_EXEC=local (the stand-in, the test stack) every power endpoint answers 503 and runs nothing; POST /system/reboot, /system/shutdown and /system/cancel-shutdown are gone. System > Power shows each answer, the pending action with its Cancel button, and the interfaces with their MAC address and an on or off button; Suspend asks first too. Proven on a fake host and with route fakes only: every step acts on the host, so the entry passes after the device check and the re-check after a reboot (ADR-0018), and reboots of the dev device are owner actions (ADR-0211). The device check must show: Reboot in the tab makes busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager ScheduledShutdown name reboot one minute ahead, and the host reboots then; Cancel empties it and nothing happens; Shutdown powers the host off a minute later; Turn on for the board's NIC makes ethtool <nic> on the host show Wake-on: g, a magic packet from a second machine on the LAN starts the host after a shutdown (whether the NIC and the board support it is unknown), and after a reboot ethtool still shows g. The host needs ethtool; the startup check names it when it is missing. The UPS monitor still shuts down only outside a container (system.ups-monitoring)."
     },
     {
       "id": "system.ups-monitoring",
@@ -2375,10 +2377,17 @@
         "System > Updates shows the current and the latest version, and no Install Update or Rollback button",
         "The tab names sudo /opt/unos/deploy/update.sh as the way to update"
       ],
+      "verified_by": [
+        "webui/tests/updates.spec.ts",
+        "supervisor/tests/test_updates.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0173"
-      ]
+        "ADR-0173",
+        "ADR-0234"
+      ],
+      "notes": "The supervisor image carries its version: UNOS_VERSION, git describe --tags --always of the checkout that deploy/install.sh or deploy/update.sh built; update.sh fetches its branch with the tags in its history, so a release tagged after the install was cloned names the images (ADR-0234). The tab shows it, the latest release on GitHub or that none is published, and names sudo /opt/unos/deploy/update.sh; Install Update, Rollback, the update progress, the history and the settings left it, while their routes stay until system.in-app-updater. General shows the same version. Proven with route fakes and in the scripts' sandbox only, so passes stays false until the dev device shows its version: scripts/dev/deploy.sh, which builds the device's images, does not pass UNOS_VERSION yet, so System > Updates and General read unknown there. Missing: that script change (the owner's), then a deploy after which GET /api/v1/updates/current on the device (scripts/dev/api.py) and both tabs name the deployed tree's version."
     },
     {
       "id": "system.no-legacy-log-endpoints",

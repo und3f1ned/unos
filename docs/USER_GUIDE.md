@@ -597,8 +597,28 @@ Access via **System** in the sidebar.
 ### General
 
 - Shows the host name, the operating system, the kernel and the architecture
+- Shows the UNOS version, as the Updates tab does
 - The host name and the time zone cannot be changed in the web interface yet
   (feature-list entry `system.hostname-and-time-zone`)
+
+### Updates
+
+- **Current version**: the version UNOS was built from, as `git describe`
+  named its checkout at the build: a release tag such as `v1.2.0`, or, marked
+  **dev**, a tag with the commits after it such as `v1.2.0-3-g712fc3a` or only
+  the commit while no tag was in its history. A release tagged later on the
+  commit UNOS runs shows after a rebuild (see [Upgrading](INSTALL.md#upgrading)).
+  An installation whose images were built without `install.sh` or `update.sh`
+  shows `unknown`.
+- **Latest release**: checked on GitHub when the tab opens, and again with
+  **Check again**; **Include pre-releases** checks for pre-releases too. The
+  tab says when an update is available, with the release's notes and a link
+  to it, when you run the latest release, when no release is published yet,
+  and why a check failed (GitHub answers 60 checks an hour per address).
+- **How to update**: UNOS is updated on the host, with
+  `sudo /opt/unos/deploy/update.sh` (see
+  [Upgrading](INSTALL.md#upgrading)). The web interface cannot install updates
+  or roll them back yet (feature-list entry `system.in-app-updater`).
 
 ### Network
 
@@ -609,12 +629,27 @@ Access via **System** in the sidebar.
 
 ### Power Management
 
-The tab has **Reboot** and **Shutdown** buttons, but they do not work yet:
-inside the supervisor's container the API answers that they are not
-available, and the tab does not show that answer. Reboot or shut down the
-host from its console or over SSH. There are no scheduled shutdown or wake
-times, and suspend, Wake-on-LAN and the UPS state have no page (feature-list
-entries `system.power`, `system.scheduled-power` and `system.ups-monitoring`).
+**Reboot** and **Shutdown** ask for confirmation, then act on the host one
+minute later. Until then the tab shows the pending reboot or shutdown with its
+time and a **Cancel reboot** or **Cancel shutdown** button, also after a
+reload; a shutdown or reboot scheduled on the host's console shows there too.
+**Suspend** asks for confirmation and suspends the host at once, if its kernel
+offers suspend to RAM; the host then sleeps until its power button or a
+Wake-on-LAN packet wakes it. The tab shows each answer, and the host's error
+when it refused.
+
+**Wake-on-LAN** lists the host's Ethernet interfaces with their MAC
+addresses. **Turn on** lets a magic packet to the interface's address start
+the host after a shutdown or wake it from suspend; **Turn off** lets nothing
+wake the host through it. An interface that cannot wake the host by magic
+packet shows **Not supported**. UNOS sets your choice again each time it
+starts, because many network drivers forget it at a reboot. Send the magic
+packet from a computer on the same network, for example with
+`wakeonlan <MAC address>`.
+
+There are no scheduled shutdown or wake times, and the UPS state has no page
+yet (feature-list entries `system.scheduled-power` and
+`system.ups-monitoring`).
 
 ### Disk Health
 
