@@ -14,8 +14,10 @@ is not localhost, 127.0.0.1, ::1 or webui (`webui/tests/target.ts`).
 (`scripts/standin/run_supervisor.py`, every data path in `.standin/`) behind a
 Caddy stand-in (`scripts/standin/front.mjs`) from a fresh data directory,
 creates the administrator the specs sign in as (`E2E_ADMIN` of
-`webui/tests/fixtures.ts`), runs Playwright with `E2E_STAND_IN=1`, stops
-everything and exits with Playwright's code. It is the way to run the specs
+`webui/tests/fixtures.ts`) through the `/setup` page with a first Playwright
+run of `webui/tests/first-run.spec.ts` (`E2E_FIRST_RUN=1`; when it fails,
+e2e.sh stops: `.standin/logs/first-run.log`), runs Playwright with
+`E2E_STAND_IN=1`, stops everything and exits with Playwright's code. It is the way to run the specs
 here: `webui/package.json` has no test scripts, and a bare
 `npx playwright test` finds no stand-in running.
 

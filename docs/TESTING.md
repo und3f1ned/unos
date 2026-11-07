@@ -259,9 +259,12 @@ directory under `.standin/` (git-ignored): the real supervisor through
 `scripts/standin/run_supervisor.py`, with every data path inside `.standin/`, and
 `scripts/standin/front.mjs` in place of Caddy (HTTPS with a self-signed certificate and the
 security headers of `webui/Caddyfile`). It creates the test administrator `admin` /
-`unos-e2e-pass` (`E2E_ADMIN` in `webui/tests/fixtures.ts`), runs Playwright with `BASE_URL` and
-`HTTP_URL` on localhost and `E2E_STAND_IN=1`, stops everything and exits with Playwright's exit
-code. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
+`unos-e2e-pass` (`E2E_ADMIN` in `webui/tests/fixtures.ts`) as the owner creates theirs: on the new
+stand-in, which has no account yet, a first Playwright run with `E2E_FIRST_RUN=1` runs
+`tests/first-run.spec.ts` alone (never retried), which goes through the `/setup` page; when it
+fails, e2e.sh stops (log: `.standin/logs/first-run.log`, ADR-0247). Then it runs Playwright with
+`BASE_URL` and `HTTP_URL` on localhost and `E2E_STAND_IN=1`, stops everything and exits with
+Playwright's exit code. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
 (`npx playwright show-report` in `webui/`). The ports default to 46443 (HTTPS), 46080 (HTTP) and
 46180 (the supervisor); `E2E_HTTPS_PORT`, `E2E_HTTP_PORT` and `E2E_BACKEND_PORT` change them. The
 standin-e2e skill explains how to find the cause of a failure.

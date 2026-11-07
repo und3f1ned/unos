@@ -2,7 +2,7 @@ import os
 import subprocess
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,8 +68,9 @@ async def get_login_history(
     failed_result = await db.execute(failed_query)
     failed_count = failed_result.scalar() or 0
 
-    # Get attempts with pagination
-    query = query.order_by(desc(LoginAttempt.timestamp)).offset(offset).limit(limit)
+    # Get attempts with pagination, newest first. Times have whole seconds: the id orders
+    # the attempts of one second (ADR-0248).
+    query = query.order_by(desc(LoginAttempt.timestamp), desc(LoginAttempt.id)).offset(offset).limit(limit)
     result = await db.execute(query)
     attempts = result.scalars().all()
 
@@ -88,7 +89,8 @@ async def clear_login_history(
     db: AsyncSession = Depends(get_db)
 ):
     """Clear login history older than specified days. Admin only."""
-    cutoff = datetime.now() - timedelta(days=older_than_days)
+    # The stored times are UTC without a zone, as SQLite's CURRENT_TIMESTAMP gives them (ADR-0248).
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=older_than_days)
 
     from sqlalchemy import delete
     stmt = delete(LoginAttempt).where(LoginAttempt.timestamp < cutoff)

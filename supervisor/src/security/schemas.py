@@ -3,7 +3,7 @@ import re
 from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from .validators import NAME_MAX
@@ -74,6 +74,18 @@ def validate_common_name(value: str) -> str:
 CertificateDomain = Annotated[str, AfterValidator(validate_common_name)]
 
 
+def _as_utc(value: datetime) -> datetime:
+    """A time without a zone is UTC: SQLite's CURRENT_TIMESTAMP is (ADR-0248)."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+# Answered with its offset ("2026-11-07T12:00:00Z"): a browser reads a time without one as
+# its own local time.
+UtcDatetime = Annotated[datetime, AfterValidator(_as_utc)]
+
+
 # Login History Schemas
 class LoginAttemptResponse(BaseModel):
     id: int
@@ -82,7 +94,7 @@ class LoginAttemptResponse(BaseModel):
     user_agent: str | None
     success: bool
     failure_reason: str | None
-    timestamp: datetime | None
+    timestamp: UtcDatetime | None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,12 +1,13 @@
 import { test as base, expect, type Page } from '@playwright/test';
 
 /**
- * The administrator the specs sign in as. scripts/standin/e2e.sh creates it
- * through the first-run setup of the stand-in's fresh data directory, and so
- * do the test stack (deploy/docker-compose.test.yml) and scripts/test-cycle.sh:
- * it exists only on those local targets (ADR-0215).
- * supervisor/tests/test_standin.py checks that e2e.sh creates this account and
- * that no spec has its own copy of the password.
+ * The administrator the specs sign in as. scripts/standin/e2e.sh creates it on
+ * the stand-in's fresh data directory through the /setup page, with a run of
+ * tests/first-run.spec.ts before the specs (ADR-0247); the test stack
+ * (deploy/docker-compose.test.yml) and scripts/test-cycle.sh create it through
+ * the first-run setup API. It exists only on those local targets (ADR-0215).
+ * supervisor/tests/test_standin.py checks that first-run.spec.ts creates this
+ * account and that no spec has its own copy of the password.
  */
 export const E2E_ADMIN = { username: 'admin', password: 'unos-e2e-pass' } as const;
 

@@ -89,14 +89,17 @@ test.describe('Security Settings', () => {
 
   test('should toggle login history visibility', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
-    await page.waitForTimeout(1000);
+    const card = page.locator('div:has(> div > h3:has-text("Login History"))');
 
-    // Click View History button
-    await page.click('button:has-text("View History")');
-    await page.waitForTimeout(500);
+    await card.getByRole('button', { name: 'View History' }).click();
 
-    // Should show stats or loading
-    await expect(page.locator('text=/Total Attempts|Loading/i').first()).toBeVisible();
+    // The list, once loaded: the administrator's own sign-in of this test is in it.
+    await expect(card.getByText('Loading...')).toHaveCount(0);
+    await expect(card.getByText('Total Attempts', { exact: true })).toBeVisible();
+    const rows = card.getByRole('list', { name: 'Login history' }).getByRole('listitem');
+    await expect(rows.first()).toBeVisible();
+    await card.getByRole('button', { name: 'Hide' }).click();
+    await expect(card.getByRole('list', { name: 'Login history' })).toHaveCount(0);
   });
 
   test('should toggle firewall configuration', async ({ authenticatedPage: page }) => {
@@ -135,14 +138,21 @@ test.describe('Security Settings', () => {
   });
 
   test('should validate password change requires all fields', async ({ authenticatedPage: page }) => {
+    const sent: string[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/v1/auth/change-password') sent.push(request.method());
+    });
     await page.goto('/system#security');
-    await page.waitForTimeout(1000);
 
-    // Fill only current password and try to submit
-    await page.fill('input[id="currentPasswordHidden"], input[id="currentPassword"]', 'test');
+    // Only the current password: the form is not sent (change-password.spec.ts goes through
+    // each field, and the change itself, with an account of its own).
+    await page.getByLabel('Current Password', { exact: true }).fill('test');
+    await page.getByRole('button', { name: 'Change Password', exact: true }).click();
 
-    // The submit button should be present
-    await expect(page.locator('button:has-text("Change Password")')).toBeVisible();
+    const newPassword = page.getByLabel('New Password', { exact: true });
+    expect(await newPassword.evaluate((input: HTMLInputElement) => input.validity.valueMissing)).toBe(true);
+    expect(sent).toEqual([]);
+    await expect(page.getByText('Password changed successfully')).toHaveCount(0);
   });
 });
 

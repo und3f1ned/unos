@@ -4,7 +4,7 @@
   import { user } from "$lib/stores/auth";
   import SmbAccessCard from "$lib/components/account/SmbAccessCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
-  import { Alert } from "$lib/components/ui";
+  import { Alert, Badge } from "$lib/components/ui";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
     getLoginHistory, clearLoginHistory,
@@ -899,44 +899,43 @@
         {:else if loginHistory.length === 0}
           <p class="text-sm text-slate-400 text-center py-4">No login history found</p>
         {:else}
-          <div class="space-y-2 max-h-80 overflow-y-auto">
-            {#each loginHistory as attempt}
-              <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
-                <div class="flex items-center gap-3">
-                  <span class="px-2 py-1 rounded text-xs font-medium {attempt.success ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
-                    {attempt.success ? 'SUCCESS' : 'FAILED'}
-                  </span>
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <User class="w-4 h-4 text-slate-400" />
-                      <span class="font-medium">{attempt.username}</span>
-                    </div>
-                    <div class="flex items-center gap-4 text-sm text-slate-400">
+          <!-- Newest first; the times are the browser's local time (ADR-0248). -->
+          <ul class="space-y-2 max-h-80 overflow-y-auto" aria-label="Login history">
+            {#each loginHistory as attempt (attempt.id)}
+              <li class="flex items-center gap-3 p-3 bg-surface-overlay rounded-lg">
+                <Badge variant={attempt.success ? "success" : "error"}>
+                  {attempt.success ? "SUCCESS" : "FAILED"}
+                </Badge>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <User class="w-4 h-4 text-content-secondary" />
+                    <span class="font-medium">{attempt.username}</span>
+                  </div>
+                  <div class="flex items-center gap-4 text-sm text-content-secondary">
+                    <span class="flex items-center gap-1">
+                      <Clock class="w-3 h-3" />
+                      <time datetime={attempt.timestamp ?? undefined}>{formatTimestamp(attempt.timestamp)}</time>
+                    </span>
+                    {#if attempt.ip_address}
                       <span class="flex items-center gap-1">
-                        <Clock class="w-3 h-3" />
-                        {formatTimestamp(attempt.timestamp)}
+                        <MapPin class="w-3 h-3" />
+                        {attempt.ip_address}
                       </span>
-                      {#if attempt.ip_address}
-                        <span class="flex items-center gap-1">
-                          <MapPin class="w-3 h-3" />
-                          {attempt.ip_address}
-                        </span>
-                      {/if}
-                      {#if attempt.user_agent}
-                        <span class="flex items-center gap-1">
-                          <Monitor class="w-3 h-3" />
-                          {parseUserAgent(attempt.user_agent)}
-                        </span>
-                      {/if}
-                    </div>
-                    {#if attempt.failure_reason}
-                      <p class="text-xs text-red-400 mt-1">{attempt.failure_reason}</p>
+                    {/if}
+                    {#if attempt.user_agent}
+                      <span class="flex items-center gap-1">
+                        <Monitor class="w-3 h-3" />
+                        {parseUserAgent(attempt.user_agent)}
+                      </span>
                     {/if}
                   </div>
+                  {#if attempt.failure_reason}
+                    <p class="text-xs text-status-error mt-1">{attempt.failure_reason}</p>
+                  {/if}
                 </div>
-              </div>
+              </li>
             {/each}
-          </div>
+          </ul>
           <button
             on:click={loadLoginHistory}
             class="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
