@@ -12,6 +12,9 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- The CSV export of the audit log puts a `'` before a value that a spreadsheet
+  would read as a formula (one that starts with `=`, `+`, `-`, `@`, a tab or a
+  carriage return).
 - Caddy serves HTTPS from its local CA, redirects plain HTTP (308; only
   `/api/v1/health` also answers on port 80) and sends a Content Security
   Policy (plus SvelteKit's hash-based policy for the inline bootstrap script),
@@ -220,6 +223,27 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- File manager: Rename. Select one item and choose Rename to edit its name in
+  its row; a name that exists is refused, and nothing is ever replaced.
+- System → Disk Health opens each disk's SMART data: health, temperature,
+  power-on hours, the last self-test and the attributes with their status.
+  Disks whose SMART trend predicts a failure are marked Replace soon, with the
+  reasons, there and on the dashboard.
+- An Audit Log page for administrators: the entries as a timeline, searched and
+  filtered by user, action, severity and time, and exported as JSON or CSV
+  with the same filters.
+- Two-factor recovery codes: a user with two-factor authentication generates
+  ten codes on the Account page, shown once, and signs in with one of them in
+  place of an authenticator code; each code works once.
+- Backup tasks in System → Scheduler take a passphrase (at least 8
+  characters), and their backups are encrypted with it.
+- The Snapshots page offers the volumes of the mounted pools as well as the
+  pools, and the Volumes dialog takes an optional quota.
+- Disabling a network interface in System → Network asks first, and the
+  interface comes back on by itself, with its addresses and routes, after 60
+  seconds unless the change is kept.
+- System → Power reboots, shuts down, cancels a pending shutdown and turns
+  Wake-on-LAN on and off on the host, and shows the host's answer.
 - Mount and Unmount for pools (`POST /api/v1/storage/pools/{name}/mount`,
   `.../unmount`). Pools are mounted on the host by filesystem UUID, with a
   managed `/etc/fstab` entry (`nofail`; at boot Docker waits up to 15 seconds
@@ -336,6 +360,19 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- Scheduled backups are always encrypted (AES-256-GCM) with their task's
+  passphrase and are named `auto_backup_<date>_<time>.tar.gz.enc`; a restore
+  asks for the passphrase.
+- `POST /api/v1/auth/login` takes `recovery_code` in place of `totp_code`; the
+  stub `POST /api/v1/auth/recovery-codes/verify` is gone.
+- The audit log API lists, counts and exports with one set of filters,
+  including a text search (`search=`); an end bound includes the whole unit it
+  names (a date its whole day).
+- `GET /api/v1/snapshots/` needs the pool or volume (`subvolume=`).
+- System → Network shows each interface's IPv6 addresses, link speed and
+  whether it is disabled, and the IPv6 routes.
+- System → Updates shows the installed version and points to
+  `sudo /opt/unos/deploy/update.sh`; it has no Install or Rollback buttons.
 - The audit log is append-only: each entry is one JSON line in
   `/data/audit/audit.jsonl`, appended in a worker thread without rewriting
   what is already there, so an entry costs the same however long the log is.
@@ -519,6 +556,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   which is restored.
 
 ### Fixed
+- Editing a scheduled task keeps its last run and last status, and every field
+  of the task form is named by its label.
+- Creating, restoring and deleting a snapshot act on the snapshot and the
+  folders that were checked, even when another program changes them meanwhile.
+- The SMART history is replaced atomically, so a power cut during its hourly
+  write no longer cuts it short.
 - Pools were never added to the host's `/etc/fstab` (the entry was written
   inside the supervisor container), so they were not mounted after a reboot.
 - Disks were inspected from inside the container, where the host's system disk
@@ -773,16 +816,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   snapshot does.
 
 ### Known issues
-- System → Updates: Install Update and Rollback start nothing, as in 1.0.0.
-  Update with `sudo /opt/unos/deploy/update.sh`.
 - Not working yet, each with an entry in `feature-list.json`:
-  - Signing in with a recovery code: the sign-in takes none, and
-    `POST /api/v1/auth/recovery-codes/verify` answers 501 (`auth.recovery-codes`).
   - NFS exports are written inside the supervisor container and do not reach
     the host (`shares.nfs-exports`).
-  - Reboot, shutdown and suspend answer that they are not available inside the
-    supervisor's container, and the Power Management tab does not show that
-    answer; Wake-on-LAN reaches only the container's network (`system.power`).
   - The UPS state is never read, because the supervisor image has no NUT client,
     and the shutdown on low battery is skipped inside a container
     (`system.ups-monitoring`).
