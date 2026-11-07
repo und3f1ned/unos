@@ -561,7 +561,7 @@ def install_fake_host(monkeypatch) -> FakeHost:
     # at the pools below /mnt/pools of the machine running the tests, and create
     # folders there; on the device those pools are real. No pool is mounted for them.
     monkeypatch.setattr(apps_router, "list_mounted_pools", lambda: [])
-    # The apply of smb.conf after a pool change (ADR-0247) would read the smb.conf
+    # The apply of smb.conf after a pool change (ADR-0248) would read the smb.conf
     # and the database of the machine running the tests, and run Samba's commands,
     # which FakeHost does not know: it is only counted here. test_smb_integration.py
     # runs it, with the Samba fake.
@@ -1841,7 +1841,7 @@ class TestPoolEndpoints:
         assert data_pool.fstab == BASE_FSTAB
 
     def test_the_endpoints_that_change_the_managed_pools_apply_smb_conf(self, api, data_pool):
-        """ADR-0247: the managed pools decide which SMB shares are served, so create, mount,
+        """ADR-0248: the managed pools decide which SMB shares are served, so create, mount,
         unmount and remove apply smb.conf, also when they fail (an operation may change the fstab
         before it fails); reads and requests refused before the operation do not. What the apply
         does is tested in test_smb_integration.py."""

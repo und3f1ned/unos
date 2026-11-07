@@ -853,7 +853,9 @@ wake the host through it. An interface that cannot wake the host by magic
 packet shows **Not supported**. UNOS sets your choice again each time it
 starts, because many network drivers forget it at a reboot. Send the magic
 packet from a computer on the same network, for example with
-`wakeonlan <MAC address>`.
+`wakeonlan <MAC address>`. A magic packet starts a host that is off only where
+the board keeps the network card powered then; many single-board computers
+cut its power, and then only the power button starts the host.
 
 There are no scheduled shutdown or wake times, and the UPS state has no page
 yet (feature-list entries `system.scheduled-power` and

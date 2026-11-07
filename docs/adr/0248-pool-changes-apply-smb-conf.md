@@ -5,7 +5,7 @@ area: shares
 decided-by: agent
 ---
 
-# ADR-0247: The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once
+# ADR-0248: The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once
 
 ## Context
 

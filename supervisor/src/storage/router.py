@@ -59,7 +59,7 @@ async def _call(func: Callable[..., T], *args: Any) -> T:
 async def _change_pools(func: Callable[..., T], *args: Any) -> T:
     """_call for an operation that can add or remove a managed fstab entry, then apply smb.conf.
 
-    The managed pools decide which SMB shares are served (ADR-0247). The apply
+    The managed pools decide which SMB shares are served (ADR-0248). The apply
     runs also when the operation failed, which may have changed the fstab
     before it failed; an unchanged rendering writes nothing, and the apply
     never changes the answer.
@@ -107,7 +107,7 @@ async def create_pool_endpoint(request: Request, pool: PoolCreate, _=Depends(ver
     the mountpoint directory holds files; 400 for invalid input, including
     ``confirm_name != name`` and ``force`` without a ``device_identities``
     entry for every selected device. Then smb.conf is applied again: SMB
-    shares that a forgotten pool of this name kept are served (ADR-0247).
+    shares that a forgotten pool of this name kept are served (ADR-0248).
     """
     validate_pool_name(pool.name)
     if pool.confirm_name != pool.name:
@@ -131,7 +131,7 @@ async def delete_pool_endpoint(request: Request, name: str, _=Depends(verify_tok
     """Forget a pool: unmount it on the host and drop its fstab entry.
 
     The disks are not wiped; the filesystem can be mounted again later. As
-    after an unmount, its SMB shares stop being served (ADR-0247).
+    after an unmount, its SMB shares stop being served (ADR-0248).
     """
     # Validate pool name
     validated_name = validate_pool_name(name)
@@ -148,7 +148,7 @@ async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_toke
     409 when the mountpoint directory holds files (they would be hidden).
     The pool's apps that could not start without it are started in the
     background; the response does not wait for them. Its SMB shares are
-    served again before it answers (ADR-0247).
+    served again before it answers (ADR-0248).
     """
     validated_name = validate_pool_name(name)
 
@@ -163,7 +163,7 @@ async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_to
     409 while host processes or running containers use the pool, such as
     smbd for an SMB client that has one of its shares open. Before it
     answers, smb.conf no longer serves the pool's shares, and their open
-    connections are closed (ADR-0247).
+    connections are closed (ADR-0248).
     """
     validated_name = validate_pool_name(name)
 

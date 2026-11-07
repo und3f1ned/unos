@@ -1052,7 +1052,7 @@ class TestStatus:
         assert api.client.get(f"{API}/smb-status").json()["problems"] == []
 
     def test_an_smb_conf_replaced_after_the_last_apply(self, api):
-        """ADR-0248: after an apply that left UNOS's file in place, a file without UNOS's header,
+        """ADR-0249: after an apply that left UNOS's file in place, a file without UNOS's header,
         or none, is a problem until the next change writes UNOS's file again."""
         assert api.create(access=access((ALICE, "read"))).status_code == 200
         assert api.client.get(f"{API}/smb-status").json()["problems"] == []
@@ -1121,8 +1121,8 @@ class TestStatus:
 def test_the_e2e_fakes_answer_with_the_servers_texts(api, monkeypatch):
     """webui/tests/shares-fakes.ts answers with these texts word for word (ADR-0189): why a share
     of a pool that UNOS does not manage, or no longer manages after an unmount, is not served
-    (ADR-0247), the status problem that names such a share, and the status problem of a replaced
-    smb.conf (ADR-0248)."""
+    (ADR-0248), the status problem that names such a share, and the status problem of a replaced
+    smb.conf (ADR-0249)."""
     fakes = (Path(__file__).resolve().parents[2] / "webui" / "tests" / "shares-fakes.ts").read_text(encoding="utf-8")
     unmanaged = service.share_path_problem(
         str(validators.pools_base() / "e2e_data" / "docs"), other_paths={}, pool_names={"data"}

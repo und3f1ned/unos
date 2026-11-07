@@ -3,14 +3,14 @@ status: superseded
 date: 2026-11-07
 area: shares
 decided-by: agent
-superseded-by: ADR-0249
+superseded-by: ADR-0250
 ---
 
 # ADR-0195: Handle the SMB follow-ups left open after slice 2
 
 ## Context
 
-Superseded by ADR-0249: the follow-ups still open, without the two that ADR-0247 and ADR-0248 decided.
+Superseded by ADR-0250: the follow-ups still open, without the two that ADR-0248 and ADR-0249 decided.
 
 Phase 1 slice 2 delivered per-user SMB access (ADR-0059) and left known gaps, smaller design items and checks that could not be run from the workstation. They are recorded here so that later slices pick them up instead of finding them again; two of them, the SAMR password change and the single copy of `smb.conf.unos-replaced`, are also among the follow-ups of ADR-0164.
 

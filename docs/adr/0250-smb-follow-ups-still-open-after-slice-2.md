@@ -6,13 +6,13 @@ decided-by: agent
 supersedes: [ADR-0195]
 ---
 
-# ADR-0249: Handle the SMB follow-ups still open after slice 2
+# ADR-0250: Handle the SMB follow-ups still open after slice 2
 
 ## Context
 
 ADR-0195 recorded the known gaps, smaller design items and unchecked points that phase 1 slice 2
 (ADR-0059) left open, so that later slices pick them up instead of finding them again. Two of them
-are decided since, by ADR-0247 and ADR-0248, and this ADR restates the others. Two of those, the
+are decided since, by ADR-0248 and ADR-0249, and this ADR restates the others. Two of those, the
 SAMR password change and the single copy of `smb.conf.unos-replaced`, are also among the follow-ups
 of ADR-0164.
 
@@ -42,9 +42,9 @@ Proposed, not implemented:
 Decided since ADR-0195, and no longer open:
 
 - `GET /api/v1/shares/smb-status` names an smb.conf that was replaced or removed after UNOS wrote
-  it (ADR-0248, `shares.status-names-foreign-smb-conf`).
+  it (ADR-0249, `shares.status-names-foreign-smb-conf`).
 - Creating, mounting, unmounting and forgetting a pool apply smb.conf again, so the shares of an
-  unmounted or forgotten pool leave it at once (ADR-0247, `shares.reapply-on-pool-unmount`).
+  unmounted or forgotten pool leave it at once (ADR-0248, `shares.reapply-on-pool-unmount`).
 
 ## Consequences
 

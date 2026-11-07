@@ -5,7 +5,7 @@ startup sweep, asserting the smb.conf that UNOS writes.
 Host commands go to the FakeSambaHost (its fstab has the pool 'data'). It does
 not emulate findmnt or btrfs, so pools._mounted_pool_target and
 disks.host_mounts are patched; os.fchown is recorded, so that the test runs as
-a regular user. The tests of a pool change (ADR-0247) run the real pool code
+a regular user. The tests of a pool change (ADR-0248) run the real pool code
 as well: PoolsAndSambaHost sends the pool commands to the FakeHost of
 test_pool_persistence.py.
 """
@@ -414,7 +414,7 @@ def test_a_regular_users_answers_name_no_other_share_and_no_host_output(cycle):
     assert any("alice_private" in problem for problem in status["problems"])
 
 
-# --- smb.conf replaced after UNOS wrote it: the status (ADR-0248) ----------------------------------
+# --- smb.conf replaced after UNOS wrote it: the status (ADR-0249) ----------------------------------
 
 REPLACED = (
     "smb.conf was replaced or removed after UNOS wrote it; it is written again at the next change or "
@@ -423,7 +423,7 @@ REPLACED = (
 
 
 def test_the_status_names_an_smb_conf_replaced_after_unos_wrote_it(cycle, monkeypatch):
-    """ADR-0248: after UNOS wrote smb.conf, the device's old file is copied back by hand, and then
+    """ADR-0249: after UNOS wrote smb.conf, the device's old file is copied back by hand, and then
     removed. GET /shares/smb-status names it as a problem until the next start writes UNOS's file
     again; before the first apply there is no such problem."""
     c = cycle
@@ -452,7 +452,7 @@ def test_the_status_names_an_smb_conf_replaced_after_unos_wrote_it(cycle, monkey
     assert REPLACED not in problems()
 
 
-# --- a pool change applies smb.conf again (ADR-0247) -------------------------------------------------
+# --- a pool change applies smb.conf again (ADR-0248) -------------------------------------------------
 
 UNMANAGED = "Share path must be on a storage pool that UNOS manages: 'data' is not one"
 
@@ -538,7 +538,7 @@ def status_problems(c) -> list[str]:
 
 
 def test_unmounting_a_pool_stops_serving_its_shares_and_mounting_serves_them_again(pool_cycle):
-    """ADR-0247: the managed pools decide which shares are served, so a pool change applies
+    """ADR-0248: the managed pools decide which shares are served, so a pool change applies
     smb.conf again: the shares of an unmounted pool leave smb.conf at once, and their open
     connections are closed after the reload; mounting the pool serves them again."""
     c, fake = pool_cycle, pool_cycle.fake
@@ -574,7 +574,7 @@ def test_unmounting_a_pool_stops_serving_its_shares_and_mounting_serves_them_aga
 
 
 def test_forgetting_a_pool_stops_serving_its_shares(pool_cycle):
-    """ADR-0247: Remove Pool (DELETE /storage/pools/data) forgets the pool as Unmount does; the
+    """ADR-0248: Remove Pool (DELETE /storage/pools/data) forgets the pool as Unmount does; the
     share keeps its folder and access, and is served again once the pool is mounted again."""
     c, fake = pool_cycle, pool_cycle.fake
     mark = len(fake.calls)
@@ -607,7 +607,7 @@ def test_a_pool_change_that_changes_no_share_writes_nothing(pool_cycle):
 
 
 def test_an_apply_that_fails_after_an_unmount_is_shown_in_the_status(pool_cycle):
-    """ADR-0247: the apply after the unmount fails (testparm refuses the file). The unmount is done
+    """ADR-0248: the apply after the unmount fails (testparm refuses the file). The unmount is done
     and answered as done; smb.conf keeps the section of docs, whose folder is not there (the empty
     mountpoint is write-protected), the status says why, and the next start writes the file."""
     c, fake = pool_cycle, pool_cycle.fake
@@ -629,7 +629,7 @@ def test_an_apply_that_fails_after_an_unmount_is_shown_in_the_status(pool_cycle)
 
 
 async def test_the_apply_after_a_pool_change_waits_for_smb_lock(pool_cycle, monkeypatch):
-    """ADR-0247, ADR-0080: the apply after a pool change is a change of SMB state. While another one
+    """ADR-0248, ADR-0080: the apply after a pool change is a change of SMB state. While another one
     (a share change, an account flow, a restore, the startup reconcile) holds smb_lock, the unmount
     is answered only after it: smb.conf is not rendered, checked or installed meanwhile, and then
     the apply runs with the lock held. Without the lock, it could render the shares before a share

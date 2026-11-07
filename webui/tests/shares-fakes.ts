@@ -26,7 +26,7 @@ export const GUEST_WARNING =
 export const VERSION_CONFLICT = 'The share was changed meanwhile; reload';
 // Why a share of a pool that UNOS does not manage, or no longer manages after an unmount, is not
 // served (ADR-0148), the status problem that names a share that is not served, and the status
-// problem of an smb.conf replaced after UNOS wrote it (ADR-0248);
+// problem of an smb.conf replaced after UNOS wrote it (ADR-0249);
 // supervisor/tests/test_share_api.py checks all three against the server.
 export const unmanagedPoolProblem = (pool: string) =>
   `Share path must be on a storage pool that UNOS manages: '${pool}' is not one`;
@@ -241,7 +241,7 @@ const byLowerCase = (a: string, b: string) => {
 };
 
 /**
- * As the server after an unmount or a mount on the Storage page (ADR-0247): the shares of a pool
+ * As the server after an unmount or a mount on the Storage page (ADR-0248): the shares of a pool
  * that is not mounted, which UNOS then no longer manages, are not served and their access does
  * not count, and the SMB status names each of them as a problem (appended to the problems) and
  * lists none of them as a guest share; once the pool is mounted again they are served again,

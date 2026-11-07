@@ -1322,7 +1322,7 @@ async def apply_smb_config(db: AsyncSession) -> interfaces.ApplyResult:
 
 
 async def apply_after_pool_change() -> None:
-    """Apply smb.conf after a storage endpoint created, mounted, unmounted or forgot a pool (ADR-0247).
+    """Apply smb.conf after a storage endpoint created, mounted, unmounted or forgot a pool (ADR-0248).
 
     The pools that UNOS manages (the fstab markers) decide which shares are
     served (rule 4 of share_path_problem): the shares of a pool that was
@@ -2501,7 +2501,7 @@ def last_reconcile() -> LastReconcile:
     return _last_reconcile
 
 
-# The status problem of an smb.conf that no longer starts with UNOS's header after UNOS wrote it (ADR-0248).
+# The status problem of an smb.conf that no longer starts with UNOS's header after UNOS wrote it (ADR-0249).
 SMB_CONF_REPLACED = (
     "smb.conf was replaced or removed after UNOS wrote it; it is written again at the next change or "
     "restart, and SMB cannot be turned on until then"
@@ -2582,7 +2582,7 @@ async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
     if _last_apply.ok is False and _last_apply.message:
         problems.append(f"smb.conf was not updated: {_last_apply.message}")
     elif _last_apply.ok is True:
-        # The last apply left UNOS's file in place; it may have been replaced since (ADR-0248).
+        # The last apply left UNOS's file in place; it may have been replaced since (ADR-0249).
         replaced = await asyncio.to_thread(_live_conf_problem)
         if replaced is not None:
             problems.append(replaced)

@@ -790,7 +790,7 @@ test.describe('SMB shares page (fake data)', () => {
     expect(fake.writes).toEqual([{ method: 'DELETE', path: '/shares/smb-status/import-report', body: null }]);
   });
 
-  // ADR-0248: the status names an smb.conf that was replaced or removed after UNOS wrote it,
+  // ADR-0249: the status names an smb.conf that was replaced or removed after UNOS wrote it,
   // which the server checks after every apply that left UNOS's file in place.
   test('an smb.conf replaced after UNOS wrote it is named in the status', async ({ authenticatedPage: page }) => {
     await fakeSmbApi(page, {

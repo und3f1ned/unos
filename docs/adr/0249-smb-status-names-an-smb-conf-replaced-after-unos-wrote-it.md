@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0130]
 ---
 
-# ADR-0248: SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it
+# ADR-0249: SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it
 
 ## Context
 

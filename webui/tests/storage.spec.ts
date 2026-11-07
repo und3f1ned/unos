@@ -137,7 +137,7 @@ test.describe('Storage pools (fake data)', () => {
     expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_tank/mount', body: {} }]);
   });
 
-  // ADR-0247: the storage endpoints apply smb.conf after a pool change, so the shares of an
+  // ADR-0248: the storage endpoints apply smb.conf after a pool change, so the shares of an
   // unmounted pool stop being served at once, the guest share among them, and the SMB status
   // names them. The fakes answer as the server does (supervisor/tests/test_smb_integration.py
   // runs the server's side).
