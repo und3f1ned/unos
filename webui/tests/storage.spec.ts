@@ -378,7 +378,7 @@ test.describe('Storage volumes (fake data)', () => {
     await expect(dialog.getByText('Mounted read-only')).toHaveCount(0);
     // btrfs snapshots are not recursive, and scheduled snapshot tasks only take
     // pools: files put in a volume leave the pool's snapshots. Said as what to do:
-    // a volume has no snapshot until one is made (ADR-0234).
+    // a volume has no snapshot until one is made (ADR-0243).
     await expect(
       dialog.getByText(
         'Snapshots of the pool do not include the files in its volumes: take snapshots of each volume as well, ' +

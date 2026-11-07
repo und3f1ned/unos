@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0233: Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id
+# ADR-0242: Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id
 
 ## Context
 

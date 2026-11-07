@@ -18,6 +18,7 @@ test.describe('Navigation', () => {
     await expect(sidebarLink(page, '/containers')).toBeVisible();
     await expect(sidebarLink(page, '/apps')).toBeVisible();
     await expect(sidebarLink(page, '/users')).toBeVisible();
+    await expect(sidebarLink(page, '/audit')).toBeVisible();
     await expect(sidebarLink(page, '/system')).toBeVisible();
   });
 

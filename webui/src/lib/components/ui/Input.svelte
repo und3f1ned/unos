@@ -1,6 +1,6 @@
 <script lang="ts">
 	export let id: string = "";
-	export let type: "text" | "password" | "email" | "number" | "search" = "text";
+	export let type: "text" | "password" | "email" | "number" | "search" | "date" = "text";
 	export let value: string = "";
 	export let placeholder: string = "";
 	export let label: string = "";
@@ -10,8 +10,22 @@
 	export let disabled: boolean = false;
 	export let autocomplete: string = "";
 	export let maxlength: number | undefined = undefined;
+	// The field's name for screen readers where no label is shown, such as a field in a list row.
+	export let ariaLabel: string = "";
+	export let spellcheck: boolean | undefined = undefined;
+	// "sm" fits the field into a list row.
+	export let size: "md" | "sm" = "md";
+	// Take the keyboard focus with the whole text selected when the field appears: typing replaces it.
+	export let selectOnMount: boolean = false;
 
 	$: inputId = id || `input-${Math.random().toString(36).slice(2, 9)}`;
+	$: sizeClass = size === "sm" ? "px-2 py-1" : "";
+
+	function focusAndSelect(field: HTMLInputElement, enabled: boolean) {
+		if (!enabled) return;
+		field.focus();
+		field.select();
+	}
 
 	function handleInput(e: Event) {
 		const target = e.target as HTMLInputElement;
@@ -36,13 +50,19 @@
 			{required}
 			{disabled}
 			{autocomplete}
+			{spellcheck}
+			aria-label={ariaLabel || undefined}
+			use:focusAndSelect={selectOnMount}
 			{maxlength}
-			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
+			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:input
 			on:change
 			on:focus
 			on:blur
+			on:keydown
+			on:click
+			on:dblclick
 		/>
 	{:else if type === "password"}
 		<input
@@ -53,13 +73,19 @@
 			{required}
 			{disabled}
 			{autocomplete}
+			{spellcheck}
+			aria-label={ariaLabel || undefined}
+			use:focusAndSelect={selectOnMount}
 			{maxlength}
-			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
+			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:input
 			on:change
 			on:focus
 			on:blur
+			on:keydown
+			on:click
+			on:dblclick
 		/>
 	{:else if type === "email"}
 		<input
@@ -70,13 +96,19 @@
 			{required}
 			{disabled}
 			{autocomplete}
+			{spellcheck}
+			aria-label={ariaLabel || undefined}
+			use:focusAndSelect={selectOnMount}
 			{maxlength}
-			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
+			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:input
 			on:change
 			on:focus
 			on:blur
+			on:keydown
+			on:click
+			on:dblclick
 		/>
 	{:else if type === "number"}
 		<input
@@ -88,11 +120,17 @@
 			{required}
 			{disabled}
 			{autocomplete}
-			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
+			{spellcheck}
+			aria-label={ariaLabel || undefined}
+			use:focusAndSelect={selectOnMount}
+			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:change
 			on:focus
 			on:blur
+			on:keydown
+			on:click
+			on:dblclick
 		/>
 	{:else if type === "search"}
 		<input
@@ -103,8 +141,31 @@
 			{required}
 			{disabled}
 			{autocomplete}
+			{spellcheck}
+			aria-label={ariaLabel || undefined}
+			use:focusAndSelect={selectOnMount}
 			{maxlength}
-			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
+			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
+			class:border-red-500={error}
+			on:input
+			on:change
+			on:focus
+			on:blur
+			on:keydown
+			on:click
+			on:dblclick
+		/>
+	{:else if type === "date"}
+		<!-- The value is "" or YYYY-MM-DD, whatever the browser shows; the dark scheme keeps
+		     the browser's calendar button visible on the dark field. -->
+		<input
+			id={inputId}
+			type="date"
+			bind:value
+			{required}
+			{disabled}
+			{autocomplete}
+			class="form-input [color-scheme:dark] disabled:cursor-not-allowed disabled:opacity-50"
 			class:border-red-500={error}
 			on:input
 			on:change

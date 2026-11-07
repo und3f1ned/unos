@@ -15,6 +15,7 @@
     type ScheduleFrequency,
   } from "$lib/api/scheduler";
   import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
+  import { Input } from "$lib/components/ui";
   import {
     Calendar,
     Clock,
@@ -56,6 +57,23 @@
 
   // Form state
   let formData: Partial<ScheduledTask> = getDefaultFormData();
+  // The passphrase of a backup task, typed twice. The API never returns it:
+  // the form starts empty, and an edit that leaves it empty keeps the stored one.
+  let passphrase = "";
+  let passphraseConfirm = "";
+
+  // At least as long as the server asks (MIN_PASSPHRASE_LENGTH in scheduler/router.py).
+  const MIN_PASSPHRASE_LENGTH = 8;
+
+  // A backup task being edited keeps its passphrase when the device has its
+  // key. A new one, a task made a backup task, and a backup task without a key
+  // (made before backups were encrypted, or its key was lost) need one.
+  $: keepsPassphrase = editingTask?.task_type === "backup" && editingTask.has_backup_key === true;
+  $: passphraseTooShort = passphrase !== "" && passphrase.length < MIN_PASSPHRASE_LENGTH;
+  $: passphraseMismatch = passphraseConfirm !== passphrase;
+  $: waitsForPassphrase =
+    formData.task_type === "backup" &&
+    (passphraseTooShort || passphraseMismatch || (!passphrase && !keepsPassphrase));
 
   const TASK_TYPES: { value: TaskType; label: string; icon: typeof Database }[] = [
     { value: "snapshot", label: "BTRFS Snapshot", icon: Database },
@@ -150,6 +168,7 @@
     formData = getDefaultFormData();
     if (pools.length > 0) formData.target_pool = pools[0].name;
     if (disks.length > 0) formData.target_disk = disks[0].path;
+    passphrase = passphraseConfirm = "";
     showTaskModal = true;
   }
 
@@ -166,6 +185,7 @@
   function openEditModal(task: ScheduledTask) {
     editingTask = task;
     formData = { ...task };
+    passphrase = passphraseConfirm = "";
     showTaskModal = true;
   }
 
@@ -173,6 +193,7 @@
     showTaskModal = false;
     editingTask = null;
     formData = getDefaultFormData();
+    passphrase = passphraseConfirm = "";
   }
 
   async function openHistoryModal(taskId?: string, taskName?: string) {
@@ -208,6 +229,8 @@
         target_disk: formData.task_type === "smart_test" ? formData.target_disk : undefined,
         command: formData.task_type === "custom" ? formData.command : undefined,
         keep_count: ["snapshot", "backup"].includes(formData.task_type!) ? formData.keep_count : undefined,
+        // Sent only when typed: left out, the server keeps the stored passphrase.
+        passphrase: formData.task_type === "backup" && passphrase ? passphrase : undefined,
       };
 
       if (editingTask?.id) {
@@ -476,21 +499,23 @@
       <div class="p-4 space-y-4">
         <!-- Task Name -->
         <div>
-          <label class="block text-sm text-slate-400 mb-1">Task Name</label>
+          <label for="task-name" class="form-label">Task Name</label>
           <input
+            id="task-name"
             type="text"
             bind:value={formData.name}
             placeholder="Daily snapshot"
-            class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+            class="form-input"
           />
         </div>
 
         <!-- Task Type -->
         <div>
-          <label class="block text-sm text-slate-400 mb-1">Task Type</label>
+          <label for="task-type" class="form-label">Task Type</label>
           <select
+            id="task-type"
             bind:value={formData.task_type}
-            class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+            class="form-input"
           >
             {#each TASK_TYPES as type}
               <option value={type.value}>{type.label}</option>
@@ -501,13 +526,14 @@
         <!-- Pool Selection (for snapshot/scrub) -->
         {#if formData.task_type === "snapshot" || formData.task_type === "scrub"}
           <div>
-            <label class="block text-sm text-slate-400 mb-1">Target Pool</label>
+            <label for="task-target-pool" class="form-label">Target Pool</label>
             {#if pools.length === 0}
               <p class="text-sm text-yellow-400">No pools available. Create a pool first.</p>
             {:else}
               <select
+                id="task-target-pool"
                 bind:value={formData.target_pool}
-                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+                class="form-input"
               >
                 {#each pools as pool}
                   <option value={pool.name}>{pool.name}</option>
@@ -520,7 +546,7 @@
         <!-- Disk Selection (for smart_test) -->
         {#if formData.task_type === "smart_test"}
           <div>
-            <label for="task-target-disk" class="block text-sm text-slate-400 mb-1">Target Disk</label>
+            <label for="task-target-disk" class="form-label">Target Disk</label>
             {#if disks.length === 0 && !storedDisk}
               <p class="text-sm text-yellow-400">No disks available.</p>
             {:else}
@@ -531,7 +557,7 @@
                 <select
                   id="task-target-disk"
                   bind:value={formData.target_disk}
-                  class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+                  class="form-input"
                 >
                   {#if storedDisk}
                     <option value={storedDisk}>{storedDisk}{disksLoaded ? " (not connected)" : ""}</option>
@@ -548,12 +574,13 @@
         <!-- Custom Command -->
         {#if formData.task_type === "custom"}
           <div>
-            <label class="block text-sm text-slate-400 mb-1">Command</label>
+            <label for="task-command" class="form-label">Command</label>
             <input
+              id="task-command"
               type="text"
               bind:value={formData.command}
               placeholder="/usr/local/bin/my-script.sh"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none font-mono text-sm"
+              class="form-input font-mono text-sm"
             />
             <p class="text-xs text-slate-500 mt-1">Shell command to execute</p>
           </div>
@@ -562,26 +589,52 @@
         <!-- Keep Count (for snapshot/backup) -->
         {#if formData.task_type === "snapshot" || formData.task_type === "backup"}
           <div>
-            <label class="block text-sm text-slate-400 mb-1">Keep Count</label>
+            <label for="task-keep-count" class="form-label">Keep Count</label>
             <input
+              id="task-keep-count"
               type="number"
               bind:value={formData.keep_count}
               min="1"
               max="100"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+              class="form-input"
             />
             <p class="text-xs text-slate-500 mt-1">Number of {formData.task_type}s to retain</p>
           </div>
+        {/if}
+
+        <!-- Passphrase (for backup): the backups are encrypted with it -->
+        {#if formData.task_type === "backup"}
+          <Input
+            id="task-passphrase"
+            type="password"
+            label="Passphrase"
+            autocomplete="new-password"
+            bind:value={passphrase}
+            error={passphraseTooShort ? `Use at least ${MIN_PASSPHRASE_LENGTH} characters` : ""}
+            hint={keepsPassphrase
+              ? "Leave empty to keep the current passphrase. A new one applies to the backups made from now on."
+              : `Required, at least ${MIN_PASSPHRASE_LENGTH} characters. The backups are encrypted with it (AES-256-GCM). Keep it safe: a backup cannot be restored without it.`}
+          />
+          <Input
+            id="task-passphrase-confirm"
+            type="password"
+            label="Confirm Passphrase"
+            autocomplete="new-password"
+            bind:value={passphraseConfirm}
+            error={passphraseConfirm && passphraseMismatch ? "The passphrases do not match" : ""}
+            hint="Type the passphrase again."
+          />
         {/if}
 
         <hr class="border-slate-700" />
 
         <!-- Schedule Frequency -->
         <div>
-          <label class="block text-sm text-slate-400 mb-1">Frequency</label>
+          <label for="task-frequency" class="form-label">Frequency</label>
           <select
+            id="task-frequency"
             bind:value={formData.frequency}
-            class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+            class="form-input"
           >
             {#each FREQUENCIES as freq}
               <option value={freq.value}>{freq.label}</option>
@@ -592,12 +645,13 @@
         <!-- Custom Cron Expression -->
         {#if formData.frequency === "custom"}
           <div>
-            <label class="block text-sm text-slate-400 mb-1">Cron Expression</label>
+            <label for="task-cron-expression" class="form-label">Cron Expression</label>
             <input
+              id="task-cron-expression"
               type="text"
               bind:value={formData.cron_expression}
               placeholder="0 2 * * *"
-              class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+              class="form-input font-mono"
             />
             <p class="text-xs text-slate-500 mt-1">Format: minute hour day_of_month month day_of_week</p>
           </div>
@@ -606,10 +660,11 @@
           <div class="grid grid-cols-2 gap-4">
             {#if formData.frequency !== "hourly"}
               <div>
-                <label class="block text-sm text-slate-400 mb-1">Hour</label>
+                <label for="task-hour" class="form-label">Hour</label>
                 <select
+                  id="task-hour"
                   bind:value={formData.hour}
-                  class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+                  class="form-input"
                 >
                   {#each Array(24) as _, i}
                     <option value={i}>{String(i).padStart(2, "0")}:00</option>
@@ -618,10 +673,11 @@
               </div>
             {/if}
             <div>
-              <label class="block text-sm text-slate-400 mb-1">Minute</label>
+              <label for="task-minute" class="form-label">Minute</label>
               <select
+                id="task-minute"
                 bind:value={formData.minute}
-                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+                class="form-input"
               >
                 {#each [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] as m}
                   <option value={m}>{String(m).padStart(2, "0")}</option>
@@ -633,10 +689,11 @@
           <!-- Day Selection -->
           {#if formData.frequency === "weekly"}
             <div>
-              <label class="block text-sm text-slate-400 mb-1">Day of Week</label>
+              <label for="task-day-of-week" class="form-label">Day of Week</label>
               <select
+                id="task-day-of-week"
                 bind:value={formData.day_of_week}
-                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+                class="form-input"
               >
                 {#each DAYS_OF_WEEK as day}
                   <option value={day.value}>{day.label}</option>
@@ -647,10 +704,11 @@
 
           {#if formData.frequency === "monthly"}
             <div>
-              <label class="block text-sm text-slate-400 mb-1">Day of Month</label>
+              <label for="task-day-of-month" class="form-label">Day of Month</label>
               <select
+                id="task-day-of-month"
                 bind:value={formData.day_of_month}
-                class="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg focus:border-blue-500 focus:outline-none"
+                class="form-input"
               >
                 {#each Array(28) as _, i}
                   <option value={i + 1}>{i + 1}</option>
@@ -679,7 +737,7 @@
         </button>
         <button
           on:click={handleSaveTask}
-          disabled={saving}
+          disabled={saving || waitsForPassphrase}
           class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg flex items-center justify-center gap-2"
         >
           {#if saving}

@@ -11,7 +11,7 @@ export interface SnapshotInfo {
   created: string;
 }
 
-/** A mounted pool, or one of its volumes, that snapshots can be made of (ADR-0234). */
+/** A mounted pool, or one of its volumes, that snapshots can be made of (ADR-0243). */
 export interface Subvolume {
   /** The pool's mountpoint, or the volume's folder in it. */
   path: string;

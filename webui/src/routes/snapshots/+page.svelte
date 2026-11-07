@@ -12,7 +12,7 @@
 	import { Archive, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
 	import { Button, Card, Modal, Alert, Input, Select, EmptyState } from '$lib/components/ui';
 
-	// The mounted pools and their volumes (ADR-0234), and the one whose snapshots are listed.
+	// The mounted pools and their volumes (ADR-0243), and the one whose snapshots are listed.
 	let subvolumes: Subvolume[] = [];
 	let subvolumesLoading = true;
 	let subvolumesError = '';

@@ -80,7 +80,7 @@ interface SnapshotRequest {
 }
 
 // GET /snapshots/subvolumes: each mounted pool, then its volumes; volumes_error
-// says why a pool's volumes are missing (ADR-0234).
+// says why a pool's volumes are missing (ADR-0243).
 const DATA = { path: '/mnt/pools/e2e_data', pool: 'e2e_data', volume: null, volumes_error: null };
 const DOCUMENTS = { path: '/mnt/pools/e2e_data/documents', pool: 'e2e_data', volume: 'documents', volumes_error: null };
 const PHOTOS = { path: '/mnt/pools/e2e_data/photos', pool: 'e2e_data', volume: 'photos', volumes_error: null };
@@ -211,7 +211,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(rows(page).nth(2)).toContainText('auto_20261106_020000');
     await expect(rows(page).nth(2)).toContainText('11/6/2026, 5:00:00 AM');
     await expect(row(page, 'before-edit')).toHaveCount(0);
-    // No size: measuring a snapshot walked all its files (ADR-0234).
+    // No size: measuring a snapshot walked all its files (ADR-0243).
     await expect(page.getByRole('columnheader')).toHaveText(['Name', 'Created', 'Actions']);
 
     await picker(page).click();
@@ -233,7 +233,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await choose(page, 'e2e_data/photos (Volume)');
     await expect(page.getByText('No snapshots yet')).toBeVisible();
-    // The names say UTC, the list the browser's time (ADR-0234).
+    // The names say UTC, the list the browser's time (ADR-0243).
     await expect(page.getByText('names that UNOS gives, snap_, restore_ and auto_, are in UTC')).toBeVisible();
     await expect(page.locator('.alert').filter({ hasText: 'could not be read' })).toHaveCount(0);
     expect(writes(requests)).toEqual([]);
@@ -309,7 +309,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await page.getByRole('button', { name: 'Create Snapshot' }).click();
     const dialog = page.getByRole('dialog', { name: 'Create Snapshot' });
     // btrfs snapshots stop at subvolumes: a pool's snapshot leaves out its volumes,
-    // which get none until one is made of each (ADR-0234).
+    // which get none until one is made of each (ADR-0243).
     await expect(
       dialog.getByText(
         "It does not include the files in the pool's volumes: take snapshots of each volume as well. " +

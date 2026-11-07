@@ -12,7 +12,7 @@ containers that bind it and the clients of its NFS export: whatever writes
 there can rename an entry or swap it for a symbolic link at any moment, also
 between a check and the btrfs command after it. btrfs-progs resolves the
 paths it is given again, links included, so create, restore and delete act
-on the folders they opened instead (ADR-0233). The subvolume, its
+on the folders they opened instead (ADR-0242). The subvolume, its
 ``.snapshots`` folder and the snapshot are opened one component at a time
 without following links (``open_dir_nofollow``, ADR-0042); btrfs reaches
 them as ``/proc/self/fd/<fd>``, which the kernel follows to the open folder
@@ -23,7 +23,7 @@ snapshots (``src/scheduler/router.py``) use the same functions.
 
 The Snapshots page offers the pools mounted at their mountpoints and their
 volumes (GET /snapshots/subvolumes), read on the host as the Storage page
-reads them (ADR-0234). The snapshot commands themselves still run in the
+reads them (ADR-0243). The snapshot commands themselves still run in the
 container (architecture.host-command-layer), which sees the pools at the
 same paths.
 """
@@ -83,7 +83,7 @@ def run_cmd(cmd: list[str], *, pass_fds: tuple[int, ...] = ()) -> tuple[str, str
 
 
 def utc_stamp() -> str:
-    """``<date>_<time>`` in UTC, as the names snap_, restore_ and the scheduler's auto_ give them (ADR-0234)."""
+    """``<date>_<time>`` in UTC, as the names snap_, restore_ and the scheduler's auto_ give them (ADR-0243)."""
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
@@ -212,7 +212,7 @@ def make_snapshot(subvolume: Path, name: str) -> Path:
     ``subvolume`` comes from validate_pools_path, ``name`` from
     validate_snapshot_name. The snapshot is made of the folder that was
     opened, in the ``.snapshots`` folder that was opened or created in it
-    (ADR-0233). HTTPException: 400 when the name exists or ``.snapshots`` is
+    (ADR-0242). HTTPException: 400 when the name exists or ``.snapshots`` is
     a symbolic link or no folder, 404 when the subvolume is gone, 500 when
     ``.snapshots`` cannot be created or btrfs fails.
     """
@@ -257,7 +257,7 @@ def _subvolume_path(subvol_id: int, mountpoint: str) -> str:
 
 
 def delete_snapshot_by_id(subvolume: Path, name: str, shown: str) -> None:
-    """Delete the snapshot ``<subvolume>/.snapshots/<name>`` by its subvolume id (ADR-0233).
+    """Delete the snapshot ``<subvolume>/.snapshots/<name>`` by its subvolume id (ADR-0242).
 
     ``subvolume`` comes from validate_pools_path; ``shown`` is how the
     caller named the snapshot, for the 404. The snapshot is opened without
@@ -317,7 +317,7 @@ def _snapshot_info(snap: Path, subvolume: Path) -> SnapshotInfo | None:
     """What the list shows of a snapshot, from ``btrfs subvolume show`` alone.
 
     No size: ``du`` walked every file of every snapshot at each listing
-    (minutes on a large pool, and it woke the disks; ADR-0234).
+    (minutes on a large pool, and it woke the disks; ADR-0243).
     """
     stdout, _, rc = run_cmd(["btrfs", "subvolume", "show", str(snap)])
     if rc != 0:
@@ -357,7 +357,7 @@ def _volumes_problem(exc: Exception) -> str:
 
 
 def _list_subvolumes() -> list[SnapshotSubvolume]:
-    """Every pool mounted at its mountpoint, each followed by its volumes (ADR-0234).
+    """Every pool mounted at its mountpoint, each followed by its volumes (ADR-0243).
 
     As the Storage page shows them: storage.pools.list_pools and
     list_volumes, which read the host through src/host.py. A pool mounted at
@@ -407,7 +407,7 @@ async def list_subvolumes(_: dict = Depends(verify_token)):
 
 @router.get("/", response_model=list[SnapshotInfo])
 async def list_snapshots(subvolume: str, _: dict = Depends(verify_token)):
-    """The snapshots of one pool or volume, newest first (ADR-0234: no list of every pool)."""
+    """The snapshots of one pool or volume, newest first (ADR-0243: no list of every pool)."""
     return await asyncio.to_thread(_list_snapshots, subvolume)
 
 
@@ -431,7 +431,7 @@ async def create_snapshot(req: SnapshotCreate, _: dict = Depends(verify_token)):
 
 @router.delete("/{snapshot_id}")
 async def delete_snapshot(snapshot_id: str, subvolume: str, _: dict = Depends(verify_token)):
-    """Delete a snapshot, by its subvolume id (ADR-0233)."""
+    """Delete a snapshot, by its subvolume id (ADR-0242)."""
     subvol_path = _validate_subvolume(subvolume)
     name = validate_path_component(snapshot_id, what="Snapshot name")
 
@@ -457,7 +457,7 @@ def _restore(subvolume: Path, name: str, shown: str, target_path: str | None) ->
     """A writable snapshot ``restore_<date>_<time>`` (UTC) of the opened snapshot, in the opened target.
 
     The target is the subvolume of the snapshot unless ``target_path`` is
-    given. Both are the folders that were opened (ADR-0233): a link or a
+    given. Both are the folders that were opened (ADR-0242): a link or a
     rename meanwhile can neither copy another snapshot nor put the copy
     somewhere else.
     """

@@ -79,6 +79,8 @@ and this index, and `make check-fast` runs it.
 | [0212](0212-device-secrets-in-dev-env.md) | Device settings and secrets live in the git-ignored dev.env, never on command lines | accepted | 2026-11-07 |
 | [0213](0213-audit-notes-stay-out-of-the-repository.md) | Security audit notes and exploit details stay outside the repository | accepted | 2026-11-07 |
 | [0224](0224-append-only-audit-log-in-json-lines.md) | The audit log is append-only JSON lines with size-based rotation | accepted | 2026-11-07 |
+| [0236](0236-audit-log-filtered-alike-and-shown-on-an-administrator-page.md) | The audit log is listed, counted and exported with one set of filters and shown on an administrator page | superseded by [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | 2026-11-07 |
+| [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page | accepted | 2026-11-07 |
 
 ## Auth
 
@@ -90,11 +92,13 @@ and this index, and `make check-fast` runs it.
 | [0029](0029-first-run-setup-creates-one-administrator.md) | There are no default credentials: the first visit creates exactly one administrator | accepted | 2026-11-05 |
 | [0030](0030-administrator-only-routers.md) | Whole routers are administrator-only, and regular users get Dashboard and Account | accepted | 2026-11-05 |
 | [0031](0031-websocket-auth-with-the-first-message.md) | WebSocket clients authenticate with their first message, never with a token in the URL | accepted | 2026-11-05 |
-| [0032](0032-kept-authentication-practices.md) | Auth keeps bcrypt, one JWT algorithm, TOTP before any token, and hashed API tokens | accepted | 2026-11-05 |
+| [0032](0032-kept-authentication-practices.md) | Auth keeps bcrypt, one JWT algorithm, TOTP before any token, and hashed API tokens | superseded by [0239](0239-kept-authentication-practices-with-a-second-factor-before-any-token.md) | 2026-11-05 |
 | [0033](0033-session-revocation-and-token-scopes.md) | Add session revocation, safer token storage, 2FA recovery codes and token scopes | proposed | 2026-11-05 |
 | [0067](0067-two-factor-codes-are-single-use.md) | Two-factor codes are single-use, remembered in memory | accepted | 2026-11-06 |
 | [0068](0068-own-smb-activation-needs-the-two-factor-code.md) | Turning on one's own SMB access needs the two-factor code | accepted | 2026-11-06 |
 | [0191](0191-throttle-api-token-last-used-writes.md) | Throttle the commit of an API token's last use | proposed | 2026-11-07 |
+| [0238](0238-recovery-codes-sign-in-once-in-place-of-a-two-factor-code.md) | Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication | accepted | 2026-11-07 |
+| [0239](0239-kept-authentication-practices-with-a-second-factor-before-any-token.md) | Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens | accepted | 2026-11-07 |
 
 ## Storage
 
@@ -109,9 +113,10 @@ and this index, and `make check-fast` runs it.
 | [0071](0071-scrubs-return-once-started.md) | Scrubs return once started, and scheduled scrubs need a mounted pool | accepted | 2026-11-06 |
 | [0072](0072-smart-only-on-whole-host-disks.md) | SMART runs only on whole host disks, the set the Storage page lists | accepted | 2026-11-06 |
 | [0073](0073-deferred-storage-edge-cases.md) | Fix the deferred storage and snapshot edge cases of slice 1 | proposed | 2026-11-06 |
-| [0232](0232-snapshots-of-volumes-and-volume-quotas-in-the-web-ui.md) | The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB | superseded by [0234](0234-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | 2026-11-07 |
-| [0233](0233-snapshot-commands-act-on-the-folders-that-were-opened.md) | Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id | accepted | 2026-11-07 |
-| [0234](0234-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | The Snapshots page offers mounted pools and their volumes, also a pool whose volumes cannot be read, and the Volumes dialog takes a quota in GiB | accepted | 2026-11-07 |
+| [0235](0235-disk-health-shows-smart-data-and-replace-soon-marks.md) | Disk Health opens each disk's SMART data, and disks whose SMART trend scores 50 are marked replace soon | accepted | 2026-11-07 |
+| [0241](0241-snapshots-of-volumes-and-volume-quotas-in-the-web-ui.md) | The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB | superseded by [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | 2026-11-07 |
+| [0242](0242-snapshot-commands-act-on-the-folders-that-were-opened.md) | Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id | accepted | 2026-11-07 |
+| [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | The Snapshots page offers mounted pools and their volumes, also a pool whose volumes cannot be read, and the Volumes dialog takes a quota in GiB | accepted | 2026-11-07 |
 
 ## Shares
 
@@ -231,6 +236,7 @@ and this index, and `make check-fast` runs it.
 | [0165](0165-backup-restore-flows-and-unique-names.md) | Backups restore from the tab, accept encrypted uploads and get unique names | accepted | 2026-11-06 |
 | [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | accepted | 2026-11-06 |
 | [0167](0167-deferred-backup-and-upload-edge-cases.md) | Fix the deferred backup and upload edge cases of slice 1 | proposed | 2026-11-06 |
+| [0240](0240-scheduled-backups-encrypted-with-a-key-derived-from-the-passphrase.md) | Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own | accepted | 2026-11-07 |
 
 ## Files
 
@@ -240,6 +246,7 @@ and this index, and `make check-fast` runs it.
 | [0168](0168-file-manager-download-delete-copy-move.md) | The file manager downloads with the session and never overwrites on copy or move | accepted | 2026-11-06 |
 | [0169](0169-uploads-stream-into-their-folder.md) | Uploads stream into their folder and stay unnamed until complete | accepted | 2026-11-06 |
 | [0170](0170-file-manager-protects-volumes-and-mounts.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts | accepted | 2026-11-06 |
+| [0232](0232-file-manager-renames-in-the-row-and-never-replaces.md) | The file manager renames one selected item in its row and never replaces an entry | accepted | 2026-11-07 |
 
 ## System
 
@@ -253,6 +260,8 @@ and this index, and `make check-fast` runs it.
 | [0171](0171-supervisor-volatile-files-in-ram.md) | The supervisor keeps volatile files in RAM | accepted | 2026-11-06 |
 | [0172](0172-unique-task-ids-and-bounded-smart-tests.md) | Scheduled tasks get unique ids, backups run concurrently, and SMART tests time out | accepted | 2026-11-06 |
 | [0173](0173-in-app-updater-in-its-own-slice.md) | Redesign the in-app updater in its own slice; until then update.sh is the way | proposed | 2026-11-06 |
+| [0233](0233-power-actions-run-on-the-host-and-are-off-where-host-commands-run-locally.md) | Power actions run on the host through host.py and are off where host commands run locally | accepted | 2026-11-07 |
+| [0234](0234-the-image-carries-its-version-and-the-updates-tab-shows-only-what-works.md) | The supervisor image carries its version, and System > Updates shows only what works | accepted | 2026-11-07 |
 
 ## Web UI
 

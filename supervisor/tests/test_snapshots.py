@@ -354,7 +354,7 @@ class TestSnapshotSchemas:
         assert snap.created == "2025-01-24T12:00:00+00:00"
 
     def test_snapshot_info_has_no_size(self):
-        """The list does not measure snapshots: du walked every file of each one (ADR-0234)."""
+        """The list does not measure snapshots: du walked every file of each one (ADR-0243)."""
         assert set(SnapshotInfo.model_fields) == {"id", "name", "subvolume", "path", "created"}
 
     def test_snapshot_create_schema(self):
@@ -418,7 +418,7 @@ class TestListSubvolumes:
     """GET /snapshots/subvolumes: the pools and volumes that the Snapshots page offers.
 
     Every pool mounted at its mountpoint, followed by its volumes, as GET
-    /storage/pools and GET /storage/pools/{pool}/volumes show them (ADR-0234).
+    /storage/pools and GET /storage/pools/{pool}/volumes show them (ADR-0243).
     """
 
     def test_mounted_pools_and_their_volumes(self, pool_host):
@@ -538,7 +538,7 @@ class TestListSubvolumes:
         assert pool_host.changes == []
 
     def test_a_failing_subvolume_list_leaves_every_pool_offered(self, pool_host):
-        """It answered 500 before (ADR-0234), and the page then offered no pool at all."""
+        """It answered 500 before (ADR-0243), and the page then offered no pool at all."""
         stderr = "ERROR: can't perform the search: Permission denied"
         pool_host.subvols.add(DATA_UUID, "documents")
         pool_host.fail[("btrfs", "subvolume", "list")] = (1, stderr)
@@ -598,10 +598,10 @@ class TestListSnapshots:
             "name": "snap_20250124_120000",
             "subvolume": str(pools.pool),
             "path": str(snap_path),
-            # With its offset, so that the browser shows it in its own time zone (ADR-0234).
+            # With its offset, so that the browser shows it in its own time zone (ADR-0243).
             "created": "2025-01-24T12:00:00+00:00",
         }
-        # Only btrfs: du walked every file of every snapshot at each listing (ADR-0234).
+        # Only btrfs: du walked every file of every snapshot at each listing (ADR-0243).
         assert btrfs.calls == [["btrfs", "subvolume", "show", str(snap_path)]]
 
     async def test_creation_times_are_given_in_utc_newest_first(self, pools, btrfs):
@@ -716,7 +716,7 @@ class TestCreateSnapshot:
         assert (listed.name, listed.created) == ("before", "2025-01-24T12:00:00+00:00")
 
     async def test_the_snapshot_goes_into_the_snapshot_folder_that_was_checked(self, pools, btrfs):
-        """Whatever writes in the volume can swap .snapshots for a link right before btrfs runs (ADR-0233)."""
+        """Whatever writes in the volume can swap .snapshots for a link right before btrfs runs (ADR-0242)."""
         documents = btrfs.subvolume(pools.pool / "documents")
         photos = btrfs.subvolume(pools.pool / "photos")
         (documents / ".snapshots").mkdir()
@@ -844,7 +844,7 @@ class TestDeleteSnapshot:
     """Tests for deleting snapshots."""
 
     async def test_delete_snapshot_success(self, pools, btrfs):
-        """By the id of the snapshot that was opened, checked to be where it was asked for (ADR-0233)."""
+        """By the id of the snapshot that was opened, checked to be where it was asked for (ADR-0242)."""
         snap = btrfs.snapshot(pools.pool, "snap_test")
         snap_id = str(btrfs.id_of(snap))
 
@@ -880,7 +880,7 @@ class TestDeleteSnapshot:
         assert (pools.pool / ".snapshots" / "before").is_dir()
 
     async def test_a_snapshot_swapped_for_a_link_before_btrfs_runs_is_deleted_and_not_the_link(self, pools, btrfs):
-        """Whatever writes in the volume can swap the entry between the check and the delete (ADR-0233).
+        """Whatever writes in the volume can swap the entry between the check and the delete (ADR-0242).
 
         btrfs-progs resolves a path given to it again, links included: by path,
         this deleted the volume the link leads to.
@@ -1102,7 +1102,7 @@ class TestRestoreSnapshot:
         assert btrfs.calls == [["btrfs", "subvolume", "snapshot", f"{snap}/.", str(target)]]
 
     async def test_the_snapshot_that_was_checked_is_restored(self, pools, btrfs, frozen_stamp):
-        """Whatever writes in the volume can swap the snapshot for a link right before btrfs runs (ADR-0233).
+        """Whatever writes in the volume can swap the snapshot for a link right before btrfs runs (ADR-0242).
 
         By path, btrfs copied the snapshot of another volume that the link led
         to into this volume, where whatever made the link could read it.

@@ -3,14 +3,14 @@ status: superseded
 date: 2026-11-07
 area: storage
 decided-by: agent
-superseded-by: ADR-0234
+superseded-by: ADR-0243
 ---
 
-# ADR-0232: The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB
+# ADR-0241: The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB
 
 ## Context
 
-Superseded by ADR-0234: a pool whose volumes cannot be read is offered alone with the reason, the names snap_, restore_ and auto_ take UTC, and GET /snapshots/ needs its pool or volume.
+Superseded by ADR-0243: a pool whose volumes cannot be read is offered alone with the reason, the names snap_, restore_ and auto_ take UTC, and GET /snapshots/ needs its pool or volume.
 
 The snapshot API took any folder in a pool (`_validate_subvolume` in `supervisor/src/snapshots/router.py`), but `GET /snapshots/subvolumes` listed only the btrfs mountpoints that findmnt showed in the container, so the Snapshots page could not snapshot a volume (ADR-0069). Its list ran `du -sh` on every snapshot at every listing, a walk of all its files with a timeout of 600 s each that wakes the disks, and dropped the offset of btrfs's creation time, so a browser outside UTC showed the time hours off. ADR-0069 has the Volumes dialog send an optional quota, but it sent only the name. This settles the web UI of storage.snapshots and storage.volumes.
 

@@ -94,7 +94,9 @@ DOCKER_STUB = textwrap.dedent(
         case "$2" in
           # Compose 5.0.2 unless the scenario has a line compose-version=<version>.
           version) v=$(sed -n 's/^compose-version=//p' "$STUB_DIR/scenario"); echo "${v:-5.0.2}" ;;
-          build) interrupt_at build; has probe-lock && probe_lock; has build-fails && exit 1 ;;
+          # The version the images get (ADR-0234): one line per build.
+          build) echo "UNOS_VERSION=${UNOS_VERSION-<unset>}" >> "$STUB_DIR/build-env"
+                 interrupt_at build; has probe-lock && probe_lock; has build-fails && exit 1 ;;
           down) interrupt_at down ;;
           up) # Part of the help: --wait since Compose 2.1.1, --wait-timeout since 2.17.
               if [ "$3" = --help ]; then
@@ -379,6 +381,47 @@ class TestUpdateScript:
         assert sorted(p.name for p in backup.iterdir()) == ["data.tar.gz", "unos.db"]
         assert (backup.stat().st_mode & 0o777) == 0o700
         assert (sandbox / "install" / "VERSION").read_text() == "2\n"
+
+    def test_the_new_images_carry_the_version_of_the_new_checkout(self, sandbox):
+        # System > Updates shows the version the supervisor image was built with (ADR-0234).
+        _git("tag", "v0.1.0", "HEAD", cwd=sandbox / "install")
+
+        result, calls = _run_update(sandbox)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        # One commit after the tag: <tag>-1-g<commit>, as git describe names it.
+        built = (sandbox / "stub" / "build-env").read_text().splitlines()
+        assert len(built) == 1 and built[0].startswith("UNOS_VERSION=v0.1.0-1-g"), built
+        assert _head(sandbox).startswith(built[0].removeprefix("UNOS_VERSION=v0.1.0-1-g"))
+        assert f"Updated to: {built[0].removeprefix('UNOS_VERSION=')}" in result.stdout
+
+    @pytest.mark.parametrize("tag_at_install", [None, "v0.9.0"], ids=["no-tag-at-install", "older-tag-at-install"])
+    def test_a_release_tagged_after_the_install_names_the_new_images(self, sandbox, tag_at_install):
+        # The release is tagged on the new commit and published after the install was cloned.
+        # Unless the fetch brings its tag, git describe names the commit (or the older tag with
+        # the commits after it), and System > Updates offers the installed release as an update.
+        if tag_at_install:
+            _git("tag", tag_at_install, "HEAD", cwd=sandbox / "install")
+        _git("tag", "v1.0.0", "HEAD", cwd=sandbox / "seed")
+        _git("push", "-q", "origin", "v1.0.0", cwd=sandbox / "seed")
+
+        result, _ = _run_update(sandbox)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (sandbox / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v1.0.0"]
+        assert "Updated to: v1.0.0" in result.stdout
+
+    def test_a_forced_rebuild_names_a_release_tagged_on_the_installed_commit(self, sandbox):
+        # docs/INSTALL.md: without new commits only a rebuild names the images after the release.
+        _git("pull", "-q", "--ff-only", cwd=sandbox / "install")
+        _git("tag", "v1.0.0", "HEAD", cwd=sandbox / "seed")
+        _git("push", "-q", "origin", "v1.0.0", cwd=sandbox / "seed")
+
+        result, _ = _run_update(sandbox, overrides="confirm() { true; }")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "UNOS is already up to date!" in result.stdout
+        assert (sandbox / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v1.0.0"]
 
     def test_failed_build_leaves_the_running_version_alone(self, sandbox):
         before = _head(sandbox)
@@ -917,6 +960,26 @@ class TestInstallScript:
         assert _up_calls(calls) == [f"docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert exec_start == [f"ExecStart=/usr/bin/docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert "Docker Compose 2.26.1 cannot limit its wait" in result.stdout
+
+    def test_the_images_carry_the_version_of_the_checkout(self, tmp_path):
+        # System > Updates shows the version the supervisor image was built with (ADR-0234).
+        install = tmp_path / "install"
+        _git("init", "-q", str(install), cwd=tmp_path)
+        (install / "README.md").write_text("UNOS\n")
+        _git("add", "-A", cwd=install)
+        _git("commit", "-qm", "release", cwd=install)
+        _git("tag", "v9.9.9", cwd=install)
+
+        result, calls, exec_start = _start_install(tmp_path)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (tmp_path / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v9.9.9"]
+
+    def test_without_a_git_checkout_the_version_is_unknown(self, tmp_path):
+        result, calls, exec_start = _start_install(tmp_path)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (tmp_path / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=unknown"]
 
     def test_failed_start_names_the_supervisor_health(self, tmp_path):
         result, calls, exec_start = _start_install(tmp_path, "up-fails")
@@ -1722,6 +1785,16 @@ class TestBuildContexts:
     def test_dockerignore_drops_local_build_output(self):
         assert {"node_modules", "build", ".svelte-kit"} <= _dockerignore("webui")
         assert {"**/__pycache__", "**/*.pyc"} <= _dockerignore("supervisor")
+
+    def test_the_supervisor_image_carries_the_version_it_was_built_with(self):
+        # ADR-0234: the version of System > Updates and General. After the code and the
+        # packages, so that a new version rebuilds only the last layers.
+        lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
+        arg = lines.index("ARG UNOS_VERSION=unknown")
+        assert lines[arg + 1] == "ENV UNOS_VERSION=${UNOS_VERSION}"
+        assert arg > lines.index("COPY src/ ./src/") > lines.index("RUN pip install --no-cache-dir -r requirements.txt")
+        build = _compose_file("docker-compose.yml")["services"]["supervisor"]["build"]
+        assert build == {"context": "../supervisor", "args": {"UNOS_VERSION": "${UNOS_VERSION:-unknown}"}}
 
 
 COMPOSE_FILES = ("docker-compose.yml", "docker-compose.test.yml")

@@ -12,10 +12,11 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
 6. [Docker Containers](#docker-containers)
 7. [App Store](#app-store)
 8. [User Management](#user-management)
-9. [System Settings](#system-settings)
-10. [Backups & Snapshots](#backups--snapshots)
-11. [Notifications](#notifications)
-12. [Tips & Best Practices](#tips--best-practices)
+9. [Audit Log](#audit-log)
+10. [System Settings](#system-settings)
+11. [Backups & Snapshots](#backups--snapshots)
+12. [Notifications](#notifications)
+13. [Tips & Best Practices](#tips--best-practices)
 
 ---
 
@@ -59,6 +60,13 @@ Shows all your storage pools with:
 - Used/total space
 - Health status
 - Quick access to pool details
+
+### Disks to Replace
+When a disk is marked **Replace soon**, administrators see an alert above the
+widgets that lists each such disk with its path, serial number and the
+reasons, and links to **System** → **Disk Health** (see
+[Replace Soon](#replace-soon)). When UNOS cannot read the predictions, a
+warning says why instead.
 
 ### Containers
 Lists running Docker containers with status indicators
@@ -148,7 +156,59 @@ For each pool, you can:
 
 **System** → **Disk Health** shows the model, size, temperature and SMART
 health status of each disk that the **Storage** page lists, the system disk
-included unless it is an SD card or eMMC.
+included unless it is an SD card or eMMC. Opening the tab, or its refresh
+button, reads the SMART data of every disk, which wakes disks that sleep.
+
+**SMART data** opens a disk: its overall health, temperature, power-on hours
+and power cycles, serial number, firmware, capacity, the last self-test and
+its SMART attributes, each with its status: **OK**, **Warning** (within 10 of
+the attribute's failure threshold) or **Failing** (at or below it). NVMe disks
+have no SMART attributes; the dialog lists their SMART/Health Information log
+instead (available spare, percentage used, media errors and the rest). The
+dialog shows the values the tab loaded.
+
+#### Replace Soon
+
+Every hour UNOS records, for each disk that is awake, the SMART counters of
+failing sectors and errors, and keeps the last 720 records of each disk (30
+days for a disk that never sleeps). From 24 records on (a day), it scores how
+the counters rise:
+
+- each of the reallocated, current pending and offline uncorrectable sector
+  counts that rose within the kept records adds 30 points, and 20 more if it
+  rose by 3 or more within the last 24 records;
+- each of the reported uncorrectable errors, command timeouts and UDMA CRC
+  errors that rose above 100 adds 10 points.
+
+A record in which smartctl could not read the counters counts neither as a
+rise nor as a drop.
+
+With 50 points or more the disk is marked **Replace soon**: in **Disk Health**
+with the reasons and a recommendation, and on the **Dashboard** (see
+[Disks to Replace](#disks-to-replace)). Disk Health marks the disk that
+reports the same serial number. When none of its disks does, because smartctl
+could not read the disk this time or another disk has taken its place, an
+alert above the list names the disk's path, serial number and reasons
+instead. The mark goes away by itself once the score is below 50, for example
+a day after a single sector count stopped rising.
+
+A disk that is removed or replaced loses its mark, except in two cases, where
+the old disk's mark stays until the hourly check has recorded the new disk:
+
+- a disk replaced inside the same USB enclosure, whose bridge reports its own
+  serial number for whichever disk it holds;
+- a disk behind a USB bridge that reports no serial number, or the same one
+  as another enclosure: UNOS finds such a disk by its path (such as
+  `/dev/sdb`), which another disk can take.
+
+A disk that sleeps is not recorded and keeps its last score.
+
+The score follows rises, not levels: a disk that arrives with many
+reallocated sectors gets no mark, so check the SMART data of a used disk
+yourself. NVMe disks get no score, as the hourly records hold no NVMe
+counters: **SMART data** shows their health log, and their health turns
+**FAILED** when the disk reports a critical warning. A rising counter also
+sends an alert (see [Notifications](#notifications)).
 
 ---
 
@@ -345,6 +405,16 @@ in your storage pools from the web interface. It starts in the pools directory
 - **Copy and Move** - Select the items and click **Copy** or **Move**, open
   the destination folder, then click **Copy here** or **Move here**. If an
   item with the same name is already there, nothing is copied or moved.
+- **Rename** - Select one item and click **Rename**: its name becomes a field
+  with the name selected. Type the new name, then press Enter or click
+  elsewhere; Escape keeps the old name. Switching to another window or tab
+  keeps the field as it is. A name that is already used in the folder is
+  refused, and so are `.`, `..`, names with `/` or control characters, and
+  names longer than 255 bytes: the message says why, and the field stays open
+  for another name. Spaces at the start and the end of the name are dropped.
+  The item stays selected under its new name. Until the list shows the new
+  name, the buttons for the selected items and **Copy here** or **Move here**
+  wait.
 - **Delete** - Select the items, click **Delete** and confirm. Folders are
   deleted with everything in them.
 - **Upload** - Click the upload arrow at the top right and choose one or more
@@ -356,13 +426,17 @@ in your storage pools from the web interface. It starts in the pools directory
 - **Keyboard and screen readers** - The name of each folder and file is a
   button: Tab to it, then press Enter or Space to open the folder or download
   the file. After a folder opens, the focus is on **..**. The checkbox selects
-  the item.
+  the item. After a rename, or Escape in the name field, the focus is on the
+  item's checkbox, unless Tab or a click took it to another control. Screen
+  readers announce error messages.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
-subvolumes or filesystems mounted in a pool cannot be deleted or moved here:
-delete volumes on the **Storage** page (see
-[Pool Operations](#pool-operations)).
+subvolumes or filesystems mounted in a pool cannot be deleted, renamed or
+moved here: delete volumes on the **Storage** page (see
+[Pool Operations](#pool-operations)). Renaming a folder that a share, an NFS
+export or an app uses is not refused, but they keep using the old name, which
+no longer exists: rename the folder back to restore them.
 
 A folder that contains a subvolume (such as a snapshot) or a mounted
 filesystem cannot be deleted here, or moved to another pool or volume.
@@ -555,6 +629,41 @@ code every 30 seconds.
 2FA protects only the web interface, not SMB: SMB signs in with the password
 alone. Turning SMB on yourself needs your two-factor code as well.
 
+#### Recovery Codes
+
+A recovery code signs you in when you have lost your authenticator app.
+Generate them as soon as 2FA is on:
+
+1. Go to **Account** (administrators: **System** → **Security**)
+2. Under **Two-Factor Authentication** → **Recovery codes**, click
+   **Generate recovery codes**
+3. Save the ten codes (they look like `5251-6486-2F69`) somewhere safe, away
+   from the devices you sign in with, and click **Done**. They are shown only
+   this once: UNOS keeps a hash of each code, not the code.
+
+**Recovery codes** then says how many codes are left. **Generate new codes**
+replaces all of them after a confirmation: the codes you had stop working.
+When generating fails with a server or network error, the page cannot tell
+whether UNOS replaced your codes, and says that the codes you saved may no
+longer work: generate new codes again and save those.
+
+To sign in with one, enter your username and password, click **Use a
+recovery code** at the code step and enter one of your codes; letter case,
+dashes and spaces do not matter. Each code works once: a used code is refused
+with "Invalid recovery code", as a wrong one is. A refused code appears in the
+login history as a failed sign-in, and the audit log records each sign-in with
+a recovery code.
+
+Turning 2FA off deletes the recovery codes, and after turning it on again you
+generate new ones. Turning 2FA off needs a code from the authenticator app:
+with recovery codes alone you can sign in and generate new codes, but not turn
+2FA off, and an administrator cannot reset it for you.
+
+Scripts send the code as `recovery_code` in place of `totp_code` to
+`POST /api/v1/auth/login`; `POST /api/v1/auth/recovery-codes/generate`
+answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
+left.
+
 ### API Tokens
 
 Tokens give scripts access to the UNOS API with the rights of the account that
@@ -582,6 +691,56 @@ and `unos` the name on the certificate. List your tokens with
 
 ---
 
+## Audit Log
+
+**Audit Log** in the sidebar shows administrators what happened on the NAS;
+regular users have no access to it.
+
+- The entries are listed newest first, on a timeline grouped by day. Each one
+  shows its time, its action, **Failed** when it did not succeed, **Warning**
+  or **Critical** for its severity, its details, the user, the address it came
+  from, the resource it concerns and the browser.
+- **Search** finds a text, in any case, in the user name, the action as the
+  page names it (`login failed`), the address, the resource as the page shows
+  it (`user carol`), the details or the browser. **User** takes an exact user
+  name, **Action** one kind of entry, and **From** and **To** a range of days,
+  each day included whole. The list follows the filters as you change them;
+  **Clear filters** resets them.
+- The page shows the newest 100 matching entries; **Show more** adds 100 more.
+- **Export CSV** and **Export JSON** download every entry that matches the
+  filters, newest first. In the CSV file, a `'` stands before what a
+  spreadsheet would read as a formula: a value that starts with `=`, `+`,
+  `-`, `@`, a tab or a carriage return, and such a character after a
+  semicolon, a tab or a line break inside a value. The JSON file holds the
+  values as recorded.
+- Times are the NAS's clock as the entries record it, without a time zone
+  (UTC unless the supervisor's container is set otherwise), and the days of
+  **From** and **To** are the NAS's days (feature-list entry
+  `architecture.times-with-time-zones`).
+- Recorded today: sign-ins and failed sign-ins (a wrong two-factor code
+  appears only in the login history), users created, changed and deleted, the
+  SMB access of users, shares created, changed, deleted and repaired, shares
+  imported from smb.conf and the corrections of the SMB check at startup (by
+  the user `system`), API tokens created and deleted, new recovery codes, and
+  the clearing of the log. Storage, snapshots, containers, apps, backups,
+  restarts and shutdowns, scheduled tasks, the network and system settings
+  write no entries yet, and neither do a user's own password and two-factor
+  changes, although **Action** lists such actions (feature-list entry
+  `security.audit-admin-actions`).
+
+The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
+(with `limit` from 1 and `offset` from 0), `GET /api/v1/audit/logs/count` and
+`GET /api/v1/audit/logs/export` (`format=csv` or `json`) take `search`,
+`username`, `action`, `severity`, `start_date` and `end_date`. A bound covers
+the whole unit it names, as the first and as the last one: a date
+(`YYYY-MM-DD`) its day, and a date and time (`YYYY-MM-DDTHH`, `THH:MM`,
+`THH:MM:SS`, or `THH:MM:SS` and a fraction of 1 to 6 digits) its hour,
+minute, second or fraction, so `end_date=2026-11-06T12:00` takes the entries
+up to 12:00:59.999999. Bounds are in the NAS's local time, without a time
+zone; another form gets 422.
+
+---
+
 ## System Settings
 
 Access via **System** in the sidebar.
@@ -589,8 +748,28 @@ Access via **System** in the sidebar.
 ### General
 
 - Shows the host name, the operating system, the kernel and the architecture
+- Shows the UNOS version, as the Updates tab does
 - The host name and the time zone cannot be changed in the web interface yet
   (feature-list entry `system.hostname-and-time-zone`)
+
+### Updates
+
+- **Current version**: the version UNOS was built from, as `git describe`
+  named its checkout at the build: a release tag such as `v1.2.0`, or, marked
+  **dev**, a tag with the commits after it such as `v1.2.0-3-g712fc3a` or only
+  the commit while no tag was in its history. A release tagged later on the
+  commit UNOS runs shows after a rebuild (see [Upgrading](INSTALL.md#upgrading)).
+  An installation whose images were built without `install.sh` or `update.sh`
+  shows `unknown`.
+- **Latest release**: checked on GitHub when the tab opens, and again with
+  **Check again**; **Include pre-releases** checks for pre-releases too. The
+  tab says when an update is available, with the release's notes and a link
+  to it, when you run the latest release, when no release is published yet,
+  and why a check failed (GitHub answers 60 checks an hour per address).
+- **How to update**: UNOS is updated on the host, with
+  `sudo /opt/unos/deploy/update.sh` (see
+  [Upgrading](INSTALL.md#upgrading)). The web interface cannot install updates
+  or roll them back yet (feature-list entry `system.in-app-updater`).
 
 ### Network
 
@@ -601,16 +780,32 @@ Access via **System** in the sidebar.
 
 ### Power Management
 
-The tab has **Reboot** and **Shutdown** buttons, but they do not work yet:
-inside the supervisor's container the API answers that they are not
-available, and the tab does not show that answer. Reboot or shut down the
-host from its console or over SSH. There are no scheduled shutdown or wake
-times, and suspend, Wake-on-LAN and the UPS state have no page (feature-list
-entries `system.power`, `system.scheduled-power` and `system.ups-monitoring`).
+**Reboot** and **Shutdown** ask for confirmation, then act on the host one
+minute later. Until then the tab shows the pending reboot or shutdown with its
+time and a **Cancel reboot** or **Cancel shutdown** button, also after a
+reload; a shutdown or reboot scheduled on the host's console shows there too.
+**Suspend** asks for confirmation and suspends the host at once, if its kernel
+offers suspend to RAM; the host then sleeps until its power button or a
+Wake-on-LAN packet wakes it. The tab shows each answer, and the host's error
+when it refused.
+
+**Wake-on-LAN** lists the host's Ethernet interfaces with their MAC
+addresses. **Turn on** lets a magic packet to the interface's address start
+the host after a shutdown or wake it from suspend; **Turn off** lets nothing
+wake the host through it. An interface that cannot wake the host by magic
+packet shows **Not supported**. UNOS sets your choice again each time it
+starts, because many network drivers forget it at a reboot. Send the magic
+packet from a computer on the same network, for example with
+`wakeonlan <MAC address>`.
+
+There are no scheduled shutdown or wake times, and the UPS state has no page
+yet (feature-list entries `system.scheduled-power` and
+`system.ups-monitoring`).
 
 ### Disk Health
 
-- SMART health status and temperature of each disk (see
+- SMART health status and temperature of each disk, its SMART data under
+  **SMART data**, and the **Replace soon** mark (see
   [SMART Monitoring](#smart-monitoring))
 
 ### Logs
@@ -720,16 +915,38 @@ SMB after a restore:
   belongs to another account on this NAS (for example in a backup of another
   installation).
 
-Encrypted backups (`.tar.gz.enc`) are made through the API, with
-`POST /api/v1/backup/create` and the body
+Encrypted backups (`.tar.gz.enc`) are made by backup tasks (below), or
+through the API, with `POST /api/v1/backup/create` and the body
 `{"encrypt": true, "passphrase": "..."}` (see [API Tokens](#api-tokens)).
 Without the passphrase they cannot be restored.
 
 For automatic backups, add a task of the type **System Backup** in
-**System** → **Scheduler** (**New Task**). These backups are unencrypted,
-are named `auto_backup_<date>_<time>.tar.gz` (with `_1`, `_2`, ... before
-`.tar.gz` when two are made in the same second) and appear in the list;
-**Keep Count** sets how many of them are kept.
+**System** → **Scheduler** (**New Task**). Its backups are always encrypted
+(AES-256-GCM) with the passphrase you enter twice, in **Passphrase** and
+**Confirm Passphrase**, at least 8 characters long. They are named `auto_backup_<date>_<time>.tar.gz.enc`
+(with `_1`, `_2`, ... before `.tar.gz.enc` when two are made in the same
+second) and appear in the list, marked encrypted; **Keep Count** sets how
+many of them are kept, counted over all backup tasks. Besides the database,
+they hold a copy of the scheduled tasks, without passphrases, which a
+restore does not restore.
+
+- Keep the passphrase somewhere safe: UNOS never shows it again, and
+  restoring a scheduled backup asks for it, as for any encrypted backup.
+  Without it, the backup cannot be restored. So that the task can run
+  unattended, the NAS keeps a key derived from the passphrase (not the
+  passphrase itself), readable only by the supervisor. No backup of
+  **Backup & Restore** and no scheduled backup holds that key; the copy of
+  the data volume that `update.sh` makes before an update does, next to the
+  scheduled backups (see [Upgrading](INSTALL.md#upgrading)).
+- Editing the task shows the passphrase fields empty. Leave them empty to
+  keep the passphrase, or enter a new one: it applies to the backups made
+  from then on, and older backups still need the passphrase they were made
+  with. The list does not show which task made a backup, so with several
+  backup tasks one passphrase for all of them is easier to keep.
+- A backup task without a passphrase, such as one whose key was lost, fails
+  each run with "No passphrase is set for this backup task: edit the task
+  and set one", and stores nothing. Editing it asks for a passphrase, as for
+  a new task.
 
 ---
 
@@ -771,7 +988,8 @@ notification.
 ### Security
 
 1. ✅ Create the administrator account right after installing, with a strong password
-2. ✅ Enable two-factor authentication (2FA)
+2. ✅ Enable two-factor authentication (2FA), and keep its recovery codes
+   somewhere safe
 3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
    no limit on login attempts and no two-factor authentication, and UNOS does
    not refuse common passwords
@@ -783,7 +1001,7 @@ notification.
 7. ✅ Keep UNOS updated
 8. ✅ Don't expose to the internet without VPN
 9. ✅ Use API tokens instead of passwords for scripts
-10. ✅ Review audit logs periodically
+10. ✅ Review the [audit log](#audit-log) periodically
 
 ### Storage
 

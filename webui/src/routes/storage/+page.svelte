@@ -416,7 +416,7 @@
 	let volumesLoading = false;
 	let volumesError = '';
 	let newVolumeName = '';
-	// In GiB, as typed; empty for no limit (ADR-0234).
+	// In GiB, as typed; empty for no limit (ADR-0243).
 	let newVolumeQuota = '';
 	let creatingVolume = false;
 	let createVolumeError = '';
@@ -1187,7 +1187,7 @@
 	{#if volumesPool}
 		<div class="space-y-4">
 			<!-- btrfs snapshots are not recursive, and scheduled snapshot tasks only take
-			     pools: say so before files move into a volume (ADR-0234). -->
+			     pools: say so before files move into a volume (ADR-0243). -->
 			<p class="text-sm text-secondary">
 				A volume is a btrfs subvolume in
 				<span class="mono-xs">{volumesPool.mountpoint || `/mnt/pools/${volumesPool.name}`}</span>

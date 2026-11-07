@@ -3,8 +3,8 @@ import type { Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { targetUrl } from './target';
 
-// Backup and restore flows against the real API. Backups and users created
-// here are removed afterwards.
+// Backup and restore flows against the real API. Backups, users and
+// scheduled tasks created here are removed afterwards.
 //
 // Restoring replaces the database and smb.conf of the target with the backup
 // made moments before; a user added in between shows that the restore was
@@ -32,6 +32,7 @@ const RESTORE_SKIPPED =
 let token = '';
 let backups: string[] = [];
 let users: string[] = [];
+let tasks: string[] = [];
 
 const auth = () => ({ Authorization: `Bearer ${token}` });
 
@@ -57,6 +58,12 @@ async function addUser(page: Page): Promise<string> {
   return username;
 }
 
+async function backupNames(page: Page): Promise<string[]> {
+  const response = await page.request.get('/api/v1/backup/list', { headers: auth() });
+  expect(response.ok(), `list backups: HTTP ${response.status()}`).toBeTruthy();
+  return ((await response.json()).backups as { filename: string }[]).map((backup) => backup.filename);
+}
+
 async function usernames(page: Page): Promise<string[]> {
   const response = await page.request.get('/api/v1/auth/users', { headers: auth() });
   expect(response.ok(), `list users: HTTP ${response.status()}`).toBeTruthy();
@@ -78,8 +85,8 @@ async function openBackupTab(page: Page) {
 }
 
 /**
- * Sign in before each test, and remove the backups and users it created
- * afterwards. Playwright runs no hook and no fixture for the tests that the
+ * Sign in before each test, and remove the backups, users and scheduled tasks
+ * it created afterwards. Playwright runs no hook and no fixture for the tests that the
  * restore guard skips, wherever the hooks are registered.
  */
 function signInAndCleanUp() {
@@ -89,9 +96,13 @@ function signInAndCleanUp() {
   });
 
   test.afterEach(async ({ request }) => {
-    const created = { backups, users };
+    const created = { backups, users, tasks };
     backups = [];
     users = [];
+    tasks = [];
+    for (const id of created.tasks) {
+      await request.delete(`/api/v1/scheduler/tasks/${encodeURIComponent(id)}`, { headers: auth() });
+    }
     for (const name of created.backups) {
       await request.delete(`/api/v1/backup/${encodeURIComponent(name)}`, { headers: auth() });
     }
@@ -321,6 +332,70 @@ test.describe('Restoring backups', () => {
     expect((await requestSent).postDataJSON()).toEqual({ passphrase });
     await expect(dialog.getByText('Restore Complete')).toBeVisible();
     await expect(dialog.getByText('- database')).toBeVisible();
+    expect(await usernames(page)).not.toContain(later);
+  });
+
+  test('restores a scheduled backup with the passphrase of its backup task', async ({ authenticatedPage: page }) => {
+    const passphrase = 'e2e scheduled backup passphrase';
+    const taskName = `E2E scheduled backup ${Date.now().toString(36)}`;
+    const before = await backupNames(page);
+
+    // A backup task with a passphrase, made in System > Scheduler and run now.
+    await page.goto('/system#scheduler');
+    await page.getByRole('button', { name: 'New Task' }).click();
+    await page.getByLabel('Task Name', { exact: true }).fill(taskName);
+    await page.getByLabel('Task Type', { exact: true }).selectOption('backup');
+    await page.getByLabel('Passphrase', { exact: true }).fill(passphrase);
+    await page.getByLabel('Confirm Passphrase', { exact: true }).fill(passphrase);
+    const created = page.waitForResponse(
+      (response) => isApi('/scheduler/tasks')(response.request()) && response.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'Create Task' }).click();
+    const task = await (await created).json();
+    tasks.push(task.id);
+    expect(task).not.toHaveProperty('passphrase');
+    await page.locator('div.justify-between', { hasText: taskName }).getByRole('button', { name: 'Run now' }).click();
+
+    let name = '';
+    await expect
+      .poll(
+        async () => {
+          const added = (await backupNames(page)).filter((backup) => !before.includes(backup));
+          name = added[0] ?? '';
+          return added.length;
+        },
+        { timeout: 30000 },
+      )
+      .toBe(1);
+    backups.push(name);
+    // The scheduled backup is encrypted.
+    expect(name).toMatch(/^auto_backup_\d{8}_\d{6}(_\d+)?\.tar\.gz\.enc$/);
+    const later = await addUser(page);
+
+    await openBackupTab(page);
+    await expect(encryptedMark(page, name)).toBeVisible();
+    await page.getByRole('button', { name: `Restore ${name}` }).click();
+    const dialog = restoreDialog(page);
+    const restoreButton = dialog.getByRole('button', { name: 'Restore', exact: true });
+    await dialog.getByLabel('Type the backup filename to confirm:').fill(name);
+    // Refused without its passphrase, and with another one.
+    await expect(restoreButton).toBeDisabled();
+    await dialog.getByLabel('Passphrase of the encrypted backup').fill('not the passphrase');
+    await restoreButton.click();
+    await expect(dialog.getByText('Restore Failed')).toBeVisible();
+    await expect(dialog.getByText('Invalid passphrase or corrupted backup')).toBeVisible();
+    expect(await usernames(page)).toContain(later);
+    await dialog.getByRole('button', { name: 'Close' }).click();
+
+    await page.getByRole('button', { name: `Restore ${name}` }).click();
+    await dialog.getByLabel('Type the backup filename to confirm:').fill(name);
+    await dialog.getByLabel('Passphrase of the encrypted backup').fill(passphrase);
+    const requestSent = page.waitForRequest(isApi(`/backup/restore/${name}`));
+    await restoreButton.click();
+    expect((await requestSent).postDataJSON()).toEqual({ passphrase });
+    await expect(dialog.getByText('Restore Complete')).toBeVisible();
+    await expect(dialog.getByText('- database')).toBeVisible();
+    // The database is the one the task backed up: the user added since is gone.
     expect(await usernames(page)).not.toContain(later);
   });
 });

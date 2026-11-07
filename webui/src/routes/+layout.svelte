@@ -31,7 +31,8 @@
 		Users,
 		Wrench,
 		Archive,
-		UserCog
+		UserCog,
+		ScrollText
 	} from 'lucide-svelte';
 
 	const adminNavItems = [
@@ -43,6 +44,7 @@
 		{ href: '/containers', icon: Container, label: 'Containers' },
 		{ href: '/apps', icon: Package, label: 'App Store' },
 		{ href: '/users', icon: Users, label: 'Users' },
+		{ href: '/audit', icon: ScrollText, label: 'Audit Log' },
 		{ href: '/system', icon: Wrench, label: 'System' }
 	];
 
