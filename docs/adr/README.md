@@ -278,6 +278,7 @@ and this index, and `make check-fast` runs it.
 | [0247](0247-wake-on-lan-from-power-off-depends-on-the-board.md) | Waking a host that is off by Wake-on-LAN depends on its board, and the Power tab says so | accepted | 2026-11-07 |
 | [0257](0257-system-logs-reads-every-source-from-the-hosts-journal-newest-first.md) | System > Logs reads every source from the host's journal, newest first, with one set of filters | accepted | 2026-11-07 |
 | [0258](0258-a-journal-read-ends-on-the-host-and-two-run-at-a-time.md) | A journal read of System > Logs ends on the host after 30 seconds, two run at a time, and a search without a match lists nothing | accepted | 2026-11-07 |
+| [0260](0260-notification-channels-of-every-kind-name-failed-deliveries-and-keep-a-full-history.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, and the history lists every notification sent | accepted | 2026-11-07 |
 
 ## Web UI
 

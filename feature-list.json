@@ -2345,12 +2345,13 @@
         "supervisor/tests/test_notifications.py",
         "webui/tests/notifications.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0045",
-        "ADR-0046"
+        "ADR-0046",
+        "ADR-0260"
       ],
-      "notes": "The tests use fake servers, and the E2E spec only opens the tab: no real delivery has been checked. Step 1 is implemented on the branch smtp-verify-tls (bbb773b), which is not merged: the working tree and the dev device still call STARTTLS without checking the certificate (ADR-0045)."
+      "notes": "System > Notifications adds e-mail, Telegram, webhook, Discord and Slack channels; a test shows under its channel whether it was sent or the error, and the history lists tests, POST /notifications/send and the monitors' alerts, newest first (ADR-0260). The certificate check of ADR-0045 (STARTTLS, SMTPS on port 465, the self-signed opt-out) came in from commit bbb773b of the branch smtp-verify-tls, which stays unmerged. test_notifications.py delivers to a local mail server (STARTTLS and SMTPS; trusted, self-signed and wrong-host certificates; a relay that takes mail without a login; the Date and Message-ID it receives) and a local webhook receiver, and fakes Telegram's API; its API tests also let the writes of the channels and the history fail as on a full disk, wait as on a busy SD card, and come two at once; notifications.spec.ts drives the tab with route fakes, and one of its tests sends through the stand-in's own supervisor to a mail server that is not there. Not a host-level change. No real mail server, Telegram or webhook service has been reached: that needs the owner's accounts, and Telegram from the dev device is system.telegram-from-the-device."
     },
     {
       "id": "system.alert-events",

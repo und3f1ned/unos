@@ -20,7 +20,7 @@ from ..storage import disks as storage_disks
 from ..storage import pools as storage_pools
 from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
-from ..notifications.router import send_email, send_telegram
+from ..notifications.router import history_entry, save_logs, send_email, send_telegram
 from ..notifications.schemas import NotificationEvent, NotificationType, NotificationChannel
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -350,9 +350,12 @@ async def _deliver_alert(event: NotificationEvent) -> None:
     """Send an alert through every enabled e-mail/Telegram channel; best effort.
 
     The senders report failures as (False, error) instead of raising; those are
-    logged like timeouts and exceptions.
+    logged like timeouts and exceptions. The history of System > Notifications
+    lists each alert sent, with its result, in one write per alert, made in a
+    worker thread: it is synced to the system disk (ADR-0021, ADR-0260).
     """
     loop = asyncio.get_running_loop()
+    entries = []
     for config in load_notification_configs():
         if not config.enabled:
             continue
@@ -374,6 +377,8 @@ async def _deliver_alert(event: NotificationEvent) -> None:
             logger.warning(
                 "Could not send alert '%s' by %s: %s", event.title, config.channel.value, error
             )
+        entries.append(history_entry(config, event, sent, error))
+    await asyncio.to_thread(save_logs, entries)
 
 
 async def send_smart_alert(alert: SmartTrendAlert):
