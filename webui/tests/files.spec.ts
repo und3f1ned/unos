@@ -20,8 +20,8 @@ test.describe('File Browser', () => {
   test('should display file list header', async ({ authenticatedPage: page }) => {
     await page.goto('/files');
     await page.waitForTimeout(2000);
-    // Should show column headers
-    await expect(page.locator('text=Name')).toBeVisible();
+    // Should show column headers (exact: the Rename button contains "name" too)
+    await expect(page.getByText('Name', { exact: true })).toBeVisible();
   });
 
   test('should have upload button', async ({ authenticatedPage: page }) => {
@@ -133,17 +133,32 @@ const selectionBar = (page: Page) => page.getByRole('toolbar', { name: 'Selected
 const nameButton = (page: Page, verb: 'Open' | 'Download', name: string) =>
   page.getByRole('button', { name: `${verb} ${name}`, exact: true });
 
-/** Press Tab until `target` has the keyboard focus, as a keyboard user would. */
-async function tabTo(page: Page, target: Locator, maxPresses = 80) {
+/** Press Tab (or Shift+Tab, backwards) until `target` has the keyboard focus, as a keyboard user would. */
+async function tabTo(page: Page, target: Locator, key: 'Tab' | 'Shift+Tab' = 'Tab', maxPresses = 80) {
   await expect(target).toHaveCount(1);
   for (let i = 0; i < maxPresses; i++) {
-    await page.keyboard.press('Tab');
+    await page.keyboard.press(key);
     if (await target.evaluate((element) => element === document.activeElement)) return;
   }
-  throw new Error(`${maxPresses} presses of Tab did not reach ${target}`);
+  throw new Error(`${maxPresses} presses of ${key} did not reach ${target}`);
 }
 
 const isApi = (path: string) => (request: Request) => new URL(request.url()).pathname === `/api/v1${path}`;
+
+const renameButton = (page: Page) => selectionBar(page).getByRole('button', { name: 'Rename', exact: true });
+
+/** The field in the row of `name` that takes its new name. */
+const nameField = (page: Page, name: string) =>
+  page.getByRole('textbox', { name: `New name for ${name}`, exact: true });
+
+/** How many rename requests the page has sent since the call. */
+function countRenames(page: Page): () => number {
+  let sent = 0;
+  page.on('request', (request) => {
+    if (isApi('/files/rename')(request)) sent += 1;
+  });
+  return () => sent;
+}
 
 const NO_POOL_FOLDER = 'No folder of the pools directory takes a new folder: the target has no pool to work in';
 
@@ -548,6 +563,237 @@ test.describe('File Browser operations', () => {
     await page.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(row(page, 'made-here')).toBeVisible();
     expect(await listNames(page, scratch!.path)).toEqual(['made-here']);
+  });
+
+  test('renames a file and a folder in the open folder', async ({ authenticatedPage: page }) => {
+    const dir = scratch!.path;
+    await putFile(page, dir, 'draft.txt', Buffer.from('draft'));
+    const photos = await makeFolder(page, dir, 'photos');
+    await putFile(page, photos, 'img.jpg', Buffer.from('jpeg'));
+    await openScratch(page);
+    const renames = countRenames(page);
+
+    // Rename works on one selected item.
+    await expect(renameButton(page)).toBeDisabled();
+    await row(page, 'draft.txt').getByRole('checkbox').check();
+    await row(page, 'photos').getByRole('checkbox').check();
+    await expect(renameButton(page)).toBeDisabled();
+    await row(page, 'photos').getByRole('checkbox').uncheck();
+
+    // The name becomes a field with the name in it.
+    await renameButton(page).click();
+    const field = nameField(page, 'draft.txt');
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue('draft.txt');
+    const requestSent = page.waitForRequest(isApi('/files/rename'));
+    await field.fill('final.txt');
+    await field.press('Enter');
+    const request = await requestSent;
+    expect(request.method()).toBe('POST');
+    expect(request.postDataJSON()).toEqual({ path: `${dir}/draft.txt`, new_name: 'final.txt' });
+    await expect(row(page, 'final.txt')).toBeVisible();
+    await expect(row(page, 'draft.txt')).toHaveCount(0);
+    await expect(field).toHaveCount(0);
+    // The item stays selected under its new name.
+    await expect(row(page, 'final.txt').getByRole('checkbox')).toBeChecked();
+    await expect(selectionBar(page)).toContainText('1 selected');
+
+    await row(page, 'final.txt').getByRole('checkbox').uncheck();
+    await row(page, 'photos').getByRole('checkbox').check();
+    await renameButton(page).click();
+    await nameField(page, 'photos').fill('pictures');
+    await nameField(page, 'photos').press('Enter');
+    await expect(row(page, 'pictures')).toBeVisible();
+    await expect(row(page, 'photos')).toHaveCount(0);
+    // One request for each rename: the field that goes away sends no other.
+    expect(renames()).toBe(2);
+    expect(await listNames(page, dir)).toEqual(['final.txt', 'pictures']);
+    await openFolder(page, 'pictures');
+    await expect(row(page, 'img.jpg')).toBeVisible();
+  });
+
+  test('refuses a name that exists or breaks the name rules, and Escape keeps the name', async ({
+    authenticatedPage: page,
+  }) => {
+    const dir = scratch!.path;
+    const kept = Buffer.from('bravo, kept');
+    await putFile(page, dir, 'a.txt', Buffer.from('alpha'));
+    await putFile(page, dir, 'b.txt', kept);
+    await openScratch(page);
+    await row(page, 'a.txt').getByRole('checkbox').check();
+    await renameButton(page).click();
+    const field = nameField(page, 'a.txt');
+
+    for (const [name, refusal] of [
+      ['b.txt', 'Already exists: b.txt'],
+      ['notes/a.txt', "Invalid name: '/' and control characters are not allowed"],
+      ['..', 'Invalid name'],
+      ['n'.repeat(256), 'Name too long'],
+    ]) {
+      const answered = page.waitForResponse((response) => isApi('/files/rename')(response.request()));
+      await field.fill(name);
+      await field.press('Enter');
+      expect((await answered).status()).toBe(400);
+      // The server's refusal, which screen readers announce; the field stays open for another name.
+      await expect(page.getByRole('alert')).toHaveText(`Could not rename: ${refusal}`);
+      await expect(field).toBeFocused();
+      await expect(field).toHaveValue(name);
+    }
+    expect(await listNames(page, dir)).toEqual(['a.txt', 'b.txt']);
+    const info = await page.request.get(`/api/v1/files/info?path=${encodeURIComponent(`${dir}/b.txt`)}`, {
+      headers: auth(),
+    });
+    expect((await info.json()).size).toBe(kept.length);
+
+    // Escape keeps the name, and so does an empty field: nothing is sent.
+    const renames = countRenames(page);
+    await field.press('Escape');
+    await expect(field).toHaveCount(0);
+    await expect(row(page, 'a.txt')).toBeVisible();
+    await renameButton(page).click();
+    await field.fill('   ');
+    await field.press('Enter');
+    await expect(field).toHaveCount(0);
+    await expect(row(page, 'a.txt')).toBeVisible();
+    expect(renames()).toBe(0);
+    expect(await listNames(page, dir)).toEqual(['a.txt', 'b.txt']);
+  });
+
+  test('renames from the keyboard', async ({ authenticatedPage: page }) => {
+    const dir = scratch!.path;
+    await putFile(page, dir, 'old.txt', Buffer.from('old'));
+    await openScratch(page);
+
+    // The checkbox selects the item; Rename is in the toolbar above the list.
+    const checkbox = row(page, 'old.txt').getByRole('checkbox');
+    await tabTo(page, checkbox);
+    await page.keyboard.press('Space');
+    await expect(checkbox).toBeChecked();
+    await tabTo(page, renameButton(page), 'Shift+Tab');
+    await page.keyboard.press('Enter');
+    // The field has the focus and the whole name selected: typing replaces it.
+    await expect(nameField(page, 'old.txt')).toBeFocused();
+    await page.keyboard.type('new.txt');
+    await page.keyboard.press('Enter');
+    await expect(row(page, 'new.txt')).toBeVisible();
+    // The focus goes on at the renamed item's checkbox.
+    await expect(row(page, 'new.txt').getByRole('checkbox')).toBeFocused();
+    expect(await listNames(page, dir)).toEqual(['new.txt']);
+
+    // Escape closes the field and puts the focus back on the checkbox.
+    await tabTo(page, renameButton(page), 'Shift+Tab');
+    await page.keyboard.press('Space');
+    await expect(nameField(page, 'new.txt')).toBeFocused();
+    await page.keyboard.type('other.txt');
+    await page.keyboard.press('Escape');
+    await expect(nameField(page, 'new.txt')).toHaveCount(0);
+    await expect(row(page, 'new.txt').getByRole('checkbox')).toBeFocused();
+    expect(await listNames(page, dir)).toEqual(['new.txt']);
+  });
+
+  test('leaving the name field renames the item, and a double-click in it opens nothing', async ({
+    authenticatedPage: page,
+  }) => {
+    const dir = scratch!.path;
+    await makeFolder(page, dir, 'box');
+    await putFile(page, dir, 'taken', Buffer.from('taken'));
+    await openScratch(page);
+    const renames = countRenames(page);
+    const heading = page.getByRole('heading', { name: 'File Browser', level: 1 });
+    await row(page, 'box').getByRole('checkbox').check();
+    await renameButton(page).click();
+    const field = nameField(page, 'box');
+
+    // A double-click in the field selects a word: the folder stays closed and selected.
+    await field.dblclick();
+    await expect(field).toBeFocused();
+    await expect(selectionBar(page)).toContainText('1 selected');
+    await expect(crumb(page, 'box')).toHaveCount(0);
+    // Leaving the field with the name unchanged sends nothing.
+    await heading.click();
+    await expect(field).toHaveCount(0);
+    expect(renames()).toBe(0);
+
+    // A refused name keeps the field open, until another folder is opened.
+    await renameButton(page).click();
+    await field.fill('taken');
+    await heading.click();
+    await expect(page.getByRole('alert')).toHaveText('Could not rename: Already exists: taken');
+    await expect(field).toHaveValue('taken');
+    await page.getByTitle('Up one folder').click();
+    await openFolder(page, scratch!.name);
+    await expect(row(page, 'box')).toBeVisible();
+    await expect(field).toHaveCount(0);
+
+    await row(page, 'box').getByRole('checkbox').check();
+    await renameButton(page).click();
+    await field.fill('crate');
+    await heading.click();
+    await expect(row(page, 'crate')).toBeVisible();
+    expect(renames()).toBe(2);
+    expect(await listNames(page, dir)).toEqual(['crate', 'taken']);
+  });
+
+  test('a rename is sent once, also when Enter is pressed again or the field is left while it is on its way', async ({
+    authenticatedPage: page,
+  }) => {
+    const dir = scratch!.path;
+    await putFile(page, dir, 'once.txt', Buffer.from('once'));
+    await openScratch(page);
+    const renames = countRenames(page);
+    // Hold the rename until the field has had another Enter and a blur.
+    let arrived!: () => void;
+    const held = new Promise<void>((resolve) => (arrived = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === '/api/v1/files/rename',
+      async (route) => {
+        arrived();
+        await released;
+        await route.continue();
+      },
+    );
+
+    await row(page, 'once.txt').getByRole('checkbox').check();
+    await renameButton(page).click();
+    const field = nameField(page, 'once.txt');
+    await field.fill('renamed.txt');
+    await field.press('Enter');
+    await held;
+    await field.press('Enter');
+    await page.getByRole('heading', { name: 'File Browser', level: 1 }).click();
+    release();
+
+    await expect(row(page, 'renamed.txt')).toBeVisible();
+    expect(renames()).toBe(1);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(await listNames(page, dir)).toEqual(['renamed.txt']);
+  });
+
+  test('items chosen for Copy follow a folder that is renamed', async ({ authenticatedPage: page }) => {
+    const dir = scratch!.path;
+    const sub = await makeFolder(page, dir, 'sub');
+    await putFile(page, sub, 'x.txt', Buffer.from('x'));
+    const dest = await makeFolder(page, dir, 'dest');
+    await openScratch(page);
+    await openFolder(page, 'sub');
+    await row(page, 'x.txt').getByRole('checkbox').check();
+    await selectionBar(page).getByRole('button', { name: 'Copy', exact: true }).click();
+
+    await page.getByTitle('Up one folder').click();
+    await row(page, 'sub').getByRole('checkbox').check();
+    await renameButton(page).click();
+    await nameField(page, 'sub').fill('box');
+    await nameField(page, 'sub').press('Enter');
+    await expect(row(page, 'box')).toBeVisible();
+
+    await openFolder(page, 'dest');
+    const requestSent = page.waitForRequest(isApi('/files/copy'));
+    await page.getByRole('button', { name: 'Copy here' }).click();
+    expect((await requestSent).postDataJSON()).toEqual([`${dir}/box/x.txt`]);
+    await expect(row(page, 'x.txt')).toBeVisible();
+    expect(await listNames(page, dest)).toEqual(['x.txt']);
   });
 
   test('an upload with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {

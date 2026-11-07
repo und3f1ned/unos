@@ -33,6 +33,7 @@
     Copy,
     FolderInput,
     ClipboardPaste,
+    Pencil,
   } from "lucide-svelte";
 
   type Transfer = "copy" | "move";
@@ -47,8 +48,11 @@
   let selected: Set<string> = new Set();
   let showNewFolder = false;
   let newFolderName = "";
+  // The path of the item whose name is a field in its row, and the field's text.
   let renaming: string | null = null;
   let renamingValue = "";
+  // A rename is on its way to the server: neither Enter nor leaving the field sends another.
+  let renameSent = false;
   let error = "";
   let busy = false;
   let downloading = false;
@@ -65,6 +69,8 @@
       listing = result;
       currentPath = result.path;
       if (result.parent === null) rootPath = result.path;
+      // A name field goes with its item: in another folder, or once the item is gone.
+      if (renaming !== null && !result.items.some((item) => item.path === renaming)) renaming = null;
     } catch (e) {
       showError("Could not open the folder", e);
     } finally {
@@ -223,19 +229,69 @@
     await refresh();
   }
 
-  async function handleRename(item: FileInfo) {
-    if (!renamingValue.trim() || renamingValue === item.name) {
+  function startRename(item: FileInfo) {
+    renaming = item.path;
+    renamingValue = item.name;
+  }
+
+  // A name field takes the focus with the whole name selected: typing replaces it.
+  function editName(field: HTMLInputElement) {
+    field.focus();
+    field.select();
+  }
+
+  // Renames `item` to the name in its field: Enter and leaving the field call
+  // it. Returns the item's path once its field is closed; null while the field
+  // stays open because the server refused the name, and when there is nothing
+  // to do: the blur of a field that is going away (after Escape or a rename),
+  // or an Enter or a blur while the rename is on its way.
+  async function handleRename(item: FileInfo): Promise<string | null> {
+    if (renaming !== item.path || renameSent) return null;
+    const name = renamingValue.trim();
+    if (!name || name === item.name || renamingValue === item.name) {
       renaming = null;
-      return;
+      return item.path;
     }
     error = "";
+    renameSent = true;
+    let renamed: FileInfo;
     try {
-      await renameItem(item.path, renamingValue.trim());
-      renaming = null;
-      await refresh();
+      renamed = await renameItem(item.path, name);
     } catch (e) {
       showError("Could not rename", e);
+      return null;
+    } finally {
+      renameSent = false;
     }
+    renaming = null;
+    // The selection, and the items chosen for Copy or Move, follow the item
+    // (and what is in it) to its new name.
+    const follow = (path: string) =>
+      path === item.path || path.startsWith(`${item.path}/`) ? renamed.path + path.slice(item.path.length) : path;
+    selected = new Set(Array.from(selected, follow));
+    if (pending) pending = { ...pending, paths: pending.paths.map(follow) };
+    await refresh();
+    return renamed.path;
+  }
+
+  // Enter renames, Escape keeps the name. Either way the keyboard focus goes on
+  // at the item's checkbox, which a screen reader reads with the item's name.
+  async function nameFieldKey(event: KeyboardEvent, item: FileInfo) {
+    if (event.key === "Escape") {
+      renaming = null;
+      await focusCheckbox(item.path);
+    } else if (event.key === "Enter") {
+      const path = await handleRename(item);
+      if (path !== null) await focusCheckbox(path);
+    }
+  }
+
+  async function focusCheckbox(path: string) {
+    await tick();
+    // Unless the focus has gone elsewhere meanwhile.
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    const boxes = Array.from(listBox?.querySelectorAll<HTMLInputElement>("input[data-path]") ?? []);
+    boxes.find((box) => box.dataset.path === path)?.focus();
   }
 
   // The file chooser of Upload. It is hidden: the Upload button opens it, also
@@ -280,9 +336,9 @@
   }
 
   $: selectedItems = listing ? listing.items.filter((item) => selected.has(item.path)) : [];
-  // Download works on one regular file at a time.
-  $: selectedFile =
-    selectedItems.length === 1 && selectedItems[0].type === "file" ? selectedItems[0] : null;
+  // Rename works on one item at a time, Download on one regular file.
+  $: selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
+  $: selectedFile = selectedItem?.type === "file" ? selectedItem : null;
 
   function getIcon(item: FileInfo) {
     if (item.type === "directory") return Folder;
@@ -345,7 +401,10 @@
   </div>
 
   {#if error}
-    <Alert variant="error" dismissible class="mb-4" on:dismiss={() => (error = "")}>{error}</Alert>
+    <!-- role="alert": screen readers announce the message when it appears. -->
+    <div role="alert">
+      <Alert variant="error" dismissible class="mb-4" on:dismiss={() => (error = "")}>{error}</Alert>
+    </div>
   {/if}
 
   <!-- Breadcrumbs -->
@@ -394,6 +453,15 @@
       on:click={() => startTransfer("move")}
     >
       Move
+    </Button>
+    <Button
+      variant="secondary"
+      size="sm"
+      icon={Pencil}
+      disabled={busy || !selectedItem}
+      on:click={() => selectedItem && startRename(selectedItem)}
+    >
+      Rename
     </Button>
     <Button
       variant="danger"
@@ -488,6 +556,7 @@
             <input
               type="checkbox"
               aria-label="Select {item.name}"
+              data-path={item.path}
               checked={selected.has(item.path)}
               on:click|stopPropagation={() => toggleSelect(item.path)}
               class="w-4 h-4 rounded bg-slate-700 border-slate-600"
@@ -498,16 +567,19 @@
                 class="w-5 h-5 flex-shrink-0 {item.type === 'directory' ? 'text-yellow-400' : 'text-slate-400'}"
               />
               {#if renaming === item.path}
+                <!-- Clicks in the field, a double-click on a word too, stay out of the row. -->
                 <input
                   type="text"
                   bind:value={renamingValue}
-                  class="flex-1 px-2 py-1 bg-slate-900 rounded border border-blue-500 focus:outline-none"
-                  on:keydown={(e) => {
-                    if (e.key === "Enter") handleRename(item);
-                    if (e.key === "Escape") renaming = null;
-                  }}
+                  aria-label="New name for {item.name}"
+                  autocomplete="off"
+                  spellcheck="false"
+                  class="form-input min-w-0 flex-1 px-2 py-1"
+                  use:editName
+                  on:keydown={(e) => nameFieldKey(e, item)}
                   on:blur={() => handleRename(item)}
                   on:click|stopPropagation
+                  on:dblclick|stopPropagation
                 />
               {:else if item.type === "directory" || item.type === "file"}
                 <Button
