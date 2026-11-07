@@ -42,12 +42,22 @@ class ScheduledTask(BaseModel):
     # For backup tasks: the passphrase their backups are encrypted with.
     # Write-only (exclude): accepted in requests, but never in an answer or in
     # the tasks file; the task keeps a key derived from it (ADR-0232). An edit
-    # without one keeps the stored key.
-    passphrase: Optional[str] = Field(default=None, exclude=True)
+    # without one keeps the stored key. Not in repr() or str() (repr=False),
+    # so that a log line or an error text with a task in it never shows it.
+    passphrase: Optional[str] = Field(default=None, exclude=True, repr=False)
 
     last_run: Optional[str] = None
     next_run: Optional[str] = None
     last_status: Optional[str] = None
+
+
+class ScheduledTaskInfo(ScheduledTask):
+    """A task as the API answers with it: with what is derived for the answer and never stored."""
+
+    # For backup tasks: whether the device has the key of the task, which an
+    # edit without a passphrase keeps (ADR-0232). None for other tasks, and
+    # when the key file cannot be read.
+    has_backup_key: Optional[bool] = None
 
 
 class TaskRun(BaseModel):

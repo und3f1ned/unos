@@ -464,6 +464,62 @@ def test_the_passphrase_is_write_only(env):
     assert stat.S_IMODE(keys_file.stat().st_mode) == 0o600
     assert list(_keys(env)) == [task_id]
     assert PASSPHRASE not in keys_file.read_text()
+    # Nor what a log line or an error text with a task in it would show.
+    task = ScheduledTask(**_backup_task())
+    assert PASSPHRASE not in repr(task) and PASSPHRASE not in str(task)
+
+
+def test_the_task_list_says_which_backup_tasks_have_a_key(env):
+    """has_backup_key: whether an edit without a passphrase keeps a key, so that the edit form asks
+    for one when it would not, as for a task made before ADR-0232 or one whose key cannot be used.
+
+    Derived from the key file for each answer and never stored; None for the other kinds of task.
+    """
+    created = env.client.post("/api/v1/scheduler/tasks", json=_backup_task())
+    other = env.client.post("/api/v1/scheduler/tasks", json=_task(has_backup_key=True))
+    assert (created.json()["has_backup_key"], other.json()["has_backup_key"]) == (True, None)
+    with_key, snapshot = created.json()["id"], other.json()["id"]
+    # A backup task in the tasks file without an entry in the key file.
+    (env.tmp / "tasks.json").write_text(
+        json.dumps(_stored(env) + [_task(id="task_by_hand", task_type="backup", target_pool=None)])
+    )
+
+    def listed() -> dict:
+        response = env.client.get("/api/v1/scheduler/tasks")
+        assert response.status_code == 200, response.text
+        return {task["id"]: task["has_backup_key"] for task in response.json()}
+
+    assert listed() == {with_key: True, snapshot: None, "task_by_hand": False}
+    keys_file = env.tmp / "backup_keys.json"
+    keys = keys_file.read_bytes()
+    keys_file.write_bytes(b"\xff not json")  # none of its keys can be used
+    assert listed() == {with_key: False, snapshot: None, "task_by_hand": False}
+    keys_file.write_bytes(keys)
+
+    # Setting the passphrase gives the task its key; what a client sends for the flag is ignored.
+    response = env.client.put("/api/v1/scheduler/tasks/task_by_hand", json=_backup_task(has_backup_key=False))
+    assert response.status_code == 200, response.text
+    assert response.json()["has_backup_key"] is True
+    # An edit without a passphrase keeps the key; the other kinds of task have none.
+    kept = env.client.put(f"/api/v1/scheduler/tasks/{with_key}", json=_backup_task(passphrase=None, hour=5))
+    edited = env.client.put(f"/api/v1/scheduler/tasks/{snapshot}", json=_task(hour=5, has_backup_key=True))
+    assert (kept.json()["has_backup_key"], edited.json()["has_backup_key"]) == (True, None)
+    assert listed() == {with_key: True, snapshot: None, "task_by_hand": True}
+    assert "has_backup_key" not in (env.tmp / "tasks.json").read_text()
+
+
+def test_the_task_list_loads_when_the_key_file_cannot_be_read(env):
+    """Edits and runs then fail with the reason (test_a_key_file_that_cannot_be_read_is_never_replaced),
+    but the tasks are still listed, without saying whether a backup task has a key."""
+    task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task()).json()
+    keys_file = env.tmp / "backup_keys.json"
+    keys_file.unlink()
+    keys_file.mkdir()  # reading it fails with an OSError (EISDIR)
+
+    response = env.client.get("/api/v1/scheduler/tasks")
+
+    assert response.status_code == 200, response.text
+    assert [(t["id"], t["has_backup_key"]) for t in response.json()] == [(task["id"], None)]
 
 
 def test_a_backup_task_stores_encrypted_backups(backup_env):

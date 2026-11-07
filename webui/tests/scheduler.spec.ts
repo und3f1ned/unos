@@ -83,8 +83,10 @@ const SMART_TASK = {
   last_run: null,
   next_run: '2026-11-08T03:00:00',
   last_status: null,
+  has_backup_key: null,
 };
-// As GET /scheduler/tasks lists a backup task: never with its passphrase.
+// As GET /scheduler/tasks lists a backup task: never with its passphrase, but
+// saying whether the device has the key derived from it.
 const BACKUP_TASK = {
   ...SMART_TASK,
   id: 'task_e2e_backup',
@@ -96,6 +98,7 @@ const BACKUP_TASK = {
   keep_count: 7,
   last_run: '2026-11-07T02:00:00',
   last_status: 'success',
+  has_backup_key: true,
 };
 const DISK_OPTIONS = FAKE_DISKS.map((d) => `${d.path} - ${d.model}`);
 const PASSPHRASE = 'e2e correct horse battery';
@@ -106,6 +109,9 @@ interface SchedulerWrites {
   /** The bodies of the task updates (PUT /scheduler/tasks/<id>). */
   updated: unknown[];
 }
+
+/** has_backup_key as the server answers with a task it saved: a backup task saved has a key. */
+const savedKey = (taskType: string) => (taskType === 'backup' ? true : null);
 
 /** List `tasks` and the given disks; returns the bodies of the task creates and updates. */
 async function fakeSchedulerApi(page: Page, disks: typeof FAKE_DISKS, tasks: object[] = [SMART_TASK]): Promise<SchedulerWrites> {
@@ -121,14 +127,14 @@ async function fakeSchedulerApi(page: Page, disks: typeof FAKE_DISKS, tasks: obj
         const body = request.postDataJSON();
         writes.created.push(body);
         const { passphrase: _, ...task } = body;
-        return route.fulfill({ json: { ...task, id: 'task_e2e_created' } });
+        return route.fulfill({ json: { ...task, id: 'task_e2e_created', has_backup_key: savedKey(task.task_type) } });
       }
       const task = tasks.find((t) => path === `/tasks/${(t as { id: string }).id}`);
       if (request.method() === 'PUT' && task) {
         const body = request.postDataJSON();
         writes.updated.push(body);
         const { passphrase: _, ...changed } = body;
-        return route.fulfill({ json: { ...task, ...changed } });
+        return route.fulfill({ json: { ...task, ...changed, has_backup_key: savedKey(changed.task_type) } });
       }
       return route.abort();
     },
@@ -368,6 +374,26 @@ test.describe('Scheduler: the task form', () => {
     await saveTask(page);
     expect(updated[1]).toEqual(expect.objectContaining({ passphrase: 'a new passphrase' }));
   });
+
+  test('editing a backup task without a key asks for a passphrase', async ({ authenticatedPage: page }) => {
+    // Made before backups were encrypted, or its key was lost: its runs fail
+    // until a passphrase is set, and an edit without one is refused.
+    const { updated } = await fakeSchedulerApi(page, FAKE_DISKS, [{ ...BACKUP_TASK, has_backup_key: false }]);
+    await openSchedulerTab(page, BACKUP_TASK.name);
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+
+    const save = page.getByRole('button', { name: 'Save Changes' });
+    await expect(page.getByText('a backup cannot be restored without it')).toBeVisible();
+    await expect(page.getByText('Leave empty to keep the current passphrase.', { exact: false })).toHaveCount(0);
+    await expect(save).toBeDisabled();
+    await field(page, 'Hour').selectOption('4');
+    await expect(save).toBeDisabled();
+    await field(page, 'Passphrase').fill(PASSPHRASE);
+    await expect(save).toBeDisabled();
+    await field(page, 'Confirm Passphrase').fill(PASSPHRASE);
+    await saveTask(page);
+    expect(updated).toEqual([expect.objectContaining({ hour: 4, passphrase: PASSPHRASE })]);
+  });
 });
 
 // Against the stand-in's supervisor: a backup task made in the form runs there
@@ -433,6 +459,8 @@ test.describe('Scheduler: a task that ran', () => {
     await expect.poll(async () => (await storedTask(page)).last_status, { timeout: 30000 }).toBe('success');
     const ran = await storedTask(page);
     expect(ran.last_run).toBeTruthy();
+    // Listed with its key, so the edit below may leave the passphrase empty.
+    expect(ran.has_backup_key).toBe(true);
 
     await row.getByRole('button', { name: 'Edit', exact: true }).click();
     await field(page, 'Hour').selectOption('5');

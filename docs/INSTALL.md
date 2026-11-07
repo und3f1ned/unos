@@ -530,9 +530,11 @@ The script:
    util-linux `flock` it only warns.
 2. Backs up the database (consistently, with SQLite's online backup API) and
    the rest of the data volume to `/var/lib/unos/backups/update-<date>/`. Only
-   root can read the backups: they contain the JWT signing secret. If the
-   backup fails, nothing has changed yet: the script asks whether to update
-   without a backup, and stops if the answer is no or there is no terminal.
+   root can read the backups: they contain the JWT signing secret, and the
+   keys of the backup tasks next to the scheduled backups those keys decrypt
+   (a restored data volume needs both). If the backup fails, nothing has
+   changed yet: the script asks whether to update without a backup, and stops
+   if the answer is no or there is no terminal.
 3. Tags the running images `:previous`, pulls the update and builds the new
    images while UNOS keeps running. If the build fails, nothing changes.
 4. Restarts UNOS (`docker compose down`, then `up -d`). `docker compose up`

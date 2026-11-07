@@ -696,7 +696,10 @@ restore does not restore.
   restoring a scheduled backup asks for it, as for any encrypted backup.
   Without it, the backup cannot be restored. So that the task can run
   unattended, the NAS keeps a key derived from the passphrase (not the
-  passphrase itself), readable only by the supervisor and in no backup.
+  passphrase itself), readable only by the supervisor. No backup of
+  **Backup & Restore** and no scheduled backup holds that key; the copy of
+  the data volume that `update.sh` makes before an update does, next to the
+  scheduled backups (see [Upgrading](INSTALL.md#upgrading)).
 - Editing the task shows the passphrase fields empty. Leave them empty to
   keep the passphrase, or enter a new one: it applies to the backups made
   from then on, and older backups still need the passphrase they were made
@@ -704,7 +707,8 @@ restore does not restore.
   backup tasks one passphrase for all of them is easier to keep.
 - A backup task without a passphrase, such as one whose key was lost, fails
   each run with "No passphrase is set for this backup task: edit the task
-  and set one", and stores nothing.
+  and set one", and stores nothing. Editing it asks for a passphrase, as for
+  a new task.
 
 ---
 

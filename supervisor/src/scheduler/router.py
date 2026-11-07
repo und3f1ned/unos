@@ -56,7 +56,7 @@ from ..security.validators import (
     validate_pool_name,
 )
 from ..storage import disks as storage_disks
-from .schemas import ScheduledTask, TaskRun, TaskType, ScheduleFrequency
+from .schemas import ScheduledTask, ScheduledTaskInfo, TaskRun, TaskType, ScheduleFrequency
 
 router = APIRouter(
     prefix="/scheduler",
@@ -711,17 +711,29 @@ async def stop_scheduler():
         _scheduler_task.cancel()
 
 
-@router.get("/tasks", response_model=list[ScheduledTask])
+def _task_info(task: ScheduledTask, has_key: bool | None) -> ScheduledTaskInfo:
+    """``task`` as the API answers with it; ``has_key`` (whether it has a key) counts for a backup task only."""
+    has_backup_key = has_key if task.task_type == TaskType.BACKUP else None
+    return ScheduledTaskInfo(**task.model_dump(), has_backup_key=has_backup_key)
+
+
+@router.get("/tasks", response_model=list[ScheduledTaskInfo])
 async def list_tasks(_: dict = Depends(verify_token)):
-    """List all scheduled tasks."""
+    """List all scheduled tasks; a backup task says whether it has a key (has_backup_key)."""
     tasks = load_tasks()
+    try:
+        keys = load_backup_keys()
+    except HTTPException:
+        # The key file cannot be read: the edits and runs of the backup tasks
+        # fail with the reason, but the tasks are still listed.
+        keys = None
     # Update next_run for each task
     for task in tasks:
         task.next_run = get_next_run(task)
-    return tasks
+    return [_task_info(task, None if keys is None else task.id in keys) for task in tasks]
 
 
-@router.post("/tasks", response_model=ScheduledTask)
+@router.post("/tasks", response_model=ScheduledTaskInfo)
 async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
     """Create a new scheduled task; a backup task needs a passphrase."""
     # In a worker thread: the disk of a SMART task is looked up on the host,
@@ -740,17 +752,18 @@ async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
     tasks.append(task)
     save_tasks(tasks)
 
-    return task
+    return _task_info(task, key is not None)
 
 
-@router.put("/tasks/{task_id}", response_model=ScheduledTask)
+@router.put("/tasks/{task_id}", response_model=ScheduledTaskInfo)
 async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verify_token)):
     """Update a scheduled task. Its last run and last status stay; a backup task
     without a passphrase keeps the one it has."""
     stored = next((t for t in load_tasks() if t.id == task_id), None)
     kept_disk = stored.target_disk if stored and stored.task_type == TaskType.SMART_TEST else None
     await asyncio.to_thread(validate_task, task, kept_disk=kept_disk)
-    key = await asyncio.to_thread(new_task_key, task, has_key=task_id in load_backup_keys())
+    has_key = task_id in load_backup_keys()
+    key = await asyncio.to_thread(new_task_key, task, has_key=has_key)
     # A new key, or none for a task that is no longer a backup task; written
     # before the task, as when a task is created.
     if stored is not None and (task.task_type != TaskType.BACKUP or key is not None):
@@ -766,7 +779,8 @@ async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verif
             task.next_run = get_next_run(task)
             tasks[i] = task
             save_tasks(tasks)
-            return task
+            # A backup task has the new key now, or kept the one it had.
+            return _task_info(task, key is not None or has_key)
 
     raise HTTPException(404, f"Task not found: {task_id}")
 

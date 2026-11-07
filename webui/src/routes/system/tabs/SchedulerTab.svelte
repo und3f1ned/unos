@@ -65,9 +65,10 @@
   // At least as long as the server asks (MIN_PASSPHRASE_LENGTH in scheduler/router.py).
   const MIN_PASSPHRASE_LENGTH = 8;
 
-  // A backup task being edited has a passphrase; a new one, or a task made a
-  // backup task, needs one.
-  $: keepsPassphrase = editingTask?.task_type === "backup";
+  // A backup task being edited keeps its passphrase when the device has its
+  // key. A new one, a task made a backup task, and a backup task without a key
+  // (made before backups were encrypted, or its key was lost) need one.
+  $: keepsPassphrase = editingTask?.task_type === "backup" && editingTask.has_backup_key === true;
   $: passphraseTooShort = passphrase !== "" && passphrase.length < MIN_PASSPHRASE_LENGTH;
   $: passphraseMismatch = passphraseConfirm !== passphrase;
   $: waitsForPassphrase =

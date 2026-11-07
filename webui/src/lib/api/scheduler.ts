@@ -26,6 +26,12 @@ export interface ScheduledTask {
   last_run?: string;
   next_run?: string;
   last_status?: string;
+  /**
+   * In the answers, for backup tasks: whether the device has the key derived
+   * from the passphrase, which an update without one keeps. null for other
+   * tasks, and when the server cannot read its keys.
+   */
+  has_backup_key?: boolean | null;
 }
 
 export interface TaskRun {
