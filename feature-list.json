@@ -1,0 +1,3164 @@
+{
+  "description": "UNOS feature ledger (ADR-0203): the user-visible features and the planned changes, each with the steps that verify it. passes turns true only after every step passed as a user scenario: the tests in verified_by assert each step, the E2E specs on the local stand-in cover the steps in the web UI, and an entry whose steps make a host-level change (GLOSSARY.md) has also passed a device check and a re-check after a reboot of the deployed tree (ADR-0018). A pass also needs a reviewer in a fresh context who tried to refute the change, with each finding fixed or recorded (ADR-0017). A failing re-check, or a step that its tests do not assert as written, sets passes back to false. A pass changes only passes, verified_by and notes; changing a description or the steps, or dropping an entry, needs a new ADR that names the entry's id, and a changed entry lists that ADR in adr. supervisor/tests/test_feature_list.py compares the ledger with the one at the branch's merge base with main, where an ADR is new when its number is not in that base's docs/adr, and skips the comparison while that base has no ledger: until the ledger is merged into main neither a local run nor CI catches a dropped or reworded entry (ci.ledger-changes-checked). The feature-pass skill carries one entry per pass.",
+  "features": [
+    {
+      "id": "process.triage-labels",
+      "category": "process",
+      "description": "Issues on GitHub are triaged with the labels needs-triage, needs-info, ready-for-agent, ready-for-human and wontfix",
+      "steps": [
+        "The GitHub repository has the five labels, and bug and enhancement",
+        "An issue opened from the bug or the enhancement template gets needs-triage",
+        "An accepted issue gets ready-for-agent or ready-for-human and a feature-list.json entry; a rejected one gets wontfix with the reason in the issue"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0206"
+      ],
+      "notes": "Owner action: the labels are made in the owner's GitHub account."
+    },
+    {
+      "id": "process.prune-merged-branches",
+      "category": "process",
+      "description": "Branches merged into main are deleted, on GitHub and in local worktrees",
+      "steps": [
+        "git branch -r --merged origin/main lists only origin/main",
+        "GitHub deletes the head branch of a merged pull request by itself",
+        "git worktree list shows no worktree of a merged branch"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0210"
+      ],
+      "notes": "Owner action on GitHub: 20 merged remote branches remain (19 claude/* and phase0-hardening)."
+    },
+    {
+      "id": "architecture.host-command-layer",
+      "category": "architecture",
+      "description": "The network, power, time zone, hostname, firewall, log, NFS and SMART actions read and change the host through src/host.py",
+      "steps": [
+        "Setting the time zone or the hostname changes them on the host: timedatectl and hostnamectl on the host show the new values",
+        "Reboot, shutdown and their cancel act on the host",
+        "Firewall rules are the host's ufw rules, and NFS exports are the host's /etc/exports",
+        "Logs come from the host's journal, and SMART data from the host's smartctl",
+        "A test fails when one of these routers runs a host command without host.run_on_host"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015",
+        "ADR-0020"
+      ],
+      "notes": "Today several of these commands run inside the supervisor container, or call nsenter themselves. Shared preparation for system.power, system.hostname-and-time-zone, system.logs-viewer, security.host-firewall and shares.nfs-exports."
+    },
+    {
+      "id": "architecture.configurable-data-dir",
+      "category": "architecture",
+      "description": "Every data path of the supervisor follows one setting, UNOS_DATA_DIR, so the backend runs outside its container without patched module constants",
+      "steps": [
+        "UNOS_DATA_DIR=<dir> starts the supervisor with its database, secrets, state files, certificates and backups under <dir>",
+        "Host paths such as /etc/fstab and /run/samba keep settings of their own",
+        "scripts/standin/run_supervisor.py sets UNOS_DATA_DIR and patches no module constant",
+        "tests/test_standin.py finds no hard-coded /data path in supervisor/src"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0215"
+      ],
+      "notes": "About 15 module-level /data paths are hard-coded today; the stand-in redirects them one by one. The health handlers in supervisor/src/main.py read /data/unos.db, /data/raid_status.json and /data/ups_config.json directly: the READ_ONLY_PROBES of tests/test_standin.py."
+    },
+    {
+      "id": "architecture.database-migrations",
+      "category": "architecture",
+      "description": "Changes to existing database tables ship as Alembic migrations",
+      "steps": [
+        "alembic upgrade head on an empty database creates the whole schema",
+        "A change to an existing table comes with a revision, and the supervisor applies pending revisions at startup",
+        "A test runs every revision on a database made by the one before"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0022",
+        "ADR-0077"
+      ],
+      "notes": "Today create_all only adds new tables (ADR-0077). Decide ADR-0022 before the first change to an existing table; without other installations (ADR-0207) the dev device's database may be reset instead."
+    },
+    {
+      "id": "architecture.structured-logging",
+      "category": "architecture",
+      "description": "The supervisor logs structured lines with level, logger and fields, and handlers log the exceptions they catch",
+      "steps": [
+        "Every log line of the supervisor is one JSON object with time, level, logger and message",
+        "A handler that catches an exception logs it with its traceback before it answers",
+        "supervisor/src has no print() calls"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023"
+      ]
+    },
+    {
+      "id": "architecture.atomic-state-files",
+      "category": "architecture",
+      "description": "JSON state files are replaced atomically, and a file that cannot be parsed is kept and reported instead of reset",
+      "steps": [
+        "A supervisor killed while it writes a state file leaves the old or the new content, never a partial file",
+        "A state file that cannot be parsed is renamed to <name>.bad and named in a warning, and the defaults are used"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023"
+      ]
+    },
+    {
+      "id": "architecture.times-with-time-zones",
+      "category": "architecture",
+      "description": "Every time the API stores or returns carries its time zone",
+      "steps": [
+        "Timestamps in API answers are ISO 8601 with an offset",
+        "The database stores times in UTC",
+        "The web UI shows times in the browser's time zone"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023"
+      ]
+    },
+    {
+      "id": "architecture.openapi-descriptions",
+      "category": "architecture",
+      "description": "The supervisor's OpenAPI schema describes every endpoint, its fields and its errors, with examples",
+      "steps": [
+        "Every route of app.openapi() has a summary and a description",
+        "Every field of the request and response models has a description, and the models have examples",
+        "Each route lists the error statuses it answers"
+      ],
+      "passes": false
+    },
+    {
+      "id": "architecture.plugins",
+      "category": "architecture",
+      "description": "Extensions add storage backends, notification channels or sign-in providers without changes to UNOS itself",
+      "steps": [
+        "A storage backend (for example ZFS or mdadm) can be added as a plugin, and one exists",
+        "A notification channel can be added as a plugin",
+        "A sign-in provider (for example LDAP or OAuth) can be added as a plugin"
+      ],
+      "passes": false,
+      "notes": "Needs an ADR on whether UNOS takes plugins at all."
+    },
+    {
+      "id": "architecture.high-availability",
+      "category": "architecture",
+      "description": "Two UNOS hosts share one configuration, and one takes over the services when the other fails",
+      "steps": [
+        "Two hosts run UNOS against one shared configuration",
+        "Stopping one host moves its shares and apps to the other within a stated time"
+      ],
+      "passes": false,
+      "notes": "Needs an ADR first; out of scope while UNOS has one dev device."
+    },
+    {
+      "id": "security.https-local-ca",
+      "category": "security",
+      "description": "The web UI is served only over HTTPS with certificates from Caddy's local CA and with security headers; plain HTTP redirects",
+      "steps": [
+        "https://<host>/ loads with Content-Security-Policy, X-Frame-Options DENY and X-Content-Type-Options nosniff",
+        "API answers carry the same headers",
+        "http://<host>/<path> redirects to https://<host>/<path>",
+        "GET /api/v1/health still answers over plain HTTP"
+      ],
+      "verified_by": [
+        "webui/tests/https.spec.ts",
+        "supervisor/tests/test_standin.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0025"
+      ],
+      "notes": "The stand-in serves these headers through scripts/standin/front.mjs. Device check: 2026-11-05 (Phase 0 deploy, also after a reboot of that tree); the deployed tree changed since. Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "security.request-limits",
+      "category": "security",
+      "description": "Request bodies, WebSocket messages and login fields are limited before the credentials are checked",
+      "steps": [
+        "An anonymous POST with a 2 MiB JSON body answers 413, and the body is not read",
+        "A signed-in 2 MiB JSON body answers 413, also when it is sent chunked",
+        "A WebSocket message over 64 KiB closes the socket",
+        "A login with a field over its limit answers 422, and audit entries store bounded fields only",
+        "File and backup uploads stream past 1 MiB under their own limits"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_request_limits.py",
+        "supervisor/tests/test_login_bounds.py",
+        "supervisor/tests/test_upload_streaming.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0062",
+        "ADR-0065"
+      ],
+      "notes": "Step 2 is asserted only without a token (supervisor/tests/test_request_limits.py), so passes is false until a test sends a declared and a chunked 2 MiB body with a valid token and gets 413. The limit is a middleware in front of every route (supervisor/src/request_limits.py)."
+    },
+    {
+      "id": "security.audit-log",
+      "category": "security",
+      "description": "Sign-ins and administrative actions are recorded in the audit log, which an administrator lists, filters and exports",
+      "steps": [
+        "Sign in, create a user and delete it: GET /api/v1/audit/logs lists the three entries with user, action, time and client address",
+        "Filters by user, action and time narrow the list, and GET /api/v1/audit/logs/count counts it",
+        "GET /api/v1/audit/logs/export downloads the filtered entries"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_login_bounds.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0065",
+        "ADR-0066"
+      ],
+      "notes": "Writing entries is tested; listing, filters and export are not, and no page shows the log (webui.audit-log-page)."
+    },
+    {
+      "id": "security.append-only-audit-log",
+      "category": "security",
+      "description": "Audit entries are appended to the log one line each, off the event loop and with rotation, instead of rewriting the whole file",
+      "steps": [
+        "Sign in 100 times: the audit log grows by 100 lines, and the bytes written before stay as they were",
+        "An entry is written in a worker thread, never on the event loop",
+        "A damaged line is skipped, and the other entries are still listed",
+        "The log rotates at its size limit and keeps a fixed number of old files, which GET /api/v1/audit/logs still reads",
+        "On the dev device one sign-in writes a few KiB to the SD card instead of about 0.19 MiB (scripts/dev/sd.sh measure)"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0066",
+        "ADR-0164",
+        "ADR-0214",
+        "ADR-0207"
+      ],
+      "notes": "The next slice. An older release's loader need not read the new log (ADR-0207)."
+    },
+    {
+      "id": "security.tamper-evident-audit-log",
+      "category": "security",
+      "description": "Each audit entry carries the hash of the one before, so an edited or removed entry is detected",
+      "steps": [
+        "Every entry stores a hash over its content and the previous entry's hash",
+        "After an entry in the file is edited or deleted, GET /api/v1/audit/logs reports where the chain breaks",
+        "The chain continues across rotated files"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0066"
+      ],
+      "notes": "Builds on security.append-only-audit-log."
+    },
+    {
+      "id": "security.server-limits",
+      "category": "security",
+      "description": "The supervisor bounds the size of request headers and the number of open connections",
+      "steps": [
+        "The upload throughput over 2.5 GbE is measured with the HTTP parser and limits chosen, and stays at today's level",
+        "A request whose header block is over the limit is refused",
+        "Connections over the limit are refused while the open ones keep working"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0063"
+      ]
+    },
+    {
+      "id": "security.host-firewall",
+      "category": "security",
+      "description": "An administrator turns the host's UFW firewall on or off and adds and removes rules in System > Security",
+      "steps": [
+        "Turn the firewall on in System > Security: ufw status on the host says active",
+        "Add a rule that allows a port from the LAN: the host's ufw lists it, and Delete removes it",
+        "The web UI, SSH and SMB stay reachable from the LAN with the firewall on"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_security.py",
+        "webui/tests/security.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015"
+      ],
+      "notes": "The ufw commands run inside the supervisor container, not on the host (architecture.host-command-layer). The E2E spec only opens the section. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "security.custom-certificates",
+      "category": "security",
+      "description": "An administrator uploads a certificate or makes a self-signed one in System > Security, and the web UI is served with it",
+      "steps": [
+        "Upload a certificate with its key and chain: it is listed with its names and expiry date",
+        "Browsers then get that certificate from https://<host>/",
+        "Deleting it returns the web UI to the certificate of Caddy's local CA"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_security.py",
+        "webui/tests/security.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0025"
+      ],
+      "notes": "Stored certificates are listed, but Caddy serves only its local CA: nothing hands them to the web UI container."
+    },
+    {
+      "id": "security.no-legacy-certificate-fixups",
+      "category": "security",
+      "description": "The certificate code keeps no special cases for files that older versions wrote",
+      "steps": [
+        "The fix-ups for private keys that older versions left 0644 and for certificate names they stored without validation are gone from supervisor/src/security/router.py",
+        "Every stored certificate and key goes through the one current path: validated, and keys written 0600",
+        "tests/test_security.py passes without tests of the old cases"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207"
+      ]
+    },
+    {
+      "id": "auth.first-run-setup",
+      "category": "auth",
+      "description": "On a new installation the first visit creates the one administrator, and setup is refused afterwards",
+      "steps": [
+        "Open the web UI of a new installation: /setup asks for the administrator's name and password",
+        "Create the account: the dashboard opens, signed in as that administrator",
+        "A second setup, also one sent at the same moment as the first, answers 400 and creates nobody",
+        "No default account exists before setup"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_auth.py",
+        "supervisor/tests/test_usernames.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0029"
+      ],
+      "notes": "No E2E test covers the /setup page: scripts/standin/e2e.sh creates the administrator through the API."
+    },
+    {
+      "id": "auth.sign-in-and-out",
+      "category": "auth",
+      "description": "A user signs in with name and password and signs out",
+      "steps": [
+        "Open the web UI without a session: the sign-in page is shown",
+        "Wrong credentials show an error, and no session starts",
+        "Right credentials open the dashboard",
+        "Sign out: the sign-in page is shown, and the session's token is gone from the browser"
+      ],
+      "verified_by": [
+        "webui/tests/auth.spec.ts",
+        "supervisor/tests/test_auth.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0009",
+        "ADR-0032"
+      ],
+      "notes": "Step 4: auth.spec.ts 'Logout ends the session' clicks Logout and checks that the token is gone (added on 2026-11-07, after a review found the step unasserted)."
+    },
+    {
+      "id": "auth.two-factor",
+      "category": "auth",
+      "description": "A user turns on TOTP two-factor authentication and then signs in with codes that work only once",
+      "steps": [
+        "On the Account page, start the two-factor setup: the QR code is drawn in the browser",
+        "Enter a code from the authenticator app: two-factor authentication is on",
+        "Sign in: after the password the code form appears, and a valid code opens the dashboard",
+        "The same code a second time is refused, and the form says to wait for the next one",
+        "Turn two-factor authentication off with a code"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_totp_once.py",
+        "webui/tests/auth.spec.ts",
+        "webui/tests/roles.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0067",
+        "ADR-0027"
+      ],
+      "notes": "The API tests cover the setup, single-use codes and turning it off; the E2E specs draw the QR code and show the code form with canned answers, but never enter a code to turn two-factor authentication on or off."
+    },
+    {
+      "id": "auth.login-rate-limit",
+      "category": "auth",
+      "description": "Sign-in attempts are limited to 5 per minute per client",
+      "steps": [
+        "Five failed sign-ins from one client answer 401, the sixth 429",
+        "Another client can still sign in meanwhile",
+        "The sign-in page shows the 429 message"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_authz.py",
+        "webui/tests/auth.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0010",
+        "ADR-0048"
+      ],
+      "notes": "Step 2 is asserted only as a 401 for the other client's wrong password (supervisor/tests/test_authz.py), which a lockout of the account would answer too, so passes is false until the other client signs in with the right password and gets 200 while the first one still gets 429."
+    },
+    {
+      "id": "auth.roles",
+      "category": "auth",
+      "description": "Regular users see only the dashboard and their account, and every administrator page and API refuses them",
+      "steps": [
+        "Sign in as a regular user: the navigation offers Dashboard and Account only",
+        "An administrator page redirects to the dashboard, and no administrator request is sent",
+        "Every administrator route of the API answers 403 to a regular user and 401 without a token"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_authz.py",
+        "webui/tests/roles.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0030"
+      ]
+    },
+    {
+      "id": "auth.user-management",
+      "category": "auth",
+      "description": "An administrator creates, edits and deletes users on the Users page",
+      "steps": [
+        "Open Users and add a user with a valid name and a password: the user is listed with its role",
+        "Edit the user's role or password",
+        "A name that breaks the name rule, or exists in another case, is refused with the reason",
+        "Delete the user: the request carries the name, and a list loaded before the id named someone else deletes nobody"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_usernames.py",
+        "webui/tests/users.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0115",
+        "ADR-0116",
+        "ADR-0133"
+      ],
+      "notes": "The steps use a user without SMB, so they make no host-level change. For a user with SMB the same edits reach the host: shares.smb-accounts and shares.password-follows-unos cover that."
+    },
+    {
+      "id": "auth.change-own-password",
+      "category": "auth",
+      "description": "A user changes their own password on the Account page",
+      "steps": [
+        "On the Account page, enter the current password and the new one: the change is confirmed",
+        "The fields are reached through their labels, and a missing field is refused",
+        "Warnings of the answer, for example about SMB, are shown until dismissed",
+        "The old password no longer signs in, and the new one does"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_usernames.py",
+        "supervisor/tests/test_smb_accounts.py",
+        "supervisor/tests/test_smb_integration.py",
+        "webui/tests/security.spec.ts",
+        "webui/tests/account-smb.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0119"
+      ],
+      "notes": "The tests check the answer and Samba's copy of the new password, not a sign-in with it; the E2E spec uses a canned answer."
+    },
+    {
+      "id": "auth.api-tokens",
+      "category": "auth",
+      "description": "A user creates API tokens for scripts, and a token can be disabled, expires and can be deleted",
+      "steps": [
+        "POST /api/v1/auth/tokens with a name and a lifetime returns the token once",
+        "A request with Authorization: Bearer <token> is accepted with the rights of the token's owner",
+        "POST /api/v1/auth/tokens/{id}/toggle disables it, and its requests answer 401",
+        "An expired token answers 401",
+        "Tokens of another user can be neither seen nor deleted"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_authz.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0032",
+        "ADR-0027"
+      ],
+      "notes": "Untested: that a disabled or an expired token is refused. API only: no page manages tokens."
+    },
+    {
+      "id": "auth.login-history",
+      "category": "auth",
+      "description": "A user sees the recent sign-ins of their account with the client's real address",
+      "steps": [
+        "Sign in from a client: System > Security > Login History lists it with its time and the client's address, not the proxy's",
+        "Failed sign-ins are listed as failed"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_security.py",
+        "webui/tests/security.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0048"
+      ],
+      "notes": "The API tests cover it; the E2E spec only opens the section, and also passes while the list says Loading."
+    },
+    {
+      "id": "auth.websocket-auth",
+      "category": "auth",
+      "description": "Live data needs a signed-in session: the WebSocket authenticates with its first message, never with a token in the URL",
+      "steps": [
+        "The dashboard opens /ws/v1/events and sends {\"type\": \"auth\", \"token\": ...} first, and stats follow",
+        "A token in the URL, a forged token or no token closes the socket with code 4401",
+        "A session that ends while the socket is open closes the socket"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_ws_auth.py",
+        "webui/tests/websocket.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0031"
+      ]
+    },
+    {
+      "id": "auth.jwt-secret-per-install",
+      "category": "auth",
+      "description": "Each installation signs its sessions with a secret of its own, and published placeholder secrets are refused",
+      "steps": [
+        "A supervisor started without UNOS_JWT_SECRET makes /data/jwt_secret with mode 0600 and keeps it across restarts",
+        "A token signed with a secret this repository once published answers 401",
+        "UNOS_JWT_SECRET set to a published placeholder stops the supervisor at startup"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_secret_bootstrap.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0028"
+      ]
+    },
+    {
+      "id": "auth.recovery-codes",
+      "category": "auth",
+      "description": "A user with two-factor authentication keeps recovery codes and signs in with one when the authenticator is lost",
+      "steps": [
+        "On the Account page, generate ten recovery codes: they are shown once",
+        "At the code step of the sign-in, a recovery code opens the session, and the same code never works again",
+        "The Account page shows how many codes are left"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0033"
+      ],
+      "notes": "Codes can be generated through the API, but nothing signs in with one: the sign-in takes no recovery code, and POST /api/v1/auth/recovery-codes/verify answers 501. No page shows them."
+    },
+    {
+      "id": "auth.mandatory-two-factor",
+      "category": "auth",
+      "description": "An administrator requires two-factor authentication for every account, with a grace period to set it up",
+      "steps": [
+        "Turn on the requirement: accounts without two-factor authentication are asked to set it up at their next sign-in",
+        "After the grace period such an account can only set up two-factor authentication"
+      ],
+      "passes": false
+    },
+    {
+      "id": "auth.security-keys",
+      "category": "auth",
+      "description": "A user signs in with a hardware security key (WebAuthn) as the second factor",
+      "steps": [
+        "On the Account page, register a security key",
+        "At the code step of the sign-in, touching the key opens the session"
+      ],
+      "passes": false
+    },
+    {
+      "id": "auth.session-revocation",
+      "category": "auth",
+      "description": "Signing out, a password change or an administrator's revoke ends a session on the server",
+      "steps": [
+        "After sign-out, the session's token answers 401",
+        "A password change ends the user's other sessions",
+        "An administrator ends a user's sessions on the Users page"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0033",
+        "ADR-0015"
+      ],
+      "notes": "Today sign-out only clears the browser's copy of the token."
+    },
+    {
+      "id": "auth.token-storage",
+      "category": "auth",
+      "description": "The web UI keeps its session token out of localStorage",
+      "steps": [
+        "After sign-in, localStorage holds no token",
+        "A reload keeps the session, or asks to sign in again, as the chosen design says"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0033",
+        "ADR-0009"
+      ],
+      "notes": "Needs an ADR on the storage; cookies conflict with ADR-0009."
+    },
+    {
+      "id": "auth.api-token-scopes",
+      "category": "auth",
+      "description": "An API token can be limited to reading, or to named areas of the API",
+      "steps": [
+        "Create a read-only token: GET requests work and changes answer 403",
+        "A token limited to an area answers 403 outside it"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0033",
+        "ADR-0015"
+      ]
+    },
+    {
+      "id": "auth.api-token-last-used-throttle",
+      "category": "auth",
+      "description": "An API token's last use is stored at most once an hour, so automations do not write to the system disk on every request",
+      "steps": [
+        "A script makes 100 requests with one token within a minute: last_used_at is committed at most once",
+        "GET /api/v1/auth/tokens shows a last use at most an hour old",
+        "On the dev device the requests of an automation write next to nothing to the SD card (scripts/dev/sd.sh measure)"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0191",
+        "ADR-0164",
+        "ADR-0214"
+      ]
+    },
+    {
+      "id": "auth.sign-in-with-full-system-disk",
+      "category": "auth",
+      "description": "Users can sign in while the disk that holds /data is full",
+      "steps": [
+        "Fill the filesystem of /data, then sign in: the sign-in works",
+        "The audit entry that could not be written is reported in the log"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023"
+      ]
+    },
+    {
+      "id": "auth.no-legacy-password-truncation",
+      "category": "auth",
+      "description": "Passwords are checked as given: the cut to 72 bytes kept for hashes of the passlib-era code is gone",
+      "steps": [
+        "verify_password in supervisor/src/auth/utils.py checks the whole password, without cutting it to 72 bytes first",
+        "A sign-in with a password longer than 72 bytes fails like a wrong password, without a server error",
+        "New passwords longer than 72 bytes are still refused with 422, and the comment in supervisor/src/auth/schemas.py no longer points to old hashes"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207",
+        "ADR-0026"
+      ]
+    },
+    {
+      "id": "auth.user-rename",
+      "category": "auth",
+      "description": "An administrator renames a user, and the user's SMB access follows the new name",
+      "steps": [
+        "Edit a user and change the name: the user signs in with the new name, and the old one is refused",
+        "A user with SMB keeps it under the new name: Samba's account of the old name is removed, and the one of the new name is made with the password that the rename asks for",
+        "A new name that breaks the name rule, or exists in another case, is refused with the reason"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0116"
+      ],
+      "notes": "Today PUT /auth/users/{id} answers 409 for another name (ADR-0116)."
+    },
+    {
+      "id": "storage.disk-list",
+      "category": "storage",
+      "description": "The Storage page lists the host's disks with what UNOS knows about each",
+      "steps": [
+        "Open Storage: every whole disk of the host is listed with model, size and serial",
+        "Each disk says whether it is the system disk, in use or holding data, and which pool it belongs to",
+        "When the disks cannot be listed, the page says why"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_disk_safety.py",
+        "webui/tests/storage.spec.ts",
+        "webui/tests/health.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0035"
+      ],
+      "notes": "Device check: 2026-11-06 (slice 1 deploy; also on 2026-11-05 after a reboot of the Phase 0 tree). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.create-pool",
+      "category": "storage",
+      "description": "An administrator creates a btrfs pool from free disks with a RAID profile, after typed confirmations",
+      "steps": [
+        "Select free disks, a name and a profile: single, RAID0, RAID1, RAID1C3, RAID1C4 or RAID10, never RAID5 or RAID6",
+        "Create stays disabled until the pool name is typed, and for disks with data until the erase is confirmed",
+        "The system disk and disks in use are not offered, and a disk whose serial, WWN or size changed since it was selected is refused and the list reloaded",
+        "The new pool is mounted at /mnt/pools/<name> by UUID with a managed fstab entry and listed as healthy"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_disk_safety.py",
+        "supervisor/tests/test_storage.py",
+        "webui/tests/storage.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0011",
+        "ADR-0034",
+        "ADR-0035"
+      ],
+      "notes": "Not run on the dev device: it needs a spare disk. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.mount-and-unmount",
+      "category": "storage",
+      "description": "An administrator unmounts and mounts a pool, and a pool comes back mounted after a reboot",
+      "steps": [
+        "Unmount a pool after the confirmation: it shows not mounted, and nothing can be written into its empty mountpoint, not even by root",
+        "Mount it again: the managed fstab entry (# unos-pool:<name>) is back, and the pool is healthy",
+        "Reboot the host: the pool is mounted before Docker starts, and the apps on it start",
+        "Unmount is refused while running apps keep data on the pool"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_pool_persistence.py",
+        "webui/tests/storage.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0034"
+      ],
+      "notes": "Device check: 2026-11-05 (Phase 0 deploy: unmount, mount and a reboot of that tree); the deployed tree changed since. Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.pool-health",
+      "category": "storage",
+      "description": "Storage and the dashboard show each pool's health as the host reports it, and a degraded pool raises an alert",
+      "steps": [
+        "A mounted pool without errors shows healthy",
+        "An unmounted pool shows not mounted, and one whose state cannot be read shows unknown, never healthy",
+        "Missing devices, error counters, a read-only mount and a filesystem that btrfs forced read-only are shown on the pool",
+        "Detach a device of a RAID1 test pool: within 5 minutes the RAID monitor marks it degraded and sends an alert that names the cause",
+        "GET /api/v1/health/raid-monitor/status shows the time of the latest check"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_pool_persistence.py",
+        "supervisor/tests/test_health_monitor.py",
+        "webui/tests/storage.spec.ts",
+        "webui/tests/dashboard.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0036",
+        "ADR-0043"
+      ],
+      "notes": "Device check: 2026-11-05 (a healthy pool, also after a reboot of the Phase 0 tree). The degraded case needs a test pool on spare disks. Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.forget-pool",
+      "category": "storage",
+      "description": "An administrator removes a pool from UNOS after typing its name, and its disks keep their data",
+      "steps": [
+        "Delete asks for the pool's name, unmounts the pool and drops its managed fstab entry and empty mountpoint",
+        "The disks are not touched: the filesystem is listed again as an unmounted pool that can be mounted later",
+        "A pool that host processes or containers use is refused with 409"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_pool_persistence.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0035",
+        "ADR-0070"
+      ],
+      "notes": "No E2E test. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.volumes",
+      "category": "storage",
+      "description": "An administrator lists, creates and deletes the volumes of a mounted pool",
+      "steps": [
+        "Open a mounted pool's Volumes dialog: the subvolumes in its top folder are listed, without snapshots",
+        "Create a volume with an optional quota: it appears at /mnt/pools/<pool>/<name>",
+        "Delete asks for the name; a volume that apps, Docker volumes, shares or NFS exports use is refused with what uses it",
+        "On a pool mounted read-only the dialog lists the volumes and says why they cannot change"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_volumes.py",
+        "webui/tests/storage.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0069",
+        "ADR-0070"
+      ],
+      "notes": "Device check: 2026-11-06 (slice 1 deploy). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.snapshots",
+      "category": "storage",
+      "description": "An administrator creates, lists, restores and deletes read-only snapshots, also on a schedule with a keep count",
+      "steps": [
+        "On Snapshots, create a snapshot of a pool or a volume: it is listed with its time",
+        "Restore a snapshot: its content comes back as a new folder next to the original",
+        "Delete a snapshot",
+        "A scheduled snapshot task with keep count 3 keeps the three newest automatic snapshots and deletes no other",
+        "A scheduled snapshot of a pool that is not mounted fails with Pool <name> is not mounted"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_snapshots.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/snapshots.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0011"
+      ],
+      "notes": "The E2E spec only checks that the page renders, and the scheduler spec covers SMART tasks only. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.scrub",
+      "category": "storage",
+      "description": "An administrator scrubs a mounted pool, follows the progress and cancels it, also on a schedule",
+      "steps": [
+        "Start Scrub on a mounted pool: the request returns once btrfs has started, and the API stays responsive",
+        "The pool shows the scrub's progress and, at the end, its result",
+        "Cancel stops a running scrub",
+        "A scheduled scrub task scrubs its pool, and fails without running btrfs when the pool is not mounted",
+        "A pool that is not mounted offers no Scrub button"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_storage.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/storage.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0071"
+      ],
+      "notes": "No E2E test starts a scrub. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.smart",
+      "category": "storage",
+      "description": "An administrator reads the SMART data of every disk the Storage page lists and schedules SMART tests",
+      "steps": [
+        "On Storage or System > Disk Health, open a disk: its SMART attributes, temperature and overall health are shown",
+        "Disk Health lists the same disks as Storage, NVMe included, and disks without SMART data too",
+        "A partition or another device is refused as not a disk of this system",
+        "In System > Scheduler, a SMART test task offers the connected whole disks and keeps the disk of a task while it is disconnected",
+        "Run now records the run as success, failed or timed out"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_health_smart.py",
+        "supervisor/tests/test_storage.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/health.spec.ts",
+        "webui/tests/scheduler.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0072",
+        "ADR-0172"
+      ],
+      "notes": "Device check: 2026-11-06 (slice 1 deploy: SMART data and a short test of the pool's disk). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.smart-trend-alerts",
+      "category": "storage",
+      "description": "SMART attributes are recorded over time, and a rising count of reallocated or pending sectors raises an alert",
+      "steps": [
+        "The SMART monitor records each disk's attributes at every pass",
+        "A rise in reallocated or pending sectors sends an alert to the e-mail and Telegram channels",
+        "GET /api/v1/health/smart/trends and /smart/predictions report the trend and a failure estimate per disk"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_health_monitor.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0043"
+      ],
+      "notes": "Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "storage.smart-replace-soon",
+      "category": "storage",
+      "description": "Disks whose SMART trend predicts a failure are marked replace soon on the dashboard and in Disk Health",
+      "steps": [
+        "A disk with a predicted failure shows replace soon with the reason",
+        "The mark goes away when the prediction does"
+      ],
+      "passes": false
+    },
+    {
+      "id": "storage.restore-copies-deletable",
+      "category": "storage",
+      "description": "The Snapshots page lists the copies that snapshot restores made, and deletes them",
+      "steps": [
+        "Restore a snapshot of a volume: the copy restore_<time> is listed on the Snapshots page",
+        "Delete it there after the check that nothing uses it: the subvolume is removed by its subvolume id",
+        "The volume that held it can be deleted afterwards"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0073"
+      ],
+      "notes": "Today a restored copy inside a volume can be deleted nowhere in the web UI."
+    },
+    {
+      "id": "storage.scrub-needs-mounted-pool",
+      "category": "storage",
+      "description": "Starting a scrub of a pool that is not mounted answers 409, and one helper starts every scrub",
+      "steps": [
+        "POST /api/v1/storage/pools/<name>/scrub for a pool that is not mounted answers 409 and runs no btrfs command",
+        "The Storage page and scheduled scrubs start scrubs through the same helper"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0071"
+      ]
+    },
+    {
+      "id": "storage.commands-time-out-cleanly",
+      "category": "storage",
+      "description": "A btrfs or smartctl command that hangs in the kernel no longer holds a worker thread after its timeout",
+      "steps": [
+        "A scrub, stats reset or SMART test command that does not return is killed at its timeout, and its worker thread is free at once",
+        "The API answers the timeout, and later requests are served"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0021"
+      ]
+    },
+    {
+      "id": "storage.edge-cases",
+      "category": "storage",
+      "description": "Storage operations stay correct with rare names, races and Docker states",
+      "steps": [
+        "A subvolume renamed while the quota rollback guard runs is never taken for the new volume",
+        "Odd subvolume names, line breaks included, cannot confuse what UNOS reads from btrfs subvolume list",
+        "When Docker cannot be asked during an unmount, a Docker volume's mount of the pool is not taken for the administrator's own mount",
+        "Docker volumes are compared with bind folders after resolving symlinks and relative paths, also for third-party volume drivers",
+        "Whole disks named like xvdaa, sdaaa or dasda are accepted wherever they are listed",
+        "A failing subvolume list right after a volume create answers that the volume exists without its quota, and a create whose name was taken meanwhile names what is there",
+        "Renaming or moving a folder that is a bind mount answers 409, not 500",
+        "A folder delete stops at a mount or subvolume that appears below the folder while it is deleted"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0073"
+      ],
+      "notes": "Low-severity cases deferred in slice 1; each step can be a pass of its own."
+    },
+    {
+      "id": "storage.disk-spindown",
+      "category": "storage",
+      "description": "Idle data disks spin down after a timeout set per disk",
+      "steps": [
+        "Set an idle timeout for a data disk: it spins down after that time without access",
+        "The system disk cannot be given a timeout",
+        "Storage shows whether each disk sleeps, and reading SMART data does not wake it"
+      ],
+      "passes": false
+    },
+    {
+      "id": "storage.volume-quota-usage",
+      "category": "storage",
+      "description": "Storage shows how much of its quota each volume uses, and alerts at set levels",
+      "steps": [
+        "The Volumes dialog shows each volume's use against its quota",
+        "Crossing 80, 90 or 95 percent sends an alert",
+        "A graph shows the use over time"
+      ],
+      "passes": false
+    },
+    {
+      "id": "storage.pool-add-and-remove-disks",
+      "category": "storage",
+      "description": "An administrator adds a disk to a pool or removes one, after typed confirmations",
+      "steps": [
+        "Add a free disk to a pool: the pool grows, and its profile is kept",
+        "Remove a disk: its data moves to the other disks first, and a removal the profile cannot survive is refused"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0035"
+      ]
+    },
+    {
+      "id": "storage.pool-balance",
+      "category": "storage",
+      "description": "An administrator balances a pool and follows, pauses, resumes or cancels the balance",
+      "steps": [
+        "Start a balance: the pool shows its progress and the estimated time left",
+        "Pause, resume and cancel act on the running balance"
+      ],
+      "passes": false
+    },
+    {
+      "id": "storage.hot-plugged-disks",
+      "category": "storage",
+      "description": "A disk attached after the supervisor started appears on the Storage page",
+      "steps": [
+        "Attach a USB disk while UNOS runs: Storage lists it within a minute, without a restart"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023"
+      ]
+    },
+    {
+      "id": "shares.smb-share",
+      "category": "shares",
+      "description": "An administrator creates an SMB share on a folder inside a pool that UNOS manages",
+      "steps": [
+        "On Shares, Add SMB share offers only folders and volumes of managed pools, never a pool root, apps/ or .snapshots",
+        "A new folder is made as root:unos-smb 2770, only below folders that only root can change; below a pool root that others can write, the request answers 409 and names the chmod",
+        "A folder that overlaps another share is refused",
+        "The share is served at once: smbclient lists it for a user with access"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_share_api.py",
+        "supervisor/tests/test_share_apply.py",
+        "supervisor/tests/test_validators.py",
+        "webui/tests/shares.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0038",
+        "ADR-0145",
+        "ADR-0146",
+        "ADR-0148",
+        "ADR-0150",
+        "ADR-0153"
+      ],
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: a share on an existing folder, and a new folder below the 0777 pool root refused). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.per-user-access",
+      "category": "shares",
+      "description": "An administrator gives a user read-only or read-write access to an SMB share, and lowering it ends the user's open connections",
+      "steps": [
+        "In the share's access list, pick a user who is not an administrator and a level",
+        "With read access the user lists and reads files over SMB, and writes are refused",
+        "With read-write access the user creates and changes files, and new files belong to the group unos-smb",
+        "Lowering the access during an open session makes the next write fail; removing it ends the tree connect",
+        "New users have no access to any share"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_share_api.py",
+        "supervisor/tests/test_share_apply.py",
+        "supervisor/tests/test_smbconf.py",
+        "webui/tests/shares.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0075",
+        "ADR-0088",
+        "ADR-0103"
+      ],
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: read and write over a signed session, a downgrade and a revocation during open sessions). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.guest-off-by-default",
+      "category": "shares",
+      "description": "SMB refuses anonymous and wrong-password sign-ins while no share is guest-accessible",
+      "steps": [
+        "An anonymous smbclient session is refused",
+        "A wrong password answers NT_STATUS_LOGON_FAILURE, never a guest session",
+        "With no guest share, server signing is mandatory and the guest-related globals are off"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_share_api.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0096",
+        "ADR-0098",
+        "ADR-0100"
+      ],
+      "notes": "Device check: 2026-11-07 (slice 2 deploy). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.read-only-guest-share",
+      "category": "shares",
+      "description": "An administrator makes a share guest-accessible; guests read it and never write",
+      "steps": [
+        "Check guest access for a share: the dialog warns, and so does the answer",
+        "An anonymous smbclient session lists and reads the share, and writes are refused",
+        "Removing the last guest share makes signing mandatory again"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_share_api.py",
+        "webui/tests/shares.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0096",
+        "ADR-0098",
+        "ADR-0100"
+      ],
+      "notes": "The slice 2 device checks made no guest share. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.smb-conf-and-status",
+      "category": "shares",
+      "description": "UNOS alone writes /etc/samba/smb.conf from its database with a hardened [global] section, and the Shares page shows the SMB status",
+      "steps": [
+        "After any share change smb.conf starts with the UNOS header and holds [global] and one section per served share",
+        "testparm accepts each rendered file before it is installed atomically, and Samba reloads it",
+        "A restart of the supervisor changes no file when nothing changed",
+        "Share sections that UNOS did not write are copied to smb.conf.unos-replaced and reported before an apply",
+        "The status panel on Shares shows whether Samba runs UNOS's smb.conf, and every problem as an alert"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_share_apply.py",
+        "supervisor/tests/test_smbconf_testparm.py",
+        "supervisor/tests/test_smb_startup.py",
+        "supervisor/tests/test_share_api.py",
+        "webui/tests/shares.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0074",
+        "ADR-0087",
+        "ADR-0089",
+        "ADR-0090",
+        "ADR-0092",
+        "ADR-0157"
+      ],
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: the device's testparm accepted the rendered files, a restart changed no file). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.smb-conf-import",
+      "category": "shares",
+      "description": "On its first start UNOS imports the host's existing smb.conf once, and the import only narrows access",
+      "steps": [
+        "The shares of the existing smb.conf are imported once, without guest access, and the old file is kept as smb.conf.unos-import-backup with mode 0600",
+        "Options UNOS does not support are dropped and listed in the import notes on Shares",
+        "Imported shares that break a rule are kept as not served and without access until their folder is changed",
+        "Import notes can be dismissed"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_share_import.py",
+        "webui/tests/shares.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0084",
+        "ADR-0085",
+        "ADR-0086",
+        "ADR-0136"
+      ],
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: the old smb.conf imported, the share DATA not served). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.edit-and-delete",
+      "category": "shares",
+      "description": "An administrator edits a share with only the changed fields and deletes a share while its folder stays",
+      "steps": [
+        "Change a share's comment: PATCH /api/v1/shares/smb/<name> sends the comment and the expected version only",
+        "When the share changed meanwhile the save answers 409, and the dialog shows the share as it is now",
+        "A share that is not served gets access only together with a new folder",
+        "Delete asks first; the share's section leaves smb.conf, and its folder stays with its files"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_share_api.py",
+        "webui/tests/shares.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0134",
+        "ADR-0135"
+      ],
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: access changed with PATCH, the test share deleted and its folder kept). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.repair-permissions",
+      "category": "shares",
+      "description": "An administrator runs Repair permissions on a share so that its existing files get the group unos-smb with group read and write",
+      "steps": [
+        "Repair permissions on a share: its files and folders get the group unos-smb, group read and write, and setgid on folders",
+        "App data, snapshots, mounts, links and files private to their owner are left alone",
+        "ACL entries stay, and the group permissions become the ACL's mask",
+        "Shares shows the last run with its counts and errors",
+        "A share that is not served cannot be repaired"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_share_repair.py",
+        "webui/tests/shares.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0155",
+        "ADR-0156"
+      ],
+      "notes": "Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.smb-accounts",
+      "category": "shares",
+      "description": "An administrator allows SMB for a regular user, whose SMB account is a marked host account",
+      "steps": [
+        "On Users, allow SMB for a regular user: the SMB column shows it",
+        "At activation UNOS makes the host account (uid 70000-79999, group unos-smb, no login shell, GECOS UNOS SMB user) and its passdb entry",
+        "Administrators can never use SMB",
+        "Deleting the user removes the host account and its passdb entry"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_smb_accounts.py",
+        "supervisor/tests/test_smb_reconcile.py",
+        "webui/tests/users.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0105",
+        "ADR-0107",
+        "ADR-0108",
+        "ADR-0117",
+        "ADR-0118"
+      ],
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: a temporary account made and removed). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.self-activation",
+      "category": "shares",
+      "description": "A regular user turns SMB on with their password, and their two-factor code if they have one, on the Account page",
+      "steps": [
+        "The Account page shows why SMB is off, or that it is allowed",
+        "Enter the current password, and a two-factor code newer than the sign-in's: SMB is on",
+        "A password SMB cannot use (under 8 characters, over 72 bytes, control characters) is refused with the reason",
+        "Turn SMB off again on the same card"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_smb_accounts.py",
+        "supervisor/tests/test_totp_once.py",
+        "webui/tests/account-smb.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0068",
+        "ADR-0118",
+        "ADR-0122",
+        "ADR-0131"
+      ],
+      "notes": "The user's own activation ran only on the stand-in, which has no Samba; on the device an administrator turned SMB on. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.password-follows-unos",
+      "category": "shares",
+      "description": "The SMB password is the UNOS password: each change of it changes Samba's copy and ends the account's open sessions",
+      "steps": [
+        "An administrator sets a new password for a user with SMB on: the old password stops working over SMB, and the new one works",
+        "The account's open SMB sessions end at the change",
+        "No password appears on a command line, in a log, an error or an answer"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_smb_accounts.py",
+        "supervisor/tests/test_smb_integration.py",
+        "webui/tests/users.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0104",
+        "ADR-0119",
+        "ADR-0123",
+        "ADR-0125"
+      ],
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: a password change during an open session). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.account-page-shares",
+      "category": "shares",
+      "description": "The Account page shows the shares a user can use and how to connect from Windows, macOS and Linux",
+      "steps": [
+        "An active account sees its shares with their access level",
+        "How to connect shows the address for Windows, macOS and Linux, and the ipv6-literal.net form when the page was opened by an IPv6 address"
+      ],
+      "verified_by": [
+        "webui/tests/account-smb.spec.ts",
+        "webui/tests/shares.spec.ts",
+        "supervisor/tests/test_smb_accounts.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0174",
+        "ADR-0196"
+      ],
+      "notes": "The specs answer GET /auth/me/smb with canned data; tests/test_smb_accounts.py (test_status_of_the_account_page) checks that answer on the server. The steps only read: the SMB state shown comes from the database (supervisor/src/shares/account_state.py), so they make no host-level change and need no device check. Turning SMB on and off there is shares.self-activation."
+    },
+    {
+      "id": "shares.nfs-exports",
+      "category": "shares",
+      "description": "An administrator exports a pool folder over NFS to a client network and removes the export",
+      "steps": [
+        "On Shares > NFS, add an export of a pool folder for a client network: the host's /etc/exports lists it, and the host's exportfs applies it",
+        "A client in that network mounts it, read-only or read-write as set",
+        "Delete removes the line and unexports the folder",
+        "Lines of /etc/exports that UNOS did not write are kept as they are"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_shares.py",
+        "webui/tests/shares.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0037",
+        "ADR-0163"
+      ],
+      "notes": "The exports are written to the supervisor container's own /etc/exports, and exportfs runs there: nothing reaches the host yet (architecture.host-command-layer). The E2E spec only opens the tab. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.restore-keeps-smb-with-proof",
+      "category": "shares",
+      "description": "After a restore, SMB stays on only for users whose password did not change since the backup",
+      "steps": [
+        "Restore a backup on the dev device: smb.conf is rendered from the restored database, never taken from the archive",
+        "Users whose password is still the one of the backup keep SMB on; the others need their password again",
+        "Restored rows never take a uid that a live or a stale account holds"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_restore_accounts.py",
+        "supervisor/tests/test_backup_restore.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0040",
+        "ADR-0112",
+        "ADR-0139",
+        "ADR-0141"
+      ],
+      "notes": "Restores ran only on the stand-in, which has no Samba. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.acl-aware-parent-check",
+      "category": "shares",
+      "description": "A folder counts as safe for a share only when no ACL entry and no sticky parent lets another account change it",
+      "steps": [
+        "A share folder below a parent whose ACL gives write to another named user or group is refused, with the reason",
+        "A sticky parent excuses other writers only when the share folder belongs to root",
+        "On the dev device a share folder inside a sticky folder owned by another account is refused"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_share_api.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0193"
+      ],
+      "notes": "Implemented and tested; ADR-0193 waits for confirmation. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "shares.group-access",
+      "category": "shares",
+      "description": "An administrator gives a group of users access to an SMB share",
+      "steps": [
+        "Make a group and add users to it",
+        "Give the group read or read-write access to a share: its members get that access, and new members get it too"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0076"
+      ]
+    },
+    {
+      "id": "shares.smb-discovery",
+      "category": "shares",
+      "description": "The NAS appears in the network browsers of Windows (WS-Discovery) and macOS (Bonjour)",
+      "steps": [
+        "Windows Explorer's Network view lists the NAS",
+        "The macOS Finder sidebar lists the NAS",
+        "NetBIOS can then be turned off"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0158"
+      ]
+    },
+    {
+      "id": "shares.smb-bind-interfaces",
+      "category": "shares",
+      "description": "An administrator chooses the network interfaces that SMB listens on",
+      "steps": [
+        "Pick interfaces: smb.conf gets interfaces and bind interfaces only, and smbd listens only there"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0095"
+      ]
+    },
+    {
+      "id": "shares.per-share-protocol-options",
+      "category": "shares",
+      "description": "A share can require encryption, serve Time Machine backups or show snapshots as Previous Versions",
+      "steps": [
+        "Turn on encryption for a share: clients without SMB3 encryption are refused there",
+        "Turn on Time Machine: a Mac uses the share as a backup disk",
+        "Turn on Previous Versions: Windows lists the share's snapshots"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0161"
+      ]
+    },
+    {
+      "id": "shares.iscsi-targets",
+      "category": "shares",
+      "description": "An administrator shares a volume as an iSCSI target with CHAP authentication",
+      "steps": [
+        "Create a target from a volume with one LUN and CHAP credentials",
+        "An initiator with the credentials connects; one without is refused",
+        "Several initiators can be allowed"
+      ],
+      "passes": false
+    },
+    {
+      "id": "shares.password-changes-only-through-unos",
+      "category": "shares",
+      "description": "An SMB user's password changes only through UNOS, so the password rule and UNOS's copy stay in step",
+      "steps": [
+        "A password change from Windows (Change a password) aimed at the NAS is refused",
+        "The Account page stays the way to change it"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0195",
+        "ADR-0164"
+      ]
+    },
+    {
+      "id": "shares.restore-uid-guards",
+      "category": "shares",
+      "description": "A restore never gives two SMB accounts one uid, nor a uid that a user deleted before the backup had",
+      "steps": [
+        "An archive whose smb_accounts holds two rows with one uid is refused",
+        "A uid handed out before the backup is never handed out again after the restore"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0195",
+        "ADR-0109"
+      ]
+    },
+    {
+      "id": "shares.status-names-foreign-smb-conf",
+      "category": "shares",
+      "description": "The SMB status names the reason when smb.conf was replaced after UNOS's last apply",
+      "steps": [
+        "Replace smb.conf by hand after an apply: GET /api/v1/shares/smb-status names the replaced file as a problem"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0195"
+      ]
+    },
+    {
+      "id": "shares.reapply-on-pool-unmount",
+      "category": "shares",
+      "description": "Unmounting or forgetting a pool re-applies smb.conf, so its shares stop being served at once",
+      "steps": [
+        "Unmount a pool with shares: smb.conf no longer serves them, and the Shares page lists them as not served",
+        "Mount it again: they are served again"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0195"
+      ]
+    },
+    {
+      "id": "shares.keep-every-replaced-copy",
+      "category": "shares",
+      "description": "Every copy of foreign share sections and every import backup is kept, not only the latest",
+      "steps": [
+        "A second foreign section event keeps the first copy of smb.conf.unos-replaced",
+        "Several import backups are kept, each with its date"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0195",
+        "ADR-0164"
+      ]
+    },
+    {
+      "id": "shares.samba-runtime-writes",
+      "category": "shares",
+      "description": "Samba's own writes to the system disk are reduced: daemon logs in RAM, and no passdb write for a failed sign-in",
+      "steps": [
+        "On a host whose /var/log is on the system disk, smbd and nmbd log to /run/samba with a small size cap",
+        "A failed SMB sign-in of an existing account writes nothing to passdb.tdb (scripts/dev/sd.sh measure)"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0194",
+        "ADR-0102",
+        "ADR-0159"
+      ],
+      "notes": "Unthrottled SMB sign-ins are an accepted risk (ADR-0102); a host rate limit for TCP port 445 is one of the options."
+    },
+    {
+      "id": "shares.apparmor-profile",
+      "category": "shares",
+      "description": "On a host whose smbd is confined by AppArmor, a share on a new folder is served without a restart of smbd",
+      "steps": [
+        "An ADR decides how, once such a host is supported: for example update-apparmor-samba-profile, then apparmor_parser -r, after every change of share paths",
+        "On a test host whose smbd runs under an enforced Samba profile, create a share on a new folder: smbd serves it at once",
+        "On a host whose smbd is unconfined, such as the dev device, UNOS runs no AppArmor tool and changes no profile"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0162"
+      ],
+      "notes": "The dev device cannot check step 2: a read-only check on 2026-11-07 found AppArmor enabled in the kernel, no AppArmor utilities, no smbd or samba profile loaded, and smbd unconfined (ADR-0162)."
+    },
+    {
+      "id": "shares.rollback-era-safeguards",
+      "category": "shares",
+      "description": "SMB safeguards that existed only for a rollback to an older release are removed, or kept by an ADR",
+      "steps": [
+        "SMB changes are audited with actions of their own; the rule to use only actions an older release knows is gone",
+        "An ADR decides whether the startup purge of SMB rows and the copy of foreign share sections still guard against restored databases and hand edits, and code kept only for rollbacks is removed",
+        "The tests of the removed paths are removed with them"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207",
+        "ADR-0157",
+        "ADR-0137",
+        "ADR-0092"
+      ]
+    },
+    {
+      "id": "shares.smb-login-protection",
+      "category": "shares",
+      "description": "Repeated failed SMB sign-ins are slowed down or locked out, and SMB-bound passwords on a list of common passwords are refused",
+      "steps": [
+        "After repeated failed SMB sign-ins, further attempts from that client or for that account are refused for a while (a rate limit or a lockout)",
+        "A password on a list of common passwords is refused with the reason when SMB is turned on with it, and when a user with SMB changes to it"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0102",
+        "ADR-0194"
+      ],
+      "notes": "ADR-0102 accepts the risk for now. A rate limit for TCP port 445 would be a firewall change on the host (ADR-0194)."
+    },
+    {
+      "id": "shares.smb-auth-audit-logging",
+      "category": "shares",
+      "description": "Failed SMB sign-ins are logged with the client and the account, so that a client that keeps failing can be found",
+      "steps": [
+        "A failed SMB sign-in is logged through Samba's auth_audit class, with the client's address and the account name",
+        "An administrator finds these lines in System > Logs and sees which client keeps failing"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0164",
+        "ADR-0094"
+      ]
+    },
+    {
+      "id": "shares.repair-in-background",
+      "category": "shares",
+      "description": "Repair permissions runs as a background job, so a large share is repaired in one run that the page follows live",
+      "steps": [
+        "Start Repair permissions on a large share: the request answers at once, and the job runs until the share is done, without the 240 s limit of a request",
+        "Shares shows the job's progress and its end over the WebSocket, without polling",
+        "One repair runs at a time: a second start while one runs is refused"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0155",
+        "ADR-0006"
+      ],
+      "notes": "Today one request repairs for at most 240 s and 5 million entries; then the state is incomplete, and a new run continues (ADR-0155)."
+    },
+    {
+      "id": "shares.nfs-exports-parser",
+      "category": "shares",
+      "description": "The parser of /etc/exports reads every line form that exportfs accepts and leaves the lines UNOS did not write as they are",
+      "steps": [
+        "Tests give the parser of supervisor/src/shares/nfs.py every line form of exports(5): comments, continuation lines, quoted and escaped paths, several clients on one line, default and per-client options",
+        "Each line is read as exportfs reads it, or reported as unreadable and left in the file unchanged",
+        "Adding or removing an export changes only the lines that UNOS wrote"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0163",
+        "ADR-0175"
+      ]
+    },
+    {
+      "id": "apps.install-on-a-pool",
+      "category": "apps",
+      "description": "An administrator installs an app from the catalog onto a chosen mounted pool",
+      "steps": [
+        "On Apps, the catalog lists the apps by category, with search",
+        "Install asks for the pool, and only mounted pools are offered",
+        "The app's data folders are made inside that pool, with no '..' and no symlinks, and placeholder secrets are refused",
+        "The installed list shows the app with the host folders it uses, and warns about data outside mounted pools"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_apps.py",
+        "webui/tests/apps.spec.ts",
+        "webui/tests/appstore.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0039"
+      ],
+      "notes": "Device check: 2026-11-07 (transmission reinstalled with its login on the pool data). Open: the re-check after a reboot (ADR-0018). The stand-in has no Docker: the catalog cards are skipped there."
+    },
+    {
+      "id": "apps.transmission-login",
+      "category": "apps",
+      "description": "The transmission app installs only with a web login, and its RPC refuses requests without it",
+      "steps": [
+        "Installing transmission without USER and PASS is refused",
+        "With both, the container gets them, and its web UI and RPC answer 401 without the login"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_apps.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0219"
+      ],
+      "notes": "Device check: 2026-11-07 (the RPC answered 401 without the login). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "apps.manage-installed",
+      "category": "apps",
+      "description": "An administrator starts, stops, restarts and uninstalls installed apps, and a start first checks that the app's data is on a mounted pool",
+      "steps": [
+        "On Apps > Installed, Stop and Start an app: its state follows",
+        "An app whose pool is not mounted does not start, and the answer says which pool to mount",
+        "Uninstall removes the container and keeps the app's data"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_apps.py",
+        "supervisor/tests/test_containers.py",
+        "webui/tests/apps.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0039"
+      ],
+      "notes": "The E2E spec only opens the Installed tab, and the stand-in has no Docker. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "apps.containers-and-images",
+      "category": "apps",
+      "description": "An administrator manages Docker containers and images: lists them, starts, stops and restarts containers, reads their logs live, and pulls and removes images",
+      "steps": [
+        "Containers lists every container with its state, and filters by state",
+        "Start, Stop and Restart act on the container",
+        "The logs of a container stream live over the WebSocket",
+        "Images lists the images; pull adds one, and remove deletes one that no container uses"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_containers.py",
+        "supervisor/tests/test_ws_auth.py",
+        "webui/tests/containers.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0031"
+      ],
+      "notes": "The stand-in has no Docker, and the E2E spec only opens the page. Device check: 2026-11-06 (images and container details listed). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "apps.container-resource-limits",
+      "category": "apps",
+      "description": "An administrator sets memory and CPU limits for an app's container",
+      "steps": [
+        "Set a memory limit and a CPU quota for an app: docker inspect shows them",
+        "The app's page shows its use against the limits, and crossing one sends an alert"
+      ],
+      "passes": false
+    },
+    {
+      "id": "apps.docker-down-503",
+      "category": "apps",
+      "description": "When Docker does not answer, the app and container pages and their API say so with 503",
+      "steps": [
+        "Stop Docker on a test host: the container and app endpoints answer 503 with the reason, and the pages show it"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0175"
+      ]
+    },
+    {
+      "id": "apps.no-legacy-default-pool",
+      "category": "apps",
+      "description": "The code for apps that older versions installed under /mnt/pools/default is gone",
+      "steps": [
+        "The checks and messages for apps without a pool label, whose data is in /mnt/pools/default, are removed from supervisor/src/apps and supervisor/src/health",
+        "The web UI's types and texts for them are removed",
+        "tests/test_apps.py passes without the cases of older versions"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207",
+        "ADR-0039"
+      ],
+      "notes": "supervisor/src/apps/router.py, apps/schemas.py, health/router.py and webui/src/lib/api/apps.ts mention them."
+    },
+    {
+      "id": "apps.docker-calls-off-event-loop",
+      "category": "apps",
+      "description": "Docker calls of the containers API run off the event loop, so a slow pull or stop does not hold up other requests",
+      "steps": [
+        "While an image is pulled, or a container is stopped, removed or listed, GET /api/v1/health and other requests are still answered",
+        "Every Docker call of supervisor/src/containers/router.py runs in a worker thread, as start and restart already do",
+        "A test with a Docker call that blocks shows another request answered meanwhile"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0021"
+      ],
+      "notes": "Only start and restart use asyncio.to_thread today. Listing and creating containers, listing, pulling and removing images, and a container's details, stop, removal and logs call docker-py on the event loop."
+    },
+    {
+      "id": "apps.smb-group-option",
+      "category": "apps",
+      "description": "An app can be installed to run in the SMB group, so that it can use a share's folder",
+      "steps": [
+        "Install offers to run the app in the SMB group, which sets its PGID to 70000 (unos-smb)",
+        "Such an app reads and writes the share folder it was given; an app installed without the option still cannot"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0160"
+      ],
+      "notes": "Apps run as PUID/PGID 1000 today, outside the group, which also keeps internet-facing apps out of the users' files (ADR-0160)."
+    },
+    {
+      "id": "apps.catalog-without-docker",
+      "category": "apps",
+      "description": "The App Store shows the app catalog when Docker does not answer",
+      "steps": [
+        "With Docker down, Apps lists the catalog and says that the installed apps cannot be loaded",
+        "On the stand-in, which has no Docker, the catalog-cards test of webui/tests/appstore.spec.ts runs instead of being skipped"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0215"
+      ],
+      "notes": "webui/src/routes/apps/+page.svelte loads the catalog and the installed apps in one Promise.all, so a failure of either hides both."
+    },
+    {
+      "id": "backup.create-and-download",
+      "category": "backup",
+      "description": "An administrator creates a configuration backup, encrypted with a passphrase if wanted, and downloads it",
+      "steps": [
+        "In System > Backup & Restore, create a backup: it is listed under a unique name, also when two are made in the same second",
+        "With a passphrase the backup is encrypted with AES-256-GCM and named .tar.gz.enc",
+        "Download saves the file with the session, and a download with an expired session leads to the sign-in page",
+        "A backup that cannot be created, deleted or downloaded is reported on the page"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_backup_files.py",
+        "supervisor/tests/test_backup_restore.py",
+        "webui/tests/backup.spec.ts",
+        "webui/tests/backup-restore.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0165"
+      ]
+    },
+    {
+      "id": "backup.upload",
+      "category": "backup",
+      "description": "An administrator uploads a backup file, and malformed or hostile archives are refused before they are stored",
+      "steps": [
+        "Upload a .tar.gz backup: it is checked in one streaming pass and then listed",
+        "Upload an encrypted .tar.gz.enc backup: it is stored as uploaded_<date>_<time>.tar.gz.enc and checked when it is restored",
+        "A plain backup named .tar.gz.enc, a corrupt archive and a file over 256 MiB are refused and leave nothing behind"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_backup_upload_check.py",
+        "supervisor/tests/test_upload_streaming.py",
+        "supervisor/tests/test_backup_files.py",
+        "supervisor/tests/test_backup_restore.py",
+        "webui/tests/backup-restore.spec.ts",
+        "webui/tests/backup.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0165",
+        "ADR-0166"
+      ]
+    },
+    {
+      "id": "backup.restore",
+      "category": "backup",
+      "description": "An administrator restores a backup, an encrypted one with its passphrase, and the configuration comes back",
+      "steps": [
+        "Restore a backup made in the web UI: users, two-factor settings, API tokens and shares come back",
+        "An encrypted backup restores with its passphrase and is refused without it",
+        "A restore that does not fit into the RAM-backed /tmp answers 507 and changes nothing",
+        "A second restore while one runs is refused"
+      ],
+      "verified_by": [
+        "webui/tests/backup-restore.spec.ts",
+        "supervisor/tests/test_backup_restore.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0040",
+        "ADR-0144",
+        "ADR-0165"
+      ],
+      "notes": "The SMB side of a restore is shares.restore-keeps-smb-with-proof. A restore renders smb.conf from the restored database and reconciles the SMB accounts (supervisor/src/backup/router.py), a host-level change (GLOSSARY.md): open are a restore on the dev device and the re-check after a reboot (ADR-0018). The device checks of 2026-11-06 covered only refusals: a missing file, and an encrypted backup without its passphrase."
+    },
+    {
+      "id": "backup.scheduled-with-retention",
+      "category": "backup",
+      "description": "A scheduled backup task makes backups and keeps only the newest N scheduled ones",
+      "steps": [
+        "Add a backup task with retention 3 in System > Scheduler",
+        "Each run stores auto_backup_<date>_<time>.tar.gz, complete before it is listed, and two runs at once both succeed",
+        "The fourth run deletes the oldest scheduled backup and never a manual one"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_backup_files.py",
+        "supervisor/tests/test_scheduler_validation.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0172"
+      ],
+      "notes": "The scheduler E2E spec covers SMART tasks only. Device check: 2026-11-06 (two scheduled backups at once)."
+    },
+    {
+      "id": "backup.off-device-copies",
+      "category": "backup",
+      "description": "Backups of the configuration and of the pools' data are copied off the device and restored from there",
+      "steps": [
+        "Configure a target: a USB disk or a second NAS (btrfs send/receive or rsync), or a cloud store (restic or rclone)",
+        "A scheduled job copies the pools' data and the configuration backups there, with a bandwidth limit and encryption",
+        "Each copy is verified, and a restore from it is tested",
+        "Configuration backups no longer stay only on the system disk"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0041"
+      ]
+    },
+    {
+      "id": "backup.streaming-restore",
+      "category": "backup",
+      "description": "A restore checks and extracts the archive in one streaming pass instead of decompressing it into /tmp first",
+      "steps": [
+        "The peak use of /tmp during a restore is at most half of what it is today",
+        "A restore still refuses every archive it refuses today"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0177"
+      ]
+    },
+    {
+      "id": "backup.edge-cases",
+      "category": "backup",
+      "description": "Backups refuse files that are not backups at upload, and take the host's pool entries of /etc/fstab",
+      "steps": [
+        "A gzip file that is not a backup, uploaded as .tar.gz.enc, is refused at the upload instead of failing at the restore",
+        "A backup takes the pool entries of the host's /etc/fstab, or no fstab at all, never the container's file"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0167"
+      ]
+    },
+    {
+      "id": "backup.no-old-backup-import",
+      "category": "backup",
+      "description": "Restores take only backups whose database holds the shares, and the import of shares from an old backup's smb.conf is gone",
+      "steps": [
+        "Restoring a backup whose database has no share tables is refused with a clear message",
+        "The path that imports shares from the archive's smb.conf for such backups is removed with its tests",
+        "Backups stop carrying a copy of smb.conf, unless an ADR keeps it"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207",
+        "ADR-0142",
+        "ADR-0143"
+      ],
+      "notes": "The same path also imports the shares of a backup whose database has the share tables but no import marker, from the archive's smb.conf (ADR-0142): that branch stays, so step 3 needs an ADR that settles what such a backup restores from."
+    },
+    {
+      "id": "backup.encrypted-scheduled-backups",
+      "category": "backup",
+      "description": "Scheduled backups are encrypted, because they hold the users' two-factor secrets",
+      "steps": [
+        "A backup task encrypts what it stores with AES-256-GCM and a passphrase, as a manual backup with a passphrase is (.tar.gz.enc)",
+        "A scheduled backup restores with that passphrase and is refused without it"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0041"
+      ]
+    },
+    {
+      "id": "files.browse-and-download",
+      "category": "files",
+      "description": "A user browses the pools and downloads files in the file manager",
+      "steps": [
+        "Open Files: it starts in the pools directory, and .. goes up",
+        "Open a folder and click a file's name: the file downloads with the session",
+        "A download with an expired session leads to the sign-in page",
+        "Paths outside the pools are refused, and symlinks are shown but never followed"
+      ],
+      "verified_by": [
+        "webui/tests/files.spec.ts",
+        "supervisor/tests/test_files_security.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0042",
+        "ADR-0168"
+      ],
+      "notes": "Step 3: files.spec.ts 'a download with an expired session leads to the sign-in page' (added on 2026-11-07, after a review found the step unasserted)."
+    },
+    {
+      "id": "files.upload",
+      "category": "files",
+      "description": "A user uploads files into the open folder, and a file appears only when it is complete",
+      "steps": [
+        "Upload files into the open folder: they are listed once complete",
+        "Each upload goes to the folder that was open when it started",
+        "A refused, failed or cancelled upload leaves nothing, and so does a supervisor stopped in the middle",
+        "Bad folders, bad names and form part headers over 8 KiB are refused before any data is written"
+      ],
+      "verified_by": [
+        "webui/tests/files.spec.ts",
+        "supervisor/tests/test_upload_streaming.py",
+        "supervisor/tests/test_files_security.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0169"
+      ],
+      "notes": "The supervisor stopped in the middle of step 3 is proven on Linux only: there the unnamed file (O_TMPFILE) goes with the process, while on macOS its test is an expected failure. Run it with scripts/dev/linux-tests.sh tests/test_upload_streaming.py."
+    },
+    {
+      "id": "files.organize",
+      "category": "files",
+      "description": "A user creates folders and copies, moves and deletes items, and nothing is overwritten",
+      "steps": [
+        "New folder creates a folder in the open folder, and a bad name is refused",
+        "Select items, choose Copy or Move, open the destination and choose Copy here or Move here",
+        "An item whose name exists at the destination is neither copied nor moved",
+        "Delete removes the selected items"
+      ],
+      "verified_by": [
+        "webui/tests/files.spec.ts",
+        "supervisor/tests/test_files_security.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0168"
+      ]
+    },
+    {
+      "id": "files.rename",
+      "category": "files",
+      "description": "A user renames a file or a folder in the file manager",
+      "steps": [
+        "Rename an item in the open folder: the list shows the new name",
+        "A name that exists or breaks the name rules is refused"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_files_security.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0168"
+      ],
+      "notes": "No E2E test renames an item."
+    },
+    {
+      "id": "files.protects-volumes-and-mounts",
+      "category": "files",
+      "description": "The file manager never deletes, renames or moves volumes, other subvolumes or mount points",
+      "steps": [
+        "Deleting, renaming or moving a volume answers 409 and changes nothing",
+        "Deleting a folder with a subvolume or a bind mount below it answers 409 and deletes nothing",
+        "A volume can still be copied"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_files_security.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0170"
+      ],
+      "notes": "Device check: 2026-11-06 (slice 1 deploy). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "files.upload-edge-cases",
+      "category": "files",
+      "description": "Uploads time out when the client stops sending, and hidden upload files left on filesystems without O_TMPFILE are cleaned up",
+      "steps": [
+        "An upload whose client stops sending is cut off after a read timeout, and its space is freed",
+        "Hidden .unos-upload-<hex> files left by a stop, on filesystems without O_TMPFILE, are found and removed with the owner's consent"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0167"
+      ]
+    },
+    {
+      "id": "files.group-writable-entries-in-shares",
+      "category": "files",
+      "description": "Folders and files that the File Manager creates inside a share are writable for the share's SMB users without a Repair",
+      "steps": [
+        "Create a folder and upload a file in a share's folder in Files: they get the group unos-smb with group write (2770 for the folder, 0660 for the file)",
+        "An SMB user with write access to the share changes the file and creates entries in the folder at once",
+        "Outside share folders the File Manager creates entries as before"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0160",
+        "ADR-0150"
+      ],
+      "notes": "Today such entries get the group unos-smb from the setgid folder but no group write, until a Repair (ADR-0155)."
+    },
+    {
+      "id": "files.delete-to-trash",
+      "category": "files",
+      "description": "Items deleted in the file manager can be brought back for a while",
+      "steps": [
+        "Delete items in Files: they go to a trash of their pool, or a snapshot is taken first, as an ADR decides",
+        "The deleted items can be restored to where they were",
+        "They are gone for good only after a set time, or when an administrator empties the trash or deletes the snapshot"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0035"
+      ]
+    },
+    {
+      "id": "system.dashboard",
+      "category": "system",
+      "description": "The dashboard shows live CPU, memory, network and disk I/O over the WebSocket, and the storage overview",
+      "steps": [
+        "Open the dashboard: the stats arrive over the WebSocket, and the CPU, memory and network values change with them, without HTTP polling",
+        "The storage widget shows the pools with the health the API reports"
+      ],
+      "verified_by": [
+        "webui/tests/dashboard.spec.ts",
+        "webui/tests/websocket.spec.ts",
+        "supervisor/tests/test_system.py",
+        "supervisor/tests/test_ws_auth.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0006"
+      ],
+      "notes": "The E2E specs check the stats socket and the storage widget, but only the labels of the CPU and memory cards."
+    },
+    {
+      "id": "system.resource-monitor",
+      "category": "system",
+      "description": "System > Resource Monitor shows CPU, memory, network and disk I/O with their history, and the process list",
+      "steps": [
+        "Open System > Resource Monitor: CPU, memory, network throughput and disk I/O are shown",
+        "The time range buttons change the history shown",
+        "The process list shows the running processes with their CPU and memory use"
+      ],
+      "verified_by": [
+        "webui/tests/monitor.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0006"
+      ],
+      "notes": "The E2E spec checks the tab's headings only, and no backend test covers the monitor API."
+    },
+    {
+      "id": "system.temperatures",
+      "category": "system",
+      "description": "The dashboard shows the host's CPU temperature, and the API lists every sensor",
+      "steps": [
+        "The dashboard's CPU card shows the temperature of the host's CPU",
+        "GET /api/v1/system/temperatures lists each sensor group with its readings",
+        "A host without sensors shows that none are available"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_system.py"
+      ],
+      "passes": false,
+      "notes": "No E2E test shows a temperature: the stand-in has no sensors. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "system.network",
+      "category": "system",
+      "description": "System > Network shows the host's interfaces, DNS, gateway, routes and connections, and an administrator brings an interface up or down",
+      "steps": [
+        "Open System > Network: each interface is listed with its addresses, state and speed",
+        "DNS servers, search domains, the gateway and the routing table are shown",
+        "Bring an interface down and up again: its state follows on the host"
+      ],
+      "verified_by": [
+        "webui/tests/network.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015"
+      ],
+      "notes": "The stand-in has no host network, and the E2E spec only opens the tab. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "system.hostname-and-time-zone",
+      "category": "system",
+      "description": "An administrator sets the host's name and time zone",
+      "steps": [
+        "Set the hostname in System > General: hostnamectl on the host shows it",
+        "Set the time zone: timedatectl on the host shows it, and scheduled tasks follow it"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_validators.py",
+        "supervisor/tests/test_system.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015"
+      ],
+      "notes": "The commands run inside the supervisor container (architecture.host-command-layer). Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "system.power",
+      "category": "system",
+      "description": "An administrator reboots, shuts down or suspends the host, cancels a pending shutdown, and turns Wake-on-LAN on",
+      "steps": [
+        "Reboot and Shutdown in System > Power ask for confirmation, then act on the host one minute later",
+        "Cancel stops a pending reboot or shutdown",
+        "Turn Wake-on-LAN on for an interface: ethtool on the host shows it, and a magic packet wakes the host"
+      ],
+      "verified_by": [
+        "webui/tests/power.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015"
+      ],
+      "notes": "No backend test, and the E2E spec only checks the confirmation dialogs. Reboots of the dev device are owner actions (ADR-0211). Open: the device check and the re-check after a reboot (ADR-0018). In the supervisor container is_in_container() (supervisor/src/power/router.py) is always true, because /.dockerenv exists: reboot, shutdown and suspend answer status unavailable, and the Power tab does not show that answer (architecture.host-command-layer)."
+    },
+    {
+      "id": "system.ups-monitoring",
+      "category": "system",
+      "description": "With NUT configured, System > Power shows the UPS state, and UNOS shuts the host down on low battery",
+      "steps": [
+        "Configure the UPS: the battery charge, the runtime and the state are shown",
+        "On battery below the set level, UNOS sends an alert and shuts the host down",
+        "Test connection names a failure"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0043"
+      ],
+      "notes": "The monitor starts in the lifespan, but nothing tests it. Open: the device check and the re-check after a reboot (ADR-0018). In the supervisor container the monitor never shuts the host down (step 2): it starts the shutdown only when is_in_container() is false, and /.dockerenv makes it true (supervisor/src/power/router.py)."
+    },
+    {
+      "id": "system.scheduled-power",
+      "category": "system",
+      "description": "The host shuts down, and wakes, at the times set in the power settings",
+      "steps": [
+        "Set an auto-shutdown time: the host shuts down then",
+        "Set a wake time: the host wakes then (rtcwake)",
+        "Idle shutdown turns the host off after the idle time"
+      ],
+      "passes": false,
+      "notes": "PUT /api/v1/power/config stores these settings, but nothing acts on them, and no page shows them."
+    },
+    {
+      "id": "system.logs-viewer",
+      "category": "system",
+      "description": "System > Logs shows the host's journal, kernel messages and log files, with filters and search",
+      "steps": [
+        "Pick a source and a severity: the entries are listed, newest first",
+        "Search highlights matches and shows markup in log lines as text",
+        "The filters are comboboxes named by their labels"
+      ],
+      "verified_by": [
+        "webui/tests/logs.spec.ts",
+        "supervisor/tests/test_logs_sources.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015",
+        "ADR-0027"
+      ],
+      "notes": "journalctl runs inside the supervisor container (architecture.host-command-layer), and the stand-in has no journal. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "system.notification-channels",
+      "category": "system",
+      "description": "An administrator adds e-mail, Telegram and webhook channels (generic, Discord, Slack) and sends test notifications",
+      "steps": [
+        "In System > Notifications, add an e-mail channel: the mail server's certificate is verified, also with SMTPS on port 465, unless the channel allows a self-signed one",
+        "Send a test: the message arrives, or the error is named",
+        "Telegram and webhook channels work the same way",
+        "The history lists the notifications sent"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_notifications.py",
+        "webui/tests/notifications.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0045",
+        "ADR-0046"
+      ],
+      "notes": "The tests use fake servers, and the E2E spec only opens the tab: no real delivery has been checked. Step 1 is implemented on the branch smtp-verify-tls (bbb773b), which is not merged: the working tree and the dev device still call STARTTLS without checking the certificate (ADR-0045)."
+    },
+    {
+      "id": "system.alert-events",
+      "category": "system",
+      "description": "Problems reach every enabled notification channel and show as a banner in the web UI",
+      "steps": [
+        "A pool not mounted or degraded, a failed SMART test, scrub errors, low space and a missed task each send one alert to every enabled channel, webhooks included",
+        "The web UI shows a health banner until the problem is gone",
+        "An alert is sent once per problem, not at every check"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0047"
+      ],
+      "notes": "Today RAID and SMART alerts go only to e-mail and Telegram channels."
+    },
+    {
+      "id": "system.telegram-from-the-device",
+      "category": "system",
+      "description": "Telegram alerts reach their chat from the dev device's network",
+      "steps": [
+        "The UNOS network gets IPv6, or the alerts go by e-mail instead, as the ADR decides",
+        "A test notification to a Telegram channel arrives"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0046"
+      ]
+    },
+    {
+      "id": "system.custom-command-tasks",
+      "category": "system",
+      "description": "An administrator schedules a custom shell command",
+      "steps": [
+        "Add a custom task with a command in System > Scheduler: it runs at its schedule",
+        "Its output and exit status are recorded with the run",
+        "Regular users can neither see nor create such tasks"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_scheduler_validation.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0044"
+      ],
+      "notes": "The command runs inside the supervisor container. No E2E test covers the custom task form."
+    },
+    {
+      "id": "system.scheduler-fixes",
+      "category": "system",
+      "description": "Editing a scheduled task keeps its last run, and every field of the task form is named by its label",
+      "steps": [
+        "Edit a task that ran: its last run and last status stay",
+        "Every control of the task form is reached through its label"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0175"
+      ]
+    },
+    {
+      "id": "system.scheduler-time-zone",
+      "category": "system",
+      "description": "Scheduled tasks run at the times of the host's time zone",
+      "steps": [
+        "Set the time zone, add a task for 03:00: it runs at 03:00 local time, also across a change of daylight saving time"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015"
+      ]
+    },
+    {
+      "id": "system.health-check",
+      "category": "system",
+      "description": "GET /api/v1/health answers without a session, for monitors and the containers' health checks",
+      "steps": [
+        "GET /api/v1/health answers 200 without a token",
+        "Successful health checks stay out of the supervisor's access log; failed ones and all other requests are logged"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_lifespan.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0176"
+      ],
+      "notes": "Over plain HTTP it is Caddy's rule: security.https-local-ca."
+    },
+    {
+      "id": "system.health-details-and-metrics",
+      "category": "system",
+      "description": "An administrator token reads the full health report and the Prometheus metrics",
+      "steps": [
+        "GET /api/v1/health/full with an administrator token reports the database, Docker, the pools and the monitors",
+        "GET /api/v1/health/prometheus answers metrics in the Prometheus text format, with the pool count",
+        "Both answer 401 without a token and 403 to a regular user"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_health_monitor.py",
+        "supervisor/tests/test_authz.py"
+      ],
+      "passes": false,
+      "notes": "Device check: 2026-11-05 (health/full, also after a reboot of the Phase 0 tree). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "system.in-app-updater",
+      "category": "system",
+      "description": "An administrator installs an update and rolls it back from System > Updates, or lets UNOS install updates by itself",
+      "steps": [
+        "System > Updates shows the current version and the latest release",
+        "Install Update backs up, installs the release, checks its health and rolls back on failure",
+        "Rollback returns to the version before",
+        "With automatic install on, a new release is installed at the configured interval"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0173",
+        "ADR-0049",
+        "ADR-0050"
+      ],
+      "notes": "Install Update and Rollback start nothing today: users update with deploy/update.sh (deploy.update-script)."
+    },
+    {
+      "id": "system.updates-tab-without-dead-buttons",
+      "category": "system",
+      "description": "Until the in-app updater works, System > Updates offers no Install or Rollback and points to update.sh",
+      "steps": [
+        "System > Updates shows the current and the latest version, and no Install Update or Rollback button",
+        "The tab names sudo /opt/unos/deploy/update.sh as the way to update"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0173"
+      ]
+    },
+    {
+      "id": "system.no-legacy-log-endpoints",
+      "category": "system",
+      "description": "The logs API has one entry endpoint for every source; the old dmesg and journal endpoints are gone",
+      "steps": [
+        "GET /api/v1/logs/dmesg and /api/v1/logs/journal answer 404",
+        "GET /api/v1/logs/entries?source=dmesg and ?source=journal serve them",
+        "No caller in webui/src uses the old paths"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207"
+      ]
+    },
+    {
+      "id": "system.no-legacy-basic-stats",
+      "category": "system",
+      "description": "The stats message of the WebSocket has one shape, without the fields kept for backward compatibility",
+      "steps": [
+        "The basic flat fields of the stats message (cpu_percent, memory_used and the others) are gone from supervisor/src/websocket/events.py",
+        "The legacy SystemStats interface is gone from webui/src/lib/stores/stats.ts, and every widget reads the current shape",
+        "tests/test_system.py and the dashboard specs pass"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207",
+        "ADR-0006"
+      ]
+    },
+    {
+      "id": "system.opt-in-telemetry",
+      "category": "system",
+      "description": "An administrator can send anonymous usage statistics, off unless turned on",
+      "steps": [
+        "Telemetry is off on a new installation",
+        "Turned on, it sends only the documented anonymous fields"
+      ],
+      "passes": false,
+      "notes": "Needs an ADR on whether UNOS collects anything at all."
+    },
+    {
+      "id": "system.network-bonding-and-vlans",
+      "category": "system",
+      "description": "An administrator bonds interfaces, tags VLANs and manages bridges",
+      "steps": [
+        "Create a bond (LACP or balance-rr) of two interfaces: the host uses it",
+        "Add a VLAN on an interface or a bond",
+        "Create a bridge for containers"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015"
+      ]
+    },
+    {
+      "id": "system.network-disable-confirmation",
+      "category": "system",
+      "description": "Disabling a network interface asks for confirmation and turns the interface back on by itself unless the change is confirmed",
+      "steps": [
+        "Disable an interface in System > Network: a dialog names the interface and warns that the connection to UNOS may drop",
+        "Unless the change is confirmed from the page within a set time, the interface comes back on by itself",
+        "A confirmed change stays after that time"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0035"
+      ]
+    },
+    {
+      "id": "system.boot-time-field",
+      "category": "system",
+      "description": "GET /api/v1/system/info names the boot time boot_time instead of uptime",
+      "steps": [
+        "GET /api/v1/system/info returns boot_time, the boot time in seconds since the epoch, and no field named uptime",
+        "The dashboard and System > General still show how long the host has run",
+        "webui/src/lib/api/system.ts and both formatUptime callers use the new field"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207"
+      ],
+      "notes": "Today the field uptime holds psutil.boot_time(); the pages compute the uptime from it, so only API clients are misled."
+    },
+    {
+      "id": "webui.navigation",
+      "category": "webui",
+      "description": "The sidebar offers the pages of the user's role and marks the open one",
+      "steps": [
+        "The sidebar shows the UNOS logo, the signed-in user and the pages of the role",
+        "The open page is highlighted, and the links switch pages"
+      ],
+      "verified_by": [
+        "webui/tests/navigation.spec.ts",
+        "webui/tests/roles.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0030"
+      ]
+    },
+    {
+      "id": "webui.system-tabs",
+      "category": "webui",
+      "description": "The tabs of the System page follow the URL",
+      "steps": [
+        "Each tab of System opens with its hash in the URL",
+        "/settings opens General, and the other tabs still switch",
+        "Back returns to the tab that was open"
+      ],
+      "verified_by": [
+        "webui/tests/system.spec.ts",
+        "webui/tests/settings.spec.ts"
+      ],
+      "passes": true
+    },
+    {
+      "id": "webui.expired-session",
+      "category": "webui",
+      "description": "An expired session leads to the sign-in page once, also from another tab",
+      "steps": [
+        "A request answered 401 leads to the sign-in page once, also during an upload or a download",
+        "A stats WebSocket closed with code 4401 leads to the sign-in page",
+        "A sign-out in another tab ends the session in this one",
+        "A sign-in as another account in another tab switches this tab to that account"
+      ],
+      "verified_by": [
+        "webui/tests/roles.spec.ts",
+        "webui/tests/files.spec.ts",
+        "webui/tests/backup-restore.spec.ts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0031"
+      ],
+      "notes": "No E2E test closes the stats WebSocket with 4401."
+    },
+    {
+      "id": "webui.keyboard-and-screen-readers",
+      "category": "webui",
+      "description": "Dialogs, lists, forms and the file manager work from the keyboard and with screen readers",
+      "steps": [
+        "Every dialog is named by its own title, and Escape returns to the dialog it was opened from",
+        "Escape in an open list closes only the list",
+        "Form fields are reached through their labels, and the SMB and NFS tabs work as tabs",
+        "In the file manager every name is a button: Enter or Space opens a folder or downloads a file, the focus follows the folder, and each checkbox is named Select <name>"
+      ],
+      "verified_by": [
+        "webui/tests/users.spec.ts",
+        "webui/tests/shares.spec.ts",
+        "webui/tests/files.spec.ts",
+        "webui/tests/security.spec.ts",
+        "webui/tests/logs.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0197"
+      ]
+    },
+    {
+      "id": "webui.audit-log-page",
+      "category": "webui",
+      "description": "An administrator reads, searches, filters and exports the audit log on a page, as a timeline",
+      "steps": [
+        "A page lists the audit entries newest first, on a timeline",
+        "Search and filters by user, action and time narrow the list",
+        "Export downloads the filtered entries"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0066"
+      ]
+    },
+    {
+      "id": "webui.light-theme",
+      "category": "webui",
+      "description": "A user switches between the dark and a light theme",
+      "steps": [
+        "The Account page offers Dark, Light and System",
+        "The choice stays across sign-ins, and every page uses the tokens of the chosen theme"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023"
+      ]
+    },
+    {
+      "id": "webui.dashboard-layout",
+      "category": "webui",
+      "description": "A user arranges, hides and shows the dashboard's widgets",
+      "steps": [
+        "Drag a widget to another place: it stays there after a reload",
+        "Hide a widget, and show it again"
+      ],
+      "passes": false
+    },
+    {
+      "id": "webui.mobile-layout",
+      "category": "webui",
+      "description": "The web UI works on a phone",
+      "steps": [
+        "On a 375 px wide screen every page is usable without horizontal scrolling",
+        "The navigation folds into a menu"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023"
+      ]
+    },
+    {
+      "id": "webui.translations",
+      "category": "webui",
+      "description": "The web UI can be shown in another language, Russian first",
+      "steps": [
+        "The Account page offers English and Russian",
+        "Every text of the web UI comes from a catalog with both"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023"
+      ]
+    },
+    {
+      "id": "webui.command-palette",
+      "category": "webui",
+      "description": "Ctrl+K (Cmd+K on macOS) opens a command palette that goes to any page or action",
+      "steps": [
+        "Ctrl+K opens the palette, and typing narrows the choices",
+        "Enter opens the chosen page or starts the action"
+      ],
+      "passes": false
+    },
+    {
+      "id": "webui.bulk-actions",
+      "category": "webui",
+      "description": "An administrator selects several containers or shares and acts on all of them at once",
+      "steps": [
+        "Select containers: Start, Stop and Restart act on all of them",
+        "Select shares: Delete asks once and deletes all of them"
+      ],
+      "passes": false
+    },
+    {
+      "id": "webui.no-http-polling",
+      "category": "webui",
+      "description": "Pages that show changing data get it over the WebSocket, never by polling the API",
+      "steps": [
+        "Container details, System > Logs, Storage and System > Updates update without setInterval polling",
+        "A test fails when a component fetches the API from setInterval"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0006"
+      ],
+      "notes": "setInterval polling remains in ContainerDetailDrawer.svelte, LogsTab.svelte, routes/storage/+page.svelte and UpdateTab.svelte."
+    },
+    {
+      "id": "webui.design-system-lint",
+      "category": "webui",
+      "description": "A check fails when web UI code outside lib/components/ui uses raw controls or raw Tailwind colours",
+      "steps": [
+        "make lint fails on a <button> element in a .svelte file outside webui/src/lib/components/ui",
+        "make lint fails on bg-slate-*, text-slate-* and other raw colour classes where a token exists",
+        "The existing uses (about 140 raw buttons and 440 raw colour classes) are replaced first, so the check starts green"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0012"
+      ]
+    },
+    {
+      "id": "webui.dialog-stack",
+      "category": "webui",
+      "description": "Escape closes only the top dialog when dialogs are stacked",
+      "steps": [
+        "Open a dialog from a dialog: Escape closes the top one and keeps the other",
+        "Each dialog's title id is unique, and a test fails without it"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0175",
+        "ADR-0197"
+      ]
+    },
+    {
+      "id": "deploy.install-script",
+      "category": "deploy",
+      "description": "install.sh installs UNOS on a Debian or Ubuntu host in one command",
+      "steps": [
+        "Run install.sh on a fresh host: it installs the host packages, generates the secrets, starts both containers and the unos unit",
+        "It prints the HTTPS address, the certificate warning and the first-run steps",
+        "A second run keeps the smb.conf that UNOS generated"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0028",
+        "ADR-0029"
+      ],
+      "notes": "The tests read the script; it has not run in this phase. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "deploy.update-script",
+      "category": "deploy",
+      "description": "update.sh updates UNOS from its git branch with a backup, a health check and an automatic rollback",
+      "steps": [
+        "Run sudo /opt/unos/deploy/update.sh: it refuses a checkout with local changes or on another branch",
+        "It backs up the database and the data volume, builds the new images while UNOS runs, and restarts",
+        "If the new version does not answer over HTTP and HTTPS in time, or the update is interrupted, the old version comes back",
+        "A second update.sh while one runs is refused"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0049"
+      ],
+      "notes": "The tests read the script; it has not run in this phase (the dev device is deployed with scripts/dev/deploy.sh). Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "deploy.uninstall-script",
+      "category": "deploy",
+      "description": "uninstall.sh removes UNOS and keeps the SMB host accounts and the pools' data",
+      "steps": [
+        "Run uninstall.sh: the containers, images and the unos unit are gone",
+        "The passdb entries of UNOS's SMB accounts are removed, and the accounts and the group unos-smb stay",
+        "smb.conf.original is restored when install.sh kept it, and the last message names what stayed"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0180"
+      ],
+      "notes": "The tests read the script; it has not run in this phase. Open: the device check and the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "deploy.health-checks-and-start-order",
+      "category": "deploy",
+      "description": "Both containers report their health to Docker, and the web UI starts only once the supervisor is healthy",
+      "steps": [
+        "docker ps shows both containers healthy after a start",
+        "The web UI waits for the supervisor's health check, which gets 10 minutes of start period",
+        "The health checks carry no credentials"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0176"
+      ],
+      "notes": "Device check: 2026-11-07 (scripts/dev/deploy.sh up: both containers healthy). Open: the re-check after a reboot (ADR-0018)."
+    },
+    {
+      "id": "deploy.release-images",
+      "category": "deploy",
+      "description": "A release is a git tag, and its amd64 and arm64 images come from GHCR instead of builds on the device",
+      "steps": [
+        "Pushing a tag v<x.y.z> builds and publishes both images to GHCR",
+        "update.sh pulls the images of a tag, backs up, checks health and rolls back",
+        "No image is built on the device"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0050",
+        "ADR-0214"
+      ]
+    },
+    {
+      "id": "deploy.digest-pinned-base-images",
+      "category": "deploy",
+      "description": "The Dockerfiles pin their base images by digest",
+      "steps": [
+        "Every FROM line names an image by digest, with the tag in a comment",
+        "Dependabot proposes the digest updates"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0015",
+        "ADR-0218"
+      ]
+    },
+    {
+      "id": "deploy.tmpfs-for-small-boards",
+      "category": "deploy",
+      "description": "The supervisor's /tmp tmpfs fits boards with 1 GB of RAM",
+      "steps": [
+        "The tmpfs size follows the owner's choice: 25 percent of RAM, or a lower fixed cap with a lower backup size limit",
+        "Backups and restores within the limit still work on a 1 GB board"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0177"
+      ]
+    },
+    {
+      "id": "deploy.docker-log-rotation",
+      "category": "deploy",
+      "description": "Docker's json-file logs of the UNOS containers are rotated",
+      "steps": [
+        "The compose file, or the host's daemon.json, caps each log at a set size and number of files",
+        "The measured log growth stays under the cap"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0178"
+      ]
+    },
+    {
+      "id": "deploy.uninstall-samba-restore",
+      "category": "deploy",
+      "description": "uninstall.sh restarts smbd once and restores smb.conf.original atomically",
+      "steps": [
+        "With smb.conf.original present, uninstall.sh restarts smbd once",
+        "The restore writes a temporary file and moves it into place"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0175"
+      ]
+    },
+    {
+      "id": "deploy.no-legacy-network-recreate",
+      "category": "deploy",
+      "description": "install.sh and update.sh start UNOS without the compose down kept for networks of releases before the fixed subnet",
+      "steps": [
+        "update.sh restarts with docker compose up -d, and the comment about releases without the fixed subnet is gone",
+        "install.sh starts UNOS without docker compose down --remove-orphans, and its comment about older installs is gone",
+        "tests/test_deploy_scripts.py checks both starts"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207",
+        "ADR-0048"
+      ]
+    },
+    {
+      "id": "deploy.one-caddyfile",
+      "category": "deploy",
+      "description": "The web UI's Caddyfile exists once",
+      "steps": [
+        "deploy/Caddyfile, a copy that nothing uses, is deleted, and webui/Caddyfile stays",
+        "Nothing in the repository refers to the deleted copy"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0201"
+      ]
+    },
+    {
+      "id": "deploy.no-legacy-smb-conf-recognition",
+      "category": "deploy",
+      "description": "install.sh recognizes the smb.conf that UNOS wrote by its header line alone",
+      "steps": [
+        "install.sh keeps an existing /etc/samba/smb.conf only when it starts with the line '# Generated by UNOS from its database.'",
+        "A file that only has server string = UNOS NAS is handled like any other smb.conf of the host",
+        "tests/test_deploy_scripts.py checks both cases"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207",
+        "ADR-0084"
+      ],
+      "notes": "configure_samba in deploy/install.sh also keeps any smb.conf with server string = UNOS NAS, for installations of releases that had not imported their shares into the database yet."
+    },
+    {
+      "id": "deploy.container-logs-off-the-system-disk",
+      "category": "deploy",
+      "description": "The UNOS containers' logs no longer grow on the system disk with every request",
+      "steps": [
+        "docker logs still shows the recent lines of unos-supervisor and unos-webui",
+        "On the dev device, 100 API calls with a cached token write at most 0.1 MiB to the SD card, measured with scripts/dev/sd.sh"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0214",
+        "ADR-0178",
+        "ADR-0222"
+      ],
+      "notes": "On 2026-11-07 one API call with a cached token wrote about 0.02 MiB, mostly access-log lines in the containers' json-file logs (ADR-0222)."
+    },
+    {
+      "id": "device.key-only-ssh",
+      "category": "device",
+      "description": "The dev device accepts SSH only with keys, and the passwords the repository once published are changed",
+      "steps": [
+        "SSH to the device with a password is refused, and root logs in by key only",
+        "The root password and the UNOS administrator's password that CLAUDE.md once published are changed",
+        "scripts/dev/ssh.sh connects with the key, and dev.env holds no SSH password"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0212",
+        "ADR-0024"
+      ],
+      "notes": "Owner action."
+    },
+    {
+      "id": "device.docker-data-root-on-hdd",
+      "category": "device",
+      "description": "Docker's data root on the dev device is on the hard disk, so image layers, the build cache and container layers stay off the SD card",
+      "steps": [
+        "The hard disk is mounted before Docker starts, at every boot",
+        "docker info shows the data root on the hard disk",
+        "The SD writes that scripts/dev/deploy.sh prints for a deploy no longer include image layers"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0214"
+      ],
+      "notes": "Owner decision: a change of the host, not of UNOS."
+    },
+    {
+      "id": "device.scenario-checks-in-repo",
+      "category": "device",
+      "description": "The device checks of the host-level entries are scripts in the repository that report their SD writes",
+      "steps": [
+        "scripts/dev/ has a check per area (files, volumes, SMART, backups, the SMB flows with a temporary account and share) that cleans up after itself",
+        "Each check prints its results and the MiB it wrote to the SD card",
+        "The feature-pass skill names the check of each host-level entry"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0018",
+        "ADR-0185",
+        "ADR-0214"
+      ],
+      "notes": "The device checks of the slice 1 and slice 2 deploys were scratch scripts outside the repository."
+    },
+    {
+      "id": "testing.per-test-temp-paths",
+      "category": "testing",
+      "description": "Each backend test uses temporary paths of its own, so test runs can go in parallel",
+      "steps": [
+        "tests/conftest.py sets no fixed /tmp path (test_smb.conf, test_exports, test_pools); each test gets its paths from tmp_path",
+        "Two runs of make test at once, in two worktrees, both pass"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0210"
+      ]
+    },
+    {
+      "id": "testing.compose-stack-per-worktree",
+      "category": "testing",
+      "description": "The compose test stack runs once per worktree, with its own project name, ports and subnet",
+      "steps": [
+        "The project name, the ports and the subnet of deploy/docker-compose.test.yml come from settings that scripts/test-cycle.sh derives from the worktree",
+        "Two worktrees run scripts/test-cycle.sh at once",
+        "Its down -v removes only its own project"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0210"
+      ]
+    },
+    {
+      "id": "testing.remove-dead-mock-layer",
+      "category": "testing",
+      "description": "The unused mock layer is gone: supervisor/tests/mocks and UNOS_TEST_MODE",
+      "steps": [
+        "supervisor/tests/mocks/ is deleted (nothing imports it)",
+        "UNOS_TEST_MODE is gone from deploy/docker-compose.test.yml (no code reads it)",
+        "docs/TESTING.md no longer describes them"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207"
+      ]
+    },
+    {
+      "id": "testing.coverage-report",
+      "category": "testing",
+      "description": "make check reports the backend's line coverage and fails below an agreed floor",
+      "steps": [
+        "make test prints the coverage of supervisor/src",
+        "Coverage below the floor fails the run"
+      ],
+      "passes": false,
+      "notes": "The February 2026 roadmap aimed at 80 percent; the floor needs the owner's decision."
+    },
+    {
+      "id": "testing.smb-real-world-checks",
+      "category": "testing",
+      "description": "The SMB behaviours that only real hosts and clients show are checked",
+      "steps": [
+        "uninstall.sh's systemctl try-restart smbd ends the open sessions",
+        "The testparm tolerance holds with a Samba older than 4.22",
+        "A Windows client connects with the ipv6-literal.net address that the Account page shows",
+        "A share folder owned by another account inside a sticky folder is refused"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0195",
+        "ADR-0091",
+        "ADR-0196"
+      ]
+    },
+    {
+      "id": "testing.no-compat-skips",
+      "category": "testing",
+      "description": "The E2E specs skip only for what the stand-in lacks, never for older supervisors",
+      "steps": [
+        "The skip for a target that runs a supervisor without the SMB API of this release is gone from webui/tests/api.spec.ts",
+        "tests/test_standin.py fails on a skip that names no missing stand-in feature"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0207",
+        "ADR-0215"
+      ]
+    },
+    {
+      "id": "testing.remove-dead-stub-checks",
+      "category": "testing",
+      "description": "The stub checks of supervisor/tests/test_smb_models.py, whose stubs real code has replaced, are removed",
+      "steps": [
+        "TestStubs loses the NotImplementedError test, which skips for every function, and its table loses the work-package labels",
+        "The signature checks of those functions stay as interface tests",
+        "make test TESTS=tests/test_smb_models.py runs with no skip"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0186",
+        "ADR-0207"
+      ]
+    },
+    {
+      "id": "ci.actions-pinned-by-sha",
+      "category": "ci",
+      "description": "The GitHub Actions of the workflows are pinned by commit SHA",
+      "steps": [
+        "Every uses: line in .github/workflows names a full commit SHA, with the version in a comment",
+        "Dependabot proposes their updates",
+        "A test fails on a uses: line pinned by tag only"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0190",
+        "ADR-0218"
+      ]
+    },
+    {
+      "id": "ci.branch-protection",
+      "category": "ci",
+      "description": "main takes changes only through pull requests whose required checks passed",
+      "steps": [
+        "Branch protection on main requires a pull request and the Unit Tests, Lint, Frontend and commits checks",
+        "Force pushes to main and its deletion are refused"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0208",
+        "ADR-0216"
+      ],
+      "notes": "Owner action on GitHub."
+    },
+    {
+      "id": "ci.ledger-changes-checked",
+      "category": "ci",
+      "description": "On a pull request, CI refuses ledger entries that were dropped or reworded without an ADR",
+      "steps": [
+        "The Unit Tests job checks out the whole history (fetch-depth: 0), so origin/main is there for tests/test_feature_list.py to find the merge base",
+        "Once main has a ledger, a pull request that drops an entry, or changes its description or steps, without an ADR that the pull request adds and that names the entry's id (a changed entry also lists it in adr) fails tests/test_feature_list.py in CI"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0203"
+      ],
+      "notes": "Step 1 holds: .github/workflows/test.yml checks out the whole history for the Unit Tests job. Until the ledger is merged into main the comparison skips, locally and in CI: there is no ledger at the base. FEATURE_LIST_BASE set to a base without a ledger makes the tests fail, so CI does not set it. The rule itself runs on fixture ledgers in every run of make test-fast (TestTheRequirementChangeRule)."
+    },
+    {
+      "id": "ci.container-image-scanning",
+      "category": "ci",
+      "description": "CI scans the supervisor and web UI images for known vulnerabilities",
+      "steps": [
+        "The weekly audit workflow builds both images and scans them",
+        "A finding of high severity fails the run and names the package"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0218"
+      ]
+    },
+    {
+      "id": "ci.samba-in-ci",
+      "category": "ci",
+      "description": "CI checks the rendered smb.conf with Samba's real testparm",
+      "steps": [
+        "The test job installs samba-common-bin",
+        "tests/test_smbconf_testparm.py runs in CI and is not skipped"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0189",
+        "ADR-0190"
+      ]
+    },
+    {
+      "id": "ci.python-type-check",
+      "category": "ci",
+      "description": "A type checker checks supervisor/src in make check and CI",
+      "steps": [
+        "make lint runs mypy or pyright on supervisor/src, with the settings in the repository",
+        "CI fails on a type error"
+      ],
+      "passes": false
+    },
+    {
+      "id": "ci.shellcheck",
+      "category": "ci",
+      "description": "shellcheck checks every shell script in make check and CI",
+      "steps": [
+        "make lint runs shellcheck on the scripts of deploy/, scripts/ and .claude/hooks/",
+        "CI fails on a finding"
+      ],
+      "passes": false
+    },
+    {
+      "id": "ci.wider-ruff-rules",
+      "category": "ci",
+      "description": "ruff checks more than pyflakes findings and syntax errors",
+      "steps": [
+        "The ruff rule set grows beyond F and E9 (for example B, E, UP), with the findings fixed first",
+        "CI fails on a finding"
+      ],
+      "passes": false
+    },
+    {
+      "id": "ci.webui-eslint",
+      "category": "ci",
+      "description": "ESLint and Prettier check the web UI in make check and CI",
+      "steps": [
+        "make frontend runs ESLint (with the Svelte plugin) and Prettier's check on webui/src",
+        "CI fails on a finding"
+      ],
+      "passes": false
+    },
+    {
+      "id": "ci.pinned-check-tools",
+      "category": "ci",
+      "description": "Every tool the checks install is pinned",
+      "steps": [
+        "pip-audit's own environment gets pinned pip, setuptools and wheel, with hashes",
+        "scripts/test-cycle.sh runs Playwright from webui/node_modules, not through npx",
+        "pip installs prefer wheels (--only-binary) where they exist"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0175",
+        "ADR-0190"
+      ]
+    },
+    {
+      "id": "ci.bootstrap-in-ci",
+      "category": "ci",
+      "description": "CI runs make setup on a clean checkout, so that the bootstrap cannot break unnoticed",
+      "steps": [
+        "A CI workflow, on a schedule and on demand, runs make setup on a fresh ubuntu-latest runner",
+        "The same job then runs make check-fast and make smoke, and fails when the setup or either of them fails"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0217"
+      ],
+      "notes": "Today only supervisor/tests/test_repo_tooling.py runs scripts/setup.sh, with stub tools instead of the network."
+    },
+    {
+      "id": "ci.secret-scan-of-history",
+      "category": "ci",
+      "description": "CI scans the whole git history for credentials with a pinned secret scanner",
+      "steps": [
+        "A CI job checks out the full history and runs a secret scanner, pinned by its commit SHA or image digest, over every commit",
+        "A commit that adds a credential fails the job",
+        "The job passes on main once the owner has cleaned the passwords once published in CLAUDE.md out of the history (ADR-0024)"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0024",
+        "ADR-0212"
+      ],
+      "notes": "The history still holds the passwords that CLAUDE.md once published."
+    }
+  ]
+}

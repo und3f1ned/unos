@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# testparm for supervisor/tests/test_smbconf_testparm.py on a workstation without Samba: runs
+# the dev device's own testparm (Samba's real parser) on a copy of the file in the device's
+# RAM, with the device's root filesystem read-only (dev_remote_ro of env.sh, ADR-0221), and
+# deletes the copy. It takes no device lock and prints no SD writes. Put this directory first
+# on PATH, as an absolute path (pytest runs in supervisor/), from the repository root; make test
+# holds the lock of the backend tests, and sd.sh measures the SD writes of the run:
+#
+#   PATH="$PWD/scripts/dev/bin:$PATH" scripts/dev/sd.sh measure testparm -- make test TESTS=tests/test_smbconf_testparm.py
+#
+# Accepts only the call that test makes: testparm -s --suppress-prompt FILE.
+set -euo pipefail
+if [ $# -ne 3 ] || [ "$1" != -s ] || [ "$2" != --suppress-prompt ] || [ ! -f "$3" ]; then
+    echo "testparm (scripts/dev/bin): only 'testparm -s --suppress-prompt FILE' is supported" >&2
+    exit 2
+fi
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+. "$here/env.sh" || exit 1
+
+# The configuration travels on standard input, after the script (read by its first command).
+REMOTE_TESTPARM='
+umask 077
+f=$(mktemp /dev/shm/unos-dev-testparm.XXXXXX) || exit 1
+head -c "$1" > "$f"
+mkdir -p -m 0755 /run/samba
+rc=0
+testparm -s --suppress-prompt "$f" < /dev/null || rc=$?
+rm -f "$f"
+exit "$rc"'
+
+# --- main
+size=$(wc -c < "$3" | tr -d ' ')
+{
+    printf '{\n%s\n%s\n}\n' "$DEV_RO_ROOT" "$REMOTE_TESTPARM"
+    cat "$3"
+} | dev_ssh "unshare --mount --propagation private bash -s -- $(dev_quote "$size")"

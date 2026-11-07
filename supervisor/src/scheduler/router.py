@@ -19,8 +19,10 @@ because the tasks file may predate validation or have been edited by hand.
 
 import json
 import os
+import secrets
 import stat
 import subprocess
+import tempfile
 import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -29,13 +31,19 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from croniter import croniter
 
 from ..auth.utils import require_admin, verify_token
-from ..backup.router import copy_database
+from ..backup.router import (
+    backup_temp_file,
+    copy_database,
+    publish_backup_file,
+    remove_stale_temp_files,
+)
 from ..security.validators import (
     pools_base,
     safe_path_join,
     validate_disk_target,
     validate_pool_name,
 )
+from ..storage import disks as storage_disks
 from .schemas import ScheduledTask, TaskRun, TaskType, ScheduleFrequency
 
 router = APIRouter(
@@ -48,6 +56,15 @@ SNAPSHOT_DIR_NAME = ".snapshots"
 MAX_TASK_NAME_LENGTH = 100
 MAX_COMMAND_LENGTH = 4096
 MAX_KEEP_COUNT = 1000
+# Seconds `smartctl -t short` may take. It only starts the test, which then
+# runs inside the disk, so it normally returns within seconds; a disk in
+# standby spins up first, which takes tens of seconds behind some USB
+# bridges. Nobody waits for a scheduled run, so this allows more than the
+# 30 s of the health API's test endpoint, like storage.disks.SMARTCTL_TIMEOUT.
+SMART_TEST_TIMEOUT = 60
+# Seconds `btrfs scrub start` may take: it returns once the scrub runs in the
+# background, unless the filesystem hangs (as storage.pools.SCRUB_COMMAND_TIMEOUT).
+SCRUB_START_TIMEOUT = 60
 
 TASKS_FILE = "/data/scheduled_tasks.json"
 RUNS_FILE = "/data/task_runs.json"
@@ -151,10 +168,16 @@ def pool_path(pool_name: str | None) -> Path:
 
 
 def disk_device(target_disk: str | None) -> str:
-    """Return ``/dev/<disk>`` for a target given as ``sda`` or ``/dev/sda``."""
+    """Return ``/dev/<disk>`` for a whole disk of the host given as ``sda`` or ``/dev/sda``.
+
+    Blocking (lsblk runs on the host): call it in a worker thread.
+    HTTPException 400 for anything but one of the host's whole disks, 500
+    when the host's disks cannot be listed (storage.disks.whole_disk_device,
+    which the SMART endpoints of the health API use as well).
+    """
     if not target_disk:
         raise _bad_task("No target disk specified")
-    return validate_disk_target(target_disk)
+    return storage_disks.whole_disk_device(target_disk)
 
 
 def _validate_schedule(task: ScheduledTask) -> None:
@@ -172,12 +195,14 @@ def _validate_schedule(task: ScheduledTask) -> None:
             raise _bad_task("A valid cron expression is required for a custom schedule")
 
 
-def validate_task(task: ScheduledTask) -> ScheduledTask:
+def validate_task(task: ScheduledTask, *, kept_disk: str | None = None) -> ScheduledTask:
     """Validate a task before it is saved and normalize its targets.
 
     Raises HTTPException(400) for invalid input. Validation lives here rather
     than in the schema so that tasks already stored in TASKS_FILE keep
     loading (load_tasks drops the whole file if one entry fails to parse).
+
+    kept_disk: the stored disk of the task being edited; it is kept without the host check (the run checks it).
     """
     name = task.name.strip()
     if not name or len(name) > MAX_TASK_NAME_LENGTH or not name.isprintable():
@@ -192,7 +217,12 @@ def validate_task(task: ScheduledTask) -> ScheduledTask:
     if task.task_type in (TaskType.SNAPSHOT, TaskType.SCRUB):
         pool_path(task.target_pool)
     elif task.task_type == TaskType.SMART_TEST:
-        task.target_disk = disk_device(task.target_disk)
+        # An edit that keeps the disk of the task does not need the disk
+        # connected: the disk is checked on the host again when the task runs.
+        if kept_disk is not None and task.target_disk and validate_disk_target(task.target_disk) == kept_disk:
+            task.target_disk = kept_disk
+        else:
+            task.target_disk = disk_device(task.target_disk)
     elif task.task_type == TaskType.CUSTOM:
         command = task.command or ""
         if not command.strip():
@@ -205,6 +235,26 @@ def validate_task(task: ScheduledTask) -> ScheduledTask:
 
 def _run(cmd: list[str] | str, **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+
+
+def _start_scrub(pool: Path) -> subprocess.CompletedProcess:
+    """Run `btrfs scrub start` on ``pool``, within SCRUB_START_TIMEOUT; stderr: its error output.
+
+    btrfs forks the process that runs the scrub and returns at once, but
+    that process keeps the standard output and error of btrfs until the
+    scrub ends, hours later on a large pool. Read through pipes
+    (capture_output), they would end only then, and the run would time out
+    while the scrub runs: the error output goes to a temporary file, the
+    output (a line saying that the scrub started) nowhere.
+    """
+    with tempfile.TemporaryFile() as stderr:
+        result = subprocess.run(
+            ["btrfs", "scrub", "start", str(pool)],
+            stdout=subprocess.DEVNULL, stderr=stderr, timeout=SCRUB_START_TIMEOUT,
+        )
+        stderr.seek(0)
+        result.stderr = stderr.read().decode(errors="replace")
+    return result
 
 
 def _real_dir(path: Path) -> bool:
@@ -242,11 +292,14 @@ def _create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
     BACKUP_DIR = Path(SCHEDULED_BACKUP_DIR)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_name = f"auto_backup_{timestamp}.tar.gz"
-    backup_path = BACKUP_DIR / backup_name
+    # Written under a temporary name, which the backup list does not show, and
+    # published without replacing a backup made in the same second.
+    tmp = backup_temp_file(BACKUP_DIR, "scheduled")
 
     try:
+        # Left by scheduled backups (or creates, uploads) that were killed,
+        # e.g. by a power cut in the night.
+        remove_stale_temp_files(BACKUP_DIR)
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir_path = Path(tmpdir)
 
@@ -283,22 +336,30 @@ def _create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
             if tasks_file.exists():
                 shutil.copy2(tasks_file, tmpdir_path / "scheduled_tasks.json")
 
-            # Create tarball
-            with tarfile.open(backup_path, "w:gz") as tar:
-                for item in tmpdir_path.iterdir():
+            # Create tarball, the manifest first: the backup list reads each
+            # backup only up to it (a tmpfs lists the newest file first).
+            with tarfile.open(tmp, "w:gz") as tar:
+                for item in sorted(tmpdir_path.iterdir(), key=lambda p: (p.name != "manifest.json", p.name)):
                     tar.add(item, arcname=item.name)
+        backup_name = publish_backup_file(tmp, "auto_backup", ".tar.gz")
 
-        # Cleanup old auto backups if keep_count is set
+        # Cleanup old auto backups if keep_count is set. A backup that is gone
+        # meanwhile was removed by a scheduled backup running at the same time.
         cleanup_msg = ""
         if keep_count and keep_count > 0:
-            auto_backups = sorted(
-                [f for f in BACKUP_DIR.glob("auto_backup_*.tar.gz")],
-                key=lambda x: x.stat().st_mtime,
-                reverse=True
-            )
+            auto_backups = []
+            for path in BACKUP_DIR.glob("auto_backup_*.tar.gz"):
+                try:
+                    auto_backups.append((path.stat().st_mtime, path))
+                except FileNotFoundError:
+                    continue
+            auto_backups.sort(reverse=True)
             deleted = 0
-            for old_backup in auto_backups[keep_count:]:
-                old_backup.unlink()
+            for _, old_backup in auto_backups[keep_count:]:
+                try:
+                    old_backup.unlink()
+                except FileNotFoundError:
+                    continue
                 deleted += 1
             if deleted > 0:
                 cleanup_msg = f" Cleaned up {deleted} old backup(s)."
@@ -307,6 +368,8 @@ def _create_scheduled_backup(keep_count: int | None) -> tuple[bool, str]:
 
     except Exception as e:
         return False, f"Backup failed: {str(e)}"
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
@@ -396,15 +459,37 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
 
         elif task.task_type == TaskType.SCRUB:
             pool = pool_path(task.target_pool)
-            result = await asyncio.to_thread(_run, ["btrfs", "scrub", "start", str(pool)])
+            # Not mounted, the path is a folder on the root filesystem: btrfs
+            # would scrub that filesystem if it is btrfs.
+            if not await asyncio.to_thread(_pool_is_mounted, pool):
+                return False, f"Pool {task.target_pool} is not mounted at {pool}"
+            # Without a timeout, a hung filesystem would block a worker thread
+            # for good and leave the run "running".
+            try:
+                result = await asyncio.to_thread(_start_scrub, pool)
+            except subprocess.TimeoutExpired:
+                return False, (
+                    f"btrfs scrub start timed out: {task.target_pool} did not answer within "
+                    f"{SCRUB_START_TIMEOUT} seconds. The pool may not be responding."
+                )
             if result.returncode != 0:
                 return False, result.stderr
             return True, "Scrub started"
 
         elif task.task_type == TaskType.SMART_TEST:
-            # Accepts "sda" and "/dev/sda" (what the UI sends).
-            device = disk_device(task.target_disk)
-            result = await asyncio.to_thread(_run, ["smartctl", "-t", "short", device])
+            # Accepts "sda" and "/dev/sda" (what the UI sends); checks the host's disks.
+            device = await asyncio.to_thread(disk_device, task.target_disk)
+            # Without a timeout, a hung disk or USB bridge would block a worker
+            # thread for good and leave the run "running".
+            try:
+                result = await asyncio.to_thread(
+                    _run, ["smartctl", "-t", "short", device], timeout=SMART_TEST_TIMEOUT
+                )
+            except subprocess.TimeoutExpired:
+                return False, (
+                    f"smartctl timed out: {device} did not answer within {SMART_TEST_TIMEOUT} "
+                    "seconds. The disk or its USB bridge may not be responding."
+                )
             if result.returncode != 0:
                 return False, result.stderr or result.stdout
             return True, "SMART test started"
@@ -519,10 +604,12 @@ async def list_tasks(_: dict = Depends(verify_token)):
 @router.post("/tasks", response_model=ScheduledTask)
 async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
     """Create a new scheduled task."""
-    validate_task(task)
+    # In a worker thread: the disk of a SMART task is looked up on the host.
+    await asyncio.to_thread(validate_task, task)
     tasks = load_tasks()
 
-    task.id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    # Random suffix: tasks created in the same second must not share an id.
+    task.id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}"
     task.next_run = get_next_run(task)
 
     tasks.append(task)
@@ -534,7 +621,10 @@ async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
 @router.put("/tasks/{task_id}", response_model=ScheduledTask)
 async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verify_token)):
     """Update a scheduled task."""
-    validate_task(task)
+    stored = next((t for t in load_tasks() if t.id == task_id), None)
+    kept_disk = stored.target_disk if stored and stored.task_type == TaskType.SMART_TEST else None
+    await asyncio.to_thread(validate_task, task, kept_disk=kept_disk)
+    # Read again: a run may have saved its result while the disk was checked.
     tasks = load_tasks()
 
     for i, t in enumerate(tasks):

@@ -420,15 +420,14 @@ class Updater:
                 shutil.rmtree(backup_path, ignore_errors=True)
             raise UpdateError(f"Backup failed: {e}")
 
-    async def _download_release(self, release: ReleaseInfo) -> Path:
-        """Download the release tarball."""
+    async def _download_release(self, release: ReleaseInfo, temp_dir: Path) -> Path:
+        """Download the release tarball into ``temp_dir`` (install_update removes it)."""
         client = await self._get_client()
 
         # Use source tarball from GitHub (more secure than arbitrary assets)
         # Format: https://github.com/owner/repo/archive/refs/tags/TAG.tar.gz
         download_url = f"https://github.com/und3f1ned/unos/archive/refs/tags/{release.tag_name}.tar.gz"
 
-        temp_dir = Path(tempfile.mkdtemp(prefix="unos-update-"))
         archive_path = temp_dir / f"unos-{release.tag_name}.tar.gz"
 
         try:
@@ -457,7 +456,6 @@ class Updater:
             return archive_path
 
         except Exception as e:
-            shutil.rmtree(temp_dir, ignore_errors=True)
             logger.error(f"Download failed: {e}")
             raise UpdateError(f"Download failed: {e}")
 
@@ -479,13 +477,10 @@ class Updater:
             if result.returncode != 0:
                 raise UpdateError(f"Failed to extract archive: {result.stderr}")
 
-            # Find the extracted directory (format: unos-TAG without 'v' prefix)
-            tag_without_v = release.tag_name.lstrip("v")
+            # The archive holds one directory: unos-TAG without the 'v' prefix.
             extracted_dirs = list(temp_extract.iterdir())
             if not extracted_dirs:
                 raise UpdateError("No files extracted from archive")
-
-            source_dir = extracted_dirs[0]  # Should be "unos-X.Y.Z"
 
             self._update_progress(UpdateStatus.INSTALLING, 70, "Installing update...")
 
@@ -582,8 +577,9 @@ class Updater:
             logger.info(f"Successfully applied update to {release.tag_name}")
 
         finally:
-            # Clean up temp files
-            shutil.rmtree(archive_path.parent, ignore_errors=True)
+            # Clean up the extracted files (install_update removes the
+            # temporary directory with the download)
+            shutil.rmtree(temp_extract, ignore_errors=True)
 
     async def _add_history_entry(
         self,
@@ -667,23 +663,29 @@ class Updater:
 
             try:
                 self._update_progress(UpdateStatus.BACKING_UP, 5, "Creating backup...")
-                backup_path = await self._create_backup()
+                await self._create_backup()
                 self._progress.can_rollback = True
                 self._save_progress_state()
 
-                # Download the release
-                archive_path = await self._download_release(release)
+                # The download lives in a temporary directory (in RAM in the
+                # container), removed once the update is done with it: after
+                # success, any failure and cancellation alike.
+                with tempfile.TemporaryDirectory(
+                    prefix="unos-update-", ignore_cleanup_errors=True
+                ) as temp_dir:
+                    # Download the release
+                    archive_path = await self._download_release(release, Path(temp_dir))
 
-                # Verify checksum if available and requested
-                if verify_checksum and release.checksum_sha256:
-                    self._update_progress(
-                        UpdateStatus.VERIFYING, 45, "Verifying checksum..."
-                    )
-                    if not await self._verify_checksum(archive_path, release.checksum_sha256):
-                        raise UpdateError("Checksum verification failed - download may be corrupted")
+                    # Verify checksum if available and requested
+                    if verify_checksum and release.checksum_sha256:
+                        self._update_progress(
+                            UpdateStatus.VERIFYING, 45, "Verifying checksum..."
+                        )
+                        if not await self._verify_checksum(archive_path, release.checksum_sha256):
+                            raise UpdateError("Checksum verification failed - download may be corrupted")
 
-                # Apply the update
-                await self._apply_update(archive_path, release)
+                    # Apply the update
+                    await self._apply_update(archive_path, release)
 
                 self._update_progress(
                     UpdateStatus.COMPLETED,

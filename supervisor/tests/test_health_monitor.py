@@ -15,6 +15,8 @@ from src.auth.utils import verify_token
 from src.main import app
 from src.storage import pools as storage_pools
 
+from .test_pool_persistence import install_fake_host
+
 health_router = importlib.import_module("src.health.router")
 main_module = importlib.import_module("src.main")
 
@@ -33,34 +35,30 @@ def _smartctl_json(serial: str, reallocated: int) -> str:
 
 
 @pytest.fixture
-def no_host(monkeypatch):
-    def forbidden(*args, **kwargs):
-        raise AssertionError("the SMART monitor must not run host commands")
+def smart_disk(monkeypatch, tmp_path):
+    """One data disk sda (FakeHost, lsblk on the host); set ``.reallocated`` per round.
 
-    monkeypatch.setattr(host, "run_on_host", forbidden)
-
-
-@pytest.fixture
-def smart_disk(monkeypatch, tmp_path, no_host):
-    """One data disk sda behind fake lsblk/smartctl; set ``.reallocated`` per round."""
+    The host also has its boot SD card and zram, which the monitor leaves alone.
+    """
     disk = SimpleNamespace(reallocated=0, rounds=0, stop_after=None)
     monkeypatch.setattr(health_router, "SMART_HISTORY_FILE", str(tmp_path / "smart_history.json"))
+    fake = install_fake_host(monkeypatch)
+    fake.add_disk("sda", serial="WD-1")
+    host_run = fake.run
 
-    def run(cmd, **kwargs):
+    def run_on_host(cmd, **kwargs):
         if cmd[0] == "lsblk":
             disk.rounds += 1
             if disk.stop_after is not None and disk.rounds >= disk.stop_after:
                 health_router._smart_monitor_running = False  # this is the last round
-            devices = {"blockdevices": [
-                {"name": "mmcblk1", "type": "disk", "mountpoint": None,
-                 "children": [{"name": "mmcblk1p1", "mountpoint": "/"}]},
-                {"name": "sda", "type": "disk", "mountpoint": None},
-            ]}
-            return subprocess.CompletedProcess(cmd, 0, json.dumps(devices), "")
+        return host_run(cmd, **kwargs)
+
+    def smartctl(cmd, **kwargs):
         assert cmd == ["smartctl", "-n", "standby", "-j", "-a", "/dev/sda"], cmd
         return subprocess.CompletedProcess(cmd, 0, _smartctl_json("WD-1", disk.reallocated), "")
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(host, "run_on_host", run_on_host)
+    monkeypatch.setattr(subprocess, "run", smartctl)
     return disk
 
 
@@ -313,3 +311,133 @@ class TestDockerComponent:
         [(kwargs, client)] = made
         assert kwargs == {"timeout": main_module.DOCKER_CHECK_TIMEOUT}
         assert client.closed
+
+
+def _pool_health(errors: int = 0, checked: str = "2026-11-06T07:00:00") -> "health_router.RaidHealthInfo":
+    return health_router.RaidHealthInfo(
+        pool="data", mount_point="/mnt/pools/data", profile="single",
+        status="healthy" if errors == 0 else "error", devices=[], total_errors=errors, last_checked=checked,
+    )
+
+
+class TestRaidStatusFile:
+    """raid_status.json is on the system disk (an SD card on small boards): the RAID
+    monitor writes it when the state of a pool changes, not after every check."""
+
+    @pytest.fixture
+    def raid_file(self, tmp_path, monkeypatch):
+        path = tmp_path / "raid_status.json"
+        monkeypatch.setattr(health_router, "RAID_STATUS_FILE", str(path))
+        monkeypatch.setattr(health_router, "_latest_raid_status", None, raising=False)
+        alerts = []
+
+        async def fake_alert(*args):
+            alerts.append(args)
+
+        async def stop_after_one_round(_seconds):
+            health_router._raid_monitor_running = False
+
+        monkeypatch.setattr(health_router, "send_raid_alert", fake_alert)
+        monkeypatch.setattr(health_router.asyncio, "sleep", stop_after_one_round)
+        return SimpleNamespace(path=path, alerts=alerts)
+
+    async def _round(self, monkeypatch, *pools):
+        async def check():
+            return list(pools)
+
+        monkeypatch.setattr(health_router, "check_raid_health", check)
+        monkeypatch.setattr(health_router, "_raid_monitor_running", True)
+        await health_router.raid_monitor_loop()
+
+    async def test_a_check_that_changes_nothing_does_not_write_the_file(self, raid_file, monkeypatch):
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00"))
+        written = raid_file.path.read_text()
+        stat_before = raid_file.path.stat()
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:05:00"))
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:10:00"))
+        assert raid_file.path.read_text() == written
+        assert raid_file.path.stat().st_mtime_ns == stat_before.st_mtime_ns
+        assert json.loads(written)["data"]["last_checked"] == "2026-11-06T07:00:00"
+
+    async def test_a_change_of_state_is_written(self, raid_file, monkeypatch):
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00"))
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:05:00"))
+        stored = json.loads(raid_file.path.read_text())["data"]
+        assert (stored["status"], stored["total_errors"], stored["last_checked"]) == ("error", 3, "2026-11-06T07:05:00")
+        assert len(raid_file.alerts) == 1
+        # The next check compares with the stored state: no second alert.
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:10:00"))
+        assert len(raid_file.alerts) == 1
+
+    @pytest.mark.parametrize("content", [None, "{not json", '{"data": "garbage"}', "[1, 2]"])
+    async def test_a_missing_or_unreadable_file_is_written(self, raid_file, monkeypatch, content):
+        if content is not None:
+            raid_file.path.write_text(content)
+        await self._round(monkeypatch, _pool_health())
+        assert json.loads(raid_file.path.read_text())["data"]["status"] == "healthy"
+
+    async def test_a_stats_reset_starts_from_the_latest_check(self, raid_file, monkeypatch, admin_api):
+        """Not from the file, whose check times can be old: it is written only when the state changes."""
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:00:00"))
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:05:00"))
+
+        health_router._clear_raid_errors("data")
+
+        shown = admin_api.get("/api/v1/health/raid-monitor/status").json()["last_status"]["data"]
+        stored = json.loads(raid_file.path.read_text())["data"]
+        for entry in (shown, stored):
+            assert (entry["status"], entry["total_errors"], entry["last_checked"]) == (
+                "healthy", 0, "2026-11-06T07:05:00")
+        await self._round(monkeypatch, _pool_health(errors=3, checked="2026-11-06T07:10:00"))
+        assert len(raid_file.alerts) == 2  # errors after the reset are new again
+
+    @pytest.fixture
+    def btrfs_reset(self, tmp_path, monkeypatch, admin_api):
+        """A pool folder for the reset endpoint, and a recording subprocess.run (after admin_api's fake host)."""
+        monkeypatch.setattr(health_router.storage_pools.settings, "pools_base_path", str(tmp_path))
+        (tmp_path / "data").mkdir()
+        calls = []
+
+        def run(cmd, **kwargs):
+            try:
+                asyncio.get_running_loop()
+                on_loop = True
+            except RuntimeError:
+                on_loop = False
+            calls.append((cmd, on_loop, kwargs.get("timeout")))
+            if calls[-1][2] is None:
+                raise AssertionError("btrfs was run without a timeout")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(health_router.subprocess, "run", run)
+        return SimpleNamespace(pool=tmp_path / "data", calls=calls)
+
+    def test_the_stats_reset_runs_btrfs_off_the_event_loop_with_a_timeout(self, raid_file, btrfs_reset, admin_api):
+        r = admin_api.post("/api/v1/health/raid/data/reset-stats")
+
+        assert r.status_code == 200, r.text
+        assert btrfs_reset.calls == [(["btrfs", "device", "stats", "--reset", str(btrfs_reset.pool)], False, 60)]
+
+    def test_a_stats_reset_that_does_not_return_answers_500(self, raid_file, btrfs_reset, admin_api, monkeypatch):
+        def hang(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        monkeypatch.setattr(health_router.subprocess, "run", hang)
+        r = admin_api.post("/api/v1/health/raid/data/reset-stats")
+
+        assert (r.status_code, r.json()["detail"]) == (
+            500, "btrfs device stats did not answer within 60 seconds: pool data may not be responding")
+
+    @pytest.mark.parametrize("name", ["..", "bad name", "data;id"])
+    def test_a_stats_reset_needs_a_valid_pool_name(self, raid_file, btrfs_reset, admin_api, name):
+        r = admin_api.post(f"/api/v1/health/raid/{name}/reset-stats")
+
+        assert r.status_code in (400, 404, 422), r.text
+        assert btrfs_reset.calls == []
+
+    async def test_the_monitor_status_shows_the_latest_check(self, raid_file, monkeypatch, admin_api):
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:00:00"))
+        await self._round(monkeypatch, _pool_health(checked="2026-11-06T07:05:00"))
+        body = admin_api.get("/api/v1/health/raid-monitor/status").json()
+        assert body["last_status"]["data"]["last_checked"] == "2026-11-06T07:05:00"
+        assert json.loads(raid_file.path.read_text())["data"]["last_checked"] == "2026-11-06T07:00:00"

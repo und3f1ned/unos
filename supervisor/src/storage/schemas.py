@@ -97,10 +97,17 @@ class PoolInfo(BaseModel):
     forced_read_only: bool = False
 
 
+# btrfs stores a quota limit as an unsigned 64-bit number and reads (u64)-1
+# as "no limit", so the largest limit is one less.
+MAX_VOLUME_QUOTA = (1 << 64) - 2
+
+
 class VolumeCreate(BaseModel):
-    pool_name: str
+    """Body of POST /storage/pools/{pool_name}/volumes: the pool is the one in the URL."""
+
     name: str
-    quota: int | None = None  # bytes, None = no quota
+    # Bytes; None = no limit. Needs quotas enabled on the pool (btrfs quota enable).
+    quota: int | None = Field(default=None, gt=0, le=MAX_VOLUME_QUOTA)
 
 
 class VolumeInfo(BaseModel):

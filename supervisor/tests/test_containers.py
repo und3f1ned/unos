@@ -1,11 +1,13 @@
 import importlib
 import os
+import re
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 from docker.errors import NotFound
 from fastapi import HTTPException
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from src.auth.utils import verify_token
 from src.config import get_settings
@@ -190,9 +192,10 @@ class TestDockerModule:
         
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             result = docker_module.start_container("abc123")
-        
+
         mock_container.start.assert_called_once()
         mock_container.reload.assert_called_once()
+        assert (result.id, result.name) == ("abc123", "test_container")
 
     def test_stop_container(self, mock_docker_client, mock_container):
         """Test stopping a container."""
@@ -200,8 +203,9 @@ class TestDockerModule:
         
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             result = docker_module.stop_container("abc123")
-        
+
         mock_container.stop.assert_called_once()
+        assert (result.id, result.name) == ("abc123", "test_container")
 
     def test_restart_container(self, mock_docker_client, mock_container):
         """Test restarting a container."""
@@ -209,8 +213,9 @@ class TestDockerModule:
         
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             result = docker_module.restart_container("abc123")
-        
+
         mock_container.restart.assert_called_once()
+        assert (result.id, result.name) == ("abc123", "test_container")
 
     def test_remove_container(self, mock_docker_client, mock_container):
         """Test removing a container."""
@@ -513,3 +518,64 @@ class TestUnosAppStartChecks:
     def test_unknown_container_is_still_404(self, api, docker_client):
         assert api.post("/api/v1/containers/nope/start").status_code == 404
         assert api.post("/api/v1/containers/nope/restart").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Routing: static paths under /containers are not taken for a container id
+# ---------------------------------------------------------------------------
+
+containers_router = importlib.import_module("src.containers.router")
+
+
+def _image(short_id: str, tags: list[str]) -> MagicMock:
+    image = MagicMock(name=short_id)
+    image.short_id = short_id
+    image.tags = tags
+    image.attrs = {"Size": 187000000, "Created": "2026-01-02T03:04:05Z"}
+    return image
+
+
+class TestRouting:
+    def test_images_are_listed(self, api, docker_client):
+        docker_client.images.list.return_value = [_image("sha256:abc123", ["nginx:latest"])]
+
+        response = api.get("/api/v1/containers/images")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == [
+            {"id": "sha256:abc123", "tags": ["nginx:latest"], "size": 187000000, "created": "2026-01-02T03:04:05Z"}
+        ]
+        docker_client.containers.get.assert_not_called()
+
+    def test_container_details_are_still_reachable(self, api, docker_client):
+        docker_client.add(_container("jellyfin", {}, []))
+
+        response = api.get("/api/v1/containers/jellyfin")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["name"] == "jellyfin"
+        assert api.get("/api/v1/containers/nope").status_code == 404
+
+    def test_image_pull_and_remove_reach_the_image_endpoints(self, api, docker_client):
+        docker_client.images.pull.return_value = _image("sha256:def456", ["alpine:3.20"])
+        docker_client.images.get.return_value = _image("sha256:def456", ["alpine:3.20"])
+
+        pulled = api.post("/api/v1/containers/images/pull", params={"image": "alpine:3.20"})
+        removed = api.delete("/api/v1/containers/images/sha256:def456")
+
+        assert pulled.status_code == 200, pulled.text
+        assert pulled.json()["id"] == "sha256:def456"
+        docker_client.images.pull.assert_called_once_with("alpine:3.20")
+        assert removed.status_code == 200, removed.text
+        assert removed.json() == {"status": "removed"}
+        docker_client.images.remove.assert_called_once_with("sha256:def456", force=False)
+        docker_client.containers.get.assert_not_called()
+
+    def test_no_route_is_shadowed_by_an_earlier_one(self):
+        """Starlette tries the routes in order: each must be the first that its own path reaches."""
+        routes = [route for route in containers_router.router.routes if isinstance(route, APIRoute)]
+        assert len(routes) > 1
+        for route in routes:
+            path = re.sub(r"\{[^}]+\}", "sample-id", route.path)
+            first = next(r for r in routes if r.methods & route.methods and r.path_regex.match(path))
+            assert first is route, f"{sorted(route.methods)} {route.path} is reached by {first.path}"

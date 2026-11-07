@@ -6,18 +6,27 @@ in USER_ALLOWED (any signed-in user), or it must depend on ``require_admin``
 ``test_every_route_has_an_explicit_authorization_decision``.
 """
 import asyncio
+import importlib
 import ipaddress
 import json
+import logging
 import re
 import shlex
+import socket
 import subprocess
+import threading
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import bcrypt
 import docker
 import pytest
+import uvicorn
 import yaml
 from fastapi.routing import APIRoute, APIWebSocketRoute
 from fastapi.testclient import TestClient
@@ -25,6 +34,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
+from starlette.requests import Request
 
 import src.host
 from src.auth.models import APIToken, User
@@ -67,6 +77,10 @@ USER_ALLOWED = {
     ("POST", f"{API}/auth/tokens/{{token_id}}/toggle"),
     ("POST", f"{API}/auth/recovery-codes/generate"),
     ("GET", f"{API}/auth/recovery-codes/status"),
+    # Own SMB access: status, turn on with the current password (and 2FA code), turn off
+    ("GET", f"{API}/auth/me/smb"),
+    ("POST", f"{API}/auth/me/smb/enable"),
+    ("POST", f"{API}/auth/me/smb/disable"),
     # Read-only system information for the dashboard
     ("GET", f"{API}/system/info"),
     ("GET", f"{API}/system/stats"),
@@ -270,6 +284,42 @@ class TestRouteMatrix:
                 problems.append(f"{method} {path}: regular user got {response.status_code}, expected 403")
         assert problems == []
 
+    def test_a_user_without_smb_reaches_the_smb_routes_without_host_commands(self, client, alice_headers):
+        """alice has no SMB account row: her three SMB routes answer from the
+        database only (no_side_effects makes any host command fail the request)."""
+        status = client.get(f"{API}/auth/me/smb", headers=alice_headers)
+        assert status.status_code == 200, status.text
+        assert status.json() == {
+            "account": {"state": "off", "allowed": False, "linux_name": None, "uid": None,
+                        "password_set_at": None, "reason": None},
+            "totp_required": False,
+            "shares": [],
+        }
+
+        disabled = client.post(f"{API}/auth/me/smb/disable", headers=alice_headers)
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["account"]["state"] == "off"
+        assert disabled.json()["warnings"] == []
+
+        # Not allowed by an administrator: refused before any host command.
+        refused = client.post(
+            f"{API}/auth/me/smb/enable", json={"current_password": PASSWORD}, headers=alice_headers
+        )
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["detail"] == "An administrator must allow SMB access for your account first"
+
+    def test_regular_users_cannot_manage_smb_of_others(self, client, authz_db, alice_headers, bob_headers):
+        assert client.post(
+            f"{API}/auth/users/{authz_db.bob_id}/smb/enable", json={"username": "bob"}, headers=alice_headers
+        ).status_code == 403
+        assert client.post(
+            f"{API}/auth/users/{authz_db.bob_id}/smb/disable", json={"username": "bob"}, headers=alice_headers
+        ).status_code == 403
+        # Not even for themselves.
+        assert client.post(
+            f"{API}/auth/users/{authz_db.alice_id}/smb/enable", json={"username": "alice"}, headers=alice_headers
+        ).status_code == 403
+
     @pytest.mark.parametrize(
         "method,path",
         [
@@ -292,6 +342,55 @@ class TestRouteMatrix:
         assert client.get(f"{API}/storage/pools", headers=token_headers).status_code == 403
 
 
+class TestUploadsReadTheirBodyAfterTheCredentialsAreChecked:
+    """FastAPI reads the form of an UploadFile parameter before it runs the
+    dependencies that check the credentials; the uploads read it themselves
+    (src/request_limits.py), so a refused client gets nothing stored."""
+
+    # {pool}: a folder of a pool (body_reads); the file upload checks it before it reads the body.
+    UPLOADS = [f"{API}/backup/upload", f"{API}/files/upload?path={{pool}}"]
+
+    @pytest.fixture
+    def body_reads(self, monkeypatch, tmp_path):
+        """Record (and refuse) every attempt to read a request body."""
+        reads = []
+
+        def refuse(name):
+            def read(self, *args, **kwargs):
+                reads.append(name)
+                raise RuntimeError(f"request.{name}() was called")
+
+            return read
+
+        for name in ("body", "form", "stream"):
+            monkeypatch.setattr(Request, name, refuse(name))
+        # The modules, not the APIRouters that src.backup and src.files export under the same name.
+        monkeypatch.setattr(importlib.import_module("src.backup.router"), "BACKUP_DIR", tmp_path / "backups")
+        (tmp_path / "pools" / "data").mkdir(parents=True)
+        monkeypatch.setattr(importlib.import_module("src.files.router"), "BASE_PATH", str(tmp_path / "pools"))
+        return reads
+
+    @pytest.mark.parametrize("url", UPLOADS)
+    def test_anonymous_and_regular_users_are_refused_before_the_body_is_read(
+        self, client, body_reads, alice_headers, tmp_path, url
+    ):
+        url = url.format(pool=tmp_path / "pools" / "data")
+        files = {"file": ("x.tar.gz", b"x" * 4096)}
+
+        assert client.post(url, files=files).status_code == 401
+        assert client.post(url, files=files, headers=alice_headers).status_code == 403
+        assert body_reads == []
+
+    @pytest.mark.parametrize("url", UPLOADS)
+    def test_an_administrator_upload_is_read(self, client, body_reads, admin_headers, tmp_path, url):
+        """The control: a read of the body would be seen."""
+        url = url.format(pool=tmp_path / "pools" / "data")
+        response = client.post(url, files={"file": ("x.tar.gz", b"x")}, headers=admin_headers)
+
+        assert response.status_code == 500
+        assert body_reads == ["stream"]
+
+
 class TestUserManagement:
     def test_regular_user_cannot_manage_users(self, client, authz_db, alice_headers):
         assert client.get(f"{API}/auth/users", headers=alice_headers).status_code == 403
@@ -302,7 +401,9 @@ class TestUserManagement:
         assert client.put(
             f"{API}/auth/users/{authz_db.alice_id}", json={"is_admin": True}, headers=alice_headers
         ).status_code == 403
-        assert client.delete(f"{API}/auth/users/{authz_db.admin_id}", headers=alice_headers).status_code == 403
+        assert client.delete(
+            f"{API}/auth/users/{authz_db.admin_id}", params={"username": "admin"}, headers=alice_headers
+        ).status_code == 403
         with Session(authz_db.engine) as session:
             assert session.get(User, authz_db.alice_id).is_admin is False
             assert session.get(User, authz_db.admin_id) is not None
@@ -317,7 +418,9 @@ class TestUserManagement:
             assert session.get(User, authz_db.admin_id).is_admin is True
 
     def test_last_admin_cannot_delete_themselves(self, client, authz_db, admin_headers):
-        response = client.delete(f"{API}/auth/users/{authz_db.admin_id}", headers=admin_headers)
+        response = client.delete(
+            f"{API}/auth/users/{authz_db.admin_id}", params={"username": "admin"}, headers=admin_headers
+        )
 
         assert response.status_code == 409
         with Session(authz_db.engine) as session:
@@ -343,7 +446,9 @@ class TestUserManagement:
             session.add(User(username="admin2", hashed_password=_PASSWORD_HASH, is_admin=True))
             session.commit()
 
-        response = client.delete(f"{API}/auth/users/{authz_db.admin_id}", headers=admin_headers)
+        response = client.delete(
+            f"{API}/auth/users/{authz_db.admin_id}", params={"username": "admin"}, headers=admin_headers
+        )
         assert response.status_code == 400
 
     def test_admin_can_delete_another_admin_while_one_remains(self, client, authz_db, admin_headers):
@@ -353,7 +458,39 @@ class TestUserManagement:
             session.commit()
             second_id = second.id
 
-        assert client.delete(f"{API}/auth/users/{second_id}", headers=admin_headers).status_code == 200
+        assert client.delete(
+            f"{API}/auth/users/{second_id}", params={"username": "admin2"}, headers=admin_headers
+        ).status_code == 200
+
+    def test_a_delete_names_the_user(self, client, authz_db, admin_headers):
+        """users.id is a rowid that SQLite reuses: DELETE carries the username it was built for."""
+        url = f"{API}/auth/users/{authz_db.bob_id}"
+
+        missing = client.delete(url, headers=admin_headers)
+        stale = client.delete(url, params={"username": "carol"}, headers=admin_headers)
+
+        assert missing.status_code == 422
+        assert (stale.status_code, stale.json()["detail"]) == (
+            409, f"User {authz_db.bob_id} is now 'bob'; reload the page"
+        )
+        with Session(authz_db.engine) as session:
+            assert session.get(User, authz_db.bob_id) is not None
+        assert client.delete(url, params={"username": "bob"}, headers=admin_headers).status_code == 200
+        with Session(authz_db.engine) as session:
+            assert session.get(User, authz_db.bob_id) is None
+
+    @pytest.mark.parametrize("body, status", [
+        pytest.param(None, 422, id="no-body"),
+        pytest.param({}, 422, id="no-username"),
+        pytest.param({"username": "bob", "enabled": False}, 422, id="extra-field"),
+        pytest.param({"username": "carol"}, 409, id="stale-username"),
+    ])
+    def test_an_smb_disable_names_the_user(self, client, authz_db, admin_headers, body, status):
+        response = client.post(f"{API}/auth/users/{authz_db.bob_id}/smb/disable", json=body, headers=admin_headers)
+
+        assert response.status_code == status, response.text
+        if status == 409:
+            assert response.json()["detail"] == f"User {authz_db.bob_id} is now 'bob'; reload the page"
 
     def test_new_passwords_longer_than_bcrypt_limit_are_rejected(self, client, admin_headers, alice_headers):
         too_long = "a" * 73
@@ -551,8 +688,9 @@ class TestRealClientAddress:
     def test_login_rate_limit_is_per_client_not_global(self, proxied_client):
         assert [self._login(proxied_client, "203.0.113.7").status_code for _ in range(5)] == [401] * 5
         assert self._login(proxied_client, "203.0.113.7").status_code == 429
-        # Another browser behind the same proxy is not locked out.
-        assert self._login(proxied_client, "198.51.100.4").status_code == 401
+        # Another browser behind the same proxy is not locked out: it signs in as the same user.
+        assert self._login(proxied_client, "198.51.100.4", PASSWORD).status_code == 200
+        assert self._login(proxied_client, "203.0.113.7", PASSWORD).status_code == 429
 
     def test_direct_connections_cannot_choose_their_address(self, direct_client, deployment, authz_db, tmp_path):
         """A new X-Forwarded-For per attempt must not mean a new rate-limit bucket."""
@@ -582,3 +720,86 @@ class TestRealClientAddress:
         assert ipaddress.ip_address(layout.webui) in layout.subnet
         # Host processes connect from the gateway; it must never be trusted.
         assert layout.webui not in (layout.gateway, layout.supervisor)
+
+
+class TestHealthchecks:
+    """The healthchecks of the compose files have no credentials. A check that
+    never passes leaves its container unhealthy, and webui only starts once the
+    supervisor is healthy."""
+
+    @pytest.mark.parametrize("compose_file", ["docker-compose.yml", "docker-compose.test.yml"])
+    def test_healthchecks_call_a_public_route(self, client, compose_file):
+        urls = {
+            name: re.findall(r"https?://[^\s'\"]+", " ".join(service["healthcheck"]["test"][1:]))
+            for name, service in _compose(compose_file)["services"].items()
+            if "healthcheck" in service
+        }
+
+        assert set(urls) == {"supervisor", "webui"}
+        for name, found in urls.items():
+            assert len(found) == 1, name
+            path = urlsplit(found[0]).path
+            assert ("GET", path) in PUBLIC, name
+            assert client.get(path).status_code == 200, name
+
+    def test_successful_checks_stay_out_of_the_access_log(self):
+        # The checks call the route every 10 seconds (supervisor) and every 30
+        # (webui, through Caddy): without the filter of src.main, thousands of
+        # lines a day in `docker logs unos-supervisor`. A real uvicorn server
+        # (the pinned version, as in the image) answers through a stub app
+        # with the status the request asks for, and logs the requests through
+        # the "uvicorn.access" logger that src.main filters.
+        async def stub(scope, receive, send):
+            status = int(dict(scope["headers"]).get(b"x-status", b"200"))
+            await send({"type": "http.response.start", "status": status, "headers": [(b"content-length", b"0")]})
+            await send({"type": "http.response.body", "body": b""})
+
+        lines = []
+        capture = logging.Handler()
+        # Without the client address, whose port changes.
+        capture.emit = lambda record: lines.append(record.getMessage().split(" - ", 1)[1])
+        access_log = logging.getLogger("uvicorn.access")
+        level = access_log.level
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        server = uvicorn.Server(uvicorn.Config(stub, log_config=None, lifespan="off"))
+        thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+        access_log.addHandler(capture)
+        access_log.setLevel(logging.INFO)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 30
+            while not server.started:
+                assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
+                time.sleep(0.05)
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            base = f"http://127.0.0.1:{sock.getsockname()[1]}"
+            for method, path, status in [
+                ("GET", "/api/v1/health", 200),
+                ("GET", "/api/v1/health", 503),
+                ("POST", "/api/v1/health", 200),
+                ("GET", "/api/v1/health?verbose=1", 200),
+                ("GET", "/api/v1/health/full", 200),
+                ("GET", "/api/v1/auth/status", 200),
+            ]:
+                request = urllib.request.Request(base + path, method=method, headers={"X-Status": str(status)})
+                try:
+                    opener.open(request, timeout=10).close()
+                except urllib.error.HTTPError as error:
+                    error.close()
+                    assert error.code == status
+        finally:
+            server.should_exit = True
+            thread.join(10)
+            access_log.removeHandler(capture)
+            access_log.setLevel(level)
+            sock.close()
+
+        # A failed check is still logged, and so is every other request.
+        assert lines == [
+            '"GET /api/v1/health HTTP/1.1" 503',
+            '"POST /api/v1/health HTTP/1.1" 200',
+            '"GET /api/v1/health?verbose=1 HTTP/1.1" 200',
+            '"GET /api/v1/health/full HTTP/1.1" 200',
+            '"GET /api/v1/auth/status HTTP/1.1" 200',
+        ]

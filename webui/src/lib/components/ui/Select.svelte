@@ -57,8 +57,13 @@
 				}
 				break;
 			case 'Escape':
-				e.preventDefault();
-				open = false;
+				// Closes only the list, not the dialog around it; a closed list
+				// leaves Escape to the dialog.
+				if (open) {
+					e.preventDefault();
+					e.stopPropagation();
+					open = false;
+				}
 				break;
 			case 'ArrowDown':
 				e.preventDefault();
@@ -139,20 +144,20 @@
 
 <div class="relative {$$props.class || ''}" bind:this={container}>
 	{#if label}
-		<label for={inputId} class="form-label">
+		<label id="{inputId}-label" for={inputId} class="form-label">
 			{label}
 			{#if required}<span class="text-error">*</span>{/if}
 		</label>
 	{/if}
 
 	<button
-		{id}
+		id={inputId}
 		type="button"
 		role="combobox"
 		aria-haspopup="listbox"
 		aria-expanded={open}
 		aria-controls="{inputId}-listbox"
-		aria-labelledby={label ? inputId : undefined}
+		aria-labelledby={label ? `${inputId}-label` : undefined}
 		{disabled}
 		class="select-trigger"
 		class:select-trigger-error={error}
@@ -172,9 +177,9 @@
 			bind:this={listbox}
 			id="{inputId}-listbox"
 			role="listbox"
-			aria-labelledby={label ? inputId : undefined}
-			class="select-dropdown"
-			transition:fly={{ y: -8, duration: 150 }}
+			aria-labelledby={label ? `${inputId}-label` : undefined}
+			class="select-dropdown scrollbar-thin"
+			in:fly={{ y: -8, duration: 150 }}
 		>
 			{#each options as option, index}
 				<li
@@ -245,7 +250,7 @@
 
 	.select-dropdown {
 		@apply absolute z-50 w-full mt-1 py-1 bg-surface-elevated border border-border
-		       rounded-lg shadow-lg max-h-60 overflow-auto scrollbar-thin;
+		       rounded-lg shadow-lg max-h-60 overflow-auto;
 	}
 
 	.select-option {

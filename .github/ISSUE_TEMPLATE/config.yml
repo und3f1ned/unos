@@ -1,0 +1,28 @@
+# The issue chooser: a bug report or an enhancement, each starting in needs-triage
+# (ADR-0206). Blank issues are off, so that every issue gets a category and a state.
+#
+# Triage labels: an issue has one category and one state.
+#   bug              category: something does not work as described
+#   enhancement      category: a new feature or a change
+#   needs-triage     state: waiting to be sorted (the templates set it)
+#   needs-info       state: waiting for specific information from the reporter; back to
+#                    needs-triage after the reply
+#   ready-for-agent  state: a verified brief with a done criterion exists; an agent may take it
+#                    (one at a time, as a feature-list.json entry)
+#   ready-for-human  state: a person has to decide or act; the issue says why
+#   wontfix          state: declined, with the reason in the issue (and an ADR for a product
+#                    decision), so that it is not argued twice
+# The labels exist in the GitHub repository; the owner creates them once, for example:
+#   gh label create needs-triage --color FBCA04 --description "Waiting to be sorted"
+#   gh label create needs-info --color D4C5F9 --description "Waiting for the reporter"
+#   gh label create ready-for-agent --color 0E8A16 --description "Verified brief, agent may take it"
+#   gh label create ready-for-human --color 1D76DB --description "A person decides or acts"
+#   gh label create wontfix --color FFFFFF --description "Declined, with the reason"
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/und3f1ned/unos/security/advisories/new
+    about: Report it privately, not in a public issue.
+  - name: Questions and ideas
+    url: https://github.com/und3f1ned/unos/discussions
+    about: Ask in GitHub Discussions.

@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
-# storage/disks.py, shares/smb.py and health/router.py. cat, test, mkdir,
-# rmdir, find, sync and sh also run there but come from essential packages.
+# storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
+# and the shadow tools, smbpasswd, pdbedit, smbstatus) and health/router.py.
+# cat, test, mkdir, rmdir, find, sync and sh also run there but come from
+# essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
@@ -45,6 +47,13 @@ HOST_TOOLS: dict[str, str] = {
     "systemctl": "systemd",
     "testparm": "samba-common-bin",
     "smbcontrol": "samba-common-bin",
+    "getent": "libc-bin",
+    "groupadd": "passwd",
+    "useradd": "passwd",
+    "userdel": "passwd",
+    "smbpasswd": "samba-common-bin",
+    "pdbedit": "samba",
+    "smbstatus": "samba",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.
@@ -103,17 +112,22 @@ def run_on_host(
     timeout: float = 60,
     check: bool = False,
     input: str | None = None,
+    errors: str | None = None,
 ) -> HostResult:
     """Run ``cmd`` in the host's namespaces and return its output.
 
     With ``check=True`` a non-zero exit status raises :class:`HostCommandError`.
-    A timeout raises :class:`subprocess.TimeoutExpired`.
+    A timeout raises :class:`subprocess.TimeoutExpired`. ``errors`` is the
+    error handler for decoding the output: strict by default (output that is
+    not valid in the locale's encoding raises UnicodeDecodeError); "replace"
+    for commands that print names anyone can choose, such as file names.
     """
     _validate_cmd(cmd)
     proc = subprocess.run(
         _prefix() + cmd,
         capture_output=True,
         text=True,
+        errors=errors,
         timeout=timeout,
         input=input,
     )
@@ -129,10 +143,11 @@ async def run_on_host_async(
     timeout: float = 60,
     check: bool = False,
     input: str | None = None,
+    errors: str | None = None,
 ) -> HostResult:
     """Async wrapper around :func:`run_on_host` that does not block the event loop."""
     return await asyncio.to_thread(
-        run_on_host, cmd, timeout=timeout, check=check, input=input
+        run_on_host, cmd, timeout=timeout, check=check, input=input, errors=errors
     )
 
 

@@ -10,7 +10,8 @@ test.describe('Security Settings', () => {
   test('should display Two-Factor Authentication section', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);
-    await expect(page.locator('text=Two-Factor Authentication')).toBeVisible();
+    // The section heading; the SMB card below it mentions two-factor authentication too.
+    await expect(page.locator('h3:has-text("Two-Factor Authentication")')).toBeVisible();
   });
 
   test('should display Change Password section', async ({ authenticatedPage: page }) => {
@@ -69,6 +70,15 @@ test.describe('Security Settings', () => {
     // Exact text: "Confirm New Password" contains "New Password".
     await expect(page.locator('label:text-is("New Password")')).toBeVisible();
     await expect(page.locator('label:has-text("Confirm New Password")')).toBeVisible();
+  });
+
+  // The labels name the masked inputs shown by default (and the unmasked ones).
+  test('password inputs are reachable through their labels', async ({ authenticatedPage: page }) => {
+    await page.goto('/system#security');
+    for (const label of ['Current Password', 'New Password', 'Confirm New Password']) {
+      await expect(page.getByLabel(label, { exact: true })).toBeVisible();
+    }
+    await expect(page.getByLabel('Current Password', { exact: true })).toHaveAttribute('type', 'password');
   });
 
   test('should show change password button', async ({ authenticatedPage: page }) => {

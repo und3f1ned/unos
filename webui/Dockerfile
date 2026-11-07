@@ -1,4 +1,7 @@
-FROM node:20-alpine AS builder
+# A supported Node.js release, the same major version as the frontend job of
+# .github/workflows/test.yml and "engines" in package.json
+# (supervisor/tests/test_deploy_scripts.py checks it).
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 

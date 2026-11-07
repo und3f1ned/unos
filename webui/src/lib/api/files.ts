@@ -1,4 +1,4 @@
-import { api } from "./client";
+import { api, apiFetch, downloadAs } from "./client";
 
 export interface FileInfo {
   name: string;
@@ -13,49 +13,42 @@ export interface FileInfo {
 
 export interface DirectoryListing {
   path: string;
+  /** null for the pools directory, the top of the file manager. */
   parent: string | null;
   items: FileInfo[];
   total_size: number;
   item_count: number;
 }
 
-export async function listDirectory(path: string): Promise<DirectoryListing> {
-  return api.get<DirectoryListing>(`/files/list?path=${encodeURIComponent(path)}`);
+/**
+ * List a directory. Without a path the server lists the pools directory
+ * (UNOS_POOLS_BASE_PATH, /mnt/pools on a device): the file manager cannot go
+ * above it, so the UI starts there instead of assuming its location.
+ */
+export async function listDirectory(path?: string): Promise<DirectoryListing> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : "";
+  return api.get<DirectoryListing>(`/files/list${query}`);
 }
 
 export async function getFileInfo(path: string): Promise<FileInfo> {
   return api.get<FileInfo>(`/files/info?path=${encodeURIComponent(path)}`);
 }
 
+/** Download a file through the API with the session token. */
 export async function downloadFile(path: string): Promise<void> {
-  const token = localStorage.getItem("token");
-  const url = `/api/v1/files/download?path=${encodeURIComponent(path)}`;
-  
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = path.split("/").pop() || "download";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  const name = path.split("/").pop() || "download";
+  await downloadAs(`/files/download?path=${encodeURIComponent(path)}`, name);
 }
 
+/** Upload a file into the directory `path`; the server keeps only the file's base name. */
 export async function uploadFile(path: string, file: File): Promise<FileInfo> {
   const formData = new FormData();
   formData.append("file", file);
-  
-  const token = localStorage.getItem("token");
-  const res = await fetch(`/api/v1/files/upload?path=${encodeURIComponent(path)}`, {
+  const response = await apiFetch(`/files/upload?path=${encodeURIComponent(path)}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
-  
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail || "Upload failed");
-  }
-  
-  return res.json();
+  return response.json();
 }
 
 export async function createDirectory(path: string, name: string): Promise<FileInfo> {
@@ -66,16 +59,19 @@ export async function renameItem(path: string, newName: string): Promise<FileInf
   return api.post<FileInfo>("/files/rename", { path, new_name: newName });
 }
 
+// Copy, move and delete take the paths as a bare JSON array in the body;
+// copy and move take the destination folder as a query parameter.
+
 export async function copyItems(sources: string[], destination: string): Promise<{ copied: string[] }> {
-  return api.post("/files/copy", null, { sources, destination });
+  return api.post(`/files/copy?destination=${encodeURIComponent(destination)}`, sources);
 }
 
 export async function moveItems(sources: string[], destination: string): Promise<{ moved: string[] }> {
-  return api.post("/files/move", null, { sources, destination });
+  return api.post(`/files/move?destination=${encodeURIComponent(destination)}`, sources);
 }
 
 export async function deleteItems(paths: string[]): Promise<{ deleted: string[] }> {
-  return api.delete("/files/delete", { paths });
+  return api.delete("/files/delete", paths);
 }
 
 export function formatSize(bytes: number): string {

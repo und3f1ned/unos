@@ -41,6 +41,8 @@ apps_router = importlib.import_module("src.apps.router")
 INSTALL = "/api/v1/apps/install"
 POOLS = "/api/v1/apps/pools"
 INSTALLED = "/api/v1/apps/installed"
+# Transmission installs only with its web login (USER and PASS, see the catalog).
+TRANSMISSION = {"template_id": "transmission", "env_overrides": {"USER": "e2e", "PASS": "k7-Unique-pass"}}
 
 
 def _fd_path(fd: int) -> Path:
@@ -252,7 +254,7 @@ class TestPoolSelection:
         pools.mounted.clear()
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={"template_id": "transmission"})
+        response = api.post(INSTALL, json={**TRANSMISSION})
 
         assert response.status_code == 409
         assert response.json()["detail"] == (
@@ -265,7 +267,7 @@ class TestPoolSelection:
     def test_unknown_or_unmounted_pool_is_rejected(self, api, pools, docker_client, pool):
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={"template_id": "transmission", "pool": pool})
+        response = api.post(INSTALL, json={**TRANSMISSION, "pool": pool})
 
         assert response.status_code == 400
         assert "not mounted" in response.json()["detail"]
@@ -470,7 +472,7 @@ class TestNoWritesOutsidePool:
         docker_client.images.pull.side_effect = lambda *a, **k: pools.mounted.discard(str(pools.alpha))
         before = _tree(pools.root)
 
-        response = api.post(INSTALL, json={"template_id": "transmission"})
+        response = api.post(INSTALL, json={**TRANSMISSION})
 
         assert response.status_code == 409
         assert "no longer mounted" in response.json()["detail"]
@@ -482,7 +484,7 @@ class TestNoWritesOutsidePool:
         config.mkdir(parents=True)
         (config / "settings.json").write_text("{}")
 
-        response = api.post(INSTALL, json={"template_id": "transmission"})
+        response = api.post(INSTALL, json={**TRANSMISSION})
 
         assert response.status_code == 200, response.text
         assert (config / "settings.json").read_text() == "{}"
@@ -514,7 +516,7 @@ class TestVolumeOverrides:
 
         response = api.post(
             INSTALL,
-            json={"template_id": "transmission", "volume_overrides": {"/downloads": make_path(pools)}},
+            json={**TRANSMISSION, "volume_overrides": {"/downloads": make_path(pools)}},
         )
 
         assert response.status_code == 400, response.text
@@ -524,7 +526,7 @@ class TestVolumeOverrides:
     def test_unknown_volume_cannot_be_added(self, api, pools, docker_client):
         response = api.post(
             INSTALL,
-            json={"template_id": "transmission", "volume_overrides": {"/host-root": str(pools.alpha)}},
+            json={**TRANSMISSION, "volume_overrides": {"/host-root": str(pools.alpha)}},
         )
 
         assert response.status_code == 400
@@ -549,7 +551,7 @@ class TestVolumeOverrides:
 
         response = api.post(
             INSTALL,
-            json={"template_id": "transmission", "volume_overrides": {"/downloads": raw}},
+            json={**TRANSMISSION, "volume_overrides": {"/downloads": raw}},
         )
 
         assert response.status_code == 200, response.text
@@ -562,7 +564,7 @@ class TestVolumeOverrides:
         response = api.post(
             INSTALL,
             json={
-                "template_id": "transmission",
+                **TRANSMISSION,
                 "volume_overrides": {"/downloads": f"{pools.alpha}/media/../torrents"},
             },
         )
@@ -582,7 +584,7 @@ class TestVolumeOverrides:
 
         response = api.post(
             INSTALL,
-            json={"template_id": "transmission", "volume_overrides": {"/downloads": str(pools.alpha / "shared")}},
+            json={**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.alpha / "shared")}},
         )
 
         assert response.status_code == 400
@@ -599,7 +601,7 @@ class TestVolumeOverrides:
 
         response = api.post(
             INSTALL,
-            json={"template_id": "transmission", "volume_overrides": {"/downloads": str(pools.alpha / override)}},
+            json={**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.alpha / override)}},
         )
 
         assert response.status_code == 400
@@ -613,7 +615,7 @@ class TestVolumeOverrides:
 
         response = api.post(
             INSTALL,
-            json={"template_id": "transmission", "volume_overrides": {"/downloads": str(library)}},
+            json={**TRANSMISSION, "volume_overrides": {"/downloads": str(library)}},
         )
 
         assert response.status_code == 200, response.text
@@ -626,7 +628,7 @@ class TestVolumeOverrides:
 
         response = api.post(
             INSTALL,
-            json={"template_id": "transmission", "volume_overrides": {"/downloads": str(pools.beta / "torrents")}},
+            json={**TRANSMISSION, "volume_overrides": {"/downloads": str(pools.beta / "torrents")}},
         )
 
         assert response.status_code == 400
@@ -658,6 +660,7 @@ class TestEnvironment:
             ("grafana", "GF_SECURITY_ADMIN_PASSWORD", "Admin"),
             ("bookstack", "DB_PASSWORD", " password "),
             ("aria2", "RPC_SECRET", "secret"),  # optional secrets are checked too
+            ("transmission", "PASS", "changeme"),
         ],
     )
     def test_placeholder_secrets_are_rejected(self, api, pools, docker_client, app_id, name, value):
@@ -680,6 +683,26 @@ class TestEnvironment:
         assert response.status_code == 200, response.text
         environment = docker_client.containers.create.call_args.kwargs["environment"]
         assert environment == {"GF_SECURITY_ADMIN_PASSWORD": "k7-Unique-pass"}
+
+    @pytest.mark.parametrize("login", [{}, {"USER": "e2e"}, {"PASS": "k7-Unique-pass"}, {"USER": " ", "PASS": "k7-Unique-pass"}])
+    def test_transmission_needs_a_login_and_a_password(self, api, pools, docker_client, login):
+        # Without both the image turns RPC authentication off at every start.
+        variables = {var.name: var for var in get_app_by_id("transmission").environment}
+        assert (variables["USER"].required, variables["USER"].secret) == (True, False)
+        assert (variables["PASS"].required, variables["PASS"].secret) == (True, True)
+
+        response = api.post(INSTALL, json={"template_id": "transmission", "env_overrides": login})
+
+        assert response.status_code == 400
+        assert "is required" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+    def test_transmission_login_is_passed_to_the_container(self, api, pools, docker_client):
+        response = api.post(INSTALL, json=TRANSMISSION)
+
+        assert response.status_code == 200, response.text
+        environment = docker_client.containers.create.call_args.kwargs["environment"]
+        assert (environment["USER"], environment["PASS"]) == ("e2e", "k7-Unique-pass")
 
     def test_tailscale_installs_without_an_auth_key(self, api, pools, docker_client):
         # Without a key the container logs a login URL to follow.
@@ -1248,7 +1271,7 @@ class TestNestedFolders:
         response = api.post(
             INSTALL,
             json={
-                "template_id": "transmission",
+                **TRANSMISSION,
                 "volume_overrides": {"/watch": str(pools.alpha / "downloads/watch")},
             },
         )
@@ -1290,7 +1313,7 @@ class TestNestedFolders:
 
         monkeypatch.setattr(apps_router, "_plan_volumes", plan_then_plant)
 
-        response = api.post(INSTALL, json={"template_id": "transmission"})
+        response = api.post(INSTALL, json={**TRANSMISSION})
 
         assert response.status_code == 409
         assert "symbolic link" in response.json()["detail"]

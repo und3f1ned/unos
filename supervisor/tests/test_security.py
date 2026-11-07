@@ -1,10 +1,13 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime
+import errno
 import json
 import os
+import shutil
 import stat
 import subprocess
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,7 +62,7 @@ class TestSecuritySchemas:
 
     def test_login_history_response_schema(self):
         """Test LoginHistoryResponse schema."""
-        from src.security.schemas import LoginHistoryResponse, LoginAttemptResponse
+        from src.security.schemas import LoginHistoryResponse
 
         response = LoginHistoryResponse(
             attempts=[],
@@ -263,6 +266,30 @@ SHA256 Fingerprint=AA:BB:CC:DD:EE:FF"""
             info = get_certificate_info("/tmp/invalid.crt")
 
             assert info is None
+
+    def test_get_pem_certificate_info_gives_openssl_the_text(self):
+        """No file: openssl reads the certificate on its standard input."""
+        from src.security.router import get_pem_certificate_info
+
+        calls = []
+
+        def openssl(cmd, **kwargs):
+            calls.append((cmd, kwargs.get("input")))
+            return subprocess.CompletedProcess(cmd, 0, "subject=CN = nas.local\n", "")
+
+        with patch("subprocess.run", side_effect=openssl):
+            info = get_pem_certificate_info("PEM")
+
+        assert (info["domain"], info["is_valid"]) == ("nas.local", True)
+        assert [cmd[:2] for cmd, _ in calls] == [["openssl", "x509"]] * 2
+        assert all("-in" not in cmd and text == "PEM" for cmd, text in calls)
+
+    def test_get_pem_certificate_info_refuses_text_that_cannot_be_encoded(self):
+        from src.security.router import get_pem_certificate_info
+
+        with patch("subprocess.run") as run:
+            assert get_pem_certificate_info("PEM\ud800") is None
+        run.assert_not_called()
 
     def test_get_custom_certificates_empty(self, tmp_path):
         """Test getting custom certificates when directory is empty."""
@@ -633,8 +660,8 @@ class TestCertificateFilesStayInCertsDir:
     @pytest.mark.parametrize("common_name", ["..", "", "a/b", "My NAS", "*", "*.*.example.com"])
     def test_upload_refuses_a_common_name_that_is_not_a_name(self, certs, admin_api, monkeypatch,
                                                               common_name):
-        monkeypatch.setattr("src.security.router.get_certificate_info",
-                            lambda path: {"domain": common_name, "issuer": "x"})
+        monkeypatch.setattr("src.security.router.get_pem_certificate_info",
+                            lambda pem: {"domain": common_name, "issuer": "x"})
         response = admin_api.post(f"{API}/upload", json={"certificate": "PEM", "private_key": "KEY"})
 
         assert response.status_code == 400
@@ -642,8 +669,8 @@ class TestCertificateFilesStayInCertsDir:
 
     @pytest.mark.parametrize("common_name", ["nas.local", "*.example.com", "10.0.0.2"])
     def test_upload_stores_under_the_common_name(self, certs, admin_api, monkeypatch, common_name):
-        monkeypatch.setattr("src.security.router.get_certificate_info",
-                            lambda path: {"domain": common_name, "issuer": "x"})
+        monkeypatch.setattr("src.security.router.get_pem_certificate_info",
+                            lambda pem: {"domain": common_name, "issuer": "x"})
         response = admin_api.post(f"{API}/upload", json={
             "certificate": "PEM", "private_key": "KEY", "chain": "CHAIN",
         })
@@ -675,8 +702,8 @@ def _host_name(length: int) -> str:
 
 def _upload_as(monkeypatch, admin_api, common_name: str):
     """Upload a certificate (with key and chain) whose subject CN is ``common_name``."""
-    monkeypatch.setattr("src.security.router.get_certificate_info",
-                        lambda path: {"domain": common_name, "issuer": "x"})
+    monkeypatch.setattr("src.security.router.get_pem_certificate_info",
+                        lambda pem: {"domain": common_name, "issuer": "x"})
     return admin_api.post(f"{API}/upload", json={
         "certificate": "PEM", "private_key": "KEY", "chain": "CHAIN",
     })
@@ -797,3 +824,146 @@ class TestPrivateKeyMode:
         assert modes_seen_by_openssl == [0o600]
         assert old_key_file.read_text() == "KEY"
         assert stat.S_IMODE(old_key_file.stat().st_mode) == 0o600
+
+
+# ==================== Uploads leave no temporary file (R-6) ====================
+
+# A self-signed certificate for nas.local, valid from 2000 to 2100. Its key
+# was not kept: the upload stores the key it is given without checking it.
+TEST_CERTIFICATE = """\
+-----BEGIN CERTIFICATE-----
+MIIBXTCCAQSgAwIBAgIUEIPM0EdnLHHR2nXJTOGBOt2HaIMwCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJbmFzLmxvY2FsMCAXDTAwMDEwMTAwMDAwMFoYDzIxMDAwMTAx
+MDAwMDAwWjAUMRIwEAYDVQQDDAluYXMubG9jYWwwWTATBgcqhkjOPQIBBggqhkjO
+PQMBBwNCAATpbgn0Kr6ADAqqq9N6WnNzOnRc67+lA4kn3vnL4GbTL1/sB1GMOWHM
+ffgFp1zBd2oZcwpVvz6bINErzEPIKsHbozIwMDAdBgNVHQ4EFgQUiM3eBUv/Gooo
+Lb/jjg44Jz4x/OUwDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNHADBEAiB5
+8872kuxklZZLG0VDJRGJNzhR91gvZAqmfE4dLAW8sQIgNrpFr2nyQfeHalZjZkUj
+nPuzPwQ/XS0fSXPzk2aOjqg=
+-----END CERTIFICATE-----
+"""
+
+NOT_A_CERTIFICATE = "-----BEGIN CERTIFICATE-----\nnot a certificate\n-----END CERTIFICATE-----\n"
+
+
+@pytest.fixture
+def upload_env(tmp_path, monkeypatch):
+    """The certificate directories in a scratch tree, and an empty directory
+    for the tempfile module. openssl is the real one."""
+    certs_dir = tmp_path / "data" / "certs"
+    monkeypatch.setattr("src.security.router.CERTS_DIR", str(certs_dir))
+    monkeypatch.setattr("src.security.router.CADDY_CERTS_DIR", str(tmp_path / "caddy"))
+    temp_dir = tmp_path / "tmp"
+    temp_dir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp_dir))
+    return SimpleNamespace(certs=certs_dir, temp=temp_dir)
+
+
+def _upload(admin_api, certificate: str, private_key: str = "KEY", chain: str | None = None):
+    """POST an upload. json.dumps escapes a lone surrogate as JSON can (httpx would fail to encode it)."""
+    body = {"certificate": certificate, "private_key": private_key}
+    if chain is not None:
+        body["chain"] = chain
+    return admin_api.post(f"{API}/upload", content=json.dumps(body),
+                          headers={"Content-Type": "application/json"})
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+class TestCertificateUploadLeavesNoTemporaryFile:
+    """openssl reads an uploaded certificate on its standard input.
+
+    The upload wrote it to a temporary file first, and anything that failed
+    before the file was removed (a full /tmp, text that cannot be encoded)
+    left it in /tmp, in RAM in the container, until a restart.
+    """
+
+    def test_valid_certificate(self, upload_env, admin_api):
+        response = _upload(admin_api, TEST_CERTIFICATE)
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "status": "ok",
+            "message": "Certificate uploaded successfully",
+            "certificate_id": "custom_nas.local",
+            "domain": "nas.local",
+        }
+        assert (upload_env.certs / "nas.local.crt").read_text() == TEST_CERTIFICATE
+        assert (upload_env.certs / "nas.local.key").read_text() == "KEY"
+        assert list(upload_env.temp.iterdir()) == []
+
+        # Stored certificates are still read from their files.
+        [cert] = admin_api.get(API).json()["certificates"]
+        assert {key: cert[key] for key in ("id", "type", "domain", "issuer", "valid_until", "is_valid")} == {
+            "id": "custom_nas.local",
+            "type": "self_signed",
+            "domain": "nas.local",
+            "issuer": "nas.local",
+            "valid_until": "Jan  1 00:00:00 2100 GMT",
+            "is_valid": True,
+        }
+        assert cert["fingerprint"]
+
+    def test_invalid_certificate(self, upload_env, admin_api):
+        response = _upload(admin_api, NOT_A_CERTIFICATE)
+
+        assert (response.status_code, response.json()) == (400, {"detail": "Invalid certificate format"})
+        assert list(upload_env.certs.iterdir()) == []
+        assert list(upload_env.temp.iterdir()) == []
+
+    def test_full_temporary_directory(self, upload_env, admin_api, monkeypatch):
+        """A full /tmp: a temporary file can be made, but not written."""
+        make = tempfile.NamedTemporaryFile
+
+        def full(*args, **kwargs):
+            file = make(*args, **kwargs)
+
+            def write(data):
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+            file.write = write
+            return file
+
+        monkeypatch.setattr(tempfile, "NamedTemporaryFile", full)
+        response = _upload(admin_api, TEST_CERTIFICATE)
+
+        assert response.status_code == 200, response.text
+        assert list(upload_env.temp.iterdir()) == []
+
+    def test_certificate_that_cannot_be_encoded(self, upload_env, admin_api):
+        """A lone surrogate (JSON can carry one as an escape) answers 400, not 500."""
+        response = _upload(admin_api, TEST_CERTIFICATE + "\ud800")
+
+        assert (response.status_code, response.json()) == (400, {"detail": "Invalid certificate format"})
+        assert list(upload_env.certs.iterdir()) == []
+        assert list(upload_env.temp.iterdir()) == []
+
+    @pytest.mark.parametrize("field,message", [
+        ("private_key", "Invalid private key format"),
+        ("chain", "Invalid certificate chain format"),
+    ])
+    def test_key_or_chain_that_cannot_be_encoded_changes_nothing(self, upload_env, admin_api,
+                                                                  field, message):
+        # They used to fail half-way: the certificate replaced, the old key emptied.
+        upload_env.certs.mkdir(parents=True)
+        old = {f"nas.local{suffix}": f"old {suffix}" for suffix in (".crt", ".key", ".chain.crt")}
+        for name, text in old.items():
+            (upload_env.certs / name).write_text(text)
+
+        response = _upload(admin_api, TEST_CERTIFICATE, **{"private_key": "KEY", "chain": "CHAIN",
+                                                            field: "x\ud800"})
+
+        assert (response.status_code, response.json()) == (400, {"detail": message})
+        assert {path.name: path.read_text() for path in upload_env.certs.iterdir()} == old
+        assert list(upload_env.temp.iterdir()) == []
+
+    def test_no_temporary_file_is_made(self, upload_env, admin_api, monkeypatch):
+        def refused(*args, **kwargs):
+            raise AssertionError("the upload made a temporary file")
+
+        for name in ("NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile", "mkstemp",
+                     "mkdtemp", "TemporaryDirectory"):
+            monkeypatch.setattr(tempfile, name, refused)
+        response = _upload(admin_api, TEST_CERTIFICATE)
+
+        assert response.status_code == 200, response.text
+        assert (upload_env.certs / "nas.local.crt").read_text() == TEST_CERTIFICATE

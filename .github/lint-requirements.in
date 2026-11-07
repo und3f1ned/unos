@@ -1,0 +1,7 @@
+# The Python tools of the lint job in .github/workflows/test.yml and of its
+# local run in docs/TESTING.md. lint-requirements.txt pins them and every
+# package they depend on, with hashes. After changing this file, regenerate it
+# from the root of the repository with the command in its header (see
+# "Updating ruff and pip-audit" in docs/TESTING.md).
+ruff==0.17.3
+pip-audit==2.10.1

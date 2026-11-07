@@ -1,0 +1,76 @@
+# Weekly update proposals (ADR-0218). Dependabot opens grouped pull requests with Conventional
+# Commit prefixes (build, ci; with the scope deps or deps-dev, ADR-0209). Nothing is merged
+# automatically: the supervisor runs privileged with the Docker socket, so every update is reviewed
+# and merged by the owner. A cooldown skips releases younger than a week; compromised releases are
+# usually pulled by then.
+#
+# Not here: .github/lint-requirements.txt (ruff and pip-audit with every dependency and hash,
+# compiled by uv from lint-requirements.in; docs/TESTING.md has the command), and the Playwright
+# image of webui/Dockerfile.test, which follows @playwright/test in webui/package-lock.json.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /supervisor
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      pip:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /webui
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      npm:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # The base images. Python and Node.js move only on purpose: the Python version is also set in
+  # CI and the venvs, and Node.js's major version in CI and webui/package.json (engines).
+  - package-ecosystem: docker
+    directories:
+      - /supervisor
+      - /webui
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: mcr.microsoft.com/playwright
+    groups:
+      docker:
+        patterns: ["*"]

@@ -1,5 +1,5 @@
 import docker
-from docker.errors import NotFound, APIError
+from docker.errors import NotFound
 from docker.models.containers import Container
 from ..config import get_settings
 from .schemas import ContainerInfo, ContainerCreate, ContainerState, PortMapping, ImageInfo
@@ -136,7 +136,7 @@ def create_container(config: ContainerCreate) -> ContainerInfo:
 
     # Prevent creating containers with system names
     if is_system_container(config.name):
-        raise ValueError(f"Container name is reserved for system use")
+        raise ValueError("Container name is reserved for system use")
 
     # Build port bindings
     port_bindings = {}

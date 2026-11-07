@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -9,7 +10,6 @@ from slowapi.util import get_remote_address
 from ..auth.utils import verify_token
 from ..security.validators import (
     sanitize_error_message,
-    validate_disk_name,
     validate_pool_name,
     validate_volume_name,
 )
@@ -33,11 +33,13 @@ router = APIRouter(prefix="/storage", tags=["storage"])
 
 
 def _http_error(exc: Exception) -> HTTPException:
-    """Map storage errors to HTTP errors (404 / 409 / 400 / 500)."""
+    """Map storage errors to HTTP errors (404 / 409 / 400 / 503 / 500)."""
     if isinstance(exc, pools.PoolNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, pools.PoolConflictError):
         return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, pools.DockerUnavailableError):
+        return HTTPException(status_code=503, detail=sanitize_error_message(exc))
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
     return HTTPException(status_code=500, detail=sanitize_error_message(exc))
@@ -61,13 +63,17 @@ async def list_disks_endpoint(_=Depends(verify_token)):
 
 @router.get("/disks/{name}/smart", response_model=SmartData)
 async def get_disk_smart(name: str, _=Depends(verify_token)):
-    """Get SMART data for a disk."""
-    # Validate disk name to prevent path traversal
-    validated_name = validate_disk_name(name)
+    """SMART data of a whole disk of the host, by its name in GET /storage/disks.
 
-    # smartctl can take many seconds (or spin up a sleeping disk): keep it
-    # off the event loop. get_smart_data bounds it with a timeout.
-    return await _call(disks.get_smart_data, f"/dev/{validated_name}")
+    400 for anything else (a partition, a RAID array, the boot SD card or
+    eMMC, a virtual device, a name such as null or st0); 500 when the host's
+    disks cannot be listed. smartctl is not run then.
+    """
+    # Both block, off the event loop: lsblk on the host, and smartctl, which
+    # can take many seconds (or spin up a sleeping disk); get_smart_data
+    # bounds it with a timeout.
+    device = await _call(disks.whole_disk_device, name)
+    return await _call(disks.get_smart_data, device)
 
 
 @router.get("/pools", response_model=list[PoolInfo])
@@ -145,43 +151,65 @@ async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_to
 
 @router.get("/pools/{pool_name}/volumes", response_model=list[VolumeInfo])
 async def list_volumes_endpoint(pool_name: str, _=Depends(verify_token)):
-    """List volumes in a pool."""
-    # Validate pool name
+    """List the volumes (subvolumes in the top directory) of a pool.
+
+    404 for an unknown pool, 409 when it is not mounted or is mounted at a
+    subvolume other than the top level. Read-only pools are listed.
+    """
     validated_pool = validate_pool_name(pool_name)
 
-    try:
-        return pools.list_volumes(validated_pool)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
+    return await _call(pools.list_volumes, validated_pool)
 
 
 @router.post("/pools/{pool_name}/volumes", response_model=VolumeInfo)
 @limiter.limit("10/minute")  # Rate limit volume creation
 async def create_volume_endpoint(request: Request, pool_name: str, volume: VolumeCreate, _=Depends(verify_token)):
-    """Create a new volume."""
-    # Validate pool and volume names
+    """Create a volume: a btrfs subvolume at <mountpoint>/<name> of the pool in the URL.
+
+    The body is ``{"name": ..., "quota": bytes or null}``; the quota must be
+    between 1 and 2^64 - 2 (422 otherwise; btrfs reads 2^64 - 1 as no
+    limit). 404 for an unknown pool. 409, and nothing is created, when the
+    pool is not mounted, mounted read-only or not at its top level, the name
+    is taken, or a quota is asked for and quotas are not enabled on the
+    pool. 409 as well when the quota cannot be set: the new volume is
+    removed again, unless the subvolume with its name by then existed
+    before it.
+    """
     validated_pool = validate_pool_name(pool_name)
     validate_volume_name(volume.name)
 
-    volume.pool_name = validated_pool
-    try:
-        return pools.create_volume(volume)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
+    return await _call(pools.create_volume, validated_pool, volume)
 
 
 @router.delete("/pools/{pool_name}/volumes/{volume_name}")
 async def delete_volume_endpoint(pool_name: str, volume_name: str, _=Depends(verify_token)):
-    """Delete a volume."""
-    # Validate pool and volume names
+    """Delete a volume with everything in it.
+
+    404 for an unknown pool or volume; 409 when the pool is not mounted,
+    mounted read-only or not at its top level, or the volume is used by a
+    running container (a bind mount, or a Docker volume that binds a folder
+    of it), an SMB share or an NFS export, is busy, or holds snapshots; 503
+    when Docker cannot be asked about the running containers and their
+    volumes. Nothing is deleted then.
+    """
     validated_pool = validate_pool_name(pool_name)
     validated_volume = validate_volume_name(volume_name)
 
+    await _call(pools.delete_volume, validated_pool, validated_volume)
+    return {"status": "deleted"}
+
+
+async def _scrub(func: Callable[[str], ScrubStatus], name: str) -> ScrubStatus:
+    """Run a btrfs scrub command for a pool in a worker thread (it can block on a busy disk)."""
+    validated_name = validate_pool_name(name)
     try:
-        pools.delete_volume(validated_pool, validated_volume)
-        return {"status": "deleted"}
+        return await asyncio.to_thread(func, validated_name)
+    except subprocess.TimeoutExpired as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"btrfs {' '.join(e.cmd[1:3])} did not answer within {pools.SCRUB_COMMAND_TIMEOUT} "
+            f"seconds: pool {validated_name} may not be responding",
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=sanitize_error_message(e))
 
@@ -189,34 +217,16 @@ async def delete_volume_endpoint(pool_name: str, volume_name: str, _=Depends(ver
 @router.post("/pools/{name}/scrub", response_model=ScrubStatus)
 async def start_scrub_endpoint(name: str, _=Depends(verify_token)):
     """Start a scrub on a pool."""
-    # Validate pool name
-    validated_name = validate_pool_name(name)
-
-    try:
-        return pools.start_scrub(validated_name)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
+    return await _scrub(pools.start_scrub, name)
 
 
 @router.get("/pools/{name}/scrub", response_model=ScrubStatus)
 async def get_scrub_status_endpoint(name: str, _=Depends(verify_token)):
     """Get scrub status for a pool."""
-    # Validate pool name
-    validated_name = validate_pool_name(name)
-
-    try:
-        return pools.get_scrub_status(validated_name)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
+    return await _scrub(pools.get_scrub_status, name)
 
 
 @router.delete("/pools/{name}/scrub", response_model=ScrubStatus)
 async def cancel_scrub_endpoint(name: str, _=Depends(verify_token)):
     """Cancel a running scrub on a pool."""
-    # Validate pool name
-    validated_name = validate_pool_name(name)
-
-    try:
-        return pools.cancel_scrub(validated_name)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
+    return await _scrub(pools.cancel_scrub, name)

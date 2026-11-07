@@ -6,17 +6,37 @@ on:
   pull_request:
     branches: [main]
 
+# The jobs only read the repository (ADR-0190). Their checkouts do not keep the token in the git
+# configuration (persist-credentials: false): no step needs it later, and the build or test code of
+# a dependency could read it there.
+permissions:
+  contents: read
+
+# A new push to a pull request cancels the run for the previous one. Every
+# push to main gets a group of its own, so its run is never cancelled or held
+# back by another one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+# The Unit Tests, Lint and Frontend jobs run the targets of the Makefile that make check runs on a
+# workstation (ADR-0216), so a local run and CI check the same things. docs/TESTING.md describes
+# them; supervisor/tests/test_deploy_scripts.py and test_repo_tooling.py keep them in step.
 jobs:
-  # Fast unit tests - runs on every push/PR
+  # The backend tests: make test (pytest over supervisor/tests).
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: supervisor
+    timeout-minutes: 30
 
     steps:
+      # The whole history with every branch: tests/test_feature_list.py compares the ledger with
+      # the one at the merge base with origin/main and skips while main has no feature-list.json.
+      # FEATURE_LIST_BASE stays unset until main has the ledger.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,10 +48,117 @@ jobs:
             supervisor/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: pip install -r supervisor/requirements-dev.txt
 
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short --ignore=tests/mocks --ignore=tests/fixtures
+        run: make test
+
+  # make lint: ruff's pyflakes findings (undefined names, unused imports and
+  # variables, ...) and syntax errors (E9) in the supervisor, scripts/ and
+  # .claude/hooks/, bash -n on the shell scripts, and the JSON syntax of
+  # feature-list.json and .claude/settings.json; each of the three runs even
+  # when another one failed (ADR-0190). Then the known vulnerabilities of the supervisor's
+  # runtime dependencies. ruff and pip-audit, and every package they depend on,
+  # come from .github/lint-requirements.txt with their hashes, so that a new
+  # release cannot change the tools.
+  lint:
+    name: Lint and Audit (Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            supervisor/requirements.txt
+            .github/lint-requirements.txt
+
+      - name: Install ruff and pip-audit
+        id: tools
+        run: pip install --require-hashes -r .github/lint-requirements.txt
+
+      # Each check runs even if the other one failed.
+      - name: Lint
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: make lint
+
+      # Resolves requirements.txt, with the dependencies of its packages, in a
+      # temporary virtual environment. pip-audit first installs the latest pip,
+      # setuptools and wheel there: they are not pinned. The weekly audit
+      # workflow (audit.yml) runs it too, for advisories published between
+      # pull requests.
+      - name: Audit the runtime dependencies
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: pip-audit -r supervisor/requirements.txt
+
+  # The web UI: make frontend (svelte-check and the production build, which
+  # runs also when the type check failed), and the known vulnerabilities of
+  # its runtime dependencies. Node.js as in the builder stage of
+  # webui/Dockerfile.
+  frontend:
+    name: Frontend Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install dependencies
+        id: install
+        working-directory: webui
+        run: npm ci
+
+      # The check script of package.json (svelte-kit sync, which writes
+      # .svelte-kit/tsconfig.json, then svelte-check --threshold error) and
+      # the build. npm run takes the programs from node_modules/.bin, where
+      # npm ci installed the versions of package-lock.json; npx would download
+      # a missing one from the registry instead, without asking where CI is set.
+      - name: Type check and build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: make frontend
+
+      - name: Audit the runtime dependencies
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: webui
+        run: npm audit --omit=dev --audit-level=high
+
+  # The messages of the pull request's commits follow the commit convention
+  # (ADR-0209): scripts/check-commit-msg.py, the script of the commit-msg hook.
+  # It checks the commits from the one that added it on.
+  commits:
+    name: Commit Messages
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history: the range from the base to the head of the pull request.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the commit messages
+        run: python3 scripts/check-commit-msg.py --range "$BASE_SHA..$HEAD_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
   # Build check - only on main branch to save costs
   build:
@@ -39,9 +166,12 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     needs: test
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

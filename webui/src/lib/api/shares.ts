@@ -1,13 +1,60 @@
 import { api } from "./client";
 
+// SMB shares and per-user access are stored in the UNOS database, and
+// smb.conf is rendered from it (supervisor/src/shares). Share names are
+// case-insensitive on the server.
+
+export type ShareAccessLevel = "read" | "write";
+
+/** SMB state of a UNOS user (supervisor/src/shares/account_state.py). */
+export type SmbAccountState = "active" | "password_needed" | "off" | "unavailable";
+
+/** One user's access to a share, as the server reports it. */
+export interface ShareAccess {
+  user_id: number;
+  username: string;
+  level: ShareAccessLevel;
+  smb_state: SmbAccountState;
+  /** In smb.conf now: the share is served and the user's SMB account is active. */
+  effective: boolean;
+}
+
+/**
+ * One entry of an access list sent to the server. `username` is the user's
+ * current name: the server answers 409 when the id now belongs to someone else.
+ */
+export interface ShareAccessEntry {
+  user_id: number;
+  username: string;
+  level: ShareAccessLevel;
+}
+
 export interface SmbShare {
   name: string;
   path: string;
   comment: string;
   browseable: boolean;
-  readonly: boolean;
+  /** Guests may read the share without a password; they can never write. */
   guest_ok: boolean;
-  valid_users: string[];
+  /** Sorted by username. */
+  access: ShareAccess[];
+  /** Send it back as `expected_version` when changing the share. */
+  version: number;
+  /** The path passes the server's path rules: the share is in smb.conf. */
+  served: boolean;
+  /** Why the share is not served; null when served. */
+  path_problem: string | null;
+  /** Served, and guests or at least one user can connect. */
+  available: boolean;
+  pool: string | null;
+  /** null: the host's mount table could not be read. */
+  pool_mounted: boolean | null;
+  /** Whether the folder is set up for SMB users; null: not mounted, missing or not served. */
+  permissions_ok: boolean | null;
+  /** Messages of the one-time import of the old smb.conf, until dismissed. */
+  import_notes: string[];
+  /** Only in answers to changes. */
+  warnings?: string[];
 }
 
 export interface SmbShareCreate {
@@ -15,9 +62,60 @@ export interface SmbShareCreate {
   path: string;
   comment?: string;
   browseable?: boolean;
-  readonly?: boolean;
   guest_ok?: boolean;
-  valid_users?: string[];
+  access?: ShareAccessEntry[];
+}
+
+/** PATCH body: only the fields that are sent change. */
+export interface SmbShareUpdate {
+  /** The server answers 409 when the share's version differs. */
+  expected_version?: number;
+  name?: string;
+  path?: string;
+  comment?: string;
+  browseable?: boolean;
+  guest_ok?: boolean;
+  /** The complete list: it replaces the share's access list. */
+  access?: ShareAccessEntry[];
+  /** Only [] is accepted: it dismisses the import notes. */
+  import_notes?: [];
+}
+
+export interface SmbShareDeleted {
+  status: "deleted";
+  warnings: string[];
+}
+
+export type RepairState = "done" | "incomplete" | "failed";
+
+export interface RepairResult {
+  share: string;
+  state: RepairState;
+  started_at: string;
+  finished_at: string;
+  visited: number;
+  changed: number;
+  /** Keys: other_filesystem, snapshots, symlink, special, hardlink, private, too_deep, raced. */
+  skipped: Record<string, number>;
+  /** At most 20 relative paths of skipped volumes and mount points. */
+  skipped_paths: string[];
+  errors: number;
+  /** At most 20, "relative/path: error". */
+  error_samples: string[];
+  message: string;
+}
+
+export interface SmbServiceStatus {
+  /** null: the check failed. */
+  samba_tools_missing: string[] | null;
+  group_ok: boolean | null;
+  problems: string[];
+  /** Non-empty: guests can read these shares, and signing is not required. */
+  guest_shares: string[];
+  import_report: string[];
+  /** Samba accounts that UNOS did not create; they cannot use UNOS shares. */
+  unmanaged_samba_users: string[];
+  active_smb_users: number;
 }
 
 export interface NfsExport {
@@ -36,10 +134,16 @@ export interface SharePath {
   path: string;
   label: string;
   type: "pool" | "volume";
+  /** Its pool is one that UNOS manages (fstab marker): only such locations can hold SMB shares. */
+  managed: boolean;
 }
 
 export async function getSharePaths(): Promise<SharePath[]> {
   return api.get<SharePath[]>("/shares/paths");
+}
+
+function smbSharePath(name: string): string {
+  return `/shares/smb/${encodeURIComponent(name)}`;
 }
 
 export async function getSmbShares(): Promise<SmbShare[]> {
@@ -47,22 +151,37 @@ export async function getSmbShares(): Promise<SmbShare[]> {
 }
 
 export async function getSmbShare(name: string): Promise<SmbShare> {
-  return api.get<SmbShare>(`/shares/smb/${name}`);
+  return api.get<SmbShare>(smbSharePath(name));
 }
 
 export async function createSmbShare(share: SmbShareCreate): Promise<SmbShare> {
   return api.post<SmbShare>("/shares/smb", share);
 }
 
-export async function updateSmbShare(
-  name: string,
-  share: SmbShareCreate
-): Promise<SmbShare> {
-  return api.put<SmbShare>(`/shares/smb/${name}`, share);
+export async function updateSmbShare(name: string, patch: SmbShareUpdate): Promise<SmbShare> {
+  return api.patch<SmbShare>(smbSharePath(name), patch);
 }
 
-export async function deleteSmbShare(name: string): Promise<void> {
-  return api.delete(`/shares/smb/${name}`);
+export async function deleteSmbShare(name: string): Promise<SmbShareDeleted> {
+  return api.delete<SmbShareDeleted>(smbSharePath(name));
+}
+
+/** Runs while the request waits: up to about 4 minutes on a large share. */
+export async function repairSharePermissions(name: string): Promise<RepairResult> {
+  return api.post<RepairResult>(`${smbSharePath(name)}/repair-permissions`);
+}
+
+/** The last repair of the share since UNOS started; 404 when none has run. */
+export async function getRepairResult(name: string): Promise<RepairResult> {
+  return api.get<RepairResult>(`${smbSharePath(name)}/repair-permissions`);
+}
+
+export async function getSmbStatus(): Promise<SmbServiceStatus> {
+  return api.get<SmbServiceStatus>("/shares/smb-status");
+}
+
+export async function clearImportReport(): Promise<{ status: string }> {
+  return api.delete<{ status: string }>("/shares/smb-status/import-report");
 }
 
 export async function getNfsExports(): Promise<NfsExport[]> {

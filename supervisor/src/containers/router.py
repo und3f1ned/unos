@@ -26,6 +26,41 @@ async def create_container(config: ContainerCreate, _=Depends(verify_token)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Image endpoints. They come before the /{container_id} routes: Starlette tries
+# the routes in order, and GET /{container_id} would take "images" for a
+# container name.
+@router.get("/images", response_model=list[ImageInfo])
+async def list_images(_=Depends(verify_token)):
+    """List all images."""
+    try:
+        return docker_ops.list_images()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/images/pull", response_model=ImageInfo)
+async def pull_image(image: str, _=Depends(verify_token)):
+    """Pull an image from registry."""
+    try:
+        return docker_ops.pull_image(image)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/images/{image_id}")
+async def remove_image(
+    image_id: str, force: bool = Query(False), _=Depends(verify_token)
+):
+    """Remove an image."""
+    try:
+        docker_ops.remove_image(image_id, force=force)
+        return {"status": "removed"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{container_id}", response_model=ContainerInfo)
 async def get_container(container_id: str, _=Depends(verify_token)):
     """Get container details."""
@@ -97,39 +132,6 @@ async def get_container_logs(
     try:
         logs = docker_ops.get_container_logs(container_id, tail=tail)
         return ContainerLogs(container_id=container_id, logs=logs)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Image endpoints
-@router.get("/images", response_model=list[ImageInfo])
-async def list_images(_=Depends(verify_token)):
-    """List all images."""
-    try:
-        return docker_ops.list_images()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/images/pull", response_model=ImageInfo)
-async def pull_image(image: str, _=Depends(verify_token)):
-    """Pull an image from registry."""
-    try:
-        return docker_ops.pull_image(image)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/images/{image_id}")
-async def remove_image(
-    image_id: str, force: bool = Query(False), _=Depends(verify_token)
-):
-    """Remove an image."""
-    try:
-        docker_ops.remove_image(image_id, force=force)
-        return {"status": "removed"}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

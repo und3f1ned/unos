@@ -1,11 +1,4 @@
-import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-
-// The filters are Select components: a button with role="combobox" below a
-// <label>. The label is not associated with the button, so the combobox has
-// no accessible name; find it through the element that holds both.
-const filterSelect = (page: Page, label: string) =>
-  page.locator('label', { hasText: label }).locator('..').getByRole('combobox');
 
 test.describe('System Logs', () => {
   test('should display logs tab', async ({ authenticatedPage: page }) => {
@@ -26,7 +19,7 @@ test.describe('System Logs', () => {
   test('should have severity filter', async ({ authenticatedPage: page }) => {
     await page.goto('/system#logs');
     await page.waitForTimeout(1000);
-    await expect(filterSelect(page, 'Priority Level')).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Priority Level', exact: true })).toBeVisible();
   });
 
   test('should display log entries or empty state', async ({ authenticatedPage: page }) => {
@@ -58,7 +51,15 @@ test.describe('System Logs', () => {
   test('should have limit selector', async ({ authenticatedPage: page }) => {
     await page.goto('/system#logs');
     await page.waitForTimeout(1000);
-    await expect(filterSelect(page, 'Limit')).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Limit', exact: true })).toBeVisible();
+  });
+
+  // Each filter's <label> names its combobox (Select: label id, aria-labelledby).
+  test('filters are comboboxes named by their labels', async ({ authenticatedPage: page }) => {
+    await page.goto('/system#logs');
+    for (const name of ['Priority Level', 'Time Range', 'Limit']) {
+      await expect(page.getByRole('combobox', { name, exact: true })).toBeVisible();
+    }
   });
 
   // Log lines contain text anyone can influence (login names, request paths,

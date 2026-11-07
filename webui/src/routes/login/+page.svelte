@@ -52,8 +52,10 @@
     } catch (e: any) {
       error = e.message || "Login failed";
       // Only a rejected password leads back to the password form. An invalid
-      // code, too many attempts (429) or a server error keep the 2FA step.
-      if (e instanceof ApiError && e.status === 401 && !error.includes("2FA")) {
+      // or already used code ("Invalid 2FA code", "This two-factor code was
+      // already used; wait for the next one"), too many attempts (429) or a
+      // server error keep the 2FA step.
+      if (e instanceof ApiError && e.status === 401 && !/2FA|two-factor/i.test(error)) {
         requiresTOTP = false;
       }
     } finally {

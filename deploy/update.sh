@@ -24,9 +24,22 @@ UNOS_INSTALL_DIR="${UNOS_INSTALL_DIR:-/opt/unos}"
 UNOS_BRANCH="${UNOS_BRANCH:-main}"
 BACKUP_DIR="/var/lib/unos/backups"
 SECRETS_FILE="/etc/unos/secrets.env"
-# Seconds the new version gets to answer before it is rolled back. At startup
-# the supervisor first mounts the pools the host has not mounted.
+# Seconds the new version gets to answer over HTTP and HTTPS once
+# `docker compose up` has returned, before it is rolled back.
 HEALTH_TIMEOUT="${UNOS_HEALTH_TIMEOUT:-300}"
+# Seconds Docker can take to report the supervisor healthy or unhealthy, at
+# most start_period + (retries + 1) x (interval + timeout) of its healthcheck
+# in docker-compose.yml, 600 + 4 x (10 + 10): a failed check counts only if it
+# started after start_period, so the one that runs then does not, and the
+# supervisor is unhealthy after retries more. A check takes up to timeout once
+# its process has started, and Docker waits interval after each one. At
+# startup the supervisor first mounts the pools the host has not mounted (up
+# to 2 minutes each). Same value in install.sh; change both with the
+# healthcheck.
+SUPERVISOR_START_TIMEOUT=680
+# --wait-timeout for `docker compose up`, where Compose has it (set by
+# check_compose_wait).
+COMPOSE_UP_WAIT=()
 # Compose services; their containers are named unos-<service>.
 SERVICES=(supervisor webui)
 # Locked while an update runs (see lock_update). In /run, where only root can
@@ -76,10 +89,13 @@ check_installation() {
 
 # Checked before anything changes: in $(( )) a word such as "abc" counts as 0
 # (an immediate rollback) and "5m" aborts the script after the restart.
+# Values of 10^9 or more are refused as well: from 2^63 on, bash wraps them to
+# a negative number, which Compose 5 refuses as --wait-timeout, in the update
+# and then in the rollback (UNOS would stay stopped).
 check_health_timeout() {
     case "$HEALTH_TIMEOUT" in
-        "" | *[!0-9]*)
-            log_error "UNOS_HEALTH_TIMEOUT must be a number of seconds, not \"$HEALTH_TIMEOUT\". Nothing was changed."
+        "" | *[!0-9]* | *[1-9]?????????*)
+            log_error "UNOS_HEALTH_TIMEOUT must be a number of seconds below 1000000000, not \"$HEALTH_TIMEOUT\". Nothing was changed."
             exit 1
             ;;
     esac
@@ -146,6 +162,37 @@ compose() {
         fi
         docker compose "$@"
     )
+}
+
+# Whether the Compose version $1 (2.26.1, v2.40.3, 2.40.3+ds1-0ubuntu1, ...)
+# is older than 2.30. False when it cannot be read.
+compose_before_2_30() {
+    [[ $1 =~ ^v?([0-9]+)\.([0-9]+) ]] || return 1
+    local major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]}))
+    [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 30 ]; }
+}
+
+# `docker compose up` starts webui only once the supervisor is healthy
+# (depends_on), and waits for that. --wait-timeout ends the wait: Compose
+# 2.17 added the option (for `up --wait` only), 2.30 applies it to this wait.
+# Older versions reject it, so it is passed only where `up --help` lists it.
+# The limit is SUPERVISOR_START_TIMEOUT, or HEALTH_TIMEOUT if that is longer:
+# if Compose gave up before Docker has decided, a slow but healthy update
+# would be rolled back, and the rollback's `up` would give up on the previous
+# version the same way and leave webui stopped. (With UNOS_HEALTH_TIMEOUT=0
+# the limit is SUPERVISOR_START_TIMEOUT; --wait-timeout 0 means no limit.)
+check_compose_wait() {
+    local help version wait=$SUPERVISOR_START_TIMEOUT
+    [ "$HEALTH_TIMEOUT" -le "$wait" ] || wait=$HEALTH_TIMEOUT
+    help=$(docker compose up --help 2>/dev/null) || help=""
+    version=$(docker compose version --short 2>/dev/null) || version=""
+    case "$help" in
+        *--wait-timeout*) COMPOSE_UP_WAIT=(--wait-timeout "$wait") ;;
+        *) COMPOSE_UP_WAIT=() ;;
+    esac
+    if [ ${#COMPOSE_UP_WAIT[@]} -eq 0 ] || compose_before_2_30 "$version"; then
+        log_warn "Docker Compose ${version:-(version unknown)} cannot limit its wait for the supervisor to become healthy (that needs Compose 2.30 or later): if the new supervisor does not start, \`docker compose up\` may wait longer than $wait seconds."
+    fi
 }
 
 # Refuse to update a checkout with local changes or on another branch. This
@@ -225,7 +272,9 @@ import tempfile
 from pathlib import Path
 
 src = Path(os.environ.get("UNOS_DB_PATH") or "/data/unos.db")
-with tempfile.TemporaryDirectory() as tmp:
+# dir=: in /tmp (RAM) or nowhere. Without it, a full /tmp would send the copy
+# to /var/tmp, in the container's writable layer on the system disk.
+with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or "/tmp") as tmp:
     copy = os.path.join(tmp, "unos.db")
     # mode=rw: fail instead of creating an empty database at a wrong path.
     source = sqlite3.connect(src.resolve().as_uri() + "?mode=rw", uri=True, timeout=30)
@@ -365,8 +414,8 @@ restart_services() {
     if ! compose down --remove-orphans; then
         rollback "Stopping the running containers failed"
     fi
-    if ! compose up -d --no-build; then
-        rollback "Starting the new containers failed. If the error above mentions an overlapping address pool, see \"Network subnet\" in docs/INSTALL.md."
+    if ! compose up -d --no-build "${COMPOSE_UP_WAIT[@]}"; then
+        rollback "Starting the new containers failed. If the error above says \"dependency failed to start\", \"is unhealthy\", \"exited\" or \"timeout waiting for dependencies\" (the wording depends on the Compose version), the supervisor stopped or did not become healthy in time: see its log below. If the error mentions an overlapping address pool, see \"Network subnet\" in docs/INSTALL.md."
     fi
 }
 
@@ -429,10 +478,10 @@ rollback() {
     log_warn "Rolling back to $CURRENT_VERSION..."
     compose down --remove-orphans || true
     restore_previous
-    if compose up -d --no-build --force-recreate && wait_for_health; then
+    if compose up -d --no-build --force-recreate "${COMPOSE_UP_WAIT[@]}" && wait_for_health; then
         log_warn "Rolled back: UNOS runs $CURRENT_VERSION again"
     else
-        log_error "UNOS did not come back after the rollback either. Check: docker ps -a; docker logs unos-supervisor"
+        log_error "UNOS did not come back after the rollback either. Check: docker ps -a; docker logs unos-supervisor. If the supervisor only needed more time to start, start UNOS again with: sudo systemctl restart unos"
     fi
     log_error "Update to $NEW_VERSION failed. Backup of the data: ${BACKUP_PATH:-none}"
     exit 1
@@ -525,10 +574,17 @@ main() {
     tag_previous_images
     pull_updates
     build_images
+    # Before the restart, so that a rollback has the result too.
+    check_compose_wait
     UPDATE_STAGE=restart
     restart_services
     if ! wait_for_health; then
-        rollback "UNOS did not answer within $HEALTH_TIMEOUT seconds after the update. If it only starts slowly, retry with: sudo UNOS_HEALTH_TIMEOUT=600 $0"
+        # Suggest twice the time it had, at least 600 seconds and at most what
+        # check_health_timeout accepts.
+        local retry_timeout=$((HEALTH_TIMEOUT * 2))
+        [ "$retry_timeout" -ge 600 ] || retry_timeout=600
+        [ "$retry_timeout" -lt 1000000000 ] || retry_timeout=999999999
+        rollback "UNOS did not answer within $HEALTH_TIMEOUT seconds after the update. If it only starts slowly, retry with: sudo UNOS_HEALTH_TIMEOUT=$retry_timeout $0"
     fi
     UPDATE_STAGE=done
     cleanup_old_images

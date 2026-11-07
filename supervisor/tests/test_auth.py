@@ -3,7 +3,6 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
 import jwt
 from jwt import PyJWTError
-import os
 import secrets
 
 
@@ -57,7 +56,7 @@ class TestPasswordHashing:
     # Hashes written by the previous passlib 1.7.4 + bcrypt 4.0.1 code. passlib
     # silently truncated passwords to bcrypt's 72-byte limit when hashing.
     LEGACY_PASSLIB_HASHES = (
-        ("admin123", "$2b$12$2QBMldgfbsfUHoQrs9u9c.qm4p5lVDC7GFd/Ks5tt.il66q2kOhpu"),
+        ("unos-e2e-pass", "$2b$12$70/WS7hrwVa4RW2kJdhIZuGbVq2hWk12O0dsSq1ZrsCQycx3gCUbe"),
         ("correct-horse-battery-staple-" * 4,  # 116 bytes
          "$2b$12$Ijd/kIObhng1hvAERpfQIebn2dKXTJryGyrHePLsyoKXIFU9W0gYS"),
         ("\u043f\u0430\u0440\u043e\u043b\u044c-" * 12,  # 156 bytes, cut mid-character at 72
@@ -222,6 +221,70 @@ class TestAuthSchemas:
         # Should raise validation error without password
         with pytest.raises(ValidationError):
             UserCreate(username="testuser")
+
+    def test_user_create_smb_fields(self):
+        from pydantic import ValidationError
+        from src.auth.schemas import UserCreate
+
+        assert UserCreate(username="carol", password="pw").smb_enabled is False
+        assert UserCreate(username="carol", password="pw", smb_enabled=True).smb_enabled is True
+        with pytest.raises(ValidationError):
+            UserCreate(username="c" * 65, password="pw")
+
+    def test_user_update_username(self):
+        from pydantic import ValidationError
+        from src.auth.schemas import UserUpdate
+
+        assert UserUpdate().username is None
+        assert UserUpdate(username="alice", password="new").username == "alice"
+        with pytest.raises(ValidationError):
+            UserUpdate(username="a" * 65)
+
+    def test_smb_request_schemas_forbid_extra_fields(self):
+        from pydantic import ValidationError
+        from src.auth.schemas import SmbEnableRequest, SmbSelfEnableRequest
+
+        assert SmbEnableRequest(username="alice").password is None
+        with pytest.raises(ValidationError):
+            SmbEnableRequest(username="alice", enabled=True)
+        with pytest.raises(ValidationError):
+            SmbEnableRequest(password="Correct-horse-1")  # the username is required
+        with pytest.raises(ValidationError):
+            SmbEnableRequest(username="alice", password="a" * 73)  # bcrypt limit
+        assert SmbSelfEnableRequest(current_password="pw").totp_code is None
+        with pytest.raises(ValidationError):
+            SmbSelfEnableRequest(current_password="pw", password="x")
+        with pytest.raises(ValidationError):
+            SmbSelfEnableRequest(current_password="pw", totp_code="1" * 17)
+
+    def test_smb_disable_request_names_the_user(self):
+        from pydantic import ValidationError
+        from src.auth.schemas import SmbDisableRequest
+
+        assert SmbDisableRequest(username="alice").username == "alice"
+        for body in ({}, {"username": "alice", "enabled": False}, {"username": "a" * 65}):
+            with pytest.raises(ValidationError):
+                SmbDisableRequest(**body)
+
+    def test_login_request_is_bounded(self):
+        """A failed login is recorded and audited before anyone is authenticated."""
+        from pydantic import ValidationError
+        from src.auth.schemas import LoginRequest
+
+        assert LoginRequest(username="a" * 255, password="p" * 1024, totp_code="1" * 16).totp_code == "1" * 16
+        for body in (
+            {"username": "a" * 256, "password": "pw"},
+            {"username": "alice", "password": "p" * 1025},
+            {"username": "alice", "password": "pw", "totp_code": "1" * 17},
+        ):
+            with pytest.raises(ValidationError):
+                LoginRequest(**body)
+
+    def test_user_response_smb_defaults(self):
+        from src.auth.schemas import UserResponse
+
+        user = UserResponse(id=1, username="alice", is_admin=False)
+        assert user.smb is None and user.warnings == []
 
     def test_user_response_schema(self):
         """Test UserResponse schema."""

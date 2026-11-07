@@ -1,13 +1,12 @@
 import subprocess
 import json
 import re
-from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 
 from ..auth.utils import verify_token
-from ..security.validators import validate_interface_name, validate_hostname, sanitize_error_message
+from ..security.validators import validate_interface_name, sanitize_error_message
 
 router = APIRouter(prefix="/network", tags=["network"])
 

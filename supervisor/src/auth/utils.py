@@ -1,9 +1,11 @@
+import enum
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
+import pyotp
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -81,6 +83,59 @@ def client_ip(request: Request | None) -> str | None:
     if request is None or request.client is None:
         return None
     return request.client.host
+
+
+# ==================== Two-factor codes (TOTP) ====================
+
+TOTP_CODE_REUSED = "This two-factor code was already used; wait for the next one"
+
+# The time step of the last TOTP code each user had accepted, by user id: a code is
+# accepted once (RFC 6238, section 5.2), wherever it is checked. Memory only (the
+# supervisor is one process): after a restart, a code of the step that was current
+# before can be accepted once more.
+_last_totp_steps: dict[int, int] = {}
+
+
+class TotpCheck(enum.Enum):
+    OK = "ok"
+    INVALID = "invalid"     # wrong code, or no usable secret
+    REUSED = "reused"       # right code, but its time step was already used
+
+
+def _totp_time() -> datetime:
+    """The time TOTP codes are checked at (tests replace it)."""
+    return datetime.now(timezone.utc)
+
+
+def check_totp_code(user_id: int, secret: object, code: object) -> TotpCheck:
+    """Check a TOTP code of user ``user_id`` and use it up.
+
+    Only the current time step is valid (valid_window 0), and only once: a code
+    whose step is not newer than the last step this user had accepted is REUSED.
+    Synchronous, without an await between the check and the record, so two
+    requests on the event loop never both accept one code.
+    """
+    if not isinstance(secret, str) or not secret or not isinstance(code, str) or not code:
+        return TotpCheck.INVALID
+    now = _totp_time()
+    try:
+        totp = pyotp.TOTP(secret)
+        valid = totp.verify(code, for_time=now)
+        step = totp.timecode(now)
+    except (TypeError, ValueError):  # binascii.Error (a secret that is not base32) is a ValueError
+        return TotpCheck.INVALID
+    if not valid:
+        return TotpCheck.INVALID
+    last = _last_totp_steps.get(user_id)
+    if last is not None and step <= last:
+        return TotpCheck.REUSED
+    _last_totp_steps[user_id] = step
+    return TotpCheck.OK
+
+
+def forget_totp_steps(user_id: int) -> None:
+    """The user was deleted: SQLite may give its id to the next new user."""
+    _last_totp_steps.pop(user_id, None)
 
 
 def generate_api_token() -> tuple[str, str]:

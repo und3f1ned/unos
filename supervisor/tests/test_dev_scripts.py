@@ -1,0 +1,1625 @@
+"""scripts/dev, the dev device's tooling, tested without the device and without dev.env.
+
+Each test writes its own dev.env in tmp_path and points UNOS_DEV_ENV_FILE at it. A stub ssh
+on PATH stands in for the device: it records its command line, environment and standard
+input, asks SSH_ASKPASS for the password like ssh does, answers like the device, or runs the
+remote command here (with stubs for unshare and mount) to exercise the device lock.
+
+Covered: every shell script and every script it runs on the device parses (bash -n, also
+with bash 3.2 where /bin/bash is that); env.sh refuses a dev.env whose mode is not 600,
+explains a missing one, takes values literally and keeps secrets out of the environment, and
+in a linked git worktree without a dev.env uses the main checkout's (UNOS_DEV_ENV_FILE still
+wins); askpass.sh answers only the device's password prompt; no secret reaches ssh's command
+line or environment; sd.sh measures; the lock is taken, reported and released; check.sh shows
+every container's log configuration, redacted, and no host name; deploy.sh up waits longer
+than Docker takes to decide the containers' health; deploy.sh backup (its device side run
+here with stubs for docker and GNU tar) writes a private, complete backup, prints nothing of
+it and keeps the newest 3; api.py redacts secrets in what it prints; its relay, run here
+against a stand-in API, keeps the token in a private cache, reuses it, signs in once after a
+401, never reads a cache that is not its own private file, calls only a loopback address and
+deletes the cache on --forget-token; tree.py's manifests and comparisons on fixture trees,
+its git listing despite a hook's GIT_* variables, and status, sync and rollback end to end
+against a fixture "device checkout"; a static scan finds no secret put on a command line by
+any script; and the two device skills say what the scripts do (which lock, which report SD
+writes) and run every other command on the device under sd.sh measure.
+
+git exports GIT_INDEX_FILE (and more) to its hooks, and the pre-commit hook runs these tests:
+every test runs without the GIT_* variables, and the fixtures' git commands get an environment
+without them, so that they cannot write to the outer repository's index.
+"""
+
+import ast
+import fcntl
+import hashlib
+import http.server
+import json
+import os
+import re
+import secrets
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import textwrap
+import threading
+import time
+import types
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEV = REPO_ROOT / "scripts" / "dev"
+SHELL_SCRIPTS = sorted(
+    p for p in DEV.rglob("*") if p.is_file() and p.suffix != ".py" and p.read_bytes().startswith((b"#!/usr/bin/env bash", b"# shellcheck shell=bash"))
+)
+PYTHON_SCRIPTS = sorted(DEV.rglob("*.py"))
+SECRET_NAME = re.compile(r"PASS|TOKEN|SECRET|API_KEY|PRIVATE_KEY")
+
+pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+
+
+@pytest.fixture(autouse=True)
+def no_outer_git_environment(monkeypatch):
+    """Without GIT_INDEX_FILE, GIT_DIR and the rest that a git hook exports: with `git commit -a`
+    GIT_INDEX_FILE names the outer repository's index, and `git add` in a fixture would write
+    the fixture's files into the commit being made."""
+    for name in list(os.environ):
+        if name.startswith("GIT_"):
+            monkeypatch.delenv(name)
+
+
+def without_git_variables() -> dict[str, str]:
+    """os.environ without GIT_DIR, GIT_INDEX_FILE and the other GIT_* variables of an outer git
+    (a hook, `git rebase -x`), for the git commands of the tests."""
+    return {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+
+
+def bashes() -> list[str]:
+    """bash on PATH and, when it is another bash (macOS: 3.2), /bin/bash."""
+    found = []
+    for candidate in (shutil.which("bash"), "/bin/bash"):
+        if candidate and os.path.exists(candidate) and os.path.realpath(candidate) not in {os.path.realpath(b) for b in found}:
+            found.append(candidate)
+    return found
+
+
+def load(name: str) -> types.ModuleType:
+    """A script of scripts/dev as a module, without writing bytecode next to it."""
+    path = DEV / name
+    module = types.ModuleType("scripts_dev_" + path.stem)
+    module.__file__ = str(path)
+    sys.modules[module.__name__] = module
+    exec(compile(path.read_text(), str(path), "exec"), module.__dict__)
+    return module
+
+
+api = load("api.py")
+tree = load("tree.py")
+
+
+class Device:
+    """A fixture dev.env and a stub ssh, for running the scripts in tmp_path."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp = tmp_path
+        self.bin = tmp_path / "bin"
+        self.log = tmp_path / "ssh-log"
+        self.bin.mkdir()
+        self.log.mkdir()
+        self.ssh_password = "ssh-" + secrets.token_hex(6)
+        # Characters a shell would act on: env.sh must take the value literally.
+        self.admin_password = "ad$min'\"pw " + secrets.token_hex(4)
+        self.tx_password = "tx-" + secrets.token_hex(6)
+        self.env_file = tmp_path / "dev.env"
+        self.write_env()
+        self.lock = tmp_path / "unos-dev.lock"
+        self.stub("ssh", STUB_SSH)
+
+    def write_env(self, extra: str = "", mode: int = 0o600, ssh_password: str | None = None) -> None:
+        pw = self.ssh_password if ssh_password is None else ssh_password
+        self.env_file.write_text(
+            "# fixture\n"
+            "UNOS_DEV_HOST=10.0.0.9\n"
+            "UNOS_DEV_SSH_USER=root\n"
+            f"UNOS_DEV_SSH_PASSWORD={pw}\n"
+            "UNOS_DEV_REPO=/opt/unos\n"
+            "UNOS_DEV_SYSTEM_DISK=mmcblk1\n"
+            "UNOS_DEV_ADMIN_USER=admin\n"
+            f"UNOS_DEV_ADMIN_PASSWORD={self.admin_password}\n"
+            "TRANSMISSION_USER=tx\n"
+            f"TRANSMISSION_PASS={self.tx_password}\n" + extra
+        )
+        os.chmod(self.env_file, mode)
+
+    @property
+    def secrets(self) -> list[str]:
+        return [self.ssh_password, self.admin_password, self.tx_password]
+
+    def stub(self, name: str, source: str) -> None:
+        path = self.bin / name
+        path.write_text(source.replace("@PYTHON@", sys.executable))
+        path.chmod(0o755)
+
+    def env(self, **extra: str) -> dict[str, str]:
+        env = {
+            "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "HOME": str(self.tmp),
+            "TMPDIR": str(self.tmp),
+            "LANG": "C",
+            "UNOS_DEV_ENV_FILE": str(self.env_file),
+            "UNOS_DEV_LOCK": str(self.lock),
+            "UNOS_DEV_STATE_DIR": str(self.tmp / "state"),
+            "FAKE_SSH_LOG": str(self.log),
+        }
+        env.update(extra)
+        return env
+
+    def bash(self, script: str, bash: str = "bash", **extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [bash, "-c", script], cwd=DEV, env=self.env(**extra), capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, timeout=60,
+        )
+
+    def run(self, *argv: str, input: str | None = None, **extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [str(a) for a in argv], cwd=REPO_ROOT, env=self.env(**extra), capture_output=True, text=True,
+            input=input, stdin=None if input is not None else subprocess.DEVNULL, timeout=60,
+        )
+
+
+# The stub ssh. FAKE_SSH_MODE: record (default) records argv, the environment and standard
+# input, asks SSH_ASKPASS like ssh, and prints FAKE_SSH_LOG/reply; sectors answers growing
+# sector counts; local runs the remote command here with bash.
+STUB_SSH = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import os, subprocess, sys
+    log = os.environ["FAKE_SSH_LOG"]
+    args = sys.argv[1:]
+    mode = os.environ.get("FAKE_SSH_MODE", "record")
+    command = " ".join(args[args.index("--") + 2:]) if "--" in args else ""
+    if mode == "local":
+        os.execvp("bash", ["bash", "-c", command])
+    if mode == "sectors":
+        path = os.path.join(log, "sectors")
+        n = int(open(path).read()) if os.path.exists(path) else 1000
+        open(path, "w").write(str(n + 100))
+        print(n)
+        sys.exit(0)
+    with open(os.path.join(log, "argv"), "a") as f:
+        f.write("\\0".join(args) + "\\n")
+    with open(os.path.join(log, "env"), "a") as f:
+        f.write("\\0".join(f"{k}={v}" for k, v in os.environ.items()) + "\\n")
+    if os.environ.get("SSH_ASKPASS"):
+        dest = args[args.index("--") + 1]
+        answer = subprocess.run([os.environ["SSH_ASKPASS"], f"{dest}'s password: "], capture_output=True, text=True)
+        with open(os.path.join(log, "askpass"), "w") as f:
+            f.write(answer.stdout)
+    data = sys.stdin.buffer.read()
+    with open(os.path.join(log, "stdin"), "ab") as f:
+        f.write(data)
+    reply = os.path.join(log, "reply")
+    if os.path.exists(reply):
+        sys.stdout.write(open(reply).read())
+    """
+)
+
+# Stand-ins for running the lock's remote side here: no mount namespace, no remount.
+STUB_UNSHARE = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --propagation) shift 2 ;;
+            --*) shift ;;
+            *) break ;;
+        esac
+    done
+    exec "$@"
+    """
+)
+STUB_MOUNT = "#!/usr/bin/env bash\nexit 0\n"
+# flock FD with -n or -w SECONDS, as util-linux's (macOS has none): the lock belongs to the
+# open file shared with the calling shell, so it stays after this process exits.
+STUB_FLOCK = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import fcntl, sys, time
+    args = sys.argv[1:]
+    wait = 0.0
+    if args[0] == "-n":
+        args = args[1:]
+    elif args[0] == "-w":
+        wait, args = float(args[1]), args[2:]
+    fd, deadline = int(args[0]), time.time() + wait
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            sys.exit(0)
+        except BlockingIOError:
+            if time.time() >= deadline:
+                sys.exit(1)
+            time.sleep(0.1)
+    """
+)
+
+
+@pytest.fixture
+def device(tmp_path):
+    return Device(tmp_path)
+
+
+# --- the scripts parse ----------------------------------------------------------------------
+
+
+def test_the_scripts_are_found():
+    names = {p.relative_to(DEV).as_posix() for p in SHELL_SCRIPTS + PYTHON_SCRIPTS}
+    assert {"env.sh", "ssh.sh", "askpass.sh", "sd.sh", "deploy.sh", "check.sh", "linux-tests.sh",
+            "bin/testparm", "api.py", "tree.py"} <= names
+
+
+@pytest.mark.parametrize("bash", bashes())
+@pytest.mark.parametrize("script", SHELL_SCRIPTS, ids=lambda p: p.relative_to(DEV).as_posix())
+def test_every_shell_script_parses(script, bash):
+    result = subprocess.run([bash, "-n", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("script", PYTHON_SCRIPTS, ids=lambda p: p.name)
+def test_python_helpers_parse_as_python_3_9(script):
+    # The device runs tree.py with its own python3; a workstation may have an old one.
+    ast.parse(script.read_text(), filename=str(script), feature_version=(3, 9))
+
+
+@pytest.mark.parametrize("script", SHELL_SCRIPTS + PYTHON_SCRIPTS, ids=lambda p: p.relative_to(DEV).as_posix())
+def test_scripts_are_executable_except_env_sh(script):
+    if script.name == "env.sh":
+        assert not os.access(script, os.X_OK), "env.sh is sourced, not run"
+        return
+    assert os.access(script, os.X_OK)
+    first = script.read_text().splitlines()[0]
+    assert first in ("#!/usr/bin/env bash", "#!/usr/bin/env python3")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["deploy.sh", "--help"], ["sd.sh", "--help"], ["check.sh", "--help"], ["linux-tests.sh", "--help"],
+     ["ssh.sh", "--help"], ["api.py", "--help"], ["tree.py", "--help"]],
+    ids=lambda a: a[0],
+)
+def test_help_needs_no_dev_env(device, argv):
+    device.env_file.unlink()
+    result = device.run(DEV / argv[0], *argv[1:])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip()
+
+
+def test_deploy_sh_refuses_unknown_steps_without_contacting_anything(device):
+    for argv in (["bogus"], ["sync", "--force"], ["up", "everything"], []):
+        result = device.run(DEV / "deploy.sh", *argv)
+        assert result.returncode == 2, argv
+    assert not any(device.log.iterdir())
+
+
+# The scripts that run on the device are strings in these files, defined before "# --- main".
+REMOTE_SCRIPTS = {"deploy.sh": ["status"], "check.sh": [], "linux-tests.sh": [], "bin/testparm": ["-s", "--suppress-prompt", "FILE"]}
+
+
+@pytest.mark.parametrize("bash", bashes())
+@pytest.mark.parametrize("name", sorted(REMOTE_SCRIPTS))
+def test_the_scripts_for_the_device_parse(device, name, bash):
+    """Load a script's definitions only (up to "# --- main", with env.sh by its absolute
+    path), run bash -n on every REMOTE_* script, DEV_RO_ROOT, the lock's remote side and the
+    SD measurement, and compile the Python embedded in them."""
+    source = (DEV / name).read_text()
+    assert "\n# --- main\n" in source
+    definitions = source.split("\n# --- main\n", 1)[0]
+    definitions = definitions.replace('. "$(dirname "${BASH_SOURCE[0]}")/env.sh"', f'. "{DEV}/env.sh"')
+    definitions = definitions.replace('. "$here/env.sh"', f'. "{DEV}/env.sh"')
+    probe = device.tmp / "definitions.sh"
+    probe.write_text(definitions)
+    script = (
+        '. "$0" || exit 9; for v in $(compgen -v REMOTE_) DEV_RO_ROOT dev__lock_script dev__sd_script; do '
+        'echo "$v"; "$BASH" -n <<< "${!v}" || { echo "SYNTAX $v"; exit 8; }; done'
+    )
+    args = [str(probe) if a == "FILE" else a for a in REMOTE_SCRIPTS[name]]
+    result = subprocess.run([bash, "-c", script, str(probe), *args], cwd=DEV, env=device.env(),
+                            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    checked = result.stdout.split()
+    assert "DEV_RO_ROOT" in checked and len(checked) >= 3, checked
+    for heredoc in re.findall(r'<< "PY"[^\n]*\n(.*?)\nPY\n', source, flags=re.S):
+        compile(heredoc, f"{name}: python", "exec")
+
+
+# --- env.sh ---------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bash", bashes())
+def test_env_sh_explains_a_missing_dev_env(device, bash):
+    device.env_file.unlink()
+    result = device.bash('. ./env.sh || exit 9; echo loaded', bash=bash)
+    assert result.returncode == 9
+    assert "loaded" not in result.stdout
+    assert str(device.env_file) in result.stderr
+    assert "dev.env.example" in result.stderr and "chmod 600" in result.stderr and "make setup" in result.stderr
+    # The passwords are the owner's to fill in (ADR-0024), not an agent's.
+    assert "the owner fills in the passwords" in result.stderr
+
+
+@pytest.mark.parametrize("bash", bashes())
+@pytest.mark.parametrize("mode", [0o644, 0o640, 0o604, 0o660, 0o700, 0o400])
+def test_env_sh_refuses_a_dev_env_whose_mode_is_not_600(device, bash, mode):
+    device.write_env(mode=mode)
+    result = device.bash('. ./env.sh || exit 9; echo loaded', bash=bash)
+    assert result.returncode == 9
+    assert "loaded" not in result.stdout
+    assert f"mode {mode:o}" in result.stderr and f"chmod 600 {device.env_file}" in result.stderr
+    for value in device.secrets:
+        assert value not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("bash", bashes())
+def test_env_sh_loads_settings_and_keeps_secrets_out_of_the_environment(device, bash):
+    device.write_env(extra='export UNOS_DEV_LOCK_WAIT=5\r\n  # indented comment\n\nUNOS_DEV_KNOWN_HOSTS="/x y/known_hosts"\n')
+    script = """
+        . ./env.sh || exit 9
+        printf '%s|' "$UNOS_DEV_HOST" "$UNOS_DEV_SSH_USER" "$UNOS_DEV_REPO" "$UNOS_DEV_SYSTEM_DISK" \
+            "$UNOS_DEV_ADMIN_USER" "$TRANSMISSION_USER" "$UNOS_DEV_LOCK_WAIT" "$UNOS_DEV_KNOWN_HOSTS"
+        echo
+        env | grep -c -e PASS -e SECRET -e TOKEN || true
+        set | grep -c -e '^UNOS_DEV_SSH_PASSWORD=' -e '^UNOS_DEV_ADMIN_PASSWORD=' -e '^TRANSMISSION_PASS=' || true
+        dev_secret UNOS_DEV_SSH_PASSWORD
+        dev_secret UNOS_DEV_ADMIN_PASSWORD
+        dev_secret TRANSMISSION_PASS
+    """
+    result = device.bash(script, bash=bash)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == "10.0.0.9|root|/opt/unos|mmcblk1|admin|tx|5|/x y/known_hosts|"
+    assert lines[1:3] == ["0", "0"], "a secret is in the environment or in a shell variable"
+    assert lines[3:] == device.secrets
+
+
+def test_dev_secret_is_only_for_secrets_and_fails_on_an_empty_value(device):
+    device.write_env(ssh_password="")
+    result = device.bash(". ./env.sh || exit 9; dev_secret UNOS_DEV_SSH_PASSWORD; echo rc=$?; "
+                         "dev_has_secret UNOS_DEV_SSH_PASSWORD; echo has=$?; dev_secret UNOS_DEV_HOST; echo host=$?")
+    assert result.stdout.split() == ["rc=1", "has=1", "host=2"]
+    assert "not a secret's name" in result.stderr
+
+
+def test_the_environment_wins_over_dev_env_for_settings(device):
+    result = device.bash('. ./env.sh || exit 9; echo "$UNOS_DEV_REPO $UNOS_DEV_HOST"', UNOS_DEV_REPO="/srv/unos")
+    assert result.stdout.split() == ["/srv/unos", "10.0.0.9"]
+
+
+def test_env_sh_reports_a_bad_line_by_number_only(device):
+    device.write_env(extra=f"this line holds {device.tx_password}\n")
+    result = device.bash(". ./env.sh || exit 9")
+    assert result.returncode == 9
+    assert "line 11 is not NAME=value" in result.stderr
+    assert device.tx_password not in result.stderr
+
+
+def test_env_sh_refuses_a_repeated_name(device):
+    device.write_env(extra="UNOS_DEV_HOST=10.0.0.10\n")
+    result = device.bash(". ./env.sh || exit 9")
+    assert result.returncode == 9 and "repeats UNOS_DEV_HOST" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "line", ["UNOS_DEV_HOST=10.0.0.9;reboot", "UNOS_DEV_REPO=opt/unos", "UNOS_DEV_REPO=/opt/../etc",
+             "UNOS_DEV_SYSTEM_DISK=sda;x", "UNOS_DEV_SSH_USER=Root$x", "UNOS_DEV_LOCK_WAIT=10s"],
+)
+def test_env_sh_refuses_values_that_would_reach_a_remote_command(device, line):
+    name = line.split("=", 1)[0]
+    text = device.env_file.read_text()
+    text = re.sub(rf"^{name}=.*\n", "", text, flags=re.M) + line + "\n"
+    device.env_file.write_text(text)
+    result = device.bash(". ./env.sh || exit 9")
+    assert result.returncode == 9, result.stdout
+    assert name in result.stderr
+
+
+def test_dev_env_example_names_every_setting_with_empty_secrets(device):
+    example = (REPO_ROOT / "dev.env.example").read_text()
+    names = re.findall(r"^([A-Z_][A-Z0-9_]*)=(.*)$", example, flags=re.M)
+    assert [n for n, _ in names] == [
+        "UNOS_DEV_HOST", "UNOS_DEV_SSH_USER", "UNOS_DEV_SSH_PASSWORD", "UNOS_DEV_REPO", "UNOS_DEV_SYSTEM_DISK",
+        "UNOS_DEV_ADMIN_USER", "UNOS_DEV_ADMIN_PASSWORD", "TRANSMISSION_USER", "TRANSMISSION_PASS",
+    ]
+    assert all(value == "" for name, value in names if SECRET_NAME.search(name))
+    # A copy works as it is (make setup copies it with mode 600).
+    shutil.copy(REPO_ROOT / "dev.env.example", device.env_file)
+    os.chmod(device.env_file, 0o600)
+    result = device.bash('. ./env.sh || exit 9; echo "$UNOS_DEV_HOST"')
+    assert result.returncode == 0, result.stderr
+
+
+def test_git_ignores_dev_env_but_not_the_example():
+    if shutil.which("git") is None or not (REPO_ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    env = without_git_variables()
+    ignored = subprocess.run(["git", "-C", str(REPO_ROOT), "check-ignore", "--no-index", "-q", "dev.env"], env=env)
+    example = subprocess.run(["git", "-C", str(REPO_ROOT), "check-ignore", "--no-index", "-q", "dev.env.example"], env=env)
+    assert ignored.returncode == 0 and example.returncode == 1
+
+
+# --- env.sh in git worktrees ----------------------------------------------------------------
+
+
+@pytest.fixture
+def worktree(device):
+    """A main checkout whose scripts/dev holds env.sh, and a linked worktree of it (git worktree
+    add): parallel work happens in worktrees (ADR-0210), and git ignores dev.env, so a new
+    worktree has none of its own."""
+    if shutil.which("git") is None:
+        pytest.skip("needs git")
+    main, linked = device.tmp / "main", device.tmp / "linked"
+    make_tree(main, {".gitignore": "*.env\ntmp/\n", "scripts/dev/env.sh": (DEV / "env.sh").read_text()})
+    git_init(main)
+    git(main, "worktree", "add", "-q", "-b", "feature", str(linked))
+    return main, linked
+
+
+def env_sh_in(device: Device, checkout: Path, bash: str = "bash", **extra: str) -> subprocess.CompletedProcess:
+    """Source env.sh of CHECKOUT with the defaults of dev.env and the state directory (the
+    fixture's environment sets both) and print what it chose."""
+    env = device.env(**extra)
+    for name in ("UNOS_DEV_ENV_FILE", "UNOS_DEV_STATE_DIR"):
+        if name not in extra:
+            del env[name]
+    script = '. ./env.sh || exit 9; printf "%s\\n" "$UNOS_DEV_ENV_FILE" "$UNOS_DEV_HOST" "$UNOS_DEV_STATE_DIR"'
+    return subprocess.run([bash, "-c", script], cwd=checkout / "scripts" / "dev", env=env, capture_output=True,
+                          text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+
+def put_dev_env(device: Device, path: Path, host: str, mode: int = 0o600) -> None:
+    path.write_text(device.env_file.read_text().replace("UNOS_DEV_HOST=10.0.0.9\n", f"UNOS_DEV_HOST={host}\n"))
+    os.chmod(path, mode)
+
+
+def same_path(a: str | Path, b: str | Path) -> bool:
+    return os.path.realpath(a) == os.path.realpath(b)
+
+
+def mentions(text: str, path: Path) -> bool:
+    """Whether a message names PATH (as given, or with its symlinks resolved, as git gives it)."""
+    return str(path) in text or os.path.realpath(path) in text
+
+
+@pytest.mark.parametrize("bash", bashes())
+def test_a_linked_worktree_uses_the_main_checkouts_dev_env(device, worktree, bash):
+    main, linked = worktree
+    put_dev_env(device, main / "dev.env", "10.0.0.20")
+    result = env_sh_in(device, linked, bash=bash)
+    assert result.returncode == 0, result.stderr
+    env_file, host, state = result.stdout.splitlines()
+    assert same_path(env_file, main / "dev.env") and host == "10.0.0.20"
+    # One record of the one device: the rollback copies and backups of every worktree go to the
+    # main checkout's tmp/dev.
+    assert same_path(state, main / "tmp" / "dev")
+    assert same_path(env_sh_in(device, main, bash=bash).stdout.splitlines()[2], main / "tmp" / "dev")
+    # The git variables that a hook exports do not lead it to another repository.
+    other = device.tmp / "other"
+    other.mkdir()
+    git(other, "init", "-q")
+    hooked = env_sh_in(device, linked, bash=bash, GIT_DIR=str(other / ".git"), GIT_INDEX_FILE=str(other / ".git" / "index"))
+    assert hooked.returncode == 0 and same_path(hooked.stdout.splitlines()[0], main / "dev.env"), hooked.stderr
+
+
+def test_a_worktrees_own_dev_env_and_unos_dev_env_file_win(device, worktree):
+    main, linked = worktree
+    put_dev_env(device, main / "dev.env", "10.0.0.20")
+    put_dev_env(device, linked / "dev.env", "10.0.0.21")
+    own = env_sh_in(device, linked)
+    assert same_path(own.stdout.splitlines()[0], linked / "dev.env") and own.stdout.splitlines()[1] == "10.0.0.21"
+    chosen = env_sh_in(device, linked, UNOS_DEV_ENV_FILE=str(device.env_file))
+    assert chosen.stdout.splitlines()[:2] == [str(device.env_file), "10.0.0.9"], chosen.stderr
+    # A file named by UNOS_DEV_ENV_FILE is not replaced by another one when it is missing.
+    missing = env_sh_in(device, linked, UNOS_DEV_ENV_FILE=str(device.tmp / "missing.env"))
+    assert missing.returncode == 9 and str(device.tmp / "missing.env") in missing.stderr
+    assert "main checkout" not in missing.stderr
+
+
+def test_the_main_checkouts_dev_env_is_held_to_the_same_rules(device, worktree):
+    main, linked = worktree
+    put_dev_env(device, main / "dev.env", "10.0.0.20", mode=0o644)
+    result = env_sh_in(device, linked)
+    assert result.returncode == 9 and "mode 644" in result.stderr and mentions(result.stderr, main / "dev.env")
+    for value in device.secrets:
+        assert value not in result.stdout + result.stderr
+
+
+def test_without_any_dev_env_a_worktree_is_told_to_create_it_in_the_main_checkout(device, worktree):
+    main, linked = worktree
+    result = env_sh_in(device, linked)
+    assert result.returncode == 9
+    assert mentions(result.stderr, linked / "dev.env") and mentions(result.stderr, main / "dev.env")
+    assert "Create it in the main checkout" in result.stderr and "UNOS_DEV_ENV_FILE" in result.stderr
+    assert "dev.env.example" in result.stderr and "chmod 600" in result.stderr
+    assert "the owner fills in the passwords" in result.stderr
+    # The main checkout itself has no main checkout to point to.
+    plain = env_sh_in(device, main)
+    assert plain.returncode == 9 and mentions(plain.stderr, main / "dev.env") and "main checkout" not in plain.stderr
+
+
+# --- ssh.sh and askpass.sh ------------------------------------------------------------------
+
+
+def test_askpass_answers_only_the_device_password_prompt(device):
+    askpass = DEV / "askpass.sh"
+    ok = device.run(askpass, "root@10.0.0.9's password: ")
+    assert ok.returncode == 0 and ok.stdout == device.ssh_password + "\n"
+    for prompt in ("Enter passphrase for key '/home/u/.ssh/id_ed25519': ", "root@10.0.0.10's password: ",
+                   "admin@10.0.0.9's password: ", "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
+                   "(root@10.0.0.9) Password: ", ""):
+        refused = device.run(askpass, prompt)
+        assert refused.returncode == 1 and refused.stdout == "", prompt
+        assert device.ssh_password not in refused.stderr
+
+
+def test_ssh_sh_puts_no_secret_on_the_command_line_or_in_the_environment(device):
+    result = device.run(DEV / "ssh.sh", "echo hello", input="data on stdin")
+    assert result.returncode == 0, result.stderr
+    argv = (device.log / "argv").read_text().rstrip("\n").split("\0")
+    env = dict(item.split("=", 1) for item in (device.log / "env").read_text().rstrip("\n").split("\0"))
+    assert argv[-3:] == ["--", "root@10.0.0.9", "echo hello"]
+    assert "BatchMode=yes" not in argv and "StrictHostKeyChecking=accept-new" in argv
+    assert os.path.realpath(env["SSH_ASKPASS"]) == os.path.realpath(DEV / "askpass.sh")
+    assert env["SSH_ASKPASS_REQUIRE"] == "force"
+    for value in device.secrets:
+        assert not any(value in a for a in argv)
+        assert not any(value in v for v in env.values())
+    # ssh gets the password from askpass.sh, and standard input passes through.
+    assert (device.log / "askpass").read_text() == device.ssh_password + "\n"
+    assert (device.log / "stdin").read_text() == "data on stdin"
+
+
+def test_ssh_sh_uses_keys_only_without_a_password(device):
+    device.write_env(ssh_password="", extra=f"UNOS_DEV_SSH_KEY={device.tmp}/id_test\n")
+    assert device.run(DEV / "ssh.sh", "true").returncode == 0
+    argv = (device.log / "argv").read_text().rstrip("\n").split("\0")
+    env = (device.log / "env").read_text()
+    assert "BatchMode=yes" in argv and "IdentitiesOnly=yes" in argv and f"{device.tmp}/id_test" in argv
+    assert "SSH_ASKPASS" not in env
+
+
+def test_sd_sh_measures_and_keeps_the_status_of_the_command(device):
+    sectors = device.run(DEV / "sd.sh", "sectors", FAKE_SSH_MODE="sectors")
+    assert sectors.stdout == "1000\n"
+    ok = device.run(DEV / "sd.sh", "measure", "a step", "--", "true", FAKE_SSH_MODE="sectors",
+                    UNOS_DEV_SD_LOG=str(device.tmp / "sd.log"))
+    assert ok.returncode == 0 and "SD writes a step: 0.049 MiB (100 sectors)" in ok.stderr
+    assert (device.tmp / "sd.log").read_text().split()[1:] == ["a_step", "100"]
+    failed = device.run(DEV / "sd.sh", "measure", "x", "--", "sh", "-c", "exit 7", FAKE_SSH_MODE="sectors")
+    assert failed.returncode == 7 and "SD writes x:" in failed.stderr
+    assert device.run(DEV / "sd.sh", "measure", "x", "true").returncode == 2
+
+
+# --- the device lock ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def local_device(device):
+    """The remote side of the scripts runs here: stubs for unshare and mount (and flock)."""
+    device.stub("unshare", STUB_UNSHARE)
+    device.stub("mount", STUB_MOUNT)
+    if shutil.which("flock") is None:
+        device.stub("flock", STUB_FLOCK)
+    if shutil.which("timeout") is None:
+        device.stub("timeout", "#!/usr/bin/env bash\nshift\nexec \"$@\"\n")
+    return device
+
+
+def lock_is_free(path: Path) -> bool:
+    with open(path, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        fcntl.flock(f, fcntl.LOCK_UN)
+        return True
+
+
+def wait_for(predicate, seconds: float = 15) -> bool:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.1)
+    return predicate()
+
+
+def test_the_lock_is_taken_recorded_and_released(local_device):
+    owner = Path(str(local_device.lock) + ".owner")
+    result = local_device.bash('. ./env.sh || exit 9; dev_lock "test step"; cat "$UNOS_DEV_LOCK.owner"; '
+                               'echo "held=$UNOS_DEV_LOCK_HELD"', FAKE_SSH_MODE="local")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("test step (") and "held=" in result.stdout
+    assert wait_for(lambda: not owner.exists()) and lock_is_free(local_device.lock)
+
+
+def test_a_second_holder_waits_and_gives_up(local_device):
+    first = subprocess.Popen(
+        # wait, unlike a foreground sleep, returns at once on SIGTERM, so the traps run.
+        ["bash", "-c", ('. ./env.sh || exit 9; dev_lock "first step"; echo held; sleep 30 & '
+                        'dev_on_exit "kill $!"; wait')],
+        cwd=DEV, env=local_device.env(FAKE_SSH_MODE="local"), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL, text=True,
+    )
+    try:
+        assert first.stdout.readline() == "held\n"
+        assert not lock_is_free(local_device.lock)
+        second = local_device.bash('. ./env.sh || exit 9; dev_lock "second step"; echo held',
+                                   FAKE_SSH_MODE="local", UNOS_DEV_LOCK_WAIT="1")
+        assert second.returncode == 1 and "held" not in second.stdout
+        assert "held by first step (" in second.stderr and "could not take the device lock" in second.stderr
+    finally:
+        first.terminate()
+        first.wait(timeout=30)
+    assert wait_for(lambda: lock_is_free(local_device.lock))
+
+
+# --- check.sh -------------------------------------------------------------------------------
+
+# docker for check.sh's script on the device: three containers, the two of UNOS running and
+# healthy, an app whose log rotation comes from the host's daemon.json. It knows the templates
+# check.sh uses and fails on any other, so a changed template needs this stub changed too.
+STUB_DOCKER = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import json, os, sys
+    containers = {
+        "1a2b": ("unos-supervisor", {"Type": "json-file", "Config": {}}),
+        "3c4d": ("unos-webui", {"Type": "json-file", "Config": {}}),
+        "5e6f": ("transmission", {"Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"}}),
+    }
+    def js(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    args = sys.argv[1:]
+    if args[0] == "ps":
+        for cid, (name, _) in containers.items():
+            print(cid if "-aq" in args else f"{name}  Up 2 hours (healthy)  deploy-{name}:latest")
+    elif args[0] == "inspect" and args[1] == "-f":
+        for ref in args[3:]:
+            found = [c for cid, c in containers.items() if ref in (cid, c[0])]
+            if not found:
+                sys.exit(f"Error: No such object: {ref}")
+            name, log = found[0]
+            out = args[2]
+            for template, value in (("{{.Name}}", "/" + name), ("{{.HostConfig.LogConfig.Type}}", log["Type"]),
+                                    ("{{json .HostConfig.LogConfig.Config}}", js(log["Config"])),
+                                    ("{{json .HostConfig.LogConfig}}", js(log)), ("{{.State.Status}}", "running"),
+                                    ("{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}", "healthy"),
+                                    ("{{.RestartCount}}", "0")):
+                out = out.replace(template, value)
+            if "{{" in out:
+                sys.exit(f"the docker stub does not know the template {out!r}")
+            print(out)
+    elif args[0] == "logs":
+        print(os.environ.get("FAKE_DOCKER_LOG", "INFO started"))
+    elif args[0] == "images":
+        if "-q" not in args:
+            print("deploy-supervisor:latest  sha256:1  2 days ago  300MB")
+    else:
+        sys.exit(f"the docker stub does not know {args}")
+    """
+)
+
+
+def test_check_sh_shows_every_containers_log_configuration(local_device):
+    """The rotation of the containers' json-file logs is set in the host's daemon.json, as log
+    options (ADR-0178): check.sh prints the driver and the options of every container, also the
+    apps', redacted like the rest of its output. The device's host name is not part of the
+    report. Its script runs here, with stubs."""
+    device = local_device
+    device.stub("docker", STUB_DOCKER)
+    device.stub("systemctl", "#!/usr/bin/env bash\necho active\n")
+    device.stub("python3", "#!/usr/bin/env bash\necho 200\n")  # the API's health check
+    device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    host_name = "box-" + secrets.token_hex(4)
+    device.stub("hostname", f"#!/usr/bin/env bash\necho {host_name}\n")
+    result = device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable,
+                        FAKE_DOCKER_LOG=f"ERROR login as admin with {device.admin_password} failed")
+    out = result.stdout
+    assert "== device" in out and host_name not in out + result.stderr
+    assert "== container logs" in out, out + result.stderr
+    section = out.split("== container logs", 1)[1].split("\n== ", 1)[0].splitlines()[1:]
+    assert section == [
+        'transmission: json-file {"max-file":"3","max-size":"10m"}',
+        "unos-supervisor: json-file {}",
+        "unos-webui: json-file {}",
+    ], out + result.stderr
+    assert "unos-supervisor: running healthy restarts=0" in out and "unos-webui: running healthy restarts=0" in out
+    # The output passes through api.py's redaction.
+    assert "ERROR login as admin with <redacted> failed" in out and device.admin_password not in out
+    assert "SD writes check.sh: " in result.stderr
+
+
+# --- deploy's tree comparison end to end ---------------------------------------------------
+
+
+def git(path: Path, *args: str) -> None:
+    """git in the fixture repository PATH, without the user's identity, signing or hooks, and
+    without an outer git's GIT_* variables."""
+    subprocess.run(["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main",
+                    "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args], check=True,
+                   env=without_git_variables())
+
+
+def git_init(path: Path) -> None:
+    git(path, "init", "-q")
+    git(path, "add", "-A")
+    git(path, "commit", "-q", "-m", "fixture")
+
+
+@pytest.fixture
+def trees(local_device):
+    """A repository with copies of the scripts (tree.py takes its root from where it is) and a
+    "device checkout", both in tmp_path; the stub ssh runs the remote commands here."""
+    if shutil.which("git") is None:
+        pytest.skip("needs git")
+    repo, checkout = local_device.tmp / "repo", local_device.tmp / "device"
+    for name in ("tree.py", "env.sh", "ssh.sh", "askpass.sh", "deploy.sh"):
+        (repo / "scripts" / "dev").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(DEV / name, repo / "scripts" / "dev" / name)
+    ignore = "*.env\nscripts/\ntmp/\n"
+    make_tree(repo, {".gitignore": ignore, "supervisor/src/main.py": "new\n", "docs/x.md": "doc\n",
+                     "deploy/update.sh": ("x", "#!/bin/sh\n"), "added.txt": "added\n"})
+    make_tree(checkout, {".gitignore": ignore, "supervisor/src/main.py": "old\n", "docs/x.md": "doc\n",
+                         "deploy/update.sh": "#!/bin/sh\n", "stale.txt": "stale\n", "deploy/.env": "JWT_SECRET=keep\n"})
+    git_init(repo)
+    git_init(checkout)
+    return local_device, repo, checkout
+
+
+def tree_cli(trees, *args: str) -> subprocess.CompletedProcess:
+    device, repo, checkout = trees
+    return subprocess.run([sys.executable, str(repo / "scripts" / "dev" / "tree.py"), *args], cwd=repo,
+                          env=device.env(FAKE_SSH_MODE="local", UNOS_DEV_REPO=str(checkout)),
+                          capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+
+
+def test_status_sync_and_rollback_end_to_end(trees):
+    device, repo, checkout = trees
+    status = tree_cli(trees, "status")
+    assert status.returncode == 0, status.stderr
+    lines = status.stdout.splitlines()
+    assert lines[1].startswith("runtime files: 2 differ (supervisor 1, webui 0, deploy 1)")
+    assert [line.split() for line in lines[2:4]] == [["mode", "deploy/update.sh"], ["changed", "supervisor/src/main.py"]]
+    assert [line.split()[-1] for line in lines[5:]] == ["added.txt", "stale.txt"]
+    assert "deploy/.env" not in status.stdout
+    assert tree_cli(trees, "verify", "supervisor").returncode == 1
+    assert tree_cli(trees, "verify", "webui").returncode == 0
+
+    dry = tree_cli(trees, "sync", "--dry-run")
+    assert dry.returncode == 0 and "write 3 files" in dry.stdout and "delete 1 files" in dry.stdout
+    assert (checkout / "supervisor/src/main.py").read_text() == "old\n" and not (device.tmp / "state").exists()
+
+    sync = tree_cli(trees, "sync")
+    assert sync.returncode == 0, sync.stderr
+    assert sync.stdout.rstrip().endswith("the device checkout now equals the working tree")
+    assert (checkout / "supervisor/src/main.py").read_text() == "new\n" and (checkout / "added.txt").exists()
+    assert os.access(checkout / "deploy/update.sh", os.X_OK) and not (checkout / "stale.txt").exists()
+    assert (checkout / "deploy/.env").read_text() == "JWT_SECRET=keep\n", "an ignored file was touched"
+    saved = device.tmp / "state" / "rollback"
+    stamp = (saved / "latest").read_text().strip()
+    assert oct((saved / stamp / "device-before.tar").stat().st_mode & 0o777) == "0o600"
+    assert tree_cli(trees, "verify", "supervisor", "webui", "deploy").returncode == 0
+    again = tree_cli(trees, "status")
+    assert "runtime files (supervisor, webui, deploy): equal" in again.stdout and "other files: equal" in again.stdout
+
+    plan = tree_cli(trees, "rollback", "--dry-run")
+    assert plan.returncode == 0 and "restore 3 files, delete 1 files" in plan.stdout
+    assert (checkout / "supervisor/src/main.py").read_text() == "new\n"
+    rollback = tree_cli(trees, "rollback")
+    assert rollback.returncode == 0, rollback.stderr
+    assert (checkout / "supervisor/src/main.py").read_text() == "old\n" and (checkout / "stale.txt").read_text() == "stale\n"
+    assert not os.access(checkout / "deploy/update.sh", os.X_OK) and not (checkout / "added.txt").exists()
+    assert (checkout / "deploy/.env").read_text() == "JWT_SECRET=keep\n"
+    assert (saved / (stamp + ".applied")).is_dir() and not (saved / "latest").exists()
+    assert "no sync to roll back" in tree_cli(trees, "rollback").stdout
+
+
+def test_deploy_sh_status_and_dry_run_hold_the_lock_and_report(trees):
+    """deploy.sh's own wiring: the lock is taken and released, the step's SD report is printed
+    (here "unknown": the stand-in device has no /sys/block/mmcblk1), the output is tree.py's."""
+    device, repo, checkout = trees
+    env = device.env(FAKE_SSH_MODE="local", UNOS_DEV_REPO=str(checkout), UNOS_DEV_PYTHON=sys.executable)
+    for argv, expected in ((["status"], "runtime files: 2 differ"), (["sync", "--dry-run"], "dry run: nothing was changed")):
+        result = subprocess.run([str(repo / "scripts" / "dev" / "deploy.sh"), *argv], cwd=repo, env=env,
+                                capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        assert result.returncode == 0, result.stderr
+        assert expected in result.stdout
+        assert f"SD writes deploy {' '.join(argv)}: unknown" in result.stderr
+        assert wait_for(lambda: lock_is_free(device.lock))
+    assert (checkout / "supervisor/src/main.py").read_text() == "old\n"
+
+
+# --- deploy.sh backup -----------------------------------------------------------------------
+
+# docker for the backup's scripts on the device: the compose project, the unos-data volume
+# (FAKE_VOLUME) and the images' ids; it fails on any other call.
+STUB_DOCKER_BACKUP = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import json, os, sys
+    args = sys.argv[1:]
+    if args == ["compose", "config", "--format", "json"]:
+        print(json.dumps({"name": "deploy"}))
+    elif args == ["volume", "inspect", "-f", "{{.Mountpoint}}", "deploy_unos-data"]:
+        print(os.environ["FAKE_VOLUME"])
+    elif args[:4] == ["image", "inspect", "-f", "{{.Id}}"] and len(args) == 5:
+        print("sha256:" + args[4].replace(":", "-"))
+    else:
+        sys.exit(f"the docker stub does not know {args}")
+    """
+)
+# GNU tar as the backup calls it on the device (macOS's bsdtar has no --transform), with
+# FAKE_ROOT standing for /: tar -c -f - [--transform s,PATTERN,TEXT,] -C DIR NAME... -C DIR
+# NAME... It writes the archive to standard output and logs its process id and its parent's.
+STUB_GNU_TAR = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import os, re, sys, tarfile
+    args = sys.argv[1:]
+    with open(os.path.join(os.environ["FAKE_SSH_LOG"], "tar"), "a") as log:
+        log.write(f"{os.getpid()} {os.getppid()} {' '.join(args)}\\n")
+    if args[:3] != ["-c", "-f", "-"]:
+        sys.exit(f"the tar stub knows only tar -c -f -, not {args}")
+    args, transform, base = args[3:], None, None
+    if args[:1] == ["--transform"]:
+        _, pattern, text, _ = args[1].split(",")
+        transform, args = (pattern, text), args[2:]
+    with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as tar:
+        while args:
+            if args[0] == "-C":
+                base = os.environ["FAKE_ROOT"] if args[1] == "/" else args[1]
+                args = args[2:]
+                continue
+            name = args.pop(0)
+            top = os.path.join(base, name)
+            found = [(top, "./" if name == "." else name)]
+            for folder, dirs, files in os.walk(top):
+                dirs.sort()
+                for entry in sorted(dirs + files):
+                    path = os.path.join(folder, entry)
+                    found.append((path, os.path.join(name, os.path.relpath(path, top))))
+            for path, arcname in found:
+                if transform:
+                    arcname = re.sub(transform[0], transform[1], arcname)
+                tar.add(path, arcname=arcname, recursive=False)
+    """
+)
+# mount that logs its arguments and the shell that ran it (DEV_RO_ROOT's remount).
+STUB_MOUNT_LOGGED = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import os, sys
+    with open(os.path.join(os.environ["FAKE_SSH_LOG"], "mount"), "a") as log:
+        log.write(f"{os.getppid()} {' '.join(sys.argv[1:])}\\n")
+    """
+)
+
+
+def test_deploy_sh_backup_is_private_quiet_and_keeps_the_newest_three(trees):
+    """deploy.sh backup (also the first part of up) copies the device's fstab, smb.conf and
+    unos-data volume, with its JWT secret, here (ADR-0223). Its scripts for the device run here
+    with stubs. The backup directory is 0700 (and so is tmp/dev/backup), its files are 0600, and
+    nothing of the archive reaches the output; the device's side ran with its root filesystem
+    read-only. tmp/dev/backup keeps the newest 3 backups: the one just made and the two newest
+    others by name, even one dated in the future (a clock that was ahead), so that a run never
+    deletes its own backup. What an interrupted backup left is deleted; other files stay."""
+    device, repo, checkout = trees
+    root, volume = device.tmp / "root", device.tmp / "volume"
+    markers = {name: f"{name}-{secrets.token_hex(6)}" for name in ("fstab", "smb", "jwt", "db")}
+    contents = {
+        "etc/fstab": f"LABEL=data /mnt/pools/data btrfs defaults 0 0 # {markers['fstab']}\n",
+        "etc/samba/smb.conf": f"[global]\n# {markers['smb']}\n",
+        "unos-data/jwt_secret": markers["jwt"] + "\n",
+        "unos-data/unos.db": markers["db"],
+    }
+    make_tree(root, {name: text for name, text in contents.items() if name.startswith("etc/")})
+    make_tree(volume, {name.split("/", 1)[1]: text for name, text in contents.items() if name.startswith("unos-data/")})
+    device.stub("docker", STUB_DOCKER_BACKUP)
+    device.stub("tar", STUB_GNU_TAR)
+    device.stub("mount", STUB_MOUNT_LOGGED)
+    device.stub("python3", '#!/bin/sh\nexec @PYTHON@ "$@"\n')
+    device.stub("sync", "#!/bin/sh\nexit 0\n")
+    base = device.tmp / "state" / "backup"
+    older = ["20250101T000000Z", "20250102T000000Z", "20250103T000000Z", "20991231T235959Z"]
+    make_tree(base, {**{f"{name}/device-state.tar": "old\n" for name in older},
+                     ".20250104T000000Z.partial/device-state.tar": "half\n", "notes.txt": "mine\n",
+                     "latest": "20250103T000000Z\n"})
+    base.chmod(0o755)
+    env = device.env(FAKE_SSH_MODE="local", UNOS_DEV_REPO=str(checkout), UNOS_DEV_PYTHON=sys.executable,
+                     FAKE_ROOT=str(root), FAKE_VOLUME=str(volume))
+
+    def backup() -> tuple[subprocess.CompletedProcess, str]:
+        result = subprocess.run([str(repo / "scripts" / "dev" / "deploy.sh"), "backup"], cwd=repo, env=env,
+                                capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert wait_for(lambda: lock_is_free(device.lock))
+        for marker in markers.values():
+            assert marker not in result.stdout + result.stderr
+        return result, (base / "latest").read_text().strip()
+
+    first, stamp = backup()
+    made = base / stamp
+    assert re.fullmatch(r"\d{8}T\d{6}Z", stamp) and stamp not in older
+    assert f"saved the device's fstab, smb.conf and unos-data volume in {made}" in " ".join(first.stdout.split())
+    assert "SD writes deploy backup: unknown" in first.stderr
+    for path, mode in ((base, 0o700), (made, 0o700), (made / "device-state.tar", 0o600), (made / "meta.txt", 0o600)):
+        assert oct(stat.S_IMODE(path.stat().st_mode)) == oct(mode), path
+    with tarfile.open(made / "device-state.tar") as tar:
+        for name, text in contents.items():
+            assert tar.extractfile(name).read().decode() == text, name
+    meta = (made / "meta.txt").read_text()
+    assert "device checkout HEAD: " in meta and "image deploy-supervisor:latest: sha256:" in meta
+    # tar ran in a shell that had remounted / read-only first (DEV_RO_ROOT).
+    read_only_shells = {line.split(" ", 1)[0] for line in (device.log / "mount").read_text().splitlines()
+                        if line.split(" ", 1)[1] == "-o remount,bind,ro,noatime /"}
+    tar_pid, tar_parent = (device.log / "tar").read_text().split()[:2]
+    assert read_only_shells & {tar_pid, tar_parent}
+    assert {p.name for p in base.iterdir()} == {"20250103T000000Z", "20991231T235959Z", stamp, "latest", "notes.txt"}
+    assert "older backups deleted: 2" in first.stdout
+
+    second, stamp2 = backup()
+    assert stamp2 > stamp and (base / stamp2 / "device-state.tar").stat().st_size > 0
+    assert {p.name for p in base.iterdir()} == {stamp, "20991231T235959Z", stamp2, "latest", "notes.txt"}
+    assert "older backups deleted: 1" in second.stdout
+
+
+def compose_seconds(duration: str) -> int:
+    """A compose duration of hours, minutes and seconds ("1m30s") in seconds."""
+    parts = re.findall(r"(\d+)([hms])", duration)
+    assert parts and "".join(number + unit for number, unit in parts) == duration, duration
+    return sum(int(number) * {"h": 3600, "m": 60, "s": 1}[unit] for number, unit in parts)
+
+
+def test_deploy_up_waits_until_docker_has_decided_the_health():
+    """deploy.sh up gives up after UNOS_DEV_UP_TIMEOUT: never before Docker has decided whether a
+    container of deploy/docker-compose.yml is healthy, which takes up to start_period +
+    (retries + 1) x (interval + timeout) (ADR-0176; the same budget as SUPERVISOR_START_TIMEOUT
+    of the install scripts in test_deploy_scripts.py)."""
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load((REPO_ROOT / "deploy" / "docker-compose.yml").read_text())["services"]
+    decided = {}
+    for name, service in services.items():
+        check = service["healthcheck"]
+        decided[name] = compose_seconds(check["start_period"]) + (check["retries"] + 1) * (
+            compose_seconds(check["interval"]) + compose_seconds(check["timeout"]))
+    default = re.search(r'^: "\$\{UNOS_DEV_UP_TIMEOUT:=(\d+)\}"$', (DEV / "deploy.sh").read_text(), flags=re.M)
+    assert default, "no default UNOS_DEV_UP_TIMEOUT in deploy.sh"
+    assert int(default.group(1)) > max(decided.values()), decided
+    # Its usage text says so with the current numbers.
+    usage = subprocess.run([str(DEV / "deploy.sh"), "--help"], capture_output=True, text=True, timeout=60,
+                           stdin=subprocess.DEVNULL)
+    assert f"default {default.group(1)}, above the supervisor's {decided['supervisor']} s" in " ".join(usage.stdout.split())
+
+
+# --- api.py ---------------------------------------------------------------------------------
+
+JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.c2lnbmF0dXJlLXZhbHVl"
+
+
+def test_redact_hides_secret_values_and_keeps_the_rest():
+    known = ["hunter22-known"]
+    data = {
+        "access_token": JWT,
+        "token_type": "bearer",
+        "password_changed_at": "2026-11-07",
+        "totp_enabled": True,
+        "requires_totp": False,
+        "hostname": "box",
+        "app": {"env": ["TRANSMISSION_PASS=s3cret-value", "PUID=1000"], "PASS": "abc123", "USER": "tx"},
+        "secrets": {"api_key": "k-1", "count": 2, "nested": ["x", "y"]},
+        "log": "connected with hunter22-known; password=plain1 token: tok-2",
+        "camelToken": "ct-3",
+        "empty_password": "",
+        # A Discord or Slack webhook URL holds its token (GET /notifications/configs); recovery
+        # codes come as "codes"; a URL may carry a user and password, or a token, before its host.
+        "discord_config": {"webhook_url": "https://discord.com/api/webhooks/1/wh-tok-4", "username": "UNOS"},
+        "codes": ["rc-5a", "rc-5b"],
+        "repo": "https://user:" + "url-pw-6" + "@example.org/x.git",
+        "mirror": "https://url-tok-8" + "@example.org/y.git",
+        "page": "https://example.org/a@b",
+    }
+    out = api.redact(data, known)
+    flat = json.dumps(out)
+    for leaked in (JWT, "s3cret-value", "abc123", "k-1", '"x"', "hunter22-known", "plain1", "tok-2", "ct-3",
+                   "wh-tok-4", "rc-5a", "rc-5b", "url-pw-6", "url-tok-8"):
+        assert leaked not in flat
+    assert out["token_type"] == "bearer" and out["password_changed_at"] == "2026-11-07"
+    assert out["totp_enabled"] is True and out["requires_totp"] is False and out["hostname"] == "box"
+    assert out["app"]["env"] == ["TRANSMISSION_PASS=<redacted>", "PUID=1000"] and out["app"]["USER"] == "tx"
+    assert out["secrets"]["count"] == 2 and out["empty_password"] == ""
+    assert out["discord_config"]["username"] == "UNOS" and out["codes"] == ["<redacted>", "<redacted>"]
+    assert out["repo"] == "https://<redacted>@example.org/x.git" and out["page"] == "https://example.org/a@b"
+
+
+def test_redact_text_for_bodies_that_are_not_json():
+    text = (f"Authorization: Bearer {JWT}\nUNOS_DEV_SSH_PASSWORD=pw-1 ok\nbypass mode: on\npassed: 3\n"
+            "DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/1/wh-tok-7\n"
+            "clone https://user:" + "url-pw-9" + "@example.org/z.git ok\n")
+    out = api.redact_text(text, ["pw-1"])
+    assert JWT not in out and "pw-1" not in out and "wh-tok-7" not in out and "url-pw-9" not in out
+    assert "bypass mode: on" in out and "passed: 3" in out
+    assert "clone https://<redacted>@example.org/z.git ok" in out
+
+
+def test_secret_values_follow_env_sh_names():
+    settings = {"UNOS_DEV_HOST": "10.0.0.9", "UNOS_DEV_SSH_PASSWORD": "abcd", "TRANSMISSION_PASS": "longer-one",
+                "UNOS_DEV_ADMIN_PASSWORD": "x", "SOME_TOKEN": "tok-tok"}
+    assert api.secret_values(settings) == ["longer-one", "tok-tok", "abcd"]
+
+
+@pytest.mark.parametrize("path", ["system/info", "/system/info?x=1", "/a/../b", "/a b", "/x#y"])
+def test_api_path_refuses_what_is_not_an_api_path(path):
+    with pytest.raises(ValueError):
+        api.api_path(path)
+
+
+def test_api_path_accepts_both_forms():
+    assert api.api_path("/system/info") == api.api_path("/api/v1/system/info") == "/system/info"
+
+
+def relay_reply(device: Device, status: int, body: object) -> None:
+    (device.log / "reply").write_text(json.dumps({"status": status, "body": json.dumps(body)}))
+
+
+def test_api_cli_sends_secrets_on_stdin_and_prints_them_redacted(device):
+    relay_reply(device, 200, {"hostname": "box", "access_token": JWT, "env": [f"TRANSMISSION_PASS={device.tx_password}"],
+                              "note": f"made with {device.admin_password}"})
+    result = device.run(DEV / "api.py", "GET", "/system/info", "--param", "limit=5")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("HTTP 200\n") and '"hostname": "box"' in result.stdout
+    for value in device.secrets + [JWT]:
+        assert value not in result.stdout + result.stderr
+    argv = (device.log / "argv").read_text()
+    for value in device.secrets:
+        assert value not in argv
+    request = json.loads((device.log / "stdin").read_text())
+    assert request["method"] == "GET" and request["path"] == "/system/info" and request["params"] == {"limit": ["5"]}
+    assert request["login"] == {"username": "admin", "password": device.admin_password}
+    assert request["cache"] == "/dev/shm/unos-dev-api.token" and request["auth"] is True
+    assert request["base"] == "https://127.0.0.1/api/v1"
+
+
+def test_api_cli_reads_a_json_body_and_reports_http_errors(device):
+    relay_reply(device, 404, {"detail": "Not Found"})
+    result = device.run(DEV / "api.py", "POST", "/shares/smb", "-", input='{"name": "x"}')
+    assert result.returncode == 1 and result.stdout.startswith("HTTP 404")
+    request = json.loads((device.log / "stdin").read_text())
+    assert request["body"] == {"name": "x"} and request["has_body"] is True
+    bad = device.run(DEV / "api.py", "POST", "/shares/smb", "-", input="not json")
+    assert bad.returncode == 2
+
+
+def test_api_cli_reports_relay_errors_redacted(device):
+    (device.log / "reply").write_text(json.dumps({"error": f"login with {device.admin_password} failed"}))
+    result = device.run(DEV / "api.py", "GET", "/system/info")
+    assert result.returncode == 2 and "failed" in result.stderr
+    assert device.admin_password not in result.stderr
+
+
+def test_api_redact_filter(device):
+    result = device.run(DEV / "api.py", "--redact", input=f"line with {device.ssh_password}\nplain line\n")
+    assert result.returncode == 0
+    assert result.stdout == "line with <redacted>\nplain line\n"
+
+
+def test_api_cli_refuses_a_dev_env_with_a_wrong_mode(device):
+    device.write_env(mode=0o644)
+    result = device.run(DEV / "api.py", "GET", "/system/info")
+    assert result.returncode == 2 and "chmod 600" in result.stderr
+    assert not (device.log / "argv").exists()
+
+
+def test_api_cli_forget_token_asks_the_relay_to_delete_the_cache(device):
+    relay_reply(device, 200, {})
+    result = device.run(DEV / "api.py", "--forget-token")
+    assert result.returncode == 0 and result.stdout == "token deleted on the device\n", result.stderr
+    # The request names the cache and carries no login.
+    request = json.loads((device.log / "stdin").read_text())
+    assert request == {"forget": True, "base": "https://127.0.0.1/api/v1", "cache": "/dev/shm/unos-dev-api.token",
+                       "timeout": 150}
+
+
+# --- api.py's relay, run here ---------------------------------------------------------------
+
+
+class FakeApi:
+    """The UNOS API as the relay meets it on the device, over plain HTTP on 127.0.0.1. POST
+    /auth/login with the administrator's password hands out a new token (token-1, token-2, ...);
+    any other request answers 200 when it carries a token of `valid` (and `accept` is true), else
+    401. Every request's method, path and Authorization header are recorded."""
+
+    def __init__(self, password: str) -> None:
+        self.password = password
+        self.logins = 0
+        self.valid: set[str] = set()
+        self.accept = True
+        self.requests: list[tuple[str, str, str | None]] = []
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:
+                pass
+
+            def reply(self, status: int, body: object) -> None:
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def serve(self) -> None:
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                bearer = self.headers.get("Authorization")
+                fake.requests.append((self.command, self.path, bearer))
+                if (self.command, self.path) == ("POST", "/api/v1/auth/login"):
+                    if json.loads(body) != {"username": "admin", "password": fake.password}:
+                        return self.reply(401, {"detail": "Invalid credentials"})
+                    fake.logins += 1
+                    fake.valid.add(f"token-{fake.logins}")
+                    return self.reply(200, {"access_token": f"token-{fake.logins}", "token_type": "bearer"})
+                if fake.accept and bearer in {f"Bearer {token}" for token in fake.valid}:
+                    return self.reply(200, {"path": self.path})
+                return self.reply(401, {"detail": "Not authenticated"})
+
+            do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = serve
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/api/v1"
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+
+    def tokens_sent(self) -> list[str | None]:
+        """The Authorization headers of the requests other than the logins, in order."""
+        return [bearer for _, path, bearer in self.requests if path != "/api/v1/auth/login"]
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+# ssh.sh's place for DeviceApi: runs the relay's command line here (unshare, mount: the stubs;
+# python3: this interpreter), in an environment whose proxy does not answer: the relay must not
+# use one.
+RUN_HERE = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    export PATH="@BIN@:$PATH" http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 \\
+        HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 no_proxy= NO_PROXY=
+    exec bash -c "$1"
+    """
+)
+
+
+@pytest.fixture
+def relay(local_device):
+    """(DeviceApi, FakeApi, token cache): the relay of api.py runs here against a FakeApi, with
+    its token cache in tmp_path instead of the device's /dev/shm."""
+    device = local_device
+    device.stub("python3", '#!/bin/sh\nexec @PYTHON@ "$@"\n')
+    runner = device.bin / "run-here"
+    runner.write_text(RUN_HERE.replace("@BIN@", str(device.bin)))
+    runner.chmod(0o755)
+    fake = FakeApi(device.admin_password)
+    cache = device.tmp / "shm" / "unos-dev-api.token"
+    cache.parent.mkdir()
+    settings = {"UNOS_DEV_ADMIN_USER": "admin", "UNOS_DEV_ADMIN_PASSWORD": device.admin_password}
+    client = api.DeviceApi(settings=settings, timeout=10, ssh=runner, base_url=fake.url, token_cache=str(cache))
+    yield client, fake, cache
+    fake.close()
+
+
+def test_the_relay_keeps_the_token_private_and_signs_in_only_when_needed(relay):
+    """Every login writes the SD card (ADR-0222): a first call signs in once and keeps the token
+    in a file of mode 600, through no temporary file left behind; the next call reuses it; a 401
+    brings exactly one new login, also when the new token is refused too; a request without a
+    login sends no token; --forget-token deletes the cache. The password goes only in the
+    login's body."""
+    client, fake, cache = relay
+    assert client.get("/system/stats").status_code == 200
+    assert fake.logins == 1 and cache.read_text() == "token-1"
+    assert stat.S_ISREG(cache.lstat().st_mode) and oct(stat.S_IMODE(cache.lstat().st_mode)) == "0o600"
+    assert [p.name for p in cache.parent.iterdir()] == [cache.name]
+
+    assert client.get("/system/stats").status_code == 200
+    assert fake.logins == 1 and fake.tokens_sent() == ["Bearer token-1", "Bearer token-1"]
+
+    fake.valid.clear()  # the API refuses the kept token (a new JWT secret, an expired token)
+    assert client.get("/system/stats").status_code == 200
+    assert fake.logins == 2 and cache.read_text() == "token-2"
+    assert fake.tokens_sent()[-2:] == ["Bearer token-1", "Bearer token-2"]
+
+    fake.accept = False  # refused again after the new login: no second one, the 401 is the answer
+    assert client.get("/system/stats").status_code == 401 and fake.logins == 3
+
+    fake.accept = True
+    asked = len(fake.requests)
+    assert client.request("GET", "/system/stats", auth=False).status_code == 401
+    assert fake.requests[asked:] == [("GET", "/api/v1/system/stats", None)]
+
+    client.forget_token()
+    assert not cache.exists()
+    client.forget_token()  # nothing left to delete
+    assert not any(fake.password in path for _, path, _ in fake.requests)
+
+
+@pytest.mark.parametrize("planted", ["mode 644", "symlink", "fifo"])
+def test_the_relay_never_reads_a_cache_that_is_not_its_own_private_file(relay, planted):
+    """/dev/shm is shared by every user of the device: a token cache that is not a regular file
+    of the relay's user (root there) with mode 600 is never read, whatever valid token it
+    holds. The relay signs in and replaces it with a file of its own; a symlink's target stays
+    as it was, and a FIFO does not make it wait. (A file of another owner needs root to set up;
+    the same check covers it.)"""
+    client, fake, cache = relay
+    token = "token-planted"
+    fake.valid.add(token)
+    target = cache.parent.parent / "elsewhere"
+    if planted == "mode 644":
+        cache.write_text(token)
+        cache.chmod(0o644)
+    elif planted == "symlink":
+        target.write_text(token)
+        target.chmod(0o600)
+        cache.symlink_to(target)
+    else:
+        os.mkfifo(cache, 0o600)
+    assert client.get("/system/stats").status_code == 200
+    assert fake.logins == 1 and fake.tokens_sent() == ["Bearer token-1"]
+    assert stat.S_ISREG(cache.lstat().st_mode) and oct(stat.S_IMODE(cache.lstat().st_mode)) == "0o600"
+    assert cache.read_text() == "token-1"
+    if planted == "symlink":
+        assert target.read_text() == token
+
+
+def test_the_relay_writes_the_token_through_no_link(relay):
+    """The new token goes to a new file with a name nobody can guess (mkstemp), renamed over the
+    cache: a link planted next to the cache, here at the fixed name an earlier version used,
+    is not written through."""
+    client, fake, cache = relay
+    target = cache.parent.parent / "elsewhere"
+    target.write_text("")
+    (cache.parent / (cache.name + ".new")).symlink_to(target)
+    assert client.get("/system/stats").status_code == 200
+    assert target.read_text() == "" and stat.S_ISREG(cache.lstat().st_mode) and cache.read_text() == "token-1"
+
+
+def test_the_relay_calls_only_the_api_of_the_device_itself(relay):
+    """The relay sends the administrator's login and token only to a loopback address."""
+    client, fake, cache = relay
+    for url in ("https://10.0.0.9/api/v1", "https://127.0.0.1.example.org/api/v1", "file:///etc/api/v1"):
+        client.base_url = url
+        with pytest.raises(api.ApiError, match="only the API of the device itself"):
+            client.get("/system/stats")
+    assert fake.requests == [] and not cache.exists()
+
+
+# --- tree.py --------------------------------------------------------------------------------
+
+
+def make_tree(root: Path, files: dict[str, object]) -> None:
+    """files: path -> text, ("x", text) for an executable, ("link", target) for a symlink."""
+    for path, spec in files.items():
+        full = root / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(spec, tuple) and spec[0] == "link":
+            full.symlink_to(spec[1])
+        elif isinstance(spec, tuple):
+            full.write_text(spec[1])
+            full.chmod(0o755)
+        else:
+            full.write_text(spec)
+            full.chmod(0o644)
+
+
+def sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def test_manifest_records_type_executable_bit_and_hash(tmp_path):
+    make_tree(tmp_path, {"a.txt": "alpha\n", "bin/run.sh": ("x", "#!/bin/sh\n"), "link": ("link", "a.txt")})
+    m = tree.manifest(tmp_path, ["a.txt", "bin/run.sh", "link", "deleted.txt"])
+    assert m == {
+        "a.txt": {"kind": "file", "x": False, "size": 6, "sha256": sha("alpha\n")},
+        "bin/run.sh": {"kind": "file", "x": True, "size": 10, "sha256": sha("#!/bin/sh\n")},
+        "link": {"kind": "link", "x": False, "size": 5, "sha256": sha("a.txt")},
+    }
+
+
+def test_compare_finds_every_kind_of_difference(tmp_path):
+    here, there = tmp_path / "here", tmp_path / "there"
+    common = {"same.txt": "same\n", "docs/x.md": "x\n"}
+    make_tree(here, {**common, "changed.py": "new\n", "mode.sh": ("x", "s\n"), "type": "file\n", "new.txt": "n\n"})
+    make_tree(there, {**common, "changed.py": "old\n", "mode.sh": "s\n", "type": ("link", "same.txt"), "gone.txt": "g\n"})
+    names = ["same.txt", "docs/x.md", "changed.py", "mode.sh", "type", "new.txt", "gone.txt"]
+    diff = tree.compare(tree.manifest(here, names), tree.manifest(there, names))
+    assert diff.changed == ["changed.py", "type"] and diff.mode == ["mode.sh"]
+    assert diff.only_local == ["new.txt"] and diff.only_remote == ["gone.txt"]
+    assert [how for how, _ in diff.items()] == ["changed", "only on device", "mode", "only here", "changed"]
+    assert not tree.compare(tree.manifest(here, common), tree.manifest(there, common))
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [("supervisor/src/main.py", "supervisor"), ("supervisor/src/shares/smbconf.py", "supervisor"),
+     ("supervisor/requirements.txt", "supervisor"), ("supervisor/Dockerfile", "supervisor"),
+     ("supervisor/requirements-dev.txt", None), ("supervisor/tests/test_smbconf.py", None),
+     ("supervisor/Dockerfile.test", None), ("webui/src/routes/+page.svelte", "webui"),
+     ("webui/static/favicon.png", "webui"), ("webui/package-lock.json", "webui"), ("webui/Caddyfile", "webui"),
+     ("webui/tests/api.spec.ts", None), ("webui/playwright.config.ts", None), ("deploy/docker-compose.yml", "deploy"),
+     ("deploy/update.sh", "deploy"), ("deploy/docker-compose.test.yml", None), ("deploy/AGENTS.md", None),
+     ("docs/adr/0001-x.md", None), ("scripts/dev/deploy.sh", None), ("AGENTS.md", None)],
+)
+def test_runtime_components(path, expected):
+    assert tree.component(path) == expected
+
+
+def test_status_separates_runtime_files_from_the_rest():
+    local = {"supervisor/src/main.py": {"kind": "file", "x": False, "size": 1, "sha256": "a"},
+             "docs/x.md": {"kind": "file", "x": False, "size": 1, "sha256": "b"}}
+    remote = {**local, "docs/x.md": {"kind": "file", "x": False, "size": 1, "sha256": "c"}}
+    lines = tree.status_lines(tree.compare(local, remote), "/here", "root@h:/opt/unos", (2, 2))
+    assert lines[1] == "runtime files (supervisor, webui, deploy): equal"
+    assert lines[2] == "other files (docs, tests, tooling): 1 differ" and lines[3].split() == ["changed", "docs/x.md"]
+    remote["supervisor/src/main.py"] = {"kind": "file", "x": True, "size": 1, "sha256": "a"}
+    lines = tree.status_lines(tree.compare(local, remote), "/here", "root@h:/opt/unos", (2, 2))
+    assert lines[1].startswith("runtime files: 1 differ (supervisor 1, webui 0, deploy 0)")
+    assert lines[2].split() == ["mode", "supervisor/src/main.py"]
+
+
+def test_git_files_lists_what_git_tracks_or_would_add(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("needs git")
+    git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main",
+           "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"]
+    env = without_git_variables()
+    subprocess.run(git + ["init", "-q"], check=True, env=env)
+    make_tree(tmp_path, {".gitignore": "*.env\nbuild/\n", "tracked.txt": "t\n", "gone.txt": "g\n",
+                         "untracked.txt": "u\n", "dev.env": "SECRET=1\n", "build/out.js": "o\n"})
+    subprocess.run(git + ["add", ".gitignore", "tracked.txt", "gone.txt"], check=True, env=env)
+    subprocess.run(git + ["commit", "-q", "-m", "x"], check=True, env=env)
+    (tmp_path / "gone.txt").unlink()
+    assert tree.git_files(tmp_path) == [".gitignore", "gone.txt", "tracked.txt", "untracked.txt"]
+    assert sorted(tree.manifest(tmp_path)) == [".gitignore", "tracked.txt", "untracked.txt"]
+
+
+def test_git_files_lists_the_checkout_despite_a_hooks_git_variables(tmp_path, monkeypatch):
+    """git exports GIT_DIR, GIT_INDEX_FILE and more to its hooks and to `git rebase -x`: tree.py
+    still lists the files of the checkout it was given, the ones status and sync compare."""
+    if shutil.which("git") is None:
+        pytest.skip("needs git")
+    here, other = tmp_path / "here", tmp_path / "other"
+    make_tree(here, {"mine.txt": "m\n"})
+    make_tree(other, {"theirs.txt": "t\n"})
+    git_init(here)
+    git_init(other)
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(other / ".git" / "index"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    assert tree.git_files(here) == ["mine.txt"]
+
+
+@pytest.mark.parametrize("path", ["../x", "/etc/passwd", ".git/config", "a//b", "a/../b", "dir/", "", "a\nb"])
+def test_sync_refuses_unsafe_paths(path):
+    with pytest.raises(tree.TreeError):
+        tree.check_paths([path])
+    tree.check_paths(["supervisor/src/main.py", ".github/workflows/test.yml", "webui/.dockerignore"])
+
+
+def test_make_tar_writes_root_owned_files_with_plain_modes(tmp_path):
+    make_tree(tmp_path, {"a.txt": "alpha\n", "run.sh": ("x", "#!/bin/sh\n"), "link": ("link", "a.txt")})
+    (tmp_path / "a.txt").chmod(0o600)
+    import io
+
+    with tarfile.open(fileobj=io.BytesIO(tree.make_tar(tmp_path, ["a.txt", "run.sh", "link"]))) as tar:
+        members = {m.name: m for m in tar.getmembers()}
+        assert set(members) == {"a.txt", "run.sh", "link"}
+        assert all(m.uid == 0 and m.gid == 0 and m.uname == "root" for m in members.values())
+        assert members["a.txt"].mode == 0o644 and members["run.sh"].mode == 0o755
+        assert members["link"].issym() and members["link"].linkname == "a.txt"
+        assert tar.extractfile("a.txt").read() == b"alpha\n"
+
+
+def test_the_device_is_read_with_a_read_only_root():
+    dev = tree.Device(host="root@h", repo="/opt/my unos", state_dir=Path("/tmp/x"), ssh=Path("/bin/false"))
+    command = dev.read_only("python3 -I -B - manifest .")
+    assert command.startswith("unshare --mount --propagation private sh -c ")
+    assert "mount -o remount,bind,ro,noatime / && cd \"$1\" && python3 -I -B - manifest ." in command
+    assert command.endswith(" sh '/opt/my unos'")
+
+
+def test_requirement_pins_and_the_rootfs_listing(tmp_path):
+    req = tmp_path / "requirements-dev.txt"
+    req.write_text("# tools\n-r requirements.txt\npytest==9.2.0\npytest-asyncio==1.4.1.post1  # async\n"
+                   "uvicorn[standard]==0.54.0\nPyYAML==6.0.3\n")
+    assert tree.pins(req) == {"pytest": "9.2.0", "pytest-asyncio": "1.4.1.post1", "uvicorn": "0.54.0", "pyyaml": "6.0.3"}
+    python, dists = tree.rootfs_dists("python3.11/site-packages/fastapi-0.162.0.dist-info\n"
+                                      "python3.11/site-packages/typing_extensions-4.15.0.dist-info\nmachine=aarch64\n")
+    assert python == "3.11" and dists == {"fastapi": "0.162.0", "typing-extensions": "4.15.0"}
+    env = tree.target_environment("3.11", "aarch64")
+    assert tree.requirement_name("colorama>=0.4; sys_platform == 'win32'", env) is None
+    assert tree.requirement_name("pytest-cov; extra == 'testing'", env) is None
+    assert tree.requirement_name("Pygments>=2.7.2", env) == "pygments"
+
+
+# --- the static scan ------------------------------------------------------------------------
+
+# SSH_ASKPASS names the helper program, not a secret.
+SHELL_SECRET_EXPANSION = re.compile(r"\$\{?(?!SSH_ASKPASS)[A-Za-z0-9_]*(PASS|TOKEN|SECRET|API_KEY|PRIVATE_KEY)")
+SUBPROCESS_CALLS = {"run", "Popen", "call", "check_call", "check_output", "system", "execv", "execvp", "execve", "spawnv"}
+
+
+def command_line_problems(shell_scripts, python_scripts) -> list[str]:
+    """Places where a script would put a secret on a command line (see the test below)."""
+    problems = []
+    for script in shell_scripts:
+        for n, line in enumerate(Path(script).read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            where = f"{Path(script).name}:{n}"
+            if SHELL_SECRET_EXPANSION.search(line):
+                problems.append(f"{where}: expands a secret's variable")
+            exported = re.findall(r"\bexport\s+([^#;&|]*)", line)
+            names = [n.split("=", 1)[0] for group in exported for n in group.split()]
+            if any(SECRET_NAME.search(n) and not n.startswith("SSH_ASKPASS") for n in names):
+                problems.append(f"{where}: exports a secret")
+    for script in list(shell_scripts) + list(python_scripts):
+        text = Path(script).read_text()
+        if "sshpass" in text or re.search(r"curl\s[^\n]*\s(-u|--user)\s", text) or re.search(r"--password[= ]", text):
+            problems.append(f"{Path(script).name}: sshpass, curl -u or --password")
+    for script in python_scripts:
+        for node in ast.walk(ast.parse(Path(script).read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+            if name not in SUBPROCESS_CALLS:
+                continue
+            argv = list(node.args[:1]) + [k.value for k in node.keywords if k.arg == "args"]
+            for part in argv:
+                for sub in ast.walk(part):
+                    ident = sub.id if isinstance(sub, ast.Name) else sub.attr if isinstance(sub, ast.Attribute) else ""
+                    if re.search(r"pass|secret|token|cred", ident, re.IGNORECASE):
+                        problems.append(f"{Path(script).name}:{node.lineno}: {ident} on a command line")
+    return problems
+
+
+def test_no_script_puts_a_secret_on_a_command_line():
+    """Secrets reach other programs only through a pipe: askpass.sh to ssh, standard input to
+    the relay. In the shell scripts no secret's variable is ever expanded or exported (the
+    values are read by dev_secret into a pipe); in the Python scripts no command line given
+    to subprocess or os mentions a password, token or secret; nothing uses sshpass, curl -u
+    or --password."""
+    assert command_line_problems(SHELL_SCRIPTS, PYTHON_SCRIPTS) == []
+
+
+def test_the_scan_finds_secrets_on_command_lines(tmp_path):
+    bad_shell = tmp_path / "bad.sh"
+    bad_shell.write_text(
+        "#!/usr/bin/env bash\n"
+        "# a comment with $UNOS_DEV_SSH_PASSWORD is fine\n"
+        'ssh -o "x=$UNOS_DEV_SSH_PASSWORD" host\n'
+        'curl -u "admin:${UNOS_DEV_ADMIN_PASSWORD}" https://h\n'
+        "export TRANSMISSION_PASS\n"
+        "export SSH_ASKPASS SSH_ASKPASS_REQUIRE\n"
+        "sshpass -f file ssh host\n"
+    )
+    bad_python = tmp_path / "bad.py"
+    bad_python.write_text(
+        "import os, subprocess\n"
+        "subprocess.run(['curl', '--data', password])\n"
+        "subprocess.run(args=['x', self.token])\n"
+        "subprocess.run(['ok'], input=password)\n"
+        "os.system('mysql --password=' + secret)\n"
+    )
+    problems = command_line_problems([bad_shell], [bad_python])
+    assert problems == [
+        "bad.sh:3: expands a secret's variable",
+        "bad.sh:4: expands a secret's variable",
+        "bad.sh:5: exports a secret",
+        "bad.sh: sshpass, curl -u or --password",
+        "bad.py: sshpass, curl -u or --password",
+        "bad.py:2: password on a command line",
+        "bad.py:3: token on a command line",
+        "bad.py:5: secret on a command line",
+    ]
+
+
+def test_no_device_password_is_written_into_the_repository_tooling():
+    """dev.env.example and the skills hold no value for a secret."""
+    skills = REPO_ROOT / ".agents" / "skills"
+    for path in (REPO_ROOT / "dev.env.example", skills / "deploy-device" / "SKILL.md", skills / "device-checks" / "SKILL.md"):
+        for name, value in re.findall(r"^([A-Z_][A-Z0-9_]*)=(\S*)", path.read_text(), flags=re.M):
+            if SECRET_NAME.search(name):
+                assert value == "", f"{path}: {name} has a value"
+
+
+# --- the skills -----------------------------------------------------------------------------
+
+
+SKILLS = REPO_ROOT / ".agents" / "skills"
+
+
+def front_matter(text: str) -> dict[str, str]:
+    front = re.match(r"---\n(.*?)\n---\n", text, flags=re.S)
+    assert front, "front matter"
+    return dict(line.split(": ", 1) for line in front.group(1).splitlines())
+
+
+@pytest.mark.parametrize("name", ["deploy-device", "device-checks"])
+def test_skill_and_its_claude_symlink(name):
+    skill = SKILLS / name / "SKILL.md"
+    text = skill.read_text()
+    fields = front_matter(text)
+    assert fields["name"] == name and len(fields["description"]) > 40
+    for script in re.findall(r"scripts/dev/[\w./-]+", text):
+        assert (REPO_ROOT / script.rstrip(".")).exists(), script
+    link = REPO_ROOT / ".claude" / "skills" / name
+    assert link.is_symlink() and os.readlink(link) == f"../../.agents/skills/{name}"
+    assert (link / "SKILL.md").read_text() == text
+
+
+def test_only_the_owner_starts_a_deploy():
+    """A deploy replaces what runs on the device and writes its SD card: the model never loads
+    the deploy-device skill on its own, and the skill says so (AGENTS.md: the owner asks)."""
+    text = (SKILLS / "deploy-device" / "SKILL.md").read_text()
+    fields = front_matter(text)
+    assert fields.get("disable-model-invocation") == "true"
+    assert fields["description"].endswith("Use only when the owner has asked for a deploy in this conversation.")
+
+
+def scripts_calling(pattern: str) -> list[str]:
+    """The scripts of scripts/dev (env.sh, which defines the helpers, aside) whose code, not
+    their comments, matches PATTERN."""
+    found = []
+    for script in SHELL_SCRIPTS:
+        code = "\n".join(line for line in script.read_text().splitlines() if not line.lstrip().startswith("#"))
+        if script.name != "env.sh" and re.search(pattern, code, flags=re.M):
+            found.append(script.relative_to(DEV).as_posix())
+    return sorted(found)
+
+
+def scripts_named(text: str, phrase: str) -> list[str]:
+    """The scripts (`name.sh`, `name.py`) that the one sentence of TEXT with PHRASE names."""
+    flat = " ".join(text.split())
+    found = [s for s in re.split(r"(?<=[.;:])\s+", flat) if phrase in s]
+    assert len(found) == 1, (phrase, found)
+    return sorted(set(re.findall(r"`([\w-]+\.(?:sh|py))", found[0])))
+
+
+def test_the_device_checks_skill_says_which_scripts_lock_and_report_sd_writes():
+    """What the skill (like AGENTS.md and ADR-0210) says about the scripts is what they do: a
+    script that starts or stops taking the device lock or reporting its SD writes fails here
+    until the skill says so too."""
+    locking = scripts_calling(r"^\s*dev_lock\b")
+    reporting = scripts_calling(r"\bdev_sd_report(_from)?\b")
+    assert locking == ["deploy.sh", "linux-tests.sh"]
+    assert reporting == ["check.sh", "deploy.sh", "linux-tests.sh", "sd.sh"]
+    text = (SKILLS / "device-checks" / "SKILL.md").read_text()
+    assert scripts_named(text, "take the device lock") == locking
+    assert scripts_named(text, "print `SD writes") == reporting
+
+
+def test_the_device_skills_measure_every_other_command_and_lock_the_backend_tests():
+    """ssh.sh, api.py and the testparm shim print no SD writes of their own: every step that runs
+    them does so under sd.sh measure, so that the report has a number for each check. pytest runs
+    through make test, which holds the lock of the backend tests (their fixed paths in /tmp)."""
+    text = (SKILLS / "device-checks" / "SKILL.md").read_text()
+    steps = text.split("## Steps", 1)[1].split("## Gotchas", 1)[0]
+    # The command lines of the steps (code spans with arguments), not the names in the prose.
+    commands = [span for span in re.findall(r"`([^`]+)`", steps) if " " in span and span.startswith(("scripts/dev/", "PATH="))]
+    unmeasured = [c for c in commands if re.search(r"scripts/dev/(ssh\.sh|api\.py|bin)\b", c) and "scripts/dev/sd.sh measure " not in c]
+    assert len(commands) >= 4 and not unmeasured, commands
+    assert any("make test TESTS=tests/test_smbconf_testparm.py" in c for c in commands), commands
+    for name in ("device-checks", "deploy-device"):
+        skill = (SKILLS / name / "SKILL.md").read_text()
+        assert not re.search(r"-m pytest|\bpytest tests/", skill), name

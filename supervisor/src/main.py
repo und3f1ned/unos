@@ -1,8 +1,31 @@
 import asyncio
 import logging
 import os
+import tempfile
+
+
+def pin_temporary_directory() -> None:
+    """Pin the directory of the tempfile module to $TMPDIR, if that is a directory.
+
+    tempfile picks its directory on first use: the first of $TMPDIR, /tmp,
+    /var/tmp, ... where it can write a small test file. In the container
+    $TMPDIR is the tmpfs at /tmp (deploy/docker-compose.yml): were it full at
+    that moment, every temporary file would silently go to /var/tmp, on the
+    system disk (an SD card). Pinned, a full /tmp fails with "No space left on
+    device" instead. Does nothing when TMPDIR is unset.
+    """
+    path = os.environ.get("TMPDIR")
+    if path and os.path.isdir(path):
+        tempfile.tempdir = os.path.abspath(path)
+
+
+# Before anything else is imported, so before anything uses tempfile.
+pin_temporary_directory()
+
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -12,6 +35,7 @@ from . import host
 from .database import init_db
 from .config import get_settings
 from .auth.utils import require_admin
+from .request_limits import MAX_REQUEST_BODY, RequestBodyLimitMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +45,7 @@ from .auth.router import router as auth_router
 from .system.router import router as system_router
 from .storage.router import router as storage_router
 from .shares.router import router as shares_router
+from .shares.repair_router import router as shares_repair_router
 from .containers.router import router as containers_router
 from .apps.router import router as apps_router
 from .files.router import router as files_router
@@ -34,6 +59,7 @@ from .health.router import router as health_router
 from .security.router import router as security_router
 from .monitor.router import router as monitor_router
 from .backup.router import router as backup_router
+from .backup.router import MAX_ARCHIVE_BYTES as MAX_BACKUP_ARCHIVE_BYTES
 from .audit.router import router as audit_router
 from .updates.router import router as updates_router
 from .websocket.events import router as ws_router
@@ -42,6 +68,7 @@ from .health.router import start_health_monitors, stop_health_monitors
 from .power.router import start_ups_monitor, stop_ups_monitor
 from .storage import pools as storage_pools
 from .storage.pools import reconcile_pools_on_startup
+from .shares.service import reconcile_smb_on_startup
 
 # Seconds the startup check for missing host programs may take.
 HOST_TOOL_CHECK_TIMEOUT = 10
@@ -96,6 +123,7 @@ async def lifespan(app: FastAPI):
     # mount check below, because it mounts filesystems on the host.
     run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"
     host_tool_check: asyncio.Task | None = None
+    smb_reconcile: asyncio.Task | None = None
     if run_background:
         # Runs beside the rest of startup (in a worker thread, bounded by
         # HOST_TOOL_CHECK_TIMEOUT), so a slow host neither delays nor fails it.
@@ -104,6 +132,12 @@ async def lifespan(app: FastAPI):
         # "nofail" gives up on slow or missing disks) before the scheduler and
         # apps start writing to /mnt/pools. Logs the outcome, never raises.
         await reconcile_pools_on_startup()
+        # The SMB startup reconcile (shares/service.py) runs beside the rest of
+        # startup and holds smb_lock while it runs: SMB changes, and the first
+        # read of the shares before their one-time import, wait for it. The
+        # startup never waits for its host commands. Logs, never raises.
+        smb_reconcile = asyncio.create_task(reconcile_smb_on_startup(), name="unos-smb-reconcile")
+        await asyncio.sleep(0)  # the task takes smb_lock before the app serves its first request
     # Background loops must be started here. FastAPI ignores router-level
     # @router.on_event hooks when the app defines a lifespan, which silently
     # disabled the scheduler and all monitors in earlier releases.
@@ -121,6 +155,9 @@ async def lifespan(app: FastAPI):
         if host_tool_check is not None:
             host_tool_check.cancel()
             await asyncio.gather(host_tool_check, return_exceptions=True)
+        if smb_reconcile is not None:
+            smb_reconcile.cancel()
+            await asyncio.gather(smb_reconcile, return_exceptions=True)
 
 
 app = FastAPI(
@@ -133,6 +170,32 @@ app = FastAPI(
 # Add rate limiter to app state and exception handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_without_input(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 answers without the values that were sent.
+
+    FastAPI's default answer repeats each rejected value (``input``, and
+    ``ctx`` with the error), so a rejected password would come back in the
+    body and end up wherever answers are logged.
+    """
+    errors = [{k: v for k, v in error.items() if k not in ("input", "ctx")} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
+# FastAPI reads a request body before it checks the credentials, so every
+# body is limited (src/request_limits.py). The two uploads read their form
+# only after that check: files of any size, and backups up to the archive
+# limit plus 1 MiB for the multipart framing.
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    limit=MAX_REQUEST_BODY,
+    path_limits={
+        "/api/v1/files/upload": None,
+        "/api/v1/backup/upload": MAX_BACKUP_ARCHIVE_BYTES + MAX_REQUEST_BODY,
+    },
+)
 
 # Configure CORS - restrict origins based on settings
 settings = get_settings()
@@ -170,6 +233,7 @@ _ADMIN_ONLY = [Depends(require_admin)]
 for _router in (
     storage_router,
     shares_router,
+    shares_repair_router,
     containers_router,
     apps_router,
     files_router,
@@ -187,7 +251,37 @@ for _router in (
     app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY)
 
 
-@app.get("/api/v1/health")
+HEALTH_PATH = "/api/v1/health"
+
+
+class _SuccessfulHealthCheckFilter(logging.Filter):
+    """Keeps successful health checks out of uvicorn's access log.
+
+    The Docker healthchecks (deploy/docker-compose.yml) call HEALTH_PATH every
+    10 seconds (supervisor) and every 30 seconds (webui, through Caddy):
+    thousands of lines a day that would bury everything else in
+    `docker logs unos-supervisor`. Every other request, and a check that
+    fails, is still logged.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn logs '%s - "%s %s HTTP/%s" %d' with the client address, the
+        # method, the path with the query string, the HTTP version and the
+        # status code.
+        args = record.args
+        if isinstance(args, tuple) and len(args) == 5:
+            _client, method, path, _version, status = args
+            if method == "GET" and path == HEALTH_PATH and status == 200:
+                return False
+        return True
+
+
+# uvicorn configures its loggers before it imports this module; dictConfig
+# keeps the filters of a logger anyway.
+logging.getLogger("uvicorn.access").addFilter(_SuccessfulHealthCheckFilter())
+
+
+@app.get(HEALTH_PATH)
 async def health_check():
     """Basic health check for load balancers."""
     return {"status": "ok"}

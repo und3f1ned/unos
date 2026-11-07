@@ -1,0 +1,59 @@
+# deploy/: compose, Caddy, the install scripts, and the dev device
+
+## Files
+
+- `docker-compose.yml` builds `../supervisor` and `../webui` into `unos-supervisor` and
+  `unos-webui` on the fixed subnet `172.31.254.0/24`: the supervisor trusts `X-Forwarded-For`
+  only from the web UI's address (ADR-0048). Change every `172.31.254.x` together.
+- Its comments explain its values: the `/tmp` and `/var/lib/btrfs` tmpfs keep volatile writes
+  off the system disk (ADR-0171); the health checks and `depends_on: service_healthy` take
+  up to 680 s, which `SUPERVISOR_START_TIMEOUT` in `install.sh` and `update.sh` must equal and
+  `UNOS_DEV_UP_TIMEOUT` of `scripts/dev/deploy.sh` (700) must exceed (ADR-0176);
+  `UNOS_JWT_SECRET` stays empty so that each install generates its own (ADR-0028).
+- `docker-compose.test.yml` is the Docker test stack (project `unos-test`, ports 3443 and 3080 on
+  127.0.0.1, the Playwright runner of the `test` profile), for a machine that runs Docker.
+- `Caddyfile` is an identical copy of `webui/Caddyfile`, the file the image uses: HTTPS from
+  Caddy's local CA, without HSTS (ADR-0025).
+- `install.sh`, `update.sh` and `uninstall.sh` run as root on a user's host. `update.sh` refuses
+  local changes and other branches, backs up, waits for health and rolls back on failure
+  (ADR-0049); `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb
+  entries (ADR-0180). There are no upgrade paths from older UNOS versions (ADR-0207).
+- `supervisor/tests/test_deploy_scripts.py` runs these scripts against fakes, parses the compose
+  files and keeps `docs/INSTALL.md` and `docs/TESTING.md` in step with them; `test_authz.py`,
+  `test_secret_bootstrap.py` and `test_standin.py` read them too. Run those tests after an edit
+  here; `make lint` runs `bash -n` on every script.
+
+## The dev device
+
+One shared board; its system disk is an SD card that cannot be replaced, so every write counts
+(ADR-0214).
+
+- Every action goes through `scripts/dev/`, with the settings of `dev.env`: the deploy-device
+  skill for deploys, the device-checks skill for checks. `deploy.sh` and `linux-tests.sh` hold the
+  device lock `/run/unos-dev.lock` (ADR-0210). They and `check.sh` print
+  `SD writes <label>: <MiB>`; `ssh.sh`, `api.py` and `bin/testparm` print none, so wrap them in
+  `scripts/dev/sd.sh measure <label> -- ...`. The report carries those numbers.
+- A linked worktree without a `dev.env` of its own uses the main checkout's (`scripts/dev/env.sh`),
+  and `tmp/dev/` is the main checkout's too (ADR-0223). Never create or fill in another `dev.env`:
+  its passwords are the owner's (ADR-0212, ADR-0024).
+- Deploys use `scripts/dev/deploy.sh` (ADR-0223). The device's checkout is synced file by file and
+  is not a git workspace, so `update.sh`, commits and pushes have no place there. Builds, `up` and
+  `rollback` run when the owner asks for a deploy; `status`, `sync --dry-run` and `backup` only
+  read the device. `backup`, also the first step of `up`, copies the device's fstab, smb.conf and
+  data volume into the git-ignored `tmp/dev/backup` and keeps the newest 3 (directories 700, files
+  600: they hold the JWT secret, the password hashes and the database; only `rollback` reads
+  them). Restoring the volume or fstab is an owner action.
+- The web UI's static files are built on the workstation, and the device builds only the image's
+  final stage (`deploy.sh build-webui`, ADR-0184). A supervisor build after a change to its
+  Dockerfile or requirements reruns apt-get and pip on the device: tell the owner first.
+- Checks start no container (ADR-0183), keep scratch data in `/dev/shm` and call the API through
+  `scripts/dev/api.py`, which runs on the device against `https://127.0.0.1/api/v1` (the device's
+  web ports do not answer the workstation, ADR-0198) and keeps its token in the device's RAM
+  (ADR-0222).
+- In the device's checkout, `git status` and other index-refreshing commands write to the SD
+  card; `scripts/dev/deploy.sh status` compares it with the working tree without writing, and the
+  scripts' read-only work runs with the device's root filesystem read-only (ADR-0221).
+- After a deploy or a rollback, the Dev device section of `PROGRESS.md` gets what runs there and
+  the SD MiB of each step (ADR-0204).
+- Reboots, image prunes and package installs (ADR-0211), credentials and the device's security
+  settings (ADR-0024) are owner actions.

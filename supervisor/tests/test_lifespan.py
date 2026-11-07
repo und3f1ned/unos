@@ -32,7 +32,7 @@ LOOPS = {
 }
 
 
-def _patch_loops(started: set[str], *, host_tool_check: bool = True):
+def _patch_loops(started: set[str], *, host_tool_check: bool = True, smb_reconcile=None):
     patches = []
     for name, (module, func, _task_attr) in LOOPS.items():
 
@@ -44,6 +44,8 @@ def _patch_loops(started: set[str], *, host_tool_check: bool = True):
     # The startup pool reconciliation and host tool check run host commands
     # (nsenter); keep them out of unit tests.
     patches.append(patch.object(main, "reconcile_pools_on_startup", AsyncMock(return_value=[])))
+    # The SMB startup reconcile runs host commands and imports smb.conf.
+    patches.append(patch.object(main, "reconcile_smb_on_startup", smb_reconcile or AsyncMock(return_value=None)))
     if host_tool_check:
         patches.append(patch.object(main, "check_host_tools", AsyncMock(return_value=None)))
     return patches
@@ -69,6 +71,7 @@ def test_lifespan_starts_and_stops_all_background_loops(monkeypatch):
         for name, task in tasks.items():
             assert task.cancelled() or task.done(), f"{name} task was not stopped"
         main.check_host_tools.assert_called_once_with()
+        main.reconcile_smb_on_startup.assert_called_once_with()
     finally:
         for p in patches:
             p.stop()
@@ -85,6 +88,7 @@ def test_background_loops_can_be_disabled(monkeypatch):
             pass
         assert started == set()
         main.check_host_tools.assert_not_called()
+        main.reconcile_smb_on_startup.assert_not_called()
     finally:
         for p in patches:
             p.stop()
@@ -185,6 +189,84 @@ def test_lifespan_logs_missing_host_tools(monkeypatch, caplog):
                 while "chattr" not in caplog.text and time.monotonic() < deadline:
                     time.sleep(0.01)
         assert "missing programs" in caplog.text and "e2fsprogs" in caplog.text
+    finally:
+        for p in patches:
+            p.stop()
+
+
+# ---------------------------------------------------------------------------
+# The SMB startup reconcile (ADR-0138)
+# ---------------------------------------------------------------------------
+
+
+def test_smb_reconcile_runs_as_a_named_task_beside_the_startup(monkeypatch):
+    monkeypatch.delenv("UNOS_DISABLE_BACKGROUND_TASKS", raising=False)
+    seen = {}
+
+    async def reconcile():
+        task = asyncio.current_task()
+        seen["name"] = task.get_name()
+
+    patches = _patch_loops(set(), smb_reconcile=reconcile)
+    for p in patches:
+        p.start()
+    try:
+        with TestClient(main.app):
+            deadline = time.monotonic() + 5
+            while "name" not in seen and time.monotonic() < deadline:
+                time.sleep(0.01)
+        assert seen == {"name": "unos-smb-reconcile"}
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_a_waiting_smb_reconcile_does_not_delay_startup_and_is_cancelled_at_shutdown(monkeypatch):
+    monkeypatch.delenv("UNOS_DISABLE_BACKGROUND_TASKS", raising=False)
+    running = threading.Event()
+    cancelled = threading.Event()
+
+    async def reconcile():
+        running.set()
+        try:
+            await asyncio.Event().wait()  # waits until cancelled
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    patches = _patch_loops(set(), smb_reconcile=reconcile)
+    for p in patches:
+        p.start()
+    try:
+        started = time.monotonic()
+        with TestClient(main.app) as client:
+            startup = time.monotonic() - started
+            assert running.wait(5), "the SMB reconcile did not start"
+            assert client.get("/api/v1/health").status_code == 200
+            assert not cancelled.is_set()
+        assert startup < 2
+        assert cancelled.is_set(), "the SMB reconcile was not cancelled at shutdown"
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_the_smb_reconcile_starts_before_the_first_request(monkeypatch):
+    """The task takes smb_lock in its first statement: it must run before the app serves."""
+    monkeypatch.delenv("UNOS_DISABLE_BACKGROUND_TASKS", raising=False)
+    order = []
+
+    async def reconcile():
+        order.append("reconcile")
+
+    patches = _patch_loops(set(), smb_reconcile=reconcile)
+    for p in patches:
+        p.start()
+    try:
+        with TestClient(main.app) as client:
+            order.append("startup done")
+            client.get("/api/v1/health")
+        assert order == ["reconcile", "startup done"]
     finally:
         for p in patches:
             p.stop()

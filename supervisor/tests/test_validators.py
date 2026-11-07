@@ -5,7 +5,7 @@ import os
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from fastapi import HTTPException
 
 from src.security import validators
@@ -28,7 +28,6 @@ from src.security.validators import (
     open_dir_nofollow,
     safe_path_join,
     sanitize_error_message,
-    RESERVED_SMB_NAMES,
 )
 
 

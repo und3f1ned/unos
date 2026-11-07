@@ -1,3 +1,8 @@
+<script context="module" lang="ts">
+	// Numbers the title ids: every dialog is labelled by its own title.
+	let titleCount = 0;
+</script>
+
 <script lang="ts">
 	import { X } from 'lucide-svelte';
 	import { createEventDispatcher } from 'svelte';
@@ -9,6 +14,7 @@
 	export let danger: boolean = false;
 
 	const dispatch = createEventDispatcher();
+	const titleId = `modal-title-${++titleCount}`;
 
 	const sizeClasses = {
 		sm: 'modal-sm',
@@ -24,9 +30,13 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape' && closable) {
-			handleClose();
-		}
+		// One Escape closes one open dialog; a closed one stays out of it. Every dialog listens
+		// on the window and the page updates between the listeners, so a dialog that this Escape
+		// has just shown again (the one a confirmation was opened from) sees it after the
+		// confirmation closed: the key marked as used leaves it open, whatever the markup order.
+		if (!open || event.key !== 'Escape' || event.defaultPrevented || !closable) return;
+		event.preventDefault();
+		handleClose();
 	}
 
 	function handleBackdropClick(event: MouseEvent) {
@@ -39,17 +49,19 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if open}
+	<!-- A dialog taller than the window scrolls with the overlay, so that its buttons stay
+	     reachable; my-auto centers it while it fits (items-center would cut off its top). -->
 	<div
-		class="modal-overlay"
+		class="modal-overlay items-start overflow-y-auto p-4"
 		on:click={handleBackdropClick}
 		role="dialog"
 		aria-modal="true"
-		aria-labelledby="modal-title"
+		aria-labelledby={titleId}
 	>
-		<div class="modal {sizeClasses[size]}">
+		<div class="modal my-auto {sizeClasses[size]}">
 			<div class="modal-header">
 				<h2
-					id="modal-title"
+					id={titleId}
 					class="modal-title {danger ? 'text-error flex items-center gap-2' : ''}"
 				>
 					<slot name="title-icon" />

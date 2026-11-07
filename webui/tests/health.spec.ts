@@ -44,4 +44,25 @@ test.describe('Disk Health', () => {
     await page.waitForTimeout(2000);
     await expect(page.locator('h2:has-text("Disk Health")')).toBeVisible();
   });
+
+  // The API is answered in the browser: the stand-in needs no lsblk.
+  test('shows why the disks cannot be listed', async ({ authenticatedPage: page }) => {
+    let fail = true;
+    await page.route(
+      (url) => url.pathname === '/api/v1/health/disks',
+      (route) =>
+        fail
+          ? route.fulfill({ status: 500, json: { detail: "Could not list the host's disks: lsblk failed" } })
+          : route.fulfill({ json: { disks: [] } }),
+    );
+    await page.goto('/system#health');
+    await expect(page.getByText("Could not list the host's disks: lsblk failed")).toBeVisible();
+    await expect(page.getByText('No disks found')).toHaveCount(0);
+
+    // A refresh that works clears the error.
+    fail = false;
+    await page.locator('h2:has-text("Disk Health")').locator('xpath=..').getByRole('button').click();
+    await expect(page.getByText('No disks found')).toBeVisible();
+    await expect(page.getByText("Could not list the host's disks: lsblk failed")).toHaveCount(0);
+  });
 });

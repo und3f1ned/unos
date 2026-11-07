@@ -1,20 +1,26 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getDiskHealth, type SmartInfo } from "$lib/api/health";
+  import { Alert } from "$lib/components/ui";
   import { HardDrive, Thermometer, Check, X, AlertTriangle, RefreshCw } from "lucide-svelte";
 
   let disks: SmartInfo[] = [];
   let loading = true;
+  let error = "";
 
   onMount(() => loadHealth());
 
   async function loadHealth() {
     loading = true;
+    error = "";
     try {
       const result = await getDiskHealth();
       disks = result.disks;
     } catch (e) {
-      console.error(e);
+      // For example 500 "Could not list the host's disks: ..." when lsblk
+      // fails: say so instead of "No disks found", and drop the old list.
+      disks = [];
+      error = e instanceof Error && e.message ? e.message : "Could not load disk health";
     }
     loading = false;
   }
@@ -44,6 +50,8 @@
     <div class="flex justify-center py-8">
       <RefreshCw class="w-6 h-6 animate-spin text-blue-500" />
     </div>
+  {:else if error}
+    <Alert variant="error" title="Could not load disk health">{error}</Alert>
   {:else}
     <div class="space-y-3">
       {#each disks as disk}

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Before every commit: the fast part of the quality gate, make check-fast (lint and the
+# convention tests; ADR-0216). CI runs the whole gate, make check, on every pull request.
+# make setup installs this directory as git's hooks (git config core.hooksPath scripts/git-hooks).
+# The hook checks the working tree, not only what is staged.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+# git exports these to its hooks (GIT_INDEX_FILE names .git/index.lock during git commit -a):
+# tests that run git in their own temporary repositories must not inherit them.
+unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX
+exec "${MAKE:-make}" check-fast

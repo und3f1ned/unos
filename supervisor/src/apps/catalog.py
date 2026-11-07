@@ -533,9 +533,14 @@ APP_CATALOG: list[AppTemplate] = [
             EnvVar(name="PUID", value="1000"),
             EnvVar(name="PGID", value="1000"),
             EnvVar(name="TZ", value="UTC"),
+            # Without both, the image turns RPC authentication off at every
+            # start: anyone who reaches port 9091 controls the client,
+            # including the script it runs when a torrent completes.
+            EnvVar(name="USER", value="", description="Login for the web interface", required=True),
+            EnvVar(name="PASS", value="", description="Password for the web interface", required=True, secret=True),
         ],
     ),
-    
+
     AppTemplate(
         id="qbittorrent",
         name="qBittorrent",
