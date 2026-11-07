@@ -140,7 +140,7 @@ async def lifespan(app: FastAPI):
         smb_reconcile = asyncio.create_task(reconcile_smb_on_startup(), name="unos-smb-reconcile")
         await asyncio.sleep(0)  # the task takes smb_lock before the app serves its first request
         # Many NIC drivers forget Wake-on-LAN at a reboot: give each interface
-        # the state an administrator chose (power/router.py, ADR-0232), beside
+        # the state an administrator chose (power/router.py, ADR-0233), beside
         # the startup. Logs, never raises.
         wol_reapply = asyncio.create_task(reapply_wol_settings(), name="unos-wol-reapply")
     # Background loops must be started here. FastAPI ignores router-level

@@ -16,7 +16,7 @@
   } from "$lib/api/power";
   import { Alert, Badge, Button, Card, EmptyState, Modal } from "$lib/components/ui";
 
-  // Reboot, shutdown, suspend and Wake-on-LAN act on the host (ADR-0232):
+  // Reboot, shutdown, suspend and Wake-on-LAN act on the host (ADR-0233):
   // reboot and shutdown one minute after the confirmation, so that they can
   // still be cancelled here; suspend at once.
 

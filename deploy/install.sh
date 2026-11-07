@@ -352,7 +352,7 @@ start_unos() {
     fi
     
     # Build containers. The supervisor image carries the version of the
-    # checkout, which the web interface shows (ADR-0233).
+    # checkout, which the web interface shows (ADR-0234).
     UNOS_VERSION=$(git -C "$UNOS_INSTALL_DIR" describe --tags --always 2>/dev/null || echo unknown) \
         docker compose build
 

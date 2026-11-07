@@ -77,7 +77,7 @@
     {/if}
   </div>
 
-  <!-- UNOS Version: the version the supervisor image was built with (ADR-0233) -->
+  <!-- UNOS Version: the version the supervisor image was built with (ADR-0234) -->
   <Card>
     <h3 class="section-title mb-4">
       <Package class="w-5 h-5" />

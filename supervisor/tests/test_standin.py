@@ -274,7 +274,7 @@ class TestIsolation:
         assert env["UNOS_HOST_EXEC"] == "local"
         assert env["UNOS_DISABLE_BACKGROUND_TASKS"] == "1"
         # With host commands on this machine, the power API refuses every power action: no
-        # reboot, shutdown, suspend or Wake-on-LAN change of this machine (ADR-0232).
+        # reboot, shutdown, suspend or Wake-on-LAN change of this machine (ADR-0233).
         assert configured["power_off"] is True
         # The UPS monitor shuts nothing down inside a container (system.ups-monitoring).
         assert env["container"] == "docker"

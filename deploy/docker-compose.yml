@@ -4,7 +4,7 @@ services:
       context: ../supervisor
       # The version the web interface shows: install.sh and update.sh set it
       # to `git describe --tags --always` of the checkout before they build
-      # (ADR-0233). A build without it reports "unknown".
+      # (ADR-0234). A build without it reports "unknown".
       args:
         UNOS_VERSION: ${UNOS_VERSION:-unknown}
     container_name: unos-supervisor

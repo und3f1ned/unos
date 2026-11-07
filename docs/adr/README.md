@@ -237,6 +237,7 @@ and this index, and `make check-fast` runs it.
 | [0168](0168-file-manager-download-delete-copy-move.md) | The file manager downloads with the session and never overwrites on copy or move | accepted | 2026-11-06 |
 | [0169](0169-uploads-stream-into-their-folder.md) | Uploads stream into their folder and stay unnamed until complete | accepted | 2026-11-06 |
 | [0170](0170-file-manager-protects-volumes-and-mounts.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts | accepted | 2026-11-06 |
+| [0232](0232-file-manager-renames-in-the-row-and-never-replaces.md) | The file manager renames one selected item in its row and never replaces an entry | accepted | 2026-11-07 |
 
 ## System
 
@@ -250,8 +251,8 @@ and this index, and `make check-fast` runs it.
 | [0171](0171-supervisor-volatile-files-in-ram.md) | The supervisor keeps volatile files in RAM | accepted | 2026-11-06 |
 | [0172](0172-unique-task-ids-and-bounded-smart-tests.md) | Scheduled tasks get unique ids, backups run concurrently, and SMART tests time out | accepted | 2026-11-06 |
 | [0173](0173-in-app-updater-in-its-own-slice.md) | Redesign the in-app updater in its own slice; until then update.sh is the way | proposed | 2026-11-06 |
-| [0232](0232-power-actions-run-on-the-host-and-are-off-where-host-commands-run-locally.md) | Power actions run on the host through host.py and are off where host commands run locally | accepted | 2026-11-07 |
-| [0233](0233-the-image-carries-its-version-and-the-updates-tab-shows-only-what-works.md) | The supervisor image carries its version, and System > Updates shows only what works | accepted | 2026-11-07 |
+| [0233](0233-power-actions-run-on-the-host-and-are-off-where-host-commands-run-locally.md) | Power actions run on the host through host.py and are off where host commands run locally | accepted | 2026-11-07 |
+| [0234](0234-the-image-carries-its-version-and-the-updates-tab-shows-only-what-works.md) | The supervisor image carries its version, and System > Updates shows only what works | accepted | 2026-11-07 |
 
 ## Web UI
 

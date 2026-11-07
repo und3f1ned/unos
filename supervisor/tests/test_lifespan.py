@@ -46,7 +46,7 @@ def _patch_loops(started: set[str], *, host_tool_check: bool = True, smb_reconci
     patches.append(patch.object(main, "reconcile_pools_on_startup", AsyncMock(return_value=[])))
     # The SMB startup reconcile runs host commands and imports smb.conf.
     patches.append(patch.object(main, "reconcile_smb_on_startup", smb_reconcile or AsyncMock(return_value=None)))
-    # Applying the Wake-on-LAN choices again runs ethtool on the host (ADR-0232).
+    # Applying the Wake-on-LAN choices again runs ethtool on the host (ADR-0233).
     patches.append(patch.object(main, "reapply_wol_settings", wol_reapply or AsyncMock(return_value=None)))
     if host_tool_check:
         patches.append(patch.object(main, "check_host_tools", AsyncMock(return_value=None)))
@@ -277,7 +277,7 @@ def test_the_smb_reconcile_starts_before_the_first_request(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Wake-on-LAN choices applied again after a boot (ADR-0232)
+# Wake-on-LAN choices applied again after a boot (ADR-0233)
 # ---------------------------------------------------------------------------
 
 

@@ -331,12 +331,83 @@ def test_rename_symlink_renames_the_link(env):
     assert env.outside.is_dir() and _tree(env.outside) == ["secret.txt"]
 
 
-def test_rename_existing_target_is_refused(env):
+def test_rename_a_file_and_a_folder(env):
+    (env.pool / "draft.txt").write_text("draft")
+    (env.pool / "photos").mkdir()
+    (env.pool / "photos" / "img.jpg").write_bytes(b"jpeg")
+
+    response = env.client.post(
+        "/api/v1/files/rename", json={"path": str(env.pool / "draft.txt"), "new_name": "final.txt"}
+    )
+    assert response.status_code == 200, response.text
+    assert {key: response.json()[key] for key in ("name", "path", "type", "size")} == {
+        "name": "final.txt",
+        "path": str(env.pool / "final.txt"),
+        "type": "file",
+        "size": 5,
+    }
+    response = env.client.post(
+        "/api/v1/files/rename", json={"path": str(env.pool / "photos"), "new_name": "pictures"}
+    )
+    assert response.status_code == 200, response.text
+    assert (response.json()["name"], response.json()["type"]) == ("pictures", "directory")
+
+    listing = env.client.get("/api/v1/files/list", params={"path": str(env.pool)}).json()
+    assert [item["name"] for item in listing["items"]] == ["pictures", "final.txt"]
+    assert (env.pool / "final.txt").read_text() == "draft"
+    assert _tree(env.pool / "pictures") == ["img.jpg"]
+
+
+@pytest.mark.parametrize("existing", ["file", "empty folder"])
+def test_rename_existing_target_is_refused(env, existing):
+    (env.pool / "a").write_text("a")
+    if existing == "file":
+        (env.pool / "b").write_text("b")
+    else:  # rename(2) would replace an empty folder
+        (env.pool / "b").mkdir()
+    response = env.client.post("/api/v1/files/rename", json={"path": str(env.pool / "a"), "new_name": "b"})
+    assert (response.status_code, response.json()["detail"]) == (400, "Already exists: b")
+    assert (env.pool / "a").read_text() == "a"
+    if existing == "file":
+        assert (env.pool / "b").read_text() == "b"
+    else:
+        assert (env.pool / "b").is_dir()
+
+
+def test_rename_never_replaces_a_name_that_appears_after_the_check(env, monkeypatch):
+    """E.g. an SMB user or an app creates the new name at the last moment: the rename is refused, and it stays."""
     (env.pool / "a").write_text("a")
     (env.pool / "b").write_text("b")
+    lstat_at = files_router._lstat_at
+    # As if b appeared right after the router looked for it.
+    monkeypatch.setattr(
+        files_router, "_lstat_at", lambda dir_fd, name: None if name == "b" else lstat_at(dir_fd, name)
+    )
+
     response = env.client.post("/api/v1/files/rename", json={"path": str(env.pool / "a"), "new_name": "b"})
-    assert response.status_code == 400
+
+    assert (response.status_code, response.json().get("detail")) == (400, "Already exists: b")
+    assert (env.pool / "a").read_text() == "a"
     assert (env.pool / "b").read_text() == "b"
+
+
+def _no_exclusive_rename(dir_fd, name, new_name):
+    """What renameat2 answers where the filesystem cannot refuse an existing name itself (NFS, some FUSE)."""
+    raise OSError(errno.EINVAL, os.strerror(errno.EINVAL))
+
+
+@pytest.mark.parametrize("exclusive_rename", [None, _no_exclusive_rename], ids=["no C function", "EINVAL"])
+def test_rename_looks_for_the_name_first_where_it_cannot_be_refused_in_one_step(env, monkeypatch, exclusive_rename):
+    monkeypatch.setattr(files_router, "_EXCLUSIVE_RENAME", exclusive_rename)
+    (env.pool / "a").write_text("a")
+    (env.pool / "b").write_text("b")
+
+    response = env.client.post("/api/v1/files/rename", json={"path": str(env.pool / "a"), "new_name": "b"})
+    assert (response.status_code, response.json()["detail"]) == (400, "Already exists: b")
+    response = env.client.post("/api/v1/files/rename", json={"path": str(env.pool / "a"), "new_name": "c"})
+    assert (response.status_code, response.json()["name"]) == (200, "c")
+    assert _tree(env.pool) == ["b", "c"]
+    assert (env.pool / "c").read_text() == "a"
 
 
 # --- delete ---------------------------------------------------------------------

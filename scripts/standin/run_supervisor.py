@@ -25,7 +25,7 @@ The stand-in keeps the supervisor away from this machine's system:
   does not exist, so no container or image of this machine is touched.
 * Power actions are off: with host commands on this machine
   (UNOS_HOST_EXEC=local) the power API refuses to reboot, shut down or
-  suspend it, to cancel its shutdowns and to change Wake-on-LAN (ADR-0232),
+  suspend it, to cancel its shutdowns and to change Wake-on-LAN (ADR-0233),
   and the UPS monitor sees a container (container=docker), so it never shuts
   this machine down.
 * UNOS_INSTALL_DIR names a folder that does not exist: the updater never runs

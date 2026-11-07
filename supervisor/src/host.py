@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
 # storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
-# power/router.py (shutdown, busctl, systemctl, ip, ethtool: ADR-0232).
+# power/router.py (shutdown, busctl, systemctl, ip, ethtool: ADR-0233).
 # cat, test, mkdir, rmdir, find, sync and sh also run there but come from
 # essential packages.
 HOST_TOOLS: dict[str, str] = {

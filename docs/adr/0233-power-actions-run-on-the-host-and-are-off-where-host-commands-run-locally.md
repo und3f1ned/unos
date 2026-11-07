@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0232: Power actions run on the host through host.py and are off where host commands run locally
+# ADR-0233: Power actions run on the host through host.py and are off where host commands run locally
 
 ## Context
 

@@ -1,4 +1,4 @@
-"""System > Power acts on the host: reboot, shutdown, cancel, suspend and Wake-on-LAN (ADR-0232).
+"""System > Power acts on the host: reboot, shutdown, cancel, suspend and Wake-on-LAN (ADR-0233).
 
 Every host command goes to ``FakePowerHost`` through a patched ``src.host.run_on_host``: logind's
 scheduled shutdown (``shutdown``, ``busctl``), the kernel's sleep states, ``systemctl suspend``,

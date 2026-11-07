@@ -26,13 +26,13 @@ router = APIRouter(prefix="/power", tags=["power"])
 CONFIG_FILE = "/data/power_config.json"
 UPS_CONFIG_FILE = "/data/ups_config.json"
 # The Wake-on-LAN state an administrator chose per interface name, applied
-# again at every start of the supervisor (reapply_wol_settings, ADR-0232).
+# again at every start of the supervisor (reapply_wol_settings, ADR-0233).
 WOL_FILE = "/data/wol_config.json"
 # One Wake-on-LAN change at a time: each reads the file, changes it and writes it.
 _wol_lock = threading.Lock()
 
 # Reboot, shutdown, cancel, suspend and Wake-on-LAN act on the host through
-# src/host.py (ADR-0232). With UNOS_HOST_EXEC=local the supervisor runs its
+# src/host.py (ADR-0233). With UNOS_HOST_EXEC=local the supervisor runs its
 # host commands on its own machine: the local stand-in on a workstation or the
 # unprivileged test stack. There every power endpoint answers 503 with this
 # text and runs nothing.
@@ -284,7 +284,7 @@ def is_in_container() -> bool:
 
     Only the UPS monitor's shutdown checks it, which therefore never runs
     in the supervisor's container (system.ups-monitoring). The power actions
-    reach the host through src/host.py instead (ADR-0232).
+    reach the host through src/host.py instead (ADR-0233).
     """
     return os.path.exists("/.dockerenv") or os.environ.get("container") == "docker"
 
@@ -346,7 +346,7 @@ async def update_power_config(config: PowerConfig, _: dict = Depends(verify_toke
     return config
 
 
-# ==================== Reboot, shutdown and suspend (ADR-0232) ====================
+# ==================== Reboot, shutdown and suspend (ADR-0233) ====================
 
 
 def _refuse_local() -> None:
@@ -470,7 +470,7 @@ async def suspend_system(request: Request, _: dict = Depends(verify_token)):
     return await asyncio.to_thread(_suspend)
 
 
-# ==================== Wake-on-LAN (ADR-0232) ====================
+# ==================== Wake-on-LAN (ADR-0233) ====================
 
 
 def _read_wol(name: str, mac_address: Optional[str]) -> WolInterface:

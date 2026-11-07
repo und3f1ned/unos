@@ -1,4 +1,4 @@
-"""System > Updates: the version the supervisor image carries, and the latest release (ADR-0233).
+"""System > Updates: the version the supervisor image carries, and the latest release (ADR-0234).
 
 The image is built with UNOS_VERSION, `git describe --tags --always` of the checkout that
 deploy/install.sh or deploy/update.sh built (supervisor/tests/test_deploy_scripts.py checks

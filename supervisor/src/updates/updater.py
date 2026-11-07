@@ -150,7 +150,7 @@ class Updater:
         return 0
 
     async def get_current_version(self) -> CurrentVersion:
-        """The version the supervisor image was built with (ADR-0233).
+        """The version the supervisor image was built with (ADR-0234).
 
         UNOS_VERSION is `git describe --tags --always` of the checkout that
         deploy/install.sh or deploy/update.sh built: a release tag, a tag

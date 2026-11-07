@@ -94,7 +94,7 @@ DOCKER_STUB = textwrap.dedent(
         case "$2" in
           # Compose 5.0.2 unless the scenario has a line compose-version=<version>.
           version) v=$(sed -n 's/^compose-version=//p' "$STUB_DIR/scenario"); echo "${v:-5.0.2}" ;;
-          # The version the images get (ADR-0233): one line per build.
+          # The version the images get (ADR-0234): one line per build.
           build) echo "UNOS_VERSION=${UNOS_VERSION-<unset>}" >> "$STUB_DIR/build-env"
                  interrupt_at build; has probe-lock && probe_lock; has build-fails && exit 1 ;;
           down) interrupt_at down ;;
@@ -383,7 +383,7 @@ class TestUpdateScript:
         assert (sandbox / "install" / "VERSION").read_text() == "2\n"
 
     def test_the_new_images_carry_the_version_of_the_new_checkout(self, sandbox):
-        # System > Updates shows the version the supervisor image was built with (ADR-0233).
+        # System > Updates shows the version the supervisor image was built with (ADR-0234).
         _git("tag", "v0.1.0", "HEAD", cwd=sandbox / "install")
 
         result, calls = _run_update(sandbox)
@@ -962,7 +962,7 @@ class TestInstallScript:
         assert "Docker Compose 2.26.1 cannot limit its wait" in result.stdout
 
     def test_the_images_carry_the_version_of_the_checkout(self, tmp_path):
-        # System > Updates shows the version the supervisor image was built with (ADR-0233).
+        # System > Updates shows the version the supervisor image was built with (ADR-0234).
         install = tmp_path / "install"
         _git("init", "-q", str(install), cwd=tmp_path)
         (install / "README.md").write_text("UNOS\n")
@@ -1787,7 +1787,7 @@ class TestBuildContexts:
         assert {"**/__pycache__", "**/*.pyc"} <= _dockerignore("supervisor")
 
     def test_the_supervisor_image_carries_the_version_it_was_built_with(self):
-        # ADR-0233: the version of System > Updates and General. After the code and the
+        # ADR-0234: the version of System > Updates and General. After the code and the
         # packages, so that a new version rebuilds only the last layers.
         lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
         arg = lines.index("ARG UNOS_VERSION=unknown")

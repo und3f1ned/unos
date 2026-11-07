@@ -4,7 +4,7 @@
   import { checkForUpdates, getCurrentVersion, type CurrentVersion, type UpdateCheck } from "$lib/api/updates";
   import { Alert, Badge, Button, Card } from "$lib/components/ui";
 
-  // What works until the in-app updater does (ADR-0233, ADR-0173): the
+  // What works until the in-app updater does (ADR-0234, ADR-0173): the
   // version the supervisor image was built with, the latest release, and the
   // update script on the host. The tab has no Install Update or Rollback.
 

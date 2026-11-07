@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
-// System > Power acts on the host (ADR-0232). The specs never reboot anything: the stand-in and
+// System > Power acts on the host (ADR-0233). The specs never reboot anything: the stand-in and
 // the compose test stack run their host commands on their own machine (UNOS_HOST_EXEC=local), so
 // their power API refuses every action (the first test checks that answer of the real
 // supervisor), and the other tests answer the tab's requests with route fakes, with the server's

@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
-// System > Updates (ADR-0233): the current version, the latest release and the update script;
+// System > Updates (ADR-0234): the current version, the latest release and the update script;
 // no Install Update or Rollback until the in-app updater works (ADR-0173). The tab's requests are
 // answered by route fakes, in the server's answer format: the stand-in's supervisor was not built
 // with a version, and GitHub is out of its reach.

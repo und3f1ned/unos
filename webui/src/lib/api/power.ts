@@ -19,7 +19,7 @@ export interface PowerConfig {
   idle_timeout_minutes: number;
 }
 
-/** An Ethernet interface of the host and its Wake-on-LAN state (ADR-0232). */
+/** An Ethernet interface of the host and its Wake-on-LAN state (ADR-0233). */
 export interface WolInterface {
   name: string;
   mac_address: string | null;

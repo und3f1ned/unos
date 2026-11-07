@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0233: The supervisor image carries its version, and System > Updates shows only what works
+# ADR-0234: The supervisor image carries its version, and System > Updates shows only what works
 
 ## Context
 
