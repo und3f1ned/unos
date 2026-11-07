@@ -7,7 +7,7 @@
 
 	// The Images tab of the Containers page: the images Docker has, a pull by
 	// name and the removal of an image that no container uses, with all its
-	// tags (ADR-0248).
+	// tags (ADR-0255).
 
 	let images: Image[] = [];
 	let loading = true;

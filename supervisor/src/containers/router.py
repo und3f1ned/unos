@@ -15,9 +15,9 @@ async def _docker(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> A
     """Run a docker.py operation in a worker thread: docker-py blocks (ADR-0021).
 
     A conflict answers 409: an image that containers use, which remove_image
-    refuses itself (ADR-0248), and the conflicts that Docker reports (a name that
+    refuses itself (ADR-0255), and the conflicts that Docker reports (a name that
     is taken, a running container removed without force) with Docker's reason as
-    the detail (ADR-0247).
+    the detail (ADR-0254).
     """
     try:
         return await asyncio.to_thread(operation, *args, **kwargs)

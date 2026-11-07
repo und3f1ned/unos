@@ -23,7 +23,7 @@ UNOS_APP_LABEL = "unos.app"
 
 # Seconds each request to the Docker API may take before docker-py gives up; a
 # stop also waits for the container's stop timeout. Pulls are sent without a
-# timeout by docker-py: their length depends on the image (ADR-0247).
+# timeout by docker-py: their length depends on the image (ADR-0254).
 DOCKER_TIMEOUT_SECONDS = 60
 
 
@@ -292,7 +292,7 @@ def pull_image(image: str) -> ImageInfo:
 
 
 class ImageInUse(Exception):
-    """Containers use the image; the containers API answers 409 with the message (ADR-0248)."""
+    """Containers use the image; the containers API answers 409 with the message (ADR-0255)."""
 
 
 def _in_use_message(image: str, containers: list[Container]) -> str:
@@ -310,7 +310,7 @@ def remove_image(image_id: str, force: bool = False) -> None:
     one tag by its ID only when forced ("image is referenced in multiple
     repositories"), so each tag is removed on its own, without force: the last one
     takes the image with it, and what is left of it is then removed by its ID
-    (ADR-0248). Docker's own refusals still reach the caller as docker-py errors.
+    (ADR-0255). Docker's own refusals still reach the caller as docker-py errors.
     """
     client = get_client()
     try:

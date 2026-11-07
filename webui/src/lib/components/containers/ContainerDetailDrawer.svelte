@@ -31,7 +31,7 @@
 
 	const dispatch = createEventDispatcher();
 
-	// The log view keeps this much of the newest text, cut at a line break (ADR-0248).
+	// The log view keeps this much of the newest text, cut at a line break (ADR-0255).
 	const MAX_LOG_CHARS = 500_000;
 	// Closer to the end than this (pixels), the view follows new lines.
 	const FOLLOW_SLACK_PX = 24;

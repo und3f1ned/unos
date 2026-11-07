@@ -5,7 +5,7 @@ area: apps
 decided-by: agent
 ---
 
-# ADR-0249: The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data
+# ADR-0256: The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data
 
 ## Context
 
@@ -15,7 +15,7 @@ decided-by: agent
 
 - The four actions of the Apps API on an installed app (start, restart, stop, uninstall) take the container from `_get_app` in `supervisor/src/apps/router.py`: 404 "App <id> not found" when Docker does not know it, and 400 "Not a UNOS managed app" when it has no `unos.app` label, which every install from the catalog sets, before anything is started, stopped or removed. Other containers are left to the Containers page.
 - Uninstall stops the container and removes it without its volumes (`container.remove()`, no `v=True`); the app's data folders are never touched, and an install of the app on the same pool uses them again. The Apps page's confirmation says that the data folders are kept.
-- A Docker error of a stop or an uninstall answers 500 "Failed to stop: ..." or "Failed to remove: ..."; both run in a worker thread (ADR-0247). A start is still checked by `prepare_app_start` (ADR-0039), whose 409 names the pool to mount.
+- A Docker error of a stop or an uninstall answers 500 "Failed to stop: ..." or "Failed to remove: ..."; both run in a worker thread (ADR-0254). A start is still checked by `prepare_app_start` (ADR-0039), whose 409 names the pool to mount.
 - Tests: `supervisor/tests/test_apps.py` (`TestStopAndUninstall`; `TestStartChecks` for the pool named in the 409) and `webui/tests/apps.spec.ts` (Installed apps).
 
 ## Consequences

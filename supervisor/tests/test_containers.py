@@ -611,7 +611,7 @@ class TestRouting:
 
 
 # ---------------------------------------------------------------------------
-# Docker calls run in worker threads (ADR-0021, ADR-0247)
+# Docker calls run in worker threads (ADR-0021, ADR-0254)
 # ---------------------------------------------------------------------------
 
 
@@ -804,7 +804,7 @@ class TestRequestsAnsweredWhileDockerBlocks:
 
 
 # ---------------------------------------------------------------------------
-# Docker's refusals keep their meaning (ADR-0247)
+# Docker's refusals keep their meaning (ADR-0254)
 # ---------------------------------------------------------------------------
 
 
@@ -889,7 +889,7 @@ def _using_the_image(docker_client: MagicMock, name: str, status: str = "exited"
 
 
 class TestImageRemoval:
-    """DELETE /api/v1/containers/images/{id} as the Images tab sends it, never forced (ADR-0248)."""
+    """DELETE /api/v1/containers/images/{id} as the Images tab sends it, never forced (ADR-0255)."""
 
     @pytest.mark.parametrize(
         "tags",

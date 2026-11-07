@@ -96,9 +96,12 @@ and this index, and `make check-fast` runs it.
 | [0033](0033-session-revocation-and-token-scopes.md) | Add session revocation, safer token storage, 2FA recovery codes and token scopes | proposed | 2026-11-05 |
 | [0067](0067-two-factor-codes-are-single-use.md) | Two-factor codes are single-use, remembered in memory | accepted | 2026-11-06 |
 | [0068](0068-own-smb-activation-needs-the-two-factor-code.md) | Turning on one's own SMB access needs the two-factor code | accepted | 2026-11-06 |
-| [0191](0191-throttle-api-token-last-used-writes.md) | Throttle the commit of an API token's last use | proposed | 2026-11-07 |
+| [0191](0191-throttle-api-token-last-used-writes.md) | Throttle the commit of an API token's last use | superseded by [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | 2026-11-07 |
 | [0238](0238-recovery-codes-sign-in-once-in-place-of-a-two-factor-code.md) | Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication | accepted | 2026-11-07 |
 | [0239](0239-kept-authentication-practices-with-a-second-factor-before-any-token.md) | Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens | accepted | 2026-11-07 |
+| [0251](0251-a-sign-in-answers-while-data-is-full-and-its-lost-records-go-to-the-log.md) | A sign-in answers while /data is full, and the records it cannot write go to the supervisor's log | accepted | 2026-11-07 |
+| [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | An API token's last use is committed at most once an hour | accepted | 2026-11-07 |
+| [0253](0253-only-a-session-token-manages-api-tokens-and-their-number-and-names-are-bounded.md) | Only a session token manages API tokens, and their number, names and permissions are bounded | accepted | 2026-11-07 |
 
 ## Storage
 
@@ -180,7 +183,7 @@ and this index, and `make check-fast` runs it.
 | [0127](0127-inactive-accounts-have-no-passdb-entry.md) | An account that is not active has no passdb entry, never a disabled one | accepted | 2026-11-06 |
 | [0128](0128-reconcile-creates-all-host-accounts.md) | The reconcile creates host accounts for every SMB-enabled user | superseded by [0129](0129-host-accounts-created-at-first-activation.md) | 2026-11-06 |
 | [0129](0129-host-accounts-created-at-first-activation.md) | Host accounts are created at the first activation | accepted | 2026-11-06 |
-| [0130](0130-no-smb-activation-before-unos-smb-conf.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write | accepted | 2026-11-06 |
+| [0130](0130-no-smb-activation-before-unos-smb-conf.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write | superseded by [0249](0249-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | 2026-11-06 |
 | [0131](0131-self-flows-answer-fixed-texts.md) | A regular user's own SMB and password flows answer only fixed texts | accepted | 2026-11-06 |
 | [0132](0132-new-users-never-inherit-smb-rows.md) | Creating a user clears the SMB rows left for its id | accepted | 2026-11-06 |
 | [0133](0133-requests-by-user-id-carry-the-username.md) | Requests that name a user by id also carry the username | accepted | 2026-11-06 |
@@ -218,7 +221,10 @@ and this index, and `make check-fast` runs it.
 | [0192](0192-reread-host-facts-before-destructive-commands.md) | Host facts are read again right before destructive commands, and doubt fails closed | accepted | 2026-11-07 |
 | [0193](0193-acl-entries-and-sticky-folders-in-the-parent-chain.md) | ACL entries and sticky folders count in the parent-chain rule | proposed | 2026-11-07 |
 | [0194](0194-reduce-samba-runtime-writes.md) | Reduce Samba's remaining writes to the system disk | proposed | 2026-11-07 |
-| [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | proposed | 2026-11-07 |
+| [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | superseded by [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | 2026-11-07 |
+| [0248](0248-pool-changes-apply-smb-conf.md) | The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once | accepted | 2026-11-07 |
+| [0249](0249-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
+| [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | proposed | 2026-11-07 |
 
 ## Apps
 
@@ -226,9 +232,9 @@ and this index, and `make check-fast` runs it.
 | --- | --- | --- | --- |
 | [0039](0039-app-data-only-on-a-mounted-pool.md) | App data lives only inside a selected, mounted pool | accepted | 2026-11-05 |
 | [0219](0219-transmission-requires-a-web-login.md) | The transmission app requires a web login | accepted | 2026-11-07 |
-| [0247](0247-docker-calls-run-in-worker-threads-and-conflicts-answer-409.md) | Docker calls of the containers and apps APIs run in worker threads within the Docker client's timeout, and the containers API answers Docker's conflicts with 409 | accepted | 2026-11-07 |
-| [0248](0248-container-logs-stream-in-the-drawer-and-images-get-a-tab.md) | The container drawer follows the log over the logs socket, and the Images tab pulls by name and removes only what no container uses | accepted | 2026-11-07 |
-| [0249](0249-the-apps-api-acts-only-on-apps-and-uninstall-keeps-their-data.md) | The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data | accepted | 2026-11-07 |
+| [0254](0254-docker-calls-run-in-worker-threads-and-conflicts-answer-409.md) | Docker calls of the containers and apps APIs run in worker threads within the Docker client's timeout, and the containers API answers Docker's conflicts with 409 | accepted | 2026-11-07 |
+| [0255](0255-container-logs-stream-in-the-drawer-and-images-get-a-tab.md) | The container drawer follows the log over the logs socket, and the Images tab pulls by name and removes only what no container uses | accepted | 2026-11-07 |
+| [0256](0256-the-apps-api-acts-only-on-apps-and-uninstall-keeps-their-data.md) | The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data | accepted | 2026-11-07 |
 
 ## Backup
 
@@ -268,6 +274,7 @@ and this index, and `make check-fast` runs it.
 | [0244](0244-a-disabled-interface-comes-back-on-unless-the-change-is-kept.md) | A disabled network interface comes back on by itself after 60 seconds unless the change is kept | accepted | 2026-11-07 |
 | [0245](0245-system-network-shows-ipv6-link-speeds-and-the-administrative-state.md) | System > Network shows IPv6, link speeds from sysfs and each interface's administrative state | accepted | 2026-11-07 |
 | [0246](0246-interfaces-with-vlans-stay-enabled-and-the-revert-follows-the-host.md) | An interface that carries VLANs is not disabled, and a disable's saved state and the page's reports follow what the host shows | accepted | 2026-11-07 |
+| [0247](0247-wake-on-lan-from-power-off-depends-on-the-board.md) | Waking a host that is off by Wake-on-LAN depends on its board, and the Power tab says so | accepted | 2026-11-07 |
 
 ## Web UI
 

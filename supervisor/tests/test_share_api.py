@@ -59,6 +59,10 @@ ALICE, BOB, CAROL, DAVE, ERIN, ADMIN, LEGACY = 1, 2, 3, 4, 5, 6, 7
 NAMES = {ALICE: "alice", BOB: "bob", CAROL: "carol", DAVE: "dave", ERIN: "erin", ADMIN: "admin", LEGACY: "Bob.Smith"}
 POOL_ROOT = service.POOL_ROOT_PROBLEM
 APPS = "App data (data/apps) cannot be shared: apps keep their configuration there"
+REPLACED = (
+    "smb.conf was replaced or removed after UNOS wrote it; it is written again at the next change or "
+    "restart, and SMB cannot be turned on until then"
+)
 
 
 class FakeSmbHost:
@@ -1047,6 +1051,31 @@ class TestStatus:
         asyncio.run(apply_smb_config(api))
         assert api.client.get(f"{API}/smb-status").json()["problems"] == []
 
+    def test_an_smb_conf_replaced_after_the_last_apply(self, api):
+        """ADR-0249: after an apply that left UNOS's file in place, a file without UNOS's header,
+        or none, is a problem until the next change writes UNOS's file again."""
+        assert api.create(access=access((ALICE, "read"))).status_code == 200
+        assert api.client.get(f"{API}/smb-status").json()["problems"] == []
+
+        api.conf.write_text("[global]\n   workgroup = WORKGROUP\n\n[docs]\n   path = /srv/docs\n")
+        assert api.client.get(f"{API}/smb-status").json()["problems"] == [REPLACED]
+        api.conf.unlink()
+        assert api.client.get(f"{API}/smb-status").json()["problems"] == [REPLACED]
+
+        assert api.patch("docs", comment="Team").status_code == 200
+        assert api.conf.read_text().startswith(smbconf.HEADER)
+        assert api.client.get(f"{API}/smb-status").json()["problems"] == []
+
+    def test_an_smb_conf_that_cannot_be_read_after_the_last_apply(self, api, monkeypatch):
+        assert api.create().status_code == 200
+
+        def unreadable():
+            raise OSError(5, "Input/output error")
+
+        monkeypatch.setattr(smb, "read_conf_bytes", unreadable)
+        assert api.client.get(f"{API}/smb-status").json()["problems"] == [
+            "smb.conf could not be read: [Errno 5] Input/output error"]
+
     def test_group_problems(self, api, monkeypatch):
         monkeypatch.setattr(accounts, "gid_problem", lambda: "gid 70000 belongs to the host group media, not unos-smb")
         status = api.client.get(f"{API}/smb-status").json()
@@ -1087,6 +1116,32 @@ class TestStatus:
         assert api.create("status", "status").status_code == 200
         assert api.get("status").json()["name"] == "status"
         assert "problems" in api.client.get(f"{API}/smb-status").json()
+
+
+def test_the_e2e_fakes_answer_with_the_servers_texts(api, monkeypatch):
+    """webui/tests/shares-fakes.ts answers with these texts word for word (ADR-0189): why a share
+    of a pool that UNOS does not manage, or no longer manages after an unmount, is not served
+    (ADR-0248), the status problem that names such a share, and the status problem of a replaced
+    smb.conf (ADR-0249)."""
+    fakes = (Path(__file__).resolve().parents[2] / "webui" / "tests" / "shares-fakes.ts").read_text(encoding="utf-8")
+    unmanaged = service.share_path_problem(
+        str(validators.pools_base() / "e2e_data" / "docs"), other_paths={}, pool_names={"data"}
+    )
+    assert unmanaged == "Share path must be on a storage pool that UNOS manages: 'e2e_data' is not one"
+    assert f"`{unmanaged.replace('e2e_data', '${pool}')}`" in fakes
+    assert f"'{service.SMB_CONF_REPLACED}'" in fakes
+
+    # The status once the pool of two shares is no longer one that UNOS manages, as setPoolMounted
+    # changes it: each share is named, in the order of the shares, and none is a guest share.
+    assert api.create().status_code == 200
+    assert api.create("public", "public", guest_ok=True).status_code == 200
+    assert api.client.get(f"{API}/smb-status").json()["guest_shares"] == ["public"]
+    monkeypatch.setattr(pools, "managed_pool_names", lambda: {"ghost"})
+    problem = unmanaged.replace("e2e_data", "data")
+    status = api.client.get(f"{API}/smb-status").json()
+    assert (status["problems"], status["guest_shares"]) == (
+        [f"Share docs is not served: {problem}", f"Share public is not served: {problem}"], [])
+    assert "`Share ${share} is not served: ${problem}`" in fakes
 
 
 # --- audit (ADR-0157) ------------------------------------------------------------------------------------

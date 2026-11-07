@@ -51,10 +51,10 @@ WS_AUTH_TIMEOUT_SECONDS = 10.0
 WS_REAUTH_INTERVAL_SECONDS = 60.0
 STATS_INTERVAL_SECONDS = 2.0
 # Lines of a container's log that its stream starts with, before the new ones
-# (the container drawer of the web UI shows them, ADR-0248).
+# (the container drawer of the web UI shows them, ADR-0255).
 LOG_STREAM_TAIL_LINES = 200
 # A logs socket closes with 1000 once the log ended or could not be read; the web
-# UI shows any other end as a lost connection (ADR-0248).
+# UI shows any other end as a lost connection (ADR-0255).
 WS_CLOSE_NORMAL = 1000
 WS_CLOSE_UNAUTHORIZED = 4401
 WS_CLOSE_FORBIDDEN = 4403

@@ -35,6 +35,16 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
    default credentials.
 5. Afterwards you sign in on the login page.
 
+Signing in works also while the disk that holds the UNOS data (`/data`, on the
+system disk) is full, so that an administrator can sign in and free space, for
+example by deleting old backups. The login history and the audit log then miss
+the sign-ins they cannot store: the supervisor's log
+(`docker logs unos-supervisor`) reports each record it could not write, with
+its time. On a disk that is full to the last block, Docker may not be able to
+keep those log lines either.
+A recovery code does not sign you in while the disk is full, because UNOS
+cannot mark it as used; a code of your authenticator app does.
+
 ### Interface Overview
 
 The UNOS interface consists of:
@@ -128,7 +138,11 @@ For each pool, you can:
 - **Mount / Unmount** - Mount the pool (and mount it at every boot), or unmount
   it; the data on the disks is not touched. Unmounting is refused while a
   running app or container uses the pool, also through a Docker volume that
-  binds a folder in it, or while files on it are open
+  binds a folder in it, or while files on it are open, for example by a
+  computer that has one of its SMB shares open. Once the pool is unmounted,
+  its SMB shares are no longer served: their open connections are closed, and
+  the **Shares** page marks them **Not served** and **Pool not mounted**. They
+  keep their access, and mounting the pool serves them again
 - **Add Devices** - Expand the pool
 - **Scrub** - Check data integrity
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
@@ -149,8 +163,9 @@ For each pool, you can:
 - **Balance** - Redistribute data across devices
 - **Delete** - Unmount the pool and remove it from `/etc/fstab`. The disks are
   not wiped: the data stays on them and the pool can be mounted again later.
-  Like Unmount, it is refused while the pool is in use; SMB shares and NFS
-  exports of the pool are not checked: remove them first.
+  Like Unmount, it is refused while the pool is in use, and its SMB shares are
+  no longer served; NFS exports of the pool are not checked: remove them
+  first.
 
 ### SMART Monitoring
 
@@ -248,7 +263,9 @@ A share is a folder inside a pool, or a volume. UNOS refuses:
 A share marked **Not served** breaks one of these rules, for example a share
 of a whole pool imported from the host's existing smb.conf. Nobody can open it
 until you give it a new folder with **Edit**; it cannot be given access until
-then.
+then. The shares of a pool that was unmounted or deleted on the **Storage**
+page are marked **Not served** and **Pool not mounted** in the same way: they
+keep their access, and mounting the pool serves them again.
 
 A share's folder must also be inside folders that only root can change:
 whoever can change a folder above it can put another folder in its place.
@@ -601,7 +618,11 @@ shares and writes its own at its first start. When importing the shares of
 the old file or writing the new one failed, the status panel of the
 **Shares** page says why: "Shares were not imported from smb.conf: ..."
 (UNOS writes its smb.conf only after that import) or "smb.conf was not
-updated: ...". Allowing SMB and turning it off are not affected.
+updated: ...". When smb.conf was replaced or removed after UNOS wrote it, the
+status panel says "smb.conf was replaced or removed after UNOS wrote it; ..."
+until UNOS writes its own again at the next change or restart; an edit that
+keeps the two comment lines at the top of UNOS's file is not noticed.
+Allowing SMB and turning it off are not affected.
 
 Turning **Allow SMB access** off (or the user's own **Turn off SMB**) ends the
 user's open SMB connections. When Samba could not apply a user's own change
@@ -692,14 +713,18 @@ left.
 Tokens give scripts access to the UNOS API with the rights of the account that
 created them: a regular user's token cannot use the administrator-only APIs.
 There is no page for them yet; create one with the API, using the
-`access_token` that `POST /api/v1/auth/login` returns (the full API token is
-shown only once):
+`access_token` that `POST /api/v1/auth/login` returns. `name` has 1 to 64
+characters. `expires_in_days` is the token's lifetime, from 1 to 3650 days;
+without it the token does not expire. A token acts with all the rights of its
+user, and `permissions` takes only `*`. A user has at most 100 tokens. The
+answer is the only place that shows the full token (`token`, which starts with
+`unos_`): UNOS keeps only a hash of it, so save it right away.
 
 ```bash
 curl --cacert unos-root-ca.crt -X POST https://unos/api/v1/auth/tokens \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Backup Script"}'
+  -d '{"name": "Backup Script", "expires_in_days": 365}'
 ```
 
 Use tokens in API requests:
@@ -709,8 +734,23 @@ curl --cacert unos-root-ca.crt -H "Authorization: Bearer YOUR_TOKEN" https://uno
 
 `unos-root-ca.crt` is the UNOS root certificate (see
 [Trust the UNOS Certificate Authority](INSTALL.md#trust-the-unos-certificate-authority)),
-and `unos` the name on the certificate. List your tokens with
-`GET /api/v1/auth/tokens` and revoke one with `DELETE /api/v1/auth/tokens/<id>`.
+and `unos` the name on the certificate.
+
+- `GET /api/v1/auth/tokens` lists your tokens with their first 12 characters
+  (`token_prefix`), whether they are active, their expiry and their last use,
+  never the full token. Other users, administrators too, neither see nor
+  change your tokens.
+- `POST /api/v1/auth/tokens/<id>/toggle` disables a token, and enables it
+  again the next time. A disabled token is refused with 401 "API token is
+  disabled", an expired one with 401 "API token has expired".
+- `DELETE /api/v1/auth/tokens/<id>` revokes a token for good.
+- Creating, disabling, enabling and deleting tokens needs the `access_token` of
+  a sign-in: a request made with an API token gets 403, so that a token cannot
+  make tokens that outlive its expiry or its revocation. A token can list
+  them.
+- The last use (`last_used_at`) is stored at most once an hour, so that
+  scripts do not write to the system disk with every request: it can be up to
+  an hour older than the token's latest request.
 
 ---
 
@@ -865,7 +905,9 @@ wake the host through it. An interface that cannot wake the host by magic
 packet shows **Not supported**. UNOS sets your choice again each time it
 starts, because many network drivers forget it at a reboot. Send the magic
 packet from a computer on the same network, for example with
-`wakeonlan <MAC address>`.
+`wakeonlan <MAC address>`. A magic packet starts a host that is off only where
+the board keeps the network card powered then; many single-board computers
+cut its power, and then only the power button starts the host.
 
 There are no scheduled shutdown or wake times, and the UPS state has no page
 yet (feature-list entries `system.scheduled-power` and

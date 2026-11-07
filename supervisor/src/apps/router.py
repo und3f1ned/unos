@@ -823,7 +823,7 @@ def _get_app(container_id: str) -> Any:
 
     400 for a container that is no app of the catalog (no unos.app label), such
     as UNOS's own unos-supervisor and unos-webui: the Apps API acts only on
-    apps (ADR-0249). Blocking: call it in a worker thread.
+    apps (ADR-0256). Blocking: call it in a worker thread.
     """
     try:
         container = get_client().containers.get(container_id)
