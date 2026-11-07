@@ -32,7 +32,7 @@ LOOPS = {
 }
 
 
-def _patch_loops(started: set[str], *, host_tool_check: bool = True, smb_reconcile=None):
+def _patch_loops(started: set[str], *, host_tool_check: bool = True, smb_reconcile=None, wol_reapply=None):
     patches = []
     for name, (module, func, _task_attr) in LOOPS.items():
 
@@ -46,6 +46,8 @@ def _patch_loops(started: set[str], *, host_tool_check: bool = True, smb_reconci
     patches.append(patch.object(main, "reconcile_pools_on_startup", AsyncMock(return_value=[])))
     # The SMB startup reconcile runs host commands and imports smb.conf.
     patches.append(patch.object(main, "reconcile_smb_on_startup", smb_reconcile or AsyncMock(return_value=None)))
+    # Applying the Wake-on-LAN choices again runs ethtool on the host (ADR-0233).
+    patches.append(patch.object(main, "reapply_wol_settings", wol_reapply or AsyncMock(return_value=None)))
     if host_tool_check:
         patches.append(patch.object(main, "check_host_tools", AsyncMock(return_value=None)))
     return patches
@@ -72,6 +74,7 @@ def test_lifespan_starts_and_stops_all_background_loops(monkeypatch):
             assert task.cancelled() or task.done(), f"{name} task was not stopped"
         main.check_host_tools.assert_called_once_with()
         main.reconcile_smb_on_startup.assert_called_once_with()
+        main.reapply_wol_settings.assert_called_once_with()
     finally:
         for p in patches:
             p.stop()
@@ -89,6 +92,7 @@ def test_background_loops_can_be_disabled(monkeypatch):
         assert started == set()
         main.check_host_tools.assert_not_called()
         main.reconcile_smb_on_startup.assert_not_called()
+        main.reapply_wol_settings.assert_not_called()
     finally:
         for p in patches:
             p.stop()
@@ -267,6 +271,43 @@ def test_the_smb_reconcile_starts_before_the_first_request(monkeypatch):
             order.append("startup done")
             client.get("/api/v1/health")
         assert order == ["reconcile", "startup done"]
+    finally:
+        for p in patches:
+            p.stop()
+
+
+# ---------------------------------------------------------------------------
+# Wake-on-LAN choices applied again after a boot (ADR-0233)
+# ---------------------------------------------------------------------------
+
+
+def test_the_wol_choices_are_applied_beside_the_startup_and_the_task_ends_with_it(monkeypatch):
+    monkeypatch.delenv("UNOS_DISABLE_BACKGROUND_TASKS", raising=False)
+    running = threading.Event()
+    cancelled = threading.Event()
+    seen = {}
+
+    async def reapply():
+        seen["name"] = asyncio.current_task().get_name()
+        running.set()
+        try:
+            await asyncio.Event().wait()  # a host that does not answer
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    patches = _patch_loops(set(), wol_reapply=reapply)
+    for p in patches:
+        p.start()
+    try:
+        started = time.monotonic()
+        with TestClient(main.app) as client:
+            startup = time.monotonic() - started
+            assert running.wait(5), "the Wake-on-LAN choices were not applied"
+            assert client.get("/api/v1/health").status_code == 200
+        assert startup < 2
+        assert seen == {"name": "unos-wol-reapply"}
+        assert cancelled.is_set(), "the Wake-on-LAN task was not cancelled at shutdown"
     finally:
         for p in patches:
             p.stop()

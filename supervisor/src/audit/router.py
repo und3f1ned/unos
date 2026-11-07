@@ -6,7 +6,7 @@ disk; ADR-0214). Before an append would grow the file past MAX_FILE_BYTES, it be
 AUDIT_FILE.1 and the older files move one number up; KEEP_ROTATED old files are kept. Readers go
 through the old files and then the current one, and skip every line that is not a valid entry.
 
-Listing, counting and exporting take the same filters (AuditFilter, ADR-0233), and the CSV
+Listing, counting and exporting take the same filters (AuditFilter, ADR-0237), and the CSV
 export holds no cell that a spreadsheet reads as a formula (_spreadsheet_text).
 """
 import asyncio
@@ -223,7 +223,7 @@ async def log_action(
     return entry
 
 
-# ==================== Filters (ADR-0233) ====================
+# ==================== Filters (ADR-0237) ====================
 
 # The forms of start_date and end_date: a date, or a date and time to the hour, the minute, the
 # second or 1 to 6 digits of a fraction of a second, without a time zone (extended ISO 8601).
@@ -335,7 +335,7 @@ def _selected(selection: AuditFilter) -> list[AuditEntry]:
 # CSV injection: a spreadsheet reads a cell that starts with =, +, -, @, a tab or a carriage
 # return as a formula. A cell starts where a value starts, and inside a value after a semicolon
 # (the list separator of many locales), a tab or a line break, where a spreadsheet that splits
-# on them starts one. A ' in front of such a character makes the cell text (ADR-0233).
+# on them starts one. A ' in front of such a character makes the cell text (ADR-0237).
 _FORMULA_START = re.compile(r"(^|[;\t\r\n])(?=[=+\-@\t\r])")
 
 

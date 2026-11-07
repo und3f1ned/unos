@@ -15,7 +15,7 @@
 	} from '$lib/api/audit';
 	import { Alert, Badge, Button, Card, EmptyState, Input, Select } from '$lib/components/ui';
 
-	// The audit log as a timeline, newest first (ADR-0233). Times are the server's local time
+	// The audit log as a timeline, newest first (ADR-0237). Times are the server's local time
 	// as the entries carry it, without a zone: the page shows them as they are, and the date
 	// filters are the server's days too.
 

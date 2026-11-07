@@ -20,9 +20,32 @@ export interface SmartInfo {
   power_on_hours: number | null;
   power_cycle_count: number | null;
   health_status: "PASSED" | "FAILED" | "UNKNOWN";
+  /** ATA attributes; NVMe disks have none. */
   attributes: SmartAttribute[];
+  /**
+   * The numbers of an NVMe disk's SMART/Health Information log, by smartctl's
+   * names and in its order (critical_warning, available_spare, ...); null for
+   * other disks.
+   */
+  nvme_health: Record<string, number> | null;
   self_test_status: string | null;
   last_test_result: string | null;
+}
+
+export type PredictionStatus = "healthy" | "watch" | "monitor_closely" | "replace_soon";
+
+/** The failure prediction of a connected disk from its SMART history (ADR-0235). */
+export interface DiskPrediction {
+  /** smartctl's serial number, as SmartInfo.serial reports it. */
+  serial: string;
+  /** The disk's path now, as lsblk lists it. */
+  device: string;
+  risk_score: number;
+  status: PredictionStatus;
+  /** The reasons of the score. */
+  risk_factors: string[];
+  recommendation: string;
+  data_points: number;
 }
 
 export interface HealthOverview {
@@ -50,6 +73,19 @@ export async function startSmartTest(device: string, testType: string = "short")
 
 export async function getHealthOverview(): Promise<HealthOverview> {
   return api.get<HealthOverview>("/health/overview");
+}
+
+/**
+ * The failure predictions of the disks connected now. Reads the stored SMART
+ * history only: no disk is woken. HTTP 500 when the host's disks cannot be listed.
+ */
+export async function getDiskPredictions(): Promise<{ predictions: DiskPrediction[] }> {
+  return api.get<{ predictions: DiskPrediction[] }>("/health/smart/predictions");
+}
+
+/** The predictions that mark a disk "Replace soon" (ADR-0235). */
+export function replaceSoon(predictions: DiskPrediction[]): DiskPrediction[] {
+  return predictions.filter((prediction) => prediction.status === "replace_soon");
 }
 
 export function getHealthColor(status: string): string {

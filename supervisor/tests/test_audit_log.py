@@ -1,5 +1,5 @@
 """The audit log: append-only (ADR-0224; feature-list.json: security.append-only-audit-log), and
-listed, filtered, searched, counted and exported through the API (ADR-0233; security.audit-log).
+listed, filtered, searched, counted and exported through the API (ADR-0237; security.audit-log).
 
 Entries are JSON lines appended to the log, written in a worker thread, read back without
 the lines that are damaged, and the log rotates by size into a fixed number of old files.
@@ -368,7 +368,7 @@ class TestLock:
         assert len(audit_router.load_audit_log()) == count
 
 
-# ==================== The API (ADR-0233; feature-list.json: security.audit-log) ====================
+# ==================== The API (ADR-0237; feature-list.json: security.audit-log) ====================
 
 CLIENT = "192.0.2.10"  # the address the test client connects from
 LISTED_ROUTES = ["/logs", "/logs/count", "/logs/export"]  # the routes that take the filters

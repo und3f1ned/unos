@@ -282,7 +282,10 @@ The stand-in is not a NAS host: it has no disks or pools that UNOS manages, no D
 and not the host's network, journal or `/proc`. With `E2E_STAND_IN=1`, the specs that need those
 skip with the reason (`test.skip(process.env.E2E_STAND_IN === '1', '<what the stand-in
 lacks>' + TEST_STACK_TOO)`, from `webui/tests/target.ts`), and the tests that turn SMB on for a new user check that this fails with a clear
-message (503). The backend tests (with fake hosts), the testparm check above and the checks on
+message (503). Both local targets run their host commands on their own machine
+(`UNOS_HOST_EXEC=local`), so their power API answers every reboot, shutdown, suspend, cancel and
+Wake-on-LAN request with 503 and runs nothing (ADR-0233): `tests/power.spec.ts` checks that
+answer and answers the Power tab's requests with route fakes otherwise. The backend tests (with fake hosts), the testparm check above and the checks on
 the dev device cover what the stand-in cannot. The compose test stack sets `E2E_STAND_IN=1` too
 (`scripts/test-cycle.sh` and its `test-runner`), so it takes the same skips, also those of the
 specs that need Docker, although that stack has the host's Docker socket.

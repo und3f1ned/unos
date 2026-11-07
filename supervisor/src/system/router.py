@@ -272,27 +272,6 @@ async def set_hostname(data: HostnameUpdate, _=Depends(require_admin)):
     return {"status": "ok", "hostname": validated_hostname}
 
 
-@router.post("/reboot")
-async def reboot_system(_=Depends(require_admin)):
-    """Reboot the system."""
-    subprocess.Popen(["shutdown", "-r", "+1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return {"status": "ok", "message": "System will reboot in 1 minute"}
-
-
-@router.post("/shutdown")
-async def shutdown_system(_=Depends(require_admin)):
-    """Shutdown the system."""
-    subprocess.Popen(["shutdown", "-h", "+1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return {"status": "ok", "message": "System will shutdown in 1 minute"}
-
-
-@router.post("/cancel-shutdown")
-async def cancel_shutdown(_=Depends(require_admin)):
-    """Cancel pending shutdown/reboot."""
-    subprocess.run(["shutdown", "-c"], capture_output=True)
-    return {"status": "ok", "message": "Shutdown cancelled"}
-
-
 class PCIeDevice(BaseModel):
     slot: str
     class_name: str

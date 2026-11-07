@@ -3,14 +3,14 @@ status: accepted
 date: 2026-11-07
 area: security
 decided-by: agent
-supersedes: [ADR-0232]
+supersedes: [ADR-0236]
 ---
 
-# ADR-0233: The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page
+# ADR-0237: The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page
 
 ## Context
 
-ADR-0232 gave `GET /api/v1/audit/logs`, `/logs/count` and `/logs/export` one set of filters and the web UI an Audit Log page (feature-list.json: `security.audit-log`, `webui.audit-log-page`). Before its merge, an end bound with a time stood for one microsecond, while entries carry microseconds (`datetime.now().isoformat()`) and the page shows times to the second, so a time as the page shows it, given as both bounds, matched nothing. The CSV export wrote the values as recorded, though a spreadsheet reads a cell that starts with `=`, `+`, `-` or `@` as a formula (CSV injection) and anyone who reaches the login chooses the user name of a failed sign-in. The search did not find the resource as the page shows it.
+ADR-0236 gave `GET /api/v1/audit/logs`, `/logs/count` and `/logs/export` one set of filters and the web UI an Audit Log page (feature-list.json: `security.audit-log`, `webui.audit-log-page`). Before its merge, an end bound with a time stood for one microsecond, while entries carry microseconds (`datetime.now().isoformat()`) and the page shows times to the second, so a time as the page shows it, given as both bounds, matched nothing. The CSV export wrote the values as recorded, though a spreadsheet reads a cell that starts with `=`, `+`, `-` or `@` as a formula (CSV injection) and anyone who reaches the login chooses the user name of a failed sign-in. The search did not find the resource as the page shows it.
 
 ## Decision
 
@@ -33,7 +33,7 @@ ADR-0232 gave `GET /api/v1/audit/logs`, `/logs/count` and `/logs/export` one set
 
 ## Considered options
 
-- An end time as one instant, as in ADR-0232: a time to the second or the minute would leave out nearly every entry of that second or minute.
+- An end time as one instant, as in ADR-0236: a time to the second or the minute would leave out nearly every entry of that second or minute.
 - Every form that `datetime.fromisoformat` takes (the basic form, week dates, a decimal comma): the unit of a bound would have to be read from each of them.
 - The OWASP rule for the first character of a value alone: a spreadsheet that splits a line at semicolons or tabs starts a cell inside a value. Quoting every cell instead: spreadsheets differ in how they read a quote that does not open a field.
 - The CSV values as recorded: Export CSV would hand a spreadsheet a formula chosen by anyone who reaches the login.

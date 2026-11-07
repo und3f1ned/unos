@@ -23,8 +23,11 @@ The stand-in keeps the supervisor away from this machine's system:
   are off (UNOS_DISABLE_BACKGROUND_TASKS=1).
 * Docker is out of reach: UNOS_DOCKER_SOCKET and DOCKER_HOST name a socket that
   does not exist, so no container or image of this machine is touched.
-* The power API sees a container (container=docker), so it never schedules a
-  reboot or shutdown of this machine.
+* Power actions are off: with host commands on this machine
+  (UNOS_HOST_EXEC=local) the power API refuses to reboot, shut down or
+  suspend it, to cancel its shutdowns and to change Wake-on-LAN (ADR-0233),
+  and the UPS monitor sees a container (container=docker), so it never shuts
+  this machine down.
 * UNOS_INSTALL_DIR names a folder that does not exist: the updater never runs
   git or docker compose in a checkout.
 * UNOS_* and DOCKER_* variables of the caller's environment are dropped.
@@ -66,7 +69,7 @@ DATA_GLOBALS: dict[str, tuple[str, ...]] = {
     "src.backup.router": ("BACKUP_DIR",),
     "src.health.router": ("RAID_STATUS_FILE", "SMART_HISTORY_FILE"),
     "src.notifications.router": ("CONFIG_FILE", "LOGS_FILE"),
-    "src.power.router": ("CONFIG_FILE", "UPS_CONFIG_FILE"),
+    "src.power.router": ("CONFIG_FILE", "UPS_CONFIG_FILE", "WOL_FILE"),
     "src.scheduler.router": ("TASKS_FILE", "RUNS_FILE", "SCHEDULED_BACKUP_DIR", "DB_FILE"),
     "src.security.router": ("FIREWALL_RULES_FILE", "CERTS_DIR", "CADDY_CERTS_DIR"),
     "src.updates.updater": ("DATA_DIR", "UPDATE_STATE_FILE", "UPDATE_HISTORY_FILE", "UPDATE_CONFIG_FILE"),

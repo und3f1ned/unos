@@ -1,7 +1,7 @@
 import type { APIRequestContext, Download, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
 
-// The Audit Log page (feature-list.json: webui.audit-log-page and security.audit-log; ADR-0233),
+// The Audit Log page (feature-list.json: webui.audit-log-page and security.audit-log; ADR-0237),
 // against the real audit log of the target. beforeAll writes the entries the tests look for,
 // all named after this run: a failed sign-in with a name that has no account, and a user
 // created and deleted through the API. The page shows the times as the server writes them.

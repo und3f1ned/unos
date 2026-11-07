@@ -14,7 +14,7 @@
     type FileInfo,
     type DirectoryListing,
   } from "$lib/api/files";
-  import { Alert, Button } from "$lib/components/ui";
+  import { Alert, Button, Input } from "$lib/components/ui";
   import {
     Folder,
     File,
@@ -33,6 +33,7 @@
     Copy,
     FolderInput,
     ClipboardPaste,
+    Pencil,
   } from "lucide-svelte";
 
   type Transfer = "copy" | "move";
@@ -47,9 +48,14 @@
   let selected: Set<string> = new Set();
   let showNewFolder = false;
   let newFolderName = "";
+  // The path of the item whose name is a field in its row, and the field's text.
   let renaming: string | null = null;
   let renamingValue = "";
+  // A rename is on its way, until the list shows the new name: neither Enter
+  // nor leaving the field sends another.
+  let renameSent = false;
   let error = "";
+  // An upload, copy, move or delete is on its way.
   let busy = false;
   let downloading = false;
   // Items chosen with Copy or Move; they go to the folder that is open when
@@ -65,6 +71,8 @@
       listing = result;
       currentPath = result.path;
       if (result.parent === null) rootPath = result.path;
+      // A name field goes with its item: in another folder, or once the item is gone.
+      if (renaming !== null && !result.items.some((item) => item.path === renaming)) renaming = null;
     } catch (e) {
       showError("Could not open the folder", e);
     } finally {
@@ -223,19 +231,79 @@
     await refresh();
   }
 
-  async function handleRename(item: FileInfo) {
-    if (!renamingValue.trim() || renamingValue === item.name) {
+  function startRename(item: FileInfo) {
+    renaming = item.path;
+    renamingValue = item.name;
+  }
+
+  // Renames `item` to the name in its field: Enter and leaving the field call
+  // it. Returns the item's path once its field is closed; null while the field
+  // stays open because the server refused the name, and when there is nothing
+  // to do: the blur of a field that is going away (after Escape or a rename),
+  // or an Enter or a blur while the rename is on its way.
+  async function handleRename(item: FileInfo): Promise<string | null> {
+    if (renaming !== item.path || renameSent) return null;
+    const name = renamingValue.trim();
+    if (!name || name === item.name || renamingValue === item.name) {
       renaming = null;
-      return;
+      return item.path;
     }
     error = "";
+    // Until the list shows the new name, the toolbar's actions and Copy here /
+    // Move here wait (`working`): they would start with the old path.
+    renameSent = true;
     try {
-      await renameItem(item.path, renamingValue.trim());
+      let renamed: FileInfo;
+      try {
+        renamed = await renameItem(item.path, name);
+      } catch (e) {
+        showError("Could not rename", e);
+        return null;
+      }
       renaming = null;
+      // The selection, and the items chosen for Copy or Move, follow the item
+      // (and what is in it) to its new name.
+      const follow = (path: string) =>
+        path === item.path || path.startsWith(`${item.path}/`) ? renamed.path + path.slice(item.path.length) : path;
+      selected = new Set(Array.from(selected, follow));
+      if (pending) pending = { ...pending, paths: pending.paths.map(follow) };
       await refresh();
-    } catch (e) {
-      showError("Could not rename", e);
+      return renamed.path;
+    } finally {
+      renameSent = false;
     }
+  }
+
+  // Enter renames, Escape keeps the name. Either way the keyboard focus goes on
+  // at the item's checkbox, which a screen reader reads with the item's name.
+  async function nameFieldKey(event: KeyboardEvent, item: FileInfo) {
+    if (event.key === "Escape") {
+      renaming = null;
+      await focusCheckbox(item.path);
+    } else if (event.key === "Enter") {
+      const path = await handleRename(item);
+      if (path !== null) await focusCheckbox(path);
+    }
+  }
+
+  // Leaving the field renames the item. Shift+Tab leaves it for the item's
+  // checkbox, whose row the rename replaces: the focus goes on at the new
+  // row's checkbox. The field also gets a blur when the window or the tab
+  // loses the focus (another app or tab, the address bar), while the page has
+  // no focus: the field gets the focus back on the return, so it stays open,
+  // as typed.
+  async function nameFieldBlur(item: FileInfo) {
+    if (!document.hasFocus()) return;
+    const path = await handleRename(item);
+    if (path !== null) await focusCheckbox(path);
+  }
+
+  async function focusCheckbox(path: string) {
+    await tick();
+    // Unless the focus has gone elsewhere meanwhile.
+    if (document.activeElement !== null && document.activeElement !== document.body) return;
+    const boxes = Array.from(listBox?.querySelectorAll<HTMLInputElement>("input[data-path]") ?? []);
+    boxes.find((box) => box.dataset.path === path)?.focus();
   }
 
   // The file chooser of Upload. It is hidden: the Upload button opens it, also
@@ -279,10 +347,14 @@
     selected = selected;
   }
 
+  // While an upload, copy, move, delete or rename is on its way, the toolbar's
+  // actions and Copy here / Move here wait: they would start with paths that
+  // are changing.
+  $: working = busy || renameSent;
   $: selectedItems = listing ? listing.items.filter((item) => selected.has(item.path)) : [];
-  // Download works on one regular file at a time.
-  $: selectedFile =
-    selectedItems.length === 1 && selectedItems[0].type === "file" ? selectedItems[0] : null;
+  // Rename works on one item at a time, Download on one regular file.
+  $: selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
+  $: selectedFile = selectedItem?.type === "file" ? selectedItem : null;
 
   function getIcon(item: FileInfo) {
     if (item.type === "directory") return Folder;
@@ -345,7 +417,10 @@
   </div>
 
   {#if error}
-    <Alert variant="error" dismissible class="mb-4" on:dismiss={() => (error = "")}>{error}</Alert>
+    <!-- role="alert": screen readers announce the message when it appears. -->
+    <div role="alert">
+      <Alert variant="error" dismissible class="mb-4" on:dismiss={() => (error = "")}>{error}</Alert>
+    </div>
   {/if}
 
   <!-- Breadcrumbs -->
@@ -372,7 +447,7 @@
       size="sm"
       icon={Download}
       loading={downloading}
-      disabled={!selectedFile}
+      disabled={working || !selectedFile}
       on:click={() => selectedFile && handleDownload(selectedFile)}
     >
       Download
@@ -381,7 +456,7 @@
       variant="secondary"
       size="sm"
       icon={Copy}
-      disabled={busy || selected.size === 0}
+      disabled={working || selected.size === 0}
       on:click={() => startTransfer("copy")}
     >
       Copy
@@ -390,16 +465,25 @@
       variant="secondary"
       size="sm"
       icon={FolderInput}
-      disabled={busy || selected.size === 0}
+      disabled={working || selected.size === 0}
       on:click={() => startTransfer("move")}
     >
       Move
     </Button>
     <Button
+      variant="secondary"
+      size="sm"
+      icon={Pencil}
+      disabled={working || !selectedItem}
+      on:click={() => selectedItem && startRename(selectedItem)}
+    >
+      Rename
+    </Button>
+    <Button
       variant="danger"
       size="sm"
       icon={Trash2}
-      disabled={busy || selected.size === 0}
+      disabled={working || selected.size === 0}
       on:click={handleDelete}
     >
       Delete
@@ -413,10 +497,17 @@
         {pending.paths.length} item(s) to {pending.mode}. Open the destination folder, then choose
         {pending.mode === "copy" ? "Copy here" : "Move here"}.
       </span>
-      <Button variant="primary" size="sm" icon={ClipboardPaste} loading={busy} on:click={finishTransfer}>
+      <Button
+        variant="primary"
+        size="sm"
+        icon={ClipboardPaste}
+        loading={busy}
+        disabled={renameSent}
+        on:click={finishTransfer}
+      >
         {pending.mode === "copy" ? "Copy here" : "Move here"}
       </Button>
-      <Button variant="ghost" size="sm" disabled={busy} on:click={() => (pending = null)}>Cancel</Button>
+      <Button variant="ghost" size="sm" disabled={working} on:click={() => (pending = null)}>Cancel</Button>
     </div>
   {/if}
 
@@ -488,6 +579,7 @@
             <input
               type="checkbox"
               aria-label="Select {item.name}"
+              data-path={item.path}
               checked={selected.has(item.path)}
               on:click|stopPropagation={() => toggleSelect(item.path)}
               class="w-4 h-4 rounded bg-slate-700 border-slate-600"
@@ -498,16 +590,19 @@
                 class="w-5 h-5 flex-shrink-0 {item.type === 'directory' ? 'text-yellow-400' : 'text-slate-400'}"
               />
               {#if renaming === item.path}
-                <input
-                  type="text"
+                <!-- Clicks in the field, a double-click on a word too, stay out of the row. -->
+                <Input
                   bind:value={renamingValue}
-                  class="flex-1 px-2 py-1 bg-slate-900 rounded border border-blue-500 focus:outline-none"
-                  on:keydown={(e) => {
-                    if (e.key === "Enter") handleRename(item);
-                    if (e.key === "Escape") renaming = null;
-                  }}
-                  on:blur={() => handleRename(item)}
-                  on:click|stopPropagation
+                  ariaLabel="New name for {item.name}"
+                  autocomplete="off"
+                  spellcheck={false}
+                  size="sm"
+                  selectOnMount
+                  class="min-w-0 flex-1"
+                  on:keydown={(e) => nameFieldKey(e, item)}
+                  on:blur={() => nameFieldBlur(item)}
+                  on:click={(e) => e.stopPropagation()}
+                  on:dblclick={(e) => e.stopPropagation()}
                 />
               {:else if item.type === "directory" || item.type === "file"}
                 <Button
