@@ -35,6 +35,17 @@ Avoid: user (a UNOS user), admin.
 addresses and routes: a timer on the host that runs unless the administrator keeps the disable
 within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` do), undo.
 
+**Notification channel**: Where UNOS sends notifications: e-mail through a mail server, a Telegram
+chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0247).
+Avoid: notifier, integration.
+
+**Alert**: A notification that a monitor sends on its own, for a pool's RAID errors or a disk's
+rising SMART counters, to every enabled e-mail and Telegram channel (ADR-0047). Avoid: alarm.
+
+**Notification history**: The latest 100 notifications sent, tests and alerts included, with the
+channel and the result of each: History in System > Notifications (ADR-0247). Avoid: log (the
+Logs tab shows the journal and container output).
+
 ## Storage
 
 **Pool**: A btrfs filesystem on one or more disks that UNOS mounts under `/mnt/pools` (ADR-0034).

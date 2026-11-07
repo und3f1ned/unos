@@ -23,6 +23,10 @@ class EmailConfig(BaseModel):
     smtp_user: str
     smtp_password: str
     smtp_tls: bool = True
+    # Check the mail server's certificate and host name (TLS on port 465 and
+    # STARTTLS). Turn off only for a server with a self-signed certificate:
+    # without the check, anyone on the network path can read the password.
+    smtp_verify_tls: bool = True
     from_address: str
     to_addresses: list[str]
 
@@ -75,9 +79,14 @@ class NotificationEvent(BaseModel):
 
 
 class NotificationLog(BaseModel):
+    """A notification sent, in the history: a test, POST /notifications/send or an alert."""
+
     id: str
     event: NotificationEvent
     channel: NotificationChannel
+    # The name of the channel it went to, as it was then.
+    channel_name: str
+    # ISO 8601 with the UTC offset.
     sent_at: str
     success: bool
     error: str | None = None

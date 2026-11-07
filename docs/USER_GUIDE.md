@@ -1004,25 +1004,54 @@ UNOS sends two kinds of alerts on its own: pool (RAID) errors and disk health
 ### Adding a Channel
 
 1. Go to **System** → **Notifications**
-2. Click **Add Email** or **Add Telegram**
+2. Click **Add Email**, **Add Telegram**, **Add Webhook**, **Add Discord** or
+   **Add Slack**
 3. Fill in the form: a channel name, and
-   - for Email the SMTP host, its port (usually 587), the username and
-     password, **Use TLS/STARTTLS**, the sender and the recipients;
-   - for Telegram the bot token and the chat ID.
-4. Leave **Enable Channel** on and click **Add Channel**
-5. Send a test with the channel's **Send test notification** button (the
-   lightning icon), which works while the channel is enabled
+   - for Email the SMTP host, its port (usually 587; 465 for SMTPS), the
+     username and password, the sender and the recipients (separated by
+     commas). **Use TLS/STARTTLS** switches the connection to TLS on ports
+     other than 465, which uses TLS from the start. **Verify the server's
+     certificate** is on: UNOS checks the mail server's certificate and host
+     name before it sends the password, and a server that fails the check
+     gets no password and no message. Turn it off only for a mail server with
+     a self-signed certificate: without the check, anyone on the network path
+     can read the password. With **Use TLS/STARTTLS** off on another port
+     than 465, the form warns that the password and the messages cross the
+     network unencrypted, with no certificate to check;
+   - for Telegram the bot token and the chat ID;
+   - for Webhook the URL, and POST or PUT: UNOS sends JSON with `title`,
+     `message`, `type`, `timestamp` and `source`;
+   - for Discord and Slack the webhook URL of the channel.
+4. Leave **Enable channel** on and click **Add Channel**
+5. Click the channel's **Send test**; it works for a disabled channel too,
+   so you can check one before it receives notifications. Under the channel
+   appears **Test notification sent**, or **Test
+   notification not sent** with the reason, for example the mail server's
+   certificate error, Telegram's answer, or `HTTP 404: ...` from a webhook.
+   A webhook, Discord or Slack channel counts as sent only when the service
+   answers with success (2xx); a redirect is a failure, so give the final URL.
 
-**History** lists the notifications sent, with their result.
+The list shows a webhook's URL by its host only, since the rest of the URL
+is its key. Editing a channel keeps the settings that only the API sets: a
+webhook's headers, body template and content type, and the names and icons
+of Discord and Slack channels.
 
-Discord, Slack and generic webhook channels can be added only through the
-API (`POST /api/v1/notifications/configs`). They receive test notifications
-and what `POST /api/v1/notifications/send` sends, but no alerts yet
-(feature-list entry `system.alert-events`).
+### History
+
+**History** lists the latest 100 notifications sent, newest first: the
+tests, the alerts and what `POST /api/v1/notifications/send` sends, each with
+the channel it went to, its time and **Delivered** or **Failed**; click an
+entry for the error. Filter it by the kind of channel and by the result. The
+summary above counts the active channels and the notifications sent,
+delivered and failed.
+
+Webhook, Discord and Slack channels receive test notifications and what
+`POST /api/v1/notifications/send` sends, but no alerts yet (feature-list
+entry `system.alert-events`).
 
 ### Notification Events
 
-The form's **Notify on Events** choices are stored, but they have no effect
+The form's **Notify on events** choices are stored, but they have no effect
 yet: every enabled e-mail and Telegram channel receives both kinds of alerts,
 and no other event (container status, temperatures, backups) sends a
 notification.

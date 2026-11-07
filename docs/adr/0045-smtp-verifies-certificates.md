@@ -19,5 +19,5 @@ E-mail notifications ran STARTTLS without an SSL context, so the mail server's c
 
 ## Consequences
 
-- The branch is not merged into main or `phase1-broken-flows` yet: the working tree still calls `starttls()` without a context, so until the merge the deployed code does not check the certificate.
+- The branch is merged into main with the change of ADR-0247; a tree deployed before that change still calls `starttls()` without a context and does not check the certificate.
 - After the merge, a channel whose server has a self-signed or private-CA certificate stops sending until its check is turned off.
