@@ -2,7 +2,7 @@
 # The tag must be the @playwright/test version in package-lock.json: the image
 # carries the browsers, and their system libraries, of exactly that version.
 # supervisor/tests/test_deploy_scripts.py checks it.
-FROM mcr.microsoft.com/playwright:v1.57.0-noble
+FROM mcr.microsoft.com/playwright:v1.65.0-noble
 
 WORKDIR /app
 
