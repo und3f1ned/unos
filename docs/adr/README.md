@@ -250,6 +250,8 @@ and this index, and `make check-fast` runs it.
 | [0171](0171-supervisor-volatile-files-in-ram.md) | The supervisor keeps volatile files in RAM | accepted | 2026-11-06 |
 | [0172](0172-unique-task-ids-and-bounded-smart-tests.md) | Scheduled tasks get unique ids, backups run concurrently, and SMART tests time out | accepted | 2026-11-06 |
 | [0173](0173-in-app-updater-in-its-own-slice.md) | Redesign the in-app updater in its own slice; until then update.sh is the way | proposed | 2026-11-06 |
+| [0232](0232-a-disabled-interface-comes-back-on-unless-the-change-is-kept.md) | A disabled network interface comes back on by itself after 60 seconds unless the change is kept | accepted | 2026-11-07 |
+| [0233](0233-system-network-shows-ipv6-link-speeds-and-the-administrative-state.md) | System > Network shows IPv6, link speeds from sysfs and each interface's administrative state | accepted | 2026-11-07 |
 
 ## Web UI
 

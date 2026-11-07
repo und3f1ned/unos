@@ -15,8 +15,8 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 - The supervisor runs in a container with `pid: host`. Whatever must read or change the host
   (mounts, `/etc/fstab`, disks, Samba, host accounts) goes through `src/host.py`: `run_on_host`,
   `run_on_host_async`, `read_host_file`, `write_host_file_atomic`, `sync_host_path`. A plain
-  `subprocess.run` reaches only the container: the network, power, system, security, logs and
-  NFS routers still work that way or call nsenter (architecture.host-command-layer).
+  `subprocess.run` reaches only the container: the power, system, security, logs and NFS
+  routers still work that way or call nsenter (architecture.host-command-layer).
 - Commands are argv lists, values validated (ADR-0037); secrets go in `input=`, not argv (ADR-0125).
 - Call `host.run_on_host(...)` after `from .. import host`: tests replace the attribute
   `src.host.run_on_host`, and a name imported with `from ..host import run_on_host` escapes them.

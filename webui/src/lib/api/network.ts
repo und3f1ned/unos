@@ -3,10 +3,35 @@ import { api } from "./client";
 export interface NetworkInterface {
   name: string;
   mac: string;
+  /** The operational state: UP, DOWN (also without a link), UNKNOWN, ... */
   state: string;
+  /** Administratively up: what Disable and Enable change. */
+  enabled: boolean;
+  /** IPv4 and IPv6 addresses with their prefix lengths. */
   ip_addresses: string[];
+  /** Mb/s, while the link is up and the driver knows it. */
+  speed: number | null;
   mtu: number;
   type: string;
+  /** Seconds until a disable that waits to be kept comes back on by itself (ADR-0232). */
+  revert_in: number | null;
+}
+
+export interface InterfaceList {
+  interfaces: NetworkInterface[];
+  /** How long a disable waits to be kept. */
+  revert_seconds: number;
+}
+
+export interface InterfaceChange {
+  status: string;
+  interface: string;
+  state: "up" | "down";
+}
+
+export interface InterfaceDisabled extends InterfaceChange {
+  /** Seconds until the interface comes back on by itself, unless the change is kept. */
+  revert_in: number;
 }
 
 export interface NetworkStats {
@@ -49,12 +74,16 @@ export interface Connection {
   remote: string;
 }
 
-export async function getInterfaces(): Promise<{ interfaces: NetworkInterface[] }> {
-  return api.get<{ interfaces: NetworkInterface[] }>("/network/interfaces");
+function interfacePath(name: string): string {
+  return `/network/interfaces/${encodeURIComponent(name)}`;
+}
+
+export async function getInterfaces(): Promise<InterfaceList> {
+  return api.get<InterfaceList>("/network/interfaces");
 }
 
 export async function getInterface(name: string): Promise<NetworkInterface> {
-  return api.get<NetworkInterface>(`/network/interfaces/${name}`);
+  return api.get<NetworkInterface>(interfacePath(name));
 }
 
 export async function getNetworkStats(): Promise<{ stats: NetworkStats[] }> {
@@ -81,12 +110,19 @@ export async function getDefaultGateway(): Promise<GatewayInfo> {
   return api.get<GatewayInfo>("/network/gateway");
 }
 
-export async function bringInterfaceUp(name: string): Promise<{ status: string }> {
-  return api.post<{ status: string }>(`/network/interfaces/${name}/up`);
+/** Enable an interface, with the addresses and routes its disable saved. */
+export async function bringInterfaceUp(name: string): Promise<InterfaceChange> {
+  return api.post<InterfaceChange>(`${interfacePath(name)}/up`);
 }
 
-export async function bringInterfaceDown(name: string): Promise<{ status: string }> {
-  return api.post<{ status: string }>(`/network/interfaces/${name}/down`);
+/** Disable an interface: it comes back on by itself after revert_in seconds unless the change is kept. */
+export async function bringInterfaceDown(name: string): Promise<InterfaceDisabled> {
+  return api.post<InterfaceDisabled>(`${interfacePath(name)}/down`);
+}
+
+/** Keep a disable that waits to be kept; the server answers 409 once it was turned back on. */
+export async function keepInterfaceDown(name: string): Promise<InterfaceChange> {
+  return api.post<InterfaceChange>(`${interfacePath(name)}/down/confirm`);
 }
 
 export async function getConnections(): Promise<{ connections: Connection[] }> {

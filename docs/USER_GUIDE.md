@@ -588,10 +588,47 @@ Access via **System** in the sidebar.
 
 ### Network
 
-- View network interfaces
-- Check IP addresses
-- Monitor network statistics
-- View active connections
+The tab shows the host's network as the host itself sees it:
+
+- **Interfaces**: each network interface with its IPv4 and IPv6 addresses, its
+  state (UP; DOWN when it has no link; Disabled) and, while it has a link, its
+  speed. Click an interface for its MAC address, MTU, type, speed and all
+  its addresses. VLANs are listed by their kernel names, such as `eth0.100`.
+  The loopback and Docker's own interfaces are not listed.
+- **Default Gateway**, **DNS Servers** and **DNS Configuration**: the gateway,
+  the DNS servers and the search domains the host uses.
+- **Routes**: the host's IPv4 and IPv6 routing tables.
+- **Connections**: the first 50 TCP and UDP sockets of the host.
+
+What could not be read is named above the lists, with the host's message.
+The traffic figures next to an interface come from the UNOS supervisor's
+container and show only for an interface whose name matches one of the
+container's (feature-list entry `system.dashboard`).
+
+#### Disabling and enabling an interface
+
+1. Click the interface, then **Disable**. A dialog names the interface and
+   warns that your connection to UNOS may drop if it goes through this
+   interface. Confirm with the dialog's button, for example **Disable eth1**,
+   or click **Cancel**.
+2. The interface goes off, and the tab counts down 60 seconds. Click
+   **Keep eth1 disabled** (with the interface's name) before the time runs
+   out to keep the change. With the keyboard: the countdown has the focus
+   when the dialog closes, and Tab reaches the button.
+3. If you do not, the interface comes back on by itself after 60 seconds,
+   with the addresses and routes it had, the default route included. This
+   also happens when the connection dropped: wait a minute, then reload the
+   page.
+
+**Enable** turns a disabled interface back on with the addresses and routes
+it had when UNOS disabled it; an Enable that fails during the countdown
+leaves the automatic revert in place. A disabled interface comes back on
+when the host restarts, as the host's network configuration says. The host
+must run systemd: UNOS refuses to disable an interface when it cannot set
+up the automatic revert.
+
+The tab does not change addresses, DNS or routes: configure them on the host
+or in your router.
 
 ### Power Management
 

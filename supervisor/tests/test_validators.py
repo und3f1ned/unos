@@ -630,6 +630,10 @@ class TestValidateInterfaceName:
         assert validate_interface_name("wlan0") == "wlan0"
         assert validate_interface_name("br0") == "br0"
         assert validate_interface_name("docker0") == "docker0"
+        assert validate_interface_name("enP4p65s0") == "enP4p65s0"
+        assert validate_interface_name("he-ipv6") == "he-ipv6"
+        # A VLAN, as the kernel names it: <link>.<VLAN id>.
+        assert validate_interface_name("eth0.100") == "eth0.100"
 
     def test_empty_interface_name_rejected(self):
         """Test empty interface name is rejected."""
@@ -663,6 +667,13 @@ class TestValidateInterfaceName:
         """Test interface names must start with a letter."""
         with pytest.raises(HTTPException) as exc:
             validate_interface_name("0eth")
+        assert exc.value.status_code == 400
+
+    @pytest.mark.parametrize("name", [".", "..", ".eth0", "-eth0", "eth0/..", "../eth0"])
+    def test_a_dot_never_makes_a_path_or_an_option(self, name):
+        """The network API puts names into host paths (/run/unos/network/<name>, /sys/class/net/<name>)."""
+        with pytest.raises(HTTPException) as exc:
+            validate_interface_name(name)
         assert exc.value.status_code == 400
 
 
