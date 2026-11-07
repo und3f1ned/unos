@@ -1168,6 +1168,35 @@ async def test_a_folder_removed_before_the_file_arrives_is_refused_before_any_of
     assert _unnamed_files(folder) == {}
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="a removed folder keeps its link count here (not Linux)")
+async def test_a_removed_folder_is_not_found_whatever_its_filesystem_answers_for_the_unnamed_file(env, monkeypatch):
+    """ext4 refuses an unnamed file in a removed folder with EPERM, where tmpfs creates one: 404 either way.
+
+    The folder is removed after it was checked, before the headers of the
+    file part, as above; the filesystem's refusal must not read as a
+    permission problem (403).
+    """
+    real_open = os.open
+
+    def ext4_open(path, flags, *args, dir_fd=None, **kwargs):
+        # ext4 (__ext4_new_inode): "Cannot create files in a deleted directory".
+        if flags == files_router._UNNAMED_FLAGS and os.fstat(dir_fd).st_nlink == 0:
+            raise PermissionError(errno.EPERM, os.strerror(errno.EPERM))
+        return real_open(path, flags, *args, dir_fd=dir_fd, **kwargs)
+
+    monkeypatch.setattr(os, "open", ext4_open)
+    folder = env.pool / "folder"
+    folder.mkdir()
+    target = _Target("files", env)
+    sender = _Sender(_file_upload(os.urandom(2 * MIB)), on_read=lambda n: folder.rmdir() if n == 0 else None)
+
+    await app(target.scope(query=urlencode({"path": str(folder)})), sender.receive, sender.send)
+
+    assert (sender.status, sender.json) == (404, {"detail": "Not found"})
+    assert sender.reads == 1  # the headers of the part, none of the file
+    assert not folder.exists() and target.stored() == []
+
+
 def test_two_uploads_of_one_name_at_the_same_time(env, creation):
     """Each has a file of its own; the one that ends last gives the file its content, and nothing is left."""
     first, second = os.urandom(3 * MIB), os.urandom(3 * MIB)
@@ -1242,6 +1271,35 @@ async def test_where_there_cannot_be_an_unnamed_file_a_hidden_one_is_used(env, m
     _check_unfinished(seen[0], "named", at_least=2 * MIB)
     assert listed == [[seen[0][0].name]]
     assert attempts == ([] if unusable.startswith("no-") else ["."])
+    assert target.stored_content() == data
+
+
+async def test_a_filesystem_without_unnamed_files_gets_the_hidden_one_whatever_its_folders_report(env, monkeypatch):
+    """A FUSE filesystem may report no links for every folder: without O_TMPFILE that is no removed folder.
+
+    Where the filesystem cannot create unnamed files, the hidden file is used
+    without asking whether the folder was removed: creating it in a removed
+    folder fails on its own (ENOENT, 404).
+    """
+    flags = files_router._UNNAMED_FLAGS or -1  # -1 stands for the flags where there are none (macOS)
+    monkeypatch.setattr(files_router, "_UNNAMED_FLAGS", flags)
+    monkeypatch.setattr(files_router, "_removed", lambda dir_fd: True)
+    real_open = os.open
+
+    def without_unnamed_files(path, open_flags, *args, **kwargs):
+        if open_flags == flags:
+            raise OSError(errno.EOPNOTSUPP, os.strerror(errno.EOPNOTSUPP))
+        return real_open(path, open_flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", without_unnamed_files)
+    target = _Target("files", env)
+    data = os.urandom(3 * MIB)
+    sender, seen = _watched(env, _file_upload(data))
+
+    await app(target.scope(), sender.receive, sender.send)
+
+    assert sender.status == 200, sender.json
+    _check_unfinished(seen[0], "named", at_least=2 * MIB)
     assert target.stored_content() == data
 
 
