@@ -44,6 +44,7 @@ from src.database import Base, get_db
 from src.main import app
 from src.main import limiter as app_limiter
 from src.security.models import LoginAttempt
+from .audit_helpers import audit_entries
 
 try:
     from fastapi.routing import iter_route_contexts
@@ -152,7 +153,7 @@ def no_side_effects(monkeypatch, tmp_path):
     monkeypatch.setattr(src.host, "run_on_host", forbidden)
     monkeypatch.setattr(docker, "from_env", forbidden)
     monkeypatch.setattr(docker, "DockerClient", forbidden)
-    monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(tmp_path / "audit_log.json"))
+    monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(tmp_path / "audit.jsonl"))
 
 
 @pytest.fixture(autouse=True)
@@ -669,7 +670,7 @@ class TestRealClientAddress:
         with Session(authz_db.engine) as session:
             ips = [a.ip_address for a in session.scalars(select(LoginAttempt).order_by(LoginAttempt.id))]
         assert ips == ["203.0.113.7", "198.51.100.4"]
-        audit = json.loads((tmp_path / "audit_log.json").read_text())
+        audit = audit_entries(tmp_path / "audit.jsonl")
         assert [entry["ip_address"] for entry in audit] == ["203.0.113.7", "198.51.100.4"]
 
     def test_forwarded_header_is_not_trusted_without_the_proxy_layer(self, client, authz_db):
@@ -700,7 +701,7 @@ class TestRealClientAddress:
         with Session(authz_db.engine) as session:
             ips = {a.ip_address for a in session.scalars(select(LoginAttempt))}
         assert ips == {deployment.gateway}
-        audit = json.loads((tmp_path / "audit_log.json").read_text())
+        audit = audit_entries(tmp_path / "audit.jsonl")
         assert {entry["ip_address"] for entry in audit} == {deployment.gateway}
 
     @pytest.mark.parametrize("dockerfile, compose_file, network", [

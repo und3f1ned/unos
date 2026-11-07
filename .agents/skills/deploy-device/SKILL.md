@@ -6,8 +6,9 @@ disable-model-invocation: true
 
 # Deploy to the dev device
 
-The dev device is one shared board; its system disk is an SD card that cannot be replaced, so
-every write counts (ADR-0214). `scripts/dev/deploy.sh` does the deploy in scripted, measured,
+The dev device is one shared board. It runs from an SD card, which wears with every write, and
+its eMMC keeps the vendor's firmware and is never written: every write counts (ADR-0214,
+ADR-0225). `scripts/dev/deploy.sh` does the deploy in scripted, measured,
 reversible steps, and keeps the backups and rollback copies on this workstation (ADR-0223).
 Each step holds the device lock (`/run/unos-dev.lock` on the device, ADR-0210) and ends with a
 line `SD writes <step>: <MiB> MiB (<sectors> sectors)`. Settings and passwords come from
@@ -87,8 +88,9 @@ lists the rolled-back files as differing from the working tree.
 - `tmp/dev/backup` holds the device's JWT secret, password hashes and database: never show,
   copy or extract its files; only `deploy.sh rollback` reads them (ADR-0212, ADR-0223). Each
   backup deletes all but the newest 3.
-- Each API login writes about 0.19 MiB (the audit log file is rewritten for every entry), so
-  `scripts/dev/api.py` keeps its token in the device's RAM (ADR-0222).
+- Each API login writes about 0.16 MiB (measured on 2026-11-07: mostly the login history's
+  SQLite commit; the audit log only appends a line, ADR-0224), so `scripts/dev/api.py` keeps
+  its token in the device's RAM (ADR-0222).
 - The device's web ports do not answer this workstation's command-line tools: use
   `scripts/dev/api.py`, which calls the API on the device itself.
 - The device's checkout is not a git workspace: only its files are synced, its index and HEAD

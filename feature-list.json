@@ -29,7 +29,7 @@
       "adr": [
         "ADR-0210"
       ],
-      "notes": "Owner action on GitHub: 20 merged remote branches remain (19 claude/* and phase0-hardening)."
+      "notes": "Owner action on GitHub: 20 merged remote branches remain (19 claude/* and phase0-hardening). On 2026-11-07 the 21 branches merged into main were deleted on GitHub by hand; nothing deletes them automatically yet."
     },
     {
       "id": "architecture.host-command-layer",
@@ -214,9 +214,10 @@
       "passes": false,
       "adr": [
         "ADR-0065",
-        "ADR-0066"
+        "ADR-0066",
+        "ADR-0224"
       ],
-      "notes": "Writing entries is tested; listing, filters and export are not, and no page shows the log (webui.audit-log-page)."
+      "notes": "Writing entries is tested (tests/test_login_bounds.py, tests/test_audit_log.py), and so are listing, counting and exporting across the rotated files (tests/test_audit_log.py); the filters by user, action and time are not, and no page shows the log (webui.audit-log-page)."
     },
     {
       "id": "security.append-only-audit-log",
@@ -227,16 +228,20 @@
         "An entry is written in a worker thread, never on the event loop",
         "A damaged line is skipped, and the other entries are still listed",
         "The log rotates at its size limit and keeps a fixed number of old files, which GET /api/v1/audit/logs still reads",
-        "On the dev device one sign-in writes a few KiB to the SD card instead of about 0.19 MiB (scripts/dev/sd.sh measure)"
+        "On the dev device, sign-ins append one line each to /data/audit/audit.jsonl without rewriting it (its inode and earlier bytes stay), and the SD writes of a sign-in are measured before and after the deploy (scripts/dev/sd.sh measure)"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0066",
         "ADR-0164",
         "ADR-0214",
-        "ADR-0207"
+        "ADR-0207",
+        "ADR-0224"
       ],
-      "notes": "The next slice. An older release's loader need not read the new log (ADR-0207)."
+      "notes": "Device check on 2026-11-07 after the deploy: three sign-ins appended three lines of about 270 bytes, the file kept its inode and its earlier bytes, and GET /api/v1/audit/logs/count counted them. A sign-in wrote 0.156 to 0.168 MiB to the SD card, 0.172 to 0.195 MiB before with a small old log; the rest is the login history's SQLite commit (architecture.sqlite-write-cost). Step 5 was reworded by ADR-0224. Not host-level (GLOSSARY.md): no reboot check needed. The old /data/audit_log.json was deleted on the device.",
+      "verified_by": [
+        "supervisor/tests/test_audit_log.py"
+      ]
     },
     {
       "id": "security.tamper-evident-audit-log",
@@ -249,7 +254,8 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0066"
+        "ADR-0066",
+        "ADR-0224"
       ],
       "notes": "Builds on security.append-only-audit-log."
     },
@@ -2757,7 +2763,8 @@
       "adr": [
         "ADR-0015",
         "ADR-0218"
-      ]
+      ],
+      "notes": "On 2026-11-07 the registry's python:3.11-slim index digest (sha256:65bd3d9f1d7f...) still equalled the base in the device's build cache, so that day's build reused it; until the pin, a newer base makes a build pull and rerun apt-get and pip on the SD card."
     },
     {
       "id": "deploy.tmpfs-for-small-boards",
@@ -2867,12 +2874,16 @@
         "The root password and the UNOS administrator's password that CLAUDE.md once published are changed",
         "scripts/dev/ssh.sh connects with the key, and dev.env holds no SSH password"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0212",
-        "ADR-0024"
+        "ADR-0024",
+        "ADR-0226"
       ],
-      "notes": "Owner action."
+      "notes": "Device check on 2026-11-07 (ADR-0226): a password login is refused (Permission denied (publickey)), root logs in with the workstation's key ~/.ssh/unos_dev_ed25519 only (sshd -T: passwordauthentication no, permitrootlogin without-password), both once-published passwords are changed (root by chpasswd on stdin, the UNOS administrator through the API), and dev.env names the key and holds no SSH password. tests/test_dev_scripts.py covers ssh.sh's key-only mode.",
+      "verified_by": [
+        "supervisor/tests/test_dev_scripts.py"
+      ]
     },
     {
       "id": "device.docker-data-root-on-hdd",
@@ -2885,9 +2896,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0214"
+        "ADR-0214",
+        "ADR-0228"
       ],
-      "notes": "Owner decision: a change of the host, not of UNOS."
+      "notes": "Owner decision: a change of the host, not of UNOS. Decided against for now (ADR-0228): UNOS must start without the pool's disk."
     },
     {
       "id": "device.scenario-checks-in-repo",
@@ -3030,9 +3042,10 @@
       "passes": false,
       "adr": [
         "ADR-0208",
-        "ADR-0216"
+        "ADR-0216",
+        "ADR-0229"
       ],
-      "notes": "Owner action on GitHub."
+      "notes": "GitHub refuses branch protection and rulesets for a private repository on the Free plan (HTTP 403, 2026-11-07), and the owner keeps the plan and the repository private (ADR-0229). Until that changes, the guard blocks agents' pushes to main (ADR-0211) and CI checks every pull request."
     },
     {
       "id": "ci.ledger-changes-checked",
@@ -3159,6 +3172,109 @@
         "ADR-0212"
       ],
       "notes": "The history still holds the passwords that CLAUDE.md once published."
+    },
+    {
+      "id": "architecture.sqlite-write-cost",
+      "category": "architecture",
+      "description": "A small database change, such as a sign-in's login-history row, writes a few KiB to the system disk instead of about 0.14 MiB",
+      "steps": [
+        "Measure one sign-in's SD writes on the dev device with scripts/dev/sd.sh measure, and the SQLite part of them",
+        "An ADR decides the journal mode and synchronous level (for example WAL with synchronous NORMAL) against the power-cut window of ADR-0078 and the backups of the database",
+        "A sign-in on the dev device writes a few KiB to the SD card, measured before and after"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0214",
+        "ADR-0224",
+        "ADR-0078"
+      ],
+      "notes": "On 2026-11-07 a sign-in wrote about 0.16 MiB, mostly the login history's commit (rollback journal, synchronous FULL)."
+    },
+    {
+      "id": "device.ipv6-inbound-filter",
+      "category": "device",
+      "description": "The dev device admits inbound IPv6 to its services only from the LAN, unless the owner wants remote access",
+      "steps": [
+        "The owner says whether the services are used from outside over IPv6",
+        "Without remote use: SSH, the web UI, Samba and transmission's web port answer only LAN, unique-local and link-local addresses over IPv6, Docker's published ports included; the BitTorrent port stays open",
+        "A check from another network shows the service ports closed and the BitTorrent port open"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0227",
+        "ADR-0095"
+      ]
+    },
+    {
+      "id": "apps.compose-stacks",
+      "category": "apps",
+      "description": "Apps install as compose stacks with pinned versions, generated secrets, resource limits and a port check, and update in place",
+      "steps": [
+        "Install an app that needs two containers (for example an app with its database) as one stack",
+        "Its secrets are generated, its versions pinned and its ports checked for conflicts before the start",
+        "Updating the app keeps its data and can be rolled back"
+      ],
+      "passes": false
+    },
+    {
+      "id": "system.emergency-runbook-and-cli",
+      "category": "system",
+      "description": "A runbook and an emergency command line get the data out when the NAS does not boot, and reset the administrator's password or 2FA",
+      "steps": [
+        "docs/ has a runbook: reach the data of a pool from another Linux machine",
+        "A command run on the host resets the administrator's password and turns 2FA off, recorded in the audit log"
+      ],
+      "passes": false
+    },
+    {
+      "id": "system.remote-access",
+      "category": "system",
+      "description": "An administrator sets up remote access (Tailscale or WireGuard) and local names for apps behind a reverse proxy",
+      "steps": [
+        "Turn on remote access in the web UI and reach the NAS from outside the LAN",
+        "Apps get names such as app.nas.local through the reverse proxy"
+      ],
+      "passes": false
+    },
+    {
+      "id": "apps.rk3588-hardware-acceleration",
+      "category": "apps",
+      "description": "Apps use the RK3588's hardware: Jellyfin transcodes with rkmpp and Immich uses the NPU",
+      "steps": [
+        "Install Jellyfin on an RK3588 host: it transcodes a video with hardware acceleration",
+        "Immich's machine learning runs on the NPU"
+      ],
+      "passes": false
+    },
+    {
+      "id": "webui.svelte-5",
+      "category": "webui",
+      "description": "The web UI runs on Svelte 5",
+      "steps": [
+        "The web UI builds and every E2E spec passes on Svelte 5",
+        "No Svelte 4 compatibility mode is left"
+      ],
+      "passes": false
+    },
+    {
+      "id": "ci.btrfs-loop-device-tests",
+      "category": "ci",
+      "description": "CI runs the storage scenarios against real btrfs on loop devices in a privileged container",
+      "steps": [
+        "A CI job creates loop devices, makes pools, volumes and snapshots through the API and checks the results",
+        "The job runs on every pull request that changes supervisor/src/storage"
+      ],
+      "passes": false
+    },
+    {
+      "id": "storage.import-existing-pool",
+      "category": "storage",
+      "description": "An administrator imports a btrfs pool that already exists on the host's disks, without formatting them",
+      "steps": [
+        "Attach the disks of an existing btrfs filesystem: the Storage page offers to import it",
+        "After the import the pool is mounted by UUID, survives a reboot and keeps its data"
+      ],
+      "passes": false
     }
   ]
 }

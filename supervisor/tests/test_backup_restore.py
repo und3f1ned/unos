@@ -21,6 +21,7 @@ from src.auth.utils import verify_token
 from src.host import HostResult
 from src.main import app
 from src.shares import accounts, interfaces, service
+from .audit_helpers import audit_entries
 
 backup_router = importlib.import_module("src.backup.router")
 
@@ -1011,7 +1012,7 @@ def smb_env(env, monkeypatch):
     monkeypatch.setattr(accounts, "reconcile_accounts", reconcile)
     monkeypatch.setattr(accounts, "read_smb_sessions", sessions)
     monkeypatch.setattr(accounts, "end_smb_sessions", end)
-    audit = env.tmp / "audit_log.json"
+    audit = env.tmp / "audit.jsonl"
     monkeypatch.setattr(audit_router, "AUDIT_FILE", str(audit))
     monkeypatch.setattr(service, "_last_apply", service.LastApply())
     monkeypatch.setattr(service, "_last_import_problem", None)
@@ -1130,7 +1131,7 @@ class TestAuthoritative:
         assert _db_rows(env, "SELECT name FROM smb_shares") == [("docs",)]
         assert _db_rows(env, "SELECT pending_import_source, pending_import_conf FROM smb_state") == [(None, None)]
         env.reconcile.assert_awaited_once()
-        (entry,) = json.loads(env.audit.read_text())
+        (entry,) = audit_entries(env.audit)
         assert (entry["action"], entry["username"], entry["resource_type"], entry["severity"]) == (
             "other", "system", "smb", "info")
         assert entry["details"].startswith("SMB state after restore: the shares of the restored database were kept")
@@ -1167,7 +1168,7 @@ class TestAuthoritative:
                "without a password." in response.json()["warnings"]
         assert _db_rows(env, "SELECT guest_ok FROM smb_shares") == [(1,)]
         assert "   map to guest = Bad User\n" in env.smb_conf.read_text()
-        (entry,) = json.loads(env.audit.read_text())
+        (entry,) = audit_entries(env.audit)
         assert entry["severity"] == "warning"
         assert "shares served with guest access: public" in entry["details"]
 
@@ -1327,7 +1328,7 @@ class TestNotAuthoritative:
         assert state == [(1, None, None)]
         assert env.smb_conf.read_text() == _render(env, ("media", f"{env.data}/media", "", True, False, (), ("alice",)))
         assert not Path(str(env.smb_conf) + ".unos-import-backup").exists()  # the live file was not read
-        (entry,) = [e for e in json.loads(env.audit.read_text()) if e["resource_type"] == "smb"]
+        (entry,) = [e for e in audit_entries(env.audit) if e["resource_type"] == "smb"]
         assert "imported 1 share(s) from smb.conf" in entry["details"]
 
     def test_without_an_archived_smb_conf_the_live_file_is_imported(self, smb_env):

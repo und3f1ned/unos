@@ -15,7 +15,6 @@ has a name SMB cannot use.
 
 import asyncio
 import errno
-import json
 import os
 import re
 import sqlite3
@@ -46,6 +45,7 @@ from src.shares.models import SmbAccount, SmbState
 from src.storage import disks, pools
 
 from .samba_fake import FakeSambaHost
+from .audit_helpers import audit_entries
 
 # The real functions, before any fixture replaces them (tests/conftest.py replaces the
 # mount check where /proc/self/mountinfo exists: the tests' pools are no mount points).
@@ -112,7 +112,7 @@ class Api:
         self.samba = tmp_path / "samba"
         self.conf = self.samba / "smb.conf"
         self.db_path = tmp_path / "unos.db"
-        self.audit = tmp_path / "audit_log.json"
+        self.audit = tmp_path / "audit.jsonl"
         self.host = host
         self.mounted = mounted  # calls of pools._mounted_pool_target: (pool, write)
 
@@ -138,7 +138,7 @@ class Api:
             conn.commit()
 
     def audit_entries(self):
-        return json.loads(self.audit.read_text()) if self.audit.exists() else []
+        return audit_entries(self.audit)
 
     def temp_files(self):
         return sorted(name for name in os.listdir(self.samba) if name.endswith(".unos-tmp"))
@@ -186,7 +186,7 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(constants, "SMB_GROUP_GID", os.getgid())
     host = FakeSmbHost()
     monkeypatch.setattr(src.host, "run_on_host", host.run)
-    monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit_log.json"))
+    monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit.jsonl"))
     monkeypatch.setattr(service, "_last_apply", service.LastApply())
     monkeypatch.setattr(service, "_last_import_problem", None)
     monkeypatch.setattr(service, "_last_reconcile", service.LastReconcile())

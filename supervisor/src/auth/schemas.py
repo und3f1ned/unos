@@ -55,7 +55,7 @@ class Token(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    # Bounded: a failed login is recorded (login_attempts, audit_log.json) before
+    # Bounded: a failed login is recorded (login_attempts, the audit log) before
     # anyone is authenticated. The limits are far above any real name, password
     # (bcrypt reads 72 bytes) or code; the 422 handler leaves the values out.
     username: str = Field(max_length=255)

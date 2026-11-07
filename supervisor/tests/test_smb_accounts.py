@@ -41,6 +41,7 @@ from src.shares.account_state import ADMIN_REASON
 from src.shares.models import SmbAccount, SmbShare, SmbShareAccess, SmbState
 
 from .samba_fake import FakeSambaHost, install_fake_samba_host
+from .audit_helpers import audit_entries
 
 API = "/api/v1"
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -120,7 +121,7 @@ class World:
 
     def __init__(self, tmp_path: Path, monkeypatch, caplog) -> None:
         self.path = tmp_path / "unos.db"
-        self.audit_file = tmp_path / "audit_log.json"
+        self.audit_file = tmp_path / "audit.jsonl"
         self.engine = create_engine(f"sqlite:///{self.path}")
         Base.metadata.create_all(self.engine)
         self.ids: dict[str, int] = {}
@@ -306,9 +307,7 @@ class World:
                                 headers=self.headers(name))
 
     def audit(self) -> list[dict]:
-        if not self.audit_file.exists():
-            return []
-        return json.loads(self.audit_file.read_text())
+        return audit_entries(self.audit_file)
 
     def smb_audit(self) -> list[tuple[str, str, str]]:
         return [(e["resource_id"], e["details"], e["severity"]) for e in self.audit() if e["resource_type"] == "smb_account"]

@@ -14,8 +14,9 @@ scripts/dev/ssh.sh; the request, the administrator's login and the answer travel
 standard input and output, never on a command line (ADR-0212). The relay calls only the
 device's own loopback address, and never through a proxy.
 
-Login: UNOS_DEV_ADMIN_USER and UNOS_DEV_ADMIN_PASSWORD from dev.env. Every login writes two
-rows (login history and audit log) to the database on the device's SD card and counts
+Login: UNOS_DEV_ADMIN_USER and UNOS_DEV_ADMIN_PASSWORD from dev.env. Every login commits a
+row of the login history to the database and appends a line to the audit log, both on the
+device's SD card (about 0.16 MiB in all, ADR-0224), and counts
 against the login rate limit (5 per minute), so the relay keeps the token in the device's RAM
 (/dev/shm/unos-dev-api.token, mode 600, root's; root there can mint tokens anyway; ADR-0222)
 and signs in again only when the API refuses it. A cache that is not a regular file of root

@@ -6,106 +6,97 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Now
 
-- Branch `phase1-broken-flows`. Slice 1 is commit 9ac7b40, pushed and not merged; `main` is
-  afd9c8e, the merge of pull request #21 (Phase 0).
-- On top of slice 1, three commits with the owner's go, pushed (ADR-0208): slice 2 (SMB users,
-  per-share permissions, guest access off by default), the transmission login fix, and the
-  conversion to the agentic patterns (the ADRs, the AGENTS.md files, the ledger, this journal,
-  the skills, the guard, `make check`, `scripts/dev/` and `scripts/standin/`). The owner opens
-  the pull request (owner action 8).
-- The branch `smtp-verify-tls` (bbb773b) is pushed and not merged: it makes e-mail notifications
-  check the mail server's certificate (ADR-0045). The working tree and the dev device still call
-  STARTTLS without that check (`system.notification-channels`).
-- This checkout is not set up: there is no `supervisor/.venv`, no `.venv-lint` and no
-  `webui/node_modules`, and the git hooks are not installed (`core.hooksPath` is unset). Until the
-  owner runs `make setup` (owner action 7), `make check`, `make smoke`, `make e2e-local` and the
-  hooks do not run here with their default tools.
-- Feature work happens in worktrees (ADR-0210) whose base is the branch that holds AGENTS.md:
-  `origin/main` once the conversion is merged; until then `origin/phase1-broken-flows`. The
-  command (AGENTS.md, Start of a session):
-  `git worktree add --no-track -b <id> ../unos-<id> <base>`; the owner runs `make setup` there.
-  A worktree without `AGENTS.md` or `.claude/settings.json` is a stop: ask the owner.
-- Next, after the owner's review of the pull request, in this order:
-  1. The feature pass of the append-only audit log (`security.append-only-audit-log`), with the
-     feature-pass skill.
-  2. `device.scenario-checks-in-repo`: the device checks of slices 1 and 2 were scratch scripts,
-     and the host-level entries they covered still need the re-check after a reboot of the
-     deployed tree (ADR-0018).
-  3. The owner's reboot (owner action 12), then that re-check with the scripts of step 2.
+- `main` is 9a28743, the merge of pull request #22: slice 1, slice 2 (SMB users, per-share
+  permissions, guest off by default), the transmission login fix and the agentic conversion.
+- Branch `security.append-only-audit-log` (worktree `../unos-security.append-only-audit-log`),
+  pushed for the owner's pull request:
+  - the append-only audit log (ADR-0224), deployed and measured on the dev device; its entry
+    passes;
+  - the dev device's SSH by key only with rotated passwords (ADR-0226, `device.key-only-ssh`
+    passes);
+  - the facts of the device's flash (ADR-0225), the IPv6 and Docker data-root decisions
+    (ADR-0227, ADR-0228), and the audit plan's entries that were missing from the ledger.
+- Branch `research.riscv64-support` (worktree `../unos-research.riscv64-support`): another
+  session's study of what riscv64 support would cost, for a SpacemiT K1 board the owner has.
+- The main checkout is set up: `supervisor/.venv`, `.venv-lint` and `webui/node_modules` were
+  copied from environments verified against the pins (with `setup.sh`'s stamps), and the git
+  hooks are on. Only Playwright's Chromium 1200 is missing: the workstation's network filter
+  blocks the download for agents, so `make e2e-local` needs `E2E_CHROMIUM_PATH` (the cached
+  `chromium_headless_shell-1234`).
+- Feature work happens in worktrees (ADR-0210) from `origin/main`:
+  `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
+  `AGENTS.md` or `.claude/settings.json` is a stop.
+- Next, in this order:
+  1. `device.scenario-checks-in-repo`: the device checks of slices 1 and 2 as scripts in
+     `scripts/dev/`, each reporting its SD writes.
+  2. The owner's reboot of the device, then the re-check of the host-level entries with those
+     scripts (ADR-0018).
+  3. `deploy.digest-pinned-base-images` and `architecture.sqlite-write-cost` (the SD card).
 
 ## Dev device
 
-State on 2026-11-07. The ArmSoM Sige7 (Debian trixie); its address and logins are in `dev.env`
-(ADR-0212). The system disk is the SD card mmcblk1, which cannot be replaced (ADR-0214).
+State on 2026-11-07, 14:30 UTC. A UGREEN NAS board with an RK3588,
+running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
-- Runs the code of the branch's commits: the supervisor image was rebuilt on 2026-11-07 with the
-  transmission fix, and the web UI is the one of the slice-2 deploy. The device checkout
-  /opt/unos was not synced to the commits, to spare the SD card: `scripts/dev/deploy.sh status`
-  finds 16 runtime files that differ only in comments, docstrings and texts (the ADR references
-  in supervisor/src, a comment of deploy/docker-compose.yml, the final message of
-  deploy/uninstall.sh, the test scripts removed from webui/package.json), plus the docs, tests
-  and tooling. The next deploy's sync brings the checkout to the branch.
-- Containers: unos-supervisor, unos-webui and transmission (with a web login, its data on the
-  pool `data`).
-- Images: deploy-supervisor:latest (aa02c3df1436) and deploy-webui:latest (e06fbf952aa9),
-  lscr.io/linuxserver/transmission, alpine (the final backup of deploy/uninstall.sh) and
-  caddy:2-alpine (the web UI's base). The supervisor's base image python:3.11-slim has no tag on
-  the device (owner action 10).
-- The slice-2 rollback images (`:pre-phase1b`) and files (/root/pre-phase1b) were deleted on
-  2026-11-07 with the owner's go for the commits. /dev/shm/unos-rootfs, in RAM, is kept for
-  `scripts/dev/linux-tests.sh`; a reboot removes it.
-- Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data; the pool root is root:root
-  755 (ADR-0220).
-- Shares: smb.conf is rendered by UNOS, and the group unos-smb exists. The share DATA is served
-  from /mnt/pools/data/shared (root:unos-smb 2770), and no account has access to it yet.
-- Accounts: besides the administrator, the regular account `test` stays for checks of the
-  regular user's view until the owner deletes it (ADR-0054).
-- AppArmor: a read-only check on 2026-11-07 found AppArmor enabled in the kernel, no AppArmor
-  utilities installed, no smbd or samba profile loaded, and smbd unconfined (ADR-0162).
-- SD-card writes measured in this phase: the slice-1 deploy 38 MiB (2026-11-06); the slice-2
-  deploy about 45 MiB of image layers and its checks 4 MiB; the transmission image pull about
-  177 MiB; the supervisor rebuild 11 MiB; the transmission reinstall 6 MiB; the device checks of
-  the conversion 0.953 MiB (2026-11-07, 08:20 to 09:06, background included); deleting the
-  rollback images 0.574 MiB. By 09:06 on
-  2026-11-07 the system disk had written 1391.9 MiB in the 37.5 h since boot, deploys included.
-  Idle, the device writes 16 KiB (32 sectors) a minute (2026-11-07). An API login writes about
-  0.19 MiB and a later API call about 0.02 MiB (`security.append-only-audit-log`,
-  `deploy.container-logs-off-the-system-disk`).
+- Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
+  eMMC `mmcblk0` (Samsung, 32 GB) keeps the vendor's firmware: 0 MiB written since boot, its own
+  wear estimate 0 to 10%. Nothing writes to it.
+- SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
+  administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
+- Runs `main` plus this branch's audit log: the supervisor image was rebuilt on 2026-11-07 at
+  14:20 UTC, the web UI is the one of the slice-2 deploy. The device checkout `/opt/unos` equals
+  this branch's working tree (`scripts/dev/deploy.sh sync`); the deploy's backup and rollback
+  copies are in the main checkout's `tmp/dev/`.
+- Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
+  Images: deploy-supervisor:latest, deploy-webui:latest, lscr.io/linuxserver/transmission,
+  alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base).
+  The slice-2 rollback images and files were deleted on 2026-11-07.
+- The audit log is `/data/audit/audit.jsonl` (ADR-0224); the old `/data/audit_log.json` was
+  deleted.
+- Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220).
+  The share DATA is served from /mnt/pools/data/shared (root:unos-smb 2770); no account has
+  access to it yet. The regular account `test` stays for checks of a regular user's view.
+- Network: global IPv6 from a Hurricane Electric tunnel prefix; the services listen on every
+  IPv6 address and the device filters nothing itself (ADR-0227). Samba admits only private,
+  unique-local and link-local addresses. smbd runs unconfined by AppArmor (ADR-0162).
+- SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
+  supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
+  0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
+  cached token 0.020 MiB, the idle device 16 KiB a minute. Earlier that day: the slice-2 deploy
+  about 45 MiB, the transmission image pull about 177 MiB.
 
 Open owner actions:
 
-1. Rotate the device's root password and the UNOS administrator's password: CLAUDE.md once
-   published them, and although they are gone from the repository's files, both are in its git
-   history (ADR-0024).
-2. Switch the device's SSH to key-only logins (`device.key-only-ssh`).
-3. Keep the GitHub repository private until both passwords are rotated and the git history is
-   cleaned (ADR-0024).
-4. Revoke the classic GitHub token and add the device's key as a read-only deploy key
-   (ADR-0053). Until then `git fetch` and `deploy/update.sh` cannot reach GitHub from the device;
-   deploys from the workstation do not need it.
-5. Check the router's inbound IPv6 filter for the device (ADR-0095).
-6. Review the allow rules of the workspace's local Claude settings (`.claude/settings.local.json`
-   in the folder above the repository): they pre-approve sshpass and `git push origin main` on
-   the device.
-7. Run `make setup` in this checkout; it needs the network (ADR-0217). It makes the virtual
-   environments, runs `npm ci`, installs Playwright's Chromium for @playwright/test 1.57 (build
-   1200) and turns the git hooks on. Until that Chromium is installed, `make e2e-local` needs
-   `E2E_CHROMIUM_PATH` naming another Chromium build.
-8. Open the pull request of `phase1-broken-flows` (its commits are pushed), review and merge it.
-9. Turn on branch protection for `main` (`ci.branch-protection`).
-10. Tag or pin the supervisor's base image python:3.11-slim on the device before the next
-    supervisor build: without it a build may pull a new base and rerun apt-get and pip, hundreds
-    of MiB on the SD card (`deploy.digest-pinned-base-images`).
-11. Ask for the first real deploy and watch it: the sync, build, up and rollback steps of
-    `scripts/dev/deploy.sh` have run only against fixture trees so far (ADR-0223).
-12. Reboot the device once the host-level checks are scripts, for the re-check of ADR-0018. After
-    the reboot, make the RAM rootfs /dev/shm/unos-rootfs again with the command that
-    `scripts/dev/linux-tests.sh` prints (it runs docker create, about 2 MB on the SD card).
-13. Give an account access to DATA: allow SMB for a regular user, then add the user to the
-    share's access list.
-14. Decide whether Docker's data root moves to the hard disk (`device.docker-data-root-on-hdd`).
+1. GitHub: `main` stays without branch protection on the Free plan (ADR-0229); the classic token
+   the device used before 2026-11-05 can be revoked only on github.com (Settings, Developer
+   settings, Tokens). Done on 2026-11-07 through the API with GitHub Desktop's sign-in: the
+   device's read-only deploy key (it reads the repository with it), pull requests #27 and #28.
+2. Playwright's Chromium 1200: `make setup` in the owner's own terminal, where the network filter
+   may allow it.
+3. The reboot of the device for the re-check of ADR-0018, once `device.scenario-checks-in-repo`
+   is done; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh` is made again.
+4. Who gets access to the share DATA (an SMB account for a regular user).
+5. Whether the services are used from outside over IPv6 (`device.ipv6-inbound-filter`).
 
 ## Log
+
+### 2026-11-07: append-only audit log, device security, flash facts
+
+- The owner merged pull request #22 and handed over the open owner actions.
+- The audit log is append-only JSON lines with rotation (ADR-0224). 14 tests; seven mutations of
+  the code (rewriting in place, the shift order, an early rotation, a reader without the lock,
+  clearing that merges, reads on the event loop, no newline repair) each fail them. A
+  fresh-context review found data loss in a failed clearing and a test that could not see a
+  rewrite; both were fixed. Deployed and measured on the device (Dev device above).
+- The dev device: SSH by key only, root's and the UNOS administrator's passwords rotated
+  (ADR-0226); the rollback images and files of slice 2 deleted (0.57 MiB); the device's flash
+  checked (ADR-0225); IPv6 exposure reviewed (ADR-0227); Docker's data root stays (ADR-0228);
+  the base image's digest checked before the build (`deploy.digest-pinned-base-images`).
+- The workspace's local Claude settings lost their password and push-to-main rules; the 21
+  branches merged into main were deleted on GitHub; the main checkout was set up offline, with
+  the git hooks on.
+- The ledger gained the audit plan's missing entries and two from today's measurements
+  (`architecture.sqlite-write-cost`, `device.ipv6-inbound-filter`).
 
 ### 2026-11-07: slice 2 on the device, device cleanup, transmission login, ADRs and the agentic conversion
 

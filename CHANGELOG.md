@@ -209,8 +209,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   of at most 1024, a two-factor code of at most 16), and an audit entry keeps
   at most 128 characters of the username, 256 of the User-Agent and of the
   resource, and 1024 of the details. A failed login, which needs no account,
-  could add megabytes to the audit log, which every audited action reads and
-  writes in full.
+  could add megabytes to the audit log, which every audited action used to
+  read and write in full.
 - The answers of a regular user's own SMB changes (Account page) and password
   changes carry no host output, paths or names of shares the user cannot
   open: their warnings, and their errors when a command on the NAS failed, are
@@ -336,6 +336,13 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- The audit log is append-only: each entry is one JSON line in
+  `/data/audit/audit.jsonl`, appended in a worker thread without rewriting
+  what is already there, so an entry costs the same however long the log is.
+  The log rotates at 1 MiB and keeps 4 older files (about 5 MiB); a damaged
+  line is skipped instead of emptying the log; clearing before a date
+  rewrites at most one file and keeps every newer entry if it fails. The old
+  `/data/audit_log.json` is not read.
 - Regular users see only Dashboard and Account (own password, two-factor
   authentication, login history).
 - The web interface ends an expired session once (HTTP 401 or WebSocket close
