@@ -1,11 +1,14 @@
+import asyncio
 import importlib
 import os
 import re
+import threading
 import pytest
+import requests
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
-from docker.errors import NotFound
+from docker.errors import APIError, NotFound
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -579,3 +582,232 @@ class TestRouting:
             path = re.sub(r"\{[^}]+\}", "sample-id", route.path)
             first = next(r for r in routes if r.methods & route.methods and r.path_regex.match(path))
             assert first is route, f"{sorted(route.methods)} {route.path} is reached by {first.path}"
+
+
+# ---------------------------------------------------------------------------
+# Docker calls run in worker threads (ADR-0021, ADR-0247)
+# ---------------------------------------------------------------------------
+
+
+def _on_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+# Every route of the containers API with a request that reaches Docker:
+# (method, route path, request path, JSON body).
+DOCKER_REQUESTS = [
+    ("GET", "/containers", "/api/v1/containers", None),
+    ("POST", "/containers", "/api/v1/containers", {"name": "web", "image": "nginx:latest"}),
+    ("GET", "/containers/images", "/api/v1/containers/images", None),
+    ("POST", "/containers/images/pull", "/api/v1/containers/images/pull?image=alpine:3.20", None),
+    ("DELETE", "/containers/images/{image_id}", "/api/v1/containers/images/sha256:def456", None),
+    ("GET", "/containers/{container_id}", "/api/v1/containers/jellyfin", None),
+    ("POST", "/containers/{container_id}/start", "/api/v1/containers/jellyfin/start", None),
+    ("POST", "/containers/{container_id}/stop", "/api/v1/containers/jellyfin/stop", None),
+    ("POST", "/containers/{container_id}/restart", "/api/v1/containers/jellyfin/restart", None),
+    ("DELETE", "/containers/{container_id}", "/api/v1/containers/jellyfin?force=true", None),
+    ("GET", "/containers/{container_id}/logs", "/api/v1/containers/jellyfin/logs?tail=10", None),
+]
+
+
+def _answering_docker(docker_client) -> MagicMock:
+    """Let the mocked Docker client answer every request of DOCKER_REQUESTS; returns the container."""
+    container = docker_client.add(_container("jellyfin", {}, []))
+    container.logs.return_value = b"2026-01-02T03:04:05Z ready\n"
+    docker_client.containers.list.return_value = [container]
+    docker_client.containers.run.return_value = SimpleNamespace(short_id="jellyfin")
+    docker_client.images.list.return_value = [_image("sha256:def456", ["alpine:3.20"])]
+    docker_client.images.pull.return_value = _image("sha256:def456", ["alpine:3.20"])
+    docker_client.images.get.return_value = _image("sha256:def456", ["alpine:3.20"])
+    return container
+
+
+@pytest.fixture
+def client_threads(docker_client, monkeypatch) -> list[bool]:
+    """For each Docker client docker.py makes (one per operation): was it on the event loop?"""
+    made: list[bool] = []
+
+    def get_client():
+        made.append(_on_event_loop())
+        return docker_client
+
+    monkeypatch.setattr(docker_module, "get_client", get_client)
+    return made
+
+
+class TestDockerCallsOffTheEventLoop:
+    def test_the_table_has_every_route_of_the_containers_api(self):
+        routes = {
+            (method, route.path)
+            for route in containers_router.router.routes
+            if isinstance(route, APIRoute)
+            for method in route.methods
+        }
+        assert routes == {(method, path) for method, path, _, _ in DOCKER_REQUESTS}
+
+    @pytest.mark.parametrize(
+        "method,url,body", [(m, u, b) for m, _, u, b in DOCKER_REQUESTS], ids=[f"{m} {p}" for m, p, _, _ in DOCKER_REQUESTS]
+    )
+    def test_each_route_calls_docker_in_a_worker_thread(self, api, docker_client, client_threads, method, url, body):
+        _answering_docker(docker_client)
+
+        response = api.request(method, url, json=body)
+
+        assert response.status_code == 200, response.text
+        assert client_threads, "the route never asked Docker"
+        assert not any(client_threads), "a Docker call ran on the event loop"
+
+    def test_the_client_waits_at_most_its_timeout_for_each_docker_request(self, monkeypatch):
+        import docker
+
+        made = []
+        monkeypatch.setattr(docker, "from_env", lambda **kwargs: made.append(kwargs) or "client")
+
+        assert docker_module.get_client() == "client"
+        assert made == [{"timeout": docker_module.DOCKER_TIMEOUT_SECONDS}]
+        assert 0 < docker_module.DOCKER_TIMEOUT_SECONDS <= 60
+
+
+@pytest.fixture
+def live_api(api):
+    """The supervisor under a real uvicorn on 127.0.0.1: one event loop, as in the image.
+
+    Requests through ``live_api.request(method, path, timeout)`` return the status code.
+    The authentication override of ``api`` applies: every request is an administrator's.
+    """
+    import socket
+    import time
+    import urllib.error
+    import urllib.request
+
+    import uvicorn
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    server = uvicorn.Server(uvicorn.Config(app, log_config=None, lifespan="off"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    base = f"http://127.0.0.1:{sock.getsockname()[1]}"
+
+    def request(method: str, path: str, timeout: float) -> int:
+        try:
+            with opener.open(urllib.request.Request(base + path, method=method), timeout=timeout) as answer:
+                return answer.status
+        except urllib.error.HTTPError as error:
+            error.close()
+            return error.code
+
+    try:
+        deadline = time.monotonic() + 30
+        while not server.started:
+            assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
+            time.sleep(0.05)
+        yield SimpleNamespace(request=request)
+    finally:
+        server.should_exit = True
+        thread.join(10)
+        sock.close()
+
+
+class TestRequestsAnsweredWhileDockerBlocks:
+    """A Docker call that blocks holds a worker thread, never the whole API (ADR-0021)."""
+
+    @pytest.mark.parametrize(
+        "method,url,blocked",
+        [
+            ("POST", "/api/v1/containers/images/pull?image=alpine:3.20", "pull"),
+            ("POST", "/api/v1/containers/jellyfin/stop", "stop"),
+            ("DELETE", "/api/v1/containers/jellyfin?force=true", "remove"),
+            ("GET", "/api/v1/containers", "list"),
+        ],
+    )
+    def test_health_and_other_requests_are_answered_meanwhile(self, live_api, docker_client, method, url, blocked):
+        container = _answering_docker(docker_client)
+        entered, release = threading.Event(), threading.Event()
+
+        def hold(real):
+            def call(*args, **kwargs):
+                entered.set()
+                assert release.wait(20), "the blocked Docker call was never released"
+                return real
+
+            return call
+
+        if blocked == "pull":
+            docker_client.images.pull.side_effect = hold(docker_client.images.pull.return_value)
+        elif blocked == "stop":
+            container.stop.side_effect = hold(None)
+        elif blocked == "remove":
+            container.remove.side_effect = hold(None)
+        else:
+            docker_client.containers.list.side_effect = hold([container])
+
+        answered: dict[str, int] = {}
+        slow = threading.Thread(target=lambda: answered.setdefault("slow", live_api.request(method, url, 30)))
+        slow.start()
+        try:
+            assert entered.wait(10), f"{method} {url} did not reach Docker"
+            for path in ("/api/v1/health", "/api/v1/apps/catalog"):
+                try:
+                    answered[path] = live_api.request("GET", path, 5)
+                except OSError as error:  # the timeout: the event loop is held
+                    pytest.fail(f"GET {path} was not answered while {blocked} blocked in Docker: {error!r}")
+            assert not release.is_set() and slow.is_alive()  # the Docker call was still in flight
+        finally:
+            release.set()
+            slow.join(30)
+
+        assert answered == {"/api/v1/health": 200, "/api/v1/apps/catalog": 200, "slow": 200}
+
+
+# ---------------------------------------------------------------------------
+# Docker's refusals keep their meaning (ADR-0247)
+# ---------------------------------------------------------------------------
+
+
+def _docker_refusal(status: int, explanation: str) -> APIError:
+    """An error of docker-py for an answer of the Docker API with ``status``."""
+    response = requests.Response()
+    response.status_code = status
+    response.reason = "Conflict"
+    response.url = "http+docker://localhost/v1.47/images/sha256:def456"
+    return APIError("Conflict", response=response, explanation=explanation)
+
+
+IN_USE = (
+    "conflict: unable to delete def456def456 (cannot be forced) - "
+    "image is being used by running container 0d1f2e3c4b5a"
+)
+
+
+class TestImageRemoval:
+    def test_an_image_that_a_container_uses_is_refused_with_dockers_reason(self, api, docker_client):
+        docker_client.images.get.return_value = _image("sha256:def456", ["nginx:1.27"])
+        docker_client.images.remove.side_effect = _docker_refusal(409, IN_USE)
+
+        response = api.delete("/api/v1/containers/images/sha256:def456")
+
+        assert (response.status_code, response.json()) == (409, {"detail": IN_USE})
+        docker_client.images.remove.assert_called_once_with("sha256:def456", force=False)
+
+    def test_an_image_that_no_container_uses_is_removed(self, api, docker_client):
+        docker_client.images.get.return_value = _image("sha256:def456", ["nginx:1.27"])
+
+        response = api.delete("/api/v1/containers/images/sha256:def456")
+
+        assert (response.status_code, response.json()) == (200, {"status": "removed"})
+        docker_client.images.remove.assert_called_once_with("sha256:def456", force=False)
+
+    def test_other_docker_errors_are_still_server_errors(self, api, docker_client):
+        docker_client.images.get.return_value = _image("sha256:def456", ["nginx:1.27"])
+        docker_client.images.remove.side_effect = APIError("driver failed to remove the layers")
+
+        response = api.delete("/api/v1/containers/images/sha256:def456")
+
+        assert response.status_code == 500
+        assert "driver failed to remove the layers" in response.json()["detail"]

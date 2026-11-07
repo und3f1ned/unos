@@ -21,6 +21,11 @@ SYSTEM_IMAGES = [
 # Label of containers installed from the app catalog (see apps.router).
 UNOS_APP_LABEL = "unos.app"
 
+# Seconds each request to the Docker API may take before docker-py gives up; a
+# stop also waits for the container's stop timeout. Pulls are sent without a
+# timeout by docker-py: their length depends on the image (ADR-0247).
+DOCKER_TIMEOUT_SECONDS = 60
+
 
 def is_system_container(name: str) -> bool:
     """Check if container is a system container."""
@@ -37,8 +42,8 @@ def is_system_image(tags: list[str]) -> bool:
 
 
 def get_client() -> docker.DockerClient:
-    """Get Docker client."""
-    return docker.from_env()
+    """Get a Docker client. Its calls block: make them in a worker thread (ADR-0021)."""
+    return docker.from_env(timeout=DOCKER_TIMEOUT_SECONDS)
 
 
 def list_containers(all: bool = True) -> list[ContainerInfo]:

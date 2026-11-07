@@ -239,6 +239,31 @@ class TestContainerLogsSocket:
         assert stream.closed.is_set()
         assert _FakeDockerClient.instances and _FakeDockerClient.instances[0].closed
 
+    def test_the_stream_starts_with_the_last_lines_and_follows_the_log(self, client, admin_token):
+        # The container drawer of the web UI shows what this socket sends: the
+        # last LOG_STREAM_TAIL_LINES lines, then each new one (ADR-0248).
+        stream = _BlockingLogStream([b"line 1\n"])
+        asked = []
+
+        class _AskedDockerClient(_FakeDockerClient):
+            def _get(self, container_id):
+                asked.append(container_id)
+
+                def logs(**kwargs):
+                    asked.append(kwargs)
+                    return self.stream
+
+                return SimpleNamespace(logs=logs)
+
+        with patch("docker.DockerClient", lambda *a, **kw: _AskedDockerClient(stream, *a, **kw)):
+            with client.websocket_connect("/ws/v1/logs/abc") as ws:
+                _auth(ws, admin_token)
+                assert ws.receive_json() == {"type": "auth_ok"}
+                assert ws.receive_json() == {"type": "log", "container_id": "abc", "data": "line 1\n"}
+
+        assert events.LOG_STREAM_TAIL_LINES == 200
+        assert asked == ["abc", {"stream": True, "follow": True, "tail": 200}]
+
 
 # ---------------------------------------------------------------------------
 # Re-authentication while a socket is open

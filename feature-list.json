@@ -1712,7 +1712,7 @@
       "adr": [
         "ADR-0039"
       ],
-      "notes": "The E2E spec only opens the Installed tab, and the stand-in has no Docker. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built (ADR-0249): start, restart, stop and uninstall act only on containers with the unos.app label (400 for another container, 404 for an unknown one); stop and uninstall run in a worker thread (ADR-0247); uninstall removes the container without its volumes and leaves the data folders. TestStopAndUninstall and TestStartChecks (the 409 names the pool) prove the steps against a fake Docker, and the Installed apps tests of webui/tests/apps.spec.ts the Installed tab with route fakes (the stand-in has no Docker). Open: the device check and the re-check after a reboot (ADR-0018). On the device: Stop and Start of transmission on Apps > Installed change its state; with the pool data unmounted (an owner action), Start is refused with the message that names the pool 'data'; Uninstall of an app installed for the check removes its container and leaves its folders under /mnt/pools/data/apps."
     },
     {
       "id": "apps.containers-and-images",
@@ -1733,7 +1733,7 @@
       "adr": [
         "ADR-0031"
       ],
-      "notes": "The stand-in has no Docker, and the E2E spec only opens the page. Device check: 2026-11-06 (images and container details listed). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Built (ADR-0248): the Images tab of the Containers page lists, pulls and removes images, never forced, and shows Docker's reason for an image that a container uses (409, ADR-0247); the drawer's Logs tab follows /ws/v1/logs/{id} with the first-message auth instead of polling the HTTP log. On the stand-in (no Docker), webui/tests/containers.spec.ts covers every step with route fakes and page.routeWebSocket. Open: the device check and the re-check after a reboot (ADR-0018). On the device: Containers lists transmission with its state and the state filter Running keeps it; Stop and Start change its state; its Logs tab shows its last lines and a new line live without a reload; Images lists lscr.io/linuxserver/transmission and alpine; Pull of a small image (an owner action, ADR-0211, with its SD writes) adds it and Remove deletes it; Remove of the transmission image is refused with Docker's reason."
     },
     {
       "id": "apps.container-resource-limits",
@@ -1782,11 +1782,15 @@
         "Every Docker call of supervisor/src/containers/router.py runs in a worker thread, as start and restart already do",
         "A test with a Docker call that blocks shows another request answered meanwhile"
       ],
+      "verified_by": [
+        "supervisor/tests/test_containers.py",
+        "supervisor/tests/test_apps.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0021"
       ],
-      "notes": "Only start and restart use asyncio.to_thread today. Listing and creating containers, listing, pulling and removing images, and a container's details, stop, removal and logs call docker-py on the event loop."
+      "notes": "Built (ADR-0247): every route of supervisor/src/containers/router.py, and the stop and uninstall of the Apps API, call Docker in a worker thread, each request within the client's 60 s timeout (a pull has no deadline). TestDockerCallsOffTheEventLoop checks every route of the router; TestRequestsAnsweredWhileDockerBlocks shows, under a real uvicorn, GET /api/v1/health and GET /api/v1/apps/catalog answered while a pull, a stop, a removal or a listing blocks in a fake Docker. Open, because Docker containers are host-level (GLOSSARY.md): the device check and the re-check after a reboot (ADR-0018), in which GET /api/v1/health answers within a second while the device pulls an image (an owner action, ADR-0211) and while transmission is stopped from the Containers page."
     },
     {
       "id": "apps.smb-group-option",

@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 WS_AUTH_TIMEOUT_SECONDS = 10.0
 WS_REAUTH_INTERVAL_SECONDS = 60.0
 STATS_INTERVAL_SECONDS = 2.0
+# Lines of a container's log that its stream starts with, before the new ones
+# (the container drawer of the web UI shows them, ADR-0248).
+LOG_STREAM_TAIL_LINES = 200
 WS_CLOSE_UNAUTHORIZED = 4401
 WS_CLOSE_FORBIDDEN = 4403
 WS_CLOSE_INTERNAL_ERROR = 1011
@@ -476,7 +479,7 @@ async def _stream_container_logs(websocket: WebSocket, container_id: str, token:
     try:
         client = await run(docker.DockerClient, base_url=f"unix://{get_settings().docker_socket}")
         container = await run(client.containers.get, container_id)
-        stream = await run(container.logs, stream=True, follow=True, tail=50)
+        stream = await run(container.logs, stream=True, follow=True, tail=LOG_STREAM_TAIL_LINES)
 
         while True:
             next_chunk = run(next, stream, None)
