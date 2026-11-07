@@ -105,7 +105,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(pools, "managed_pool_names", lambda: {"data"})
     host = FakeSmbHost()
     monkeypatch.setattr(src.host, "run_on_host", host.run)
-    monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit_log.json"))
+    monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit.jsonl"))
     monkeypatch.setattr(service, "_last_apply", service.LastApply())
     yield SimpleNamespace(base=base, pool=base / "data", conf=conf, samba=samba, db_path=db_path, host=host)
 

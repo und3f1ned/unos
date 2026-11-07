@@ -58,7 +58,7 @@ STATE_ENTRIES = frozenset({MARKER, ".gitignore", "data", "pools", "tmp", "logs",
 
 # Module globals of supervisor/src that hold a path under /data. Each one is
 # replaced by the same path under the stand-in's data directory
-# (/data/audit_log.json -> <state>/data/audit_log.json), keeping its type
+# (/data/audit/audit.jsonl -> <state>/data/audit/audit.jsonl), keeping its type
 # (str or Path). supervisor/tests/test_standin.py fails when a /data path is
 # left anywhere in the loaded modules.
 DATA_GLOBALS: dict[str, tuple[str, ...]] = {

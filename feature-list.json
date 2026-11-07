@@ -214,9 +214,10 @@
       "passes": false,
       "adr": [
         "ADR-0065",
-        "ADR-0066"
+        "ADR-0066",
+        "ADR-0224"
       ],
-      "notes": "Writing entries is tested; listing, filters and export are not, and no page shows the log (webui.audit-log-page)."
+      "notes": "Writing entries is tested (tests/test_login_bounds.py, tests/test_audit_log.py), and so are listing, counting and exporting across the rotated files (tests/test_audit_log.py); the filters by user, action and time are not, and no page shows the log (webui.audit-log-page)."
     },
     {
       "id": "security.append-only-audit-log",
@@ -227,16 +228,20 @@
         "An entry is written in a worker thread, never on the event loop",
         "A damaged line is skipped, and the other entries are still listed",
         "The log rotates at its size limit and keeps a fixed number of old files, which GET /api/v1/audit/logs still reads",
-        "On the dev device one sign-in writes a few KiB to the SD card instead of about 0.19 MiB (scripts/dev/sd.sh measure)"
+        "On the dev device, sign-ins append one line each to /data/audit/audit.jsonl without rewriting it (its inode and earlier bytes stay), and the SD writes of a sign-in are measured before and after the deploy (scripts/dev/sd.sh measure)"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0066",
         "ADR-0164",
         "ADR-0214",
-        "ADR-0207"
+        "ADR-0207",
+        "ADR-0224"
       ],
-      "notes": "The next slice. An older release's loader need not read the new log (ADR-0207)."
+      "notes": "Device check on 2026-11-07 after the deploy: three sign-ins appended three lines of about 270 bytes, the file kept its inode and its earlier bytes, and GET /api/v1/audit/logs/count counted them. A sign-in wrote 0.156 to 0.168 MiB to the SD card, 0.172 to 0.195 MiB before with a small old log; the rest is the login history's SQLite commit (architecture.sqlite-write-cost). Step 5 was reworded by ADR-0224. Not host-level (GLOSSARY.md): no reboot check needed. The old /data/audit_log.json was deleted on the device.",
+      "verified_by": [
+        "supervisor/tests/test_audit_log.py"
+      ]
     },
     {
       "id": "security.tamper-evident-audit-log",
@@ -249,7 +254,8 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0066"
+        "ADR-0066",
+        "ADR-0224"
       ],
       "notes": "Builds on security.append-only-audit-log."
     },
@@ -3159,6 +3165,23 @@
         "ADR-0212"
       ],
       "notes": "The history still holds the passwords that CLAUDE.md once published."
+    },
+    {
+      "id": "architecture.sqlite-write-cost",
+      "category": "architecture",
+      "description": "A small database change, such as a sign-in's login-history row, writes a few KiB to the system disk instead of about 0.14 MiB",
+      "steps": [
+        "Measure one sign-in's SD writes on the dev device with scripts/dev/sd.sh measure, and the SQLite part of them",
+        "An ADR decides the journal mode and synchronous level (for example WAL with synchronous NORMAL) against the power-cut window of ADR-0078 and the backups of the database",
+        "A sign-in on the dev device writes a few KiB to the SD card, measured before and after"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0214",
+        "ADR-0224",
+        "ADR-0078"
+      ],
+      "notes": "On 2026-11-07 a sign-in wrote about 0.16 MiB, mostly the login history's commit (rollback journal, synchronous FULL)."
     }
   ]
 }

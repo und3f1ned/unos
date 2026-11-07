@@ -1,13 +1,16 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-06
 area: security
 decided-by: agent
+superseded-by: ADR-0224
 ---
 
 # ADR-0066: Make the audit log append-only; until then it is rewritten as a whole
 
 ## Context
+
+Superseded by ADR-0224: the audit log is append-only JSON lines with size-based rotation.
 
 `log_action` in `supervisor/src/audit/router.py` reads `/data/audit_log.json`, appends the entry and writes the whole file again (`save_audit_log`, up to 10,000 entries, about 5 MB), synchronously on the event loop, for every entry. Each login and each audited change therefore rewrites the whole file on the device's system disk (ADR-0214), megabytes once the log is full (on the dev device a sign-in wrote about 0.19 MiB in November 2026), and a full system disk then blocks logins. `load_audit_log` returns an empty list when the file cannot be parsed, so one bad entry makes the next write drop the whole log.
 

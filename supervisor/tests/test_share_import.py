@@ -27,6 +27,7 @@ from src.host import HostResult
 from src.security import validators
 from src.shares import service, smb, smbconf
 from src.storage import pools
+from .audit_helpers import audit_entries
 
 HASH = "$2b$12$" + "x" * 53
 # Users: alice, bob, carol and dave (regular), admin (an administrator) and the
@@ -112,7 +113,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(pools, "managed_pool_names", lambda: {"data"})
     host = FakeHost()
     monkeypatch.setattr(src.host, "run_on_host", host.run)
-    audit = tmp_path / "audit_log.json"
+    audit = tmp_path / "audit.jsonl"
     monkeypatch.setattr(audit_router, "AUDIT_FILE", str(audit))
     monkeypatch.setattr(service, "_last_apply", service.LastApply())
     monkeypatch.setattr(service, "_last_import_problem", None)
@@ -961,7 +962,7 @@ class TestAudit:
     async def test_one_audit_entry(self, env):
         write_conf(env, "[a]\n path = {pool}/a\n[b]\n path = {pool}/b\n")
         await run_import(env)
-        (entry,) = json.loads(env.audit.read_text())
+        (entry,) = audit_entries(env.audit)
         assert (entry["action"], entry["username"], entry["resource_type"], entry["details"]) == (
             "other", "system", "share", "Imported 2 shares from smb.conf")
 
@@ -1056,7 +1057,7 @@ class TestStartupTrigger:
         assert state(env).report[0] == (
             f"Imported 1 share(s) from {env.conf}; the previous file is kept as {env.backup}")
         assert env.conf.read_text() == smbconf.render_config([])  # DATA is a pool root: not served
-        details = [entry["details"] for entry in json.loads(env.audit.read_text())]
+        details = [entry["details"] for entry in audit_entries(env.audit)]
         assert details[0] == "Imported 1 shares from smb.conf"
         assert details[1].startswith("SMB startup reconcile: Imported 1 share(s) from smb.conf; smb.conf was rewritten")
 
@@ -1073,7 +1074,7 @@ class TestStartupTrigger:
         await service.reconcile_smb_on_startup()
 
         assert shares(env) == {}
-        imports = [e for e in json.loads(env.audit.read_text()) if e["details"].startswith("Imported")]
+        imports = [e for e in audit_entries(env.audit) if e["details"].startswith("Imported")]
         assert len(imports) == 1
         assert env.conf.read_text() == smbconf.render_config([])
 

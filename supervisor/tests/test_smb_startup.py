@@ -11,7 +11,6 @@ go to ``FakeSmbHost`` and the pool list is ``{"data"}``.
 """
 
 import asyncio
-import json
 import logging
 import os
 import sqlite3
@@ -42,6 +41,7 @@ from src.security import validators
 from src.shares import accounts, interfaces, service, smb, smbconf
 from src.shares.models import SmbAccount, SmbState
 from src.storage import disks, pools
+from .audit_helpers import audit_entries
 
 HASH = "$2b$12$" + "x" * 53
 ALICE, BOB, CAROL, DAVE = 1, 2, 3, 4
@@ -106,7 +106,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(disks, "host_mounts", lambda: [SimpleNamespace(target=str(base / "data"))])
     host = FakeSmbHost()
     monkeypatch.setattr(src.host, "run_on_host", host.run)
-    audit = tmp_path / "audit_log.json"
+    audit = tmp_path / "audit.jsonl"
     monkeypatch.setattr(audit_router, "AUDIT_FILE", str(audit))
     monkeypatch.setattr(service, "_last_apply", service.LastApply())
     monkeypatch.setattr(service, "_last_import_problem", None)
@@ -201,7 +201,7 @@ class TestConsistentState:
     async def test_the_first_start_is_audited(self, env):
         add_share(env, "docs", "docs", access=[(ALICE, "write")])
         await start()
-        (entry,) = json.loads(env.audit.read_text())
+        (entry,) = audit_entries(env.audit)
         assert (entry["action"], entry["username"], entry["resource_type"]) == ("other", "system", "smb")
         assert entry["details"] == "SMB startup reconcile: smb.conf was rewritten"
 
@@ -225,7 +225,7 @@ class TestSessionSweep:
         assert env.host.closed() == ["DATA", "media", "old"]
         assert "IPC$" not in env.host.closed()
         env.end.assert_called_once_with(["70004", "nas", "nobody"])
-        entries = json.loads(env.audit.read_text())
+        entries = audit_entries(env.audit)
         assert "Closed the open connections to DATA, media, old (not served or without access)" in entries[0]["details"]
         assert "Ended the SMB sessions of 70004, nas, nobody" in entries[0]["details"]
 
@@ -431,7 +431,7 @@ class TestSteps:
         await start()
         with closing(sqlite3.connect(env.db_path)) as conn:
             assert conn.execute("SELECT username FROM smb_share_access").fetchall() == [("alice",)]
-        assert "Removed 1 stale share access row(s)" in json.loads(env.audit.read_text())[0]["details"]
+        assert "Removed 1 stale share access row(s)" in audit_entries(env.audit)[0]["details"]
 
 
 class TestProblemsOnly:

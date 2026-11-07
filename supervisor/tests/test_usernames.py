@@ -66,7 +66,7 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setattr(auth_router, "_setup_lock", asyncio.Lock())
     monkeypatch.setattr(auth_router, "hash_password",
                         lambda pw: bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=4)).decode())
-    monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(tmp_path / "audit_log.json"))
+    monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(tmp_path / "audit.jsonl"))
     auth_router.limiter.reset()
     app_limiter.reset()
     try:

@@ -33,6 +33,7 @@ from src.security import validators
 from src.shares import accounts, constants, repair, repair_router, service
 from src.shares.models import SmbShare
 from src.storage import pools
+from .audit_helpers import audit_entries
 
 pytestmark = pytest.mark.skipif(
     not hasattr(os, "O_PATH"), reason="Repair permissions needs os.O_PATH (Linux): runs in the Linux test runner"
@@ -802,7 +803,7 @@ def api(base, share, tmp_path, monkeypatch):
         checks.walks.append((path, kwargs))
         return real_repair_tree(path, **kwargs)
 
-    audit = tmp_path / "audit_log.json"
+    audit = tmp_path / "audit.jsonl"
     monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(audit))
     monkeypatch.setattr(constants, "SMB_GROUP_GID", GID)
     monkeypatch.setattr(service, "share_problem", share_problem)
@@ -813,7 +814,7 @@ def api(base, share, tmp_path, monkeypatch):
 
 
 def _audit(api) -> list[dict]:
-    return json.loads(api.audit.read_text()) if api.audit.exists() else []
+    return audit_entries(api.audit)
 
 
 def _sql(api, statement: str, *params) -> None:

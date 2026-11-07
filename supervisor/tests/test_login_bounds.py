@@ -1,7 +1,7 @@
 """Bounded login and audit input (ADR-0065).
 
-A failed login needs no authentication, yet it adds an entry to audit_log.json (which
-every audit write rewrites whole) and a row to login_attempts. LoginRequest bounds its
+A failed login needs no authentication, yet it adds an entry to the audit log and a row
+to login_attempts. LoginRequest bounds its
 fields, and log_action and record_login_attempt bound what they store.
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from src.audit.schemas import AuditAction
 from src.security.models import LoginAttempt
 
 from .test_smb_accounts import API, World
+from .audit_helpers import audit_entries
 
 
 @pytest.fixture
@@ -37,7 +38,7 @@ def attempts(world: World) -> list[str]:
 class TestLoginRequest:
     def test_one_failed_login_with_a_huge_username(self, world):
         """About 1 MiB of non-ASCII username (6 bytes each in the
-        file) and an 8000-character User-Agent once grew audit_log.json by 3 MB."""
+        file) and an 8000-character User-Agent once grew the audit log by 3 MB."""
         body = json.dumps({"username": "é" * 520_000, "password": "x"}, ensure_ascii=False).encode()
 
         response = world.client.post(f"{API}/auth/login", content=body,
@@ -68,7 +69,7 @@ class TestLoginRequest:
         response = world.client.post(f"{API}/auth/login", json=body, headers={"user-agent": "A" * 8000})
 
         assert response.status_code == 401
-        [entry] = json.loads(world.audit_file.read_text())
+        [entry] = audit_entries(world.audit_file)
         assert entry["action"] == "login_failed"
         assert entry["username"] == "é" * 128
         assert entry["user_agent"] == "A" * 256
@@ -87,7 +88,7 @@ class TestLogAction:
         ))
 
         assert (len(entry.username), len(entry.resource_id), len(entry.details)) == (128, 256, 1024)
-        [stored] = json.loads(world.audit_file.read_text())
+        [stored] = audit_entries(world.audit_file)
         assert (stored["username"], stored["resource_id"], stored["details"]) == ("u" * 128, "r" * 256, "d" * 1024)
 
     def test_short_values_are_kept_as_they_are(self, world):

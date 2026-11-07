@@ -242,7 +242,7 @@ def test_whole_cycle(cycle):
     assert ["smbcontrol", "all", "reload-config"] in calls
     assert not [argv for argv in calls if argv[0] == "testparm"]
 
-    # 12. Without the Samba tools, two starts leave audit_log.json untouched.
+    # 12. Without the Samba tools, two starts leave the audit log untouched.
     fake.missing = set(ALL_SAMBA_TOOLS)
     audit = world.audit_file.read_bytes()
     startup()

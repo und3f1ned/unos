@@ -75,9 +75,10 @@ and this index, and `make check-fast` runs it.
 | [0063](0063-uvicorn-header-and-connection-limits.md) | Limit uvicorn's request headers and connections after measuring the cost | proposed | 2026-11-06 |
 | [0064](0064-test-secrets-in-temporary-session-files.md) | Test secrets live in 0600 files in a temporary session folder | superseded by [0212](0212-device-secrets-in-dev-env.md) | 2026-11-06 |
 | [0065](0065-bounded-login-input-and-audit-entries.md) | Login input and audit entries are bounded | accepted | 2026-11-06 |
-| [0066](0066-append-only-audit-log.md) | Make the audit log append-only; until then it is rewritten as a whole | proposed | 2026-11-06 |
+| [0066](0066-append-only-audit-log.md) | Make the audit log append-only; until then it is rewritten as a whole | superseded by [0224](0224-append-only-audit-log-in-json-lines.md) | 2026-11-06 |
 | [0212](0212-device-secrets-in-dev-env.md) | Device settings and secrets live in the git-ignored dev.env, never on command lines | accepted | 2026-11-07 |
 | [0213](0213-audit-notes-stay-out-of-the-repository.md) | Security audit notes and exploit details stay outside the repository | accepted | 2026-11-07 |
+| [0224](0224-append-only-audit-log-in-json-lines.md) | The audit log is append-only JSON lines with size-based rotation | accepted | 2026-11-07 |
 
 ## Auth
 

@@ -69,7 +69,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   output: the redaction works. Tell the owner; the cure is a new password (an owner action),
   never a weaker redaction.
 - API calls write a little anyway: about 0.02 MiB a call (logs on the SD card), a login about
-  0.19 MiB. api.py signs in only when it has no usable token: none is kept in the device's RAM
+  0.16 MiB (mostly the login history's SQLite commit, ADR-0224). api.py signs in only when it has no usable token: none is kept in the device's RAM
   yet, the API refused the kept one, or the cache is not root's with mode 600 (ADR-0222).
 - Playwright never runs against the device: the specs create and delete pools, shares and
   users. Use the standin-e2e skill.
