@@ -581,9 +581,15 @@ test.describe('Scheduler: the time zone of the schedules', () => {
     await page.goto('/system#scheduler');
     await expect(page.getByText(SNAPSHOT_TASK.name, { exact: true })).toBeVisible();
 
+    // A schedule is shown as it is, on the NAS's clock; next runs and run times in the browser's zone.
     await expect(
-      page.getByText(`The schedules follow the clock of the NAS's time zone, ${NAS_ZONE}.`, { exact: false }),
+      page.getByText(
+        `The schedules follow the clock of the NAS's time zone, ${NAS_ZONE}. ` +
+          "Next runs and the times of the history are shown in your browser's time zone.",
+        { exact: true },
+      ),
     ).toBeVisible();
+    await expect(page.getByText(/Daily at 02:00$/)).toBeVisible();
     // The next run, 03:00 in Berlin (2026-11-08T03:00:00+01:00), is 21:00 the evening before in New York.
     await expect(page.getByText(/^11\/7\/2026, 9:00:00\sPM$/)).toBeVisible();
 

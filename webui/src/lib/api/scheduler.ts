@@ -88,7 +88,10 @@ export async function getTaskRunsForTask(taskId: string): Promise<TaskRun[]> {
   return api.get<TaskRun[]>(`/scheduler/runs/${taskId}`);
 }
 
-/** The time zone whose clock the schedules follow: the NAS's, or UTC when the NAS's cannot be read. */
+/**
+ * The time zone whose clock the schedules follow: the NAS's, as it named it last when it cannot be
+ * asked for a moment, or UTC when it names none that the supervisor can use.
+ */
 export async function getScheduleTimezone(): Promise<{ timezone: string }> {
   return api.get<{ timezone: string }>("/scheduler/timezone");
 }

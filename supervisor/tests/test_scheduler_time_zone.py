@@ -1,4 +1,4 @@
-"""Schedules follow the time zone of the host, also across a change of daylight saving time (ADR-0247).
+"""Schedules follow the time zone of the host, also across a change of daylight saving time (ADR-0249).
 
 The scheduler loop runs here on a fake clock (run_scheduler): each of its sleeps moves the
 clock on, once the runs it started have ended. The host is the fake host of
@@ -6,14 +6,18 @@ test_pool_persistence.py, whose /etc/localtime link names the time zone.
 """
 
 import asyncio
+import errno
 import importlib
 import json
 import logging
+import subprocess
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from src import host as host_module
+from src.host import HostResult
 from src.scheduler.schemas import ScheduledTask
 
 from .test_scheduler_validation import _task, make_env
@@ -93,6 +97,16 @@ def _local(started: list[tuple[str, datetime]], zone: str) -> list[tuple[str, st
     return [(task_id, at.astimezone(ZoneInfo(zone)).strftime("%Y-%m-%d %H:%M %Z")) for task_id, at in started]
 
 
+def _host_not_asked(failure: str, cmd: list[str]) -> HostResult:
+    """What run_on_host does with ``cmd`` when the host cannot be asked: ``failure`` names how."""
+    if failure == "timeout":  # the host is slow to answer, as during heavy I/O on its SD card
+        raise subprocess.TimeoutExpired(["nsenter", *cmd], 10)
+    if failure == "fork":  # no process can be started, as under memory pressure
+        raise OSError(errno.EAGAIN, "Resource temporarily unavailable")
+    # nsenter cannot enter the host's namespaces: it reports why, and readlink does not run.
+    return HostResult(1, "", "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted\n")
+
+
 # --- the time zone of the host and the times of the API ------------------------------------
 
 
@@ -147,7 +161,6 @@ def test_a_time_zone_that_cannot_be_read_leaves_the_schedules_in_utc_and_is_repo
     else:
         env.host.links["/etc/localtime"] = link
     monkeypatch.setattr(scheduler, "_utc_now", lambda: datetime(2026, 11, 7, 12, 0, tzinfo=UTC))
-    monkeypatch.setattr(scheduler, "_reported", set())  # nothing reported yet
 
     with caplog.at_level(logging.WARNING, logger="src.scheduler.router"):
         created = env.client.post("/api/v1/scheduler/tasks", json=_daily("ignored", 3)).json()
@@ -159,6 +172,45 @@ def test_a_time_zone_that_cannot_be_read_leaves_the_schedules_in_utc_and_is_repo
     warnings = [r.getMessage() for r in caplog.records if "time zone" in r.getMessage()]
     assert len(warnings) == 1, warnings
     assert "the schedules follow UTC" in warnings[0]
+
+
+def test_a_zone_that_cannot_be_read_for_a_moment_is_the_one_read_before_and_each_failure_is_logged(
+    env, monkeypatch, caplog
+):
+    """The host could not be asked (here: a timeout): the schedules followed UTC until the next read,
+    and the reason was logged once in the supervisor's life, so a later failure left no trace."""
+    env.host.links["/etc/localtime"] = BERLIN
+    answer = host_module.run_on_host  # the fake host
+    failing = False
+
+    def run_on_host(cmd, **kwargs):
+        if failing and cmd[0] == "readlink":
+            return _host_not_asked("timeout", cmd)
+        return answer(cmd, **kwargs)
+
+    monkeypatch.setattr(host_module, "run_on_host", run_on_host)
+
+    def zone() -> str:
+        response = env.client.get("/api/v1/scheduler/timezone")
+        assert response.status_code == 200, response.text
+        return response.json()["timezone"]
+
+    with caplog.at_level(logging.WARNING, logger="src.scheduler.router"):
+        failing = True
+        assert zone() == "UTC"  # no zone read yet
+        failing = False
+        assert zone() == "Europe/Berlin"
+        failing = True
+        assert [zone(), zone()] == ["Europe/Berlin", "Europe/Berlin"]
+        failing = False
+        assert zone() == "Europe/Berlin"
+        failing = True
+        assert zone() == "Europe/Berlin"
+
+    warnings = [r.getMessage() for r in caplog.records if "time zone" in r.getMessage()]
+    assert len(warnings) == 3, warnings  # each failure once, not at each read of it
+    assert "timed out" in warnings[0] and "the schedules follow UTC" in warnings[0]
+    assert all("timed out" in w and "the schedules follow Europe/Berlin" in w for w in warnings[1:]), warnings
 
 
 def test_the_times_of_a_run_carry_their_offset(env, monkeypatch):
@@ -259,6 +311,28 @@ async def test_a_time_that_the_clock_shows_twice_runs_once(env, monkeypatch):
         ("hourly", "2026-10-25 02:30 CEST"),
         ("hourly", "2026-10-25 03:30 CET"),
     ]
+
+
+@pytest.mark.parametrize("failure", ["timeout", "fork", "nsenter"])
+async def test_a_pass_that_cannot_read_the_time_zone_follows_the_zone_read_before(env, monkeypatch, failure):
+    """The pass at 03:00:01 in Berlin cannot ask the host for its zone. It checked its minute on the
+    clock of UTC: the task for 02:00 ran a second time, and the one for 03:00 not that night."""
+    env.host.links["/etc/localtime"] = BERLIN
+    _store(_daily("at-02-00", 2), _daily("at-03-00", 3))
+    clock = FakeClock(datetime(2026, 11, 8, 0, 58, 30, tzinfo=UTC))  # 01:58:30 in Berlin
+    started = started_runs(monkeypatch, clock)
+    answer = host_module.run_on_host  # the fake host
+
+    def run_on_host(cmd, **kwargs):
+        if cmd[0] == "readlink" and datetime(2026, 11, 8, 2, 0, tzinfo=UTC) <= clock.now < datetime(2026, 11, 8, 2, 1, tzinfo=UTC):
+            return _host_not_asked(failure, cmd)
+        return answer(cmd, **kwargs)
+
+    monkeypatch.setattr(host_module, "run_on_host", run_on_host)
+
+    await run_scheduler(monkeypatch, clock, datetime(2026, 11, 8, 2, 5, tzinfo=UTC))
+
+    assert _local(started, "Europe/Berlin") == [("at-02-00", "2026-11-08 02:00 CET"), ("at-03-00", "2026-11-08 03:00 CET")]
 
 
 async def test_a_pass_that_comes_late_starts_the_runs_of_the_minutes_it_missed_once(env, monkeypatch):

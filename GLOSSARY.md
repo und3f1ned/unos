@@ -37,10 +37,10 @@ within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` 
 
 **Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
 clock of the host's time zone: a snapshot, a scrub, a SMART test, a backup or a custom task. Each
-run is recorded with its status in the task's history (ADR-0044, ADR-0247). Avoid: job, cron job.
+run is recorded with its status in the task's history (ADR-0044, ADR-0249, ADR-0251). Avoid: job, cron job.
 
 **Custom task**: A scheduled task that runs a shell command as root in the supervisor's container;
-its runs record the command's output and exit status (ADR-0044, ADR-0248). Avoid: script.
+its runs record the command's output and exit status (ADR-0044, ADR-0250). Avoid: script.
 
 ## Storage
 

@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: system
 decided-by: agent
+superseded-by: ADR-0249
 ---
 
 # ADR-0247: Schedules follow the clock of the host's time zone, read from its /etc/localtime link, with fixed rules for the changes of daylight saving time
 
 ## Context
+
+Superseded by ADR-0249: when the host cannot be asked for its time zone, the schedules follow the zone it named last, not UTC, and each failure is logged.
 
 The scheduler computed its times with the naive `datetime.now()` of the supervisor's container, which runs in UTC: a task for 03:00 ran at 03:00 UTC, and the Scheduler tab showed the naive `next_run` as the browser's local time (`system.scheduler-time-zone`, ADR-0015, ADR-0023). croniter cannot simply be given zone-aware times: with `zoneinfo` it repeats and misplaces runs around a change of daylight saving time. The loop also slept 60 seconds after each pass and looked back one minute, so a pass that came late missed the tasks of a minute.
 

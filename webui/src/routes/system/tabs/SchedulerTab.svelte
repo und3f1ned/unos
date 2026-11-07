@@ -383,8 +383,8 @@
   </div>
   {#if timeZone}
     <p class="text-sm text-content-secondary">
-      The schedules follow the clock of the NAS's time zone, {timeZone}. The times shown here are your
-      browser's.
+      The schedules follow the clock of the NAS's time zone, {timeZone}. Next runs and the times of the
+      history are shown in your browser's time zone.
     </p>
   {/if}
 

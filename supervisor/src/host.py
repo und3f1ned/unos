@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), and power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233). cat, test, mkdir, rmdir, rm, find,
-# sync, sleep, hostname, readlink (the time zone: scheduler/router.py, ADR-0247)
+# sync, sleep, hostname, readlink (the time zone: scheduler/router.py, ADR-0249)
 # and sh also run there but come from essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
@@ -267,12 +267,18 @@ def time_zone_name(*, timeout: float = 10) -> str | None:
     Read where /etc/localtime links to below a ``zoneinfo`` folder, as timedatectl reads
     it (``timedatectl set-timezone`` writes that link); a zone of its ``posix/`` or
     ``right/`` folder (time with leap seconds) counts as the zone itself, whose civil
-    time it shows. None when there is no such link: no /etc/localtime (the host's clock
-    then shows UTC), a copied file instead of a link, or a link elsewhere. Raises what
-    run_on_host raises when the command cannot run.
+    time it shows. None when the host has no such link: no /etc/localtime (the host's clock
+    then shows UTC), a copied file instead of a link, or a link elsewhere. When the host
+    cannot be asked, raises what run_on_host raises (OSError, subprocess.TimeoutExpired), and
+    HostCommandError when the command fails with a message: readlink without -v reports
+    nothing, so the message is nsenter's, which could not enter the host's namespaces.
     """
-    result = run_on_host(["readlink", "/etc/localtime"], timeout=timeout)
+    cmd = ["readlink", "/etc/localtime"]
+    # "replace": a target that is not UTF-8 names no zone, which the caller then reports.
+    result = run_on_host(cmd, timeout=timeout, errors="replace")
     if not result.ok:
+        if result.stderr.strip():
+            raise HostCommandError(cmd, result.returncode, result.stderr)
         return None
     _, found, name = result.stdout.strip().rpartition("zoneinfo/")
     for folder in ("posix/", "right/"):

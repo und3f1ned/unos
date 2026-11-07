@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: system
 decided-by: agent
+superseded-by: ADR-0250
 ---
 
 # ADR-0248: A custom task's run records the command's output and exit status, and the command ends within 24 hours with what it started
 
 ## Context
+
+Superseded by ADR-0250: the command ends with every process of its session, also those that `timeout` and job control put in process groups of their own, and the runs file is UTF-8 text.
 
 A custom task ran its command with `subprocess.run(shell=True)` in a worker thread and kept its standard output, or its error output only when there was no standard output, and no exit status (`system.custom-command-tasks`, ADR-0044). Without a time limit a command that hung kept its run "running" for good and held a worker thread, a process that it left in the background held the output pipe open and kept the run waiting, and an output of any size went into `/data/task_runs.json`, which is rewritten on the system disk at each run (ADR-0214).
 

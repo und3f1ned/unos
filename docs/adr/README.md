@@ -265,8 +265,11 @@ and this index, and `make check-fast` runs it.
 | [0244](0244-a-disabled-interface-comes-back-on-unless-the-change-is-kept.md) | A disabled network interface comes back on by itself after 60 seconds unless the change is kept | accepted | 2026-11-07 |
 | [0245](0245-system-network-shows-ipv6-link-speeds-and-the-administrative-state.md) | System > Network shows IPv6, link speeds from sysfs and each interface's administrative state | accepted | 2026-11-07 |
 | [0246](0246-interfaces-with-vlans-stay-enabled-and-the-revert-follows-the-host.md) | An interface that carries VLANs is not disabled, and a disable's saved state and the page's reports follow what the host shows | accepted | 2026-11-07 |
-| [0247](0247-schedules-follow-the-clock-of-the-hosts-time-zone.md) | Schedules follow the clock of the host's time zone, read from its /etc/localtime link, with fixed rules for the changes of daylight saving time | accepted | 2026-11-07 |
-| [0248](0248-custom-task-runs-record-output-and-exit-status-and-end-within-a-day.md) | A custom task's run records the command's output and exit status, and the command ends within 24 hours with what it started | accepted | 2026-11-07 |
+| [0247](0247-schedules-follow-the-clock-of-the-hosts-time-zone.md) | Schedules follow the clock of the host's time zone, read from its /etc/localtime link, with fixed rules for the changes of daylight saving time | superseded by [0249](0249-schedules-follow-the-hosts-time-zone-as-last-read.md) | 2026-11-07 |
+| [0248](0248-custom-task-runs-record-output-and-exit-status-and-end-within-a-day.md) | A custom task's run records the command's output and exit status, and the command ends within 24 hours with what it started | superseded by [0250](0250-custom-task-commands-end-with-every-process-of-their-session.md) | 2026-11-07 |
+| [0249](0249-schedules-follow-the-hosts-time-zone-as-last-read.md) | Schedules follow the host's time zone as last read from its /etc/localtime link, with fixed rules for the changes of daylight saving time | accepted | 2026-11-08 |
+| [0250](0250-custom-task-commands-end-with-every-process-of-their-session.md) | A custom task's run records the command's output and exit status, and the command ends within 24 hours with every process of its session | accepted | 2026-11-08 |
+| [0251](0251-a-run-that-a-stop-of-the-supervisor-interrupts-is-recorded-as-failed.md) | A task run that a stop of the supervisor interrupts is recorded as failed | accepted | 2026-11-08 |
 
 ## Web UI
 

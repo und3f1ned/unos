@@ -875,17 +875,20 @@ its API.
   runs with their status, start and duration, and the output or error of each.
 - The schedules follow the clock of the NAS's time zone, which the tab names:
   the time zone set on the host (`timedatectl set-timezone`), or UTC when the
-  host's cannot be read. A task for 03:00 runs at 03:00 on that clock, also
-  after a change of daylight saving time, and a change of the time zone
-  applies within a minute. On the night the clocks go back, a time in the hour
-  that repeats runs once, the first time, and an hourly task skips the
+  host has none that UNOS can use; when the host cannot be asked for a moment,
+  they keep the zone it named last. A task for 03:00 runs at 03:00 on that
+  clock, also after a change of daylight saving time, and a change of the time
+  zone applies within a minute. On the night the clocks go back, a time in the
+  hour that repeats runs once, the first time, and an hourly task skips the
   repeated hour; on the night they go forward, a time that the clock skips
   runs when the clock passes it, once (a task for 02:30 runs at 03:00 in
   central Europe). Next runs and the times in the history show in your
   browser's time zone.
 - A task runs while UNOS runs: a time that passes while the NAS is off or
   suspended is not made up for, and when the clock is set forward, only the
-  tasks of its last 5 minutes run.
+  tasks of its last 5 minutes run. A run that a restart or shutdown of UNOS
+  cuts off (an update, a reboot) fails with "The supervisor stopped during
+  the run"; the task runs again at its next time.
 
 #### Custom Commands
 
@@ -903,12 +906,14 @@ Each run records, in the history:
   the order they were written. A run keeps the last 16 KiB, after a line that
   says so when the output was longer.
 
-A command still running after 24 hours is stopped, with everything it
+A command still running after 24 hours is stopped, with the processes it
 started, and its run fails with "The command did not end within 24 hours and
 was stopped". Processes that a command leaves running in the background end
-when it returns: run a server in a container or as a service of the host. A
-run starts at its time also while the task's run before has not ended: a
-command that must not run twice at once can guard itself, for example with
+when it returns, also those of `timeout` or of job control (`set -m`); only a
+process started in a session of its own (`setsid`) is not stopped. Run a
+server in a container or as a service of the host. A run starts at its time
+also while the task's run before has not ended: a command that must not run
+twice at once can guard itself, for example with
 `flock /tmp/my-task.lock my-script.sh`. The command is checked again before
 each run, as when it is saved: at most 4096 characters, without NUL
 characters.
