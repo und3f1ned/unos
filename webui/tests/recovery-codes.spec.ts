@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import { test, expect, E2E_ADMIN } from './fixtures';
 import type { APIRequestContext, Page } from '@playwright/test';
 
-// Two-factor recovery codes (feature auth.recovery-codes, ADR-0232) against the
+// Two-factor recovery codes (feature auth.recovery-codes, ADR-0238) against the
 // real supervisor: no route fakes. A regular account with two-factor
 // authentication is created for this file through the API and deleted
 // afterwards; its first TOTP code is computed here (RFC 6238).

@@ -5,7 +5,7 @@
 	import { Alert, Button, Modal } from '$lib/components/ui';
 
 	// The recovery codes of the signed-in account, shown while two-factor
-	// authentication is on (ADR-0232). Each code signs in once in place of a
+	// authentication is on (ADR-0238). Each code signs in once in place of a
 	// code of the authenticator app.
 
 	let status: RecoveryCodesStatus | null = null;

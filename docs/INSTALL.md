@@ -527,14 +527,21 @@ The script:
    on the branch it updates (`UNOS_BRANCH`, default `main`), and says how to
    proceed. It never stashes or discards changes. It also stops if another
    `update.sh` is running (it holds `/run/unos-update.lock`); without
-   util-linux `flock` it only warns.
+   util-linux `flock` it only warns. It then fetches the branch with the
+   release tags in its history. Without new commits it stops too, unless you
+   answer yes to *Force rebuild anyway?* (without a terminal it stops): only
+   a rebuild gives the images the name of a release that was tagged on the
+   commit UNOS already runs.
 2. Backs up the database (consistently, with SQLite's online backup API) and
    the rest of the data volume to `/var/lib/unos/backups/update-<date>/`. Only
    root can read the backups: they contain the JWT signing secret. If the
    backup fails, nothing has changed yet: the script asks whether to update
    without a backup, and stops if the answer is no or there is no terminal.
 3. Tags the running images `:previous`, pulls the update and builds the new
-   images while UNOS keeps running. If the build fails, nothing changes.
+   images while UNOS keeps running. If the build fails, nothing changes. The
+   supervisor's image carries the version of the new checkout
+   (`git describe --tags --always`, with the tags fetched in step 1), which
+   **System → Updates** shows.
 4. Restarts UNOS (`docker compose down`, then `up -d`). `docker compose up`
    starts the web interface once the supervisor answers its health check. The
    supervisor first mounts the pools the host has not mounted, up to two

@@ -61,7 +61,7 @@ class LoginRequest(BaseModel):
     username: str = Field(max_length=255)
     password: str = Field(max_length=1024)
     totp_code: str | None = Field(default=None, max_length=16)
-    # In place of totp_code: XXXX-XXXX-XXXX, in any case, with or without dashes and spaces (ADR-0232).
+    # In place of totp_code: XXXX-XXXX-XXXX, in any case, with or without dashes and spaces (ADR-0238).
     recovery_code: str | None = Field(default=None, max_length=32)
 
     @model_validator(mode="after")
@@ -168,7 +168,7 @@ class APITokenCreated(BaseModel):
     expires_at: datetime | None = None
 
 
-# 2FA recovery codes (ADR-0232)
+# 2FA recovery codes (ADR-0238)
 class RecoveryCodesResponse(BaseModel):
     codes: list[str]  # the new codes, answered only this once: the database keeps their hashes
 

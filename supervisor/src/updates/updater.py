@@ -48,6 +48,11 @@ UPDATE_STATE_FILE = DATA_DIR / "update_state.json"
 UPDATE_HISTORY_FILE = DATA_DIR / "update_history.json"
 UPDATE_CONFIG_FILE = DATA_DIR / "update_config.json"
 
+# What `git describe --tags --always` names besides a tag: the commits after a
+# tag (v1.2.0-3-g712fc3a) or, without any tag, the commit itself.
+DESCRIBED_COMMIT = re.compile(r"(?P<tag>.+)-\d+-g(?P<commit>[0-9a-f]{4,40})")
+BARE_COMMIT = re.compile(r"[0-9a-f]{7,40}")
+
 # Semver regex for validation
 SEMVER_REGEX = re.compile(
     r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
@@ -94,13 +99,17 @@ class Updater:
         return repo in ALLOWED_REPOS
 
     def _parse_version(self, version: str) -> tuple[int, int, int, str]:
-        """Parse a version string into comparable components."""
+        """Parse a version string into comparable components.
+
+        git describe output such as v1.2.0-3-g712fc3a counts as its tag,
+        v1.2.0: commits after a release are not older than it. Matched
+        before the semver pattern, which would take "3-g712fc3a" for a
+        pre-release of v1.2.0.
+        """
+        described = DESCRIBED_COMMIT.fullmatch(version)
+        if described:
+            version = described.group("tag")
         match = SEMVER_REGEX.match(version)
-        if not match:
-            # Fallback for git describe output like "v0.1.0-5-gabcdef"
-            if "-" in version and "g" in version:
-                base = version.split("-")[0]
-                match = SEMVER_REGEX.match(base)
 
         if match:
             major = int(match.group("major"))
@@ -141,59 +150,27 @@ class Updater:
         return 0
 
     async def get_current_version(self) -> CurrentVersion:
-        """Get the currently installed version."""
-        version = "unknown"
+        """The version the supervisor image was built with (ADR-0234).
+
+        UNOS_VERSION is `git describe --tags --always` of the checkout that
+        deploy/install.sh or deploy/update.sh built: a release tag, a tag
+        with the commits after it (v1.2.0-3-g712fc3a), or the commit alone
+        while the repository has no tag. The container has neither git nor
+        the checkout, so nothing runs here. "unknown" when the image was
+        built without it.
+        """
+        version = os.environ.get("UNOS_VERSION", "").strip() or "unknown"
         commit_hash = "unknown"
         is_dev = False
-        install_date = None
-
-        try:
-            # Try to get version from git
-            result = subprocess.run(
-                ["git", "describe", "--tags", "--always"],
-                cwd=str(INSTALL_DIR),
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                version = result.stdout.strip()
-                # Check if it's a development version (has commits after tag)
-                is_dev = "-" in version and "g" in version
-
-            # Get commit hash
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=str(INSTALL_DIR),
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                commit_hash = result.stdout.strip()[:12]
-
-            # Get install/last update date from git log
-            result = subprocess.run(
-                ["git", "log", "-1", "--format=%ci"],
-                cwd=str(INSTALL_DIR),
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                date_str = result.stdout.strip()
-                try:
-                    install_date = datetime.fromisoformat(date_str.replace(" ", "T"))
-                except ValueError:
-                    pass
-
-        except Exception as e:
-            logger.warning(f"Failed to get version from git: {e}")
-
+        described = DESCRIBED_COMMIT.fullmatch(version)
+        if described:
+            commit_hash, is_dev = described.group("commit"), True
+        elif BARE_COMMIT.fullmatch(version):
+            commit_hash, is_dev = version[:12], True
         return CurrentVersion(
             version=version,
             commit_hash=commit_hash,
-            install_date=install_date,
+            install_date=None,
             is_development=is_dev,
         )
 
@@ -288,9 +265,11 @@ class Updater:
         release = await self.fetch_latest_release(repo, include_prereleases)
 
         if release is None:
+            # GitHub lists no release (its 404, also while the repository is
+            # private): there is no latest version to compare with.
             return UpdateCheck(
                 current_version=current.version,
-                latest_version=current.version,
+                latest_version=None,
                 update_available=False,
                 release_info=None,
                 checked_at=datetime.now(),

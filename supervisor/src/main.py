@@ -65,7 +65,7 @@ from .updates.router import router as updates_router
 from .websocket.events import router as ws_router
 from .scheduler.router import start_scheduler, stop_scheduler
 from .health.router import start_health_monitors, stop_health_monitors
-from .power.router import start_ups_monitor, stop_ups_monitor
+from .power.router import reapply_wol_settings, start_ups_monitor, stop_ups_monitor
 from .storage import pools as storage_pools
 from .storage.pools import reconcile_pools_on_startup
 from .shares.service import reconcile_smb_on_startup
@@ -94,9 +94,9 @@ def _running_containers() -> int:
 async def check_host_tools() -> None:
     """Log one warning naming the host programs UNOS runs but the host lacks.
 
-    Pool, mount and share operations run these programs on the host (not in
-    this container), so they fail until the packages are installed there.
-    Never raises.
+    Pool, mount, share and power operations run these programs on the host
+    (not in this container), so they fail until the packages are installed
+    there. Never raises.
     """
     try:
         missing = await asyncio.to_thread(
@@ -108,9 +108,9 @@ async def check_host_tools() -> None:
     if missing:
         packages = sorted({host.HOST_TOOLS[name] for name in missing})
         logger.warning(
-            "The host is missing programs that UNOS runs for storage pools, mounts and "
-            "shares: %s. Install them on the host (apt-get install %s); until then "
-            "those operations fail.",
+            "The host is missing programs that UNOS runs for storage pools, mounts, "
+            "shares and power actions: %s. Install them on the host (apt-get install %s); "
+            "until then those operations fail.",
             ", ".join(missing),
             " ".join(packages),
         )
@@ -124,6 +124,7 @@ async def lifespan(app: FastAPI):
     run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"
     host_tool_check: asyncio.Task | None = None
     smb_reconcile: asyncio.Task | None = None
+    wol_reapply: asyncio.Task | None = None
     if run_background:
         # Runs beside the rest of startup (in a worker thread, bounded by
         # HOST_TOOL_CHECK_TIMEOUT), so a slow host neither delays nor fails it.
@@ -138,6 +139,10 @@ async def lifespan(app: FastAPI):
         # startup never waits for its host commands. Logs, never raises.
         smb_reconcile = asyncio.create_task(reconcile_smb_on_startup(), name="unos-smb-reconcile")
         await asyncio.sleep(0)  # the task takes smb_lock before the app serves its first request
+        # Many NIC drivers forget Wake-on-LAN at a reboot: give each interface
+        # the state an administrator chose (power/router.py, ADR-0233), beside
+        # the startup. Logs, never raises.
+        wol_reapply = asyncio.create_task(reapply_wol_settings(), name="unos-wol-reapply")
     # Background loops must be started here. FastAPI ignores router-level
     # @router.on_event hooks when the app defines a lifespan, which silently
     # disabled the scheduler and all monitors in earlier releases.
@@ -158,6 +163,9 @@ async def lifespan(app: FastAPI):
         if smb_reconcile is not None:
             smb_reconcile.cancel()
             await asyncio.gather(smb_reconcile, return_exceptions=True)
+        if wol_reapply is not None:
+            wol_reapply.cancel()
+            await asyncio.gather(wol_reapply, return_exceptions=True)
 
 
 app = FastAPI(

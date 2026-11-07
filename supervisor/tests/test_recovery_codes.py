@@ -1,4 +1,4 @@
-"""Two-factor recovery codes (ADR-0232; feature auth.recovery-codes).
+"""Two-factor recovery codes (ADR-0238; feature auth.recovery-codes).
 
 A user with two-factor authentication generates ten codes, which the answer shows once; at the
 code step of the sign-in each code takes the place of a code of the authenticator app once, also

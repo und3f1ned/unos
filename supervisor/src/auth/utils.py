@@ -153,7 +153,7 @@ def hash_api_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-# ==================== Recovery codes (ADR-0232) ====================
+# ==================== Recovery codes (ADR-0238) ====================
 
 RECOVERY_CODE_COUNT = 10
 RECOVERY_CODE_INVALID = "Invalid recovery code"

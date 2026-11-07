@@ -5,7 +5,7 @@ area: auth
 decided-by: agent
 ---
 
-# ADR-0232: Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication
+# ADR-0238: Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication
 
 ## Context
 
@@ -15,7 +15,7 @@ A user with two-factor authentication who lost the authenticator app could not s
 
 - Sign-in: `LoginRequest` in `supervisor/src/auth/schemas.py` takes `recovery_code` (at most 32 characters) in place of `totp_code`, checked by `login` in `supervisor/src/auth/router.py` after the password, only for an account with 2FA; both codes in one request are a 422. `_use_recovery_code` uses a code up in one compare-and-swap UPDATE of `users.recovery_codes`: the used code's hash becomes null only where the column still holds what was read, so of two sign-ins with one code exactly one succeeds, and a sign-in that read the codes before new ones were generated fails.
 - A wrong, used or malformed code answers 401 "Invalid recovery code" and is recorded as the failed login "Invalid recovery code"; a sign-in with a code is recorded as a successful login and audited as `login_success` with "Signed in with a recovery code" (severity warning).
-- Codes: `POST /api/v1/auth/recovery-codes/generate` replaces the user's codes with ten distinct new ones of 12 hex digits (48 random bits from `secrets`), answered once as XXXX-XXXX-XXXX. Its UPDATE writes them only while 2FA is on, else 400. Once they are stored, a failure to write their audit entry (a full disk) is logged, and the codes are still answered: the earlier codes no longer work, and a 500 would leave the user without any. They may be typed in any case, with or without dashes and spaces. Stored: the SHA-256 of the 12 digits in upper case (`recovery_code_hash` in `supervisor/src/auth/utils.py`), as API tokens are (ADR-0233). `GET /api/v1/auth/recovery-codes/status` answers how many are left, none while 2FA is off.
+- Codes: `POST /api/v1/auth/recovery-codes/generate` replaces the user's codes with ten distinct new ones of 12 hex digits (48 random bits from `secrets`), answered once as XXXX-XXXX-XXXX. Its UPDATE writes them only while 2FA is on, else 400. Once they are stored, a failure to write their audit entry (a full disk) is logged, and the codes are still answered: the earlier codes no longer work, and a 500 would leave the user without any. They may be typed in any case, with or without dashes and spaces. Stored: the SHA-256 of the 12 digits in upper case (`recovery_code_hash` in `supervisor/src/auth/utils.py`), as API tokens are (ADR-0239). `GET /api/v1/auth/recovery-codes/status` answers how many are left, none while 2FA is off.
 - Turning 2FA off removes the codes in the one UPDATE that turns it off (`disable_totp`), so codes that a generation stored after the request read the user go too; turning it on starts without any: codes of an earlier setup never sign in.
 - A refused code goes to the login history only, as a refused two-factor code does; the audit log gets the sign-ins with a code.
 - `POST /api/v1/auth/recovery-codes/verify`, a stub that answered 501, is removed (ADR-0207).
@@ -24,7 +24,7 @@ A user with two-factor authentication who lost the authenticator app could not s
 
 ## Consequences
 
-- A recovery code is a second factor beside the TOTP code: the kept practice of ADR-0032, no token before the TOTP check, becomes no token before the second factor (ADR-0233).
+- A recovery code is a second factor beside the TOTP code: the kept practice of ADR-0032, no token before the TOTP check, becomes no token before the second factor (ADR-0239).
 - A user who lost the authenticator app signs in with recovery codes and can generate new ones, but turning 2FA off still needs a code of the app.
 - Codes generated before this change were hashed with their dashes and no longer match: generate new ones.
 - The 48 bits stand against guessing online, because the password comes first and sign-ins are limited per client (ADR-0010). Offline, a copy of the database defeats 2FA without the codes: `users.totp_secret` is stored as it is. If TOTP secrets are ever encrypted at rest, the code hashes need a key or a slow hash too.

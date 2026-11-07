@@ -207,7 +207,7 @@ async def login(
         )
 
     # Check if 2FA is enabled. A recovery code takes the place of a code of the
-    # authenticator app, and each one signs in once (ADR-0232).
+    # authenticator app, and each one signs in once (ADR-0238).
     used_recovery_code = False
     if user.totp_enabled and login_request.recovery_code:
         if not await _use_recovery_code(db, user.id, login_request.recovery_code):
@@ -343,7 +343,7 @@ async def enable_totp(
         )
 
     current_user.totp_enabled = True
-    # A new setup starts without recovery codes: none of an earlier one comes back (ADR-0232).
+    # A new setup starts without recovery codes: none of an earlier one comes back (ADR-0238).
     current_user.recovery_codes = None
     await db.commit()
 
@@ -368,7 +368,7 @@ async def disable_totp(
 
     # One statement writes all three columns. Assigning None to the loaded user would leave
     # recovery_codes out of the UPDATE when it was loaded as None, and then codes that a
-    # generation stored after that load would outlive 2FA: they belong to this setup (ADR-0232).
+    # generation stored after that load would outlive 2FA: they belong to this setup (ADR-0238).
     await db.execute(
         update(User)
         .where(User.id == current_user.id)
@@ -869,7 +869,7 @@ async def toggle_api_token(
     }
 
 
-# ==================== 2FA Recovery Codes (ADR-0232) ====================
+# ==================== 2FA Recovery Codes (ADR-0238) ====================
 
 RECOVERY_CODES_NEED_2FA = "2FA must be enabled before generating recovery codes"
 

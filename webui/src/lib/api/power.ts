@@ -19,10 +19,30 @@ export interface PowerConfig {
   idle_timeout_minutes: number;
 }
 
+/** An Ethernet interface of the host and its Wake-on-LAN state (ADR-0233). */
 export interface WolInterface {
   name: string;
+  mac_address: string | null;
+  /** Whether a magic packet can wake the host through it. */
+  supported: boolean;
+  /** ethtool's "Wake-on" letters: "d" is off, "" when ethtool shows none. */
   wol: string;
+  /** Whether a magic packet wakes the host. */
   enabled: boolean;
+}
+
+/** The reboot or shutdown pending on the host; both null when there is none. */
+export interface PendingAction {
+  action: "reboot" | "shutdown" | null;
+  at: string | null;
+}
+
+/** The answer to a reboot, shutdown, cancel or suspend. */
+export interface PowerAnswer {
+  status: "scheduled" | "cancelled" | "none" | "suspending";
+  message: string;
+  /** What is pending afterwards; null after a suspend. */
+  pending: PendingAction | null;
 }
 
 export async function getPowerStatus(): Promise<PowerStatus> {
@@ -37,30 +57,34 @@ export async function updatePowerConfig(config: PowerConfig): Promise<PowerConfi
   return api.put<PowerConfig>("/power/config", config);
 }
 
-export async function rebootSystem(): Promise<void> {
-  return api.post("/power/reboot");
+export async function getPendingAction(): Promise<PendingAction> {
+  return api.get<PendingAction>("/power/pending");
 }
 
-export async function shutdownSystem(): Promise<void> {
-  return api.post("/power/shutdown");
+export async function rebootSystem(): Promise<PowerAnswer> {
+  return api.post<PowerAnswer>("/power/reboot");
 }
 
-export async function cancelShutdown(): Promise<void> {
-  return api.post("/power/cancel");
+export async function shutdownSystem(): Promise<PowerAnswer> {
+  return api.post<PowerAnswer>("/power/shutdown");
 }
 
-export async function suspendSystem(): Promise<void> {
-  return api.post("/power/suspend");
+export async function cancelShutdown(): Promise<PowerAnswer> {
+  return api.post<PowerAnswer>("/power/cancel");
+}
+
+export async function suspendSystem(): Promise<PowerAnswer> {
+  return api.post<PowerAnswer>("/power/suspend");
 }
 
 export async function getWolStatus(): Promise<{ interfaces: WolInterface[] }> {
   return api.get<{ interfaces: WolInterface[] }>("/power/wol");
 }
 
-export async function enableWol(iface: string): Promise<void> {
-  return api.post(`/power/wol/${iface}/enable`);
+export async function enableWol(iface: string): Promise<WolInterface> {
+  return api.post<WolInterface>(`/power/wol/${encodeURIComponent(iface)}/enable`);
 }
 
-export async function disableWol(iface: string): Promise<void> {
-  return api.post(`/power/wol/${iface}/disable`);
+export async function disableWol(iface: string): Promise<WolInterface> {
+  return api.post<WolInterface>(`/power/wol/${encodeURIComponent(iface)}/disable`);
 }
