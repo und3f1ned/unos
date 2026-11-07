@@ -143,7 +143,7 @@ export const MAX_QUOTA_GIB = Math.floor(Number.MAX_SAFE_INTEGER / GIB);
 /**
  * VolumeCreate.quota in bytes for a quota typed in GiB ("10", "0.5"), or null
  * when the text is not one: digits with an optional decimal point, more than 0
- * and at most MAX_QUOTA_GIB (ADR-0232). Read from the text alone, so that "1e3",
+ * and at most MAX_QUOTA_GIB (ADR-0234). Read from the text alone, so that "1e3",
  * "1,5" or "10 GB" are refused instead of being taken for another number.
  */
 export function quotaBytes(gib: string): number | null {

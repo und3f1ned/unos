@@ -377,8 +377,15 @@ test.describe('Storage volumes (fake data)', () => {
     await expect(items.first()).toContainText('/mnt/pools/e2e_media/documents');
     await expect(dialog.getByText('Mounted read-only')).toHaveCount(0);
     // btrfs snapshots are not recursive, and scheduled snapshot tasks only take
-    // pools: files put in a volume leave the pool's snapshots (ADR-0232).
-    await expect(dialog.getByText('Snapshots of the pool do not include the files in its volumes.')).toBeVisible();
+    // pools: files put in a volume leave the pool's snapshots. Said as what to do:
+    // a volume has no snapshot until one is made (ADR-0234).
+    await expect(
+      dialog.getByText(
+        'Snapshots of the pool do not include the files in its volumes: take snapshots of each volume as well, ' +
+          'on the Snapshots page. Scheduled snapshot tasks take pools only.',
+      ),
+    ).toBeVisible();
+    await expect(dialog.getByText(/snapshots of its own/)).toHaveCount(0);
     await expect(dialog.getByText(/snapshotted/)).toHaveCount(0);
 
     // Names the API would refuse are not sent.

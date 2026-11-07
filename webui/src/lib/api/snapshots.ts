@@ -11,18 +11,21 @@ export interface SnapshotInfo {
   created: string;
 }
 
-/** A mounted pool, or one of its volumes, that snapshots can be made of (ADR-0232). */
+/** A mounted pool, or one of its volumes, that snapshots can be made of (ADR-0234). */
 export interface Subvolume {
   /** The pool's mountpoint, or the volume's folder in it. */
   path: string;
   pool: string;
   /** The volume's name; null for the pool itself. */
   volume: string | null;
+  /** For a pool: why its volumes are missing, when they could not be read; null otherwise. */
+  volumes_error: string | null;
 }
 
 /**
  * Each pool mounted at its mountpoint, followed by its volumes. HTTP 500 with
- * the reason when the host's pools or volumes cannot be read.
+ * the reason when the host's mounts or pools cannot be read; a pool whose
+ * volumes cannot be read comes alone, with the reason in volumes_error.
  */
 export async function getSubvolumes(): Promise<Subvolume[]> {
   return api.get<Subvolume[]>("/snapshots/subvolumes");
@@ -33,7 +36,7 @@ export async function getSnapshots(subvolume: string): Promise<SnapshotInfo[]> {
   return api.get<SnapshotInfo[]>(`/snapshots/?subvolume=${encodeURIComponent(subvolume)}`);
 }
 
-/** A read-only snapshot of a pool or volume; without a name the server makes one (snap_<date>_<time>). */
+/** A read-only snapshot of a pool or volume; without a name the server makes one (snap_<date>_<time>, in UTC). */
 export async function createSnapshot(subvolume: string, name?: string): Promise<SnapshotInfo> {
   return api.post<SnapshotInfo>("/snapshots/", { subvolume, name });
 }
@@ -43,8 +46,8 @@ export async function deleteSnapshot(snapshotId: string, subvolume: string): Pro
 }
 
 /**
- * A writable copy of the snapshot, `restore_<date>_<time>`, in the folder it
- * was made of (or in targetPath); nothing is overwritten.
+ * A writable copy of the snapshot, `restore_<date>_<time>` (in UTC), in the
+ * folder it was made of (or in targetPath); nothing is overwritten.
  */
 export async function restoreSnapshot(
   snapshotPath: string,

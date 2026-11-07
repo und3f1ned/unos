@@ -12,7 +12,7 @@
 	import { Archive, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
 	import { Button, Card, Modal, Alert, Input, Select, EmptyState } from '$lib/components/ui';
 
-	// The mounted pools and their volumes (ADR-0232), and the one whose snapshots are listed.
+	// The mounted pools and their volumes (ADR-0234), and the one whose snapshots are listed.
 	let subvolumes: Subvolume[] = [];
 	let subvolumesLoading = true;
 	let subvolumesError = '';
@@ -41,6 +41,8 @@
 	let deleteError = '';
 
 	$: options = subvolumes.map((sv) => ({ value: sv.path, label: label(sv) }));
+	// Pools offered without their volumes, which could not be read (a disk that dropped off, say).
+	$: unreadVolumes = subvolumes.filter((sv) => sv.volumes_error);
 	$: selected = subvolumes.find((sv) => sv.path === selectedPath) ?? null;
 	$: busy = subvolumesLoading || snapshotsLoading;
 	// The pool or volume that a restore makes its copy in.
@@ -129,7 +131,7 @@
 		creating = true;
 		createError = '';
 		try {
-			// Without a name the server makes one (snap_<date>_<time>).
+			// Without a name the server makes one (snap_<date>_<time>, in UTC).
 			await createSnapshot(selected.path, newSnapshotName.trim() || undefined);
 			creating = false;
 			showCreate = false;
@@ -222,6 +224,11 @@
 				on:change={(e) => choose(e.detail.value)}
 				class="max-w-md"
 			/>
+			{#each unreadVolumes as sv (sv.path)}
+				<Alert variant="warning" title="The volumes of {sv.pool} could not be read" class="mt-4">
+					{sv.volumes_error} The pool itself is offered; its volumes are missing from the list.
+				</Alert>
+			{/each}
 		</Card>
 	{:else if subvolumesLoading}
 		<p class="loading-text">Loading...</p>
@@ -303,8 +310,11 @@
 			<span class="mono-xs">.snapshots</span> folder. btrfs makes it at once and then stores only
 			what changes. A snapshot of a pool does not include the files in its volumes: take
 			snapshots of each volume as well. Restoring makes a writable copy next to the original and
-			overwrites nothing. Scheduled snapshots (System, Scheduler) are made of pools and are named
-			<span class="mono-xs">auto_&lt;date&gt;_&lt;time&gt;</span>.
+			overwrites nothing. Scheduled snapshots (System, Scheduler) are made of pools only and are
+			named <span class="mono-xs">auto_&lt;date&gt;_&lt;time&gt;</span>. The date and time in the
+			names that UNOS gives, <span class="mono-xs">snap_</span>,
+			<span class="mono-xs">restore_</span> and <span class="mono-xs">auto_</span>, are in UTC;
+			Created shows the time in your browser's time zone.
 		</p>
 	</Card>
 </div>
@@ -316,13 +326,14 @@
 				A read-only snapshot of <span class="mono-xs break-all">{selected.path}</span>, kept in
 				<span class="mono-xs break-all">{selected.path}/.snapshots</span>.
 				{#if !selected.volume}
-					It does not include the files in the pool's volumes: they have snapshots of their own.
+					It does not include the files in the pool's volumes: take snapshots of each volume as
+					well. Scheduled snapshot tasks take pools only.
 				{/if}
 			</p>
 			<Input
 				label="Snapshot name (optional)"
 				bind:value={newSnapshotName}
-				placeholder="Made from the date and time when empty"
+				placeholder="Made from the date and time in UTC when empty"
 				autocomplete="off"
 				disabled={creating}
 			/>
@@ -345,7 +356,8 @@
 		<div class="space-y-4">
 			<p class="text-sm">
 				Restore snapshot <span class="font-semibold break-all">{snapshotToRestore.name}</span>? A
-				writable copy of it, <span class="mono-xs">restore_&lt;date&gt;_&lt;time&gt;</span>, is made in
+				writable copy of it, <span class="mono-xs">restore_&lt;date&gt;_&lt;time&gt;</span> with the
+				date and time in UTC, is made in
 				<span class="mono-xs break-all">{snapshotToRestore.subvolume}</span>. Nothing is overwritten.
 			</p>
 			{#if restoreInto && !restoreInto.volume}

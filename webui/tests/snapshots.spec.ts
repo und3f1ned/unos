@@ -79,11 +79,12 @@ interface SnapshotRequest {
   body: unknown;
 }
 
-// GET /snapshots/subvolumes: each mounted pool, then its volumes.
-const DATA = { path: '/mnt/pools/e2e_data', pool: 'e2e_data', volume: null };
-const DOCUMENTS = { path: '/mnt/pools/e2e_data/documents', pool: 'e2e_data', volume: 'documents' };
-const PHOTOS = { path: '/mnt/pools/e2e_data/photos', pool: 'e2e_data', volume: 'photos' };
-const MEDIA = { path: '/mnt/pools/e2e_media', pool: 'e2e_media', volume: null };
+// GET /snapshots/subvolumes: each mounted pool, then its volumes; volumes_error
+// says why a pool's volumes are missing (ADR-0234).
+const DATA = { path: '/mnt/pools/e2e_data', pool: 'e2e_data', volume: null, volumes_error: null };
+const DOCUMENTS = { path: '/mnt/pools/e2e_data/documents', pool: 'e2e_data', volume: 'documents', volumes_error: null };
+const PHOTOS = { path: '/mnt/pools/e2e_data/photos', pool: 'e2e_data', volume: 'photos', volumes_error: null };
+const MEDIA = { path: '/mnt/pools/e2e_media', pool: 'e2e_media', volume: null, volumes_error: null };
 const SUBVOLUMES = [DATA, DOCUMENTS, PHOTOS, MEDIA];
 
 // What the server answers for a new snapshot and a restore: the times are UTC, with their offset.
@@ -210,7 +211,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(rows(page).nth(2)).toContainText('auto_20261106_020000');
     await expect(rows(page).nth(2)).toContainText('11/6/2026, 5:00:00 AM');
     await expect(row(page, 'before-edit')).toHaveCount(0);
-    // No size: measuring a snapshot walked all its files (ADR-0232).
+    // No size: measuring a snapshot walked all its files (ADR-0234).
     await expect(page.getByRole('columnheader')).toHaveText(['Name', 'Created', 'Actions']);
 
     await picker(page).click();
@@ -232,8 +233,39 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await choose(page, 'e2e_data/photos (Volume)');
     await expect(page.getByText('No snapshots yet')).toBeVisible();
+    // The names say UTC, the list the browser's time (ADR-0234).
+    await expect(page.getByText('names that UNOS gives, snap_, restore_ and auto_, are in UTC')).toBeVisible();
+    await expect(page.locator('.alert').filter({ hasText: 'could not be read' })).toHaveCount(0);
     expect(writes(requests)).toEqual([]);
     expect(dialogs).toEqual([]);
+  });
+
+  test('a pool whose volumes cannot be read is offered alone, and the page says why', async ({
+    authenticatedPage: page,
+  }) => {
+    const detail =
+      "Listing the subvolumes of /mnt/pools/e2e_media failed: ERROR: can't perform the search: Input/output error";
+    const requests = await fakeSnapshotsApi(page, {
+      subvolumes: [DATA, DOCUMENTS, PHOTOS, { ...MEDIA, volumes_error: detail }],
+      snapshots: [snapshot(MEDIA.path, 'nightly', '2026-11-07T02:00:00+00:00')],
+    });
+    await page.goto('/snapshots');
+
+    const warning = page.locator('.alert').filter({ hasText: 'The volumes of e2e_media could not be read' });
+    await expect(warning).toContainText(detail);
+    await expect(page.locator('.alert').filter({ hasText: 'could not be read' })).toHaveCount(1);
+    // The other pool keeps its volumes, and the pool itself can still be chosen.
+    await picker(page).click();
+    await expect(page.getByRole('option')).toHaveText([
+      'e2e_data (Pool)',
+      'e2e_data/documents (Volume)',
+      'e2e_data/photos (Volume)',
+      'e2e_media (Pool)',
+    ]);
+    await page.getByRole('option', { name: 'e2e_media (Pool)' }).click();
+    await expect(row(page, 'nightly')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create Snapshot' })).toBeEnabled();
+    expect(writes(requests)).toEqual([]);
   });
 
   test('create a snapshot of a volume: it is listed with its time', async ({ authenticatedPage: page }) => {
@@ -246,6 +278,10 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await page.getByRole('button', { name: 'Create Snapshot' }).click();
     const dialog = page.getByRole('dialog', { name: 'Create Snapshot' });
     await expect(dialog).toContainText('/mnt/pools/e2e_data/documents');
+    await expect(dialog.getByLabel('Snapshot name (optional)')).toHaveAttribute(
+      'placeholder',
+      'Made from the date and time in UTC when empty',
+    );
     await dialog.getByLabel('Snapshot name (optional)').fill('before-upgrade');
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
 
@@ -272,8 +308,15 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await page.getByRole('button', { name: 'Create Snapshot' }).click();
     const dialog = page.getByRole('dialog', { name: 'Create Snapshot' });
-    // btrfs snapshots stop at subvolumes: a pool's snapshot leaves out its volumes.
-    await expect(dialog.getByText(/does not include the files in the pool's volumes/)).toBeVisible();
+    // btrfs snapshots stop at subvolumes: a pool's snapshot leaves out its volumes,
+    // which get none until one is made of each (ADR-0234).
+    await expect(
+      dialog.getByText(
+        "It does not include the files in the pool's volumes: take snapshots of each volume as well. " +
+          'Scheduled snapshot tasks take pools only.',
+      ),
+    ).toBeVisible();
+    await expect(dialog.getByText(/snapshots of their own/)).toHaveCount(0);
     await dialog.getByLabel('Snapshot name (optional)').fill('nightly');
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
 
@@ -293,7 +336,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await page.getByRole('button', { name: 'Restore snapshot before-edit' }).click();
     const dialog = page.getByRole('dialog', { name: 'Restore Snapshot' });
-    await expect(dialog).toContainText('restore_<date>_<time>');
+    await expect(dialog).toContainText('restore_<date>_<time> with the date and time in UTC');
     await expect(dialog).toContainText('/mnt/pools/e2e_data/documents');
     await expect(dialog).toContainText('Nothing is overwritten.');
     // The copy of a volume's snapshot is a subvolume in the volume (storage.restore-copies-deletable).

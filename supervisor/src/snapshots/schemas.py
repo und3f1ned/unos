@@ -7,7 +7,7 @@ class SnapshotInfo(BaseModel):
     subvolume: str
     path: str
     # In UTC, with its offset ("2025-01-24T12:49:31+00:00"); as btrfs prints it
-    # when that cannot be read. No size: du walked every file of the snapshot (ADR-0232).
+    # when that cannot be read. No size: du walked every file of the snapshot (ADR-0234).
     created: str
 
 
@@ -18,6 +18,9 @@ class SnapshotSubvolume(BaseModel):
     pool: str
     # The volume's name; None for the pool itself.
     volume: str | None = None
+    # For a pool: why its volumes are not offered, when they could not be read
+    # (btrfs failed on the pool or did not answer, ADR-0234); None otherwise.
+    volumes_error: str | None = None
 
 
 class SnapshotCreate(BaseModel):
