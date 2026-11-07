@@ -160,6 +160,30 @@ function countRenames(page: Page): () => number {
   return () => sent;
 }
 
+/**
+ * What Chromium does when the user switches to another app or tab and back: the focused element
+ * stays the page's active element, document.hasFocus() is false until the return, the element and
+ * the window get a blur, and on the return a focus. The headless browser of the specs never loses
+ * the focus itself: neither another page in front, nor turning off its focus emulation, nor a
+ * minimized window blurs the page.
+ */
+async function leaveTheWindowAndReturn(page: Page) {
+  await page.evaluate(() => {
+    const element = document.activeElement;
+    Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false });
+    element?.dispatchEvent(new FocusEvent('blur'));
+    element?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    window.dispatchEvent(new FocusEvent('blur'));
+  });
+  await page.evaluate(() => {
+    Reflect.deleteProperty(document, 'hasFocus');
+    window.dispatchEvent(new FocusEvent('focus'));
+    const element = document.activeElement;
+    element?.dispatchEvent(new FocusEvent('focus'));
+    element?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+  });
+}
+
 const NO_POOL_FOLDER = 'No folder of the pools directory takes a new folder: the target has no pool to work in';
 
 test.describe('File Browser operations', () => {
@@ -689,6 +713,17 @@ test.describe('File Browser operations', () => {
     await expect(nameField(page, 'new.txt')).toHaveCount(0);
     await expect(row(page, 'new.txt').getByRole('checkbox')).toBeFocused();
     expect(await listNames(page, dir)).toEqual(['new.txt']);
+
+    // Shift+Tab leaves the field for the item's checkbox, and leaving the field renames the
+    // item: the focus stays on the checkbox, in the row of the new name.
+    await tabTo(page, renameButton(page), 'Shift+Tab');
+    await page.keyboard.press('Enter');
+    await expect(nameField(page, 'new.txt')).toBeFocused();
+    await page.keyboard.type('last.txt');
+    await page.keyboard.press('Shift+Tab');
+    await expect(row(page, 'last.txt')).toBeVisible();
+    await expect(row(page, 'last.txt').getByRole('checkbox')).toBeFocused();
+    expect(await listNames(page, dir)).toEqual(['last.txt']);
   });
 
   test('leaving the name field renames the item, and a double-click in it opens nothing', async ({
@@ -794,6 +829,115 @@ test.describe('File Browser operations', () => {
     expect((await requestSent).postDataJSON()).toEqual([`${dir}/box/x.txt`]);
     await expect(row(page, 'x.txt')).toBeVisible();
     expect(await listNames(page, dest)).toEqual(['x.txt']);
+  });
+
+  test('the toolbar and Copy here wait while a rename is on its way', async ({ authenticatedPage: page }) => {
+    const dir = scratch!.path;
+    await putFile(page, dir, 'draft.txt', Buffer.from('draft'));
+    const sub = await makeFolder(page, dir, 'sub');
+    await putFile(page, sub, 'x.txt', Buffer.from('x'));
+    await openScratch(page);
+    // x.txt waits for Copy here.
+    await openFolder(page, 'sub');
+    await row(page, 'x.txt').getByRole('checkbox').check();
+    await selectionBar(page).getByRole('button', { name: 'Copy', exact: true }).click();
+    await page.getByTitle('Up one folder').click();
+    await expect(row(page, 'draft.txt')).toBeVisible();
+    // The server renames; its answer waits until release().
+    let arrived!: () => void;
+    const held = new Promise<void>((resolve) => (arrived = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === '/api/v1/files/rename',
+      async (route) => {
+        const response = await route.fetch();
+        arrived();
+        await released;
+        await route.fulfill({ response });
+      },
+    );
+    const dialogs: string[] = [];
+    page.on('dialog', (dialog) => {
+      dialogs.push(dialog.message());
+      void dialog.accept();
+    });
+    const deleteButton = selectionBar(page).getByRole('button', { name: 'Delete', exact: true });
+
+    await row(page, 'draft.txt').getByRole('checkbox').check();
+    await renameButton(page).click();
+    await nameField(page, 'draft.txt').fill('final.txt');
+    // The click on Delete leaves the field, which sends the rename. Delete waits for it, instead
+    // of deleting draft.txt, which is no longer there.
+    await deleteButton.click();
+    await held;
+    expect(dialogs).toEqual([]);
+    for (const name of ['Download', 'Copy', 'Move', 'Rename', 'Delete']) {
+      await expect(selectionBar(page).getByRole('button', { name, exact: true })).toBeDisabled();
+    }
+    await expect(page.getByRole('button', { name: 'Copy here' })).toBeDisabled();
+
+    release();
+    await expect(row(page, 'final.txt')).toBeVisible();
+    await expect(row(page, 'final.txt').getByRole('checkbox')).toBeChecked();
+    await expect(page.getByRole('button', { name: 'Copy here' })).toBeEnabled();
+    // Now Delete deletes the item under its new name.
+    await deleteButton.click();
+    await expect(row(page, 'final.txt')).toHaveCount(0);
+    expect(dialogs).toEqual(['Delete 1 item(s)?']);
+    expect(await listNames(page, dir)).toEqual(['sub']);
+  });
+
+  test('switching to another window or tab keeps the name field open, as typed', async ({
+    authenticatedPage: page,
+  }) => {
+    const dir = scratch!.path;
+    await putFile(page, dir, 'report.docx', Buffer.from('report'));
+    await openScratch(page);
+    const renames = countRenames(page);
+    await row(page, 'report.docx').getByRole('checkbox').check();
+    await renameButton(page).click();
+    const field = nameField(page, 'report.docx');
+    await field.fill('report-fi');
+
+    // The user switches to another app to look up the rest of the name, and comes back.
+    await leaveTheWindowAndReturn(page);
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue('report-fi');
+    await field.press('End');
+    await page.keyboard.type('nal.docx');
+    await field.press('Enter');
+    await expect(row(page, 'report-final.docx')).toBeVisible();
+    expect(renames()).toBe(1);
+    expect(await listNames(page, dir)).toEqual(['report-final.docx']);
+  });
+
+  test('spaces at the ends of the new name are dropped', async ({ authenticatedPage: page }) => {
+    const dir = scratch!.path;
+    await putFile(page, dir, 'draft.txt', Buffer.from('draft'));
+    await makeFolder(page, dir, ' notes');
+    await openScratch(page);
+    const renames = countRenames(page);
+    const heading = page.getByRole('heading', { name: 'File Browser', level: 1 });
+
+    // An item whose own name has a space at its start keeps it while its field is left unchanged.
+    await row(page, ' notes').getByRole('checkbox').check();
+    await renameButton(page).click();
+    await expect(nameField(page, ' notes')).toHaveValue(' notes');
+    await heading.click();
+    await expect(nameField(page, ' notes')).toHaveCount(0);
+    expect(renames()).toBe(0);
+    await row(page, ' notes').getByRole('checkbox').uncheck();
+
+    await row(page, 'draft.txt').getByRole('checkbox').check();
+    await renameButton(page).click();
+    const requestSent = page.waitForRequest(isApi('/files/rename'));
+    await nameField(page, 'draft.txt').fill('  final.txt  ');
+    await nameField(page, 'draft.txt').press('Enter');
+    expect((await requestSent).postDataJSON()).toEqual({ path: `${dir}/draft.txt`, new_name: 'final.txt' });
+    await expect(row(page, 'final.txt')).toBeVisible();
+    expect(renames()).toBe(1);
+    expect(await listNames(page, dir)).toEqual([' notes', 'final.txt']);
   });
 
   test('an upload with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {

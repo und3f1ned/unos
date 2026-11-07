@@ -341,11 +341,14 @@ in your storage pools from the web interface. It starts in the pools directory
   item with the same name is already there, nothing is copied or moved.
 - **Rename** - Select one item and click **Rename**: its name becomes a field
   with the name selected. Type the new name, then press Enter or click
-  elsewhere; Escape keeps the old name. A name that is already used in the
-  folder is refused, and so are `.`, `..`, names with `/` or control
-  characters, and names longer than 255 bytes: the message says why, and the
-  field stays open for another name. Spaces at the start and the end of the
-  name are dropped. The item stays selected under its new name.
+  elsewhere; Escape keeps the old name. Switching to another window or tab
+  keeps the field as it is. A name that is already used in the folder is
+  refused, and so are `.`, `..`, names with `/` or control characters, and
+  names longer than 255 bytes: the message says why, and the field stays open
+  for another name. Spaces at the start and the end of the name are dropped.
+  The item stays selected under its new name. Until the list shows the new
+  name, the buttons for the selected items and **Copy here** or **Move here**
+  wait.
 - **Delete** - Select the items, click **Delete** and confirm. Folders are
   deleted with everything in them.
 - **Upload** - Click the upload arrow at the top right and choose one or more
@@ -358,7 +361,8 @@ in your storage pools from the web interface. It starts in the pools directory
   button: Tab to it, then press Enter or Space to open the folder or download
   the file. After a folder opens, the focus is on **..**. The checkbox selects
   the item. After a rename, or Escape in the name field, the focus is on the
-  item's checkbox. Screen readers announce error messages.
+  item's checkbox, unless Tab or a click took it to another control. Screen
+  readers announce error messages.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
