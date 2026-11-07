@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
 # storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
-# and the shadow tools, smbpasswd, pdbedit, smbstatus) and health/router.py.
+# and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
+# power/router.py (shutdown, busctl, systemctl, ip, ethtool: ADR-0233).
 # cat, test, mkdir, rmdir, find, sync and sh also run there but come from
 # essential packages.
 HOST_TOOLS: dict[str, str] = {
@@ -54,6 +55,10 @@ HOST_TOOLS: dict[str, str] = {
     "smbpasswd": "samba-common-bin",
     "pdbedit": "samba",
     "smbstatus": "samba",
+    "shutdown": "systemd-sysv",
+    "busctl": "systemd",
+    "ip": "iproute2",
+    "ethtool": "ethtool",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.
@@ -93,8 +98,19 @@ class HostResult:
         return self.returncode == 0
 
 
+def runs_locally() -> bool:
+    """Whether commands run directly, not in the host's namespaces (``UNOS_HOST_EXEC=local``).
+
+    "The host" is then the machine or container the supervisor itself runs
+    on: the local stand-in on a workstation (scripts/standin/), or the
+    unprivileged supervisor of the compose test stack. Callers that must
+    never act on such a machine, such as the power actions, check it first.
+    """
+    return os.environ.get("UNOS_HOST_EXEC", "").lower() == "local"
+
+
 def _prefix() -> list[str]:
-    if os.environ.get("UNOS_HOST_EXEC", "").lower() == "local":
+    if runs_locally():
         return []
     return list(_NSENTER_PREFIX)
 

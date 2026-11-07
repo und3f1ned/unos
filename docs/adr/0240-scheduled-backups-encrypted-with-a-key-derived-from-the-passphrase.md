@@ -5,7 +5,7 @@ area: backup
 decided-by: agent
 ---
 
-# ADR-0232: Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own
+# ADR-0240: Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own
 
 ## Context
 

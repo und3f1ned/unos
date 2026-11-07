@@ -16,7 +16,7 @@ Do not expose task creation or editing to regular users. Task targets (pool
 names, disks) are validated when a task is saved and again before it runs,
 because the tasks file may predate validation or have been edited by hand.
 
-Backup tasks encrypt their backups (ADR-0232). Their passphrase is never
+Backup tasks encrypt their backups (ADR-0240). Their passphrase is never
 stored: BACKUP_KEYS_FILE (0600) keeps the key derived from it, apart from
 TASKS_FILE, which the API returns and every scheduled backup contains.
 """
@@ -613,7 +613,7 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             return True, "SMART test started"
 
         elif task.task_type == TaskType.BACKUP:
-            # Encrypted with the key of the task (ADR-0232); never unencrypted.
+            # Encrypted with the key of the task (ADR-0240); never unencrypted.
             key = load_backup_keys().get(task.id or "")
             if key is None:
                 return False, NO_BACKUP_KEY

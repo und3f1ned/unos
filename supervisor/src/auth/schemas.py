@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from ..shares.account_state import SmbAccountStatus
 
@@ -61,6 +61,14 @@ class LoginRequest(BaseModel):
     username: str = Field(max_length=255)
     password: str = Field(max_length=1024)
     totp_code: str | None = Field(default=None, max_length=16)
+    # In place of totp_code: XXXX-XXXX-XXXX, in any case, with or without dashes and spaces (ADR-0238).
+    recovery_code: str | None = Field(default=None, max_length=32)
+
+    @model_validator(mode="after")
+    def _one_second_factor(self) -> "LoginRequest":
+        if self.totp_code and self.recovery_code:
+            raise ValueError("Send a two-factor code or a recovery code, not both")
+        return self
 
 
 class PasswordChange(BaseModel):
@@ -160,10 +168,11 @@ class APITokenCreated(BaseModel):
     expires_at: datetime | None = None
 
 
-# 2FA Recovery codes
+# 2FA recovery codes (ADR-0238)
 class RecoveryCodesResponse(BaseModel):
-    codes: list[str]  # Plain codes - only shown once when generated
+    codes: list[str]  # the new codes, answered only this once: the database keeps their hashes
 
 
-class RecoveryCodeVerify(BaseModel):
-    code: str
+class RecoveryCodesStatus(BaseModel):
+    remaining: int    # codes not used yet; 0 while 2FA is off
+    generated: bool   # codes were generated for the current two-factor setup (also when all are used)

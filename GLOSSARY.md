@@ -49,6 +49,14 @@ Avoid: subvolume (snapshots are subvolumes too), dataset.
 **Snapshot**: A read-only btrfs snapshot of a pool or a volume. Restoring one makes a writable copy
 and overwrites nothing (ADR-0011). Avoid: backup.
 
+**SMART history**: The sector and error counters of each disk that the SMART monitor records every
+hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0235). Avoid: SMART
+log (smartctl's own self-test and error logs).
+
+**Replace soon**: The mark of a connected disk whose failure prediction, a score of the rises in
+its SMART history, reaches 50; Disk Health and the dashboard show it with its reasons (ADR-0235).
+Avoid: failing (the disk's own SMART health check), degraded (a pool's health).
+
 ## Shares and SMB
 
 **Share**: An SMB share: a folder inside a managed pool, or a volume, that Samba serves with
@@ -111,7 +119,11 @@ accounts; UNOS leaves every other one alone (ADR-0108). Avoid: user.
 it expires (ADR-0009, ADR-0028). Avoid: cookie, API token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
-once (ADR-0032). Avoid: session token, API key.
+once (ADR-0239). Avoid: session token, API key.
+
+**Recovery code**: One of the ten codes that a user with two-factor authentication generates on the
+Account page and keeps; each one signs in once in place of a code of the authenticator app
+(ADR-0238). Avoid: backup code.
 
 ## Apps and backups
 
@@ -126,7 +138,7 @@ one or more containers. Avoid: app.
 
 **Scheduled backup**: A backup that a backup task of the Scheduler makes,
 `auto_backup_<date>_<time>.tar.gz.enc`, always encrypted with the task's passphrase, of which the
-device keeps only a derived key (ADR-0232). Avoid: auto backup.
+device keeps only a derived key (ADR-0240). Avoid: auto backup.
 
 **Restore**: Replacing the live database with a backup's after the archive and the database are
 checked (ADR-0040, ADR-0144). Restoring a snapshot is another action: it makes a copy.

@@ -28,6 +28,7 @@ or a bind mount, cannot be deleted, or moved to another pool or volume
 """
 
 import asyncio
+import ctypes
 import errno
 import grp
 import logging
@@ -37,7 +38,8 @@ import re
 import secrets
 import shutil
 import stat
-from collections.abc import Iterator
+import sys
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from typing import BinaryIO
 from urllib.parse import quote
@@ -679,6 +681,57 @@ def _create_directory(path: str, name: str) -> FileInfo:
     return get_file_info(name, _display_path([*parts, name]), st)
 
 
+def _c_exclusive_rename() -> Callable[[int, str, str], None] | None:
+    """The C library's rename that fails with EEXIST instead of replacing an entry; None if it has none.
+
+    renameat2 with RENAME_NOREPLACE on Linux (glibc 2.28 and later), and
+    renameatx_np with RENAME_EXCL on macOS, where the stand-in runs. The
+    function takes a directory descriptor, a name in it and its new name,
+    and raises OSError.
+    """
+    try:
+        name, flag = {"linux": ("renameat2", 0x1), "darwin": ("renameatx_np", 0x4)}[sys.platform]
+        function = getattr(ctypes.CDLL(None, use_errno=True), name)
+    except (KeyError, OSError, AttributeError):
+        return None
+    function.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    function.restype = ctypes.c_int
+
+    def exclusive_rename(dir_fd: int, old: str, new: str) -> None:
+        if function(dir_fd, os.fsencode(old), dir_fd, os.fsencode(new), flag) != 0:
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code))
+
+    return exclusive_rename
+
+
+# Module level so tests can replace it.
+_EXCLUSIVE_RENAME = _c_exclusive_rename()
+# What it answers where the filesystem cannot rename that way (EINVAL: NFS,
+# FUSE filesystems without it), or the kernel has no renameat2.
+_NO_EXCLUSIVE_RENAME = frozenset({errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP})
+
+
+def _rename_exclusive(dir_fd: int, name: str, new_name: str) -> None:
+    """Rename ``name`` to ``new_name`` in the directory ``dir_fd``; FileExistsError if ``new_name`` exists.
+
+    rename(2) replaces an entry that has the new name, and between a look for
+    it and the rename an SMB user or an app can create one: the C library's
+    exclusive rename refuses it in the same step (ADR-0232). Where there is
+    none, or the filesystem cannot, the name is looked for first.
+    """
+    if _EXCLUSIVE_RENAME is not None:
+        try:
+            _EXCLUSIVE_RENAME(dir_fd, name, new_name)
+            return
+        except OSError as exc:
+            if exc.errno not in _NO_EXCLUSIVE_RENAME:
+                raise
+    if _lstat_at(dir_fd, new_name) is not None:
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST))
+    os.rename(name, new_name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+
+
 def _rename(path: str, new_name: str) -> FileInfo:
     parts = _split(path)
     new_name = _validate_name(new_name)
@@ -689,9 +742,11 @@ def _rename(path: str, new_name: str) -> FileInfo:
         if st is None:
             raise HTTPException(404, f"Not found: {path}")
         _refuse_separate_filesystem(dir_fd, st, parts, "renamed")
-        if new_name != parts[-1] and _lstat_at(dir_fd, new_name) is not None:
-            raise HTTPException(400, f"Already exists: {new_name}")
-        os.rename(parts[-1], new_name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        if new_name != parts[-1]:
+            try:
+                _rename_exclusive(dir_fd, parts[-1], new_name)
+            except FileExistsError:
+                raise HTTPException(400, f"Already exists: {new_name}") from None
         st = os.stat(new_name, dir_fd=dir_fd, follow_symlinks=False)
     finally:
         os.close(dir_fd)
@@ -926,7 +981,10 @@ async def create_directory(req: CreateDirectoryRequest, _: dict = Depends(verify
 
 @router.post("/rename", response_model=FileInfo)
 async def rename_item(req: RenameRequest, _: dict = Depends(verify_token)):
-    """Rename a file or directory (a symlink is renamed, not its target)."""
+    """Rename a file or directory in its folder (a symlink is renamed, not its target).
+
+    A name that exists there is refused (400 "Already exists: <name>"), never replaced.
+    """
     return await _run(_rename, req.path, req.new_name)
 
 

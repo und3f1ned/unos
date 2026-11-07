@@ -50,7 +50,8 @@ class CurrentVersion(BaseModel):
 class UpdateCheck(BaseModel):
     """Result of checking for updates."""
     current_version: str
-    latest_version: str
+    # None when no release is published.
+    latest_version: str | None
     update_available: bool
     release_info: ReleaseInfo | None = None
     checked_at: datetime

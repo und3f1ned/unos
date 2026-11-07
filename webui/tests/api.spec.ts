@@ -432,11 +432,15 @@ test.describe('API Tests', () => {
     expect(response.ok()).toBeTruthy();
   });
 
-  test('GET /api/v1/power/wol should return WOL status', async ({ request }) => {
+  test('GET /api/v1/power/wol answers that power actions are off on a local target', async ({ request }) => {
+    // The stand-in and the test stack run their host commands on their own machine
+    // (UNOS_HOST_EXEC=local), so the power API reads and changes nothing there (ADR-0233);
+    // supervisor/tests/test_power.py checks it on a fake host.
     const response = await request.get(`${BASE_URL}/api/v1/power/wol`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    expect(response.ok()).toBeTruthy();
+    expect(response.status()).toBe(503);
+    expect((await response.json()).detail).toContain('UNOS_HOST_EXEC=local');
   });
 
   // ==================== Scheduler ====================

@@ -117,6 +117,9 @@ class HostDisk:
     path: str  # "/dev/sda"
     model: str | None
     size: int  # bytes; 0 when lsblk reports none
+    # As lsblk reports it. smartctl's can differ: behind a USB bridge lsblk may
+    # report the bridge's serial, or none.
+    serial: str | None = None
 
     @property
     def paths(self) -> frozenset[str]:
@@ -575,6 +578,7 @@ def host_disks() -> list[HostDisk]:
             path=node.get("path") or f"/dev/{node['name']}",
             model=disk_id(node.get("model")),
             size=_to_int(node.get("size")),
+            serial=disk_id(node.get("serial")),
         )
         for node in _whole_disks(_lsblk_tree())
     ]

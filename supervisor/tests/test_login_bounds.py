@@ -52,6 +52,7 @@ class TestLoginRequest:
         ("username", "a" * 256),
         ("password", "p" * 1025),
         ("totp_code", "1" * 17),
+        ("recovery_code", "1" * 33),
     ])
     def test_limits(self, world, field, value):
         body = {"username": "alice", "password": "Wrong-pass-2026", field: value}

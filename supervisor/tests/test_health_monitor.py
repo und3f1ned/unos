@@ -138,17 +138,16 @@ class TestSmartTrendAlerts:
             (5, 1, 4), (197, 0, 2),
         }
 
-    async def test_predictions_read_both_key_types(self, tmp_path, monkeypatch):
+    def test_predictions_read_both_key_types(self):
+        # The endpoint and the disks it covers: test_smart_predictions.py.
         entries = [{"timestamp": f"t{i}", "device": "/dev/sda", "attributes": {"5": 0}}
                    for i in range(23)]
         entries.append({"timestamp": "t23", "device": "/dev/sda", "attributes": {5: 40}})
-        monkeypatch.setattr(health_router, "load_smart_history", lambda: {"WD-1": entries})
 
-        result = await health_router.get_disk_predictions(_={})
+        prediction = health_router.predict_disk_failure("WD-1", entries, "/dev/sda")
 
-        [prediction] = result["predictions"]
-        assert prediction["risk_score"] >= 50
-        assert "Reallocated_Sector_Ct: 40 (was 0)" in prediction["risk_factors"]
+        assert prediction.risk_score >= 50
+        assert "Reallocated_Sector_Ct: 40 (was 0)" in prediction.risk_factors
 
 
 def _on_event_loop() -> bool:

@@ -371,7 +371,7 @@ def test_an_edit_keeps_the_result_of_a_run_that_ends_while_the_disk_is_checked(e
     )
 
 
-# --- backup tasks and their passphrase (ADR-0232) ---------------------------------------
+# --- backup tasks and their passphrase (ADR-0240) ---------------------------------------
 
 PASSPHRASE = "correct horse battery"
 NO_PASSPHRASE = "A backup task needs a passphrase: its backups are encrypted with it"
@@ -471,7 +471,7 @@ def test_the_passphrase_is_write_only(env):
 
 def test_the_task_list_says_which_backup_tasks_have_a_key(env):
     """has_backup_key: whether an edit without a passphrase keeps a key, so that the edit form asks
-    for one when it would not, as for a task made before ADR-0232 or one whose key cannot be used.
+    for one when it would not, as for a task made before ADR-0240 or one whose key cannot be used.
 
     Derived from the key file for each answer and never stored; None for the other kinds of task.
     """
