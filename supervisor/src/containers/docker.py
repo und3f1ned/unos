@@ -291,15 +291,43 @@ def pull_image(image: str) -> ImageInfo:
     )
 
 
+class ImageInUse(Exception):
+    """Containers use the image; the containers API answers 409 with the message (ADR-0248)."""
+
+
+def _in_use_message(image: str, containers: list[Container]) -> str:
+    names = sorted(c.name for c in containers)
+    if len(names) == 1:
+        return f"The image {image} is used by the container {names[0]}. Remove the container first."
+    return f"The image {image} is used by the containers {', '.join(names)}. Remove the containers first."
+
+
 def remove_image(image_id: str, force: bool = False) -> None:
-    """Remove an image."""
+    """Remove an image with all its tags.
+
+    Without force, an image that a container uses, running or stopped, is refused
+    (ImageInUse) before anything is removed. Docker deletes an image with more than
+    one tag by its ID only when forced ("image is referenced in multiple
+    repositories"), so each tag is removed on its own, without force: the last one
+    takes the image with it, and what is left of it is then removed by its ID
+    (ADR-0248). Docker's own refusals still reach the caller as docker-py errors.
+    """
     client = get_client()
     try:
-        # Get image to check if it is a system image
         img = client.images.get(image_id)
         if is_system_image(img.tags):
             raise ValueError("Cannot remove system image")
-        
-        client.images.remove(image_id, force=force)
+        if force:
+            client.images.remove(img.id, force=True)
+            return
+        users = client.containers.list(all=True, filters={"ancestor": img.id})
+        if users:
+            raise ImageInUse(_in_use_message(img.tags[0] if img.tags else img.short_id, users))
+        for tag in img.tags:
+            client.images.remove(tag, force=False)
     except NotFound:
         raise ValueError(f"Image {image_id} not found")
+    try:
+        client.images.remove(img.id, force=False)
+    except NotFound:
+        pass  # removing its last tag removed the image

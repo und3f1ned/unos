@@ -145,7 +145,8 @@ export function streamContainerLogs(id: string, handlers: ContainerLogHandlers):
     } else if (event.code === WS_CLOSE_FORBIDDEN) {
       handlers.onEnd('forbidden');
     } else {
-      // 1000: the server finished the stream, for example because the container stopped.
+      // 1000: the server finished the stream: the log ended (the container stopped) or could
+      // not be read. Any other code, 1006 of a dropped connection included, is a lost one.
       handlers.onEnd(event.code === 1000 ? 'ended' : 'lost');
     }
   };

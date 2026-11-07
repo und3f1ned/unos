@@ -108,7 +108,9 @@
 			!logView || logView.scrollHeight - logView.scrollTop - logView.clientHeight < FOLLOW_SLACK_PX;
 		let next = logs + data;
 		if (next.length > MAX_LOG_CHARS) {
-			const cut = next.indexOf('\n', next.length - MAX_LOG_CHARS);
+			// Search from the last character that must go: the first line break from there
+			// ends the last dropped line, so what follows is the most whole lines that fit.
+			const cut = next.indexOf('\n', next.length - MAX_LOG_CHARS - 1);
 			next = cut === -1 ? next.slice(-MAX_LOG_CHARS) : next.slice(cut + 1);
 		}
 		logs = next;

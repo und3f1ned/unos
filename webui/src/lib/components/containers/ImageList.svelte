@@ -6,7 +6,8 @@
 	import { formatBytes } from '$lib/stores/stats';
 
 	// The Images tab of the Containers page: the images Docker has, a pull by
-	// name and the removal of an image that no container uses (ADR-0248).
+	// name and the removal of an image that no container uses, with all its
+	// tags (ADR-0248).
 
 	let images: Image[] = [];
 	let loading = true;
@@ -75,7 +76,8 @@
 		removing = true;
 		removeError = '';
 		try {
-			// Never forced: Docker refuses an image that a container uses, with its reason.
+			// Never forced: the server refuses an image that a container uses and names the
+			// containers; Docker's own refusals come with Docker's reason.
 			await removeImage(image.id);
 			notice = `Removed ${nameOf(image)}.`;
 			imageToRemove = null;
@@ -200,8 +202,12 @@
 		<div class="space-y-4">
 			<p class="text-sm">
 				Remove the image <span class="font-semibold break-all">{nameOf(imageToRemove)}</span>
-				(<span class="mono-xs break-all">{imageToRemove.id}</span>)? Docker removes it only if no
-				container uses it. Pull it again to use it later.
+				(<span class="mono-xs break-all">{imageToRemove.id}</span>)?
+				{#if imageToRemove.tags.length > 1}
+					Its other tags go with it:
+					<span class="mono-xs break-all">{imageToRemove.tags.slice(1).join(', ')}</span>.
+				{/if}
+				An image that a container uses is not removed. Pull it again to use it later.
 			</p>
 			{#if removeError}
 				<Alert variant="error" title="The image was not removed">{removeError}</Alert>

@@ -1733,13 +1733,15 @@ class TestStopAndUninstall:
 
     def test_a_docker_error_of_the_removal_is_reported(self, api, pools, installed):
         container = installed(_stops(_jellyfin(pools, status="running")))
-        container.remove.side_effect = APIError("removal of container jellyfin is already in progress")
+        container.remove.side_effect = APIError(
+            'driver "overlay2" failed to remove root filesystem: device or resource busy'
+        )
 
         response = api.delete(UNINSTALL.format("jellyfin"))
 
         assert response.status_code == 500
         assert response.json()["detail"].startswith("Failed to remove: ")
-        assert "already in progress" in response.json()["detail"]
+        assert "device or resource busy" in response.json()["detail"]
 
     @pytest.mark.parametrize("action,method,path", APP_ACTIONS, ids=[a for a, _, _ in APP_ACTIONS])
     def test_docker_is_asked_in_a_worker_thread(self, api, pools, installed, docker_client, monkeypatch,

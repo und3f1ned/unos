@@ -21,6 +21,10 @@ JWT, disabled or expired API token, deleted user) closes the socket with
 4401; a logs socket whose user is no longer an administrator is closed with
 4403. If the check itself fails (database error), the socket is closed with
 1011 and the client reconnects through the handshake.
+
+A logs socket is closed with 1000 once the container's log ended (the
+container stopped) or could not be read, after a ``{"type": "error"}`` message
+with the reason.
 """
 import asyncio
 import functools
@@ -49,6 +53,9 @@ STATS_INTERVAL_SECONDS = 2.0
 # Lines of a container's log that its stream starts with, before the new ones
 # (the container drawer of the web UI shows them, ADR-0248).
 LOG_STREAM_TAIL_LINES = 200
+# A logs socket closes with 1000 once the log ended or could not be read; the web
+# UI shows any other end as a lost connection (ADR-0248).
+WS_CLOSE_NORMAL = 1000
 WS_CLOSE_UNAUTHORIZED = 4401
 WS_CLOSE_FORBIDDEN = 4403
 WS_CLOSE_INTERNAL_ERROR = 1011
@@ -479,7 +486,10 @@ async def _stream_container_logs(websocket: WebSocket, container_id: str, token:
     try:
         client = await run(docker.DockerClient, base_url=f"unix://{get_settings().docker_socket}")
         container = await run(client.containers.get, container_id)
-        stream = await run(container.logs, stream=True, follow=True, tail=LOG_STREAM_TAIL_LINES)
+        # Each line starts with the time Docker received it, as in GET /containers/{id}/logs.
+        stream = await run(
+            container.logs, stream=True, follow=True, tail=LOG_STREAM_TAIL_LINES, timestamps=True
+        )
 
         while True:
             next_chunk = run(next, stream, None)
@@ -496,7 +506,10 @@ async def _stream_container_logs(websocket: WebSocket, container_id: str, token:
                 return
             chunk = next_chunk.result()
             if chunk is None:
-                return  # log stream ended, e.g. the container stopped
+                # The log ended, e.g. the container stopped. Returning without a
+                # close would make uvicorn drop the connection (1006 in a browser).
+                await _close(websocket, WS_CLOSE_NORMAL, "log ended")
+                return
             await websocket.send_json({
                 "type": "log",
                 "container_id": container_id,
@@ -510,6 +523,7 @@ async def _stream_container_logs(websocket: WebSocket, container_id: str, token:
                 await websocket.send_json({"type": "error", "message": str(exc)})
             except Exception:
                 pass
+            await _close(websocket, WS_CLOSE_NORMAL, "log error")
     finally:
         _finish(disconnected)
         _finish(revoked)

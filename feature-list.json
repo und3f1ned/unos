@@ -1733,7 +1733,7 @@
       "adr": [
         "ADR-0031"
       ],
-      "notes": "Built (ADR-0248): the Images tab of the Containers page lists, pulls and removes images, never forced, and shows Docker's reason for an image that a container uses (409, ADR-0247); the drawer's Logs tab follows /ws/v1/logs/{id} with the first-message auth instead of polling the HTTP log. On the stand-in (no Docker), webui/tests/containers.spec.ts covers every step with route fakes and page.routeWebSocket. Open: the device check and the re-check after a reboot (ADR-0018). On the device: Containers lists transmission with its state and the state filter Running keeps it; Stop and Start change its state; its Logs tab shows its last lines and a new line live without a reload; Images lists lscr.io/linuxserver/transmission and alpine; Pull of a small image (an owner action, ADR-0211, with its SD writes) adds it and Remove deletes it; Remove of the transmission image is refused with Docker's reason."
+      "notes": "Built (ADR-0248): the Images tab of the Containers page lists, pulls and removes images, never forced. The server refuses an image that a container uses, running or stopped, with 409 naming the containers; otherwise it removes each tag of the image and then the rest, because Docker deletes an image with more than one tag by its ID only when forced (TestImageRemoval, against a fake that refuses as Docker's classic image store does). The drawer's Logs tab follows /ws/v1/logs/{id} with the first-message auth instead of polling the HTTP log; each line carries Docker's timestamp, and the server closes with 1000 when the log ends or cannot be read (TestTheLogSocketClosesWhenItsLogEnds, under a real uvicorn). On the stand-in (no Docker), webui/tests/containers.spec.ts covers every step with route fakes and page.routeWebSocket, with the ends of a stream (1000, 1011, 4403, 4401) and the view of the newest 500,000 characters. Open: the device check and the re-check after a reboot (ADR-0018). On the device: Containers lists transmission with its state and the state filter Running keeps it; Stop and Start change its state; its Logs tab shows its last lines with their times and a new line live without a reload, and after a Stop from the drawer says that the log stream ended; Images lists lscr.io/linuxserver/transmission and alpine; Pull of a small image (an owner action, ADR-0211, with its SD writes) adds it, a second tag of it (docker tag, an owner action) shows in its row, and Remove deletes the image with both tags; Remove of the transmission image is refused with the answer that names the transmission container."
     },
     {
       "id": "apps.container-resource-limits",
@@ -2722,7 +2722,7 @@
       "adr": [
         "ADR-0006"
       ],
-      "notes": "setInterval polling remains in ContainerDetailDrawer.svelte, LogsTab.svelte, routes/storage/+page.svelte and UpdateTab.svelte."
+      "notes": "Container details stream their log over /ws/v1/logs/{id} (ADR-0248, apps.containers-and-images), and UpdateTab.svelte no longer polls. setInterval polling of the API remains in LogsTab.svelte (Auto-refresh every 5 s) and routes/storage/+page.svelte (the scrub status)."
     },
     {
       "id": "webui.design-system-lint",

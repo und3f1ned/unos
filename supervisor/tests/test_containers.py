@@ -1,13 +1,15 @@
 import asyncio
+import contextlib
 import importlib
 import os
 import re
 import threading
 import pytest
 import requests
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 from docker.errors import APIError, NotFound
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
@@ -301,20 +303,29 @@ class TestImageOperations:
         mock_docker_client.images.pull.assert_called_once_with("nginx:latest")
 
     def test_remove_image(self, mock_docker_client):
-        """Test removing an image."""
+        """Test removing an image: no container uses it, then each tag and the rest, never forced."""
+        image = MagicMock(id="sha256:abc123".ljust(71, "0"), short_id="sha256:abc123", tags=["nginx:latest"])
+        mock_docker_client.images.get.return_value = image
+        mock_docker_client.containers.list.return_value = []
+
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             docker_module.remove_image("sha256:abc123")
-        
-        mock_docker_client.images.remove.assert_called_once_with("sha256:abc123", force=False)
+
+        mock_docker_client.containers.list.assert_called_once_with(all=True, filters={"ancestor": image.id})
+        assert mock_docker_client.images.remove.call_args_list == [
+            call("nginx:latest", force=False),
+            call(image.id, force=False),
+        ]
 
     def test_remove_image_not_found(self, mock_docker_client):
         """Test removing non-existent image."""
         from docker.errors import NotFound
-        mock_docker_client.images.remove.side_effect = NotFound("not found")
-        
+        mock_docker_client.images.get.side_effect = NotFound("not found")
+
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             with pytest.raises(ValueError, match="not found"):
                 docker_module.remove_image("nonexistent")
+        mock_docker_client.images.remove.assert_not_called()
 
 
 class TestPortParsing:
@@ -395,6 +406,7 @@ def _container(name: str, labels: dict, mounts: list[dict]) -> MagicMock:
     container.short_id = f"{name}-id"
     container.name = name
     container.status = "exited"
+    container.image.id = f"sha256:{name}-image"
     container.image.tags = [f"example/{name}:latest"]
     container.labels = labels
     container.attrs = {"Created": "2026-01-02T03:04:05Z", "NetworkSettings": {"Ports": {}}, "Mounts": mounts}
@@ -415,7 +427,11 @@ def _jellyfin(pool: Path) -> MagicMock:
 
 @pytest.fixture
 def docker_client(monkeypatch):
-    """A mocked Docker client that knows the containers passed to ``add``."""
+    """A mocked Docker client that knows the containers passed to ``add``.
+
+    ``containers.list`` lists them as Docker does: the running ones only without
+    ``all``, and with the filter ``ancestor`` those whose image has that ID.
+    """
     by_name: dict[str, MagicMock] = {}
     client = MagicMock(name="docker")
 
@@ -425,7 +441,15 @@ def docker_client(monkeypatch):
         except KeyError:
             raise NotFound(f"No such container: {name}") from None
 
+    def list_containers(all=False, filters=None, **kwargs):
+        ancestor = (filters or {}).get("ancestor")
+        return [
+            c for c in by_name.values()
+            if (all or c.status == "running") and ancestor in (None, c.image.id)
+        ]
+
     client.containers.get.side_effect = get
+    client.containers.list.side_effect = list_containers
     monkeypatch.setattr(docker_module, "get_client", lambda: client)
     client.add = lambda container: by_name.setdefault(container.name, container)
     return client
@@ -532,6 +556,7 @@ containers_router = importlib.import_module("src.containers.router")
 
 def _image(short_id: str, tags: list[str]) -> MagicMock:
     image = MagicMock(name=short_id)
+    image.id = short_id.ljust(71, "0")  # "sha256:" and 64 hex digits
     image.short_id = short_id
     image.tags = tags
     image.attrs = {"Size": 187000000, "Created": "2026-01-02T03:04:05Z"}
@@ -571,7 +596,8 @@ class TestRouting:
         docker_client.images.pull.assert_called_once_with("alpine:3.20")
         assert removed.status_code == 200, removed.text
         assert removed.json() == {"status": "removed"}
-        docker_client.images.remove.assert_called_once_with("sha256:def456", force=False)
+        docker_client.images.get.assert_called_once_with("sha256:def456")
+        assert docker_client.images.remove.call_args_list[0] == call("alpine:3.20", force=False)
         docker_client.containers.get.assert_not_called()
 
     def test_no_route_is_shadowed_by_an_earlier_one(self):
@@ -618,7 +644,6 @@ def _answering_docker(docker_client) -> MagicMock:
     """Let the mocked Docker client answer every request of DOCKER_REQUESTS; returns the container."""
     container = docker_client.add(_container("jellyfin", {}, []))
     container.logs.return_value = b"2026-01-02T03:04:05Z ready\n"
-    docker_client.containers.list.return_value = [container]
     docker_client.containers.run.return_value = SimpleNamespace(short_id="jellyfin")
     docker_client.images.list.return_value = [_image("sha256:def456", ["alpine:3.20"])]
     docker_client.images.pull.return_value = _image("sha256:def456", ["alpine:3.20"])
@@ -672,17 +697,15 @@ class TestDockerCallsOffTheEventLoop:
         assert 0 < docker_module.DOCKER_TIMEOUT_SECONDS <= 60
 
 
-@pytest.fixture
-def live_api(api):
-    """The supervisor under a real uvicorn on 127.0.0.1: one event loop, as in the image.
+@contextlib.contextmanager
+def served_by_uvicorn() -> Iterator[str]:
+    """Serve the supervisor under a real uvicorn on 127.0.0.1; yields "127.0.0.1:<port>".
 
-    Requests through ``live_api.request(method, path, timeout)`` return the status code.
-    The authentication override of ``api`` applies: every request is an administrator's.
+    One event loop and uvicorn's own HTTP and WebSocket protocols ("auto"), as the
+    image's command line in supervisor/Dockerfile uses them; the lifespan does not run.
     """
     import socket
     import time
-    import urllib.error
-    import urllib.request
 
     import uvicorn
 
@@ -691,27 +714,42 @@ def live_api(api):
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, lifespan="off"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    base = f"http://127.0.0.1:{sock.getsockname()[1]}"
-
-    def request(method: str, path: str, timeout: float) -> int:
-        try:
-            with opener.open(urllib.request.Request(base + path, method=method), timeout=timeout) as answer:
-                return answer.status
-        except urllib.error.HTTPError as error:
-            error.close()
-            return error.code
-
     try:
         deadline = time.monotonic() + 30
         while not server.started:
             assert thread.is_alive() and time.monotonic() < deadline, "uvicorn did not start"
             time.sleep(0.05)
-        yield SimpleNamespace(request=request)
+        yield f"127.0.0.1:{sock.getsockname()[1]}"
     finally:
         server.should_exit = True
         thread.join(10)
         sock.close()
+
+
+@pytest.fixture
+def live_api(api):
+    """The supervisor under a real uvicorn (``served_by_uvicorn``): one event loop, as in the image.
+
+    Requests through ``live_api.request(method, path, timeout)`` return the status code.
+    The authentication override of ``api`` applies: every request is an administrator's.
+    """
+    import urllib.error
+    import urllib.request
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    with served_by_uvicorn() as address:
+        base = f"http://{address}"
+
+        def request(method: str, path: str, timeout: float) -> int:
+            try:
+                with opener.open(urllib.request.Request(base + path, method=method), timeout=timeout) as answer:
+                    return answer.status
+            except urllib.error.HTTPError as error:
+                error.close()
+                return error.code
+
+        yield SimpleNamespace(request=request)
 
 
 class TestRequestsAnsweredWhileDockerBlocks:
@@ -779,35 +817,157 @@ def _docker_refusal(status: int, explanation: str) -> APIError:
     return APIError("Conflict", response=response, explanation=explanation)
 
 
-IN_USE = (
-    "conflict: unable to delete def456def456 (cannot be forced) - "
-    "image is being used by running container 0d1f2e3c4b5a"
-)
+IMAGE_ID = "sha256:" + "def456" * 10 + "abcd"
+# What GET /api/v1/containers/images lists as the image's id, and the Images tab sends back.
+IMAGE_SHORT_ID = IMAGE_ID[:19]
+REMOVE_IMAGE = f"/api/v1/containers/images/{IMAGE_SHORT_ID}"
+
+
+class _DockerImage:
+    """One image as the classic image store of Docker (moby) answers for it, through docker-py.
+
+    Without force, Docker deletes an image by its ID only while at most one tag refers to
+    it ("image is referenced in multiple repositories" otherwise) and no container uses it.
+    A tag is removed on its own, except the last one of an image that a container uses,
+    and removing the last tag deletes the image, unless other images are built on it.
+    The containers are those of the ``docker_client`` fixture.
+    """
+
+    def __init__(self, docker_client: MagicMock, tags: list[str], *, children: bool = False):
+        self.client = docker_client
+        self.tags = list(tags)
+        self.children = children
+        self.exists = True
+        # Every removal Docker was asked for: (reference, force).
+        self.removals: list[tuple[str, bool]] = []
+        docker_client.images.get.side_effect = self.get
+        docker_client.images.remove.side_effect = self.remove
+
+    def _is_named(self, reference: str) -> bool:
+        by_id = reference.startswith("sha256:") and IMAGE_ID.startswith(reference)
+        return self.exists and (by_id or reference in self.tags)
+
+    def _users(self) -> list[str]:
+        return [c.name for c in self.client.containers.list(all=True) if c.image.id == IMAGE_ID]
+
+    def get(self, reference: str) -> MagicMock:
+        if not self._is_named(reference):
+            raise NotFound(f"No such image: {reference}")
+        image = _image(IMAGE_SHORT_ID, list(self.tags))
+        image.id = IMAGE_ID
+        return image
+
+    def remove(self, image: str, force: bool = False, noprune: bool = False) -> None:
+        self.removals.append((image, force))
+        if not self._is_named(image):
+            raise NotFound(f"No such image: {image}")
+        short, users = IMAGE_ID[7:19], self._users()
+        if image in self.tags:
+            if len(self.tags) == 1 and users and not force:
+                raise _docker_refusal(409, (
+                    f'conflict: unable to remove repository reference "{image}" (must force) - '
+                    f"container {users[0]} is using its referenced image {short}"
+                ))
+            self.tags.remove(image)
+            self.exists = bool(self.tags) or self.children
+        elif self.children:
+            raise _docker_refusal(409, f"conflict: unable to delete {short} (cannot be forced) - image has dependent child images")
+        elif not force and len(self.tags) > 1:
+            raise _docker_refusal(409, f"conflict: unable to delete {short} (must be forced) - image is referenced in multiple repositories")
+        elif not force and users:
+            raise _docker_refusal(409, f"conflict: unable to delete {short} (must be forced) - image is being used by stopped container {users[0]}")
+        else:
+            self.tags.clear()
+            self.exists = False
+
+
+def _using_the_image(docker_client: MagicMock, name: str, status: str = "exited") -> MagicMock:
+    container = docker_client.add(_container(name, {}, []))
+    container.image.id = IMAGE_ID
+    container.status = status
+    return container
 
 
 class TestImageRemoval:
-    def test_an_image_that_a_container_uses_is_refused_with_dockers_reason(self, api, docker_client):
-        docker_client.images.get.return_value = _image("sha256:def456", ["nginx:1.27"])
-        docker_client.images.remove.side_effect = _docker_refusal(409, IN_USE)
+    """DELETE /api/v1/containers/images/{id} as the Images tab sends it, never forced (ADR-0248)."""
 
-        response = api.delete("/api/v1/containers/images/sha256:def456")
+    @pytest.mark.parametrize(
+        "tags",
+        [["alpine:3.20", "alpine:latest"], ["alpine:3.20", "registry.example/alpine:3.20"], ["nginx:1.27"], []],
+        ids=["two-tags-of-one-repository", "tags-of-two-repositories", "one-tag", "no-tag"],
+    )
+    def test_an_image_that_no_container_uses_is_removed_with_all_its_tags(self, api, docker_client, tags):
+        docker_client.add(_container("e2e-db", {}, []))  # a container of another image
+        image = _DockerImage(docker_client, tags)
 
-        assert (response.status_code, response.json()) == (409, {"detail": IN_USE})
-        docker_client.images.remove.assert_called_once_with("sha256:def456", force=False)
-
-    def test_an_image_that_no_container_uses_is_removed(self, api, docker_client):
-        docker_client.images.get.return_value = _image("sha256:def456", ["nginx:1.27"])
-
-        response = api.delete("/api/v1/containers/images/sha256:def456")
+        response = api.delete(REMOVE_IMAGE)
 
         assert (response.status_code, response.json()) == (200, {"status": "removed"})
-        docker_client.images.remove.assert_called_once_with("sha256:def456", force=False)
+        assert not image.exists
+        assert [force for _, force in image.removals if force] == []
+
+    @pytest.mark.parametrize("status", ["exited", "running"])
+    @pytest.mark.parametrize("tags", [["nginx:1.27"], ["nginx:1.27", "nginx:latest"]], ids=["one-tag", "two-tags"])
+    def test_an_image_that_a_container_uses_keeps_every_tag_and_the_answer_names_it(
+        self, api, docker_client, tags, status
+    ):
+        _using_the_image(docker_client, "e2e-web", status)
+        image = _DockerImage(docker_client, tags)
+
+        response = api.delete(REMOVE_IMAGE)
+
+        assert (response.status_code, response.json()) == (
+            409,
+            {"detail": "The image nginx:1.27 is used by the container e2e-web. Remove the container first."},
+        )
+        assert (image.exists, image.tags, image.removals) == (True, tags, [])
+
+    def test_every_container_that_uses_the_image_is_named(self, api, docker_client):
+        for name in ("e2e-worker", "e2e-web"):
+            _using_the_image(docker_client, name)
+        _DockerImage(docker_client, ["nginx:1.27"])
+
+        response = api.delete(REMOVE_IMAGE)
+
+        assert (response.status_code, response.json()) == (
+            409,
+            {"detail": "The image nginx:1.27 is used by the containers e2e-web, e2e-worker. Remove the containers first."},
+        )
+
+    def test_a_refusal_of_docker_answers_409_with_its_reason(self, api, docker_client):
+        # Other images are built on it: Docker keeps it once its tags are gone, and says why.
+        image = _DockerImage(docker_client, ["alpine:3.20"], children=True)
+
+        response = api.delete(REMOVE_IMAGE)
+
+        reason = "conflict: unable to delete def456def456 (cannot be forced) - image has dependent child images"
+        assert (response.status_code, response.json()) == (409, {"detail": reason})
+        assert image.exists
+
+    def test_a_forced_removal_is_left_to_docker(self, api, docker_client):
+        _using_the_image(docker_client, "e2e-web")
+        image = _DockerImage(docker_client, ["nginx:1.27", "nginx:latest"])
+
+        response = api.delete(REMOVE_IMAGE, params={"force": "true"})
+
+        assert (response.status_code, response.json()) == (200, {"status": "removed"})
+        # One forced removal by the image's ID: Docker removes its tags and the image.
+        assert [(IMAGE_ID.startswith(reference), force) for reference, force in image.removals] == [(True, True)]
+        assert not image.exists
+
+    def test_an_unknown_image_is_not_found(self, api, docker_client):
+        image = _DockerImage(docker_client, ["nginx:1.27"])
+
+        response = api.delete("/api/v1/containers/images/sha256:0123456789ab")
+
+        assert (response.status_code, response.json()) == (404, {"detail": "Image sha256:0123456789ab not found"})
+        assert image.removals == []
 
     def test_other_docker_errors_are_still_server_errors(self, api, docker_client):
-        docker_client.images.get.return_value = _image("sha256:def456", ["nginx:1.27"])
+        _DockerImage(docker_client, ["nginx:1.27"])
         docker_client.images.remove.side_effect = APIError("driver failed to remove the layers")
 
-        response = api.delete("/api/v1/containers/images/sha256:def456")
+        response = api.delete(REMOVE_IMAGE)
 
         assert response.status_code == 500
         assert "driver failed to remove the layers" in response.json()["detail"]

@@ -464,9 +464,9 @@ state, and the search box finds containers by name or image.
 - **Remove** deletes the container, also a running one, after a confirmation.
 - Click a container for its details: **Overview**, **Logs** and **Network**.
   **Logs** shows the last 200 lines of its log and then each new line as the
-  container writes it. When the log ends, for example because the container
-  stopped, or the connection is lost, the tab says so; **Reconnect** starts again
-  with the last lines.
+  container writes it, each line with the time Docker received it. When the log
+  ends, for example because the container stopped, or the connection is lost,
+  the tab says so; **Reconnect** starts again with the last lines.
 
 ### Images
 
@@ -476,9 +476,11 @@ creation time.
 - **Pull**: enter an image name such as `nginx:latest` (without a tag, Docker
   pulls `latest`) and click **Pull**. A large image can take several minutes;
   the image is listed once Docker has it.
-- **Remove**: click the bin of an image and confirm. Docker removes an image
-  only if no container uses it; otherwise the dialog shows Docker's reason, and
-  the image stays. Remove the container first.
+- **Remove**: click the bin of an image and confirm. The image goes with all
+  its tags, and only if no container uses it, running or stopped: otherwise the
+  dialog names the containers that use it, and the image keeps its tags. Remove
+  those containers first. When Docker refuses for another reason, the dialog
+  shows it.
 
 ### Creating Containers
 

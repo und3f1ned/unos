@@ -14,12 +14,15 @@ router = APIRouter(prefix="/containers", tags=["containers"])
 async def _docker(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run a docker.py operation in a worker thread: docker-py blocks (ADR-0021).
 
-    A conflict that Docker reports (409: an image that a container uses, a
-    name that is taken, a running container removed without force) keeps its
-    status, with Docker's reason as the detail (ADR-0247).
+    A conflict answers 409: an image that containers use, which remove_image
+    refuses itself (ADR-0248), and the conflicts that Docker reports (a name that
+    is taken, a running container removed without force) with Docker's reason as
+    the detail (ADR-0247).
     """
     try:
         return await asyncio.to_thread(operation, *args, **kwargs)
+    except docker_ops.ImageInUse as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except APIError as e:
         if e.status_code == 409:
             raise HTTPException(status_code=409, detail=e.explanation or str(e)) from e
@@ -77,7 +80,7 @@ async def pull_image(image: str, _=Depends(verify_token)):
 async def remove_image(
     image_id: str, force: bool = Query(False), _=Depends(verify_token)
 ):
-    """Remove an image (409 with Docker's reason while a container uses it)."""
+    """Remove an image with all its tags (409 while a container uses it)."""
     try:
         await _docker(docker_ops.remove_image, image_id, force=force)
         return {"status": "removed"}
