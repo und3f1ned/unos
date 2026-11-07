@@ -6,11 +6,16 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Now
 
-- `main` holds the audit log, the device's security and flash facts (pull request #27), the
-  riscv64 study (#28, `docs/research/riscv64-support-2026-11-07.md`), and Dependabot's updates of
-  the GitHub Actions (#23) and of the supervisor's pip packages (#25: psutil 7.2.2, croniter
-  6.2.4, pyotp 2.10.0, slowapi 0.1.10), and the upload fix for ext4 (#29). Dependabot's #24 and
-  #26 were closed unmerged (ADR-0231).
+- `main` holds the first feature batch (pull requests #32 to #39, ADR-0232 to ADR-0246):
+  rename in the file manager, SMART data and replace-soon marks, the Audit Log page, two-factor
+  recovery codes, encrypted scheduled backups, snapshots of volumes with volume quotas in the web
+  UI, the network interface's disable confirmation with its automatic revert, and power actions
+  on the host with an Updates tab that works. Before them: the audit log, the device's security,
+  the upload fix for ext4, Dependabot's Actions and pip updates (#23 to #30).
+- Waiting for the device check (`passes: false` until it passed): `files.rename`, `storage.smart`, `storage.snapshots`, `storage.volumes`, `system.network-disable-confirmation`, `system.network`, `system.power`, `system.updates-tab-without-dead-buttons`
+  (`files.rename` needs only `scripts/dev/linux-tests.sh tests/test_files_security.py -k rename`, its
+  exclusive rename on Linux). One supervisor and web UI deploy carries all of it, with
+  the pip updates of #25 (the pip layer is rebuilt once).
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
@@ -77,6 +82,18 @@ Open owner actions:
 5. Whether the services are used from outside over IPv6 (`device.ipv6-inbound-filter`).
 
 ## Log
+
+### 2026-11-07: the first feature batch
+
+- The owner asked to work on features. A read-only triage of the 139 unfinished product entries
+  of `feature-list.json` against the code found 73 missing, 47 partial and 19 implemented but
+  not yet checked. Eight groups of the most valuable ones that this machine can test were built
+  in parallel, one worktree each: tests first, `make check` and the E2E specs on the stand-in,
+  a fresh-context review of each branch and the fixes of every finding.
+- Merged as #32 to #39; the branches' ADRs were renumbered at the merge (ADR-0232 to
+  ADR-0246). Passing now: `storage.smart-replace-soon`, `webui.audit-log-page`, `security.audit-log`, `auth.recovery-codes`, `backup.encrypted-scheduled-backups`, `system.scheduler-fixes`. The others need the device check after the
+  next deploy. `make check` and every E2E spec (415 passed, 16 skipped where the stand-in lacks
+  the host) passed on main before the last merge.
 
 ### 2026-11-07: pull requests merged, CI off, Dependabot's rules
 
