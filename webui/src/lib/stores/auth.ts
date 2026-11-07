@@ -10,8 +10,9 @@ export const isAdmin = derived(user, ($user) => $user?.is_admin === true);
 
 /**
  * Pages whose API routers are administrator-only (they answer 403 to regular
- * accounts); see the admin-only routers in supervisor/src/main.py. Regular
- * users get neither the navigation entry nor the page.
+ * accounts); see the admin-only routers in supervisor/src/main.py, and the
+ * audit router, administrator-only as a whole in supervisor/src/audit/router.py.
+ * Regular users get neither the navigation entry nor the page.
  */
 const ADMIN_ONLY_ROUTES = [
   '/storage',
@@ -20,7 +21,8 @@ const ADMIN_ONLY_ROUTES = [
   '/files',
   '/containers',
   '/apps',
-  '/users'
+  '/users',
+  '/audit'
 ];
 
 export function isAdminOnlyRoute(pathname: string): boolean {

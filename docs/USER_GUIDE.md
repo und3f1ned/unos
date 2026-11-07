@@ -12,10 +12,11 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
 6. [Docker Containers](#docker-containers)
 7. [App Store](#app-store)
 8. [User Management](#user-management)
-9. [System Settings](#system-settings)
-10. [Backups & Snapshots](#backups--snapshots)
-11. [Notifications](#notifications)
-12. [Tips & Best Practices](#tips--best-practices)
+9. [Audit Log](#audit-log)
+10. [System Settings](#system-settings)
+11. [Backups & Snapshots](#backups--snapshots)
+12. [Notifications](#notifications)
+13. [Tips & Best Practices](#tips--best-practices)
 
 ---
 
@@ -649,6 +650,56 @@ and `unos` the name on the certificate. List your tokens with
 
 ---
 
+## Audit Log
+
+**Audit Log** in the sidebar shows administrators what happened on the NAS;
+regular users have no access to it.
+
+- The entries are listed newest first, on a timeline grouped by day. Each one
+  shows its time, its action, **Failed** when it did not succeed, **Warning**
+  or **Critical** for its severity, its details, the user, the address it came
+  from, the resource it concerns and the browser.
+- **Search** finds a text, in any case, in the user name, the action as the
+  page names it (`login failed`), the address, the resource as the page shows
+  it (`user carol`), the details or the browser. **User** takes an exact user
+  name, **Action** one kind of entry, and **From** and **To** a range of days,
+  each day included whole. The list follows the filters as you change them;
+  **Clear filters** resets them.
+- The page shows the newest 100 matching entries; **Show more** adds 100 more.
+- **Export CSV** and **Export JSON** download every entry that matches the
+  filters, newest first. In the CSV file, a `'` stands before what a
+  spreadsheet would read as a formula: a value that starts with `=`, `+`,
+  `-`, `@`, a tab or a carriage return, and such a character after a
+  semicolon, a tab or a line break inside a value. The JSON file holds the
+  values as recorded.
+- Times are the NAS's clock as the entries record it, without a time zone
+  (UTC unless the supervisor's container is set otherwise), and the days of
+  **From** and **To** are the NAS's days (feature-list entry
+  `architecture.times-with-time-zones`).
+- Recorded today: sign-ins and failed sign-ins (a wrong two-factor code
+  appears only in the login history), users created, changed and deleted, the
+  SMB access of users, shares created, changed, deleted and repaired, shares
+  imported from smb.conf and the corrections of the SMB check at startup (by
+  the user `system`), API tokens created and deleted, new recovery codes, and
+  the clearing of the log. Storage, snapshots, containers, apps, backups,
+  restarts and shutdowns, scheduled tasks, the network and system settings
+  write no entries yet, and neither do a user's own password and two-factor
+  changes, although **Action** lists such actions (feature-list entry
+  `security.audit-admin-actions`).
+
+The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
+(with `limit` from 1 and `offset` from 0), `GET /api/v1/audit/logs/count` and
+`GET /api/v1/audit/logs/export` (`format=csv` or `json`) take `search`,
+`username`, `action`, `severity`, `start_date` and `end_date`. A bound covers
+the whole unit it names, as the first and as the last one: a date
+(`YYYY-MM-DD`) its day, and a date and time (`YYYY-MM-DDTHH`, `THH:MM`,
+`THH:MM:SS`, or `THH:MM:SS` and a fraction of 1 to 6 digits) its hour,
+minute, second or fraction, so `end_date=2026-11-06T12:00` takes the entries
+up to 12:00:59.999999. Bounds are in the NAS's local time, without a time
+zone; another form gets 422.
+
+---
+
 ## System Settings
 
 Access via **System** in the sidebar.
@@ -849,7 +900,7 @@ notification.
 7. ✅ Keep UNOS updated
 8. ✅ Don't expose to the internet without VPN
 9. ✅ Use API tokens instead of passwords for scripts
-10. ✅ Review audit logs periodically
+10. ✅ Review the [audit log](#audit-log) periodically
 
 ### Storage
 

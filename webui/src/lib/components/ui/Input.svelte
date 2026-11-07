@@ -1,6 +1,6 @@
 <script lang="ts">
 	export let id: string = "";
-	export let type: "text" | "password" | "email" | "number" | "search" = "text";
+	export let type: "text" | "password" | "email" | "number" | "search" | "date" = "text";
 	export let value: string = "";
 	export let placeholder: string = "";
 	export let label: string = "";
@@ -154,6 +154,23 @@
 			on:keydown
 			on:click
 			on:dblclick
+		/>
+	{:else if type === "date"}
+		<!-- The value is "" or YYYY-MM-DD, whatever the browser shows; the dark scheme keeps
+		     the browser's calendar button visible on the dark field. -->
+		<input
+			id={inputId}
+			type="date"
+			bind:value
+			{required}
+			{disabled}
+			{autocomplete}
+			class="form-input [color-scheme:dark] disabled:cursor-not-allowed disabled:opacity-50"
+			class:border-red-500={error}
+			on:input
+			on:change
+			on:focus
+			on:blur
 		/>
 	{/if}
 
