@@ -514,6 +514,15 @@ def _linkable(fd: int) -> bool:
         return False
 
 
+def _removed(dir_fd: int) -> bool:
+    """Whether the folder ``dir_fd`` was removed: on Linux a removed folder has no links left.
+
+    A deleted btrfs subvolume keeps one: an upload into a volume deleted
+    meanwhile is refused only when its file is linked (404 then).
+    """
+    return os.fstat(dir_fd).st_nlink == 0
+
+
 class _FileUpload(UploadSink):
     """An upload into the folder ``path``, for request_limits.receive_upload.
 
@@ -578,14 +587,22 @@ class _FileUpload(UploadSink):
         try:
             fd = os.open(".", _UNNAMED_FLAGS, 0o666, dir_fd=self.dir_fd)
         except OSError as exc:
+            # Where there cannot be one, the hidden file is used: creating it
+            # in a removed folder fails on its own (ENOENT).
             if exc.errno in _NO_UNNAMED_FILE:
                 return None
+            # A folder removed since prepare() is not found, whatever its
+            # filesystem answers for an unnamed file there: ext4 refuses one
+            # with EPERM, which would otherwise read as 403.
+            if _removed(self.dir_fd):
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT)) from exc
             raise
         try:
             # The kernel refuses a new name in a folder that was removed since
-            # prepare() (ENOENT), but still creates an unnamed file there:
-            # refuse it now as well, not once the whole file has arrived.
-            if os.fstat(self.dir_fd).st_nlink == 0:
+            # prepare() (ENOENT), but tmpfs still creates an unnamed file there,
+            # and btrfs does too by its code: refuse it now as well, not once
+            # the whole file has arrived.
+            if _removed(self.dir_fd):
                 raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT))
             # Checked now, before any of the file is written: it can only be
             # linked into the folder through /proc/self/fd.

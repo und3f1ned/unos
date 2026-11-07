@@ -486,7 +486,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   every check, so the check times in the file can be old;
   `GET /api/v1/health/raid-monitor/status` shows the latest check.
 - An upload into a folder that does not exist, or that is not inside a pool,
-  is refused before any of the file is read. An upload whose file name
+  is refused before any of the file is read, also when the folder is removed
+  while the upload starts. An upload whose file name
   cannot be used (or names an existing folder), or a backup without a
   `.tar.gz` or `.tar.gz.enc` extension, is refused as soon as the name
   arrives. Before, the whole file was received first. A backup is refused as
