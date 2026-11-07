@@ -3,6 +3,7 @@ import subprocess
 import json
 import asyncio
 import logging
+import os
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -151,25 +152,62 @@ class SmartTrendAlert(BaseModel):
     recommendation: str
 
 
+class SmartHistoryUnreadable(Exception):
+    """SMART_HISTORY_FILE exists but holds no SMART history that can be read."""
+
+
 def load_smart_history() -> dict[str, list[dict]]:
-    """Load SMART history from file."""
+    """The SMART history: smartctl's serial -> its snapshots, oldest first.
+
+    {} without a file. A file that cannot be read or holds no history raises
+    SmartHistoryUnreadable: that is not an empty history (ADR-0232).
+    """
     path = Path(SMART_HISTORY_FILE)
-    if not path.exists():
-        return {}
     try:
-        return json.loads(path.read_text())
-    except Exception:
+        history = json.loads(path.read_text())
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as exc:
+        raise SmartHistoryUnreadable(f"Could not read the SMART history {path}: {exc}") from exc
+    if not isinstance(history, dict) or not all(
+        isinstance(entries, list) and all(isinstance(entry, dict) for entry in entries)
+        for entries in history.values()
+    ):
+        raise SmartHistoryUnreadable(
+            f"Could not read the SMART history {path}: it holds no snapshots by serial"
+        )
+    return history
+
+
+def _smart_history_or_500() -> dict[str, list[dict]]:
+    try:
+        return load_smart_history()
+    except SmartHistoryUnreadable as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 def save_smart_history(history: dict[str, list[dict]]):
-    """Save SMART history to file."""
+    """Write the SMART history to SMART_HISTORY_FILE, the last 720 snapshots of each disk.
+
+    Staged next to the file, then renamed over it: a reader, or a power loss
+    during the write, finds the old history or the new one, never a part
+    (ADR-0232).
+    """
     path = Path(SMART_HISTORY_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Keep only last 30 days of data per disk (720 entries at hourly checks)
     for serial in history:
         history[serial] = history[serial][-720:]
-    path.write_text(json.dumps(history, indent=2))
+    staged = path.with_name(path.name + ".new")
+    try:
+        with open(staged, "w") as f:
+            f.write(json.dumps(history, indent=2))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(staged, path)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
 
 
 def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
@@ -373,14 +411,20 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
     disks of GET /health/disks, storage.disks.host_disks) and returns the
     trend alerts of the attributes that rose since the disk's previous
     snapshot. When the host's disks cannot be listed, the pass is logged
-    and skipped.
+    and skipped. A history file that cannot be read is logged and replaced
+    by a new history, so that a damaged file does not stop the recording
+    (ADR-0232).
     """
     try:
         disks = storage_disks.host_disks()
     except Exception as exc:
         logger.warning("SMART monitor: pass skipped, could not list the host's disks: %s", exc)
         return []
-    history = load_smart_history()
+    try:
+        history = load_smart_history()
+    except SmartHistoryUnreadable as exc:
+        logger.warning("SMART monitor: %s; starting a new history", exc)
+        history = {}
     alerts: list[SmartTrendAlert] = []
 
     for disk in disks:
@@ -737,16 +781,20 @@ def parse_smart_data(device: str) -> SmartInfo:
             if isinstance(value, int) and not isinstance(value, bool)
         }
 
-    # Self-test status
+    # The last self-test: the first entry of the ATA self-test log, or of the
+    # NVMe one (smartctl 7.3 and later), where the newest test comes first.
     self_test_status = None
     last_test_result = None
-    self_test_log = data.get("ata_smart_self_test_log", {}).get("standard", {})
-    if self_test_log:
-        tests = self_test_log.get("table", [])
-        if tests:
-            last_test = tests[0]
-            last_test_result = last_test.get("status", {}).get("string", "Unknown")
-            self_test_status = last_test.get("type", {}).get("string", "Unknown")
+    ata_tests = data.get("ata_smart_self_test_log", {}).get("standard", {}).get("table", [])
+    nvme_tests = data.get("nvme_self_test_log", {}).get("table", [])
+    if ata_tests:
+        last_test = ata_tests[0]
+        last_test_result = last_test.get("status", {}).get("string", "Unknown")
+        self_test_status = last_test.get("type", {}).get("string", "Unknown")
+    elif nvme_tests:
+        last_test = nvme_tests[0]
+        last_test_result = last_test.get("self_test_result", {}).get("string", "Unknown")
+        self_test_status = last_test.get("self_test_code", {}).get("string", "Unknown")
 
     return SmartInfo(
         device=device,
@@ -984,7 +1032,7 @@ async def get_raid_monitor_status(_: dict = Depends(verify_token)):
 @router.get("/smart/history/{serial}")
 async def get_smart_history(serial: str, _: dict = Depends(verify_token)):
     """Get SMART history for a specific disk by serial number."""
-    history = load_smart_history()
+    history = _smart_history_or_500()
     if serial not in history:
         raise HTTPException(404, f"No history found for serial: {serial}")
 
@@ -1001,7 +1049,7 @@ async def get_smart_history(serial: str, _: dict = Depends(verify_token)):
 @router.get("/smart/trends")
 async def get_smart_trends(_: dict = Depends(verify_token)):
     """Get current SMART trend analysis for all disks."""
-    history = load_smart_history()
+    history = _smart_history_or_500()
     all_alerts = []
 
     for serial, entries in history.items():
@@ -1047,10 +1095,12 @@ def predict_disk_failure(serial: str, entries: list[dict], device: str) -> Optio
 
     None with fewer than MIN_PREDICTION_SNAPSHOTS snapshots, or when no
     snapshot holds any of CRITICAL_ATTRIBUTES (NVMe disks: the monitor records
-    ATA attributes only). Each of the sector counts 5, 197 and 198 that rose
-    over the history adds 30, and 20 more when it rose by more than 0.1 per
-    snapshot over the last MIN_PREDICTION_SNAPSHOTS; each of 187, 188 and 199
-    that rose above 100 adds 10. REPLACE_SOON_SCORE or more is replace_soon.
+    ATA attributes only). Each counter is read from the snapshots that hold
+    it: one without it (smartctl could not read the attribute table) is no
+    value of 0. Each of the sector counts 5, 197 and 198 that rose over the
+    history adds 30, and 20 more when it rose by more than 0.1 per snapshot
+    over its last MIN_PREDICTION_SNAPSHOTS; each of 187, 188 and 199 that
+    rose above 100 adds 10. REPLACE_SOON_SCORE or more is replace_soon.
     """
     if len(entries) < MIN_PREDICTION_SNAPSHOTS:
         return None
@@ -1063,7 +1113,9 @@ def predict_disk_failure(serial: str, entries: list[dict], device: str) -> Optio
 
     for attr_id, attr_name in CRITICAL_ATTRIBUTES.items():
         # Get values over time
-        values = [_attribute_value(e, attr_id) for e in entries]
+        values = [_attribute_value(e, attr_id) for e in entries if _reports_attribute(e, attr_id)]
+        if not values:
+            continue
         current = values[-1]
         first = values[0]
 
@@ -1071,7 +1123,7 @@ def predict_disk_failure(serial: str, entries: list[dict], device: str) -> Optio
         if current > first:
             # Per snapshot (hourly) over the last day, whatever the length of
             # the history: a month of quiet history does not hide a fast rise.
-            recent = values[-MIN_PREDICTION_SNAPSHOTS]
+            recent = values[max(0, len(values) - MIN_PREDICTION_SNAPSHOTS)]
             increase_rate = (current - recent) / MIN_PREDICTION_SNAPSHOTS
 
             if attr_id in [5, 197, 198]:  # Critical sector issues
@@ -1115,35 +1167,43 @@ def _histories_of_connected_disks(
 ) -> dict[str, tuple[str, list[dict]]]:
     """The histories of the disks connected now: serial -> (the disk's path now, history).
 
-    The history keeps the serials of removed and replaced disks (ADR-0232). A
-    serial whose latest snapshot holds lsblk's serial belongs to the disk that
-    lsblk lists with that serial now, wherever it is. One without (a USB
-    bridge without a serial), or with a serial that several disks report
-    (identical USB bridges), belongs to the disk now at the path of that
-    snapshot, unless another history claims that disk by its lsblk serial.
-    Two histories that claim one disk: the later latest snapshot wins. Disks
-    that smartctl reports without a serial share one history and get none.
+    The history keeps the serials of removed and replaced disks (ADR-0232).
+    Each history goes by its latest snapshot and the lsblk serial stored with
+    it. A history whose lsblk serial no connected disk reports belongs to a
+    disk that is gone. One whose lsblk serial one connected disk reports and
+    no other history holds belongs to that disk, wherever it is now. Any
+    other (a USB bridge without a serial; a bridge serial that several disks
+    report or several histories hold: identical bridges, a disk replaced in
+    its enclosure) belongs to the disk now at the path of that snapshot, if
+    this disk reports the history's lsblk serial when it has one and no
+    history claims the disk by its serial; of several such histories, the
+    later latest snapshot wins. Disks that smartctl reports without a serial
+    share one history and get none.
     """
     reported = Counter(disk.serial for disk in disks if disk.serial)
-    by_lsblk_serial = {disk.serial: disk for disk in disks if disk.serial and reported[disk.serial] == 1}
+    latest = {serial: entries[-1] for serial, entries in history.items() if entries}
+    held = Counter(entry.get("lsblk_serial") for entry in latest.values())
+    by_lsblk_serial = {disk.serial: disk for disk in disks if disk.serial}
     by_path = {path: disk for disk in disks for path in disk.paths}
-    by_identity: dict[str, tuple[str, str]] = {}  # disk path -> (timestamp, serial)
-    by_place: dict[str, tuple[str, str]] = {}
-    for serial, entries in history.items():
-        if not entries or not serial or serial == _NO_SERIAL:
+    by_identity: dict[str, str] = {}  # disk path -> serial
+    by_place: dict[str, tuple[str, str]] = {}  # disk path -> (timestamp, serial)
+    for serial, entry in latest.items():
+        if not serial or serial == _NO_SERIAL:
             continue
-        latest = entries[-1]
-        taken = str(latest.get("timestamp", ""))
-        lsblk_serial = latest.get("lsblk_serial")
-        # Reported by one disk: that disk; by none: the disk is gone.
-        if lsblk_serial and reported[lsblk_serial] <= 1:
-            disk, claims = by_lsblk_serial.get(lsblk_serial), by_identity
-        else:
-            disk, claims = by_path.get(latest.get("device")), by_place
-        if disk is not None and (disk.path not in claims or taken > claims[disk.path][0]):
-            claims[disk.path] = (taken, serial)
+        lsblk_serial = entry.get("lsblk_serial")
+        if lsblk_serial and reported[lsblk_serial] == 0:
+            continue  # the disk, or its enclosure, is gone
+        if lsblk_serial and reported[lsblk_serial] == 1 and held[lsblk_serial] == 1:
+            by_identity[by_lsblk_serial[lsblk_serial].path] = serial
+            continue
+        disk = by_path.get(entry.get("device"))
+        if disk is None or (lsblk_serial and disk.serial != lsblk_serial):
+            continue
+        taken = str(entry.get("timestamp", ""))
+        if disk.path not in by_place or taken > by_place[disk.path][0]:
+            by_place[disk.path] = (taken, serial)
     owners = {path: serial for path, (_, serial) in by_place.items() if path not in by_identity}
-    owners.update({path: serial for path, (_, serial) in by_identity.items()})
+    owners.update(by_identity)
     return {serial: (path, history[serial]) for path, serial in owners.items()}
 
 
@@ -1153,10 +1213,11 @@ def _histories_of_connected_disks(
 def get_disk_predictions(_: dict = Depends(verify_token)):
     """Failure predictions from the SMART trends of the disks connected now (ADR-0232).
 
-    The disks of GET /health/disks; 500 when the host's disks cannot be listed.
+    The disks of GET /health/disks; 500 when the host's disks cannot be
+    listed or the SMART history cannot be read.
     """
     disks = storage_disks.host_disks_or_500()
-    histories = _histories_of_connected_disks(load_smart_history(), disks)
+    histories = _histories_of_connected_disks(_smart_history_or_500(), disks)
     predictions = [
         prediction
         for serial, (device, entries) in histories.items()
@@ -1169,7 +1230,7 @@ def get_disk_predictions(_: dict = Depends(verify_token)):
 @router.get("/smart-monitor/status")
 async def get_smart_monitor_status(_: dict = Depends(verify_token)):
     """Get SMART trend monitor status."""
-    history = load_smart_history()
+    history = _smart_history_or_500()
     return {
         "running": _smart_monitor_running,
         "check_interval_seconds": SMART_CHECK_INTERVAL,

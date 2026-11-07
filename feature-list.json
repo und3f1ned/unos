@@ -882,7 +882,7 @@
         "ADR-0172",
         "ADR-0232"
       ],
-      "notes": "Disk Health opens each disk's SMART data in a dialog, from what GET /health/disks returned (ADR-0232): health, temperature, power-on hours and cycles, serial, firmware, the last self-test, the ATA attributes with their status, and the SMART/Health Information log of NVMe disks (test_health_smart.py, health.spec.ts on route fakes). smartctl runs in the container (architecture.host-command-layer), and GET /health/disks runs it without -n standby, so opening Disk Health wakes sleeping disks (storage.disk-spindown). Device check: 2026-11-06 (slice 1 deploy: SMART data and a short test of the pool's disk). Open: the device check of the dialog (System > Disk Health on the device: the pool's disk /dev/sda opens with its attributes, temperature and PASSED; an NVMe disk, if one is connected, with its health log) and the re-check after a reboot (ADR-0018)."
+      "notes": "Disk Health opens each disk's SMART data in a dialog, from what GET /health/disks returned (ADR-0232): health, temperature, power-on hours and cycles, serial, firmware, the last self-test (of the ATA or the NVMe self-test log), the ATA attributes with their status, and the SMART/Health Information log of NVMe disks (test_health_smart.py, health.spec.ts on route fakes). smartctl runs in the container (architecture.host-command-layer), and GET /health/disks runs it without -n standby, so opening Disk Health wakes sleeping disks (storage.disk-spindown). Device check: 2026-11-06 (slice 1 deploy: SMART data and a short test of the pool's disk). Open: the device check of the dialog (System > Disk Health on the device: the pool's disk /dev/sda opens with its attributes, temperature and PASSED; an NVMe disk, if one is connected, with its health log) and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "storage.smart-trend-alerts",
@@ -894,13 +894,11 @@
         "GET /api/v1/health/smart/trends and /smart/predictions report the trend and a failure estimate per disk"
       ],
       "verified_by": [
-        "supervisor/tests/test_health_monitor.py",
-        "supervisor/tests/test_smart_predictions.py"
+        "supervisor/tests/test_health_monitor.py"
       ],
       "passes": false,
       "adr": [
-        "ADR-0043",
-        "ADR-0232"
+        "ADR-0043"
       ],
       "notes": "Open: the device check and the re-check after a reboot (ADR-0018)."
     },
@@ -923,7 +921,7 @@
       "adr": [
         "ADR-0232"
       ],
-      "notes": "GET /health/smart/predictions scores the SMART history as ADR-0232 fixes it (the rate over the last 24 snapshots; no prediction for NVMe disks or the shared 'unknown' history) and covers the disks connected now, found by the lsblk serial the monitor stores with each snapshot, else by path. Disk Health marks a disk Replace soon by its serial, with the risk factors and the recommendation; the dashboard lists such disks for administrators and links to Disk Health; both say when the predictions cannot be read. Proven here, 2026-11-07: test_smart_predictions.py (the threshold, the window, the disks covered, the mark going a day after the last rise), health.spec.ts and dashboard.spec.ts on route fakes, roles.spec.ts (no request for regular users); reviewed in a fresh context (ADR-0017). No host-level change, and no failing disk can be shown on the device. A sanity check there after the next deploy: GET /api/v1/health/smart/predictions answers 200 for the connected disks, new snapshots in /data/smart_history.json hold lsblk_serial, and the dashboard shows no mark and no warning."
+      "notes": "GET /health/smart/predictions scores the SMART history as ADR-0232 fixes it (the rate over the last 24 snapshots; no prediction for NVMe disks or the shared 'unknown' history) and covers the disks connected now, found by the lsblk serial the monitor stores with each snapshot when it names one disk and one history, else by path. A counter is read from the snapshots that hold it, and the history file is written atomically; one that cannot be read answers 500. Disk Health marks a disk Replace soon by its serial, with the risk factors and the recommendation, and lists a prediction that matches no listed disk apart; the dashboard lists such disks for administrators and links to Disk Health; both say when the predictions cannot be read. Proven here, 2026-11-07: test_smart_predictions.py (the threshold, the window, snapshots without the counters, the disks covered, the mark going a day after the last rise, the history file), health.spec.ts and dashboard.spec.ts on route fakes, roles.spec.ts (no request for regular users); reviewed in a fresh context twice (ADR-0017), the findings of the second fixed on 2026-11-07. No host-level change, and no failing disk can be shown on the device. A sanity check there after the next deploy: GET /api/v1/health/smart/predictions answers 200 for the connected disks, new snapshots in /data/smart_history.json hold lsblk_serial, and the dashboard shows no mark and no warning."
     },
     {
       "id": "storage.restore-copies-deletable",

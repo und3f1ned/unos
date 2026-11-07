@@ -38,7 +38,7 @@ export type PredictionStatus = "healthy" | "watch" | "monitor_closely" | "replac
 export interface DiskPrediction {
   /** smartctl's serial number, as SmartInfo.serial reports it. */
   serial: string;
-  /** Where the disk's latest SMART snapshot was taken. */
+  /** The disk's path now, as lsblk lists it. */
   device: string;
   risk_score: number;
   status: PredictionStatus;

@@ -33,6 +33,11 @@ function replaceSoonMark(scope: Locator | Page): Locator {
   return scope.locator('.badge', { hasText: /^Replace soon$/ });
 }
 
+/** The alert that lists the predictions to replace soon that match no listed disk. */
+function unmatchedAlert(page: Page): Locator {
+  return page.locator('.alert', { has: page.getByText('Replace soon', { exact: true }) });
+}
+
 /** Reload the tab's data with its refresh button, and wait until it is loaded. */
 async function refresh(page: Page) {
   const button = page.getByRole('button', { name: 'Refresh disk health' });
@@ -213,6 +218,47 @@ test.describe('Disk Health', () => {
 
     await expect(replaceSoonMark(disk(page, '/dev/e2e-sda'))).toBeVisible();
     await expect(replaceSoonMark(page)).toHaveCount(1);
+    // The prediction that matches no listed disk is listed apart, with its path and serial.
+    await expect(unmatchedAlert(page).getByRole('listitem')).toHaveText([
+      '/dev/e2e-sdb (serial E2E-OLD-1): Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly',
+    ]);
+  });
+
+  test('lists a disk to replace soon that smartctl could not read on this load', async ({
+    authenticatedPage: page,
+  }) => {
+    // The server found the disk at /dev/e2e-sdb by the serial lsblk reports for it,
+    // but smartctl timed out on it: Disk Health lists it with the serial Unknown.
+    const usb = { ...REPLACE_SOON, serial: 'E2E-USB-1', device: '/dev/e2e-sdb' };
+    let disks: object[] = FAKE_SMART_DISKS;
+    await fakeHealthApi(page, {
+      disks: () => ({ json: { disks } }),
+      predictions: () => predictionsAnswer(REPLACE_SOON, usb),
+    });
+    await page.goto('/system#health');
+
+    await expect(unmatchedAlert(page).getByRole('listitem')).toHaveText([
+      '/dev/e2e-sdb (serial E2E-USB-1): Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly',
+    ]);
+    await expect(replaceSoonMark(disk(page, '/dev/e2e-sda'))).toBeVisible();
+    await expect(replaceSoonMark(disk(page, '/dev/e2e-sdb'))).toHaveCount(0);
+
+    // At the next load smartctl reads the disk: the disk is marked, and the alert goes.
+    disks = FAKE_SMART_DISKS.map((listed) =>
+      listed.device === '/dev/e2e-sdb'
+        ? {
+            ...listed, serial: 'E2E-USB-1', firmware: '01.01A01', temperature: 31,
+            power_on_hours: 20410, power_cycle_count: 77, health_status: 'PASSED',
+            attributes: [
+              { id: 5, name: 'Reallocated_Sector_Ct', value: 100, worst: 100, thresh: 10, raw_value: '3', status: 'ok' },
+            ],
+          }
+        : listed,
+    );
+    await refresh(page);
+    await expect(replaceSoonMark(disk(page, '/dev/e2e-sdb'))).toBeVisible();
+    await expect(disk(page, '/dev/e2e-sdb')).toContainText('Reallocated_Sector_Ct increasing rapidly');
+    await expect(unmatchedAlert(page)).toHaveCount(0);
   });
 
   test('says when the failure predictions cannot be loaded', async ({ authenticatedPage: page }) => {

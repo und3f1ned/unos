@@ -173,16 +173,28 @@ the counters rise:
 - each of the reported uncorrectable errors, command timeouts and UDMA CRC
   errors that rose above 100 adds 10 points.
 
+A record in which smartctl could not read the counters counts neither as a
+rise nor as a drop.
+
 With 50 points or more the disk is marked **Replace soon**: in **Disk Health**
 with the reasons and a recommendation, and on the **Dashboard** (see
-[Disks to Replace](#disks-to-replace)). The mark goes away by itself once the
-score is below 50, for example a day after a single sector count stopped
-rising. A disk that is removed or replaced loses its mark. Only behind a USB
-bridge that reports no serial number, or the same one for several disks, does
-UNOS go by the disk's path (such as `/dev/sdb`): when another disk takes that
-place, the dashboard keeps the old disk's mark until the hourly check has
-recorded the new one. A disk that sleeps is not recorded and keeps its last
-score.
+[Disks to Replace](#disks-to-replace)). Disk Health marks the disk that
+reports the same serial number. When none of its disks does, because smartctl
+could not read the disk this time or another disk has taken its place, an
+alert above the list names the disk's path, serial number and reasons
+instead. The mark goes away by itself once the score is below 50, for example
+a day after a single sector count stopped rising.
+
+A disk that is removed or replaced loses its mark, except in two cases, where
+the old disk's mark stays until the hourly check has recorded the new disk:
+
+- a disk replaced inside the same USB enclosure, whose bridge reports its own
+  serial number for whichever disk it holds;
+- a disk behind a USB bridge that reports no serial number, or the same one
+  as another enclosure: UNOS finds such a disk by its path (such as
+  `/dev/sdb`), which another disk can take.
+
+A disk that sleeps is not recorded and keeps its last score.
 
 The score follows rises, not levels: a disk that arrives with many
 reallocated sectors gets no mark, so check the SMART data of a used disk

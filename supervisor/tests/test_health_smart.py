@@ -497,9 +497,21 @@ def test_a_sata_disk_reports_its_attributes_and_last_self_test(board_api, board)
 
 def test_an_nvme_disk_reports_its_health_information_log(board_api, board):
     # NVMe disks have no ATA attributes: their SMART data is the SMART/Health
-    # Information log, which Disk Health showed nothing of.
+    # Information log, which Disk Health showed nothing of. smartctl 7.3 and
+    # later print their self-test log too, the newest test first.
     board.smart["/dev/nvme0n1"] = {
         **BOARD_SMART["/dev/nvme0n1"], "nvme_smart_health_information_log": NVME_LOG,
+        "nvme_self_test_log": {
+            "current_self_test_operation": {"value": 0, "string": "No self-test in progress"},
+            "table": [
+                {"self_test_code": {"value": 1, "string": "Short"},
+                 "self_test_result": {"value": 0, "string": "Completed without error"},
+                 "power_on_hours": 1190},
+                {"self_test_code": {"value": 2, "string": "Extended"},
+                 "self_test_result": {"value": 1, "string": "Aborted: Self-test command"},
+                 "power_on_hours": 1100},
+            ],
+        },
     }
     numbers = {key: value for key, value in NVME_LOG.items() if key != "temperature_sensors"}
 
@@ -510,7 +522,10 @@ def test_an_nvme_disk_reports_its_health_information_log(board_api, board):
     assert list(nvme["nvme_health"]) == list(numbers)  # in smartctl's order
     assert (nvme["health_status"], nvme["temperature"], nvme["power_on_hours"],
             nvme["power_cycle_count"]) == ("PASSED", 40, 1200, 45)
+    assert (nvme["self_test_status"], nvme["last_test_result"]) == (
+        "Short", "Completed without error")
     assert sata["nvme_health"] is None
+    assert (sata["self_test_status"], sata["last_test_result"]) == (None, None)
     single = board_api.get("/api/v1/health/disk/nvme0n1")
     assert single.status_code == 200, single.text
     assert single.json()["nvme_health"] == numbers

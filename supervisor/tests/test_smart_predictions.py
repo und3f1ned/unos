@@ -6,11 +6,14 @@ least 24 snapshots; each of the sector counts 5, 197 and 198 that rose adds
 30, and 20 more when it rose by more than 0.1 per snapshot over the last 24
 snapshots; each of 187, 188 and 199 that rose above 100 adds 10. 50 or more
 is replace_soon: the mark of Disk Health and the dashboard
-(storage.smart-replace-soon), with the risk factors as its reason. The
-history keeps the serials of removed and replaced disks, so only the disks
-connected now get a prediction: by the serial lsblk reported with the
-latest snapshot, or else by its path. The endpoint reads the history only:
-smartctl never runs, and no disk is woken.
+(storage.smart-replace-soon), with the risk factors as its reason. A
+counter is read from the snapshots that hold it. The history keeps the
+serials of removed and replaced disks, so only the disks connected now get
+a prediction: by the serial lsblk reported with the latest snapshot when
+that serial names one connected disk and one history, or else by its path.
+The endpoint reads the history only: smartctl never runs, and no disk is
+woken. The history file is replaced atomically, and one that cannot be read
+is an error, not an empty history.
 """
 
 import importlib
@@ -41,7 +44,11 @@ SAME = object()  # lsblk reports smartctl's serial, as for SATA and NVMe disks
 
 def snapshots(attributes, *, serial="WD-1", device="/dev/sda", lsblk_serial=SAME, start=START,
               count=None):
-    """Hourly history entries of one disk, as the SMART monitor stores them (JSON keys)."""
+    """Hourly history entries of one disk, as the SMART monitor stores them (JSON keys).
+
+    A value None leaves the attribute out of that snapshot, as when smartctl
+    could not read the attribute table (the monitor then stores none).
+    """
     if count is None:
         count = len(next(iter(attributes.values())))
     return [
@@ -50,7 +57,9 @@ def snapshots(attributes, *, serial="WD-1", device="/dev/sda", lsblk_serial=SAME
             "device": device,
             "serial": serial,
             "lsblk_serial": serial if lsblk_serial is SAME else lsblk_serial,
-            "attributes": {str(attr): values[i] for attr, values in attributes.items()},
+            "attributes": {
+                str(attr): values[i] for attr, values in attributes.items() if values[i] is not None
+            },
             "temperature": 35,
             "power_on_hours": 1000 + i,
         }
@@ -156,6 +165,13 @@ def test_a_fast_rise_of_reallocated_sectors_is_replace_soon_with_its_reasons(api
         ({CRC_ERRORS: [0] * 99 + [100]}, 0, "healthy"),
         # High counts that do not rise: the score follows the trend, not the level.
         ({REALLOCATED: [40] * 24}, 0, "healthy"),
+        # A snapshot without the counters (smartctl could not read the attribute
+        # table) tells nothing of them: it is no drop to 0 ...
+        ({REALLOCATED: [0] * 21 + [3] * 3 + [None]}, 50, "replace_soon"),
+        # ... and no rise from 0, here for as long as it is the oldest kept ...
+        ({REALLOCATED: [None] + [8] * 99, PENDING: [None] + [1] * 99}, 0, "healthy"),
+        # ... nor a fast one: the rate counts the last 24 snapshots that hold the counter.
+        ({REALLOCATED: [0] * 70 + [3] * 6 + [None] + [3] * 23}, 30, "monitor_closely"),
     ],
 )
 def test_the_score_and_its_threshold(api, disks, attributes, score, status):
@@ -325,6 +341,77 @@ def test_disks_behind_identical_bridges_are_found_at_their_paths(api, disks):
     assert placed(api) == [("WD-A", "/dev/sdc"), ("WD-B", "/dev/sdd")]
 
 
+BRIDGE = "0123456789ABCDEF"
+
+
+@pytest.mark.parametrize("connected", ["sdc", "sdd"])
+@pytest.mark.parametrize("recorded_later", ["WD-A", "WD-B"])
+def test_disks_behind_identical_bridges_after_one_enclosure_is_unplugged(
+    api, disks, connected, recorded_later
+):
+    # lsblk now reports the bridges' serial for one disk only, and both histories
+    # hold it: it names neither disk, whichever was recorded later in the pass.
+    disks.add_disk(connected, serial=BRIDGE)
+    later = timedelta(seconds=5)
+    disks.write({
+        "WD-A": snapshots(FAILING, serial="WD-A", device="/dev/sdc", lsblk_serial=BRIDGE,
+                          start=START + (later if recorded_later == "WD-A" else timedelta())),
+        "WD-B": snapshots(STEADY, serial="WD-B", device="/dev/sdd", lsblk_serial=BRIDGE,
+                          start=START + (later if recorded_later == "WD-B" else timedelta())),
+    })
+
+    assert placed(api) == {"sdc": [("WD-A", "/dev/sdc")], "sdd": [("WD-B", "/dev/sdd")]}[connected]
+
+
+def test_a_disk_behind_an_ambiguous_bridge_serial_needs_that_serial_at_its_path(api, disks):
+    # After a reboot the enclosure still connected is at /dev/sdd, and a disk
+    # the monitor has not recorded yet took /dev/sdc, where WD-A was recorded.
+    disks.add_disk("sdc", serial="WD-9")
+    disks.add_disk("sdd", serial=BRIDGE)
+    disks.write({
+        "WD-A": snapshots(FAILING, serial="WD-A", device="/dev/sdc", lsblk_serial=BRIDGE),
+        "WD-B": snapshots(FAILING, serial="WD-B", device="/dev/sdd", lsblk_serial=BRIDGE),
+    })
+
+    assert placed(api) == [("WD-B", "/dev/sdd")]
+
+
+def test_a_disk_replaced_inside_its_usb_enclosure(api, disks):
+    # The enclosure's bridge reports its own serial for whichever disk it holds.
+    disks.add_disk("sdc", serial="BRIDGE-1")
+    old = snapshots(FAILING, serial="WD-OLD", device="/dev/sdc", lsblk_serial="BRIDGE-1")
+    disks.write({"WD-OLD": old})
+    # Until the monitor has recorded the new disk nothing tells the two apart:
+    # the old disk's mark stays (ADR-0232).
+    assert placed(api) == [("WD-OLD", "/dev/sdc")]
+
+    # The new disk's first snapshot: both histories hold the bridge's serial at
+    # that path, and the later one wins, with too few snapshots for a prediction.
+    new = snapshots(STEADY, serial="WD-NEW", device="/dev/sdc", lsblk_serial="BRIDGE-1",
+                    start=START + timedelta(days=2))
+    disks.write({"WD-OLD": old, "WD-NEW": new[:1]})
+    assert placed(api) == []
+
+    disks.write({"WD-OLD": old, "WD-NEW": new})
+    assert placed(api) == [("WD-NEW", "/dev/sdc")]
+
+
+@pytest.mark.parametrize("newer_first", [False, True])
+def test_of_two_disks_recorded_at_one_path_without_a_serial_the_later_wins(
+    api, disks, newer_first
+):
+    # A disk swapped in an enclosure whose bridge reports no serial.
+    disks.add_disk("sdc", serial=None)
+    histories = [
+        ("WD-OLD", snapshots(FAILING, serial="WD-OLD", device="/dev/sdc", lsblk_serial=None)),
+        ("WD-NEW", snapshots(STEADY, serial="WD-NEW", device="/dev/sdc", lsblk_serial=None,
+                             start=START + timedelta(days=2))),
+    ]
+    disks.write(dict(reversed(histories) if newer_first else histories))
+
+    assert placed(api) == [("WD-NEW", "/dev/sdc")]
+
+
 def test_disks_without_a_serial_get_no_prediction(api, disks):
     # The monitor records every disk that smartctl reports without a serial
     # under "unknown", so the counters of different disks mix there.
@@ -367,3 +454,67 @@ def test_without_a_history_there_is_no_prediction(api, disks):
 
     assert predictions(api) == []
     assert not disks.history_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# The history file
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # Cut short, as a write cut by a power loss leaves it.
+        json.dumps({"WD-1": snapshots(FAILING)})[:300],
+        "",
+        "[]",
+        '{"WD-1": 5}',
+        '{"WD-1": [5]}',
+    ],
+)
+def test_a_history_that_cannot_be_read_is_an_error_not_an_empty_one(api, disks, content):
+    disks.history_file.write_text(content)
+
+    response = api.get("/api/v1/health/smart/predictions")
+
+    # Not "no predictions": both pages say so instead of showing no mark.
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"].startswith(
+        f"Could not read the SMART history {disks.history_file}: "), response.text
+
+
+@pytest.mark.parametrize("path", ["/smart/trends", "/smart/history/WD-1", "/smart-monitor/status"])
+def test_the_other_history_endpoints_say_so_too(api, disks, path):
+    disks.history_file.write_text("{")
+
+    response = api.get(f"/api/v1/health{path}")
+
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"].startswith(
+        f"Could not read the SMART history {disks.history_file}: "), response.text
+
+
+def test_a_read_during_the_hourly_write_gets_the_whole_old_history(api, disks, monkeypatch):
+    disks.write({"WD-1": snapshots(FAILING)})
+    old = disks.history_file.read_text()
+    monkeypatch.setattr(subprocess, "run", smartctl_reports(3))
+
+    with open(disks.history_file) as reader:
+        assert health_router._smart_monitor_pass() == []
+        # The new history replaced the file: the old one was never cut short.
+        assert reader.read() == old
+
+    assert predictions(api)[0]["data_points"] == 25
+    assert sorted(path.name for path in disks.history_file.parent.iterdir()) == ["smart_history.json"]
+
+
+def test_the_monitor_starts_a_new_history_when_the_file_cannot_be_read(disks, monkeypatch, caplog):
+    disks.history_file.write_text("{")
+    monkeypatch.setattr(subprocess, "run", smartctl_reports(0))
+
+    health_router._smart_monitor_pass()
+
+    assert {serial: len(entries) for serial, entries in health_router.load_smart_history().items()} == {
+        "WD-1": 1}
+    assert f"Could not read the SMART history {disks.history_file}: " in caplog.text
+    assert "starting a new history" in caplog.text

@@ -58,6 +58,11 @@
     return predictions.find((prediction) => prediction.serial === disk.serial);
   }
 
+  // The predictions to replace soon that match no listed disk: smartctl could
+  // not read the disk on this load (its serial shows as Unknown), or another
+  // disk took its place. They are listed apart, as on the dashboard.
+  $: unmatched = toReplace.filter((prediction) => !disks.some((disk) => disk.serial === prediction.serial));
+
   function healthIcon(status: string) {
     if (status === "PASSED") return Check;
     if (status === "FAILED") return X;
@@ -118,6 +123,21 @@
   {:else}
     {#if predictionsError}
       <Alert variant="warning" title="Could not load the failure predictions">{predictionsError}</Alert>
+    {/if}
+    {#if unmatched.length > 0}
+      <Alert variant="error" title="Replace soon">
+        <p class="text-sm">
+          No disk in the list reports the serial number of these disks now: smartctl could not read
+          the disk this time, or another disk took its place.
+        </p>
+        <ul class="mt-2 space-y-1 text-sm">
+          {#each unmatched as prediction}
+            <li>
+              <span class="mono">{prediction.device}</span> (serial {prediction.serial}): {prediction.risk_factors.join("; ")}
+            </li>
+          {/each}
+        </ul>
+      </Alert>
     {/if}
     <ul class="space-y-3" aria-label="Disks">
       {#each disks as disk}
