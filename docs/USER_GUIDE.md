@@ -39,9 +39,9 @@ Signing in works also while the disk that holds the UNOS data (`/data`, on the
 system disk) is full, so that an administrator can sign in and free space, for
 example by deleting old backups. The login history and the audit log then miss
 the sign-ins they cannot store: the supervisor's log
-(`docker logs unos-supervisor`) reports each record it could not write. On a
-disk that is full to the last block, Docker may not be able to keep those log
-lines either.
+(`docker logs unos-supervisor`) reports each record it could not write, with
+its time. On a disk that is full to the last block, Docker may not be able to
+keep those log lines either.
 A recovery code does not sign you in while the disk is full, because UNOS
 cannot mark it as used; a code of your authenticator app does.
 
@@ -679,10 +679,12 @@ left.
 Tokens give scripts access to the UNOS API with the rights of the account that
 created them: a regular user's token cannot use the administrator-only APIs.
 There is no page for them yet; create one with the API, using the
-`access_token` that `POST /api/v1/auth/login` returns. `expires_in_days` is
-the token's lifetime, from 1 to 3650 days; without it the token does not
-expire. The answer is the only place that shows the full token (`token`, which
-starts with `unos_`): UNOS keeps only a hash of it, so save it right away.
+`access_token` that `POST /api/v1/auth/login` returns. `name` has 1 to 64
+characters. `expires_in_days` is the token's lifetime, from 1 to 3650 days;
+without it the token does not expire. A token acts with all the rights of its
+user, and `permissions` takes only `*`. A user has at most 100 tokens. The
+answer is the only place that shows the full token (`token`, which starts with
+`unos_`): UNOS keeps only a hash of it, so save it right away.
 
 ```bash
 curl --cacert unos-root-ca.crt -X POST https://unos/api/v1/auth/tokens \
@@ -708,6 +710,10 @@ and `unos` the name on the certificate.
   again the next time. A disabled token is refused with 401 "API token is
   disabled", an expired one with 401 "API token has expired".
 - `DELETE /api/v1/auth/tokens/<id>` revokes a token for good.
+- Creating, disabling, enabling and deleting tokens needs the `access_token` of
+  a sign-in: a request made with an API token gets 403, so that a token cannot
+  make tokens that outlive its expiry or its revocation. A token can list
+  them.
 - The last use (`last_used_at`) is stored at most once an hour, so that
   scripts do not write to the system disk with every request: it can be up to
   an hour older than the token's latest request.

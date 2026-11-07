@@ -15,6 +15,7 @@ import errno
 import json
 import logging
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pyotp
 import pytest
@@ -28,6 +29,7 @@ from src.audit.schemas import AuditAction
 from src.auth import utils as auth_utils
 from src.auth.models import User
 from src.security.models import LoginAttempt
+from src.security.router import record_login_attempt
 
 from .test_recovery_codes import generate
 from .test_smb_accounts import ALICE_PW, API, SECRETS, World
@@ -154,14 +156,19 @@ class TestSignInWhileDataIsFull:
 
     def test_the_records_it_could_not_write_are_reported_in_the_log(self, world, monkeypatch):
         fill_data(world, monkeypatch)
+        before = datetime.now(timezone.utc).replace(microsecond=0)
 
         sign_in(world, headers={"user-agent": "backup-script/1.0"})
 
+        after = datetime.now(timezone.utc)
         [(entry, message)] = reported(world, ENTRY_LOST)
         assert (entry["action"], entry["username"], entry["success"]) == ("login_success", "alice", True)
         assert (entry["ip_address"], entry["user_agent"]) == ("testclient", "backup-script/1.0")
         assert entry["timestamp"] and NO_SPACE in message
         [(attempt, message)] = reported(world, ATTEMPT_LOST)
+        # The row would have taken its time from the database: the log carries it, in UTC.
+        attempted_at = datetime.fromisoformat(attempt.pop("timestamp"))
+        assert attempted_at.utcoffset() == timedelta(0) and before <= attempted_at <= after
         assert attempt == {
             "username": "alice", "ip_address": "testclient", "user_agent": "backup-script/1.0",
             "success": True, "failure_reason": None,
@@ -259,6 +266,23 @@ class TestOneWriteAlone:
         assert stored_attempts(world) == [("alice", True), ("alice", False)]
         assert [entry["action"] for entry in world.audit()] == ["login_success", "login_failed"]
         assert reported(world, ATTEMPT_LOST) == reported(world, ENTRY_LOST) == []
+
+
+class TestRecordLoginAttempt:
+    def test_an_attempt_it_cannot_store_leaves_the_session_usable(self, world):
+        """The INSERT fails inside the commit, where a full disk fails it: the session is rolled
+        back, so that the caller can go on using it."""
+        fill_the_database(world)
+
+        async def attempt_then_read() -> str | None:
+            async with world.maker() as db:
+                await record_login_attempt(db, "alice", False, failure_reason="Incorrect username or password")
+                return await db.scalar(select(User.username).where(User.id == world.ids["alice"]))
+
+        assert asyncio.run(attempt_then_read()) == "alice"
+        assert stored_attempts(world) == []
+        [(attempt, message)] = reported(world, ATTEMPT_LOST)
+        assert (attempt["username"], attempt["success"]) == ("alice", False) and DB_FULL in message
 
 
 class TestLogAction:

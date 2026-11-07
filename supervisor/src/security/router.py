@@ -3,7 +3,7 @@ import os
 import subprocess
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import OperationalError
@@ -781,11 +781,14 @@ async def record_login_attempt(
         "success": success,
         "failure_reason": failure_reason,
     }
+    # The row takes its time from the database (server_default); the log line has to carry it.
+    attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     db.add(LoginAttempt(**fields))
     try:
         await db.commit()
     except OperationalError as exc:
         await db.rollback()
         logger.error(
-            "Could not store this login attempt in the login history: %s (%s)", json.dumps(fields), exc.orig or exc
+            "Could not store this login attempt in the login history: %s (%s)",
+            json.dumps({"timestamp": attempted_at, **fields}), exc.orig or exc,
         )

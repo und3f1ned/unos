@@ -1,4 +1,5 @@
 """WebSocket authentication handshake (first-message auth, 4401/4403 close codes)."""
+import logging
 import queue
 import threading
 import time
@@ -16,12 +17,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 from starlette.websockets import WebSocketDisconnect
 
+from src.auth import utils as auth_utils
 from src.auth.models import APIToken, User
 from src.auth.utils import create_access_token, generate_api_token
 from src.config import get_settings
 from src.database import Base
 from src.main import app
 from src.websocket import events
+
+from .test_api_token_last_use import FAILURES, START
 
 _FAST_HASH = bcrypt.hashpw(b"irrelevant", bcrypt.gensalt(rounds=4)).decode()
 
@@ -421,6 +425,68 @@ class TestReauthentication:
         assert len(commits) == 1
         with Session(ws_db.engine) as session:
             assert session.query(APIToken).filter_by(token_hash=token_hash).one().last_used_at is not None
+
+    @staticmethod
+    def _token_used_at(ws_db, last_used_at) -> tuple[str, str]:
+        full_token, token_hash = generate_api_token()
+        with Session(ws_db.engine) as session:
+            user = session.query(User).filter_by(username="ws_user").one()
+            session.add(APIToken(name="t", token_hash=token_hash, token_prefix=full_token[:12], user_id=user.id,
+                                 last_used_at=last_used_at))
+            session.commit()
+        return full_token, token_hash
+
+    @staticmethod
+    def _last_use_warnings(caplog, error: str) -> list[str]:
+        warnings = [r.getMessage() for r in caplog.records
+                    if r.levelno == logging.WARNING and "last use of API token" in r.getMessage()]
+        assert all(error in message for message in warnings), warnings
+        return warnings
+
+    @FAILURES
+    def test_a_handshake_whose_last_use_cannot_be_stored_still_authenticates(
+            self, client, ws_db, monkeypatch, caplog, failure):
+        """A full /data refuses the commit of the token's first use (ADR-0247): the session is
+        rolled back before it reads the user, and the socket opens (ADR-0248)."""
+        full_token, token_hash = self._token_used_at(ws_db, None)
+        error = failure(ws_db.async_engine.sync_engine, monkeypatch)
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, full_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "stats"
+
+        with Session(ws_db.engine) as session:
+            assert session.query(APIToken).filter_by(token_hash=token_hash).one().last_used_at is None
+        assert len(self._last_use_warnings(caplog, error)) == 1
+
+    @FAILURES
+    def test_a_recheck_whose_last_use_cannot_be_stored_keeps_the_socket_open(
+            self, client, ws_db, fast_recheck, monkeypatch, caplog, failure):
+        """Once the stored last use is an hour old, a re-check commits it again and meets a full
+        /data (ADR-0247): it is rolled back, the token still passes, and the socket streams on
+        instead of closing with 1011 (ADR-0248)."""
+        clock = {"now": START}
+        monkeypatch.setattr(auth_utils, "_token_time", lambda: clock["now"])
+        # Stored already: the handshake commits nothing, and every check that commits fails.
+        full_token, token_hash = self._token_used_at(ws_db, START)
+        error = failure(ws_db.async_engine.sync_engine, monkeypatch)
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, full_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            clock["now"] = START + timedelta(hours=1)
+            checked = len(fast_recheck)
+            deadline = time.monotonic() + 5
+            while len(fast_recheck) < checked + 3:
+                assert ws.receive_json()["type"] == "stats"
+                assert time.monotonic() < deadline, "credentials were not re-checked"
+            assert ws.receive_json()["type"] == "stats"
+
+        with Session(ws_db.engine) as session:
+            assert session.query(APIToken).filter_by(token_hash=token_hash).one().last_used_at == START
+        # The first two of those re-checks are over: each one tried, and was rolled back.
+        assert len(self._last_use_warnings(caplog, error)) >= 2
 
     def test_expired_jwt_is_disconnected_from_events(self, client, fast_recheck):
         token = jwt.encode({"sub": "ws_user", "exp": int(time.time()) + 2},

@@ -266,6 +266,25 @@ async def require_admin(user: User = Depends(verify_token)) -> User:
     return user
 
 
+SESSION_NEEDED = "An API token cannot create, enable, disable or delete API tokens: sign in to do it"
+
+
+async def require_session(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user: User = Depends(verify_token),
+) -> User:
+    """Allow the request only with a session token, not with an API token (ADR-0249).
+
+    For the changes that would outlast the API token that asks for them, such as a new token:
+    a token's lifetime and its revocation must bound what it can do, and a session token needs
+    the password and the second factor (ADR-0239). An API token that is not valid keeps the 401
+    of ``verify_token``; a valid one gets 403.
+    """
+    if credentials.credentials.startswith(API_TOKEN_PREFIX):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=SESSION_NEEDED)
+    return user
+
+
 async def verify_api_token(token: str, db: AsyncSession) -> User:
     """Verify an API token and return the associated user.
 

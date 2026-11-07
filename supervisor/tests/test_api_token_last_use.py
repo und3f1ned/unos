@@ -6,6 +6,10 @@ database on the system disk per request (ADR-0214). A request now commits it onl
 stored one is empty or an hour old. The time the server checks and stamps tokens at is the
 tests' (auth.utils._token_time); commits are counted as SQLAlchemy reports them on the app's
 engine.
+
+A commit of the last use that fails, as on a full /data (ADR-0247), fails where SQLite fails:
+at the UPDATE, or at the COMMIT that ends the transaction. ``the_write_fails`` and
+``the_commit_fails`` make it fail there; test_ws_auth.py uses them too.
 """
 from __future__ import annotations
 
@@ -15,8 +19,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import event
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from src.auth import utils as auth_utils
@@ -26,6 +29,38 @@ from .test_smb_accounts import API, World
 
 START = datetime(2026, 11, 7, 9, 0, 0)  # UTC without a zone, as token times are stored
 DB_FULL = "database or disk is full"
+READ_ONLY = "attempt to write a readonly database"
+
+
+def the_write_fails(engine: Engine, monkeypatch) -> str:
+    """From now on SQLite refuses every write of ``engine`` (the sync engine of the app's async
+    one) at the statement itself, inside the commit's flush, as a full or read-only /data
+    does: every connection it opens from now on is read-only (PRAGMA query_only). The session
+    must then be rolled back before it reads again. Returns SQLite's message."""
+    def read_only(dbapi_connection, _record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA query_only = 1")
+        cursor.close()
+
+    event.listen(engine, "connect", read_only)
+    return READ_ONLY
+
+
+def the_commit_fails(engine: Engine, monkeypatch) -> str:
+    """From now on the statements of ``engine`` run, and SQLite's COMMIT fails at the end of
+    the transaction with "database or disk is full", as when the journal or the database file
+    cannot be written to its end. The session must then be rolled back before it reads again.
+    Returns SQLite's message."""
+    def disk_full(dbapi_connection) -> None:
+        raise sqlite3.OperationalError(DB_FULL)
+
+    monkeypatch.setattr(engine.dialect, "do_commit", disk_full)
+    return DB_FULL
+
+
+FAILURES = pytest.mark.parametrize(
+    "failure", [the_write_fails, the_commit_fails], ids=["at-the-write", "at-the-commit"]
+)
 
 
 @pytest.fixture
@@ -143,13 +178,14 @@ class TestLastUse:
         )
 
     def test_a_request_that_writes_does_not_take_a_skipped_last_use_along(self, world, clock):
-        """A request that commits for its own sake, here one that creates a second token, would
-        also write a last use that was set and left uncommitted."""
-        token_id, token = new_token(world)
+        """A request that commits for its own sake, here an administrator's script that creates a
+        user, would also write a last use that was set and left uncommitted."""
+        token_id, token = new_token(world, owner="admin")
         use(world, token)
         clock.now = START + timedelta(minutes=10)
 
-        created = world.client.post(f"{API}/auth/tokens", json={"name": "second"}, headers=bearer(token))
+        created = world.client.post(f"{API}/auth/users", json={"username": "carol", "password": "Carol-pass-2026"},
+                                    headers=bearer(token))
 
         assert created.status_code == 200, created.text
         assert stored_last_use(world, token_id) == START
@@ -160,15 +196,14 @@ class TestLastUse:
 
         assert commits == []
 
-    def test_a_last_use_that_cannot_be_stored_still_answers(self, world, clock, monkeypatch):
-        """A full /data refuses the commit (ADR-0247): the request is answered, and the next one
-        tries again."""
+    @FAILURES
+    def test_a_last_use_that_cannot_be_stored_still_answers(self, world, clock, monkeypatch, failure):
+        """A full /data refuses the commit of the last use (ADR-0247), at the UPDATE or at the
+        COMMIT: the session is rolled back before it reads the token's user, the request is
+        answered, and the next one tries again."""
         token_id, token = new_token(world)
+        error = failure(world.async_engine.sync_engine, monkeypatch)
 
-        async def disk_full(self):
-            raise OperationalError("COMMIT", {}, sqlite3.OperationalError(DB_FULL))
-
-        monkeypatch.setattr(AsyncSession, "commit", disk_full)
         for _ in range(2):
             assert use(world, token).json()["username"] == "alice"
 
@@ -176,4 +211,4 @@ class TestLastUse:
         warnings = [r.getMessage() for r in world.caplog.records
                     if r.levelno == logging.WARNING and "last use of API token" in r.getMessage()]
         assert len(warnings) == 2, warnings
-        assert all(f"API token {token_id}:" in message and DB_FULL in message for message in warnings)
+        assert all(f"API token {token_id}:" in message and error in message for message in warnings)

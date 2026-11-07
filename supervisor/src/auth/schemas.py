@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from ..shares.account_state import SmbAccountStatus
 
@@ -137,9 +137,17 @@ class TOTPEnableRequest(BaseModel):
 
 
 # API Token schemas
+# Each token is a row of the database on the system disk, which any signed-in user can add to:
+# its name is bounded, and so is the number of tokens per user (ADR-0249).
+API_TOKEN_NAME_CHARS = 64
+
+
 class APITokenCreate(BaseModel):
-    name: str
-    permissions: str = "*"  # * for all, or comma-separated like "read,containers,storage"
+    # Shown in the token list and the audit log; white space around it is dropped.
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=API_TOKEN_NAME_CHARS)]
+    # Stored for the scopes of auth.api-token-scopes. Until they are checked, a token acts with
+    # all of its owner's rights, and "*" is the one value that says so (ADR-0249).
+    permissions: Literal["*"] = "*"
     # Optional expiration: 1 day to 10 years. Anything else is a 422 (huge
     # values used to overflow the expiry date into a 500).
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)

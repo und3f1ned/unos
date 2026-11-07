@@ -4,15 +4,20 @@ import { E2E_ADMIN } from './fixtures';
 /**
  * API tokens for scripts (feature auth.api-tokens, ADR-0239), against the stand-in's real
  * supervisor: a token is answered once, acts with the rights of its owner, answers 401 while
- * it is disabled and once it is deleted, and is out of reach of other users. Its last use is
- * stored once and then stays as it is for up to an hour (auth.api-token-last-used-throttle,
- * ADR-0248). API only: no page manages tokens. That a token expires is asserted in
- * supervisor/tests/test_authz.py, because the shortest lifetime is a day.
+ * it is disabled and once it is deleted, and is out of reach of other users. Only a session
+ * creates, disables and deletes tokens, and a name has 1 to 64 characters (ADR-0249). Its last
+ * use is stored once and then stays as it is for up to an hour
+ * (auth.api-token-last-used-throttle, ADR-0248). API only: no page manages tokens. That a token
+ * expires, and the limit of 100 tokens per user, are asserted in supervisor/tests/test_authz.py:
+ * the shortest lifetime is a day.
  */
 
 type Credentials = { username: string; password: string };
 type Created = { id: number; token: string; token_prefix: string; expires_at: string | null };
-type Listed = { id: number; is_active: boolean; last_used_at: string | null };
+type Listed = { id: number; name: string; is_active: boolean; last_used_at: string | null };
+
+/** The server's answer to a request with an API token that would manage tokens (ADR-0249). */
+const SESSION_NEEDED = 'An API token cannot create, enable, disable or delete API tokens: sign in to do it';
 
 async function signIn(request: APIRequestContext, credentials: Credentials): Promise<string> {
   const response = await request.post('/api/v1/auth/login', { data: credentials });
@@ -126,6 +131,43 @@ test.describe('API tokens', () => {
     const gone = await me(request, created.token);
     expect(gone.status()).toBe(401);
     expect((await gone.json()).detail).toBe('Invalid API token');
+  });
+
+  test('a token cannot create, disable or delete tokens, and a name has 1 to 64 characters', async ({
+    request,
+  }) => {
+    // A token of one day cannot make one that never expires, nor touch itself or others.
+    const leaked = await createToken(request, userSession, { expires_in_days: 1 });
+    const other = await createToken(request, userSession);
+    const asToken = { headers: bearer(leaked.token) };
+    const refused = [
+      await request.post('/api/v1/auth/tokens', { ...asToken, data: { name: 'minted' } }),
+      await request.post(`/api/v1/auth/tokens/${other.id}/toggle`, asToken),
+      await request.delete(`/api/v1/auth/tokens/${other.id}`, asToken),
+      await request.post(`/api/v1/auth/tokens/${leaked.id}/toggle`, asToken),
+      await request.delete(`/api/v1/auth/tokens/${leaked.id}`, asToken),
+    ];
+    for (const response of refused) {
+      expect(response.status(), response.url()).toBe(403);
+      expect((await response.json()).detail).toBe(SESSION_NEEDED);
+    }
+    const { tokens } = await listTokens(request, userSession);
+    expect(tokens.map((token) => token.name)).not.toContain('minted');
+    for (const id of [leaked.id, other.id]) {
+      expect(tokens.find((token) => token.id === id)?.is_active).toBe(true);
+    }
+    // The token still lists them and acts with its owner's rights.
+    expect((await request.get('/api/v1/auth/tokens', asToken)).status()).toBe(200);
+    expect((await me(request, leaked.token)).status()).toBe(200);
+
+    for (const name of ['', '   ', 'x'.repeat(65)]) {
+      const response = await request.post('/api/v1/auth/tokens', { headers: bearer(userSession), data: { name } });
+      expect(response.status(), JSON.stringify(name)).toBe(422);
+    }
+    const longest = await createToken(request, userSession, { name: 'x'.repeat(64) });
+    expect((await listTokens(request, userSession)).tokens.find((token) => token.id === longest.id)?.name).toBe(
+      'x'.repeat(64),
+    );
   });
 
   test('the last use is stored once and stays as it is within the hour', async ({ request }) => {

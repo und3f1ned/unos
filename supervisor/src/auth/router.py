@@ -30,7 +30,7 @@ from .schemas import (
 )
 from .utils import (
     hash_password, verify_password, create_access_token, verify_token,
-    require_admin, generate_api_token, generate_recovery_codes,
+    require_admin, require_session, generate_api_token, generate_recovery_codes,
     TOTP_CODE_REUSED, TotpCheck, check_totp_code, forget_totp_steps,
     RECOVERY_CODE_INVALID, recovery_code_hash, recovery_code_hashes, recovery_codes_left,
 )
@@ -754,6 +754,17 @@ async def disable_my_smb(
 
 
 # ==================== API Token Management ====================
+#
+# Only a session token creates, toggles and deletes tokens (require_session): tokens made with a
+# token would outlast its lifetime and its revocation. Listing them is open to API tokens too: it
+# changes nothing and never shows a token (ADR-0249).
+
+# Each token is a row of the database on the system disk (ADR-0214, ADR-0249).
+MAX_API_TOKENS_PER_USER = 100
+TOO_MANY_API_TOKENS = (
+    f"You already have {MAX_API_TOKENS_PER_USER} API tokens, the most a user can have: delete one first"
+)
+
 
 @router.get("/tokens", response_model=list[APITokenResponse])
 async def list_api_tokens(
@@ -771,7 +782,7 @@ async def list_api_tokens(
 async def create_api_token(
     request: Request,
     data: APITokenCreate,
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new API token. The full token is only shown once!"""
@@ -785,15 +796,23 @@ async def create_api_token(
         expires_at = datetime.utcnow() + timedelta(days=data.expires_in_days)
 
     # Create the token
+    user_id = current_user.id
     api_token = APIToken(
         name=data.name,
         token_hash=token_hash,
         token_prefix=token_prefix,
-        user_id=current_user.id,
+        user_id=user_id,
         permissions=data.permissions,
         expires_at=expires_at
     )
     db.add(api_token)
+    # Counted after the flush, which takes SQLite's write lock: two requests at the same moment
+    # cannot both pass the limit.
+    await db.flush()
+    count = await db.scalar(select(func.count()).select_from(APIToken).where(APIToken.user_id == user_id))
+    if count > MAX_API_TOKENS_PER_USER:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=TOO_MANY_API_TOKENS)
     await db.commit()
     await db.refresh(api_token)
 
@@ -821,7 +840,7 @@ async def create_api_token(
 async def delete_api_token(
     request: Request,
     token_id: int,
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete an API token."""
@@ -856,7 +875,7 @@ async def delete_api_token(
 @router.post("/tokens/{token_id}/toggle")
 async def toggle_api_token(
     token_id: int,
-    current_user: User = Depends(verify_token),
+    current_user: User = Depends(require_session),
     db: AsyncSession = Depends(get_db)
 ):
     """Enable or disable an API token."""
