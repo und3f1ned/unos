@@ -318,3 +318,4 @@ and this index, and `make check-fast` runs it.
 | [0216](0216-make-check-is-the-single-quality-gate.md) | One quality gate: make check runs what CI runs | accepted | 2026-11-07 |
 | [0217](0217-make-setup-bootstraps-a-checkout.md) | One command, make setup, bootstraps a checkout idempotently | accepted | 2026-11-07 |
 | [0218](0218-scheduled-dependency-audits-and-maintenance.md) | Dependencies are audited weekly, and maintenance passes run monthly | accepted | 2026-11-07 |
+| [0229](0229-main-stays-without-branch-protection-on-the-free-plan.md) | The main branch stays without branch protection on GitHub's Free plan | accepted | 2026-11-07 |
