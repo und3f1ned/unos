@@ -183,9 +183,11 @@ def _path_problem(path: object, other_paths: Mapping[str, str], pool_names: Coll
     if path != normalized:
         return f"Write the folder as {normalized}"
     parts = PurePosixPath(normalized).relative_to(pools_base()).parts
-    # 2. No snapshot folder.
+    # 2. No snapshot folder, and no trash (ADR-0259).
     if ".snapshots" in parts:
         return "Snapshot folders cannot be shared"
+    if ".unos-trash" in parts:
+        return "The trash (.unos-trash) cannot be shared"
     # 3. Not a pool root (a volume root, <pool>/<volume>, passes).
     if len(parts) < 2:
         return POOL_ROOT_PROBLEM

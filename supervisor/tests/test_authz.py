@@ -236,6 +236,11 @@ class TestRouteMatrix:
             ("GET", f"{API}/audit/logs"),
             ("GET", f"{API}/security/firewall"),
             ("GET", f"{API}/health/full"),
+            # The trash of the file manager (ADR-0259): administrator-only with the files router.
+            ("GET", f"{API}/files/trash"),
+            ("POST", f"{API}/files/trash/restore"),
+            ("DELETE", f"{API}/files/trash"),
+            ("POST", f"{API}/files/trash/empty"),
         } <= operations
 
     def test_websocket_routes_are_known(self):

@@ -255,7 +255,8 @@ are overwritten.
 A share is a folder inside a pool, or a volume. UNOS refuses:
 - the top level of a pool, which holds app data (`apps/`), the volumes and
   the snapshots;
-- `apps` and everything below it, and `.snapshots`;
+- `apps` and everything below it, `.snapshots`, and the trash (`.unos-trash`,
+  see [Trash](#trash));
 - folders outside the pools that UNOS manages;
 - a folder inside another share's folder, or one that contains another
   share's folder: shares do not overlap.
@@ -432,8 +433,17 @@ in your storage pools from the web interface. It starts in the pools directory
   The item stays selected under its new name. Until the list shows the new
   name, the buttons for the selected items and **Copy here** or **Move here**
   wait.
-- **Delete** - Select the items, click **Delete** and confirm. Folders are
-  deleted with everything in them.
+- **Delete** - Select the items and click **Delete**. In the dialog, **Move
+  to trash** moves them into the trash of their pool or volume, from where
+  you can restore them (see [Trash](#trash)); it has the keyboard focus, so
+  Enter does it, and Escape keeps the items. Folders go with everything in
+  them. If the items cannot go to the trash, the dialog stays open with the
+  reason, about the items that are still in the folder: when some went to
+  the trash before the refusal, the message says how many. When the trash
+  refuses them (for example, they have no trash, or their pool has no space
+  left for them), the dialog then also offers **Delete for good**, which
+  deletes them at once and frees their space; that cannot be undone, so
+  Cancel has the keyboard focus.
 - **Upload** - Click the upload arrow at the top right and choose one or more
   files. They go to the folder that was open when you chose them, also if you
   open another folder while they upload. A file with the same name is
@@ -457,6 +467,40 @@ no longer exists: rename the folder back to restore them.
 
 A folder that contains a subvolume (such as a snapshot) or a mounted
 filesystem cannot be deleted here, or moved to another pool or volume.
+
+### Trash
+
+**Trash** at the top right of the File Browser opens the trash: the items
+deleted in the File Browser, in every pool and volume, newest first, with the
+folder each was deleted from, when it was deleted, the day it is kept until,
+and the size of files.
+
+- **Restore** puts the selected items back in the folder they were deleted
+  from, with their names, contents and permissions. Nothing is replaced: if an
+  item with the same name is there again, or the folder is gone (or is now on
+  another filesystem, such as a disk mounted there), nothing is restored and
+  the message says why. Restore the folder first, or create it again with
+  **New Folder**, then restore the item.
+- Deleted items stay in the trash for 30 days. When UNOS starts, and then once
+  a day, it deletes for good the items that were deleted 30 or more days ago.
+- Until then they still take up space in their pool. **Delete for good**
+  deletes the selected items at once, and **Empty trash** everything in the
+  trash of every pool and volume. Both ask first, and neither can be undone.
+- Each pool and each volume keeps its trash in a hidden folder,
+  `.unos-trash`, at its top (for example `/mnt/pools/data/.unos-trash` and
+  `/mnt/pools/data/photos/.unos-trash`), where only root can open it. The File
+  Browser does not show it, SMB clients do not see it, and it cannot be
+  shared; apps and NFS clients that use a volume can see it. If an app or an
+  NFS client made a folder of that name first, UNOS makes it root's, with
+  mode 0700, before it uses it, and ignores what they put in it. A copy of a
+  pool or a volume leaves its trash out; a snapshot keeps it.
+- Items inside a snapshot, inside the restored copy of a volume's snapshot, or
+  in another filesystem mounted in a folder of a pool or volume have no trash,
+  and neither have items on a filesystem that cannot keep the trash private
+  (vfat, for example): the Delete dialog says so, and they can only be
+  deleted for good.
+- Screen readers read each item's checkbox with the folder it was deleted
+  from and the time, so that items of the same name can be told apart.
 
 ---
 

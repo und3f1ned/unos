@@ -294,6 +294,13 @@ class TestCreate:
         response = api.create(folder=folder)
         assert (response.status_code, response.json()["detail"]) == (400, "Snapshot folders cannot be shared")
 
+    @pytest.mark.parametrize("folder", [".unos-trash", "x/.unos-trash", ".unos-trash/old"])
+    def test_the_trash(self, api, folder):
+        """The trash of a pool or a volume holds deleted items (ADR-0259)."""
+        response = api.create(folder=folder)
+        assert (response.status_code, response.json()["detail"]) == (400, "The trash (.unos-trash) cannot be shared")
+        assert not (api.pool / ".unos-trash").exists()
+
     @pytest.mark.parametrize("folder", [None, "apps", "apps/x"])
     def test_pool_root_and_app_data(self, api, folder):
         response = api.create(folder=folder)
