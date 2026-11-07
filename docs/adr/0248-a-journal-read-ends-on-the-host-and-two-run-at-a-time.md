@@ -24,7 +24,7 @@ The 30-second timeout of ADR-0247 ended only the supervisor's wait for journalct
 
 - A read keeps a journalctl on the host for at most 35 seconds. While two slow searches run, a further request, also one for a source without a search, waits up to 30 seconds for a thread.
 - The other host commands of `src/host.py` still run on after their timeout: ending nsenter's process group there would end them all, and belongs to architecture.host-command-layer.
-- The local stand-in on macOS has neither timeout(1) nor journalctl: its tab shows the error, as before.
+- The local stand-in has no journalctl, and macOS has timeout(1) only from Homebrew's coreutils: its tab shows the error, as before.
 - After an error the tab lists nothing until an answer comes, so no entry shown can be taken for one of the request that failed.
 
 ## Considered options
