@@ -89,7 +89,9 @@ done
 if docker image inspect "$image:latest" > /dev/null 2>&1; then
     docker tag "$image:latest" "$image:rollback"
 fi
-env -u JWT_SECRET docker compose build supervisor < /dev/null 2>&1 | tail -n 25
+# The version the web interface shows (ADR-0234): git describe of the tree on the workstation,
+# as $2; the checkout on the device is synced file by file and has no git history.
+UNOS_VERSION=${2:-unknown} env -u JWT_SECRET docker compose build supervisor < /dev/null 2>&1 | tail -n 25
 docker image inspect -f "$image:latest {{.Id}} created {{.Created}} size {{.Size}}" "$image:latest"
 # Static checks of the result: no container is started.
 env -u JWT_SECRET docker compose config --quiet && echo "compose config: ok"
@@ -245,8 +247,12 @@ step_status() { "$PYTHON3" "$TREE" status; }
 step_sync() { "$PYTHON3" "$TREE" sync ${dry_run:+"$dry_run"}; }
 
 step_build_supervisor() {
+    local version
     "$PYTHON3" "$TREE" verify supervisor
-    dev_remote "$REMOTE_BUILD_SUPERVISOR" "$UNOS_DEV_REPO"
+    version=$(git -C "$UNOS_REPO_ROOT" describe --tags --always --dirty 2> /dev/null || echo unknown)
+    case $version in '' | *[!A-Za-z0-9._+-]*) version=unknown ;; esac
+    echo "version: $version"
+    dev_remote "$REMOTE_BUILD_SUPERVISOR" "$UNOS_DEV_REPO" "$version"
 }
 
 step_build_webui() {

@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0191]
 ---
 
-# ADR-0248: An API token's last use is committed at most once an hour
+# ADR-0252: An API token's last use is committed at most once an hour
 
 ## Context
 
@@ -16,7 +16,7 @@ Every request made with an API token set the token's `last_used_at` and committe
 
 - `verify_api_token` in `supervisor/src/auth/utils.py` commits `last_used_at` only when it is empty or at least `LAST_USE_INTERVAL`, one hour, older than now. Otherwise it does not set it at all: a later commit of the same request, such as one that creates another token, would write it too.
 - Now is `_token_time()`, UTC without a zone as the token times are stored; the expiry check uses it too, and tests replace it.
-- A commit of the last use that raises an `OperationalError`, such as on a full `/data` (ADR-0247), is rolled back and logged as a warning with the token's id, and the request is answered; the next request tries again.
+- A commit of the last use that raises an `OperationalError`, such as on a full `/data` (ADR-0251), is rolled back and logged as a warning with the token's id, and the request is answered; the next request tries again.
 - The re-check every 60 seconds of a WebSocket opened with a token (ADR-0031) goes through the same function, so it commits at most once an hour as well. Session tokens are checked by reading only, as before.
 - Tests: `supervisor/tests/test_api_token_last_use.py` (100 requests within a minute commit once; a commit again once the stored use is an hour old; the token list shows a last use at most an hour old; a request's own commit does not write a skipped last use; a failed commit), `supervisor/tests/test_ws_auth.py` (the re-checks) and `webui/tests/api-tokens.spec.ts` (the last use that the API shows stays as it is).
 

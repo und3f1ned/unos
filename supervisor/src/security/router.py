@@ -761,7 +761,7 @@ async def record_login_attempt(
     """Record a login attempt in the database.
 
     An attempt that cannot be stored, such as on a full /data, is reported in the log and the
-    sign-in goes on (ADR-0247). The rollback then expires the rows the caller loaded with
+    sign-in goes on (ADR-0251). The rollback then expires the rows the caller loaded with
     ``db``: read what the sign-in needs of them before.
     """
     ip_address = None

@@ -1,4 +1,4 @@
-"""Signing in while /data is full (ADR-0247; feature auth.sign-in-with-full-system-disk).
+"""Signing in while /data is full (ADR-0251; feature auth.sign-in-with-full-system-disk).
 
 A sign-in writes twice to /data before it answers: a row of the login history (SQLite) and an
 entry of the audit log (JSON lines, ADR-0224). The tests make /data full the way those writes

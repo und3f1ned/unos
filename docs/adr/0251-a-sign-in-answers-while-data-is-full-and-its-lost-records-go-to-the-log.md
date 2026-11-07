@@ -5,7 +5,7 @@ area: auth
 decided-by: agent
 ---
 
-# ADR-0247: A sign-in answers while /data is full, and the records it cannot write go to the supervisor's log
+# ADR-0251: A sign-in answers while /data is full, and the records it cannot write go to the supervisor's log
 
 ## Context
 
@@ -17,7 +17,7 @@ A sign-in writes a row of the login history (SQLite) and an entry of the audit l
 - `log_action` in `supervisor/src/audit/router.py`: an entry whose append raises `OSError` is logged at ERROR as `Could not write this audit entry to the audit log: <its JSON line> (<the error>)`, and the error goes on to the caller. `login` answers all the same (`_audit_sign_in` in `supervisor/src/auth/router.py`); every other caller handles the error as before.
 - So while `/data` is full, a wrong password still answers 401, and the password with a TOTP code answers the session token: TOTP codes are used up in memory (ADR-0067), and the rate limit is kept there too (ADR-0010).
 - A recovery code does not sign in while its use cannot be stored: the UPDATE that uses it up is committed before the token (ADR-0238), its failure answers 500, and the code stays unused. A code that is not used up would sign in again.
-- The last use of an API token follows the same rule (ADR-0248).
+- The last use of an API token follows the same rule (ADR-0252).
 - Tests: `supervisor/tests/test_sign_in_full_disk.py`. SQLite raises its own "database or disk is full" there (`PRAGMA max_page_count` keeps the file at its pages, and `login_attempts` is filled to its last page), the audit append fails with ENOSPC, and a commit fails at its end as on a journal that cannot be written. The dev device's `/data` is never filled for a check (ADR-0214).
 
 ## Consequences

@@ -123,7 +123,7 @@ accounts; UNOS leaves every other one alone (ADR-0108). Avoid: user.
 it expires (ADR-0009, ADR-0028). Avoid: cookie, API token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
-once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0249). Avoid:
+once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). Avoid:
 session token, API key.
 
 **Recovery code**: One of the ten codes that a user with two-factor authentication generates on the

@@ -5,7 +5,7 @@ area: auth
 decided-by: agent
 ---
 
-# ADR-0249: Only a session token manages API tokens, and their number, names and permissions are bounded
+# ADR-0253: Only a session token manages API tokens, and their number, names and permissions are bounded
 
 ## Context
 

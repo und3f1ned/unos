@@ -612,7 +612,7 @@ class TestApiTokenUse:
             assert listed.status_code == 200
             assert alices["id"] not in [t["id"] for t in listed.json()]
             # A session gets 404, as for a token that does not exist; an API token is refused
-            # before that (ADR-0249).
+            # before that (ADR-0253).
             refused = 403 if others is bobs_token else 404
             assert client.post(f"{API}/auth/tokens/{alices['id']}/toggle", headers=others).status_code == refused
             assert client.delete(f"{API}/auth/tokens/{alices['id']}", headers=others).status_code == refused
@@ -623,7 +623,7 @@ class TestApiTokenUse:
 
 class TestApiTokensAreManagedWithASession:
     """Only a session token creates, toggles and deletes API tokens: tokens made with a token
-    would outlast its lifetime and its revocation (ADR-0249)."""
+    would outlast its lifetime and its revocation (ADR-0253)."""
 
     def test_a_token_cannot_create_a_token(self, client, authz_db, alice_headers):
         """A token of one day that leaked cannot make one that never expires."""
@@ -676,7 +676,7 @@ class TestApiTokensAreManagedWithASession:
 class TestApiTokenBounds:
     """Each token is a row of the database on the system disk, which any signed-in user can add
     to: a name has 1 to 64 characters, the permissions are "*", and a user has at most 100
-    tokens (ADR-0249)."""
+    tokens (ADR-0253)."""
 
     @pytest.mark.parametrize(
         "body",

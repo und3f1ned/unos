@@ -5,9 +5,9 @@ import { E2E_ADMIN } from './fixtures';
  * API tokens for scripts (feature auth.api-tokens, ADR-0239), against the stand-in's real
  * supervisor: a token is answered once, acts with the rights of its owner, answers 401 while
  * it is disabled and once it is deleted, and is out of reach of other users. Only a session
- * creates, disables and deletes tokens, and a name has 1 to 64 characters (ADR-0249). Its last
+ * creates, disables and deletes tokens, and a name has 1 to 64 characters (ADR-0253). Its last
  * use is stored once and then stays as it is for up to an hour
- * (auth.api-token-last-used-throttle, ADR-0248). API only: no page manages tokens. That a token
+ * (auth.api-token-last-used-throttle, ADR-0252). API only: no page manages tokens. That a token
  * expires, and the limit of 100 tokens per user, are asserted in supervisor/tests/test_authz.py:
  * the shortest lifetime is a day.
  */
@@ -16,7 +16,7 @@ type Credentials = { username: string; password: string };
 type Created = { id: number; token: string; token_prefix: string; expires_at: string | null };
 type Listed = { id: number; name: string; is_active: boolean; last_used_at: string | null };
 
-/** The server's answer to a request with an API token that would manage tokens (ADR-0249). */
+/** The server's answer to a request with an API token that would manage tokens (ADR-0253). */
 const SESSION_NEEDED = 'An API token cannot create, enable, disable or delete API tokens: sign in to do it';
 
 async function signIn(request: APIRequestContext, credentials: Credentials): Promise<string> {

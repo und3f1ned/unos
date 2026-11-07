@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0249
 ---
 
 # ADR-0130: SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write
 
 ## Context
+
+Superseded by ADR-0249: the same activation rules, and the status names an smb.conf replaced after UNOS wrote it.
 
 Until UNOS's first apply succeeds (testparm refuses a line, the pool list cannot be read or
 the import fails), or after the file was replaced by hand, Samba serves an smb.conf that

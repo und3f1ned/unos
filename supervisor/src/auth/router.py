@@ -175,7 +175,7 @@ async def setup_admin(request: Request, user: UserCreate, db: AsyncSession = Dep
 
 async def _audit_sign_in(**entry) -> None:
     """The audit entry of a sign-in. One that cannot be written, such as on a full /data, is in
-    the supervisor's log (log_action), and the sign-in still answers (ADR-0247)."""
+    the supervisor's log (log_action), and the sign-in still answers (ADR-0251)."""
     try:
         await log_action(**entry)
     except OSError:
@@ -757,9 +757,9 @@ async def disable_my_smb(
 #
 # Only a session token creates, toggles and deletes tokens (require_session): tokens made with a
 # token would outlast its lifetime and its revocation. Listing them is open to API tokens too: it
-# changes nothing and never shows a token (ADR-0249).
+# changes nothing and never shows a token (ADR-0253).
 
-# Each token is a row of the database on the system disk (ADR-0214, ADR-0249).
+# Each token is a row of the database on the system disk (ADR-0214, ADR-0253).
 MAX_API_TOKENS_PER_USER = 100
 TOO_MANY_API_TOKENS = (
     f"You already have {MAX_API_TOKENS_PER_USER} API tokens, the most a user can have: delete one first"

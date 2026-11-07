@@ -405,7 +405,7 @@ class TestReauthentication:
 
     def test_rechecks_of_an_api_token_do_not_commit_its_last_use_again(self, client, ws_db, fast_recheck):
         """The handshake stores the token's last use; the re-checks, every minute (here every
-        0.1 s), store it again only once it is an hour old (ADR-0248)."""
+        0.1 s), store it again only once it is an hour old (ADR-0252)."""
         full_token, token_hash = generate_api_token()
         with Session(ws_db.engine) as session:
             user = session.query(User).filter_by(username="ws_user").one()
@@ -446,8 +446,8 @@ class TestReauthentication:
     @FAILURES
     def test_a_handshake_whose_last_use_cannot_be_stored_still_authenticates(
             self, client, ws_db, monkeypatch, caplog, failure):
-        """A full /data refuses the commit of the token's first use (ADR-0247): the session is
-        rolled back before it reads the user, and the socket opens (ADR-0248)."""
+        """A full /data refuses the commit of the token's first use (ADR-0251): the session is
+        rolled back before it reads the user, and the socket opens (ADR-0252)."""
         full_token, token_hash = self._token_used_at(ws_db, None)
         error = failure(ws_db.async_engine.sync_engine, monkeypatch)
 
@@ -464,8 +464,8 @@ class TestReauthentication:
     def test_a_recheck_whose_last_use_cannot_be_stored_keeps_the_socket_open(
             self, client, ws_db, fast_recheck, monkeypatch, caplog, failure):
         """Once the stored last use is an hour old, a re-check commits it again and meets a full
-        /data (ADR-0247): it is rolled back, the token still passes, and the socket streams on
-        instead of closing with 1011 (ADR-0248)."""
+        /data (ADR-0251): it is rolled back, the token still passes, and the socket streams on
+        instead of closing with 1011 (ADR-0252)."""
         clock = {"now": START}
         monkeypatch.setattr(auth_utils, "_token_time", lambda: clock["now"])
         # Stored already: the handshake commits nothing, and every check that commits fails.

@@ -195,7 +195,7 @@ async def log_action(
 
     An entry that cannot be appended, such as on a full /data, is reported in the supervisor's
     log as its JSON line, and the OSError goes to the caller, which decides whether its request
-    still answers: a sign-in does (ADR-0247).
+    still answers: a sign-in does (ADR-0251).
     """
     # Get IP address and user agent from request
     ip_address = None

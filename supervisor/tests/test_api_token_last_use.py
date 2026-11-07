@@ -1,4 +1,4 @@
-"""An API token's last use is committed at most once an hour (ADR-0248; feature
+"""An API token's last use is committed at most once an hour (ADR-0252; feature
 auth.api-token-last-used-throttle).
 
 Every request made with a token used to set its last_used_at and commit it: a write to the
@@ -7,7 +7,7 @@ stored one is empty or an hour old. The time the server checks and stamps tokens
 tests' (auth.utils._token_time); commits are counted as SQLAlchemy reports them on the app's
 engine.
 
-A commit of the last use that fails, as on a full /data (ADR-0247), fails where SQLite fails:
+A commit of the last use that fails, as on a full /data (ADR-0251), fails where SQLite fails:
 at the UPDATE, or at the COMMIT that ends the transaction. ``the_write_fails`` and
 ``the_commit_fails`` make it fail there; test_ws_auth.py uses them too.
 """
@@ -198,7 +198,7 @@ class TestLastUse:
 
     @FAILURES
     def test_a_last_use_that_cannot_be_stored_still_answers(self, world, clock, monkeypatch, failure):
-        """A full /data refuses the commit of the last use (ADR-0247), at the UPDATE or at the
+        """A full /data refuses the commit of the last use (ADR-0251), at the UPDATE or at the
         COMMIT: the session is rolled back before it reads the token's user, the request is
         answered, and the next one tries again."""
         token_id, token = new_token(world)

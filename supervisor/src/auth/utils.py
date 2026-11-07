@@ -156,7 +156,7 @@ def hash_api_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-# An API token's last use is committed at most once in this interval (ADR-0248): an automation
+# An API token's last use is committed at most once in this interval (ADR-0252): an automation
 # would otherwise write to the database on the system disk with every request (ADR-0214).
 LAST_USE_INTERVAL = timedelta(hours=1)
 
@@ -273,7 +273,7 @@ async def require_session(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     user: User = Depends(verify_token),
 ) -> User:
-    """Allow the request only with a session token, not with an API token (ADR-0249).
+    """Allow the request only with a session token, not with an API token (ADR-0253).
 
     For the changes that would outlast the API token that asks for them, such as a new token:
     a token's lifetime and its revocation must bound what it can do, and a session token needs
@@ -289,7 +289,7 @@ async def verify_api_token(token: str, db: AsyncSession) -> User:
     """Verify an API token and return the associated user.
 
     The token's last use is committed only when the stored one is empty or LAST_USE_INTERVAL
-    old (ADR-0248). A commit that fails, such as on a full /data, is rolled back and logged,
+    old (ADR-0252). A commit that fails, such as on a full /data, is rolled back and logged,
     and the request is answered all the same.
     """
     token_hash = hash_api_token(token)

@@ -138,7 +138,11 @@ For each pool, you can:
 - **Mount / Unmount** - Mount the pool (and mount it at every boot), or unmount
   it; the data on the disks is not touched. Unmounting is refused while a
   running app or container uses the pool, also through a Docker volume that
-  binds a folder in it, or while files on it are open
+  binds a folder in it, or while files on it are open, for example by a
+  computer that has one of its SMB shares open. Once the pool is unmounted,
+  its SMB shares are no longer served: their open connections are closed, and
+  the **Shares** page marks them **Not served** and **Pool not mounted**. They
+  keep their access, and mounting the pool serves them again
 - **Add Devices** - Expand the pool
 - **Scrub** - Check data integrity
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
@@ -159,8 +163,9 @@ For each pool, you can:
 - **Balance** - Redistribute data across devices
 - **Delete** - Unmount the pool and remove it from `/etc/fstab`. The disks are
   not wiped: the data stays on them and the pool can be mounted again later.
-  Like Unmount, it is refused while the pool is in use; SMB shares and NFS
-  exports of the pool are not checked: remove them first.
+  Like Unmount, it is refused while the pool is in use, and its SMB shares are
+  no longer served; NFS exports of the pool are not checked: remove them
+  first.
 
 ### SMART Monitoring
 
@@ -258,7 +263,9 @@ A share is a folder inside a pool, or a volume. UNOS refuses:
 A share marked **Not served** breaks one of these rules, for example a share
 of a whole pool imported from the host's existing smb.conf. Nobody can open it
 until you give it a new folder with **Edit**; it cannot be given access until
-then.
+then. The shares of a pool that was unmounted or deleted on the **Storage**
+page are marked **Not served** and **Pool not mounted** in the same way: they
+keep their access, and mounting the pool serves them again.
 
 A share's folder must also be inside folders that only root can change:
 whoever can change a folder above it can put another folder in its place.
@@ -588,7 +595,11 @@ shares and writes its own at its first start. When importing the shares of
 the old file or writing the new one failed, the status panel of the
 **Shares** page says why: "Shares were not imported from smb.conf: ..."
 (UNOS writes its smb.conf only after that import) or "smb.conf was not
-updated: ...". Allowing SMB and turning it off are not affected.
+updated: ...". When smb.conf was replaced or removed after UNOS wrote it, the
+status panel says "smb.conf was replaced or removed after UNOS wrote it; ..."
+until UNOS writes its own again at the next change or restart; an edit that
+keeps the two comment lines at the top of UNOS's file is not noticed.
+Allowing SMB and turning it off are not affected.
 
 Turning **Allow SMB access** off (or the user's own **Turn off SMB**) ends the
 user's open SMB connections. When Samba could not apply a user's own change
@@ -871,7 +882,9 @@ wake the host through it. An interface that cannot wake the host by magic
 packet shows **Not supported**. UNOS sets your choice again each time it
 starts, because many network drivers forget it at a reboot. Send the magic
 packet from a computer on the same network, for example with
-`wakeonlan <MAC address>`.
+`wakeonlan <MAC address>`. A magic packet starts a host that is off only where
+the board keeps the network card powered then; many single-board computers
+cut its power, and then only the power button starts the host.
 
 There are no scheduled shutdown or wake times, and the UPS state has no page
 yet (feature-list entries `system.scheduled-power` and
