@@ -10,7 +10,7 @@ nothing is not a result.
 | Pass | Who runs it | What it checks | What follows |
 | --- | --- | --- | --- |
 | Dependency audit | GitHub Actions: `.github/workflows/audit.yml`, every week and on demand (`workflow_dispatch`) | `pip-audit -r supervisor/requirements.txt`, and `npm audit --omit=dev --audit-level=high` in `webui/` | A failed run: the owner updates the dependency, or a feature-list entry when the update needs work |
-| Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes | Pull requests that the owner reviews and merges by hand after `make check` passes: never automatically, because the supervisor runs privileged with the Docker socket |
+| Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes; no new major npm versions and no Playwright (ADR-0231) | Pull requests that the owner reviews and merges by hand after `make check` passes in a checkout set up from the pull request's branch, since CI is off (ADR-0230): never automatically, because the supervisor runs privileged with the Docker socket |
 
 `make audit` runs the same audit locally; it needs the network. The hashed lint tools of
 `.github/lint-requirements.txt` are regenerated as `docs/TESTING.md` describes.
@@ -58,6 +58,11 @@ and proposes the changes, and the owner reviews them.
    and modes (`ls -lR tmp/dev/backup`), never at the contents (ADR-0212): at most 3 backup
    folders, each with mode 700 and its files with mode 600. Anything else is a bug of
    `deploy.sh`, fixed with a test in `supervisor/tests/test_dev_scripts.py`.
+9. **Playwright.** Dependabot leaves it alone (ADR-0231). Move `@playwright/test` in
+   `webui/package.json` and `webui/package-lock.json` to its newest release, together with the
+   tag of the image in `webui/Dockerfile.test`
+   (`test_image_has_the_playwright_version_of_package_lock` checks that they match), then
+   `make setup` for the browsers (the network: the owner's machine) and `make e2e-local`.
 
 ## After a session that went badly
 

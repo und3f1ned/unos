@@ -1,7 +1,7 @@
 # UNOS Testing Guide
 
 How a change to UNOS is verified, from the repository root. `make help` lists the targets; the
-`Makefile` runs the same commands as CI (ADR-0216).
+`Makefile` runs the same commands as the CI workflow (ADR-0216), which is off on GitHub (ADR-0230).
 
 ## The Three Verification Levels
 
@@ -10,11 +10,11 @@ template point here.
 
 | Level | Command | Where it runs | What it proves |
 |-------|---------|---------------|----------------|
-| 1. The gate | `make check` | this machine, CI | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere), svelte-check and the production build |
+| 1. The gate | `make check` | this machine (CI is off, ADR-0230) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere), svelte-check and the production build |
 | 2. E2E against the local stand-in | `make e2e-local` | this machine | the user flows of the web UI against the real supervisor and the built web UI |
 | 3. The dev device | `scripts/dev/` with the deploy-device and device-checks skills | the dev device | what only a real NAS host has: disks, btrfs, Samba, Docker, a reboot |
 
-- Level 1 must pass before a change is done, and CI runs it on every pull request. Two fast
+- Level 1 must pass before a change is done; with CI off, whoever merges runs it. Two fast
   parts of it run on their own: `make check-fast` (lint and the convention tests; the pre-commit
   hook and the Stop hook of Claude Code sessions run it) and `make smoke` (in seconds: the app
   starts and serves health, the first-run setup and a login; the baseline of a session).
@@ -95,8 +95,8 @@ commit:
 - `pre-commit` runs `make check-fast`.
 - `commit-msg` runs `scripts/check-commit-msg.py` on the message.
 
-CI's Commit Messages job runs the same script over the commits of a pull request. To check a
-branch before pushing it:
+CI's Commit Messages job runs the same script over the commits of a pull request (CI is off,
+ADR-0230). To check a branch before pushing it:
 
 ```bash
 python3 scripts/check-commit-msg.py --range origin/main..HEAD
@@ -197,7 +197,7 @@ def test_list_disks(fake_host):
 
 `tests/test_share_repair.py` (Repair permissions) walks real temporary
 folders with `os.O_PATH`, `/proc/self/fd` and `/proc/self/fdinfo`, which only
-Linux has: it is skipped on macOS and runs on Linux, as in CI.
+Linux has: it is skipped on macOS and runs on Linux.
 
 A new share folder is created only through a pool root that is on the pool's
 mount, which UNOS checks in `/proc/self/mountinfo` where that file exists. The
@@ -206,8 +206,9 @@ tests' pools are plain folders, not mount points, so on Linux
 in every test; the tests of the check call the real function.
 
 From a Mac, `scripts/dev/linux-tests.sh [pytest arguments]` runs the backend tests on Linux in
-the dev device's RAM, without a container, and reports the SD writes of the run (ADR-0187); CI
-stays the gate.
+the dev device's RAM, without a container, and reports the SD writes of the run (ADR-0187).
+With CI off (ADR-0230), it is the only place where they run, on tmpfs: a test fakes what
+another filesystem answers differently, as ext4's EPERM in `tests/test_upload_streaming.py`.
 
 ### Samba's testparm
 
@@ -348,6 +349,8 @@ Neither runs E2E specs on the device.
 
 ## CI
 
+The workflow CI is off on GitHub since 2026-11-07 (ADR-0230): its file stays as described here,
+kept in step by the tests, and "Enable workflow" in the Actions tab turns it on again. When on,
 GitHub Actions (`.github/workflows/test.yml`) runs on every push to `main` and on every pull
 request against `main`; a new push to a pull request cancels the run for the previous one.
 
@@ -405,7 +408,7 @@ that this page has the commands of the lint and frontend jobs).
   `npm update <package>`) rather than weakening the check.
 - `.github/dependabot.yml` proposes grouped updates every week for pip, npm, GitHub Actions and
   the Docker base images, with a cooldown of a week and Conventional Commit prefixes. Nothing is
-  merged automatically.
+  merged automatically. New major npm versions and Playwright are left out (ADR-0231).
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
 
 ### Running the CI Checks Locally

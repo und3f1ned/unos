@@ -1031,6 +1031,20 @@ def test_dependabot_proposes_weekly_grouped_updates_with_conventional_prefixes()
     assert updates["pip"]["directory"] == "/supervisor" and updates["npm"]["directory"] == "/webui"
 
 
+def test_dependabot_leaves_major_npm_versions_and_playwright_alone():
+    """Majors of the web UI's toolchain are features; Playwright moves with its image by hand (ADR-0231)."""
+    config = yaml.safe_load((REPO_ROOT / ".github" / "dependabot.yml").read_text())
+    updates = {update["package-ecosystem"]: update for update in config["updates"]}
+    npm_ignored = {rule["dependency-name"]: rule.get("update-types") for rule in updates["npm"]["ignore"]}
+    docker_ignored = {rule["dependency-name"]: rule.get("update-types") for rule in updates["docker"]["ignore"]}
+
+    assert npm_ignored["*"] == ["version-update:semver-major"]
+    assert npm_ignored["@playwright/test"] is None  # every version
+    # Dependabot names an image without its registry: mcr.microsoft.com/playwright is "playwright".
+    assert docker_ignored["playwright"] is None
+    assert not [name for name in docker_ignored if "/" in name]
+
+
 def test_issue_templates_start_in_triage():
     labels = {}
     for template in ("bug", "enhancement"):

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Before every commit: the fast part of the quality gate, make check-fast (lint and the
-# convention tests; ADR-0216). CI runs the whole gate, make check, on every pull request.
+# convention tests; ADR-0216). The whole gate, make check, runs before a change is done (ADR-0230).
 # make setup installs this directory as git's hooks (git config core.hooksPath scripts/git-hooks).
 # The hook checks the working tree, not only what is staged.
 set -eu

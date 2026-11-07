@@ -5,8 +5,10 @@
 # usually pulled by then.
 #
 # Not here: .github/lint-requirements.txt (ruff and pip-audit with every dependency and hash,
-# compiled by uv from lint-requirements.in; docs/TESTING.md has the command), and the Playwright
-# image of webui/Dockerfile.test, which follows @playwright/test in webui/package-lock.json.
+# compiled by uv from lint-requirements.in; docs/TESTING.md has the command); Playwright, that is
+# @playwright/test and the image of webui/Dockerfile.test, which carries its version, moved together
+# by hand in the monthly maintenance pass; and new major versions of npm packages, which change the
+# web UI's toolchain and come as features of feature-list.json (ADR-0231).
 version: 2
 updates:
   - package-ecosystem: pip
@@ -33,6 +35,10 @@ updates:
     commit-message:
       prefix: build
       include: scope
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@playwright/test"
     groups:
       npm:
         patterns: ["*"]
@@ -70,7 +76,8 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: node
         update-types: ["version-update:semver-major"]
-      - dependency-name: mcr.microsoft.com/playwright
+      # Dependabot names an image without its registry (mcr.microsoft.com/playwright).
+      - dependency-name: playwright
     groups:
       docker:
         patterns: ["*"]
