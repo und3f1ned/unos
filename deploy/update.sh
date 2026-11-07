@@ -232,7 +232,12 @@ check_for_updates() {
     log_info "Checking for updates..."
 
     cd "$UNOS_INSTALL_DIR" || exit 1
-    git fetch --quiet origin "$UNOS_BRANCH"
+    # A refspec with a destination, so that git also fetches the tags that
+    # point into the branch's history: git describe names the new images
+    # after a release tagged since the install was cloned (ADR-0233).
+    # `git fetch origin <branch>` fetches no tags. A tag that exists here
+    # already stays as it is, where --tags would fail on one that moved.
+    git fetch --quiet origin "+refs/heads/$UNOS_BRANCH:refs/remotes/origin/$UNOS_BRANCH"
 
     local behind ahead
     behind=$(git rev-list --count "HEAD..origin/$UNOS_BRANCH")

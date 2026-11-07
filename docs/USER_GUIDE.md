@@ -590,10 +590,12 @@ Access via **System** in the sidebar.
 ### Updates
 
 - **Current version**: the version UNOS was built from, as `git describe`
-  names its checkout: a release tag such as `v1.2.0`, a tag with the commits
-  after it such as `v1.2.0-3-g712fc3a` (marked **dev**), or only the commit
-  while the repository has no release tag. An installation whose images were
-  built without `install.sh` or `update.sh` shows `unknown`.
+  named its checkout at the build: a release tag such as `v1.2.0`, or, marked
+  **dev**, a tag with the commits after it such as `v1.2.0-3-g712fc3a` or only
+  the commit while no tag was in its history. A release tagged later on the
+  commit UNOS runs shows after a rebuild (see [Upgrading](INSTALL.md#upgrading)).
+  An installation whose images were built without `install.sh` or `update.sh`
+  shows `unknown`.
 - **Latest release**: checked on GitHub when the tab opens, and again with
   **Check again**; **Include pre-releases** checks for pre-releases too. The
   tab says when an update is available, with the release's notes and a link

@@ -52,6 +52,7 @@ LINKS = ["ip", "-d", "-j", "link", "show"]
 REBOOTS = "The host reboots in 1 minute"
 SHUTS_DOWN = "The host shuts down in 1 minute"
 NOTHING_PENDING = "No reboot or shutdown is pending"
+STILL_SCHEDULED = "The pending shutdown is still scheduled"
 SUSPENDING = "The host is suspending"
 NO_SUSPEND = "The host cannot suspend: its kernel offers no suspend to RAM"
 
@@ -372,7 +373,7 @@ class TestCancel:
         response = client.post(f"{API}/cancel")
 
         assert response.status_code == 500
-        assert response.json()["detail"] == "The pending shutdown is still scheduled"
+        assert response.json()["detail"] == STILL_SCHEDULED
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +675,7 @@ def test_the_e2e_fakes_answer_with_the_servers_texts():
     """webui/tests/power.spec.ts answers the Power tab's requests itself (route fakes): with these
     texts, word for word (ADR-0189)."""
     spec = (REPO / "webui" / "tests" / "power.spec.ts").read_text(encoding="utf-8")
-    for text in (REBOOTS, SHUTS_DOWN, NOTHING_PENDING, SUSPENDING, NO_SUSPEND, power.POWER_OFF_DETAIL,
-                 "The pending reboot was cancelled", "eth1 does not support Wake-on-LAN by magic packet"):
+    for text in (REBOOTS, SHUTS_DOWN, NOTHING_PENDING, STILL_SCHEDULED, SUSPENDING, NO_SUSPEND,
+                 power.POWER_OFF_DETAIL, "The pending reboot was cancelled",
+                 "eth1 does not support Wake-on-LAN by magic packet"):
         assert text in spec, text

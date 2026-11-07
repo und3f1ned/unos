@@ -395,6 +395,34 @@ class TestUpdateScript:
         assert _head(sandbox).startswith(built[0].removeprefix("UNOS_VERSION=v0.1.0-1-g"))
         assert f"Updated to: {built[0].removeprefix('UNOS_VERSION=')}" in result.stdout
 
+    @pytest.mark.parametrize("tag_at_install", [None, "v0.9.0"], ids=["no-tag-at-install", "older-tag-at-install"])
+    def test_a_release_tagged_after_the_install_names_the_new_images(self, sandbox, tag_at_install):
+        # The release is tagged on the new commit and published after the install was cloned.
+        # Unless the fetch brings its tag, git describe names the commit (or the older tag with
+        # the commits after it), and System > Updates offers the installed release as an update.
+        if tag_at_install:
+            _git("tag", tag_at_install, "HEAD", cwd=sandbox / "install")
+        _git("tag", "v1.0.0", "HEAD", cwd=sandbox / "seed")
+        _git("push", "-q", "origin", "v1.0.0", cwd=sandbox / "seed")
+
+        result, _ = _run_update(sandbox)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (sandbox / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v1.0.0"]
+        assert "Updated to: v1.0.0" in result.stdout
+
+    def test_a_forced_rebuild_names_a_release_tagged_on_the_installed_commit(self, sandbox):
+        # docs/INSTALL.md: without new commits only a rebuild names the images after the release.
+        _git("pull", "-q", "--ff-only", cwd=sandbox / "install")
+        _git("tag", "v1.0.0", "HEAD", cwd=sandbox / "seed")
+        _git("push", "-q", "origin", "v1.0.0", cwd=sandbox / "seed")
+
+        result, _ = _run_update(sandbox, overrides="confirm() { true; }")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "UNOS is already up to date!" in result.stdout
+        assert (sandbox / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v1.0.0"]
+
     def test_failed_build_leaves_the_running_version_alone(self, sandbox):
         before = _head(sandbox)
 

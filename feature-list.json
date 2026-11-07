@@ -2380,12 +2380,12 @@
         "supervisor/tests/test_updates.py",
         "supervisor/tests/test_deploy_scripts.py"
       ],
-      "passes": true,
+      "passes": false,
       "adr": [
         "ADR-0173",
         "ADR-0233"
       ],
-      "notes": "The supervisor image carries its version: UNOS_VERSION, git describe --tags --always of the checkout that deploy/install.sh or deploy/update.sh built (ADR-0233). The tab shows it, the latest release on GitHub or that none is published, and names sudo /opt/unos/deploy/update.sh; Install Update, Rollback, the update progress, the history and the settings left it, while their routes stay until system.in-app-updater. General shows the same version. On the dev device, whose images scripts/dev/deploy.sh builds, the version reads unknown until that script passes UNOS_VERSION to the supervisor's build."
+      "notes": "The supervisor image carries its version: UNOS_VERSION, git describe --tags --always of the checkout that deploy/install.sh or deploy/update.sh built; update.sh fetches its branch with the tags in its history, so a release tagged after the install was cloned names the images (ADR-0233). The tab shows it, the latest release on GitHub or that none is published, and names sudo /opt/unos/deploy/update.sh; Install Update, Rollback, the update progress, the history and the settings left it, while their routes stay until system.in-app-updater. General shows the same version. Proven with route fakes and in the scripts' sandbox only, so passes stays false until the dev device shows its version: scripts/dev/deploy.sh, which builds the device's images, does not pass UNOS_VERSION yet, so System > Updates and General read unknown there. Missing: that script change (the owner's), then a deploy after which GET /api/v1/updates/current on the device (scripts/dev/api.py) and both tabs name the deployed tree's version."
     },
     {
       "id": "system.no-legacy-log-endpoints",

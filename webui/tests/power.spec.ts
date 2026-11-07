@@ -14,6 +14,7 @@ const SHUTS_DOWN = 'The host shuts down in 1 minute';
 const REBOOT_CANCELLED = 'The pending reboot was cancelled';
 const SHUTDOWN_CANCELLED = 'The pending shutdown was cancelled';
 const NOTHING_PENDING = 'No reboot or shutdown is pending';
+const STILL_SCHEDULED = 'The pending shutdown is still scheduled';
 const SUSPENDING = 'The host is suspending';
 const NO_SUSPEND = 'The host cannot suspend: its kernel offers no suspend to RAM';
 const NO_MAGIC_PACKET = 'eth1 does not support Wake-on-LAN by magic packet';
@@ -223,6 +224,29 @@ test.describe('Power Management', () => {
 
     await expect(page.getByRole('status')).toContainText(NOTHING_PENDING);
     await expect(page.getByText('A shutdown is pending')).toHaveCount(0);
+  });
+
+  test('a cancel the host refused is shown, with the pending shutdown read again', async ({
+    authenticatedPage: page,
+  }) => {
+    const host = await fakePowerApi(page, {
+      pending: { action: 'shutdown', at: inOneMinute() },
+      answers: { 'POST /cancel': { status: 500, json: { detail: STILL_SCHEDULED } } },
+    });
+    await openPowerTab(page);
+    await expect(page.getByText('A shutdown is pending')).toBeVisible();
+    // Moved meanwhile on the host's console (shutdown -h +5); the cancel then leaves it pending.
+    const later = new Date(Date.now() + 5 * 60_000).toISOString();
+    host.pending = { action: 'shutdown', at: later };
+
+    await button(page, 'Cancel shutdown').click();
+
+    await expect(page.getByRole('alert')).toContainText(STILL_SCHEDULED);
+    // What the host has now, read again: the shutdown at its new time, still with its Cancel button.
+    await expect(page.getByText(`The host shuts down at ${await shownTime(page, later)}.`)).toBeVisible();
+    await expect(button(page, 'Cancel shutdown')).toBeEnabled();
+    await expect(page.getByRole('status')).toHaveCount(0);
+    expect(host.changes).toEqual(['POST /cancel']);
   });
 
   test('the error of a reboot that the host refused stays in the dialog', async ({ authenticatedPage: page }) => {
