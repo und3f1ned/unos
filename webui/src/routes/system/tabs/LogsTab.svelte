@@ -110,6 +110,8 @@
     } catch (e) {
       if (request !== latestRequest) return;
       console.error("Failed to load logs:", e);
+      // The entries of the request before belong to another source or other filters.
+      entries = [];
       error = e instanceof Error ? e.message : "Failed to load logs";
     }
     loading = false;
@@ -123,7 +125,10 @@
     loadLogs();
   }
 
+  // A search waits for the answer that is still coming, like Auto: asking again
+  // would only add another journalctl on the host behind it (ADR-0248).
   function handleSearch() {
+    if (loading) return;
     loadLogs();
   }
 
@@ -291,7 +296,7 @@
               </button>
             {/if}
           </div>
-          <Button variant="primary" size="sm" on:click={handleSearch}>
+          <Button variant="primary" size="sm" on:click={handleSearch} disabled={loading}>
             Search
           </Button>
         </div>
@@ -361,89 +366,89 @@
     </Card>
   {/if}
 
-  <!-- Error Alert -->
+  <!-- Error Alert, instead of the list: no entries belong to the request that failed -->
   {#if error}
     <Alert variant="error" title="Error loading logs">
       {error}
     </Alert>
-  {/if}
-
-  <!-- Logs Display -->
-  <Card>
-    <div class="flex items-center justify-between mb-3">
-      <span class="text-sm text-secondary">
-        {#if loading}
-          Loading...
-        {:else}
-          Showing {entries.length} log entries, newest first
-        {/if}
-      </span>
-      {#if autoRefresh}
-        <span class="text-xs text-success flex items-center gap-1">
-          <span class="w-2 h-2 bg-success rounded-full animate-pulse"></span>
-          Auto-refreshing every 5s
+  {:else}
+    <!-- Logs Display -->
+    <Card>
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-sm text-secondary">
+          {#if loading}
+            Loading...
+          {:else}
+            Showing {entries.length} log entries, newest first
+          {/if}
         </span>
-      {/if}
-    </div>
-
-    <div class="bg-surface-muted rounded-lg overflow-hidden">
-      <div class="max-h-[600px] overflow-y-auto scrollbar-thin">
-        {#if loading && entries.length === 0}
-          <div class="flex items-center justify-center py-12">
-            <RefreshCw class="w-6 h-6 animate-spin text-secondary" />
-            <span class="ml-2 text-secondary">Loading logs...</span>
-          </div>
-        {:else if entries.length === 0}
-          <EmptyState
-            icon={FileText}
-            title="No logs found"
-            description={hasActiveFilters
-              ? "Try adjusting your filters or search terms"
-              : "No log entries available for this source"}
-          />
-        {:else}
-          <table class="w-full text-sm">
-            <thead class="sticky top-0 bg-surface-overlay border-b border-border">
-              <tr>
-                <th class="px-3 py-2 text-left text-secondary font-medium w-[160px]">Time</th>
-                <th class="px-3 py-2 text-left text-secondary font-medium w-[80px]">Level</th>
-                <th class="px-3 py-2 text-left text-secondary font-medium w-[120px]">Source</th>
-                <th class="px-3 py-2 text-left text-secondary font-medium">Message</th>
-              </tr>
-            </thead>
-            <tbody class="font-mono text-xs">
-              {#each entries as entry, i}
-                <tr class="border-b border-border/50 hover:bg-surface-overlay/50 transition-colors">
-                  <td class="px-3 py-2 text-secondary whitespace-nowrap">
-                    {formatTimestamp(entry.timestamp)}
-                  </td>
-                  <td class="px-3 py-2">
-                    <Badge variant={getPriorityVariant(entry.priority)} class="text-xs">
-                      {entry.priority}
-                    </Badge>
-                  </td>
-                  <td class="px-3 py-2 text-secondary">
-                    {#if entry.unit}
-                      <span class="truncate block max-w-[120px]" title={entry.unit}>
-                        {entry.unit}
-                      </span>
-                    {:else}
-                      <span class="text-muted">-</span>
-                    {/if}
-                  </td>
-                  <td class="px-3 py-2 text-content">
-                    <span class="break-all"
-                      >{#each splitByMatch(entry.message ?? "", search) as part}{#if part.match}<mark
-                            class="bg-status-warning/30 text-status-warning rounded-sm">{part.text}</mark
-                          >{:else}{part.text}{/if}{/each}</span
-                    >
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+        {#if autoRefresh}
+          <span class="text-xs text-success flex items-center gap-1">
+            <span class="w-2 h-2 bg-success rounded-full animate-pulse"></span>
+            Auto-refreshing every 5s
+          </span>
         {/if}
       </div>
-    </div>
-  </Card>
+
+      <div class="bg-surface-muted rounded-lg overflow-hidden">
+        <div class="max-h-[600px] overflow-y-auto scrollbar-thin">
+          {#if loading && entries.length === 0}
+            <div class="flex items-center justify-center py-12">
+              <RefreshCw class="w-6 h-6 animate-spin text-secondary" />
+              <span class="ml-2 text-secondary">Loading logs...</span>
+            </div>
+          {:else if entries.length === 0}
+            <EmptyState
+              icon={FileText}
+              title="No logs found"
+              description={hasActiveFilters
+                ? "Try adjusting your filters or search terms"
+                : "No log entries available for this source"}
+            />
+          {:else}
+            <table class="w-full text-sm">
+              <thead class="sticky top-0 bg-surface-overlay border-b border-border">
+                <tr>
+                  <th class="px-3 py-2 text-left text-secondary font-medium w-[160px]">Time</th>
+                  <th class="px-3 py-2 text-left text-secondary font-medium w-[80px]">Level</th>
+                  <th class="px-3 py-2 text-left text-secondary font-medium w-[120px]">Source</th>
+                  <th class="px-3 py-2 text-left text-secondary font-medium">Message</th>
+                </tr>
+              </thead>
+              <tbody class="font-mono text-xs">
+                {#each entries as entry, i}
+                  <tr class="border-b border-border/50 hover:bg-surface-overlay/50 transition-colors">
+                    <td class="px-3 py-2 text-secondary whitespace-nowrap">
+                      {formatTimestamp(entry.timestamp)}
+                    </td>
+                    <td class="px-3 py-2">
+                      <Badge variant={getPriorityVariant(entry.priority)} class="text-xs">
+                        {entry.priority}
+                      </Badge>
+                    </td>
+                    <td class="px-3 py-2 text-secondary">
+                      {#if entry.unit}
+                        <span class="truncate block max-w-[120px]" title={entry.unit}>
+                          {entry.unit}
+                        </span>
+                      {:else}
+                        <span class="text-muted">-</span>
+                      {/if}
+                    </td>
+                    <td class="px-3 py-2 text-content">
+                      <span class="break-all"
+                        >{#each splitByMatch(entry.message ?? "", search) as part}{#if part.match}<mark
+                              class="bg-status-warning/30 text-status-warning rounded-sm">{part.text}</mark
+                            >{:else}{part.text}{/if}{/each}</span
+                      >
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+        </div>
+      </div>
+    </Card>
+  {/if}
 </div>

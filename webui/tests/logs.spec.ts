@@ -19,6 +19,9 @@ const SOURCES = [
 
 const LEVELS = ['emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info', 'debug'];
 
+// The server's answer (500) when journalctl ran past its time on the host (ADR-0248).
+const DID_NOT_ANSWER = "Could not read the host's journal: journalctl did not answer within 30 seconds";
+
 type Entry = { timestamp: string; facility: string; priority: string; message: string; source: string; unit: string };
 
 function entry(source: string, timestamp: string, priority: string, unit: string, message: string): Entry {
@@ -50,15 +53,17 @@ const ANSWERS: Record<string, Entry[]> = {
 
 /**
  * Answer the tab's requests as the server does, from ANSWERS: a severity lists that level and
- * the more severe ones, and the limit the newest entries. Other requests of the logs API are
- * aborted. Returns the query of every entries request, and lets a test hold the answers for one
- * source until it releases them.
+ * the more severe ones, a search the entries whose message holds the text in any case, and the
+ * limit the newest entries. Other requests of the logs API are aborted. Returns the query of every
+ * entries request, lets a test hold the answers for one source until it releases them, and makes
+ * the server fail with a detail until `fail(null)`.
  */
 async function fakeLogsApi(page: Page) {
   const requests: URLSearchParams[] = [];
   let held: string | null = null;
   let release: () => void = () => {};
   let released = Promise.resolve();
+  let failure: string | null = null;
   await page.route('**/api/v1/logs/**', async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/api/v1/logs/sources') {
@@ -69,10 +74,13 @@ async function fakeLogsApi(page: Page) {
     requests.push(query);
     const source = query.get('source') ?? '';
     if (source === held) await released;
+    if (failure) return route.fulfill({ status: 500, json: { detail: failure } });
     if (!(source in ANSWERS)) return route.fulfill({ status: 400, json: { detail: `Unknown log source: ${source}` } });
     const priority = query.get('priority');
+    const search = (query.get('search') ?? '').toLowerCase();
     const listed = ANSWERS[source]
       .filter((e) => !priority || LEVELS.indexOf(e.priority) <= LEVELS.indexOf(priority))
+      .filter((e) => e.message.toLowerCase().includes(search))
       .slice(0, Number(query.get('limit')));
     return route.fulfill({ json: { entries: listed, total: listed.length } });
   });
@@ -83,6 +91,9 @@ async function fakeLogsApi(page: Page) {
       released = new Promise((resolve) => (release = resolve));
     },
     release: () => release(),
+    fail(detail: string | null) {
+      failure = detail;
+    },
   };
 }
 
@@ -276,5 +287,80 @@ test.describe('System Logs with a fake journal', () => {
     await page.waitForTimeout(300);
     await expect(cells(page, 4)).toHaveText([OOM, EXT4, USB_DEVICE, USB_ERROR]);
     await expect(page.getByText('Showing 4 log entries, newest first')).toBeVisible();
+  });
+
+  test('a search asks the server: the matches it lists are highlighted, and no match says so', async ({
+    authenticatedPage: page,
+  }) => {
+    const api = await fakeLogsApi(page);
+    await page.goto('/system#logs');
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+
+    const box = page.getByPlaceholder('Search in logs');
+    await box.fill('failed');
+    await box.press('Enter');
+    await expect(cells(page, 4)).toHaveText([FAILED_PASSWORD, NO_EXIT]);
+    await expect(page.locator('main table mark')).toHaveText(['Failed', 'failed']);
+    await expect(page.getByText('Showing 2 log entries, newest first')).toBeVisible();
+    const last = api.requests[api.requests.length - 1];
+    expect([last.get('source'), last.get('search'), last.get('limit')]).toEqual(['journal', 'failed', '200']);
+
+    // A word that no entry has: the server lists nothing, and the tab says so.
+    await box.fill('no-such-word');
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await expect(page.getByText('No logs found')).toBeVisible();
+    await expect(page.getByText('Try adjusting your filters or search terms')).toBeVisible();
+    await expect(cells(page, 4)).toHaveCount(0);
+    await expect(page.getByText('Error loading logs')).toHaveCount(0);
+    expect(api.requests[api.requests.length - 1].get('search')).toBe('no-such-word');
+  });
+
+  test('an error of the server is shown instead of the entries of the request before', async ({
+    authenticatedPage: page,
+  }) => {
+    const api = await fakeLogsApi(page);
+    await page.goto('/system#logs');
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+
+    // A search through a large journal that journalctl cannot finish in time.
+    api.fail(DID_NOT_ANSWER);
+    const box = page.getByPlaceholder('Search in logs');
+    await box.fill('python3');
+    await box.press('Enter');
+    await expect(page.getByText('Error loading logs')).toBeVisible();
+    await expect(page.getByText(DID_NOT_ANSWER)).toBeVisible();
+    await expect(cells(page, 4)).toHaveCount(0);
+    await expect(page.getByText(/Showing \d+ log entries/)).toHaveCount(0);
+    await expect(page.getByText('No logs found')).toHaveCount(0);
+
+    // The next answer lists its entries again.
+    api.fail(null);
+    await page.getByRole('button', { name: 'Kernel', exact: true }).click();
+    await expect(cells(page, 4)).toHaveText([OOM]);
+    await expect(page.locator('main table mark')).toHaveText(['python3']);
+    await expect(page.getByText('Error loading logs')).toHaveCount(0);
+  });
+
+  test('Search waits while an answer is still coming', async ({ authenticatedPage: page }) => {
+    const api = await fakeLogsApi(page);
+    api.hold('journal');
+    await page.goto('/system#logs');
+    await expect.poll(() => api.requests.length).toBe(1);
+
+    // Asking again would only add another journalctl on the host behind the one still reading.
+    const box = page.getByPlaceholder('Search in logs');
+    const search = page.getByRole('button', { name: 'Search', exact: true });
+    await box.fill('failed');
+    await expect(search).toBeDisabled();
+    await box.press('Enter');
+    await page.waitForTimeout(300);
+    expect(api.requests.length).toBe(1);
+
+    api.release();
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+    await expect(search).toBeEnabled();
+    await search.click();
+    await expect(cells(page, 4)).toHaveText([FAILED_PASSWORD, NO_EXIT]);
+    expect(api.requests.map((query) => query.get('search'))).toEqual([null, 'failed']);
   });
 });

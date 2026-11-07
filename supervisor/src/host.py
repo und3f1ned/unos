@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
-# busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl:
-# ADR-0247). cat, test, mkdir, rmdir, rm, find, sync, sleep, hostname and sh also
-# run there but come from essential packages.
+# busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl, under
+# timeout: ADR-0247, ADR-0248). cat, test, mkdir, rmdir, rm, find, sync, sleep,
+# timeout, hostname and sh also run there but come from essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",

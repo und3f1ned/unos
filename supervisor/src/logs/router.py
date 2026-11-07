@@ -1,15 +1,19 @@
-"""System > Logs: the host's journal, by source (ADR-0247).
+"""System > Logs: the host's journal, by source (ADR-0247, ADR-0248).
 
 Every source is a part of the host's systemd journal. GET /entries reads it with
 one journalctl command on the host, through src/host.py (ADR-0020), off the
-event loop and with a timeout (ADR-0021): ``--reverse`` prints the newest
-entries first, and the answer keeps that order. The log files of GET /files and
-GET /file/{filename} are still those of the supervisor container's /var/log.
+event loop and with a timeout that ends journalctl on the host (ADR-0021),
+at most two reads at a time: ``--reverse`` prints the newest entries first, and
+the answer keeps that order. The log files of GET /files and GET /file/{filename}
+are still those of the supervisor container's /var/log.
 """
 
+import asyncio
+import functools
 import json
 import re
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Literal, NamedTuple, Optional
 
@@ -26,8 +30,20 @@ PRIORITY_LEVELS = ("emerg", "alert", "crit", "err", "warning", "notice", "info",
 Priority = Literal["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
 
 # Seconds journalctl may take. A search reads the journal until it has found the
-# entries it needs: long on a large journal.
+# entries it needs: long on a large journal. coreutils' timeout(1) ends it on the
+# host then, with SIGTERM, and KILL_AFTER seconds later with SIGKILL, and exits
+# with TIMED_OUT. The timeout of subprocess.run alone would end only the nsenter
+# in front of it, which forks for --pid and does not pass the signal on: journalctl
+# would read on (ADR-0248).
 JOURNAL_TIMEOUT = 30
+KILL_AFTER = 5
+TIMED_OUT = 124
+# How long the supervisor waits for the host's answer: longer than timeout(1) may take.
+JOURNAL_WAIT = JOURNAL_TIMEOUT + KILL_AFTER + 5
+# The journal is read in threads of its own, two at a time: other requests wait for
+# one of them, so that no more than two journalctl run on the host at once and none
+# takes a thread of the default executor, which sign-ins (bcrypt) use.
+_JOURNAL_READS = ThreadPoolExecutor(max_workers=2, thread_name_prefix="unos-journal")
 # Longest text the search takes, as in the audit log (ADR-0237).
 MAX_SEARCH_CHARS = 256
 # The time ranges `since` takes, as the web UI sends them ("1 hour ago");
@@ -36,6 +52,7 @@ SINCE = re.compile(r"[1-9][0-9]{0,3} (?:minute|hour|day)s? ago")
 # The fields an entry is made of; journalctl prints __REALTIME_TIMESTAMP with them.
 OUTPUT_FIELDS = "MESSAGE,PRIORITY,SYSLOG_FACILITY,SYSLOG_IDENTIFIER,_COMM,_SYSTEMD_UNIT"
 CANNOT_READ = "Could not read the host's journal"
+DID_NOT_ANSWER = f"{CANNOT_READ}: journalctl did not answer within {JOURNAL_TIMEOUT} seconds"
 
 
 class Source(NamedTuple):
@@ -165,6 +182,7 @@ async def read_journal(
     ``priority`` or a more severe level, since ``since``, and with ``search`` in their
     message, in any case. The caller has checked the values."""
     cmd = [
+        "timeout", f"--kill-after={KILL_AFTER}", str(JOURNAL_TIMEOUT),
         "journalctl", "--no-pager", "--quiet", "--all", "--output=json", f"--output-fields={OUTPUT_FIELDS}",
         "--reverse", f"--lines={limit}",
     ]
@@ -178,15 +196,23 @@ async def read_journal(
         # puts a backslash before each of PCRE2's special characters: the text is taken literally.
         cmd += [f"--grep={re.escape(search)}", "--case-sensitive=false"]
     cmd += LOG_SOURCES[source].matches
+    read = functools.partial(host.run_on_host, cmd, timeout=JOURNAL_WAIT, errors="replace")
     try:
-        result = await host.run_on_host_async(cmd, timeout=JOURNAL_TIMEOUT, errors="replace")
+        result = await asyncio.get_running_loop().run_in_executor(_JOURNAL_READS, read)
     except subprocess.TimeoutExpired:
-        raise HTTPException(500, f"{CANNOT_READ}: journalctl did not answer within {JOURNAL_TIMEOUT} seconds")
+        raise HTTPException(500, DID_NOT_ANSWER)
     except OSError as exc:
         raise HTTPException(500, f"{CANNOT_READ}: {exc}")
+    if result.returncode == TIMED_OUT:
+        raise HTTPException(500, DID_NOT_ANSWER)
+    if search and result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip():
+        # journalctl --grep exits with status 1, and says nothing, when no entry matched: as grep does.
+        return LogsResponse(entries=[], total=0)
     if not result.ok:
         raise HTTPException(500, f"{CANNOT_READ}: {_why(result)}")
-    entries = [entry for line in result.stdout.splitlines() if (entry := _entry(line, source)) is not None]
+    # One entry per line, and a line ends at "\n" alone: journalctl escapes the control
+    # characters, but prints U+2028 and U+2029 as they are, where str.splitlines() would cut.
+    entries = [entry for line in result.stdout.split("\n") if (entry := _entry(line, source)) is not None]
     return LogsResponse(entries=entries, total=len(entries))
 
 
@@ -305,7 +331,6 @@ async def get_dmesg_logs_legacy(
 @router.get("/journal", response_model=LogsResponse)
 async def get_journal_logs_legacy(
     limit: int = Query(100, ge=1, le=1000),
-    unit: str | None = None,
     priority: Optional[Priority] = None,
     _: dict = Depends(verify_token)
 ):

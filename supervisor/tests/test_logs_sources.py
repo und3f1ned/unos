@@ -1,10 +1,15 @@
-"""System > Logs reads the host's journal, newest first (ADR-0247).
+"""System > Logs reads the host's journal, newest first (ADR-0247, ADR-0248).
 
 Every source is a part of the host's systemd journal that journalctl prints on the host: the
 commands go to ``FakeJournal`` through a patched ``src.host.run_on_host``. The fake keeps its
 entries oldest first, as the journal does, and answers the options the router sends the way
 journalctl does (--reverse, --lines, --priority, --since, --grep and --case-sensitive, --dmesg,
---unit and FIELD=VALUE matches); a command or an option it does not know fails the test.
+--unit and FIELD=VALUE matches); a command or an option it does not know fails the test. It
+prints like journalctl too: a field as text when it is printable, else as its bytes, and other
+characters than the control characters as they are (U+2028 among them); and a --grep that
+matched nothing exits with status 1 and prints nothing, as grep does. coreutils' timeout(1) in
+front of journalctl ends a journalctl that reads too long; without it, the end of the wait of
+subprocess.run leaves journalctl reading on the host.
 ``subprocess`` is blocked, so nothing runs on this machine, whatever the code under test does.
 """
 
@@ -16,6 +21,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +64,9 @@ MATCHES = {
 }
 FIELDS = "MESSAGE,PRIORITY,SYSLOG_FACILITY,SYSLOG_IDENTIFIER,_COMM,_SYSTEMD_UNIT"
 CANNOT_READ = "Could not read the host's journal: "
+# timeout(1) on the host ends journalctl after 30 seconds (SIGTERM), and 5 seconds later (SIGKILL).
+HOST_TIMEOUT = ["timeout", "--kill-after=5", "30"]
+DID_NOT_ANSWER = CANNOT_READ + "journalctl did not answer within 30 seconds"
 
 
 def _web_ui_values(name: str) -> list[str]:
@@ -72,9 +81,10 @@ TIME_RANGES = [value for value in _web_ui_values("TIME_RANGES") if value]
 
 
 def journalctl(source: str = "journal", *, lines: int = 100, filters: tuple[str, ...] = ()) -> list[str]:
-    """The command a request runs on the host: the newest ``lines`` entries first, then the filters
-    and the source's matches."""
+    """The command a request runs on the host: journalctl under timeout(1), the newest ``lines``
+    entries first, then the filters and the source's matches."""
     return [
+        *HOST_TIMEOUT,
         "journalctl", "--no-pager", "--quiet", "--all", "--output=json", f"--output-fields={FIELDS}",
         "--reverse", f"--lines={lines}", *filters, *MATCHES[source],
     ]
@@ -90,6 +100,19 @@ def _text(value) -> str:
     return value
 
 
+def _control(char: str) -> bool:
+    """systemd's unichar_is_control(): C0 but tab and newline, DEL and C1."""
+    code = ord(char)
+    return (code < 32 and char not in "\t\n") or 0x7F <= code <= 0x9F
+
+
+def _printed(value):
+    """A field as journalctl's JSON prints it: text when it is printable, else its bytes."""
+    if isinstance(value, str) and any(_control(char) for char in value):
+        return list(value.encode("utf-8"))
+    return value
+
+
 class FakeJournal:
     """The host behind ``src.host.run_on_host``: a systemd journal that journalctl prints."""
 
@@ -99,8 +122,14 @@ class FakeJournal:
         self.calls: list[list[str]] = []
         self.timeouts: list[float] = []
         self.on_event_loop: list[bool] = []
+        self.results: list[HostResult] = []
         # What journalctl answers instead of the journal's entries (an error, other output).
         self.answer: HostResult | None = None
+        # Seconds journalctl reads before it answers, such as a search through a large journal
+        # that finds nothing; None: it answers at once.
+        self.reads_for: float | None = None
+        # The journalctl commands that still read on the host after the supervisor stopped waiting.
+        self.still_reading: list[list[str]] = []
 
     def add(self, message, *, minutes_ago, priority=6, identifier=None, comm=None, unit=None,
             transport="syslog", facility=None, boot=BOOT, **fields) -> dict:
@@ -131,10 +160,31 @@ class FakeJournal:
             self.on_event_loop.append(True)
         except RuntimeError:
             self.on_event_loop.append(False)
-        result = self.answer if self.answer is not None else self._journalctl(cmd)
+        result = self.answer if self.answer is not None else self._on_host(cmd, timeout)
+        self.results.append(result)
         if check and not result.ok:
             raise HostCommandError(cmd, result.returncode, result.stderr)
         return result
+
+    def _on_host(self, cmd: list[str], wait: float) -> HostResult:
+        """journalctl, maybe under timeout(1), which ends it after DURATION seconds: status 124."""
+        limit = None
+        if cmd[0] == "timeout":
+            cmd = cmd[1:]
+            while cmd[0].startswith("-"):
+                name, _, value = cmd.pop(0).partition("=")
+                assert name == "--kill-after" and float(value) > 0, f"the fake timeout does not know {name}"
+            limit = float(cmd.pop(0))
+        if self.reads_for is not None:
+            ends_after = self.reads_for if limit is None else min(self.reads_for, limit)
+            if ends_after > wait:
+                # subprocess.run kills nsenter, which forked for --pid and does not pass the
+                # signal on: journalctl reads on, on the host.
+                self.still_reading.append(cmd)
+                raise subprocess.TimeoutExpired(cmd, wait)
+            if limit is not None and self.reads_for > limit:
+                return HostResult(124, "", "")
+        return self._journalctl(cmd)
 
     def _since(self, value: str) -> int:
         number, unit, ago = value.split(" ")
@@ -201,10 +251,14 @@ class FakeJournal:
             selected = selected[::-1][:lines] if lines is not None else selected[::-1]
         elif lines is not None:
             selected = selected[-lines:]
+        if pattern is not None and not selected:
+            # journalctl --grep copies grep: when it showed nothing, it exits with status 1, silently.
+            return HostResult(1, "", "")
         shown = (fields or set()) | {"__CURSOR", "__REALTIME_TIMESTAMP", "__MONOTONIC_TIMESTAMP", "_BOOT_ID"}
-        printed = [{key: value for key, value in entry.items() if fields is None or key in shown}
+        printed = [{key: _printed(value) for key, value in entry.items() if fields is None or key in shown}
                    for entry in selected]
-        return HostResult(0, "".join(json.dumps(entry) + "\n" for entry in printed), "")
+        # Control characters escaped, everything else as it is: journalctl writes UTF-8, not ASCII.
+        return HostResult(0, "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in printed), "")
 
 
 def _forbidden(*args, **kwargs):
@@ -433,12 +487,73 @@ class TestEntries:
 
         assert entries(client) == []
 
-    def test_the_journal_is_read_off_the_event_loop_with_a_timeout(self, client, journal):
+    def test_an_entry_with_a_line_or_paragraph_separator_in_its_text_is_one_entry(self, client, journal):
+        # journalctl escapes only the control characters in its JSON: U+2028 and U+2029, which
+        # anyone can put into a user name or a request path, come out as they are, and
+        # str.splitlines() would cut an entry's line there.
+        journal.entries = []
+        journal.add("Invalid user \u2028evil from 198.51.100.7 port 4422", minutes_ago=3, identifier="sshd")
+        journal.add("Accepted password for alice from 192.0.2.10", minutes_ago=2, identifier="sshd")
+        journal.add("share \u2029music refused", minutes_ago=1, identifier="smbd\u2028")
+
+        listed = entries(client)
+
+        assert "\u2028" in journal.results[-1].stdout and "\u2029" in journal.results[-1].stdout
+        assert [(entry["message"], entry["unit"]) for entry in listed] == [
+            ("share \u2029music refused", "smbd\u2028"),
+            ("Accepted password for alice from 192.0.2.10", "sshd"),
+            ("Invalid user \u2028evil from 198.51.100.7 port 4422", "sshd"),
+        ]
+
+    def test_a_message_with_control_characters_stays_text(self, client, journal):
+        # journalctl prints such a field as its bytes; the entry has the text, the escapes included.
+        journal.entries = []
+        journal.add("\x1b[1;31mI/O error\x1b[0m on sda", minutes_ago=1, identifier="kernel")
+
+        assert messages(client) == ["\x1b[1;31mI/O error\x1b[0m on sda"]
+        assert '"MESSAGE": [27, 91, ' in journal.results[-1].stdout
+
+    def test_the_journal_is_read_off_the_event_loop_and_ends_on_the_host_in_time(self, client, journal):
         entries(client, source="dmesg")
 
         assert journal.on_event_loop == [False]
-        assert journal.timeouts == [logs.JOURNAL_TIMEOUT]
-        assert 0 < logs.JOURNAL_TIMEOUT <= 60
+        assert journal.calls == [journalctl("dmesg")]
+        assert logs.JOURNAL_TIMEOUT == 30 and logs.KILL_AFTER == 5
+        # The supervisor waits longer than timeout(1) may take to end journalctl: the host answers.
+        [wait] = journal.timeouts
+        assert logs.JOURNAL_TIMEOUT + logs.KILL_AFTER < wait <= 60
+
+    def test_at_most_two_journal_reads_run_at_once_in_threads_of_their_own(self, journal, monkeypatch):
+        # Not on the default executor, whose threads sign-ins (bcrypt) and other pages need, and
+        # never more than two journalctl at a time on the host.
+        lock = threading.Lock()
+        two_running = threading.Event()
+        running, most, threads = 0, 0, set()
+
+        def reading(cmd, **kwargs):
+            nonlocal running, most
+            with lock:
+                running += 1
+                most = max(most, running)
+                threads.add(threading.current_thread().name)
+                if running == 2:
+                    two_running.set()
+            two_running.wait(timeout=2)  # the first two overlap whenever two threads run them
+            time.sleep(0.05)
+            with lock:
+                running -= 1
+            return journal.run(cmd, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", reading)
+
+        async def five_reads():
+            return await asyncio.gather(*(logs.read_journal("journal", limit=1) for _ in range(5)))
+
+        answers = asyncio.run(five_reads())
+
+        assert [[entry.message for entry in answer.entries] for answer in answers] == [[OOM]] * 5
+        assert most == 2
+        assert threads and all(name.startswith("unos-journal") for name in threads), threads
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +592,13 @@ class TestSearch:
             "--priority=notice", "--since=1 hour ago", r"--grep=198\.51\.100\.7", "--case-sensitive=false"
         ))]
 
+    @pytest.mark.parametrize("params", [{"search": "no-such-word"}, {"source": "cron", "search": "sshd"},
+                                        {"source": "dmesg", "priority": "emerg", "search": "memory"}])
+    def test_a_search_that_finds_nothing_lists_no_entries(self, client, journal, params):
+        # journalctl --grep exits with status 1 and says nothing when no entry matched, as grep does.
+        assert messages(client, **params) == []
+        assert journal.results == [HostResult(1, "", "")]
+
 
 # ---------------------------------------------------------------------------
 # Errors, values and roles
@@ -492,7 +614,37 @@ class TestErrors:
         assert response.status_code == 500
         assert response.json()["detail"] == CANNOT_READ + "Failed to get journal access: Permission denied"
 
-    def test_journalctl_that_hangs_is_an_error(self, client, journal, monkeypatch):
+    @pytest.mark.parametrize(
+        "params,answer,detail",
+        [
+            # Status 1 with journalctl's message is its error, also in a search.
+            ({"search": "error"}, HostResult(1, "", "Failed to open journal: Too many open files\n"),
+             "Failed to open journal: Too many open files"),
+            # Only a search's status 1 means "no match".
+            ({}, HostResult(1, "", ""), "journalctl exited with status 1"),
+            ({"search": "error"}, HostResult(2, "", ""), "journalctl exited with status 2"),
+        ],
+    )
+    def test_a_failure_is_an_error_also_in_a_search(self, client, journal, params, answer, detail):
+        journal.answer = answer
+
+        response = client.get(f"{API}/entries", params=params)
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == CANNOT_READ + detail
+
+    def test_a_journalctl_that_reads_too_long_is_ended_on_the_host(self, client, journal):
+        # A search for a word that a large journal does not have reads all of it and prints nothing.
+        journal.reads_for = 600
+
+        response = client.get(f"{API}/entries", params={"search": "no-such-word"})
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == DID_NOT_ANSWER
+        assert journal.results == [HostResult(124, "", "")]  # timeout(1) ended it after 30 seconds
+        assert journal.still_reading == []
+
+    def test_a_host_command_that_does_not_answer_in_time_is_an_error(self, client, journal, monkeypatch):
         def hanging(cmd, **kwargs):
             raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 0))
 
@@ -501,9 +653,7 @@ class TestErrors:
         response = client.get(f"{API}/entries", params={"search": "error"})
 
         assert response.status_code == 500
-        assert response.json()["detail"] == (
-            CANNOT_READ + f"journalctl did not answer within {logs.JOURNAL_TIMEOUT} seconds"
-        )
+        assert response.json()["detail"] == DID_NOT_ANSWER
 
     def test_a_host_command_that_cannot_start_is_an_error(self, client, journal, monkeypatch):
         def no_nsenter(cmd, **kwargs):
@@ -572,10 +722,33 @@ def test_the_host_tools_name_journalctl():
     assert host_module.HOST_TOOLS["journalctl"] == "systemd"
 
 
+class TestLegacyRoutes:
+    """GET /logs/dmesg and /logs/journal read like /entries until system.no-legacy-log-endpoints."""
+
+    def test_they_read_the_journal_with_their_values(self, client, journal):
+        assert messages_of(client, "/dmesg", limit=2) == [OOM, EXT4]
+        assert messages_of(client, "/journal", limit=5, priority="err") == [OOM, USB]
+        assert journal.calls == [journalctl("dmesg", lines=2),
+                                 journalctl("journal", lines=5, filters=("--priority=err",))]
+
+    def test_the_journal_route_takes_no_unit(self):
+        # unit is removed (ADR-0247): the route does not offer a filter that it would ignore.
+        parameters = app.openapi()["paths"][f"{API}/journal"]["get"]["parameters"]
+
+        assert sorted(parameter["name"] for parameter in parameters) == ["limit", "priority"]
+
+
+def messages_of(client, path: str, **params) -> list[str]:
+    response = client.get(f"{API}{path}", params=params)
+    assert response.status_code == 200, response.text
+    return [entry["message"] for entry in response.json()["entries"]]
+
+
 def test_the_e2e_fakes_answer_with_the_servers_texts():
     """webui/tests/logs.spec.ts answers the tab's requests itself (route fakes): with the server's
-    sources, word for word (ADR-0189)."""
+    sources and its answer for a journalctl that did not answer in time, word for word (ADR-0189)."""
     spec = (REPO / "webui" / "tests" / "logs.spec.ts").read_text(encoding="utf-8")
     for source in SOURCES:
         for text in (source["name"], source["label"], source["description"]):
             assert text in spec, text
+    assert f"{logs.CANNOT_READ}: journalctl did not answer within {logs.JOURNAL_TIMEOUT} seconds" in spec

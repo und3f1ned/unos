@@ -879,14 +879,16 @@ that logged it and its message. The filters narrow the list:
 - **Limit**: at most 50, 100, 200 (at first), 500 or 1000 entries.
 - **Search**: type a text and press Enter or click **Search**: the tab lists
   the newest entries whose message contains it, in the chosen source, level
-  and time range, also when they are older than the newest entries. The case
-  of the letters A to Z does not matter. The matches are highlighted in the
-  messages, also while you type; log messages are always shown as text.
+  and time range, also when they are older than the newest entries, and
+  says **No logs found** when none does. The case of the letters A to Z does
+  not matter. The matches are highlighted in the messages, also while you
+  type; log messages are always shown as text.
 
-**Auto** reloads the list every 5 seconds, and waits while an answer is still
-coming. When the journal cannot be read, the tab shows why. A search through
-a large journal can take long: after 30 seconds the tab reports that
-journalctl did not answer, and a shorter time range helps.
+**Auto** reloads the list every 5 seconds. Auto and **Search** wait while an
+answer is still coming. When the journal cannot be read, the tab shows why
+instead of the list. A search through a large journal can take long: after
+30 seconds UNOS stops journalctl on the host and the tab reports that it did
+not answer; a shorter time range helps.
 
 The output of the UNOS containers themselves is not in the journal: run
 `docker logs unos-supervisor` or `docker logs unos-webui` on the host. Log
