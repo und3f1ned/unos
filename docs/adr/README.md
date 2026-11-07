@@ -90,12 +90,13 @@ and this index, and `make check-fast` runs it.
 | [0029](0029-first-run-setup-creates-one-administrator.md) | There are no default credentials: the first visit creates exactly one administrator | accepted | 2026-11-05 |
 | [0030](0030-administrator-only-routers.md) | Whole routers are administrator-only, and regular users get Dashboard and Account | accepted | 2026-11-05 |
 | [0031](0031-websocket-auth-with-the-first-message.md) | WebSocket clients authenticate with their first message, never with a token in the URL | accepted | 2026-11-05 |
-| [0032](0032-kept-authentication-practices.md) | Auth keeps bcrypt, one JWT algorithm, TOTP before any token, and hashed API tokens | accepted | 2026-11-05 |
+| [0032](0032-kept-authentication-practices.md) | Auth keeps bcrypt, one JWT algorithm, TOTP before any token, and hashed API tokens | superseded by [0233](0233-kept-authentication-practices-with-a-second-factor-before-any-token.md) | 2026-11-05 |
 | [0033](0033-session-revocation-and-token-scopes.md) | Add session revocation, safer token storage, 2FA recovery codes and token scopes | proposed | 2026-11-05 |
 | [0067](0067-two-factor-codes-are-single-use.md) | Two-factor codes are single-use, remembered in memory | accepted | 2026-11-06 |
 | [0068](0068-own-smb-activation-needs-the-two-factor-code.md) | Turning on one's own SMB access needs the two-factor code | accepted | 2026-11-06 |
 | [0191](0191-throttle-api-token-last-used-writes.md) | Throttle the commit of an API token's last use | proposed | 2026-11-07 |
 | [0232](0232-recovery-codes-sign-in-once-in-place-of-a-two-factor-code.md) | Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication | accepted | 2026-11-07 |
+| [0233](0233-kept-authentication-practices-with-a-second-factor-before-any-token.md) | Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens | accepted | 2026-11-07 |
 
 ## Storage
 

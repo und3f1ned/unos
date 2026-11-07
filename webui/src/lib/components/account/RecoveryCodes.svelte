@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { ApiError } from '$lib/api/client';
 	import { generateRecoveryCodes, getRecoveryCodesStatus, type RecoveryCodesStatus } from '$lib/api/auth';
 	import { Alert, Button, Modal } from '$lib/components/ui';
 
@@ -16,7 +17,16 @@
 	let codes: string[] = [];
 	let busy = false;
 	let error = '';
+	// The last generation failed without a refusal (a server error, an unreadable answer or
+	// none): the server may have stored new codes that never reached the page, and then the
+	// saved ones no longer work. Its warning stays until a generation succeeds or is refused.
+	let outcomeUnknown = false;
 	let confirmNew = false;
+
+	const REFUSED_TITLE = 'No recovery codes were generated';
+	const UNKNOWN_TITLE = 'New recovery codes may have been generated';
+	const UNKNOWN_HINT =
+		'If they were, they never reached this page, and any codes you saved before no longer work. Generate new codes now.';
 
 	onMount(() => {
 		void load();
@@ -41,6 +51,7 @@
 		if (busy) return;
 		busy = true;
 		error = '';
+		outcomeUnknown = false;
 		try {
 			codes = await generateRecoveryCodes();
 			// No second request: if it failed, the codes answered only now would not be shown.
@@ -49,13 +60,20 @@
 			confirmNew = false;
 		} catch (e) {
 			error = messageOf(e);
+			// Only a 4xx answer says that the server refused and changed nothing.
+			outcomeUnknown = !(e instanceof ApiError && e.status < 500);
 		} finally {
 			busy = false;
 		}
 	}
 
+	// A refusal's message goes with the dialog; the warning of an unknown outcome stays.
+	function clearRefusal() {
+		if (!outcomeUnknown) error = '';
+	}
+
 	function askForNewCodes() {
-		error = '';
+		clearRefusal();
 		// Without codes left there is nothing to replace.
 		if (left > 0) confirmNew = true;
 		else void generate();
@@ -64,12 +82,13 @@
 	function closeConfirm() {
 		if (!busy) {
 			confirmNew = false;
-			error = '';
+			clearRefusal();
 		}
 	}
 
 	$: left = status?.remaining ?? 0;
 	$: leftText = left === 1 ? '1 recovery code left' : `${left} recovery codes left`;
+	$: errorTitle = outcomeUnknown ? UNKNOWN_TITLE : REFUSED_TITLE;
 </script>
 
 <section aria-labelledby="recovery-codes-title" class="mt-4 pt-4 border-t border-border space-y-3">
@@ -108,14 +127,20 @@
 	{/if}
 
 	{#if error && !confirmNew}
-		<Alert variant="error" title="No recovery codes were generated">{error}</Alert>
+		<Alert variant="error" title={errorTitle}>
+			{error}
+			{#if outcomeUnknown}<p class="mt-1">{UNKNOWN_HINT}</p>{/if}
+		</Alert>
 	{/if}
 </section>
 
 <Modal open={confirmNew} title="Generate new recovery codes" size="md" closable={!busy} on:close={closeConfirm}>
 	<p>Your current recovery codes stop working. Ten new ones are shown once.</p>
 	{#if error}
-		<Alert variant="error" title="No recovery codes were generated">{error}</Alert>
+		<Alert variant="error" title={errorTitle}>
+			{error}
+			{#if outcomeUnknown}<p class="mt-1">{UNKNOWN_HINT}</p>{/if}
+		</Alert>
 	{/if}
 
 	<svelte:fragment slot="footer">

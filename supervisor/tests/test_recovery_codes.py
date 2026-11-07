@@ -8,8 +8,10 @@ codes, and a new setup starts without any.
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
+import logging
 import re
 
 import httpx
@@ -141,6 +143,28 @@ class TestGenerate:
 
         assert (response.status_code, response.json()["detail"]) == (400, NEEDS_2FA)
         assert stored(world) is None
+
+    def test_the_codes_are_answered_when_their_audit_entry_cannot_be_written(self, world, monkeypatch):
+        """The new codes are stored before the audit entry is appended. An entry that cannot be
+        written (a full disk) must not keep the codes from the user: the earlier ones no longer
+        work, and these are answered only this once."""
+        world.set_totp("alice", SECRET)
+        old = generate(world)
+
+        async def disk_full(*args, **kwargs):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        monkeypatch.setattr(auth_router, "log_action", disk_full)
+        response = world.client.post(f"{API}/auth/recovery-codes/generate", headers=world.headers("alice"))
+
+        assert response.status_code == 200, response.text
+        codes = response.json()["codes"]
+        assert len(codes) == 10 and set(codes).isdisjoint(old)
+        assert json.loads(stored(world)) == [auth_utils.recovery_code_hash(code) for code in codes]
+        errors = [record.getMessage() for record in world.caplog.records if record.levelno >= logging.ERROR]
+        assert any("audit entry" in message and "alice" in message for message in errors), errors
+        logged = "\n".join(record.getMessage() for record in world.caplog.records)
+        assert not any(code in logged or code.replace("-", "") in logged for code in codes)
 
     def test_the_ten_codes_differ_even_when_the_random_digits_repeat(self, monkeypatch):
         """Two equal codes would make one code sign in twice."""
@@ -337,9 +361,42 @@ class TestTwoFactorOff:
         refused = login(world, "alice", ALICE_PW, recovery_code=codes[0])
         assert (refused.status_code, refused.json()["detail"]) == (401, INVALID)
 
+    def test_codes_generated_while_two_factor_is_being_turned_off_are_removed(self, world, clock, monkeypatch):
+        """A generation commits after the request that turns 2FA off has read the user, and
+        before that request commits (TestGenerate has the opposite order): its codes do not
+        outlive 2FA either, also when the user had no codes before."""
+        world.set_totp("alice", SECRET)
+        real = auth_router.check_totp_code
+        generated = []
+
+        def generated_meanwhile(user_id, secret, code):
+            check = real(user_id, secret, code)
+            # A request of its own, answered before this one goes on.
+            generated.append(world.client.post(f"{API}/auth/recovery-codes/generate", headers=world.headers("alice")))
+            return check
+
+        monkeypatch.setattr(auth_router, "check_totp_code", generated_meanwhile)
+        disabled = world.client.post(
+            f"{API}/auth/totp/disable", json={"code": clock.code(SECRET)}, headers=world.headers("alice")
+        )
+
+        assert disabled.status_code == 200, disabled.text
+        assert [answer.status_code for answer in generated] == [200], [answer.text for answer in generated]
+        assert stored(world) is None
+        assert status(world) == {"remaining": 0, "generated": False}
+        user = world.user("alice")
+        assert (user.totp_enabled, user.totp_secret) == (False, None)
+
+    def test_without_two_factor_authentication_no_code_is_left(self, world):
+        """Codes stored for an account without 2FA (a restored database) sign nobody in, and the
+        status counts none."""
+        _, hashes = auth_utils.generate_recovery_codes()
+        store(world, "bob", json.dumps(hashes))
+
+        assert status(world, "bob") == {"remaining": 0, "generated": False}
+
     def test_a_new_setup_starts_without_codes(self, world, clock):
-        """Codes left from before (a generation that crossed turning 2FA off, a restored
-        database) never come back with a new setup."""
+        """Codes left from before (a restored database) never come back with a new setup."""
         _, hashes = auth_utils.generate_recovery_codes()
         store(world, "alice", json.dumps(hashes))
         headers = world.headers("alice")

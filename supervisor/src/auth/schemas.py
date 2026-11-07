@@ -174,5 +174,5 @@ class RecoveryCodesResponse(BaseModel):
 
 
 class RecoveryCodesStatus(BaseModel):
-    remaining: int    # codes not used yet
+    remaining: int    # codes not used yet; 0 while 2FA is off
     generated: bool   # codes were generated for the current two-factor setup (also when all are used)

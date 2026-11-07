@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.exc import IntegrityError
@@ -36,6 +37,7 @@ from .utils import (
 from ..security.router import record_login_attempt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 LAST_ADMIN_DETAIL = "At least one administrator account must remain"
 
@@ -364,9 +366,14 @@ async def disable_totp(
             status_code=400, detail=TOTP_CODE_REUSED if check is TotpCheck.REUSED else "Invalid TOTP code"
         )
 
-    current_user.totp_enabled = False
-    current_user.totp_secret = None
-    current_user.recovery_codes = None  # they belong to this setup (ADR-0232)
+    # One statement writes all three columns. Assigning None to the loaded user would leave
+    # recovery_codes out of the UPDATE when it was loaded as None, and then codes that a
+    # generation stored after that load would outlive 2FA: they belong to this setup (ADR-0232).
+    await db.execute(
+        update(User)
+        .where(User.id == current_user.id)
+        .values(totp_enabled=False, totp_secret=None, recovery_codes=None)
+    )
     await db.commit()
 
     return {"status": "ok", "message": "2FA disabled successfully"}
@@ -888,25 +895,33 @@ async def generate_new_recovery_codes(
     if result.rowcount != 1:
         raise HTTPException(status_code=400, detail=RECOVERY_CODES_NEED_2FA)
 
-    # Audit log
-    await log_action(
-        action=AuditAction.OTHER,
-        request=request,
-        user=current_user,
-        resource_type="recovery_codes",
-        details="Generated new 2FA recovery codes",
-        severity=AuditSeverity.WARNING
-    )
+    # The new codes are stored and the earlier ones no longer work: an audit entry that cannot
+    # be written (a full disk) is logged, and the codes, answered only now, still reach the user.
+    try:
+        await log_action(
+            action=AuditAction.OTHER,
+            request=request,
+            user=current_user,
+            resource_type="recovery_codes",
+            details="Generated new 2FA recovery codes",
+            severity=AuditSeverity.WARNING
+        )
+    except Exception as exc:
+        logger.error(
+            "Could not write the audit entry of new recovery codes for %s: %s", current_user.username, exc
+        )
 
     return RecoveryCodesResponse(codes=plain_codes)
 
 
 @router.get("/recovery-codes/status", response_model=RecoveryCodesStatus)
 async def recovery_codes_status(current_user: User = Depends(verify_token)):
-    """How many of the user's recovery codes are left."""
+    """How many of the user's recovery codes are left: none while 2FA is off, when no code
+    signs in (codes stored then come only from a restored database)."""
+    stored = current_user.recovery_codes if current_user.totp_enabled else None
     return RecoveryCodesStatus(
-        remaining=recovery_codes_left(current_user.recovery_codes),
-        generated=bool(recovery_code_hashes(current_user.recovery_codes)),
+        remaining=recovery_codes_left(stored),
+        generated=bool(recovery_code_hashes(stored)),
     )
 
 

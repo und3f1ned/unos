@@ -563,6 +563,9 @@ Generate them as soon as 2FA is on:
 
 **Recovery codes** then says how many codes are left. **Generate new codes**
 replaces all of them after a confirmation: the codes you had stop working.
+When generating fails with a server or network error, the page cannot tell
+whether UNOS replaced your codes, and says that the codes you saved may no
+longer work: generate new codes again and save those.
 
 To sign in with one, enter your username and password, click **Use a
 recovery code** at the code step and enter one of your codes; letter case,

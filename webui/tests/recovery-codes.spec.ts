@@ -13,6 +13,10 @@ const USER = {
 };
 const SHOWN = /^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/;
 const INVALID = 'Invalid recovery code';
+// A failed generation: refused by the server, or with an outcome the page cannot know.
+const REFUSED = 'No recovery codes were generated';
+const UNKNOWN = 'New recovery codes may have been generated';
+const UNKNOWN_HINT = 'any codes you saved before no longer work';
 
 let adminToken = '';
 let userToken = '';
@@ -68,6 +72,21 @@ async function generateThroughTheApi(request: APIRequestContext): Promise<string
   const response = await request.post('/api/v1/auth/recovery-codes/generate', { headers: bearer(userToken) });
   expect(response.ok(), `generate: HTTP ${response.status()}`).toBeTruthy();
   return (await response.json()).codes as string[];
+}
+
+/** Recovery code `code` opens a session of USER, through the API. */
+async function expectSignInWith(request: APIRequestContext, code: string) {
+  const response = await request.post('/api/v1/auth/login', { data: { ...USER, recovery_code: code } });
+  expect(response.status(), `sign-in with a recovery code: ${await response.text()}`).toBe(200);
+  const me = await request.get('/api/v1/auth/me', { headers: bearer((await response.json()).access_token) });
+  expect((await me.json()).username).toBe(USER.username);
+}
+
+/** Recovery code `code` does not sign in: the server answers 401 "Invalid recovery code". */
+async function expectRefused(request: APIRequestContext, code: string) {
+  const refused = await request.post('/api/v1/auth/login', { data: { ...USER, recovery_code: code } });
+  expect(refused.status()).toBe(401);
+  expect((await refused.json()).detail).toBe(INVALID);
 }
 
 /** Store the token the way the sign-in form does, then open the Account page. */
@@ -138,22 +157,26 @@ test.describe('Recovery codes', () => {
     await expect(part.getByRole('list', { name: 'Recovery codes' })).toHaveCount(0);
     await expect(page.getByText(codes[0])).toHaveCount(0);
 
+    // The page showed the codes the server keeps: one of them signs in.
+    await expectSignInWith(request, codes[9]);
+    await page.reload();
+    await expect(part.getByText('9 recovery codes left')).toBeVisible();
+
     // New codes replace them after a confirmation, and the old ones stop working.
     await part.getByRole('button', { name: 'Generate new codes' }).click();
     const confirm = page.getByRole('dialog', { name: 'Generate new recovery codes' });
     await expect(confirm).toContainText('Your current recovery codes stop working');
     await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toHaveCount(0);
-    await expect(part.getByText('10 recovery codes left')).toBeVisible();
+    await expect(part.getByText('9 recovery codes left')).toBeVisible();
     await part.getByRole('button', { name: 'Generate new codes' }).click();
     await confirm.getByRole('button', { name: 'Generate new codes' }).click();
     await expect(confirm).toHaveCount(0);
     await expect(list.getByRole('listitem')).toHaveCount(10);
     const fresh = (await list.getByRole('listitem').allInnerTexts()).map((code) => code.trim());
     expect(fresh.filter((code) => codes.includes(code))).toEqual([]);
-    const refused = await request.post('/api/v1/auth/login', { data: { ...USER, recovery_code: codes[0] } });
-    expect(refused.status()).toBe(401);
-    expect((await refused.json()).detail).toBe(INVALID);
+    await expectRefused(request, codes[0]);
+    await expectSignInWith(request, fresh[0]);
   });
 
   test('new codes stay shown when the count cannot be read afterwards', async ({ page, request }) => {
@@ -175,6 +198,84 @@ test.describe('Recovery codes', () => {
     await expect(part.getByRole('list', { name: 'Recovery codes' }).getByRole('listitem')).toHaveCount(10);
     await part.getByRole('button', { name: 'Done' }).click();
     await expect(part.getByText('10 recovery codes left')).toBeVisible();
+  });
+
+  test('a generation the server refuses says that no codes were generated', async ({ page, request }) => {
+    const saved = await generateThroughTheApi(request);
+    await openAccount(page);
+    const part = page.getByRole('region', { name: 'Recovery codes' });
+    await expect(part.getByText('10 recovery codes left')).toBeVisible();
+    // The server's answer once 2FA was turned off elsewhere.
+    await page.route('**/api/v1/auth/recovery-codes/generate', (route) =>
+      route.fulfill({ status: 400, json: { detail: '2FA must be enabled before generating recovery codes' } }),
+    );
+
+    await part.getByRole('button', { name: 'Generate new codes' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Generate new recovery codes' });
+    await confirm.getByRole('button', { name: 'Generate new codes' }).click();
+
+    await expect(confirm.getByText(REFUSED)).toBeVisible();
+    await expect(confirm).toContainText('2FA must be enabled before generating recovery codes');
+    await expect(confirm.getByText(UNKNOWN)).toHaveCount(0);
+    await expect(confirm).not.toContainText(UNKNOWN_HINT);
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toHaveCount(0);
+    await expect(part.getByText(REFUSED)).toHaveCount(0);
+    await expect(part.getByText('10 recovery codes left')).toBeVisible();
+    await expectSignInWith(request, saved[0]);
+  });
+
+  test('a generation whose answer is lost says that the saved codes may no longer work', async ({
+    page,
+    request,
+  }) => {
+    const saved = await generateThroughTheApi(request);
+    await openAccount(page);
+    const part = page.getByRole('region', { name: 'Recovery codes' });
+    await expect(part.getByText('10 recovery codes left')).toBeVisible();
+    const generateUrl = '**/api/v1/auth/recovery-codes/generate';
+    const confirm = page.getByRole('dialog', { name: 'Generate new recovery codes' });
+
+    // The server replaces the codes, but the page gets a server error in place of its answer
+    // (the server's 500 is plain text, which the client reads as "Request failed").
+    let replaced = 0;
+    await page.route(generateUrl, async (route) => {
+      replaced = (await route.fetch()).status();
+      await route.fulfill({ status: 500, contentType: 'text/plain', body: 'Internal Server Error' });
+    });
+    await part.getByRole('button', { name: 'Generate new codes' }).click();
+    await confirm.getByRole('button', { name: 'Generate new codes' }).click();
+    await expect(confirm).toContainText('Request failed');
+    await expect(confirm.getByText(UNKNOWN)).toBeVisible();
+    await expect(confirm).toContainText(UNKNOWN_HINT);
+    await expect(confirm.getByText(REFUSED)).toHaveCount(0);
+    expect(replaced).toBe(200);
+    // The warning is right, and it stays on the page after Cancel.
+    await expectRefused(request, saved[0]);
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toHaveCount(0);
+    await expect(part.getByText(UNKNOWN)).toBeVisible();
+    await expect(part).toContainText(UNKNOWN_HINT);
+
+    // No answer at all (the connection broke): the page cannot know either.
+    await page.unroute(generateUrl);
+    await page.route(generateUrl, (route) => route.abort('connectionreset'));
+    await part.getByRole('button', { name: 'Generate new codes' }).click();
+    await confirm.getByRole('button', { name: 'Generate new codes' }).click();
+    await expect(confirm).toContainText('Failed to fetch');
+    await expect(confirm.getByText(UNKNOWN)).toBeVisible();
+    await expect(confirm).toContainText(UNKNOWN_HINT);
+    await expect(confirm.getByText(REFUSED)).toHaveCount(0);
+    await page.unroute(generateUrl);
+
+    // Generating again shows new codes that work, and the warning is gone.
+    await confirm.getByRole('button', { name: 'Generate new codes' }).click();
+    await expect(confirm).toHaveCount(0);
+    const list = part.getByRole('list', { name: 'Recovery codes' });
+    await expect(list.getByRole('listitem')).toHaveCount(10);
+    await expect(part.getByText(UNKNOWN)).toHaveCount(0);
+    const fresh = (await list.getByRole('listitem').allInnerTexts()).map((code) => code.trim());
+    await expectSignInWith(request, fresh[0]);
   });
 
   test('a recovery code signs in once at the code step, and the Account page counts what is left', async ({

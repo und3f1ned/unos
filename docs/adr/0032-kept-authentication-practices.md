@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-05
 area: auth
 decided-by: agent
+superseded-by: ADR-0233
 ---
 
 # ADR-0032: Auth keeps bcrypt, one JWT algorithm, TOTP before any token, and hashed API tokens
 
 ## Context
+
+Superseded by ADR-0233: the third practice is now no token before the second factor, a TOTP code or an unused recovery code (ADR-0232); the other three stay.
 
 The November 2026 audit rated authentication and permissions 2 of 5, but found four practices of 1.0.0 done right. Recording them keeps later changes from undoing them.
 

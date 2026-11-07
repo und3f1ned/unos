@@ -362,7 +362,7 @@
       "passes": true,
       "adr": [
         "ADR-0009",
-        "ADR-0032"
+        "ADR-0233"
       ],
       "notes": "Step 4: auth.spec.ts 'Logout ends the session' clicks Logout and checks that the token is gone (added on 2026-11-07, after a review found the step unasserted)."
     },
@@ -489,7 +489,7 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0032",
+        "ADR-0233",
         "ADR-0027"
       ],
       "notes": "Untested: that a disabled or an expired token is refused. API only: no page manages tokens."
@@ -564,9 +564,10 @@
       "passes": true,
       "adr": [
         "ADR-0033",
-        "ADR-0232"
+        "ADR-0232",
+        "ADR-0233"
       ],
-      "notes": "Against the stand-in's real supervisor, recovery-codes.spec.ts generates ten codes on the Account page, which a reload no longer shows (step 1), signs in at the code step with a code that a second time answers 'Invalid recovery code' (step 2), and reads 10, 9 and 8 codes left (step 3). test_recovery_codes.py adds two sign-ins with one code at the same moment, codes typed in any case or without dashes, new codes generated meanwhile, and codes removed with two-factor authentication. Database only: not host-level (GLOSSARY.md). Turning 2FA off still needs a code of the authenticator app, and no administrator can reset 2FA."
+      "notes": "Against the stand-in's real supervisor, recovery-codes.spec.ts generates ten codes on the Account page, which a reload no longer shows and of which one signs in (step 1), signs in at the code step with a code that a second time answers 'Invalid recovery code' (step 2), and reads 10, 9 and 8 codes left (step 3). It also checks what a failed generation says: no codes were generated after a refusal, and after a lost answer that the saved codes may no longer work. test_recovery_codes.py adds two sign-ins with one code at the same moment, codes typed in any case or without dashes, new codes generated meanwhile, codes removed with two-factor authentication also when a generation commits while it is being turned off, and codes answered when their audit entry cannot be written. Database only: not host-level (GLOSSARY.md). Turning 2FA off still needs a code of the authenticator app, and no administrator can reset 2FA."
     },
     {
       "id": "auth.mandatory-two-factor",
