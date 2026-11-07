@@ -1,5 +1,5 @@
 import type { APIRequestContext, Page } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { E2E_ADMIN, test, expect } from './fixtures';
 import { ADMIN_REASON, fakeSmbApi, smbStatus, type FakeMySmb } from './shares-fakes';
 
 // The "Network file access (SMB)" card of the Account page (System → Security).
@@ -320,7 +320,7 @@ test.describe('Change Password (fake answer)', () => {
     });
     await openAccount(page);
 
-    await page.fill('#currentPassword', 'admin123');
+    await page.fill('#currentPassword', E2E_ADMIN.password);
     await page.fill('#newPassword', 'e2e-Changed-Password-1');
     await page.fill('#confirmPassword', 'e2e-Changed-Password-1');
     await page.getByRole('button', { name: 'Change Password' }).click();
@@ -329,15 +329,13 @@ test.describe('Change Password (fake answer)', () => {
     const shown = page.locator('.alert-warning', { hasText: warning });
     await expect(shown).toBeVisible();
     await expect(page.locator('#currentPassword')).toHaveValue('');
-    expect(sent).toEqual([{ current_password: 'admin123', new_password: 'e2e-Changed-Password-1' }]);
+    expect(sent).toEqual([{ current_password: E2E_ADMIN.password, new_password: 'e2e-Changed-Password-1' }]);
     await shown.getByRole('button', { name: 'Dismiss' }).click();
     await expect(shown).toHaveCount(0);
   });
 });
 
-// ---- Turning SMB on against the stand-in, which has no Samba (never the device) ----
-
-const ADMIN = { username: 'admin', password: 'admin123' };
+// ---- Turning SMB on where E2E_STAND_IN=1: the stand-in or the compose test stack, which have no Samba ----
 
 async function apiLogin(request: APIRequestContext, credentials: { username: string; password: string }) {
   const response = await request.post('/api/v1/auth/login', { data: credentials });
@@ -346,7 +344,10 @@ async function apiLogin(request: APIRequestContext, credentials: { username: str
 }
 
 test.describe('SMB activation on the Account page (stand-in)', () => {
-  test.skip(process.env.E2E_STAND_IN !== '1', 'turns SMB on for a test user: only on the stand-in, which has no Samba');
+  test.skip(
+    process.env.E2E_STAND_IN !== '1',
+    'turns SMB on for a test user: only where E2E_STAND_IN=1, on the stand-in or the compose test stack, which have no Samba',
+  );
 
   const user = { username: `e2e_acct_${Date.now().toString(36)}`, password: 'e2e-Account-Password-1' };
   let adminToken = '';
@@ -354,7 +355,7 @@ test.describe('SMB activation on the Account page (stand-in)', () => {
   const asAdmin = () => ({ Authorization: `Bearer ${adminToken}` });
 
   test.beforeAll(async ({ request }) => {
-    adminToken = await apiLogin(request, ADMIN);
+    adminToken = await apiLogin(request, E2E_ADMIN);
     const created = await request.post('/api/v1/auth/users', { headers: asAdmin(), data: user });
     expect(created.ok(), `create ${user.username}: HTTP ${created.status()}`).toBeTruthy();
     userId = (await created.json()).id;

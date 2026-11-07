@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { TEST_STACK_TOO } from './target';
 
 test.describe('App Store', () => {
   test('should navigate to app store page', async ({ authenticatedPage: page }) => {
@@ -22,6 +23,11 @@ test.describe('App Store', () => {
   });
 
   test('should show app cards in catalog', async ({ authenticatedPage: page }) => {
+    test.skip(
+      process.env.E2E_STAND_IN === '1',
+      'The stand-in has no Docker: the App Store shows its catalog only once the installed apps (containers) have loaded' +
+        TEST_STACK_TOO,
+    );
     await page.goto('/apps');
     await page.waitForTimeout(2000);
     

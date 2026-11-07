@@ -1,4 +1,4 @@
-"""FakeSambaHost (spec 9.2): an in-memory host behind ``src.host.run_on_host``.
+"""FakeSambaHost (ADR-0189): an in-memory host behind ``src.host.run_on_host``.
 
 Install it with ``monkeypatch.setattr(src.host, "run_on_host", fake.run)`` (or
 ``install_fake_samba_host``, which also blocks real subprocesses). It follows
@@ -6,9 +6,9 @@ the FakeHost pattern of test_pool_persistence.py: every command is recorded in
 ``calls`` (argv, stdin), the ones that change the host also in ``mutations``,
 and a command it does not know fails the test.
 
-It emulates the account commands of spec 3.2 (getent, groupadd, useradd,
+It emulates the account commands of shares/accounts.py (getent, groupadd, useradd,
 userdel, smbpasswd, pdbedit, smbstatus, smbcontrol <pid> shutdown, sync), the
-smb.conf commands of spec 2.4 (mkdir /run/samba, testparm, smbcontrol
+smb.conf commands of an apply (mkdir /run/samba, testparm, smbcontrol
 reload-config and close-share, systemctl reload smbd), ``cat -- /etc/fstab``
 and the tool check of ``host.missing_host_binaries``. ``findmnt`` and
 ``btrfs`` are not emulated: a test that creates a share folder patches
@@ -34,7 +34,8 @@ DEFAULT_FSTAB = (
     "defaults,noatime,nofail,x-systemd.device-timeout=15s,x-systemd.before=docker.service 0 0\n"
 )
 
-# The parameters of spec 2.2 and 2.3 (the testparm allowlist).
+# The parameters that UNOS renders, in [global] and in share sections (the testparm
+# allowlist; ADR-0087, ADR-0088).
 SMB_CONF_KEYS = frozenset({
     "workgroup", "server string", "server role", "security", "passdb backend", "map to guest",
     "restrict anonymous", "guest account", "invalid users", "hosts allow", "server min protocol",
@@ -279,10 +280,10 @@ class FakeSambaHost:
         for flag in ("-m", "-p", "--password", "--create-home"):
             assert flag not in args, f"useradd with {flag}: {argv}"
         expected = ["-r", "-l", "-N", "-M", "-u", None, "-g", None, "-d", None, "-s", None, "-c", None, None]
-        assert len(args) == len(expected), f"useradd with other arguments than spec 3.2: {argv}"
+        assert len(args) == len(expected), f"useradd with other arguments than create_host_account uses: {argv}"
         for want, got in zip(expected, args):
             if want is not None:
-                assert got == want, f"useradd with other arguments than spec 3.2: {argv}"
+                assert got == want, f"useradd with other arguments than create_host_account uses: {argv}"
         uid, gid, home, shell, gecos, name = int(args[5]), int(args[7]), args[9], args[11], args[13], args[14]
         assert not name.startswith("-"), argv
         self._mutation(argv)
@@ -397,7 +398,7 @@ class FakeSambaHost:
                     if not stripped or stripped.startswith(("#", ";", "[")):
                         continue
                     key = stripped.split("=", 1)[0].strip().lower()
-                    assert key in SMB_CONF_KEYS, f"smb.conf parameter outside spec 2.2/2.3: {line!r}"
+                    assert key in SMB_CONF_KEYS, f"smb.conf parameter that UNOS does not render: {line!r}"
         return self._result(code, stdout="Loaded services file OK.\n" if code == 0 else "", stderr=output)
 
 

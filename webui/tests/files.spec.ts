@@ -68,7 +68,8 @@ test.describe('File Browser', () => {
 
 // The flows below work on real files: each test gets a scratch folder
 // e2e-files-<id> in the first pool (a directory of the pools directory) that
-// accepts one, and removes it afterwards. They are skipped when there is none.
+// accepts one, and removes it afterwards. They are skipped when there is none:
+// the stand-in has testpool, the test stack's pools directory is empty.
 
 type Entry = { name: string; path: string; type: string; size: number };
 type Scratch = { pool: Entry; name: string; path: string };
@@ -144,12 +145,13 @@ async function tabTo(page: Page, target: Locator, maxPresses = 80) {
 
 const isApi = (path: string) => (request: Request) => new URL(request.url()).pathname === `/api/v1${path}`;
 
+const NO_POOL_FOLDER = 'No folder of the pools directory takes a new folder: the target has no pool to work in';
+
 test.describe('File Browser operations', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     token = (await page.evaluate(() => localStorage.getItem('token'))) ?? '';
     expect(token, 'signed in').not.toBe('');
     const response = await page.request.get('/api/v1/files/list', { headers: auth() });
-    test.skip(response.status() === 404, 'No pools directory');
     expect(response.ok(), `list pools: HTTP ${response.status()}`).toBeTruthy();
     const name = `e2e-files-${Date.now().toString(36)}`;
     // The first pool that takes a new folder (an unmounted pool's directory is write-protected).
@@ -161,10 +163,10 @@ test.describe('File Browser operations', () => {
       });
       if (made.ok()) {
         scratch = { pool, name, path: (await made.json()).path };
-        return;
+        break;
       }
     }
-    test.skip(true, 'No pool directory to work in');
+    test.skip(scratch === null, NO_POOL_FOLDER);
   });
 
   test.afterEach(async ({ request }) => {
@@ -567,5 +569,25 @@ test.describe('File Browser operations', () => {
     // The upload's own 401 ended the session, not a request made after it.
     expect(sent).toEqual(['POST /api/v1/files/upload']);
     expect(await listNames(page, scratch!.path)).toEqual([]);
+  });
+
+  test('a download with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {
+    await putFile(page, scratch!.path, 'late.txt', Buffer.from('late'));
+    await openScratch(page);
+    const sent: string[] = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/v1/files/')) sent.push(`${request.method()} ${url.pathname}`);
+    });
+    const saved: string[] = [];
+    page.on('download', (download) => saved.push(download.suggestedFilename()));
+    // As if the token had expired: same tab, so no storage event.
+    await page.evaluate(() => localStorage.setItem('token', 'expired-session-token'));
+    await row(page, 'late.txt').dblclick();
+    await expect(page).toHaveURL('/login');
+    await expect(page.locator('#username')).toBeVisible();
+    // The download's own 401 ended the session, and no file was saved.
+    expect(sent).toEqual(['GET /api/v1/files/download']);
+    expect(saved).toEqual([]);
   });
 });

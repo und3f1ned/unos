@@ -195,7 +195,7 @@ def test_lifespan_logs_missing_host_tools(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
-# The SMB startup reconcile (spec 4.2)
+# The SMB startup reconcile (ADR-0138)
 # ---------------------------------------------------------------------------
 
 

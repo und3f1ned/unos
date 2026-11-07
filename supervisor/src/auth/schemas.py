@@ -76,7 +76,7 @@ class UserUpdate(BaseModel):
     username: str | None = Field(default=None, max_length=64)
 
 
-# SMB access (spec 4.1)
+# SMB access (ADR-0118)
 class SmbEnableRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(max_length=64)       # must be the user's current username (409)
@@ -100,7 +100,7 @@ class MySmbShare(BaseModel):
     level: Literal["read", "write"]
     guest_ok: bool
     usable: bool          # the account is active (or it is a guest share). Database only: whether
-                          # the share is served (5.4) is not checked, since that needs the host's pool list
+                          # the share is served (ADR-0145) is not checked, since that needs the host's pool list
 
 
 class MySmbStatus(BaseModel):

@@ -16,7 +16,7 @@ archive into arbitrary file writes on the host. Restore therefore:
 * never installs the archived smb.conf: shares and their access are rows of
   the database, and smb.conf is rendered from them. Before the swap, the
   extracted database is prepared for SMB (shares/service.py and
-  shares/accounts.py, spec 4.3): its SMB tables are created or checked, and
+  shares/accounts.py, ADR-0139): its SMB tables are created or checked, and
   a database whose shares were never imported gets its shares imported again
   after the restore, from the archived smb.conf or else the live one. The
   restore runs under the SMB lock, which also covers the post-restore step
@@ -304,7 +304,7 @@ def _verify_database(path: Path) -> None:
         if not admins:
             raise BackupValidationError("unos.db in the backup has no administrator account")
         # UNOS creates neither. A trigger would run inside the SMB preparation
-        # of the extracted file (spec 4.3), before anything was checked.
+        # of the extracted file (ADR-0139), before anything was checked.
         if conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')").fetchone()[0]:
             raise BackupValidationError("unos.db in the backup contains triggers or views; UNOS databases have none")
     except sqlite3.Error as e:
@@ -720,7 +720,7 @@ def _archived_smb_conf(path: Path, warnings: list[str]) -> str | None:
     """The text of the archived smb.conf (strict UTF-8, at most MAX_CONFIG_BYTES), or None with a warning.
 
     It is never installed: the import after the restore reads its shares when
-    the restored database has none of its own (spec 4.3).
+    the restored database has none of its own (ADR-0142).
     """
     data = path.read_bytes()
     try:
@@ -733,7 +733,7 @@ def _archived_smb_conf(path: Path, warnings: list[str]) -> str | None:
 
 
 def _prepare_smb(db_file: Path, db_path: Path, archive_conf: str | None) -> list[str]:
-    """The SMB rules of spec 4.3 on the extracted database, before it replaces the live one.
+    """The SMB rules of a restore (ADR-0139) on the extracted database, before it replaces the live one.
 
     The SMB tables are created or checked (BackupValidationError), the SMB
     accounts of the live database are read, and then one transaction on the
@@ -866,7 +866,7 @@ def _restore_message(restored: list[str], warnings: list[str]) -> str:
 
 
 async def _after_database_restore(result: dict) -> None:
-    """The post-restore step (spec 4.3), under smb_lock: missing tables, then the SMB reconcile.
+    """The post-restore step (ADR-0138), under smb_lock: missing tables, then the SMB reconcile.
 
     A failure is the warning SMB_REPAIRED_AT_START: the startup reconcile does
     the same work. When smb.conf was rendered from the restored database,

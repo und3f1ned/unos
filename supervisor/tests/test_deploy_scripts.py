@@ -160,8 +160,15 @@ FLOCK_STUB = textwrap.dedent(
 ).lstrip()
 
 
+def _without_git_variables(environ) -> dict:
+    """The environment without GIT_DIR, GIT_INDEX_FILE and the other GIT_* variables of an outer
+    git (its hooks, git rebase -x): the sandbox's git commands stay in the sandbox (conftest.py
+    removes them as well)."""
+    return {key: value for key, value in environ.items() if not key.startswith("GIT_")}
+
+
 def _git(*args, cwd):
-    subprocess.run([*GIT, *args], cwd=cwd, check=True, capture_output=True)
+    subprocess.run([*GIT, *args], cwd=cwd, check=True, capture_output=True, env=_without_git_variables(os.environ))
 
 
 def _update_lib():
@@ -202,7 +209,8 @@ def sandbox(tmp_path):
 
 def _head(sandbox):
     return subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=sandbox / "install", check=True, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"], cwd=sandbox / "install", check=True, capture_output=True, text=True,
+        env=_without_git_variables(os.environ),
     ).stdout.strip()
 
 
@@ -226,7 +234,7 @@ def _run_update(sandbox, *scenario, overrides="", **extra_env):
     update.sh is sourced, such as a function that replaces one of its own."""
     (sandbox / "stub" / "scenario").write_text("".join(f"{s}\n" for s in scenario))
     env = {
-        **os.environ,
+        **_without_git_variables(os.environ),
         "PATH": f"{sandbox / 'bin'}:{os.environ['PATH']}",
         "STUB_DIR": str(sandbox / "stub"),
         "UNOS_INSTALL_DIR": str(sandbox / "install"),
@@ -1398,10 +1406,11 @@ class TestUninstallScript:
                 "guest shares to anyone on your network." in text
             )
             assert "systemctl restart smbd" in text
-        # After an upgrade the copy is the file of the earlier release, not the
-        # one from before UNOS (that is smb.conf.original).
+        # The copy that the supervisor keeps of an smb.conf it did not write when
+        # it imports its shares (ADR-0085); smb.conf.original is the one that
+        # install.sh kept.
         assert (
-            f"The smb.conf from before this release of UNOS (UNOS imported its shares from it) is "
+            f"The smb.conf that UNOS replaced with its own (UNOS imported its shares from it) is "
             f"{folder}/smb.conf.unos-import-backup. Check it before you copy it back: it may give every Samba "
             "account access to its shares." in text
         ) is backup
@@ -1526,6 +1535,16 @@ def _compose_string(value):
     return value.replace("$$", "$")
 
 
+def _e2e_admin():
+    """The administrator that the E2E specs sign in as: E2E_ADMIN of webui/tests/fixtures.ts."""
+    text = (REPO_ROOT / "webui" / "tests" / "fixtures.ts").read_text()
+    found = re.search(
+        r"^export const E2E_ADMIN = \{ username: '([^'\\]+)', password: '([^'\\]+)' \} as const;$", text, re.M
+    )
+    assert found, "webui/tests/fixtures.ts: no E2E_ADMIN"
+    return {"username": found[1], "password": found[2]}
+
+
 class TestTestRunner:
     """The test-runner service of the test profile (webui/Dockerfile.test)."""
 
@@ -1589,7 +1608,8 @@ class TestTestRunner:
         setup = calls[3]
         assert "-X POST" in setup
         assert setup.endswith("https://webui/api/v1/auth/setup")
-        assert """-d {"username": "admin", "password": "admin123"}""" in setup
+        # The account of webui/tests/fixtures.ts, in the form of the compose file.
+        assert f"-d {json.dumps(_e2e_admin())}" in setup
         assert calls[4:] == ["npx playwright test --reporter=list,html"]
 
     @pytest.mark.parametrize("status", ["500", "000"])
@@ -1652,17 +1672,23 @@ class TestTestCycle:
         assert "docker compose -f docker-compose.test.yml build --quiet" in calls
         assert _wait_timeouts(calls) == [_supervisor_decided_within("docker-compose.test.yml")]
 
+    def test_creates_the_administrator_the_specs_sign_in_as(self):
+        script = (REPO_ROOT / "scripts" / "test-cycle.sh").read_text()
+        bodies = re.findall(r"-d '(\{[^'\n]*\})'", script)
+
+        assert [json.loads(body) for body in bodies] == [_e2e_admin()]
+
     def test_testing_md_starts_the_stack_with_the_same_limit(self):
         testing = (REPO_ROOT / "docs" / "TESTING.md").read_text()
         ups = re.findall(r"^docker compose -f docker-compose\.test\.yml up\b.*$", testing, re.M)
 
-        assert len(ups) == 3
-        assert _wait_timeouts(ups) == [_supervisor_decided_within("docker-compose.test.yml")] * 3
+        assert ups
+        assert _wait_timeouts(ups) == [_supervisor_decided_within("docker-compose.test.yml")] * len(ups)
 
 
 class TestInstallGuide:
-    """docs/INSTALL.md: the systemd unit of a manual installation, and the
-    command that adds --wait-timeout to the unit of an earlier install.sh."""
+    """docs/INSTALL.md: the systemd unit of a manual installation starts compose as
+    install.sh does."""
 
     def test_unit_starts_compose_as_install_sh_does(self, tmp_path):
         guide = (REPO_ROOT / "docs" / "INSTALL.md").read_text()
@@ -1670,33 +1696,15 @@ class TestInstallGuide:
 
         assert re.findall(r"^ExecStart=.*$", guide, re.M) == exec_start
 
-    def test_sed_command_gives_an_earlier_unit_the_limit_of_install_sh(self, tmp_path):
+    def test_has_no_upgrade_path_from_older_versions(self):
+        # UNOS keeps no backward compatibility (ADR-0207): the chapter for installations of
+        # 1.0.0 or earlier and its commands are gone, also the sed command for older units.
         guide = (REPO_ROOT / "docs" / "INSTALL.md").read_text()
-        commands = re.findall(r"^ *sudo sed -i -E '([^']+)' /etc/systemd/system/unos\.service$", guide, re.M)
-        _, _, exec_start = _start_install(tmp_path)
-        assert len(commands) == 1
-        assert len(exec_start) == 1
 
-        # The unit of an earlier install.sh, one with another limit, and one
-        # that has the limit already.
-        for before in ("up -d", "up -d --wait-timeout 600", exec_start[0].split(" compose ", 1)[1]):
-            unit = textwrap.dedent(
-                f"""
-                [Service]
-                Type=oneshot
-                ExecStart=/usr/bin/docker compose {before}
-                ExecStop=/usr/bin/docker compose down
-                TimeoutStartSec=0
-                """
-            )
-            result = subprocess.run(
-                ["sed", "-E", commands[0]], input=unit, capture_output=True, text=True, check=True, timeout=30
-            )
-            assert [line for line in result.stdout.splitlines() if line.startswith("ExecStart=")] == exec_start
-            # Only ExecStart changed.
-            assert result.stdout.replace(exec_start[0], "") == unit.replace(
-                f"ExecStart=/usr/bin/docker compose {before}", ""
-            )
+        assert "1.0.0" not in guide
+        assert "/etc/systemd/system/unos.service" not in "\n".join(
+            line for line in guide.splitlines() if line.lstrip().startswith("sudo sed")
+        )
 
 
 def _dockerignore(context):
@@ -2107,6 +2115,17 @@ def _commands(job):
     return [step["run"] for step in _workflow_jobs()[job]["steps"] if "run" in step]
 
 
+def _make_dry_run(target, *variables):
+    """The commands that `make -n <target>` prints, from the root of the repository."""
+    # Without the variables of an outer make, when the suite itself runs under make test.
+    env = {key: value for key, value in os.environ.items() if key not in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL")}
+    result = subprocess.run(
+        ["make", "--no-print-directory", "-n", target, *variables],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60, check=True, env=env,
+    )
+    return result.stdout
+
+
 def _normalized(name):
     """A package name as pip compares them (PEP 503)."""
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -2158,8 +2177,12 @@ class TestContinuousIntegration:
         commands = _commands("lint")
 
         assert commands[0] == "pip install --require-hashes -r .github/lint-requirements.txt"
-        assert "ruff check --select F,E9 supervisor" in commands
+        assert "make lint" in commands
         assert "pip-audit -r supervisor/requirements.txt" in commands
+        # make lint runs ruff from PATH there, where the hashed install put it, over the supervisor
+        # and the repository's tooling.
+        assert "ruff check --select F,E9 supervisor scripts .claude/hooks" in _make_dry_run(
+            "lint", "RUFF=ruff").splitlines()
 
     def test_lint_requirements_pin_every_package_with_its_hashes(self):
         wanted = (REPO_ROOT / ".github" / "lint-requirements.in").read_text()
@@ -2228,7 +2251,10 @@ class TestContinuousIntegration:
         # the check script: npm run takes it from node_modules/.bin. `npx -y
         # svelte-check@<version>` resolved its dependencies afresh in every
         # run, and npx downloads a program that is missing there.
-        assert commands == ["npm ci", "npm run build", "npm run check", "npm audit --omit=dev --audit-level=high"]
+        assert commands == ["npm ci", "make frontend", "npm audit --omit=dev --audit-level=high"]
+        # make frontend runs both, also when the type check fails (ADR-0190).
+        dry_run = _make_dry_run("frontend", "NPM=npm").splitlines()
+        assert {"cd webui && npm run check", "cd webui && npm run build"} <= set(dry_run)
         assert scripts["check"] == "svelte-kit sync && svelte-check --threshold error"
 
     def test_svelte_check_is_an_exact_dev_dependency_in_the_lockfile(self):

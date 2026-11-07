@@ -1,7 +1,7 @@
-"""The account reconcile of the startup and post-restore paths (spec 4.2, P2):
+"""The account reconcile of the startup and post-restore paths (ADR-0138):
 accounts.reconcile_accounts(db) makes the host match the smb_accounts rows, and
 writes nothing when they already match. Host commands go to the FakeSambaHost;
-service.delete_access_of_user (P1) is an AsyncMock."""
+service.delete_access_of_user is an AsyncMock."""
 from __future__ import annotations
 
 import asyncio
@@ -105,7 +105,7 @@ class TestConsistent:
         assert result == interfaces.ReconcileResult(changes=[], problems=[])
         assert world.fake.mutating_calls() == []
         assert commits["n"] == 0
-        # The read-only commands of a consistent start (spec 4.2).
+        # The read-only commands of a consistent start (ADR-0138).
         assert [a[:2] for a in world.fake.argvs()] == [
             ["/bin/sh", "-c"], ["getent", "passwd"], ["getent", "group"], ["getent", "group"], ["pdbedit", "-L"],
         ]
@@ -206,8 +206,8 @@ class TestHostRepairs:
 
     def test_a_stale_account_with_the_name_of_an_active_row(self, world):
         """passdb is keyed by the name: the stale account's entry was the only password Samba
-        had for alice. Her row must not stay 'set' (a correction of spec 4.2 step 6, which
-        assumed that the entry survives the removal of the stale account)."""
+        had for alice. Her row must not stay 'set': removing the stale account's entry (step 6
+        of reconcile_accounts) removed her password too."""
         consistent(world)
         world.fake.passwd["alice"] = accounts.HostAccount("alice", 70005, 70000, "UNOS SMB user", "/nonexistent",
                                                           "/usr/sbin/nologin")
@@ -245,7 +245,7 @@ class TestHostRepairs:
         assert result.problems == ["The stale host account alice is still in use; UNOS removes it at its next start"]
 
     def test_a_row_with_the_uid_of_a_stale_account_of_another_name(self, world):
-        """Decision 16, defense in depth: erin's row (restored or hand-edited) has the uid of the
+        """ADR-0112, defense in depth: erin's row (restored or hand-edited) has the uid of the
         stale marked account dave, whose files on the pools that uid owns. Once dave's account is
         gone, erin must not get a host account with it: her row loses the uid and needs SMB
         turned on again (a fresh uid then)."""
@@ -273,7 +273,7 @@ class TestHostRepairs:
         assert world.next_uid() == 70006  # her next activation gets a fresh uid
 
     def test_the_row_loses_the_uid_before_the_stale_account_is_removed(self, world, commits):
-        """F1 (round 2 review): when dave's userdel runs, erin's row has already lost dave's
+        """ADR-0112: when dave's userdel runs, erin's row has already lost dave's
         uid in the database (committed with the other database rules, before step 6)."""
         _erin_with_daves_uid(world)
         reached, release = world.fake.pause_at("userdel", "dave")
@@ -296,7 +296,7 @@ class TestHostRepairs:
 
     @pytest.mark.parametrize("interruption", ["stop-after-userdel", "commits-fail-after-userdel"])
     def test_an_interrupted_run_never_gives_the_uid_to_the_row(self, world, monkeypatch, interruption):
-        """F1 (round 2 review): the supervisor stops right after dave's userdel (power loss,
+        """ADR-0112: the supervisor stops right after dave's userdel (power loss,
         container restart), or every commit after it fails (database busy). Dave's account
         is gone, so no later run sees the conflict: erin's row must not keep his uid, else
         the next reconcile or her next activation creates erin with uid 70005, the owner of
@@ -364,7 +364,7 @@ class TestHostRepairs:
         assert reconcile(world) == interfaces.ReconcileResult()
 
     def test_a_foreign_account_with_the_uid_of_an_active_row(self, world):
-        """Spec 4.2 step 6: an active row without its host account, while a foreign account has its
+        """Step 6 of reconcile_accounts: an active row without its host account, while a foreign account has its
         uid: 'needed' plus a problem, and the foreign account is left untouched. Rule 3c' is only
         about marked accounts (UNOS removes those): the row keeps its uid."""
         consistent(world)
@@ -402,7 +402,7 @@ class TestHostRepairs:
         assert result.problems == ["The stale host account dave is still in use; UNOS removes it at its next start"]
 
     def test_reconcile_rechecks_the_marker_right_before_userdel(self, world):
-        """tests-7 (I3): the stale account dave is taken over on the host (usermod -c) while the
+        """ADR-0192: the stale account dave is taken over on the host (usermod -c) while the
         reconcile ends its sessions; userdel must not run."""
         consistent(world)
         world.fake.add_account("dave", 70007)
@@ -459,7 +459,7 @@ class TestHostRepairs:
         assert world.next_uid() == 70002  # never lowered
 
     def test_a_foreign_account_that_getent_does_not_list(self, world):
-        """sec-host-4 (I3): a directory account alice (enumeration off, sssd's default) with a
+        """ADR-0192: a directory account alice (enumeration off, sssd's default) with a
         hand-made Samba entry, while the UNOS row of alice is not active. The enumeration does
         not show the account; it is read by name before pdbedit -x, and its entry stays."""
         consistent(world)
@@ -692,7 +692,7 @@ class TestSessions:
 
 class TestWriteLock:
     def test_no_write_lock_is_held_while_host_commands_run(self, world):
-        """The startup reconcile runs while requests are served (D27): the database rules
+        """The startup reconcile runs while requests are served (ADR-0138): the database rules
         are committed before the host actions, so other writers do not wait for SQLite's
         lock (and fail after its busy timeout) while userdel or smbstatus run."""
         consistent(world)
@@ -720,7 +720,7 @@ class TestWriteLock:
 
 class TestRollback:
     def test_host_ahead_of_a_rolled_back_database(self, world, tmp_path):
-        """R-F17: the commit of an activation was lost (a power cut right after it)."""
+        """The commit of an activation was lost to a power cut right after it (ADR-0078)."""
         world.make_allowed("alice")
         world.set_next_uid(70000)
         before = tmp_path / "before.db"

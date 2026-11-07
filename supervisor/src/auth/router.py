@@ -60,11 +60,12 @@ async def _ensure_an_admin_remains(db: AsyncSession) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=LAST_ADMIN_DETAIL)
 
 
-# ==================== SMB access (spec 4.1) ====================
+# ==================== SMB access ====================
 #
 # Every SMB step runs under service.smb_lock() and starts by reloading the
 # target user and its account row (accounts.reload_user, populate_existing):
-# objects loaded before the lock, such as the token's user, may be stale.
+# objects loaded before the lock, such as the token's user, may be stale
+# (ADR-0080, ADR-0081).
 
 
 def _user_response(user: User, row: SmbAccount | None, warnings: list[str] | None = None) -> UserResponse:
@@ -258,7 +259,7 @@ async def change_password(
     """Change current user password.
 
     For an active SMB account, Samba's copy is changed first and the
-    account's open SMB sessions end after the commit (spec 3.5). A self flow:
+    account's open SMB sessions end after the commit (ADR-0121, ADR-0123). A self flow:
     its warnings are fixed texts (the details are logged).
     """
     verified_hash = current_user.hashed_password

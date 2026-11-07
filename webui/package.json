@@ -6,15 +6,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "check": "svelte-kit sync && svelte-check --threshold error",
-    "preview": "vite preview",
-    "test": "playwright test",
-    "test:ui": "playwright test --ui",
-    "test:headed": "playwright test --headed",
-    "test:api": "playwright test api.spec.ts",
-    "test:auth": "playwright test auth.spec.ts",
-    "test:local": "BASE_URL=https://localhost:3443 HTTP_URL=http://localhost:3080 playwright test",
-    "test:local:headed": "BASE_URL=https://localhost:3443 HTTP_URL=http://localhost:3080 playwright test --headed",
-    "test:ci": "CI=true playwright test"
+    "preview": "vite preview"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

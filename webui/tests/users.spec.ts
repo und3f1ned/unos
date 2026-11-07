@@ -1,5 +1,5 @@
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { E2E_ADMIN, test, expect } from './fixtures';
 import { ADMIN_REASON, accessOf, fakeShare, fakeSmbApi, fakeUser, type FakeUser } from './shares-fakes';
 
 test.describe('User Management', () => {
@@ -460,8 +460,9 @@ test.describe('Users page SMB (fake data)', () => {
   test('turning SMB on with a password can be refused, and the dialog shows why', async ({
     authenticatedPage: page,
   }) => {
-    // Decision 10: smb.conf is not the file UNOS writes yet (here its first apply failed);
-    // the administrator's answer names the reason (accounts._smb_conf_not_unos).
+    // No SMB activation while smb.conf is not the file UNOS writes (ADR-0130); here its
+    // first apply failed, and the administrator's answer names the reason
+    // (accounts._smb_conf_not_unos).
     const refusal =
       'SMB cannot be turned on until UNOS has installed its own smb.conf: smb.conf was not updated: ' +
       'testparm rejected the new smb.conf: Error loading services.';
@@ -566,9 +567,7 @@ test.describe('Users page SMB (fake data)', () => {
   });
 });
 
-// ---- Turning SMB on against the stand-in, which has no Samba (never the device) ----
-
-const ADMIN = { username: 'admin', password: 'admin123' };
+// ---- Turning SMB on where E2E_STAND_IN=1: the stand-in or the compose test stack, which have no Samba ----
 
 async function apiLogin(request: APIRequestContext, credentials: { username: string; password: string }) {
   const response = await request.post('/api/v1/auth/login', { data: credentials });
@@ -577,14 +576,17 @@ async function apiLogin(request: APIRequestContext, credentials: { username: str
 }
 
 test.describe('SMB activation (stand-in)', () => {
-  test.skip(process.env.E2E_STAND_IN !== '1', 'turns SMB on for test users: only on the stand-in, which has no Samba');
+  test.skip(
+    process.env.E2E_STAND_IN !== '1',
+    'turns SMB on for test users: only where E2E_STAND_IN=1, on the stand-in or the compose test stack, which have no Samba',
+  );
 
   let token = '';
   const created: string[] = [];
   const headers = () => ({ Authorization: `Bearer ${token}` });
 
   test.beforeAll(async ({ request }) => {
-    token = await apiLogin(request, ADMIN);
+    token = await apiLogin(request, E2E_ADMIN);
   });
 
   test.afterAll(async ({ request }) => {

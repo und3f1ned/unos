@@ -688,8 +688,9 @@ class TestRealClientAddress:
     def test_login_rate_limit_is_per_client_not_global(self, proxied_client):
         assert [self._login(proxied_client, "203.0.113.7").status_code for _ in range(5)] == [401] * 5
         assert self._login(proxied_client, "203.0.113.7").status_code == 429
-        # Another browser behind the same proxy is not locked out.
-        assert self._login(proxied_client, "198.51.100.4").status_code == 401
+        # Another browser behind the same proxy is not locked out: it signs in as the same user.
+        assert self._login(proxied_client, "198.51.100.4", PASSWORD).status_code == 200
+        assert self._login(proxied_client, "203.0.113.7", PASSWORD).status_code == 429
 
     def test_direct_connections_cannot_choose_their_address(self, direct_client, deployment, authz_db, tmp_path):
         """A new X-Forwarded-For per attempt must not mean a new rate-limit bucket."""

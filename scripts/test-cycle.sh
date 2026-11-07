@@ -1,6 +1,9 @@
 #!/bin/bash
 # UNOS Deviceless Test Cycle
-# This script runs the complete test cycle without requiring a physical device.
+# The container-level route on Linux with Docker (docs/TESTING.md): the backend tests
+# (make test, in the environment of make setup), then the deviceless test stack of
+# deploy/docker-compose.test.yml and the E2E specs against it. The quicker local
+# route is make e2e-local (the stand-in); neither needs the device.
 #
 # Usage:
 #   ./scripts/test-cycle.sh              # Run all tests
@@ -84,14 +87,14 @@ wait_for_service() {
     return 1
 }
 
-# The E2E suites sign in as admin/admin123 (webui/tests/fixtures.ts). A fresh
+# The E2E suites sign in as admin/unos-e2e-pass (webui/tests/fixtures.ts). A fresh
 # test stack has no account yet: create it through the first-run setup API.
 seed_test_admin() {
     local status
     log_info "Creating the test administrator account..."
     status=$(curl -sk -o /dev/null -w "%{http_code}" -X POST "$TEST_HTTPS_URL/api/v1/auth/setup" \
         -H "Content-Type: application/json" \
-        -d '{"username": "admin", "password": "admin123"}')
+        -d '{"username": "admin", "password": "unos-e2e-pass"}')
     case "$status" in
         200) log_success "Test administrator created" ;;
         400) log_info "An account already exists" ;;
@@ -102,29 +105,15 @@ seed_test_admin() {
     esac
 }
 
+# The backend tests run as make test runs them, in the environment of make setup
+# (supervisor/.venv).
 run_unit_tests() {
-    log_info "Running backend unit tests..."
-    cd "$PROJECT_ROOT/supervisor"
-
-    if [ -f "requirements-dev.txt" ]; then
-        # Create virtual environment if it doesn't exist
-        if [ ! -d "venv" ]; then
-            log_info "Creating Python virtual environment..."
-            python3 -m venv venv
-        fi
-
-        # Activate and install dependencies (runtime + pytest & co.)
-        source venv/bin/activate
-        pip install -q -r requirements-dev.txt
-
-        # Run tests
-        log_info "Executing pytest..."
-        python -m pytest tests/ -v --tb=short --ignore=tests/mocks --ignore=tests/fixtures
-
-        deactivate
-    else
-        log_warning "requirements-dev.txt not found, skipping backend tests"
+    log_info "Running backend unit tests (make test)..."
+    if [ ! -x "$PROJECT_ROOT/supervisor/.venv/bin/python" ]; then
+        log_error "supervisor/.venv is missing: run make setup first (scripts/setup.sh --check lists what is missing)"
+        return 1
     fi
+    make -C "$PROJECT_ROOT" test
 
     log_success "Backend unit tests passed!"
 }
@@ -163,8 +152,9 @@ run_e2e_tests() {
     npx playwright install chromium --with-deps 2>/dev/null || true
 
     # Run tests. HTTP_URL is the plain-HTTP port for the redirect and health
-    # checks in tests/https.spec.ts. E2E_STAND_IN=1: this is the test stack (no
-    # Samba, seeded share), so the SMB activation and seeded-share tests run.
+    # checks in tests/https.spec.ts. E2E_STAND_IN=1: like the stand-in, the test
+    # stack has no Samba and the seeded share, so the specs take the stand-in's
+    # skips, also those that need Docker (docs/TESTING.md).
     log_info "Executing Playwright tests..."
     E2E_STAND_IN=1 BASE_URL="$TEST_HTTPS_URL" HTTP_URL="$TEST_URL" CI=true npx playwright test --reporter=list
 

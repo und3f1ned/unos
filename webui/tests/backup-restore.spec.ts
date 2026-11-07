@@ -1,15 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import type { Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { targetUrl } from './target';
 
 // Backup and restore flows against the real API. Backups and users created
 // here are removed afterwards.
 //
 // Restoring replaces the database and smb.conf of the target with the backup
 // made moments before; a user added in between shows that the restore was
-// applied. playwright.config.ts targets the device when BASE_URL is not set,
-// so the tests that restore run only against a local address, or anywhere
-// with E2E_ALLOW_RESTORE=1 (e.g. a throwaway test stack).
+// applied. The tests that restore run only against an address on this
+// machine (the local stand-in, playwright.config.ts's default), or with
+// E2E_ALLOW_RESTORE=1 (the throwaway Docker test stack, https://webui).
 
 /** localhost, 127.0.0.1, ::1 and *.localhost: a test instance on this machine. */
 function isLocalAddress(url: string | undefined): boolean {
@@ -23,9 +24,9 @@ function isLocalAddress(url: string | undefined): boolean {
   return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');
 }
 
-const RESTORE_ALLOWED = process.env.E2E_ALLOW_RESTORE === '1' || isLocalAddress(process.env.BASE_URL);
+const RESTORE_ALLOWED = process.env.E2E_ALLOW_RESTORE === '1' || isLocalAddress(targetUrl());
 const RESTORE_SKIPPED =
-  'Restores the database and smb.conf of the target: runs only when BASE_URL is local ' +
+  'Restores the database and smb.conf of the target: runs only when the target is on this machine ' +
   '(localhost, 127.0.0.1, ::1, *.localhost) or E2E_ALLOW_RESTORE=1 is set';
 
 let token = '';

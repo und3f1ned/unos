@@ -1,4 +1,4 @@
-"""smb.conf as text (spec 1.4, 2.1, 2.2, 2.3 and 2.5). Pure: no I/O.
+"""smb.conf as text. Pure: no I/O.
 
 * The parser of the one-time import (``parse_smb_conf``) reads a file the way
   Samba's own parser does, and ``section_values`` gives the effective value of
@@ -34,13 +34,14 @@ HEADER = (
     "# when shares or SMB accounts change (Shares and Users pages).\n"
 )
 
-# Loopback, RFC 1918, CGNAT/VPN, IPv4 link-local, IPv6 ULA and link-local (spec 2.2).
+# Loopback, RFC 1918, CGNAT/VPN, IPv4 link-local, IPv6 ULA and link-local (ADR-0095).
 HOSTS_ALLOW = (
     "127.0.0.0/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 "
     "169.254.0.0/16 fc00::/7 fe80::/10"
 )
 
-# Lines 10-15 of every share section (spec 2.3); is_unos_section looks for them.
+# The six fixed lines that end every share section (ADR-0147, ADR-0150); is_unos_section
+# looks for them.
 _FIXED_SHARE_LINES: tuple[tuple[str, str], ...] = (
     ("veto files", "/.snapshots/"),
     ("force group", constants.SMB_GROUP_NAME),
@@ -98,7 +99,7 @@ def _safe_user(name: object) -> str:
     return name  # type: ignore[return-value]
 
 
-# --- rendering (spec 2.2, 2.3) ------------------------------------------------------
+# --- rendering (ADR-0087, ADR-0088) ------------------------------------------------------
 
 
 def _line(key: str, value: str) -> str:
@@ -145,12 +146,12 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
 
 
 def render_global(guest_enabled: bool) -> str:
-    """The ``[global]`` section (spec 2.2); three lines depend on whether a guest share exists."""
+    """The ``[global]`` section (ADR-0087); three lines depend on whether a guest share exists (ADR-0098)."""
     return "[global]\n" + "".join(_line(key, value) for key, value in global_settings(guest_enabled))
 
 
 def render_share(s: service.ShareRender) -> str:
-    """The section of one served share (spec 2.3): read only everywhere, write access only
+    """The section of one served share (ADR-0088): read only everywhere, write access only
     through ``write list``, and every access line always written."""
     principals = sorted(set(s.readers) | set(s.writers))
     writers = sorted(set(s.writers))
@@ -172,7 +173,7 @@ def render_share(s: service.ShareRender) -> str:
 
 
 def render_config(shares: Sequence[service.ShareRender]) -> str:
-    """The whole smb.conf (spec 2.2): HEADER, an empty line, [global], then each share
+    """The whole smb.conf: HEADER, an empty line, [global], then each share
     (sorted by name, case-insensitively) after an empty line."""
     parts = [HEADER, "\n", render_global(any(s.guest_ok for s in shares))]
     for share in sorted(shares, key=lambda s: s.name.lower()):
@@ -181,7 +182,7 @@ def render_config(shares: Sequence[service.ShareRender]) -> str:
     return "".join(parts)
 
 
-# --- parser (spec 1.4) ---------------------------------------------------------------
+# --- parser (ADR-0086) ---------------------------------------------------------------
 
 
 @dataclass
@@ -208,11 +209,11 @@ class ParsedSmbConf:
     sections: list[ParsedSection]   # file order; duplicates (case-insensitive) merged into the first
     notes: list[str]                # parser-level messages (duplicates merged, include ignored, ...)
     has_include: bool               # an include or config file line anywhere
-    unos_header: bool               # the text starts with HEADER (2.2)
+    unos_header: bool               # the text starts with HEADER
 
 
 def note_value(value: object) -> str:
-    """A value quoted in a note or report line (spec 1.4): bytes that were not UTF-8
+    """A value quoted in a note or report line (ADR-0086): bytes that were not UTF-8
     become U+FFFD, control characters '?', and at most 200 characters are kept."""
     text = value if isinstance(value, str) else str(value)
     try:
@@ -360,7 +361,7 @@ def parse_bool(value: str) -> bool | None:
     return None
 
 
-# --- effective values (spec 1.4) -------------------------------------------------------
+# --- effective values (ADR-0086) -------------------------------------------------------
 
 # Normalized key -> (canonical boolean, inverted).
 _BOOLEAN_KEYS: dict[str, tuple[str, bool]] = {
@@ -551,7 +552,7 @@ def _restricts(option: ParsedOption) -> bool:
 
 
 def global_restrictions(parsed: ParsedSmbConf) -> list[ParsedOption]:
-    """The [global] options that remove all access at the import (spec 1.4), in file order:
+    """The [global] options that remove all access at the import (ADR-0086), in file order:
     ``hosts allow``, ``hosts deny``, an ``invalid users`` entry, or ``smb encrypt`` set to
     required, mandatory, force, forced or enforced. Scripts that refuse connections are
     pairs of options: global_script_restrictions.
@@ -594,7 +595,7 @@ def _restricting(scripts: Mapping[str, Mapping[str, ParsedOption]]) -> list[Scri
 
 
 def section_script_restrictions(parsed: ParsedSmbConf, section: ParsedSection) -> list[ScriptRestriction]:
-    """The scripts that can refuse connections to ``section`` (spec 1.4): with its effective
+    """The scripts that can refuse connections to ``section`` (ADR-0086): with its effective
     values (the [global] options before its first header, then its own options, the last
     value of each), a command is set and its close option is true. The caller tells apart
     the restrictions that the section sets itself."""
@@ -632,22 +633,22 @@ _UNOS_SHARE_LINES = frozenset((normalize_key(key), value) for key, value in _FIX
 
 
 def is_unos_global_line(option: ParsedOption) -> bool:
-    """A [global] line equal to a line of either render_global variant (spec 1.4, 2.5)."""
+    """A [global] line equal to a line of either render_global variant."""
     return (option.key, option.value) in _UNOS_GLOBAL_LINES
 
 
 def is_unos_share_line(option: ParsedOption) -> bool:
-    """One of the fixed lines 10-15 of spec 2.3."""
+    """One of the fixed lines that end every share section (_FIXED_SHARE_LINES)."""
     return (option.key, option.value) in _UNOS_SHARE_LINES
 
 
 def is_unos_section(section: ParsedSection) -> bool:
-    """Whether a section has the six fixed lines 10-15 of spec 2.3 (UNOS rendered it)."""
+    """Whether a section has the six fixed lines of _FIXED_SHARE_LINES (UNOS rendered it)."""
     present = {(option.key, option.value) for option in section.options}
     return _UNOS_SHARE_LINES <= present
 
 
-# --- grants and shrinks (spec 2.5) ------------------------------------------------------
+# --- grants and shrinks (ADR-0103) ------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -660,7 +661,7 @@ class ShareGrants:
 
 
 def _not_exact(values: SectionValues) -> bool:
-    """Options whose effect on access UNOS cannot evaluate exactly (spec 2.5)."""
+    """Options whose effect on access UNOS cannot evaluate exactly (ADR-0103)."""
     return bool(
         values.copy
         or values.hosts_allow
@@ -677,7 +678,7 @@ def _not_exact(values: SectionValues) -> bool:
 
 
 def config_grants(parsed: ParsedSmbConf) -> dict[str, ShareGrants]:
-    """The grants of each section of a file, keyed by its lower-case name (spec 2.5).
+    """The grants of each section of a file, keyed by its lower-case name (ADR-0103).
 
     Principals are user names (lower case), GUEST and ANY_USER (any
     authenticated user); 1 is read, 2 is write. Grants come from the
@@ -726,7 +727,7 @@ def _level(grants: Mapping[str, int], principal: str) -> int:
 
 def shrunk_shares(old_text: str, new_text: str) -> list[str]:
     """Names (as in the old file) of the sections whose access shrank from ``old_text``
-    to ``new_text`` (spec 2.5): removed, renamed or no longer served, path changed,
+    to ``new_text`` (ADR-0103): removed, renamed or no longer served, path changed,
     an unknown section whose text changed, or a principal that lost read or write."""
     old = config_grants(parse_smb_conf(old_text))
     new = config_grants(parse_smb_conf(new_text))

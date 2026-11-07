@@ -1,9 +1,10 @@
-"""The rendered smb.conf against a real testparm (spec 9.3, P1).
+"""The rendered smb.conf against a real testparm (ADR-0189).
 
 Skipped unless testparm is installed. To run it with the device's Samba
-(Debian trixie, Samba 4.22), see spec 9.3: a python:3.11-slim-trixie container
-with samba-common-bin. Every line UNOS writes must be known to that Samba:
-testparm must exit 0 and must not report an unknown parameter.
+(Debian trixie, Samba 4.22), put the absolute path of scripts/dev/bin first on
+PATH (its testparm runs the device's), or run it in a python:3.11-slim-trixie
+container with samba-common-bin. Every line UNOS writes must be known to that
+Samba: testparm must exit 0 and must not report an unknown parameter.
 """
 
 import shutil
@@ -25,7 +26,7 @@ def share(name, *, guest_ok=False, readers=(), writers=(), comment="", browseabl
 
 
 def testparm(tmp_path, text: str) -> str:
-    # The cache directory of [global]: testparm exits 1 without it (spec 2.2).
+    # The cache directory of [global]: testparm exits 1 without it (ADR-0094).
     subprocess.run(["mkdir", "-p", "/run/samba"], capture_output=True, check=False)
     conf = tmp_path / "smb.conf"
     conf.write_text(text)

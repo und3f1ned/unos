@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { E2E_ADMIN } from './fixtures';
 import { fakeStorageApi } from './storage-fakes';
 
 // Regular (non-administrator) accounts. Every API except live stats and the
@@ -7,7 +8,6 @@ import { fakeStorageApi } from './storage-fakes';
 // other tabs. The account is created through the API for this file and
 // deleted afterwards.
 
-const ADMIN = { username: 'admin', password: 'admin123' };
 const REGULAR = {
   username: `e2e_user_${Date.now().toString(36)}`,
   password: 'e2e-Regular-Password-1',
@@ -74,7 +74,7 @@ async function stayedInDocument(page: Page): Promise<boolean> {
 
 test.describe('Regular user account', () => {
   test.beforeAll(async ({ request }) => {
-    adminToken = await apiLogin(request, ADMIN);
+    adminToken = await apiLogin(request, E2E_ADMIN);
     const created = await request.post('/api/v1/auth/users', {
       data: REGULAR,
       headers: { Authorization: `Bearer ${adminToken}` },

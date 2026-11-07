@@ -1,10 +1,10 @@
-"""The share API (spec 5.1-5.6 and 9.1, P1): /shares/smb, /shares/smb-status.
+"""The share API: /shares/smb, /shares/smb-status.
 
 Each test has its own database file, pools base (with the managed pool
 "data"), smb.conf and audit log. Host commands go to ``FakeSmbHost`` behind
 ``src.host.run_on_host``; ``pools.managed_pool_names``,
 ``pools._mounted_pool_target`` and ``disks.host_mounts`` are patched, and so
-are ``accounts.gid_problem`` and ``accounts.host_status`` (P2's functions).
+are ``accounts.gid_problem`` and ``accounts.host_status`` (shares/accounts.py).
 ``constants.SMB_GROUP_GID`` is the runner's own gid, so that new folders can
 get it without root.
 
@@ -218,7 +218,7 @@ def section(api, name) -> str:
     return ""
 
 
-# --- create (spec 5.3, 5.4) --------------------------------------------------------------------------
+# --- create --------------------------------------------------------------------------
 
 
 class TestCreate:
@@ -374,7 +374,7 @@ class TestCreate:
 
 
 class TestInjection:
-    """Hostile share definitions never reach smb.conf (I3); they are refused with 400."""
+    """Hostile share definitions never reach smb.conf (ADR-0037); they are refused with 400."""
 
     @pytest.mark.parametrize(
         "comment",
@@ -495,7 +495,7 @@ class TestInjection:
         assert f"   path = {api.pool}/Team Docs\n" in api.conf.read_text()
 
 
-# --- PATCH (spec 5.3) ----------------------------------------------------------------------------------
+# --- PATCH (ADR-0134) ----------------------------------------------------------------------------------
 
 
 class TestPatch:
@@ -763,7 +763,7 @@ class TestNotServed:
         return api
 
     def test_import_notes_of_a_share_that_still_grants_can_be_dismissed(self, granting):
-        """Dismissing grants nothing new (decision 8): it skips PATCH step 4."""
+        """Dismissing grants nothing new (ADR-0136): it skips PATCH step 4."""
         api = granting
         response = api.patch("docs", import_notes=[], expected_version=1)
         assert response.status_code == 200, response.text
@@ -903,7 +903,7 @@ class TestRead:
 
     @pytest.mark.parametrize("order", [("read", "write"), ("write", "read")])
     def test_two_rows_of_one_user_show_the_lower_level(self, api, order):
-        """I7: a restored smb_share_access without its UNIQUE constraint can hold two rows for
+        """ADR-0144: a restored smb_share_access without its UNIQUE constraint can hold two rows for
         one user; the answer shows the level that smb.conf renders: the lower one."""
         assert api.create().status_code == 200
         api.sql("DROP TABLE smb_share_access",
@@ -927,7 +927,7 @@ class TestRead:
 
 
 class TestPaths:
-    """GET /shares/paths: the share form offers only folders of pools that UNOS manages (decision 9)."""
+    """GET /shares/paths: the share form offers only folders of pools that UNOS manages (ADR-0148)."""
 
     @pytest.fixture
     def listed(self, api, monkeypatch):
@@ -1034,7 +1034,7 @@ class TestStatus:
             "create them again on the Shares page"]
 
     def test_a_failed_apply(self, api):
-        """An apply after an account change (P2) that testparm rejects."""
+        """An apply after an account change that testparm rejects."""
         api.host.fail[("testparm",)] = HostResult(1, "", "Error loading services.")
         with pytest.raises(smb.SambaConfigError):
             asyncio.run(apply_smb_config(api))
@@ -1089,7 +1089,7 @@ class TestStatus:
         assert "problems" in api.client.get(f"{API}/smb-status").json()
 
 
-# --- audit (spec 5.6) ------------------------------------------------------------------------------------
+# --- audit (ADR-0157) ------------------------------------------------------------------------------------
 
 
 class TestAudit:
@@ -1120,7 +1120,7 @@ class TestAudit:
             "warning", f"Created share docs at {api.pool}/docs, guests can read it")
 
 
-# --- the folders above a share folder (spec 5.4 rule 8, decision 6) ----------------------------------------
+# --- the folders above a share folder (ADR-0153, ADR-0154) ----------------------------------------
 
 
 def refusal(folder, detail="mode 0777", commands=None) -> str:
@@ -1169,8 +1169,8 @@ def owners(monkeypatch):
 class TestFoldersAboveAShare:
     """Whoever can change a folder between the pool root and a share folder can rename the
     share folder away and put another folder or a symlink in its place: smbd and Repair
-    permissions follow the path (sec-host-1). The check reads through descriptors and
-    changes no mode (decision B4)."""
+    permissions follow the path (ADR-0153). The check reads through descriptors and
+    changes no mode (ADR-0154)."""
 
     @pytest.mark.parametrize("uid, gid, mode, detail, commands", [
         (0, 0, 0o755, None, None),
@@ -1250,7 +1250,7 @@ class TestFoldersAboveAShare:
     ])
     def test_named_acl_entries_count_as_other_accounts(self, monkeypatch, mode, gid, writers, detail):
         """With a POSIX ACL the group bits are the mask of its named entries: a folder of
-        root:root 0775 can then be writable by uid 1000 (sec-host-1, through an ACL)."""
+        root:root 0775 can then be writable by uid 1000 (through an ACL, ADR-0193)."""
         read = []
         monkeypatch.setattr(service, "_acl_writers", lambda fd: read.append(fd) or writers)
         unsafe = service._unsafe_folder("/p/x", directory(0, gid, mode), fd=7)
@@ -1392,7 +1392,7 @@ class TestFoldersAboveAShare:
         assert walks == []
 
     def test_a_folder_renamed_in_after_the_mkdir_can_no_longer_be_changed(self, api, monkeypatch):
-        """sec-host-2: a writer of the parent could remove the new folder and rename a folder of
+        """ADR-0153: a writer of the parent could remove the new folder and rename a folder of
         its choice into its place between the mkdir and the open, and UNOS then gave that
         folder (an app's data) the SMB group and 2770. Nothing is created below a parent that
         others can change any more, so only root could race."""
@@ -1503,7 +1503,7 @@ class TestFoldersAboveAShare:
             "Share media: the folders above its folder could not be checked: a folder's ACL could not be read"]
 
 
-# --- folders are created on the pool's mount (spec 5.4 rule 7, decision 7) --------------------------------
+# --- folders are created on the pool's mount (ADR-0152) --------------------------------
 
 
 def not_mounted(api) -> str:
@@ -1512,7 +1512,7 @@ def not_mounted(api) -> str:
 
 class TestFolderCreationOnThePoolMount:
     """The pool can be unmounted, or its mountpoint removed, between the findmnt check and the
-    creation (sec-host-3, concurrency-6): the folder is created only through a descriptor
+    creation (ADR-0152): the folder is created only through a descriptor
     of the pool root that is on the pool's mount, and the mountpoint is never made again."""
 
     @pytest.fixture

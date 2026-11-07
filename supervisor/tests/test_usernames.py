@@ -1,4 +1,4 @@
-"""Names of new UNOS users (spec 7, P2): POST /auth/setup and POST /auth/users accept
+"""Names of new UNOS users (ADR-0115): POST /auth/setup and POST /auth/users accept
 only names that SMB accounts can use, unique without regard to case. Users created
 before keep their names and keep logging in."""
 from __future__ import annotations

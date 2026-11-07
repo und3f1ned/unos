@@ -33,7 +33,7 @@ INITIAL_SMB_CONF = """[global]
 
 
 class TestSmbListShares:
-    """smb.list_shares(): the shares storage/pools.py must not lose (spec 2.7)."""
+    """smb.list_shares(): the shares storage/pools.py must not lose (ADR-0069)."""
 
     @pytest.fixture
     def temp_smb_conf(self):
@@ -94,7 +94,7 @@ class TestSmbListShares:
 
         shares = smb.list_shares()
 
-        # list_shares() serves storage/pools.py only: names and paths (spec 2.7).
+        # list_shares() serves storage/pools.py only: names and paths.
         assert shares == [
             smb.SharePathInfo(name="share1", path="/data/share1"),
             smb.SharePathInfo(name="share2", path="/data/share2"),

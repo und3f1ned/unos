@@ -1,4 +1,4 @@
-"""Two-factor codes are single-use (decision 12, sec-api-6; RFC 6238, section 5.2).
+"""Two-factor codes are single-use (ADR-0067; RFC 6238, section 5.2).
 
 Every place that checks a TOTP code (login, turning SMB on, the setup confirmation,
 turning 2FA off) refuses a code whose time step is not newer than the last step that
@@ -121,7 +121,7 @@ class TestLogin:
 
 class TestSmbSelfActivation:
     def test_the_code_of_the_login_does_not_turn_smb_on(self, world, clock):
-        """sec-api-6: someone who saw the password and the code at the login cannot turn SMB on
+        """ADR-0067: someone who saw the password and the code at the login cannot turn SMB on
         (a channel without 2FA) with them in the same 30 seconds."""
         world.set_totp("alice", SECRET)
         world.make_allowed("alice")

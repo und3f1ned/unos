@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { E2E_ADMIN } from './fixtures';
 
 test.describe('Authentication', () => {
   test('should show login page when not authenticated', async ({ page }) => {
@@ -19,8 +20,8 @@ test.describe('Authentication', () => {
 
   test('should login successfully with valid credentials', async ({ page }) => {
     await page.goto('/login');
-    await page.fill('input[type="text"]', 'admin');
-    await page.fill('input[type="password"]', 'admin123');
+    await page.fill('input[type="text"]', E2E_ADMIN.username);
+    await page.fill('input[type="password"]', E2E_ADMIN.password);
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/');
     await expect(page.locator('text=Dashboard')).toBeVisible();
@@ -88,11 +89,28 @@ test.describe('Authentication', () => {
     ]);
   });
 
+  test('Logout ends the session: the sign-in page is shown and the token is gone', async ({ page }) => {
+    await page.goto('/login');
+    await page.fill('input[type="text"]', E2E_ADMIN.username);
+    await page.fill('input[type="password"]', E2E_ADMIN.password);
+    await page.click('button[type="submit"]');
+    await expect(page).toHaveURL('/');
+    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeTruthy();
+
+    await page.getByRole('button', { name: 'Logout' }).click();
+    await expect(page).toHaveURL('/login');
+    await expect(page.locator('#username')).toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+    // Without the token, a page that needs a session sends to the sign-in page.
+    await page.goto('/storage');
+    await expect(page).toHaveURL(/\/login/);
+  });
+
   test('should logout by clearing session', async ({ page }) => {
     // Login first
     await page.goto('/login');
-    await page.fill('input[type="text"]', 'admin');
-    await page.fill('input[type="password"]', 'admin123');
+    await page.fill('input[type="text"]', E2E_ADMIN.username);
+    await page.fill('input[type="password"]', E2E_ADMIN.password);
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/');
     await page.waitForTimeout(1000);

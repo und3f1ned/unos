@@ -1,4 +1,4 @@
-"""The SMB account rules of a database restore (spec 4.3, P2), on sqlite3 files:
+"""The SMB account rules of a database restore (ADR-0141), on sqlite3 files:
 accounts.snapshot_for_restore() reads the live database before the restore, and
 accounts.prepare_restored_accounts() proves or revokes every restored account
 inside the restore's transaction on the extracted database, before it replaces
@@ -237,7 +237,7 @@ class TestProof:
 
 
 class TestLiveUids:
-    """Decision 16 (sec-api-3): a restored row never keeps a uid that a live account of
+    """ADR-0112: a restored row never keeps a uid that a live account of
     another name holds (a backup of another UNOS installation, whose uids also start at
     70000, or a crafted archive): uid NULL, 'needed', a fresh uid at the next activation."""
 
@@ -331,7 +331,7 @@ class TestCarryOver:
         assert rows(restored) == {}
 
     def test_live_accounts_keep_their_uids(self, live, tmp_path):
-        """Decision 16 (sec-api-3): a restored row never takes the uid of a live account of
+        """ADR-0112: a restored row never takes the uid of a live account of
         another name, which owns its files on the pools. The live owner keeps it."""
         restored = make_db(tmp_path / "restored.db",
                            users=[(7, "alice", HASH_A, False), (8, "dave", HASH_B, False)],
@@ -400,7 +400,7 @@ class TestNextUid:
 
     @pytest.mark.parametrize("authoritative", [True, False])
     def test_the_live_next_uid_is_a_floor(self, tmp_path, authoritative):
-        """tests-3: the live next_uid is the only record of the uids of accounts deleted after
+        """ADR-0109: the live next_uid is the only record of the uids of accounts deleted after
         the backup (their rows and host accounts are gone). It decides even when it is above
         every uid that the restored rows and the snapshot list."""
         restored = make_db(tmp_path / "restored.db", users=[(2, "alice", HASH_A, False)],
@@ -443,7 +443,7 @@ def test_a_failure_rolls_back_everything(live, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# The whole path of decision 16: the preparation, the swap, the post-restore
+# The whole path of ADR-0112: the preparation, the swap, the post-restore
 # reconcile and an activation, on the FakeSambaHost
 # ---------------------------------------------------------------------------
 

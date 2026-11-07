@@ -1,4 +1,4 @@
-"""smb.conf on the host: the file, testparm, the reload and close-share (spec 2.1, 2.4-2.7).
+"""smb.conf on the host: the file, testparm, the reload and close-share.
 
 smb.conf is rendered from the UNOS database: shares/smbconf.py writes the text
 and shares/service.py builds its input and runs the pipeline. This module owns
@@ -56,7 +56,7 @@ COMMENT_MAX_LENGTH = 256
 # Debian's lock directory, a tmpfs) is missing, e.g. after a boot before smbd ran.
 CACHE_DIRECTORY = "/run/samba"
 # Copies kept next to smb.conf: the file found by the one-time import, and a
-# file whose share sections UNOS did not render (spec 1.4, 2.4 step 7).
+# file whose share sections UNOS did not render (ADR-0085, ADR-0092).
 IMPORT_BACKUP_SUFFIX = ".unos-import-backup"
 REPLACED_SUFFIX = ".unos-replaced"
 # Temporary files next to smb.conf: ".smb.conf.<random>.unos-tmp".
@@ -233,7 +233,7 @@ def _testparm(path: str) -> None:
 
 
 def _install(tmp: str) -> None:
-    """Rename the staged file over smb.conf, then fsync the directory (spec 2.4 step 9).
+    """Rename the staged file over smb.conf, then fsync the directory (ADR-0089).
 
     ``/etc/samba`` is a bind mount of the host's directory, so this flushes the
     host's directory entry. The temporary file is removed when the rename fails.
@@ -265,7 +265,7 @@ def _write_file_durably(path: str, data: bytes) -> None:
 
 
 def keep_import_backup(data: bytes) -> bool:
-    """Copy the original smb.conf to ``<smb.conf>.unos-import-backup`` (spec 1.4).
+    """Copy the original smb.conf to ``<smb.conf>.unos-import-backup`` (ADR-0085).
 
     An existing copy is never overwritten. Returns True when this call wrote it.
     """
@@ -290,7 +290,7 @@ def keep_replaced(data: bytes) -> bool:
 
 
 def remove_stale_temp_files() -> list[str]:
-    """Delete ``.smb.conf.*.unos-tmp`` next to smb.conf (spec 2.6); returns the names deleted.
+    """Delete ``.smb.conf.*.unos-tmp`` next to smb.conf; returns the names deleted.
 
     A supervisor stopped between mkstemp and rename leaves these behind. This
     writes only when such files exist.
@@ -424,7 +424,7 @@ def _file_share_paths() -> list[tuple[str, str]]:
 
 
 def list_shares() -> list[SharePathInfo]:
-    """Every share UNOS knows of, for storage/pools.py (spec 2.7). Synchronous.
+    """Every share UNOS knows of, for storage/pools.py (ADR-0069). Synchronous.
 
     The union of the database rows and of the sections of the live smb.conf,
     so that neither a share that is not applied yet nor a stale file entry is

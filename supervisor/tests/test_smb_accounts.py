@@ -1,9 +1,9 @@
-"""SMB accounts (spec 3, 4.1 and 9.1, P2): allow, activation, collisions, password
+"""SMB accounts (ADR-0105, ADR-0118): allow, activation, collisions, password
 changes, revocation, promotion and deletion, through the API and the FakeSambaHost.
 
-service.apply_smb_config and service.delete_access_of_user (P1) are AsyncMocks;
+service.apply_smb_config and service.delete_access_of_user are AsyncMocks;
 the smb.conf content is asserted in test_smb_integration.py. After every test the
-passwords used appear in no argv, no log record and no response body (I2).
+passwords used appear in no argv, no log record and no response body (ADR-0125).
 """
 from __future__ import annotations
 
@@ -69,13 +69,13 @@ TOOLS_MISSING = (
     "SMB accounts are not available: the host lacks smbpasswd, pdbedit, smbstatus "
     "(install samba and samba-common-bin)"
 )
-# The fixed warnings of the self flows (decision 11).
+# The fixed warnings of the self flows (ADR-0131).
 SELF_APPLY_WARNING = (
     "SMB access changed, but Samba has not applied every change yet; "
     "an administrator can see why on the Shares page"
 )
 SELF_SESSIONS_WARNING = "Some of your open SMB connections could not be ended; they end when your devices disconnect"
-# What the errors of the self flows say instead of a failed command's output (decision 11).
+# What the errors of the self flows say instead of a failed command's output (ADR-0131).
 SELF_HOST_FAILED = (
     "a command on the NAS failed; try again later or ask an administrator (details are in the supervisor log)"
 )
@@ -136,7 +136,7 @@ class World:
         app.dependency_overrides[get_db] = override_get_db
         self.fake: FakeSambaHost = install_fake_samba_host(monkeypatch)
         monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(self.audit_file))
-        # UNOS's own smb.conf is installed: activations are allowed (decision 10).
+        # UNOS's own smb.conf is installed: activations are allowed (ADR-0130).
         self.smb_conf = tmp_path / "smb.conf"
         self.smb_conf.write_text(smbconf.render_config([]))
         monkeypatch.setattr(smb.settings, "smb_conf_path", str(self.smb_conf))
@@ -156,7 +156,7 @@ class World:
 
     @staticmethod
     async def _delete_access(db, user_id):
-        """What P1's delete_access_of_user does to the rows (flushed, not committed)."""
+        """What service.delete_access_of_user does to the rows (flushed, not committed)."""
         result = await db.execute(delete(SmbShareAccess).where(SmbShareAccess.user_id == user_id))
         return result.rowcount
 
@@ -321,7 +321,7 @@ def world(tmp_path, monkeypatch, caplog):
         yield w
     finally:
         w.close()
-    # I2: no password in argv, in a log record or in an answer (only requests carry them).
+    # ADR-0125: no password in argv, in a log record or in an answer (only requests carry them).
     # In a fixture's teardown caplog.records holds only the teardown's records.
     records = [r for when in ("setup", "call", "teardown") for r in caplog.get_records(when)]
     assert records, "the log was not captured"
@@ -631,7 +631,7 @@ class TestSelfActivation:
         response = world.self_enable()
 
         assert response.status_code == 503
-        # A regular user's own flow: no host output (decision 11; TestSelfFlowErrors).
+        # A regular user's own flow: no host output (ADR-0131; TestSelfFlowErrors).
         assert response.json()["detail"] == f"SMB could not be turned on: {SELF_HOST_FAILED}"
         assert "Samba did not accept the password: Failed to add entry for user alice." in _logged(world)
         row = world.row("alice")
@@ -759,7 +759,7 @@ def orphan_rows_of(world: "World", name: str) -> int:
 
 
 class TestCreateUserAfterAnOrphan:
-    """concurrency-4, decision 14: a new user never inherits SMB rows of its id."""
+    """ADR-0132: a new user never inherits SMB rows of its id."""
 
     def test_the_rows_of_its_id_are_deleted(self, world):
         world.make_active("bob", 70001, BOB_PW)
@@ -795,7 +795,7 @@ class TestCreateUserAfterAnOrphan:
 
 
 # ---------------------------------------------------------------------------
-# Stale identity (D1 of decisions-v2): flows read the rows after taking smb_lock
+# Stale identity (ADR-0081): flows read the rows after taking smb_lock
 # ---------------------------------------------------------------------------
 
 
@@ -861,7 +861,7 @@ class TestStaleIdentity:
 
     @pytest.mark.parametrize("flow", ["smb-disable", "smb-enable", "change-password"])
     async def test_a_self_flow_whose_user_id_was_reused_while_it_waited(self, world, flow):
-        """Spec 3.6: alice's request passed verify_token, then waits on smb_lock; meanwhile
+        """ADR-0081: alice's request passed verify_token, then waits on smb_lock; meanwhile
         alice is deleted and SQLite gives her id to mallory. The request must not act on
         mallory (404), whatever mallory's SMB state is."""
         world.make_allowed("alice")
@@ -980,7 +980,7 @@ async def _sent_while_locked(world: "World", method: str, url: str, **kwargs):
 
 
 class TestAccountFlowsWaitForTheLock:
-    """I5 (tests verifier, 'missed'): no host command and no write before smb_lock."""
+    """ADR-0080: no host command and no write before smb_lock."""
 
     async def test_delete_user(self, world):
         world.make_active("alice", 70000, ALICE_PW)
@@ -1003,7 +1003,7 @@ class TestAccountFlowsWaitForTheLock:
         assert response.json()["smb"]["state"] == "active"
 
     async def test_create_user_with_smb(self, world):
-        """With decision 14 the insert itself waits: nothing is written before the lock."""
+        """With ADR-0132 the insert itself waits: nothing is written before the lock."""
         lock = service.smb_lock()
         await lock.acquire()
         try:
@@ -1028,7 +1028,7 @@ class TestAccountFlowsWaitForTheLock:
         assert response.json()["smb"]["state"] == "active"
 
     async def test_create_user_runs_its_smb_step_under_the_lock(self, world, monkeypatch):
-        """F2 (round 2 review): the test above shows only that the insert waits. The SMB step
+        """The test above shows only that the insert waits. The SMB step
         of POST /auth/users (smb_enabled) runs under the same smb_lock too: every host command
         of the activation, the smb.conf apply and the reloads of the user see the lock held."""
         lock = service.smb_lock()
@@ -1084,7 +1084,7 @@ NOT_UNOS = "SMB cannot be turned on until UNOS has installed its own smb.conf"
 
 
 class TestActivationNeedsUnosSmbConf:
-    """Decision 10: while Samba still serves an smb.conf that UNOS did not write (the first
+    """ADR-0130: while Samba still serves an smb.conf that UNOS did not write (the first
     apply after the upgrade failed), no Samba password is set: the new account would get
     what the old file gives every Samba user. Revocations are never blocked."""
 
@@ -1222,7 +1222,7 @@ class TestActivationNeedsUnosSmbConf:
 
 
 # ---------------------------------------------------------------------------
-# Collisions (spec 3.3, 3.4)
+# Collisions (ADR-0113)
 # ---------------------------------------------------------------------------
 
 
@@ -1390,7 +1390,7 @@ class TestCollisions:
 
 
 # ---------------------------------------------------------------------------
-# Password changes (spec 3.5)
+# Password changes (ADR-0121, ADR-0123)
 # ---------------------------------------------------------------------------
 
 
@@ -1431,7 +1431,7 @@ class TestPasswordChange:
         argvs = world.fake.argvs()
         assert argvs.index(["smbpasswd", "-s", "-a", "alice"]) < commit
         assert argvs[commit:] == [["smbstatus", "--json"], ["smbcontrol", str(pid), "shutdown"]]
-        # Spec 5.6: the SMB password set by an administrator has its own audit entry.
+        # ADR-0157: the SMB password set by an administrator has its own audit entry.
         assert world.smb_audit() == [("alice", "SMB password set by an administrator", "info")]
 
     @pytest.mark.parametrize("via", ["self", "admin"])
@@ -1614,7 +1614,7 @@ class TestCommitFailureAfterSmbpasswd:
         response = world.self_enable() if via == "self" else world.admin_enable("alice", SET_PW)
 
         assert response.status_code == 503
-        # A regular user's own flow names no host output (decision 11; TestSelfFlowErrors).
+        # A regular user's own flow names no host output (ADR-0131; TestSelfFlowErrors).
         assert response.json()["detail"] == (
             "The database was busy and Samba could not be reset: pdbedit could not remove the Samba "
             "account alice: tdb locked; SMB access is repaired at the next start" if via == "admin"
@@ -1643,7 +1643,7 @@ class TestCommitFailureAfterSmbpasswd:
 
 class TestCommitFailureAfterRevocation:
     """The revoke step removed the passdb entry, then the commit failed: the row must not
-    say active while Samba has no password for it, and the sessions end (I9)."""
+    say active while Samba has no password for it, and the sessions end (ADR-0104)."""
 
     def test_delete(self, world, failing_commit):
         world.make_active("alice", 70000, ALICE_PW)
@@ -1821,7 +1821,7 @@ class TestWriteFailureAfterRevocation:
 
 class TestSmbpasswdTimeout:
     """smbpasswd may store the password before it times out, or even after: Samba's
-    password is unknown, so the flows compensate as after a failed commit (spec 3.6)."""
+    password is unknown, so the flows compensate as after a failed commit (ADR-0124)."""
 
     def test_self_change(self, world, monkeypatch):
         world.make_active("alice", 70000, ALICE_PW)
@@ -1894,7 +1894,7 @@ class TestSmbpasswdTimeout:
             response = world.put_user("alice", password=NEW_PW, username="alice")
 
         assert response.status_code == 503
-        # A regular user's own flow names no host output (decision 11; TestSelfFlowErrors).
+        # A regular user's own flow names no host output (ADR-0131; TestSelfFlowErrors).
         assert response.json()["detail"] == (
             "smbpasswd did not answer in time and Samba could not be reset: pdbedit could not remove the "
             "Samba account alice: tdb locked; SMB access is repaired at the next start" if via == "admin"
@@ -1966,7 +1966,7 @@ class TestApplyWarnings:
 
 
 # What install_smb_config returns while Samba's reload fails and a close-share of another
-# user's share fails (sec-api-5): host stderr, host paths and that share's name.
+# user's share fails: host stderr, host paths and that share's name.
 HOST_APPLY_WARNINGS = [
     "Samba did not reload smb.conf (smbcontrol: Failed to send message to all: NT_STATUS_ACCESS_DENIED\n"
     "debug: lock directory /run/samba, private dir /var/lib/samba/private; systemctl: Job for smbd.service "
@@ -1981,7 +1981,7 @@ def _leaks(warnings: list[str]) -> list[str]:
 
 
 class TestSelfFlowWarnings:
-    """Decision 11: the answers of a regular user's own flows carry fixed warnings: no host
+    """ADR-0131: the answers of a regular user's own flows carry fixed warnings: no host
     output, no paths, no names of other users' shares. The details are logged; the
     administrator's flows keep the full texts."""
 
@@ -2057,7 +2057,7 @@ def _logged(world: World) -> str:
 
 
 class TestSelfFlowErrors:
-    """Decision 11 for errors: when a command on the host fails in a regular user's own
+    """ADR-0131 for errors: when a command on the host fails in a regular user's own
     flow, the answer carries no host output and no path, only a fixed text; the full
     text is logged. Fixed texts (missing tools, timeouts, collisions) are kept, and
     administrators get the full texts."""
@@ -2443,7 +2443,7 @@ class TestUsernamesInRequests:
         assert bcrypt.checkpw(ALICE_PW.encode(), world.user("alice").hashed_password.encode())
 
     def test_a_disable_or_delete_built_for_the_previous_owner_of_the_id(self, world):
-        """concurrency-5, decision 15: bob (the highest id) is deleted and carol gets his id. A
+        """ADR-0133: bob (the highest id) is deleted and carol gets his id. A
         request built from a stale list of users must not act on carol."""
         bob_id = world.ids["bob"]
         assert world.delete_user("bob").status_code == 200
@@ -2589,7 +2589,7 @@ def hide_from_enumeration(fake: FakeSambaHost, name: str) -> None:
 
 
 class TestForeignAccountsFailClosed:
-    """sec-host-4 (I3): pdbedit -x never removes the Samba entry of a host account that UNOS
+    """ADR-0192: pdbedit -x never removes the Samba entry of a host account that UNOS
     did not create, also when getent passwd does not list that account cleanly, and decides
     on the account and passdb as they are right before it runs."""
 
@@ -2693,7 +2693,7 @@ class TestForeignAccountsFailClosed:
 
 
 class TestRemoveHostAccount:
-    """_remove_host_account reads the account again right before userdel (I3): the callers'
+    """_remove_host_account reads the account again right before userdel (ADR-0192): the callers'
     facts may be seconds old (the reconcile ends the account's sessions in between)."""
 
     def test_a_foreign_account_with_the_expected_uid_is_never_removed(self, monkeypatch):
@@ -2836,7 +2836,7 @@ class TestRemoveHostAccount:
 
 
 # ---------------------------------------------------------------------------
-# read_smb_sessions and end_smb_sessions (spec 3.2)
+# read_smb_sessions and end_smb_sessions (ADR-0104)
 # ---------------------------------------------------------------------------
 
 DEVICE_EMPTY = json.dumps({

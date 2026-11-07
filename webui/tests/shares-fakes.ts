@@ -10,15 +10,19 @@ import type { Page } from '@playwright/test';
 /** Pools base of the stand-in the specs run against (the local one differs). */
 export const POOLS = process.env.E2E_POOLS_BASE || '/mnt/pools';
 
-// The texts the server uses (supervisor/src/shares/account_state.py, spec 8.5).
+// The texts the server uses, word for word (supervisor/src/shares/account_state.py
+// and service.py).
+// Administrators never have SMB access (ADR-0117).
 export const ADMIN_REASON =
   'Administrators cannot use SMB: their password controls the whole NAS, and SMB has no ' +
   'two-factor authentication and no login rate limit. Use a regular account for files.';
+// Guest access is off by default, and guest shares are read-only (ADR-0096).
 export const GUEST_WARNING =
   'Anyone on your network can read this share without a password, and its name is visible to ' +
   'anyone on your network. Guests can never write. While a guest share exists, connections to ' +
   'this server are not required to be signed. Windows 11 refuses guest access by default, and ' +
   'guest connections are neither signed nor encrypted.';
+// A change sent with an outdated expected_version (ADR-0135).
 export const VERSION_CONFLICT = 'The share was changed meanwhile; reload';
 
 export type SmbState = 'active' | 'password_needed' | 'off' | 'unavailable';

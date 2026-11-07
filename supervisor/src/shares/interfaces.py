@@ -1,5 +1,5 @@
-"""Types shared by shares/service.py (P1), shares/accounts.py (P2), shares/repair*.py (P4)
-and backup/router.py (P1)."""
+"""Types shared by shares/service.py, shares/accounts.py, shares/repair*.py
+and backup/router.py."""
 
 from __future__ import annotations
 

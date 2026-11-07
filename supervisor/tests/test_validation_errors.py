@@ -1,4 +1,4 @@
-"""422 answers never repeat the values that were sent (spec 5.1, I2).
+"""422 answers never repeat the values that were sent (ADR-0125).
 
 FastAPI's default answer to a request that fails validation lists, for each
 error, the rejected value (``input``) and the error context (``ctx``): a

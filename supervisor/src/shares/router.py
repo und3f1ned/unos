@@ -1,8 +1,8 @@
-"""Share endpoints: SMB shares (spec 5.2) and NFS exports. Administrator-only (main.py).
+"""Share endpoints: SMB shares and NFS exports. Administrator-only (main.py).
 
 SMB shares are rows of the UNOS database; shares/service.py changes them
 under smb_lock() and renders smb.conf from them. Every mutation is audited
-(spec 5.6). PUT /shares/smb/{name} is gone (405): PATCH changes only the
+(ADR-0157). PUT /shares/smb/{name} is gone (405): PATCH changes only the
 fields it sends.
 """
 
@@ -43,13 +43,13 @@ class SharePath(BaseModel):
     label: str
     type: str  # "pool" or "volume"
     # The pool is one that UNOS manages (its fstab marker): only such folders can be SMB
-    # shares (spec 5.4 rule 4). A volume has its pool's value; false for every path when
+    # shares (ADR-0148). A volume has its pool's value; false for every path when
     # the pool list cannot be read.
     managed: bool
 
 
 async def _call(func, *args, not_found_status: int = 400):
-    """Run a share operation and map its errors (spec 5.2).
+    """Run a share operation and map its errors.
 
     Coroutine functions are awaited; blocking functions run in a worker
     thread. HTTPException passes through (validation errors arrive as 400).
@@ -77,7 +77,7 @@ async def _call(func, *args, not_found_status: int = 400):
 
 
 async def _audit(request: Request, actor: str | None, action: AuditAction, change: service.ShareChange) -> None:
-    """The audit entry of a share mutation (spec 5.6); none when nothing changed."""
+    """The audit entry of a share mutation (ADR-0157); none when nothing changed."""
     if change.details is None:
         return
     await log_action(

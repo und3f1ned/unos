@@ -1,4 +1,4 @@
-"""Repair permissions: give a share's files and folders the group model (P4, spec 5.5 and 6).
+"""Repair permissions: give a share's files and folders the group model (ADR-0155, ADR-0150).
 
 After a repair every file and folder of the share has the group unos-smb and
 group read/write: folders 2770 (setgid, so that new entries get the group),
@@ -24,7 +24,7 @@ share or would open something to the group that is not meant for it:
 Nothing is changed (state "failed") when the share's folder is not on its
 pool's mount (the pool is not mounted, or another filesystem is mounted on
 the folder or above it), or when it is a pool root, app data (<pool>/apps)
-or inside ``.snapshots``, which are never shared (spec 5.4).
+or inside ``.snapshots``, which are never shared (ADR-0145).
 
 SMB users and app containers can change the share while it is repaired, so
 the walk never resolves a path. It is an explicit depth-first walk that opens
@@ -110,7 +110,7 @@ def repair_tree(
     """Repair the permissions of the share folder ``path`` and of everything below it.
 
     ``path`` is a share's stored path: a folder inside a pool, in the normal
-    form below the pools base (spec 5.4). ``gid`` is the group to give (the
+    form below the pools base (ADR-0145). ``gid`` is the group to give (the
     SMB group; a parameter for tests). The walk stops with the state
     "incomplete" after ``time_limit`` seconds or ``max_entries`` visited
     entries; a second run gets on quickly, since entries that are already
@@ -490,7 +490,7 @@ class _Refused(ValueError):
 def _refusal(parts: tuple[str, ...]) -> str | None:
     """Why a repair never walks the folder with the components ``parts`` below the pools base, or None.
 
-    These folders are never shared (spec 5.4, rules 2, 3 and 5), and
+    These folders are never shared (ADR-0145), and
     service.share_problem() refuses them before a repair. They are checked
     again on the path that is walked: app data and snapshots must never get
     the SMB group.

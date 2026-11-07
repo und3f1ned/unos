@@ -1,5 +1,5 @@
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { E2E_ADMIN, test, expect } from './fixtures';
 import {
   FAKE_PATHS,
   GUEST_WARNING,
@@ -85,7 +85,9 @@ async function pick(scope: Locator, username: string, level: 'No access' | 'Read
   await expect(list).toHaveCount(0);
 }
 
-// The texts the server answers about folders that other accounts can change (decision 6).
+// The texts the server answers about folders that other accounts can change: share
+// folders are made only below folders that only root can change (ADR-0153), and the
+// owner runs the chmod, never UNOS (ADR-0154).
 // The texts of service.UnsafeFolder: refusal() (409 of a create that would make the folder,
 // and of Repair permissions), warning() (a create onto an existing folder), problem() (status).
 const UNSAFE_PARENT =
@@ -1097,8 +1099,8 @@ test.describe('SMB shares page (fake data)', () => {
       },
     });
     await page.goto(`${origin}/login`);
-    await page.fill('input[type="text"]', 'admin');
-    await page.fill('input[type="password"]', 'admin123');
+    await page.fill('input[type="text"]', E2E_ADMIN.username);
+    await page.fill('input[type="password"]', E2E_ADMIN.password);
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(`${origin}/`);
 
@@ -1120,7 +1122,6 @@ test.describe('SMB shares page (fake data)', () => {
 
 // ---- The share seeded into the stand-in's smb.conf (supervisor/tests/fixtures/init-test-data.sh) ----
 
-const ADMIN = { username: 'admin', password: 'admin123' };
 const SEED = 'e2e_seed';
 const SEED_URL = `/api/v1/shares/smb/${SEED}`;
 
@@ -1131,8 +1132,9 @@ async function apiLogin(request: APIRequestContext, credentials: { username: str
 }
 
 test.describe('Seeded SMB share (stand-in)', () => {
-  // The device has no such share; the stand-in imports it at its first start.
-  test.skip(process.env.E2E_STAND_IN !== '1', 'only the stand-in has the seeded share');
+  // Only the stand-in (scripts/standin/run_supervisor.py) and the test stack
+  // (init-test-data.sh) seed it; UNOS imports it at its first start.
+  test.skip(process.env.E2E_STAND_IN !== '1', 'only where E2E_STAND_IN=1: the stand-in and the compose test stack seed it');
 
   const regular = { username: `e2e_seed_${Date.now().toString(36)}`, password: 'e2e-Seed-Password-1' };
   let token = '';
@@ -1146,7 +1148,7 @@ test.describe('Seeded SMB share (stand-in)', () => {
   }
 
   test.beforeAll(async ({ request }) => {
-    token = await apiLogin(request, ADMIN);
+    token = await apiLogin(request, E2E_ADMIN);
     const created = await request.post('/api/v1/auth/users', { headers: headers(), data: regular });
     expect(created.ok(), `create ${regular.username}: HTTP ${created.status()}`).toBeTruthy();
     regularId = (await created.json()).id;

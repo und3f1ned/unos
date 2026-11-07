@@ -60,7 +60,7 @@ services:
     container_name: unos-webui-test
     # The UI is served over HTTPS only (see webui/Caddyfile); plain HTTP
     # answers with a redirect, except /api/v1/health. Loopback only: the test
-    # account (admin/admin123) is public and the supervisor has the Docker
+    # account (admin/unos-e2e-pass) is public and the supervisor has the Docker
     # socket. The test-runner uses the compose network instead.
     ports:
       - "127.0.0.1:3080:80"
@@ -98,11 +98,13 @@ services:
       - CI=true
       # A throwaway stack: the tests that restore a backup may run (tests/backup-restore.spec.ts).
       - E2E_ALLOW_RESTORE=1
-      # The stand-in (no Samba, seeded share [e2e_seed]): the SMB activation
-      # and seeded-share tests may run. Never set against the device.
+      # Like the stand-in (no Samba, seeded share [e2e_seed]): the SMB
+      # activation and seeded-share tests run, and the specs take the
+      # stand-in's skips, the Docker ones included (ADR-0215). Never set
+      # against the device.
       - E2E_STAND_IN=1
     # A fresh stack has no account. Before the command runs, create the one
-    # the tests sign in with (admin/admin123, webui/tests/fixtures.ts) through
+    # the tests sign in with (admin/unos-e2e-pass, webui/tests/fixtures.ts) through
     # the first-run setup API, as scripts/test-cycle.sh does; 400 means that an
     # account exists already. Caddy creates its certificate when it first
     # starts, hence the wait. $$ is a $ for the shell: compose replaces $.
@@ -121,10 +123,10 @@ services:
         done
         status=$$(curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -X POST \
           -H 'Content-Type: application/json' \
-          -d '{"username": "admin", "password": "admin123"}' \
+          -d '{"username": "admin", "password": "unos-e2e-pass"}' \
           "$$BASE_URL/api/v1/auth/setup")
         case "$$status" in
-          200) echo "Created the test account admin/admin123" ;;
+          200) echo "Created the test account admin/unos-e2e-pass" ;;
           400) echo "An account exists already" ;;
           *)
             echo "Creating the test account failed (HTTP $$status)" >&2

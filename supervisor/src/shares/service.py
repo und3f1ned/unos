@@ -1,31 +1,31 @@
-"""SMB shares: rendering and applying smb.conf, the import, startup and restore (P1).
+"""SMB shares: rendering and applying smb.conf, the import, startup and restore.
 
-UNOS is the only author of smb.conf (spec section 0). Shares and their access
+UNOS is the only author of smb.conf (ADR-0074). Shares and their access
 are rows of the database; ``apply_smb_config`` renders the file from them and
 installs it:
 
 * ``build_render_input`` reads the rows again and validates every value
   (restored databases are untrusted). Only served shares are rendered: a
   share is served when its name is valid and its stored path passes the path
-  rules of spec 5.4 (``share_path_problem``).
-* The one-time import (spec 1.4) turns the shares of the existing smb.conf
+  rules of ADR-0145 (``share_path_problem``).
+* The one-time import (ADR-0084) turns the shares of the existing smb.conf
   into rows, fail-safe: it only ever narrows access. It runs once per
   database, before any apply renders from that database.
 * Staging writes the new text next to smb.conf and checks it with testparm;
   installing renames it into place, reloads Samba and closes the tree
-  connects of every share whose access shrank (spec 2.4, 2.5).
-* The share API (shares/router.py, spec 5): create, PATCH and delete stage
+  connects of every share whose access shrank (ADR-0089, ADR-0103).
+* The share API (shares/router.py, ADR-0089): create, PATCH and delete stage
   the new file from the flushed change, commit, then install it, so that a
   state testparm rejects is never committed; the read endpoints and the
   status.
-* The startup reconcile (spec 4.2) and the post-restore step (spec 4.3) run
+* The startup reconcile (ADR-0138) and the post-restore step (ADR-0139) run
   the same path: import, purge, the SMB accounts (shares/accounts.py), the
   apply, a reload and the session sweep. The restore prepares the extracted
   database before it replaces the live one (ensure_smb_tables,
   restored_smb_authoritative, prepare_restored_shares).
 
 Every change of SMB state runs under ``smb_lock()``. Modules in src/shares
-import each other as module objects (spec 1.1): ``service`` and ``accounts``
+import each other as module objects, because ``service`` and ``accounts``
 need each other.
 """
 
@@ -74,9 +74,9 @@ logger = logging.getLogger(__name__)
 
 _locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
 
-# Longest path the import accepts (spec 1.4); longer ones are skipped.
+# Longest path the import accepts; longer ones are skipped.
 MAX_IMPORT_PATH = 4096
-# Read every row as stored now (spec I5): never an object of the identity map.
+# Read every row as stored now (ADR-0081): never an object of the identity map.
 _FRESH = {"populate_existing": True}
 
 POOL_ROOT_PROBLEM = (
@@ -124,7 +124,7 @@ async def _pool_names() -> frozenset[str]:
 
 
 async def _audit(details: str, *, resource_type: str, severity: AuditSeverity = AuditSeverity.INFO) -> None:
-    """An audit entry of the system (spec 5.6); a failure to write it is logged, never raised."""
+    """An audit entry of the system (ADR-0157); a failure to write it is logged, never raised."""
     try:
         await log_action(
             AuditAction.OTHER,
@@ -138,7 +138,7 @@ async def _audit(details: str, *, resource_type: str, severity: AuditSeverity = 
 
 
 def json_lines(value: object) -> list[str]:
-    """A JSON list of messages (import_notes, import_report) read defensively (spec 1.4).
+    """A JSON list of messages (import_notes, import_report) read defensively (ADR-0144).
 
     Invalid JSON or a value that is not a list gives []; items that are not
     strings are dropped. The columns may come from a restored database.
@@ -154,13 +154,13 @@ def json_lines(value: object) -> list[str]:
     return [item for item in data if isinstance(item, str)]
 
 
-# --- the path rules (spec 5.4) ----------------------------------------------------------
+# --- the path rules (ADR-0145) ----------------------------------------------------------
 
 
 def share_path_problem(
     path: object, *, other_paths: Mapping[str, str], pool_names: Collection[str]
 ) -> str | None:
-    """The first rule of spec 5.4 that ``path`` breaks, or None. Never raises.
+    """The first of the rules below (ADR-0145) that ``path`` breaks, or None. Never raises.
 
     Reads the filesystem below the pools base (the symlink check of
     validate_share_path): callers run it in a worker thread. A path that is not
@@ -233,7 +233,7 @@ def _check_paths(entries: Sequence[tuple[int, str, object]], pool_names: Collect
     return problems
 
 
-# --- the render input (spec 2.4) ----------------------------------------------------------
+# --- the render input ----------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -341,7 +341,7 @@ async def _read_render_input(db: AsyncSession, pool_names: Collection[str]) -> t
         candidates.append((row.id, row.name, row.path))
         rows_by_id[row.id] = row
 
-    # Paths: rules 1-6 of spec 5.4, all in one worker thread (they read the filesystem).
+    # Paths: rules 1-6 of share_path_problem, all in one worker thread (they read the filesystem).
     path_problems = await asyncio.to_thread(_check_paths, candidates, frozenset(pool_names))
 
     # Principals: active accounts only (account_state.derive_smb_state).
@@ -412,11 +412,11 @@ def _sort_key(value: object) -> tuple[int, int, str]:
 
 
 async def build_render_input(db: AsyncSession, pool_names: Collection[str]) -> RenderInput:
-    """The served shares and their active principals, from rows read now (spec 2.4).
+    """The served shares and their active principals, from rows read now (ADR-0081).
 
     Shares, access rows, users and SMB accounts are read with one query each.
-    Every value is validated again (I7): a share with an invalid or duplicate
-    name or a path that breaks spec 5.4 is not served, a comment that fails
+    Every value is validated again (ADR-0144): a share with an invalid or duplicate
+    name or a path that breaks ADR-0145 is not served, a comment that fails
     validation is left out, and a principal is rendered only for an access row
     of an existing user with that user's current name and an active account.
     """
@@ -425,7 +425,7 @@ async def build_render_input(db: AsyncSession, pool_names: Collection[str]) -> R
 
 
 async def share_problem(db: AsyncSession, share_id: int) -> str | None:
-    """Why the stored path of a share breaks spec 5.4 (the share is then not served), or None.
+    """Why the stored path of a share breaks ADR-0145 (the share is then not served), or None.
 
     Raises PoolListUnavailable when the pool list cannot be read.
     """
@@ -439,7 +439,7 @@ async def share_problem(db: AsyncSession, share_id: int) -> str | None:
     return None if row is not None else "The share does not exist"
 
 
-# --- the one-time import (spec 1.4) ---------------------------------------------------------
+# --- the one-time import (ADR-0084) ---------------------------------------------------------
 
 # The last import failure, for GET /shares/smb-status; None after a success.
 _last_import_problem: str | None = None
@@ -578,7 +578,7 @@ def _groups_note(list_name: str, groups: Sequence[str]) -> str:
 def _import_section(
     section: smbconf.ParsedSection, ctx: _ImportContext, taken: set[str], report: list[str]
 ) -> _ImportedShare | None:
-    """Map one section to a share (spec 1.4), fail-safe; None when it is skipped (with a report line).
+    """Map one section to a share (ADR-0086), fail-safe; None when it is skipped (with a report line).
     A share that had a script refusing connections gets a report line too.
 
     Runs in a worker thread: the folder is normalized with validate_share_path,
@@ -618,7 +618,7 @@ def _import_section(
     try:
         normalized = validate_share_path(path)
     except Exception:
-        normalized = path  # stored as written: it breaks rule 1 of spec 5.4 below
+        normalized = path  # stored as written: it breaks rule 1 of share_path_problem below
     if normalized != path:
         notes.append(
             f"The folder was written as {smbconf.note_value(path)}; it is stored as {smbconf.note_value(normalized)}"
@@ -832,7 +832,7 @@ def _plan_import(
         if share is not None:
             shares.append(share)
 
-    # The path rules of spec 5.4 on the stored paths (overlaps among the imported shares).
+    # The path rules (ADR-0145) on the stored paths (overlaps among the imported shares).
     problems = _check_paths([(i, s.name, s.path) for i, s in enumerate(shares)], pool_names)
     for i, problem in problems.items():
         share = shares[i]
@@ -998,7 +998,7 @@ async def _import_locked(db: AsyncSession) -> _ImportPlan | None:
 
 
 async def _import_if_needed_locked(db: AsyncSession) -> bool:
-    """Import the shares of smb.conf if this database has not done so (spec 1.4).
+    """Import the shares of smb.conf if this database has not done so (ADR-0084).
 
     The caller holds smb_lock() and has nothing uncommitted in ``db``. The
     import runs in a session of its own on the same database, in one
@@ -1014,7 +1014,7 @@ async def _import_if_needed_locked(db: AsyncSession) -> bool:
 
 
 async def ensure_imported(db: AsyncSession) -> None:
-    """Run the one-time import if it is still needed (spec 1.4, trigger 2; the read endpoints).
+    """Run the one-time import if it is still needed (ADR-0084), for the read endpoints.
 
     With the marker set this is one SELECT and takes no lock. Otherwise it
     waits for smb_lock() (the startup reconcile may hold it), checks again
@@ -1026,12 +1026,12 @@ async def ensure_imported(db: AsyncSession) -> None:
         await _import_if_needed_locked(db)
 
 
-# --- staging and installing smb.conf (spec 2.4, 2.5) ------------------------------------------
+# --- staging and installing smb.conf (ADR-0089, ADR-0103) ------------------------------------------
 
 
 @dataclass
 class LastApply:
-    """The outcome of the last apply, and what it still has to do (memory only, spec 2.4)."""
+    """The outcome of the last apply, and what it still has to do (memory only, ADR-0090)."""
 
     time: datetime | None = None
     ok: bool | None = None                 # True: smb.conf holds the rendering (installed or unchanged)
@@ -1111,12 +1111,13 @@ def _foreign_sections(old_text: str, row_names: Collection[str]) -> list[str]:
 
 
 def _prepare_file(new_text: str, row_names: Collection[str], install: bool) -> StagedConfig:
-    """Steps 5-8 of spec 2.4 (and 9 with ``install``), in one worker thread.
+    """Read smb.conf, copy it when it has foreign sections, stage and testparm the new
+    text (and install it with ``install``), in one worker thread (ADR-0089, ADR-0092).
 
     Raises SambaConfigError, and leaves smb.conf unchanged, when the file
     cannot be read or staged or testparm rejects it or cannot check it: any
-    error of these steps becomes a SambaConfigError ("On any error the temp
-    file is discarded and SambaConfigError is raised", spec 2.4 step 8).
+    error of these steps discards the staged file and becomes a
+    SambaConfigError.
     """
     try:
         data = smb.read_conf_bytes()
@@ -1170,7 +1171,7 @@ def _prepare_file(new_text: str, row_names: Collection[str], install: bool) -> S
 
 
 async def _stage_config(db: AsyncSession, *, install: bool) -> StagedConfig:
-    """Steps 2-8 (9 with ``install``) of spec 2.4, rendering from the rows ``db`` sees now."""
+    """Render from the rows ``db`` sees now, then stage and testparm (and install with ``install``)."""
     pool_names = await _pool_names()
     render, row_names = await _read_render_input(db, pool_names)
     new_text = smbconf.render_config(render.shares)
@@ -1181,7 +1182,7 @@ async def _stage_config(db: AsyncSession, *, install: bool) -> StagedConfig:
 
 async def stage_smb_config(db: AsyncSession) -> StagedConfig:
     """Render smb.conf from the rows ``db`` sees (a share mutation's flushed changes
-    included) and check it with testparm, without installing it (spec 2.4 steps 1-8).
+    included) and check it with testparm, without installing it (ADR-0089).
 
     Never imports: it raises SambaConfigError when the shares were not imported
     yet (the mutation imports right after taking smb_lock, before its changes).
@@ -1217,7 +1218,7 @@ def _close_shares(names: Sequence[str]) -> tuple[list[str], set[str], list[str]]
 
 
 async def install_smb_config(staged: StagedConfig) -> interfaces.ApplyResult:
-    """Install a staged smb.conf, reload Samba and close shrunk shares (spec 2.4 steps 9-12).
+    """Install a staged smb.conf, reload Samba and close shrunk shares (ADR-0089, ADR-0090, ADR-0103).
 
     Also retries a pending reload and pending closes of earlier applies, even
     when the text is unchanged. The shares closed while the full reload was
@@ -1291,7 +1292,7 @@ def _record_failure(message: str) -> None:
 
 
 async def apply_smb_config(db: AsyncSession) -> interfaces.ApplyResult:
-    """Render smb.conf from the database and install it (spec 2.4).
+    """Render smb.conf from the database and install it (ADR-0089).
 
     The caller holds smb_lock() and has committed. Raises smb.SambaConfigError
     when testparm rejects the text, when the shares are not imported yet and
@@ -1320,7 +1321,7 @@ async def apply_smb_config(db: AsyncSession) -> interfaces.ApplyResult:
     return await install_smb_config(staged)
 
 
-# --- rows (spec 1.3) -------------------------------------------------------------------------
+# --- rows -------------------------------------------------------------------------
 
 
 def _next_version(version: object) -> int:
@@ -1369,7 +1370,7 @@ async def delete_access_of_user(db: AsyncSession, user_id: int) -> int:
 
 
 async def purge_orphans(db: AsyncSession) -> int:
-    """Delete stale access rows (spec 1.3), flushed in the caller's transaction.
+    """Delete stale access rows (ADR-0137), flushed in the caller's transaction.
 
     A row is stale when its share or its user does not exist, when its
     username is not the user's current username, or when the user is an
@@ -1412,7 +1413,7 @@ async def purge_orphans(db: AsyncSession) -> int:
     return len(stale)
 
 
-# --- the share API (spec 5.1-5.4, 5.6) -------------------------------------------------------------
+# --- the share API -------------------------------------------------------------
 
 GUEST_WARNING = (
     "Anyone on your network can read this share without a password, and its name is visible to anyone "
@@ -1441,7 +1442,7 @@ def _same_gid_conflict(group_problem: str | None, gid: str | None) -> bool:
 
 @dataclass
 class ShareChange:
-    """What a share mutation did: the answer, and the audit entry of spec 5.6 (written by the router)."""
+    """What a share mutation did: the answer, and the audit entry (ADR-0157, written by the router)."""
 
     name: str                                   # resource_id of the audit entry
     details: str | None                         # None: nothing changed, no audit entry
@@ -1513,7 +1514,7 @@ async def _load_share(db: AsyncSession, name: str) -> models.SmbShare:
 
 
 def _other_paths(rows: Sequence, own_id: object, pool_names: Collection[str]) -> dict[str, str]:
-    """Share name -> path of the other shares whose own paths pass rules 1-5 of spec 5.4 (sync)."""
+    """Share name -> path of the other shares whose own paths pass rules 1-5 of share_path_problem (sync)."""
     others: dict[str, str] = {}
     for row in rows:
         if row.id == own_id or not isinstance(row.path, str):
@@ -1525,7 +1526,7 @@ def _other_paths(rows: Sequence, own_id: object, pool_names: Collection[str]) ->
 
 
 def _new_path(path: str, own_id: object, rows: Sequence, pool_names: Collection[str]) -> tuple[str, tuple[str, ...]]:
-    """Rules 1-6 of spec 5.4 for the path of a create or PATCH (sync; reads the filesystem).
+    """Rules 1-6 of share_path_problem for the path of a create or PATCH (sync; reads the filesystem).
 
     The path is normalized first (validate_share_path, 400 with its detail),
     and the rules run on the normalized path: rules 1-5 answer 400, rule 6
@@ -1543,7 +1544,7 @@ def _new_path(path: str, own_id: object, rows: Sequence, pool_names: Collection[
 
 
 def _resulting_path_problem(path: object, own_id: object, rows: Sequence, pool_names: Collection[str]) -> str | None:
-    """PATCH step 4 (spec 5.3): rules 1-6 for the path a share has after the change (sync)."""
+    """PATCH step 4 (update_share): rules 1-6 for the path a share has after the change (sync)."""
     return share_path_problem(path, other_paths=_other_paths(rows, own_id, pool_names), pool_names=pool_names)
 
 
@@ -1569,7 +1570,7 @@ def _existing_folder(fd: int) -> _Folder:
     return _Folder(existed=True, permissions_ok=constants.share_root_mode_ok(st.st_mode, st.st_gid))
 
 
-# --- the folders above a share folder (spec 5.4 rules 7 and 8) ------------------------------------
+# --- the folders above a share folder (ADR-0152, ADR-0153) ------------------------------------
 
 
 @dataclass(frozen=True)
@@ -1832,7 +1833,7 @@ def _open_new_folder_parent(base: Path, parts: tuple[str, ...]) -> int:
 
 
 def _prepare_folder(parts: tuple[str, ...]) -> _Folder:
-    """Rules 7 and 8 of spec 5.4 for the path of a create or PATCH (sync, worker thread).
+    """Rules 7 and 8 for the path of a create or PATCH (ADR-0152, ADR-0153; sync, worker thread).
 
     7. The pool must be mounted at its mountpoint (writable when the folder
        must be created): no share folder is ever created on the system disk.
@@ -1898,7 +1899,7 @@ def _prepare_folder(parts: tuple[str, ...]) -> _Folder:
 async def _check_access(
     db: AsyncSession, entries: Sequence[schemas.ShareAccessEntry]
 ) -> dict[int, tuple[str, str]]:
-    """The access entries of a create or PATCH, checked against the users as stored now (spec 5.3).
+    """The access entries of a create or PATCH, checked against the users as stored now (ADR-0133).
 
     Returns user id -> (current username, level). Users whose SMB account is
     off or needs a password are accepted: their entries become effective when
@@ -1933,7 +1934,7 @@ async def _check_access(
 
 
 async def _stage_commit_install(db: AsyncSession) -> tuple[interfaces.ApplyResult, RenderInput]:
-    """Stage smb.conf from the flushed changes of a share mutation, commit, install (spec 2.4, 5.3).
+    """Stage smb.conf from the flushed changes of a share mutation, commit, install (ADR-0089).
 
     A staging failure (testparm, the pool list) rolls the mutation back and
     raises SambaConfigError. A failed commit discards the staged file and
@@ -2026,7 +2027,7 @@ async def _valid_access_rows(db: AsyncSession, share_id: object) -> int:
 
 
 async def create_share(db: AsyncSession, data: schemas.SmbShareCreate) -> ShareChange:
-    """POST /shares/smb (spec 5.3). Takes smb_lock()."""
+    """POST /shares/smb. Takes smb_lock()."""
     async with smb_lock():
         try:
             return await _create_share_locked(db, data)
@@ -2084,7 +2085,7 @@ async def _create_share_locked(db: AsyncSession, data: schemas.SmbShareCreate) -
 
 
 async def update_share(db: AsyncSession, name: str, data: schemas.SmbShareUpdate) -> ShareChange:
-    """PATCH /shares/smb/{name} (spec 5.3): only the fields that are sent change. Takes smb_lock()."""
+    """PATCH /shares/smb/{name} (ADR-0134): only the fields that are sent change. Takes smb_lock()."""
     async with smb_lock():
         try:
             return await _update_share_locked(db, name, data)
@@ -2118,7 +2119,7 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
     access = await _check_access(db, data.access) if "access" in sent else None
     guest_ok = data.guest_ok if "guest_ok" in sent else bool(share.guest_ok)
 
-    # 4. A share that is not served must not grant anything (5.3). A PATCH that only
+    # 4. A share that is not served must not grant anything (ADR-0136). A PATCH that only
     # dismisses the import notes grants nothing new and needs no valid folder.
     dismiss_only = sent - {"expected_version"} == {"import_notes"}
     grants = not dismiss_only and (
@@ -2190,9 +2191,9 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
 
 
 async def delete_share(db: AsyncSession, name: str) -> ShareChange:
-    """DELETE /shares/smb/{name} (spec 5.3): the row and its access rows; the folder is kept.
+    """DELETE /shares/smb/{name}: the row and its access rows; the folder is kept.
 
-    The shrink rule of spec 2.5 closes the share's open tree connects. Takes smb_lock().
+    The shrink rule (ADR-0103) closes the share's open tree connects. Takes smb_lock().
     """
     async with smb_lock():
         try:
@@ -2372,7 +2373,7 @@ async def _infos(
             or row.username != known.username
             or row.level not in ("read", "write")
         ):
-            continue  # not rendered, and purged at the next start or restore (spec 1.3)
+            continue  # not rendered, and purged at the next start or restore (ADR-0137)
         current = levels.setdefault(row.share_id, {}).get(row.user_id)
         levels[row.share_id][row.user_id] = "read" if "read" in (current, row.level) else "write"
 
@@ -2437,7 +2438,7 @@ async def _share_info(db: AsyncSession, share_id: object, render: RenderInput | 
 
 
 async def list_share_infos(db: AsyncSession) -> list[schemas.SmbShareInfo]:
-    """GET /shares/smb: every share, after the import (spec 5.2, 5.3)."""
+    """GET /shares/smb: every share, after the import (ADR-0084)."""
     await ensure_imported(db)
     render, mounts = await _render_and_mounts(db)
     return await _infos(db, render, mounts)
@@ -2457,7 +2458,7 @@ async def get_share_info(db: AsyncSession, name: str) -> schemas.SmbShareInfo:
 
 @dataclass
 class LastReconcile:
-    """Problems of the last startup or post-restore reconcile (spec 4.2), for the status endpoint.
+    """Problems of the last startup or post-restore reconcile (ADR-0138), for the status endpoint.
 
     Problems that the status endpoint reads live (render problems, a failed
     import, a failed or pending apply, pending reloads and closes) are only
@@ -2494,7 +2495,7 @@ def _host_checks() -> tuple[interfaces.AccountHostStatus | None, str | None, boo
 
 
 async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
-    """GET /shares/smb-status (spec 5.3)."""
+    """GET /shares/smb-status."""
     problems: list[str] = []
     try:
         await ensure_imported(db)
@@ -2601,7 +2602,7 @@ async def clear_import_report(db: AsyncSession) -> None:
             raise
 
 
-# --- the startup reconcile and the post-restore step (spec 4.2, 4.3) --------------------------------
+# --- the startup reconcile and the post-restore step (ADR-0138) --------------------------------
 
 
 @dataclass
@@ -2632,7 +2633,7 @@ async def _active_and_waiting(db: AsyncSession) -> tuple[set[str], list[str]]:
 
 
 async def _remove_access_of_unserved(db: AsyncSession) -> list[str]:
-    """Post-restore step 2 (spec 4.3): every share whose stored path breaks a rule of spec 5.4
+    """Post-restore step 2 (_reconcile): every share whose stored path breaks a rule of ADR-0145
     loses its access rows and guest access, with a note (flushed, not committed).
 
     Shares without access and without guest access are left alone (nothing to
@@ -2668,7 +2669,7 @@ async def _remove_access_of_unserved(db: AsyncSession) -> list[str]:
 
 
 async def _reload_now(run: _Run, marker_set: bool) -> None:
-    """Step 5 of spec 4.2: a reload message to smbd and nmbd (no disk write); after it, pending closes.
+    """Step 5 of _reconcile: a reload message to smbd and nmbd (no disk write); after it, pending closes.
 
     After a full reload, the shares closed while it was pending become pending
     closes again (they are closed here with the import marker set, else at the
@@ -2704,7 +2705,7 @@ async def _reload_now(run: _Run, marker_set: bool) -> None:
 
 
 async def _session_sweep(db: AsyncSession, run: _Run, marker_set: bool) -> None:
-    """Step 6 of spec 4.2.
+    """Step 6 of _reconcile: the session sweep.
 
     close-share part (only with the import marker set: before the import, the
     file in effect is not UNOS's rendering): close every share with a tree
@@ -2768,7 +2769,7 @@ async def _session_sweep(db: AsyncSession, run: _Run, marker_set: bool) -> None:
 
 
 async def _reconcile(db: AsyncSession, run: _Run, *, after_restore: bool) -> None:
-    """Steps 2.1-2.6 of spec 4.2 (and steps 1-5 of the post-restore step, spec 4.3).
+    """The startup reconcile and the post-restore step (ADR-0138): steps 1-6 below.
 
     Each step runs in its own try: a failure is recorded and the next step
     runs, except that the apply and the close-share part of the session sweep
@@ -2804,7 +2805,7 @@ async def _reconcile(db: AsyncSession, run: _Run, *, after_restore: bool) -> Non
         await _rollback(db)
         run.problems.append(f"Stale share access rows could not be removed: {_reason(exc)}")
 
-    # 3. The SMB accounts on the host (P2).
+    # 3. The SMB accounts on the host (shares/accounts.py).
     try:
         rec = await accounts.reconcile_accounts(db)
         run.changes.extend(rec.changes)
@@ -2825,7 +2826,7 @@ async def _reconcile(db: AsyncSession, run: _Run, *, after_restore: bool) -> Non
             result = await apply_smb_config(db)
             # smb.conf holds this database's rendering only when the apply installed
             # it or found it unchanged: a failed install is only a warning of the
-            # result, and "smb_config" is restored only when applied (spec 4.3).
+            # result, and "smb_config" is restored only when applied.
             run.applied = _last_apply.ok is True
             if result.changed:
                 run.changes.append("smb.conf was rewritten")
@@ -2863,7 +2864,7 @@ def _record(run: _Run) -> list[str]:
 
 
 async def reconcile_smb_on_startup() -> None:
-    """The startup reconcile (spec 4.2). Takes smb_lock() first; logs, never raises."""
+    """The startup reconcile (ADR-0138). Takes smb_lock() first; logs, never raises."""
     async with smb_lock():
         run = _Run()
         try:
@@ -2888,7 +2889,7 @@ async def reconcile_smb_on_startup() -> None:
 
 
 async def after_database_restore_locked(db: AsyncSession) -> tuple[list[str], bool]:
-    """The post-restore reconcile (spec 4.3): (warnings, smb.conf applied). The caller holds smb_lock()."""
+    """The post-restore reconcile (ADR-0138): (warnings, smb.conf applied). The caller holds smb_lock()."""
     run = _Run()
     await _reconcile(db, run, after_restore=True)
     warnings = _record(run)
@@ -2934,7 +2935,7 @@ async def after_database_restore_locked(db: AsyncSession) -> tuple[list[str], bo
     return warnings, run.applied
 
 
-# --- the restore preparation on the extracted database (spec 4.3, worker thread) ---------------------
+# --- the restore preparation on the extracted database (ADR-0139, worker thread) ---------------------
 
 _SMB_TABLES = (
     models.SmbShare.__table__,
@@ -3021,7 +3022,7 @@ def _make_datetimes_readable(conn: sqlite3.Connection) -> None:
 
 
 def restored_smb_authoritative(conn: sqlite3.Connection) -> bool:
-    """Whether an extracted database is authoritative for SMB: its import marker is set (spec 4.3).
+    """Whether an extracted database is authoritative for SMB: its import marker is set (ADR-0141).
 
     A backup taken before the import ran (or from a run without background
     tasks) has the tables but no import. Any sqlite3.Error counts as False.
@@ -3034,13 +3035,13 @@ def restored_smb_authoritative(conn: sqlite3.Connection) -> bool:
 
 
 def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool, archive_conf: str | None) -> list[str]:
-    """The share rules of spec 4.3 on an extracted database, in the caller's transaction (sync).
+    """The share rules of a restore (ADR-0142) on an extracted database, in the caller's transaction (sync).
 
     Not authoritative: every share and access row is deleted, and the next
     import reads the backup's smb.conf (``archive_conf``), else the live file;
     such an import never turns guest access on. Authoritative: the rows are
     kept, DateTime values that SQLAlchemy cannot read are replaced, and every
-    share whose stored path breaks a rule of spec 5.4 loses its access rows
+    share whose stored path breaks a rule of ADR-0145 loses its access rows
     and guest access, with a note. Returns the names of the shares with guest
     access afterwards. Raises PoolListUnavailable when the pool list cannot be
     read.

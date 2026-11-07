@@ -1,6 +1,10 @@
-# Dependencies
-node_modules/
+# Dependencies. No trailing slash on node_modules: webui/node_modules may be a
+# symbolic link, which a pattern ending in / does not match.
+node_modules
 venv/
+# The environments of make setup (scripts/setup.sh).
+supervisor/.venv/
+.venv-lint/
 __pycache__/
 *.pyc
 *.pyo
@@ -17,6 +21,8 @@ dist/
 *.swp
 *.swo
 *~
+# Claude Code's local settings: its "always allow" rules copy whole commands, secrets included.
+.claude/settings.local.json
 
 # Environment
 .env
@@ -43,11 +49,15 @@ Thumbs.db
 test-results/
 playwright-report/
 coverage/
+# The local stand-in of make e2e-local (scripts/standin/e2e.sh): data, logs, certificate.
+.standin/
 
 # Docker
 .docker/
 
-# Temporary files
+# Temporary files. tmp/ also holds the handoffs (tmp/handoff), the device deploys' backups and
+# rollback copies (tmp/dev), the guard's denial log (tmp/guard) and the Stop hook's last run
+# (tmp/stop-check).
 tmp/
 temp/
 *.tmp

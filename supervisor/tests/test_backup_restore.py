@@ -96,7 +96,7 @@ def env(tmp_path, monkeypatch):
 def make_env(tmp_path, monkeypatch, *, smb_applied: bool = False):
     """The env fixture: backup directory, live database and smb.conf in tmp_path.
 
-    The SMB steps of a database restore are mocked: P2's account rules on the
+    The SMB steps of a database restore are mocked: the account rules on the
     extracted database (accounts.snapshot_for_restore and
     accounts.prepare_restored_accounts) and the post-restore step
     (service.after_database_restore_locked, returning no warnings and
@@ -787,7 +787,7 @@ def test_bad_databases_are_rejected(env, make):
 
 
 def test_the_archived_smb_conf_is_never_tested_or_installed(env):
-    """The restore stages no smb.conf: shares come from the database (spec 4.3)."""
+    """The restore stages no smb.conf: shares come from the database (ADR-0040)."""
     env.host.side_effect = AssertionError("no host command during the restore")
     name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env)),
                         _file("smb.conf", f"[docs]\n   path = {env.pools}/data/docs\n".encode())])
@@ -881,7 +881,7 @@ def test_upload_wrong_extension_is_rejected(env):
     assert _upload(env, b"x", filename="backup.zip").status_code == 400
 
 
-# --- SMB state (spec 4.3): the extracted database is prepared before the swap ---------------------
+# --- SMB state (ADR-0139): the extracted database is prepared before the swap ---------------------
 #
 # The restored database is untrusted: triggers and views are refused, SMB
 # tables of an unknown layout too, and its SMB state is proven before it
@@ -1445,7 +1445,7 @@ class TestCrashSafety:
 
 
 async def test_a_restore_waits_for_smb_lock(env, monkeypatch):
-    """A restore is an SMB state change: it starts only when smb_lock is free (spec 4.3)."""
+    """A restore is an SMB state change: it starts only when smb_lock is free (ADR-0080)."""
     name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
     started = []
     real_restore = backup_router._restore
@@ -1478,7 +1478,7 @@ async def test_a_restore_waits_for_smb_lock(env, monkeypatch):
 
 
 async def test_the_post_restore_step_runs_under_smb_lock(env, monkeypatch):
-    """Spec 4.3, I5: smb_lock is held from before the restore thread until the post-restore
+    """ADR-0080: smb_lock is held from before the restore thread until the post-restore
     step returns, so an SMB flow that queued on the lock during the restore runs after it."""
     name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
     entered, release = asyncio.Event(), asyncio.Event()
@@ -1574,7 +1574,7 @@ def test_a_second_restore_while_one_runs_is_refused(env, monkeypatch):
 
 
 def test_include_shares_false_still_restores_the_shares_of_the_database(smb_env):
-    """R-F18: shares are rows of the database, which every backup contains."""
+    """Shares are rows of the database, which every backup contains (ADR-0143)."""
     env = smb_env
     with closing(sqlite3.connect(env.db_path)) as conn:
         conn.execute("UPDATE smb_state SET shares_imported_at = ?", (IMPORTED_AT,))

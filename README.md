@@ -48,7 +48,6 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### File Sharing
 - **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux
-- **NFS Exports** - Unix/Linux native network file system
 - **Web File Browser** - Upload, download, copy, move, and manage files via browser
 
 ### Application Platform
@@ -59,7 +58,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### System Monitoring
 - **Real-time Dashboard** - Live CPU, memory, network, and disk I/O statistics via WebSocket
-- **Process Monitor** - View and manage running processes
+- **Process Monitor** - View the top processes by CPU or memory use
 - **Temperature Monitoring** - Hardware temperature sensors
 - **Network Statistics** - Per-interface bandwidth monitoring with history graphs
 - **Prometheus Metrics** - `/api/v1/health/prometheus` endpoint for external monitoring (administrator API token)
@@ -68,36 +67,25 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **HTTPS by Default** - The web interface is served over HTTPS with certificates from a built-in local CA; plain HTTP redirects
 - **Multi-user Support** - Administrators and regular users (who see only the dashboard and their own account)
 - **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps
-- **Recovery Codes** - Backup codes for 2FA recovery
-- **API Tokens** - Generate tokens for programmatic access
-- **Audit Logging** - Track all user actions and system events
+- **API Tokens** - Generate tokens for scripts through the API
+- **Audit Logging** - Sign-ins and administrative actions are recorded; administrators list, filter and export them through the API
 - **Rate Limiting** - Protection against brute-force attacks
 
 ### Notifications
-- **Email** - SMTP-based email alerts
-- **Telegram** - Bot notifications to chat/groups
-- **Discord** - Webhook notifications with embeds
-- **Slack** - Webhook notifications
-- **Custom Webhooks** - Generic webhook support for any service
+- **Alerts** - Pool (RAID) errors and disk health (SMART) warnings go to every enabled e-mail and Telegram channel
+- **Channels** - E-mail and Telegram in System > Notifications; Discord, Slack and generic webhooks through the API, with test messages
 
 ### Task Scheduler
 - **Automated Snapshots** - Schedule periodic snapshot creation with retention
 - **Scheduled Scrubs** - Automate BTRFS data integrity checks
 - **SMART Tests** - Schedule disk health tests
 - **Configuration Backups** - Automated system backup with cleanup
-- **Custom Commands** - Run any command on a schedule
+- **Custom Commands** - Run a shell command in the supervisor container on a schedule
 
 ### Network Management
-- **Interface Management** - View and control network interfaces
+- **Interfaces** - View network interfaces and their addresses, and bring them up or down
 - **DNS Configuration** - View DNS servers and search domains
-- **Hostname Management** - Set system hostname
-- **Routing Table** - View network routes and gateway
-
-### Power Management
-- **Remote Control** - Reboot, shutdown, and suspend via web interface
-- **Wake-on-LAN** - Configure WoL for network interfaces
-- **UPS Monitoring** - NUT integration with auto-shutdown on low battery
-- **Scheduled Power** - Configure auto-shutdown and wake times
+- **Routing Table** - View network routes, the gateway and active connections
 
 ### Backup & Recovery
 - **Configuration Backup** - Back up the UNOS database (accounts, 2FA, API tokens, SMB shares and their access)
@@ -106,6 +94,17 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### System Updates
 - **Update script** - `sudo /opt/unos/deploy/update.sh` updates UNOS from its git branch, backs up the database and the data volume first, and rolls back automatically if the new version does not start
+
+### Planned
+
+Not working yet; each has an entry in [feature-list.json](feature-list.json), named in parentheses:
+- **Recovery codes** (`auth.recovery-codes`) - Codes can be generated through the API, but the sign-in does not take one yet
+- **NFS exports** (`shares.nfs-exports`) - Exports are written inside the supervisor container and do not reach the host
+- **Power control** (`system.power`) - Reboot, shutdown and suspend from the web interface, and Wake-on-LAN: inside the supervisor container they are refused or reach only the container
+- **UPS monitoring** (`system.ups-monitoring`) - The UPS state and the shutdown on low battery: the supervisor image has no NUT client, and the shutdown is skipped inside a container
+- **Scheduled power** (`system.scheduled-power`) - Shutdown and wake times are stored, and nothing acts on them
+- **Alerts for every event and channel** (`system.alert-events`) - Discord, Slack and webhook channels get no alerts, and the events chosen for a channel have no effect
+- **Host name and time zone** (`system.hostname-and-time-zone`) - Setting them from the web interface
 
 ## Quick Start
 
@@ -177,7 +176,7 @@ anyone who can reach the page can create it.
                        │ Docker socket, system commands
 ┌──────────────────────▼──────────────────────────────────┐
 │  Host OS (Debian/Ubuntu)                                │
-│  btrfs, samba, nfs, smartmontools, docker               │
+│  btrfs, samba, smartmontools, docker                    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -188,7 +187,10 @@ anyone who can reach the page can create it.
 | [Installation Guide](docs/INSTALL.md) | Detailed installation instructions |
 | [User Guide](docs/USER_GUIDE.md) | How to use UNOS features |
 | [Changelog](CHANGELOG.md) | Version history and release notes |
-| [Development Guide](CLAUDE.md) | Developer instructions |
+| [Contributing](CONTRIBUTING.md) | How work flows, from an issue to a pull request |
+| [AGENTS.md](AGENTS.md) | Commands, rules and conventions for developers and coding agents |
+| [Testing Guide](docs/TESTING.md) | The tests, the local stand-in and CI |
+| [Decision Records](docs/adr/README.md) | Why UNOS is built the way it is |
 
 ## Tech Stack
 
@@ -221,9 +223,6 @@ sudo docker compose down
 sudo systemctl restart unos   # docker compose up -d with /etc/unos/secrets.env
 ```
 
-Updating from 1.0.0 or earlier needs a few steps once (HTTPS, mounting existing
-pools, SMB shares): see [Updating from 1.0.0 or Earlier](docs/INSTALL.md#updating-from-100-or-earlier).
-
 ## Uninstalling
 
 ```bash
@@ -240,29 +239,29 @@ SMB accounts other user ids. The script prints how to remove them, and names
 the accounts whose Samba password it could not remove.
 `/etc/samba/smb.conf` stays, and Samba still serves the shares it lists,
 unless `install.sh` kept the file it replaced (`smb.conf.original`), which
-is then restored. After an upgrade from 1.0.0 or earlier, or a manual
-installation, the smb.conf that UNOS replaced with its own (and imported its
-shares from) is `/etc/samba/smb.conf.unos-import-backup`.
+is then restored. If the supervisor replaced an existing smb.conf with its own
+(after a manual installation, for example), it kept that file, whose shares it
+imported, as `/etc/samba/smb.conf.unos-import-backup`.
 
 ## Contributing
 
-Contributions are welcome! See [CLAUDE.md](CLAUDE.md) for development setup and coding standards.
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) describes how work
+flows from an issue or a feature entry to a pull request, the tests every change
+needs, and how decisions are recorded in [docs/adr/](docs/adr/README.md).
 
 ```bash
-# Backend development
-cd supervisor
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-uvicorn src.main:app --reload --port 8080
-
-# Frontend development
-cd webui
-npm install && npm run dev
+make setup   # once per checkout: Python venv, lint tools, npm packages, Playwright, git hooks
+make check   # the quality gate: the backend tests, lint, svelte-check and the build, as in CI
 ```
+
+Developers and coding agents follow [AGENTS.md](AGENTS.md) for the commands and
+the rules; [docs/TESTING.md](docs/TESTING.md) covers the tests, the local
+stand-in and CI.
 
 ## License
 
-UNOS is released under the [GPL-3.0 License](LICENSE).
+UNOS is released under the [GPL-3.0-or-later](LICENSE) license: the GNU General Public
+License, version 3 or (at your option) any later version.
 
 ## Support
 
@@ -276,5 +275,5 @@ UNOS is released under the [GPL-3.0 License](LICENSE).
 </p>
 
 <p align="center">
-  <code>nas</code> · <code>self-hosted</code> · <code>homelab</code> · <code>storage</code> · <code>btrfs</code> · <code>docker</code> · <code>samba</code> · <code>nfs</code> · <code>fastapi</code> · <code>sveltekit</code> · <code>arm64</code> · <code>home-server</code> · <code>file-sharing</code> · <code>network-attached-storage</code> · <code>linux</code>
+  <code>nas</code> · <code>self-hosted</code> · <code>homelab</code> · <code>storage</code> · <code>btrfs</code> · <code>docker</code> · <code>samba</code> · <code>fastapi</code> · <code>sveltekit</code> · <code>arm64</code> · <code>home-server</code> · <code>file-sharing</code> · <code>network-attached-storage</code> · <code>linux</code>
 </p>

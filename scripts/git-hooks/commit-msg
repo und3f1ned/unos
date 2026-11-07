@@ -1,0 +1,7 @@
+#!/bin/sh
+# Checks the message of every commit against the commit convention (ADR-0209): Conventional
+# Commits in English, a first line of at most 72 characters, a valid Feature: trailer.
+# CI's commits job checks the commits of every pull request with the same script.
+# Usage (git runs it): commit-msg <file with the message>
+set -eu
+exec python3 "$(dirname "$0")/../check-commit-msg.py" "$1"

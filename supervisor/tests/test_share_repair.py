@@ -1,4 +1,4 @@
-"""Repair permissions (spec 5.5 and 9.1, P4): shares/repair.py and shares/repair_router.py.
+"""Repair permissions (ADR-0155, ADR-0156): shares/repair.py and shares/repair_router.py.
 
 The walk runs on real temporary folders with the test's own group
 (gid=os.getgid()), so it needs neither root nor the SMB group, and modes are
@@ -735,7 +735,7 @@ class TestWalk:
         ],
     )
     def test_app_data_and_snapshot_folders_are_never_walked(self, base, share, folder, reason):
-        # service.share_problem() refuses them (spec 5.4, rules 2 and 5);
+        # service.share_problem() refuses them (rules 2 and 5 of share_path_problem);
         # repair_tree checks the path it walks again.
         target = base / "data" / folder
         target.mkdir(parents=True)
@@ -754,7 +754,7 @@ class TestWalk:
 def api(base, share, tmp_path, monkeypatch):
     """The repair router, as main.py includes it, on a temporary database with the share Media.
 
-    service.share_problem (P1), accounts.gid_problem (P2) and
+    service.share_problem, accounts.gid_problem and
     pools._mounted_pool_target are replaced by fakes that the test steers
     through ``checks``; repair_tree runs for real, with calls recorded.
     """
@@ -928,7 +928,7 @@ class TestEndpoints:
     @pytest.mark.parametrize("where", ["pool", "parent"])
     def test_a_share_below_a_folder_that_others_can_change_is_refused(self, api, where):
         """Whoever can change a folder above the share's folder can swap in another folder (an
-        app's data), which the walk would then give the SMB group (sec-host-1)."""
+        app's data), which the walk would then give the SMB group (ADR-0153)."""
         data = _file(api.share / "a.txt", 0o644)
         folder = api.base / "data"
         if where == "parent":
@@ -1004,7 +1004,7 @@ class TestEndpoints:
             ),
             pytest.param("name", None, id="name"),
             pytest.param("deleted", None, id="deleted"),
-            # The share was deleted before the check read the row: P1's share_problem() answers this.
+            # The share was deleted before the check read the row: service.share_problem() answers this.
             pytest.param("deleted", "The share does not exist", id="deleted-found"),
         ],
     )

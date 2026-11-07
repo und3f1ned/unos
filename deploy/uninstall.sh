@@ -315,7 +315,7 @@ print_smb_leftovers() {
         echo "Samba configuration: $SAMBA_DIR/smb.conf stays, and Samba still serves"
         echo "the shares it lists, guest shares to anyone on your network."
         if [ -f "$SAMBA_DIR/smb.conf.unos-import-backup" ]; then
-            echo "The smb.conf from before this release of UNOS (UNOS imported its"
+            echo "The smb.conf that UNOS replaced with its own (UNOS imported its"
             echo "shares from it) is $SAMBA_DIR/smb.conf.unos-import-backup. Check it"
             echo "before you copy it back: it may give every Samba account access to"
             echo "its shares."

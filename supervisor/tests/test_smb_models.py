@@ -1,6 +1,6 @@
-"""Slice 2 foundation (spec 1.1, 1.2 and 9.1, P0): the SMB tables, the fixed values,
-the SMB state derived for a user, the types shared by the packages, and the stubs whose
-signatures P1, P2 and P4 code against."""
+"""Slice 2 foundation: the SMB tables (ADR-0077), the fixed values, the SMB state derived
+for a user, the types shared by the shares modules, and the stubs whose signatures the
+later work packages coded against (STUBS)."""
 import ast
 import asyncio
 import inspect
@@ -140,7 +140,7 @@ def db(db_path):
 
 
 class TestTablesOnAnOldDatabase:
-    """init_db() runs create_all at startup and after a restore (spec 1.2)."""
+    """init_db() runs create_all at startup and after a restore (ADR-0077)."""
 
     async def test_init_db_adds_the_four_tables_and_leaves_the_user_alone(self, old_db, monkeypatch):
         users = _rows(old_db, "users")
@@ -173,7 +173,7 @@ class TestTablesOnAnOldDatabase:
         assert {table: _rows(old_db, table) for table in SMB_TABLES} == rows
 
     def test_init_db_registers_the_smb_models_itself(self, tmp_path):
-        """At startup nothing else has imported shares.models: database.init_db() must (spec 1.1.5)."""
+        """At startup nothing else has imported shares.models: database.init_db() must (ADR-0077)."""
         result = _run_fresh(
             "import asyncio\n"
             "from src import database\n"
@@ -188,7 +188,7 @@ class TestTablesOnAnOldDatabase:
         assert SMB_TABLES <= _tables(tmp_path / "fresh.db")
 
     def test_leaf_modules_import_no_other_shares_module(self, tmp_path):
-        """constants, models, account_state and interfaces import only each other (spec 1.1)."""
+        """constants, models, account_state and interfaces are leaf modules: they import only each other."""
         result = _run_fresh(
             "import sys\n"
             "import src.shares.constants, src.shares.models, src.shares.account_state, src.shares.interfaces\n"
@@ -308,7 +308,7 @@ class TestConstraints:
             _add(db, SmbState(id=1, pending_import_source=source))
 
     async def test_deleting_a_share_deletes_its_access_rows(self, db, db_path):
-        """Spec 1.3: db.delete(share), the ORM cascade removes the access rows (no SQLite foreign keys)."""
+        """db.delete(share): the ORM cascade removes the access rows (no SQLite foreign keys)."""
         _add(db, SmbShare(id=1, name="media", path="/mnt/pools/data/media"),
              SmbShare(id=2, name="docs", path="/mnt/pools/data/docs"),
              SmbShareAccess(share_id=1, user_id=1, username="alice", level="write"),
@@ -583,7 +583,7 @@ class TestInterfaces:
         assert {session, interfaces.SmbSession(48211, "alice", ("IPC$", "media"))} == {session}
 
     def test_restore_context_and_post_restore_do_not_exist(self):
-        """Removed in review round 1: the restore prepares the extracted database instead (spec 4.3)."""
+        """Removed: the restore prepares the extracted database instead (ADR-0139)."""
         assert not hasattr(interfaces, "RestoreContext")
         assert not hasattr(interfaces, "PostRestore")
 
@@ -591,8 +591,9 @@ class TestInterfaces:
 _POS = inspect.Parameter.POSITIONAL_OR_KEYWORD
 _KW = inspect.Parameter.KEYWORD_ONLY
 
-# The stubs of spec 1.1.5: async or not, parameters (name, kind, annotation), return
-# annotation, and the package that replaces the body (keeping the signature).
+# The stubs that the first work package of slice 2 (P0) wrote: async or not, parameters
+# (name, kind, annotation), return annotation, and the later package (P1, P2) that
+# replaced the body, keeping the signature.
 STUBS = {
     "service.apply_smb_config": (True, [("db", _POS, "AsyncSession")], "interfaces.ApplyResult", "P1"),
     "service.reconcile_smb_on_startup": (True, [], "None", "P1"),

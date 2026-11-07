@@ -1,4 +1,4 @@
-"""Repair permissions endpoints (P4, spec 5.5).
+"""Repair permissions endpoints (ADR-0155).
 
 POST repairs the permissions of a share's folder (repair.repair_tree) in a
 worker thread and answers when the repair has finished, after at most about
@@ -56,7 +56,7 @@ async def repair_share_permissions(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> repair.RepairResult:
-    """Repair the permissions of a share's folder and answer the result (spec 5.5).
+    """Repair the permissions of a share's folder and answer the result (ADR-0155).
 
     Every file and folder of the share gets the group unos-smb and group
     read/write (folders 2770, files 0660 or 0770); other accounts lose access.
@@ -64,7 +64,7 @@ async def repair_share_permissions(
     filesystems and mount points are skipped. 404 for an unknown share, also
     one deleted while it was checked. 409, and nothing is changed, when the
     share was changed while it was checked, the share is not served (its
-    folder breaks a rule of spec 5.4), its pool is not mounted or is mounted
+    folder breaks a rule of ADR-0145), its pool is not mounted or is mounted
     read-only, a folder above the share's folder can be changed by other
     accounts, another host group has the SMB group's gid, or another repair
     is running. 503 when the pool list cannot be read. A repair stops after

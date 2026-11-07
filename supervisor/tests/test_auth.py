@@ -56,7 +56,7 @@ class TestPasswordHashing:
     # Hashes written by the previous passlib 1.7.4 + bcrypt 4.0.1 code. passlib
     # silently truncated passwords to bcrypt's 72-byte limit when hashing.
     LEGACY_PASSLIB_HASHES = (
-        ("admin123", "$2b$12$2QBMldgfbsfUHoQrs9u9c.qm4p5lVDC7GFd/Ks5tt.il66q2kOhpu"),
+        ("unos-e2e-pass", "$2b$12$70/WS7hrwVa4RW2kJdhIZuGbVq2hWk12O0dsSq1ZrsCQycx3gCUbe"),
         ("correct-horse-battery-staple-" * 4,  # 116 bytes
          "$2b$12$Ijd/kIObhng1hvAERpfQIebn2dKXTJryGyrHePLsyoKXIFU9W0gYS"),
         ("\u043f\u0430\u0440\u043e\u043b\u044c-" * 12,  # 156 bytes, cut mid-character at 72

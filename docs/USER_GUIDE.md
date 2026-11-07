@@ -180,19 +180,18 @@ A share is a folder inside a pool, or a volume. UNOS refuses:
   share's folder: shares do not overlap.
 
 A share marked **Not served** breaks one of these rules, for example a share
-of a whole pool made by an earlier release. Nobody can open it until you give
-it a new folder with **Edit**; it cannot be given access until then.
+of a whole pool imported from the host's existing smb.conf. Nobody can open it
+until you give it a new folder with **Edit**; it cannot be given access until
+then.
 
 A share's folder must also be inside folders that only root can change:
 whoever can change a folder above it can put another folder in its place.
-Earlier releases made the folder of a writable guest share writable by every
-account (mode 0777), also when that folder was the top folder of a pool.
-Below such a folder UNOS creates no new share folder and does not run
-**Repair permissions**: the message names the folder and the command to run
-on the NAS, for example `sudo chmod 755 /mnt/pools/data`. A share of a folder
-that exists already is created with a warning, and the status panel of the
-**Shares** page lists every served share below such a folder until the
-command has run.
+Below a folder that other accounts can change (mode 0777, for example), UNOS
+creates no new share folder and does not run **Repair permissions**: the
+message names the folder and the command to run on the NAS, for example
+`sudo chmod 755 /mnt/pools/data`. A share of a folder that exists already is
+created with a warning, and the status panel of the **Shares** page lists
+every served share below such a folder until the command has run.
 
 #### Creating a Share
 
@@ -247,10 +246,11 @@ files everyone on your network may read, and keep them few.
 #### Repair Permissions
 
 UNOS creates share folders with the group `unos-smb` and the mode 2770, and
-files created over SMB get that group and the mode 660. Files that were in
-the folder before (from an earlier release, from an app or from the File
-Browser) keep their permissions until you press **Repair permissions** on
-the share. A share marked **Permissions need repair** needs it. Repairing:
+files created over SMB get that group and the mode 660. Files that did not
+come in over SMB (from an app, from the File Browser, or already in the folder
+when the share was created) keep their permissions until you press **Repair
+permissions** on the share. A share marked **Permissions need repair** needs
+it. Repairing:
 - gives every file and folder of the share the group `unos-smb` and group
   read and write access (folders 2770, files 660, or 770 for files their
   owner may run);
@@ -449,10 +449,7 @@ Go to **App Store** → **Installed** to:
 4. Click **Create User**
 
 New accounts are regular users. To make one an administrator, edit it and
-tick **Administrator privileges**. Accounts created before these username
-rules keep their names and keep working; a name that breaks the rules (with
-capitals or a dot, or starting with `s-` and a digit, say) cannot use SMB:
-create a new account for that.
+tick **Administrator privileges**.
 
 ### User Roles
 
@@ -490,18 +487,18 @@ one of two ways:
 Then give the user access to shares on the **Shares** page.
 
 SMB passwords need at least 8 characters. A user whose UNOS password is
-shorter (earlier releases, and scripts that use the API, can set shorter
-ones) first changes it under **Change Password**, then turns SMB on. A two-factor code works only once:
+shorter (scripts that use the API can set shorter ones) first changes it
+under **Change Password**, then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 
-SMB cannot be turned on while Samba still uses an smb.conf that this release
-of UNOS did not write (HTTP 409), as right after an update until UNOS has
-written its own at its first start. When importing the shares of the old
-file or writing the new one failed, the status panel of the **Shares** page
-says why: "Shares were not imported from smb.conf: ..." (UNOS writes its
-smb.conf only after that import) or "smb.conf was not updated: ...".
-Allowing SMB and turning it off are not affected.
+SMB cannot be turned on while Samba still uses an smb.conf that UNOS did not
+write (HTTP 409): on a host that had an smb.conf before, UNOS imports its
+shares and writes its own at its first start. When importing the shares of
+the old file or writing the new one failed, the status panel of the
+**Shares** page says why: "Shares were not imported from smb.conf: ..."
+(UNOS writes its smb.conf only after that import) or "smb.conf was not
+updated: ...". Allowing SMB and turning it off are not affected.
 
 Turning **Allow SMB access** off (or the user's own **Turn off SMB**) ends the
 user's open SMB connections. When Samba could not apply a user's own change
@@ -585,8 +582,9 @@ Access via **System** in the sidebar.
 
 ### General
 
-- **Hostname** - Change NAS name
-- **Timezone** - Set correct timezone
+- Shows the host name, the operating system, the kernel and the architecture
+- The host name and the time zone cannot be changed in the web interface yet
+  (feature-list entry `system.hostname-and-time-zone`)
 
 ### Network
 
@@ -595,11 +593,14 @@ Access via **System** in the sidebar.
 - Monitor network statistics
 - View active connections
 
-### Power
+### Power Management
 
-- **Reboot** - Restart the NAS
-- **Shutdown** - Power off the NAS
-- **Scheduled Tasks** - Set up auto-shutdown
+The tab has **Reboot** and **Shutdown** buttons, but they do not work yet:
+inside the supervisor's container the API answers that they are not
+available, and the tab does not show that answer. Reboot or shut down the
+host from its console or over SSH. There are no scheduled shutdown or wake
+times, and suspend, Wake-on-LAN and the UPS state have no page (feature-list
+entries `system.power`, `system.scheduled-power` and `system.ups-monitoring`).
 
 ### Disk Health
 
@@ -668,16 +669,13 @@ and **Delete** buttons.
 
 SMB after a restore:
 - The shares and their access lists come back with the database, and UNOS
-  writes smb.conf from them. The copy of smb.conf in a backup (the
-  `include_shares` option of the API) is for older releases; UNOS reads it
-  only to import the shares of a backup made before UNOS kept shares in its
-  database.
+  writes smb.conf from them; the copy of smb.conf that the `include_shares`
+  option of the API adds to a backup is never installed.
 - SMB keeps working for users whose password did not change since the backup
   was made. Everyone else shows **Password needed** and must turn SMB on
   again (see [SMB Access](#smb-access)), and so must a user whose SMB user id
   belongs to another account on this NAS (for example in a backup of another
   installation).
-- Guest access is never turned back on by the smb.conf of an old backup.
 
 Encrypted backups (`.tar.gz.enc`) are made through the API, with
 `POST /api/v1/backup/create` and the body
@@ -694,36 +692,34 @@ are named `auto_backup_<date>_<time>.tar.gz` (with `_1`, `_2`, ... before
 
 ## Notifications
 
-Get alerts about important events via email, Discord, or Telegram.
+UNOS sends two kinds of alerts on its own: pool (RAID) errors and disk health
+(SMART) warnings. They go to every enabled e-mail and Telegram channel.
 
-### Setting Up Email Notifications
+### Adding a Channel
 
 1. Go to **System** → **Notifications**
-2. Click **Add Channel** → **Email**
-3. Configure:
-   - SMTP server
-   - Port (usually 587)
-   - Username and password
-   - Sender and recipient email
-4. Click **Test** to verify
-5. Click **Save**
+2. Click **Add Email** or **Add Telegram**
+3. Fill in the form: a channel name, and
+   - for Email the SMTP host, its port (usually 587), the username and
+     password, **Use TLS/STARTTLS**, the sender and the recipients;
+   - for Telegram the bot token and the chat ID.
+4. Leave **Enable Channel** on and click **Add Channel**
+5. Send a test with the channel's **Send test notification** button (the
+   lightning icon), which works while the channel is enabled
 
-### Setting Up Discord Notifications
+**History** lists the notifications sent, with their result.
 
-1. Create a Discord webhook in your server
-2. Go to **System** → **Notifications**
-3. Click **Add Channel** → **Discord**
-4. Paste the webhook URL
-5. Test and save
+Discord, Slack and generic webhook channels can be added only through the
+API (`POST /api/v1/notifications/configs`). They receive test notifications
+and what `POST /api/v1/notifications/send` sends, but no alerts yet
+(feature-list entry `system.alert-events`).
 
 ### Notification Events
 
-Choose which events trigger notifications:
-- Disk health warnings
-- Pool errors
-- Container status changes
-- System temperature alerts
-- Backup completion
+The form's **Notify on Events** choices are stored, but they have no effect
+yet: every enabled e-mail and Telegram channel receives both kinds of alerts,
+and no other event (container status, temperatures, backups) sends a
+notification.
 
 ---
 

@@ -1,4 +1,4 @@
-"""smb.conf as text (spec 1.4, 2.2, 2.3, 2.5 and 9.1, P1): the renderer, the parser
+"""smb.conf as text: the renderer, the parser
 of the one-time import, the effective values, and the grants that decide which
 shares are closed after a change. smbconf.py is pure: no file and no host here."""
 
@@ -71,7 +71,7 @@ def section(name, body):
     return f"[{name}]\n{body}{FIXED}"
 
 
-# --- [global] (spec 2.2) -------------------------------------------------------------------
+# --- [global] (ADR-0087) -------------------------------------------------------------------
 
 
 class TestGlobal:
@@ -103,7 +103,7 @@ class TestGlobal:
         assert smbconf.render_config([]) == HEADER + "\n" + GLOBAL_WITHOUT_GUESTS
 
 
-# --- share sections (spec 2.3) ----------------------------------------------------------------
+# --- share sections (ADR-0088) ----------------------------------------------------------------
 
 
 class TestShareSections:
@@ -289,7 +289,7 @@ class TestSerializerGuards:
             smbconf._safe_path("/x/%S")
 
 
-# --- the parser (spec 1.4) ----------------------------------------------------------------------------
+# --- the parser (ADR-0086) ----------------------------------------------------------------------------
 
 
 def values(text, name="x"):
@@ -470,7 +470,7 @@ class TestParser:
 
     def test_global_restrictions_of_every_block_in_file_order(self):
         """A restriction that a later [global] block lifts still applies to the shares between
-        the blocks in Samba, so every block counts (spec 1.4, restrictions that remove all access)."""
+        the blocks in Samba, so every block counts (ADR-0086)."""
         parsed = smbconf.parse_smb_conf(
             "[global]\n Invalid Users = alice\n smb encrypt = desired\n hosts allow =\n"
             "[x]\n path = /x\n hosts deny = 10.0.0.5\n"
@@ -553,7 +553,7 @@ class TestParser:
         smbconf.note_value(latin1).encode("utf-8")
 
 
-# --- grants and shrinks (spec 2.5) ---------------------------------------------------------------------
+# --- grants and shrinks (ADR-0103) ---------------------------------------------------------------------
 
 
 def grants(text):

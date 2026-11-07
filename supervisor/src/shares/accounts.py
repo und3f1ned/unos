@@ -1,8 +1,8 @@
-"""SMB accounts: host accounts, Samba's passdb and the smb_accounts rows (P2).
+"""SMB accounts: host accounts, Samba's passdb and the smb_accounts rows (ADR-0105).
 
 An SMB account is a real host account (uid 70000-79999, primary group
 unos-smb, no home, nologin shell, locked unix password) plus a tdbsam entry.
-This module has two layers (spec section 3):
+This module has two layers:
 
 * The host layer is synchronous and runs in worker threads. It reaches the
   host only through ``host.run_on_host`` (the module attribute, so that tests
@@ -12,12 +12,12 @@ This module has two layers (spec section 3):
   against the UNOS range where it is put into argv; a failed check raises
   SmbHostError, never an assert (asserts vanish under ``python -O``).
   ``useradd`` only creates marked accounts, ``userdel`` only removes marked
-  accounts, and ``pdbedit -x`` only removes UNOS passdb entries (I3).
+  accounts, and ``pdbedit -x`` only removes UNOS passdb entries (ADR-0108).
 * The orchestration layer is async. Its caller (auth/router.py) holds
   ``service.smb_lock()`` and passes the user and the account row it reloaded
   with ``reload_user`` after taking the lock, so every SMB state is derived
-  from rows read under the lock (I5). It turns SmbHostError into
-  HTTPException (spec 3.7).
+  from rows read under the lock (ADR-0081). It turns SmbHostError into
+  HTTPException.
 
 Only snapshot_for_restore, prepare_restored_accounts, reconcile_accounts,
 host_status, gid_problem, read_smb_sessions and end_smb_sessions are called
@@ -53,7 +53,7 @@ from . import account_state, constants, interfaces, models, service, smb, smbcon
 
 logger = logging.getLogger(__name__)
 
-# The programs of every account host step (spec 3.2, the tool check).
+# The programs of every account host step (the tool check looks for all of them).
 SAMBA_TOOLS = ("getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus")
 TOOLS_HINT = "install samba and samba-common-bin"
 
@@ -109,7 +109,7 @@ _GROUP = constants.SMB_GROUP_NAME
 
 
 class SmbHostError(Exception):
-    """A host step of an SMB account flow failed. ``status`` is its HTTP status (spec 3.7)."""
+    """A host step of an SMB account flow failed. ``status`` is its HTTP status."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -120,7 +120,7 @@ class SmbHostError(Exception):
 class SmbHostCommandFailed(SmbHostError):
     """A host command failed; ``message`` ends with what it printed (stderr, or the text
     of the exception), which may name host paths. A regular user's own flow is not
-    told it (_http, decision 11)."""
+    told it (_http, ADR-0131)."""
 
 
 class SmbToolMissing(SmbHostError):
@@ -154,7 +154,7 @@ class HostAccount:
 
     @property
     def ours(self) -> bool:
-        """Whether UNOS created this account (the marker of spec 3.3)."""
+        """Whether UNOS created this account (the marker of ADR-0108)."""
         return (
             self.gecos == constants.SMB_GECOS
             and constants.SMB_UID_MIN <= self.uid <= constants.SMB_UID_MAX
@@ -233,7 +233,7 @@ def _tools_message(tools: Iterable[str]) -> str:
 
 
 def _foreign_account_message(name: str) -> str:
-    """Spec 3.4: a host account of the name that UNOS did not create."""
+    """A host account of the name that UNOS did not create (ADR-0113)."""
     return (
         f"A host account named {name} exists that UNOS did not create. Remove it on the host "
         f"(pdbedit -x -u {name}; userdel {name}) or use another UNOS user."
@@ -241,7 +241,7 @@ def _foreign_account_message(name: str) -> str:
 
 
 def _other_case_message(name: str, stored: str) -> str:
-    """Spec 3.4: a passdb entry that holds the key of the name, stored in another case."""
+    """A passdb entry that holds the key of the name, stored in another case (ADR-0113)."""
     shown = _shown(stored)
     return (
         f"A Samba account named {shown} exists that UNOS did not create; Samba treats it as {name}. "
@@ -300,7 +300,7 @@ def _parse_passwd_line(line: str) -> HostAccount | None:
 def _unreadable_account(line: str) -> HostAccount:
     """A passwd line that names an account but does not parse (a ':' in an NSS directory's
     GECOS, for example): a foreign account (no GECOS, so never ``ours``). UNOS never
-    touches it, and never calls the name missing (I3, fail closed). Its uid is kept when
+    touches it, and never calls the name missing (ADR-0192, fail closed). Its uid is kept when
     the third field is a number, so that no uid allocation picks it; else -1."""
     fields = line.split(":")
     uid = _number(fields[2]) if len(fields) > 2 else None
@@ -377,7 +377,7 @@ def read_passdb_names() -> dict[str, str]:
     """Samba's passdb entries (``pdbedit -L``): lower-cased name -> stored name.
 
     tdbsam keys its entries by the lower-cased name, so every comparison of
-    passdb names uses the lower-cased key (spec 3.2).
+    passdb names uses the lower-cased key.
     """
     result = _run(["pdbedit", "-L"], timeout=CHANGE_TIMEOUT)
     if not result.ok:
@@ -431,7 +431,7 @@ def _ensure_group_from(by_name: HostGroup | None, by_gid: HostGroup | None, *, f
 
 
 def ensure_group() -> bool:
-    """Make sure the host group unos-smb exists with gid 70000 (spec 3.3); True when created."""
+    """Make sure the host group unos-smb exists with gid 70000 (ADR-0107); True when created."""
     by_name = read_group(_GROUP)
     if by_name is not None:
         return _ensure_group_from(by_name, None, flush=True)
@@ -456,7 +456,7 @@ def gid_problem() -> str | None:
 
 
 def create_host_account(name: str, uid: int) -> None:
-    """``useradd`` a marked account (spec 3.2); the unix password stays locked."""
+    """``useradd`` a marked account (ADR-0105); the unix password stays locked."""
     name = _checked_name(name, "useradd")
     uid = _checked_uid(uid, "useradd")
     result = _run(
@@ -485,7 +485,7 @@ def _remove_host_account(name: str, *, expected_uid: int | None = None) -> str:
     """userdel of a marked account: "removed", "missing" or "busy".
 
     The account is read again right before: an account that is not ours (or,
-    with ``expected_uid``, has another uid) is never removed (I3).
+    with ``expected_uid``, has another uid) is never removed (ADR-0192).
     """
     name = _checked_name(name, "userdel")
     account = _read_host_account(name)
@@ -525,7 +525,7 @@ def set_own_samba_password(name: str, password: str) -> None:
 
     The host may have changed since the activation: the host account of the
     name must still be ours (or missing, then smbpasswd fails), and no passdb
-    entry in another case may hold its key (spec 3.4). Otherwise 409, and
+    entry in another case may hold its key (ADR-0113). Otherwise 409, and
     smbpasswd never writes a passdb entry for a foreign account.
     """
     name = _checked_name(name, "smbpasswd")
@@ -549,7 +549,7 @@ def _delete_unos_entry(
     ``accounts`` and ``passdb`` may be old (read before a commit) or incomplete
     (an NSS directory that ``getent passwd`` does not enumerate): when they say
     that the entry is UNOS's, the account is read again by name and passdb is
-    listed again right before pdbedit runs, and only those facts decide (I3).
+    listed again right before pdbedit runs, and only those facts decide (ADR-0192).
     ``reread=False`` only for a caller that has just read both that way. A
     refusal updates both dicts with what was read.
     """
@@ -670,7 +670,7 @@ def _smbstatus() -> list[interfaces.SmbSession] | None:
 
 
 def read_smb_sessions() -> list[interfaces.SmbSession] | None:
-    """The sessions smbd serves now (`smbstatus --json`, spec 3.2); None when they cannot be read (sync)."""
+    """The sessions smbd serves now (`smbstatus --json`, ADR-0104); None when they cannot be read (sync)."""
     try:
         return _smbstatus()
     except Exception as exc:  # defensive: listing sessions must never block a flow
@@ -679,7 +679,7 @@ def read_smb_sessions() -> list[interfaces.SmbSession] | None:
 
 
 def end_smb_sessions(names: Iterable[str]) -> list[str]:
-    """Shut down the smbd processes serving sessions of ``names`` (spec 3.2). Returns warnings; never raises (sync)."""
+    """Shut down the smbd processes serving sessions of ``names`` (ADR-0104). Returns warnings; never raises (sync)."""
     try:
         given = sorted({name for name in names if isinstance(name, str) and name})
     except Exception as exc:
@@ -822,7 +822,7 @@ def _http(
     error: SmbHostError, prefix: str | None = None, *, self_flow: str | None = None, user: object = None
 ) -> HTTPException:
     """The answer of a failed host step. ``self_flow`` names the flow of a regular user's
-    own request (decision 11), e.g. "SMB could not be turned on": a failed host command
+    own request (ADR-0131), e.g. "SMB could not be turned on": a failed host command
     (SmbHostCommandFailed, whose text carries host output) is then logged (with
     ``user``) and answered with ``self_flow`` and SELF_HOST_FAILED. Every other text
     (missing tools, timeouts, refusals, collisions) is answered as it is."""
@@ -851,7 +851,7 @@ async def _commit(db: AsyncSession) -> None:
 
 
 async def reload_user(db: AsyncSession, user_id: int) -> tuple[User | None, models.SmbAccount | None]:
-    """The user and its account row, read again after smb_lock() was taken (I5).
+    """The user and its account row, read again after smb_lock() was taken (ADR-0081).
 
     ``populate_existing`` overwrites objects of the session's identity map
     (database.py sets expire_on_commit=False, so objects loaded before the
@@ -878,7 +878,7 @@ async def _apply(db: AsyncSession) -> list[str]:
     The warnings are the apply's own (host stderr, names of other shares) or the
     text of smb.SambaConfigError (testparm, the import, the pool list). Only
     administrators' answers carry them: the self flows answer SELF_APPLY_WARNING
-    instead and log them (FlowResult.add, self_flow_warnings; decision 11). Any
+    instead and log them (FlowResult.add, self_flow_warnings; ADR-0131). Any
     other error (a database error carries its SQL statement) is logged, and the
     warning is fixed.
     """
@@ -917,7 +917,7 @@ def _reset_mismatched_row(row: models.SmbAccount, user: User) -> None:
 
 
 async def allow(db: AsyncSession, user: User, row: models.SmbAccount | None) -> FlowResult:
-    """An administrator allows SMB for ``user`` (spec 3.6). Database only."""
+    """An administrator allows SMB for ``user`` (ADR-0118). Database only."""
     status = _state(user, row)
     if status.state is account_state.SmbAccountState.UNAVAILABLE:
         raise HTTPException(status_code=409, detail=status.reason)
@@ -958,7 +958,7 @@ def _require_unos_smb_conf() -> None:
 
 
 def _activation_checks(name: str, row_uid: int | None) -> _ActivationPlan:
-    """Step 2 of an activation (spec 3.6), in a worker thread: tools, smb.conf, group, collisions (3.4).
+    """Step 2 of an activation, in a worker thread: tools, smb.conf (ADR-0130), group, collisions (ADR-0113).
 
     The tool check comes first: a host without Samba (the stand-in) answers 503.
     """
@@ -977,7 +977,7 @@ def _activation_checks(name: str, row_uid: int | None) -> _ActivationPlan:
     if stored is not None and stored != name:
         raise SmbHostError(409, _other_case_message(name, stored))
     # No uid adoption: a marked account of this name is the row's own account
-    # only with the row's uid; any other one is stale (spec 3.4, D24).
+    # only with the row's uid; any other one is stale (ADR-0110).
     stale = existing if existing is not None and existing.uid != row_uid else None
     return _ActivationPlan(accounts, passdb, existing, stale)
 
@@ -1007,7 +1007,7 @@ def _activation_changes(name: str, uid: int, password: str, plan: _ActivationPla
 
 
 async def _allocate_uid(db: AsyncSession, host_uids: set[int]) -> int:
-    """A fresh uid (spec 3.3), never one of a row or of a host account; next_uid only increases."""
+    """A fresh uid (ADR-0109), never one of a row or of a host account; next_uid only increases."""
     state = await models.get_smb_state(db)
     stored = state.next_uid if _valid_next_uid(state.next_uid) else constants.SMB_UID_MIN
     row_uids = {uid for (uid,) in (await db.execute(select(models.SmbAccount.uid))).all() if _valid_uid(uid)}
@@ -1032,7 +1032,7 @@ async def activate(
     by_admin: bool,
     new_hash: str | None,
 ) -> FlowResult:
-    """Give Samba ``password`` for ``user`` and make the account active (spec 3.6).
+    """Give Samba ``password`` for ``user`` and make the account active (ADR-0118).
 
     Admin enable with a password (``new_hash`` also becomes the UNOS
     password), self-activation and create-user with SMB.
@@ -1049,7 +1049,7 @@ async def activate(
     # Kept for the compensation: a rollback expires the ORM objects.
     user_id, name = user.id, user.username
     own_uid = row.uid if row is not None and row.linux_name == name and _valid_uid(row.uid) else None
-    # A regular user's own request: no host output in its errors (decision 11).
+    # A regular user's own request: no host output in its errors (ADR-0131).
     self_flow = None if by_admin else "SMB could not be turned on"
 
     # Step 2: checks (thread).
@@ -1142,10 +1142,10 @@ def _smb_conf_not_unos(error: SmbConfNotUnos, *, by_admin: bool) -> str:
 def _compensation_error(
     failure: str | None, timeout: SmbHostTimeout | None = None, *, by_admin: bool = True
 ) -> HTTPException:
-    """The 503 of a compensation (spec 3.6): after a failed commit, or after smbpasswd
+    """The 503 of a compensation (ADR-0124): after a failed commit, or after smbpasswd
     timed out (``timeout``); ``failure`` is why the compensation failed too. A regular
     user's own request (not ``by_admin``) is not told ``failure`` (host output,
-    decision 11): it is logged."""
+    ADR-0131): it is logged."""
     if failure is None:
         return HTTPException(status_code=503, detail=NOTHING_CHANGED if timeout is None else timeout.message)
     cause = "The database was busy" if timeout is None else timeout.message
@@ -1193,7 +1193,7 @@ async def _try_mark_needed(db: AsyncSession, user_id: int, name: object) -> bool
 
 
 async def _reset_account(db: AsyncSession, user_id: int, name: str) -> str | None:
-    """Admin-reset compensation (spec 3.6): no passdb entry, the row 'needed', the sessions ended.
+    """Admin-reset compensation (ADR-0124): no passdb entry, the row 'needed', the sessions ended.
 
     Returns why this failed (the answer then says that SMB access is repaired
     at the next start), or None.
@@ -1202,13 +1202,13 @@ async def _reset_account(db: AsyncSession, user_id: int, name: str) -> str | Non
     if not await _try_mark_needed(db, user_id, name):
         failure = failure or "the SMB account could not be marked as needing a password"
     # Samba has lost the password the open sessions were opened with: either
-    # the entry is gone, or it holds a password that UNOS did not store (I9).
+    # the entry is gone, or it holds a password that UNOS did not store (ADR-0104).
     await _end_sessions(name)
     return failure
 
 
 async def _compensate_password(db: AsyncSession, user_id: int, name: str, current_password: str | None) -> str | None:
-    """Samba may hold a new password that UNOS did not store (spec 3.6): a self change
+    """Samba may hold a new password that UNOS did not store (ADR-0124): a self change
     puts the current password back; otherwise, or when that fails, _reset_account().
 
     Returns why this failed, or None.
@@ -1223,7 +1223,7 @@ async def _compensate_password(db: AsyncSession, user_id: int, name: str, curren
 
 
 def _revoke_on_host(name: object, uid: object, password_state: object) -> bool:
-    """The revoke step of spec 3.6, in a worker thread. True when a passdb entry was removed.
+    """The revoke step (ADR-0127), in a worker thread. True when a passdb entry was removed.
 
     Raises SmbHostError with the reason when the revocation cannot be guaranteed.
     """
@@ -1248,7 +1248,7 @@ async def _revoke(row: models.SmbAccount, prefix: str, *, by_admin: bool = True)
 async def _revoked_but_not_saved(db: AsyncSession, user_id: int, name: object) -> None:
     """The revoke step removed the passdb entry, then the commit failed and was rolled
     back: the row must not say 'set' while Samba has no password for it (it is set to
-    'needed' in a fresh session), and the account's open sessions end (I9)."""
+    'needed' in a fresh session), and the account's open sessions end (ADR-0104)."""
     await _try_mark_needed(db, user_id, name)
     await _end_sessions(name)
 
@@ -1285,12 +1285,12 @@ async def _turn_off(db: AsyncSession, user: User, row: models.SmbAccount | None,
 
 
 async def deactivate(db: AsyncSession, user: User, row: models.SmbAccount | None) -> FlowResult:
-    """The user turns SMB off (spec 3.6): no passdb entry, 'needed', ``enabled`` kept."""
+    """The user turns SMB off (ADR-0118): no passdb entry, 'needed', ``enabled`` kept."""
     return await _turn_off(db, user, row, disallow=False)
 
 
 async def disallow(db: AsyncSession, user: User, row: models.SmbAccount | None) -> FlowResult:
-    """An administrator turns SMB off (spec 3.6): like deactivate, plus enabled = 0.
+    """An administrator turns SMB off (ADR-0118): like deactivate, plus enabled = 0.
 
     The host account is kept (locked, without passdb entry), so the uid stays
     with the user.
@@ -1306,13 +1306,13 @@ async def update_password_before_store(
     *,
     current_password: str | None,
 ) -> PasswordUpdate | None:
-    """Samba's copy first (spec 3.5): for an active account, ``smbpasswd`` runs before
+    """Samba's copy first (ADR-0123): for an active account, ``smbpasswd`` runs before
     the caller stores the bcrypt hash; a failure answers 503 and nothing changes.
 
     Returns None for an account that is not active: a password change never
     activates SMB. The caller then stores the hash and calls store_password().
     ``current_password`` is given by the user's own change only, whose errors
-    carry no host output (decision 11).
+    carry no host output (ADR-0131).
     """
     if not _is_active(user, row):
         return None
@@ -1328,7 +1328,7 @@ async def update_password_before_store(
             raise _http(error) from None
         # smbpasswd may have stored the new password before it timed out, or may
         # still do so: Samba's password is unknown. Nothing is stored; Samba is
-        # compensated as after a failed commit (spec 3.6).
+        # compensated as after a failed commit (ADR-0124).
         await _rollback(db)
         failure = await _compensate_password(db, user_id, name, current_password)
         raise _compensation_error(failure, error, by_admin=by_admin) from None
@@ -1340,7 +1340,7 @@ async def update_password_before_store(
 
 async def store_password(db: AsyncSession, update_: PasswordUpdate | None) -> list[str]:
     """Commit a password change. After update_password_before_store() changed Samba's
-    password, a failed commit is compensated (spec 3.6) and answers 503; after the
+    password, a failed commit is compensated (ADR-0124) and answers 503; after the
     commit the account's sessions, opened with the old password, are ended."""
     if update_ is None:
         await db.commit()
@@ -1376,7 +1376,7 @@ async def revocation_guard(
     DELETE of delete_access_of_user), not only at the commit. Whichever write
     fails, the transaction is rolled back; when the revoke step had removed the
     passdb entry, the row is set to 'needed' and the account's sessions end, as
-    for a failed disallow (I9). The answer is 503. An HTTPException raised in the
+    for a failed disallow (ADR-0104). The answer is 503. An HTTPException raised in the
     block (the last-admin check's 409) passes through after the same steps.
     """
     try:
@@ -1399,7 +1399,7 @@ async def commit_revocation(db: AsyncSession, revocation: PromotionRevoke | User
 
 
 async def revoke_for_promotion(db: AsyncSession, user: User, row: models.SmbAccount | None) -> PromotionRevoke:
-    """Before ``is_admin`` is set (spec 3.6): revoke the account, delete the user's access rows.
+    """Before ``is_admin`` is set (ADR-0117): revoke the account, delete the user's access rows.
 
     Everything happens in the transaction that sets is_admin; commit it with
     commit_revocation(), then call finish_promotion().
@@ -1445,7 +1445,7 @@ async def _has_access_rows(db: AsyncSession, user_id: int) -> bool:
 
 
 async def begin_user_removal(db: AsyncSession, user: User, row: models.SmbAccount | None) -> UserRemoval | None:
-    """Before the user is deleted (spec 3.6): revoke, then delete the access and account rows
+    """Before the user is deleted: revoke, then delete the access and account rows
     in the caller's transaction. None when the user had neither an account row nor access.
 
     The caller deletes the user and commits inside revocation_guard(), which covers
@@ -1500,7 +1500,7 @@ def _remove_account_of_deleted_user(name: str, uid: object) -> list[str]:
 
 
 async def finish_user_removal(db: AsyncSession, removal: UserRemoval) -> list[str]:
-    """After the commit of a user's deletion (spec 3.6). Returns warnings; never raises."""
+    """After the commit of a user's deletion. Returns warnings; never raises."""
     warnings: list[str] = []
     try:
         if removal.had_access:
@@ -1516,7 +1516,7 @@ async def finish_user_removal(db: AsyncSession, removal: UserRemoval) -> list[st
 
 
 # --------------------------------------------------------------------------
-# Startup and post-restore reconcile (spec 4.2)
+# Startup and post-restore reconcile (ADR-0138)
 # --------------------------------------------------------------------------
 
 
@@ -1563,7 +1563,7 @@ def _rows_with_a_stale_uid(rows: list[_Row], accounts: dict[str, HostAccount]) -
     A marked account is stale when no row has its (name, uid); step 6 removes
     it. The files it created on the pools are owned by its uid, so a row of
     another name with that uid (restored or hand-edited) must never get a host
-    account with it (decision 16, defense in depth).
+    account with it (ADR-0112, defense in depth).
     """
     keys = _row_keys(rows)
     stale: dict[int, HostAccount] = {}
@@ -1579,7 +1579,7 @@ def _rows_with_a_stale_uid(rows: list[_Row], accounts: dict[str, HostAccount]) -
 
 
 def _password_missing(name: object) -> str:
-    """The change of a 'set' row for which Samba has no password (spec 4.2, rule 3d)."""
+    """The change of a 'set' row for which Samba has no password (reconcile_accounts, rule 3d)."""
     shown = _shown(name)
     return f"SMB password of {shown} is missing in Samba; {shown} must enter it again"
 
@@ -1602,7 +1602,7 @@ def _read_host_state() -> tuple[dict[str, HostAccount], HostGroup | None, HostGr
 
 
 def _reconcile_host(plan: _HostPlan) -> _HostOutcome:
-    """Step 6 of spec 4.2, in one worker thread; each action only when needed."""
+    """Step 6 of reconcile_accounts, in one worker thread; each action only when needed."""
     out = _HostOutcome()
     accounts = dict(plan.accounts)
     passwd_changed = False
@@ -1637,7 +1637,7 @@ def _reconcile_host(plan: _HostPlan) -> _HostOutcome:
                 if name in active_names:
                     # passdb is keyed by the name: that was the only password Samba
                     # had for the active row of this name (another uid). The row must
-                    # not stay 'set' (spec 4.2 step 6 assumed the entry survives).
+                    # not stay 'set'.
                     out.needed[name] = _password_missing(name)
             out.problems += end_smb_sessions([name])
             outcome = _remove_host_account(name, expected_uid=account.uid)
@@ -1713,7 +1713,7 @@ def _reconcile_host(plan: _HostPlan) -> _HostOutcome:
 
 
 async def _uid_floor(db: AsyncSession, uids: Iterable[object]) -> str | None:
-    """Step 5 of spec 4.2: next_uid is at least one above every uid seen; written only on a difference."""
+    """Step 5 of reconcile_accounts (ADR-0109): next_uid is at least one above every uid seen; written only on a difference."""
     floor = max([constants.SMB_UID_MIN] + [uid + 1 for uid in uids if _valid_uid(uid)])  # type: ignore[operator]
     table = models.SmbState.__table__
     found = (await db.execute(select(table.c.next_uid).where(table.c.id == 1))).first()
@@ -1731,20 +1731,20 @@ async def _uid_floor(db: AsyncSession, uids: Iterable[object]) -> str | None:
 
 
 async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
-    """Make the host match the rows (spec 4.2). The caller holds smb_lock() and applies afterwards.
+    """Make the host match the rows. The caller holds smb_lock() and applies afterwards.
 
     No write transaction is open while a host command runs: the host is read
     before the database rules write anything, and their changes are committed
     before the host actions of step 6. The startup reconcile runs while
-    requests are served (D27), and SQLite keeps its write lock until the
+    requests are served (ADR-0138), and SQLite keeps its write lock until the
     commit, so every other writer would wait for it and fail. Each commit
-    happens only when a row changed (I6).
+    happens only when a row changed (ADR-0082).
     """
     result = interfaces.ReconcileResult()
     missing = await asyncio.to_thread(missing_samba_tools)
 
     # Plain SQL (Core) on the tables: every statement reads the database (no
-    # identity map, I5), and no DateTime column is parsed (a restored database
+    # identity map, ADR-0081), and no DateTime column is parsed (a restored database
     # can hold anything there).
     accounts_t = models.SmbAccount.__table__
     users_t = User.__table__
@@ -1864,7 +1864,7 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
 
     # 3c'. A row of another name that holds the uid of a stale marked host account
     # (which step 6 removes) loses it: uid NULL, 'needed', and a fresh uid at its next
-    # activation (decision 16, defense in depth). Decided on the host snapshot of
+    # activation (ADR-0112, defense in depth). Decided on the host snapshot of
     # step 2 and committed with the other rules before step 6 removes the account,
     # so that a failed commit or a stop after the userdel never leaves the row with
     # the uid of an account that is gone (a later run could not see the conflict).
@@ -1935,7 +1935,7 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
 
 
 # --------------------------------------------------------------------------
-# Database restore (spec 4.3): sync, sqlite3, before the extracted database
+# Database restore (ADR-0139): sync, sqlite3, before the extracted database
 # replaces the live one
 # --------------------------------------------------------------------------
 
@@ -2013,7 +2013,7 @@ def snapshot_for_restore(db_path: pathlib.Path | None) -> interfaces.RestoreSnap
 
 def _proven(prev: interfaces.PrevAccount | None, username: object, hashed: object, is_admin: bool,
             linux_name: object, uid: object) -> bool:
-    """Spec 4.3: equal bcrypt strings (salt included) prove that Samba holds the restored password."""
+    """Equal bcrypt strings (salt included) prove that Samba holds the restored password (ADR-0141)."""
     return (
         isinstance(prev, interfaces.PrevAccount)
         and isinstance(prev.username, str) and isinstance(username, str) and prev.username == username
@@ -2029,7 +2029,7 @@ def _proven(prev: interfaces.PrevAccount | None, username: object, hashed: objec
 def prepare_restored_accounts(
     conn: sqlite3.Connection, snapshot: interfaces.RestoreSnapshot, authoritative: bool
 ) -> list[str]:
-    """Apply the account rules of spec 4.3 to an extracted database, inside the caller's
+    """Apply the account rules of a restore (ADR-0141) to an extracted database, inside the caller's
     transaction on ``conn`` (sync). Returns messages for the restore result."""
     messages: list[str] = []
 

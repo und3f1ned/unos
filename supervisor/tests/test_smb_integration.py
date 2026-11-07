@@ -1,12 +1,11 @@
-"""The whole SMB cycle with the real shares (P1) and accounts (P2) code (spec 9.1):
+"""The whole SMB cycle with the real shares and accounts code (ADR-0189):
 startup import, a share folder, an account, access changes, revocations and the
 startup sweep, asserting the smb.conf that UNOS writes.
 
 Host commands go to the FakeSambaHost (its fstab has the pool 'data'). It does
 not emulate findmnt or btrfs, so pools._mounted_pool_target and
 disks.host_mounts are patched; os.fchown is recorded, so that the test runs as
-a regular user. Needs P1 merged: before that, service.reconcile_smb_on_startup
-raises NotImplementedError("P1").
+a regular user.
 """
 from __future__ import annotations
 
@@ -52,7 +51,7 @@ DEVICE_SMB_CONF = """[global]
 ALL_SAMBA_TOOLS = {"getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus",
                    "smbcontrol", "testparm"}
 
-# The real P1 functions, recorded at import (before any fixture replaces them).
+# The real functions of shares/service.py, recorded at import (before any fixture replaces them).
 REAL_APPLY = service.apply_smb_config
 REAL_DELETE_ACCESS = service.delete_access_of_user
 
@@ -74,7 +73,7 @@ def cycle(tmp_path, monkeypatch, caplog):
     """The World of test_smb_accounts (admin and the regular user 'test') with the real
     service.apply_smb_config and delete_access_of_user, a temporary smb.conf and pools base."""
     world = World(tmp_path, monkeypatch, caplog)
-    # The real P1 functions, not the AsyncMocks of the unit tests.
+    # The real service functions, not the AsyncMocks of the unit tests.
     monkeypatch.setattr(service, "apply_smb_config", REAL_APPLY)
     monkeypatch.setattr(service, "delete_access_of_user", REAL_DELETE_ACCESS)
     world.add_user("test", TEST_PW)
@@ -133,7 +132,7 @@ def test_whole_cycle(cycle):
     # 1. Startup imports the device's [DATA]: the pool root is not served, so
     # smb.conf is the header and render_global(False) only.
     startup()
-    from src.shares import smbconf  # P1's module (after the first P1 call, which needs it too)
+    from src.shares import smbconf  # imported after startup(), which uses it too
 
     text = c.conf.read_text()
     assert text == smbconf.render_config([])
@@ -252,7 +251,7 @@ def test_whole_cycle(cycle):
 
 
 def test_a_host_without_samba_writes_the_audit_log_only_for_changes(cycle):
-    """D5 of decisions-v2: problems alone (the stand-in) write no audit entry."""
+    """ADR-0157: problems alone (the stand-in) write no audit entry."""
     fake, world = cycle.fake, cycle.world
     fake.missing = set(ALL_SAMBA_TOOLS)
 
@@ -268,7 +267,7 @@ def test_a_host_without_samba_writes_the_audit_log_only_for_changes(cycle):
 
 
 def test_smb_is_turned_on_only_once_unos_wrote_smb_conf(cycle, monkeypatch):
-    """Decision 10: the first apply after the upgrade fails (here testparm refuses the file),
+    """ADR-0130: the first apply after the upgrade fails (here testparm refuses the file),
     so Samba still serves the device's old smb.conf, whose [DATA] gives write access to every
     Samba user. Turning SMB on is refused (no smbpasswd, no passdb entry) until an apply
     succeeded; revocations are not blocked."""
@@ -316,7 +315,7 @@ def test_smb_is_turned_on_only_once_unos_wrote_smb_conf(cycle, monkeypatch):
 
 
 def test_smb_conf_replaced_after_unos_wrote_it(cycle, monkeypatch):
-    """Decision 10 after a successful apply: the device's old smb.conf is copied back while
+    """ADR-0130 after a successful apply: the device's old smb.conf is copied back while
     this release runs. Turning SMB on is refused, and neither answer claims what is not
     so: the regular user is told to ask an administrator (the Shares page lists no reason
     for this), the administrator that the file was replaced after UNOS wrote it."""
@@ -358,7 +357,7 @@ def test_smb_conf_replaced_after_unos_wrote_it(cycle, monkeypatch):
 
 
 def test_a_regular_users_answers_name_no_other_share_and_no_host_output(cycle):
-    """sec-api-5, decision 11: an administrator removed alice's access to her private share
+    """ADR-0131: an administrator removed alice's access to her private share
     while Samba's reload fails, so its close is pending. The regular user 'test' turns its own
     SMB off: the answer carries fixed warnings only, while the administrator's status keeps
     the details."""

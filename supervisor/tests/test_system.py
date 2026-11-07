@@ -158,7 +158,7 @@ class TestTemperatures:
         }
         
         with patch("src.system.router.verify_token"):
-            with patch("psutil.sensors_temperatures", return_value=mock_sensors):
+            with patch("psutil.sensors_temperatures", create=True, return_value=mock_sensors):
                 result = asyncio.run(get_temperatures())
         
         assert len(result) == 2
@@ -183,7 +183,7 @@ class TestTemperatures:
         }
         
         with patch("src.system.router.verify_token"):
-            with patch("psutil.sensors_temperatures", return_value=mock_sensors):
+            with patch("psutil.sensors_temperatures", create=True, return_value=mock_sensors):
                 result = asyncio.run(get_temperatures())
         
         assert result[0].sensors[0].label == "Sensor 0"
@@ -200,7 +200,7 @@ class TestTemperatures:
         }
         
         with patch("src.system.router.verify_token"):
-            with patch("psutil.sensors_temperatures", return_value=mock_sensors):
+            with patch("psutil.sensors_temperatures", create=True, return_value=mock_sensors):
                 result = asyncio.run(get_temperatures())
         
         assert result[0].sensors[0].high is None
@@ -212,7 +212,7 @@ class TestTemperatures:
         import asyncio
         
         with patch("src.system.router.verify_token"):
-            with patch("psutil.sensors_temperatures", side_effect=Exception("No sensors")):
+            with patch("psutil.sensors_temperatures", create=True, side_effect=Exception("No sensors")):
                 result = asyncio.run(get_temperatures())
         
         assert result == []

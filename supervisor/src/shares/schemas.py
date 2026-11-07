@@ -1,6 +1,6 @@
-"""Request and answer models of the share API (spec 5.1); NFS models unchanged.
+"""Request and answer models of the share API; NFS models unchanged.
 
-SMB shares and their per-user access are rows of the UNOS database (spec 0):
+SMB shares and their per-user access are rows of the UNOS database (ADR-0074):
 smb.conf is rendered from them. Access is granted per UNOS user, read or
 write; guests can only ever read. Requests name users by id and also carry
 the username the client saw, because users.id is reused after a deletion.
@@ -89,8 +89,8 @@ class SmbShareInfo(BaseModel):
     guest_ok: bool
     access: list[ShareAccessInfo]                   # sorted by username
     version: int                                    # send it back as expected_version
-    served: bool                                    # the path passes 5.4: the share is rendered
-    path_problem: str | None                        # why it is not served (5.4); None when served
+    served: bool                                    # the path passes the path rules (ADR-0145): the share is rendered
+    path_problem: str | None                        # why it is not served (ADR-0145); None when served
     available: bool                                 # served and (guest_ok or at least one effective entry)
     pool: str | None                                # first path component below the pools base
     pool_mounted: bool | None                       # None: the host mount table could not be read

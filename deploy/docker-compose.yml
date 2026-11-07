@@ -82,7 +82,8 @@ services:
     # and its systemd unit pass at least that as --wait-timeout
     # (SUPERVISOR_START_TIMEOUT), which Compose 2.30 or later applies to this
     # wait, so that Compose does not give up on the supervisor first. Change
-    # SUPERVISOR_START_TIMEOUT in both scripts with these values.
+    # SUPERVISOR_START_TIMEOUT in both scripts, and UNOS_DEV_UP_TIMEOUT of
+    # scripts/dev/deploy.sh, with these values.
     healthcheck:
       test:
         - CMD

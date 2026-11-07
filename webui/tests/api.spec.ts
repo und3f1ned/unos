@@ -1,18 +1,28 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
+import { E2E_ADMIN } from './fixtures';
+import { TEST_STACK_TOO, targetUrl } from './target';
 
-// Same default as playwright.config.ts: the UI and API are served over HTTPS.
-const BASE_URL = process.env.BASE_URL || 'https://10.1.1.103';
+// The target of playwright.config.ts: the UI and API are served over HTTPS.
+const BASE_URL = targetUrl();
 let token = '';
+
+// What the stand-in (E2E_STAND_IN=1) lacks: it is not a NAS host. The tests
+// of these endpoints are skipped there, with the reason (ADR-0215), and on the
+// compose test stack, which sets E2E_STAND_IN=1 too (TEST_STACK_TOO).
+const NO_DISKS = 'The stand-in is not a NAS host: it has no disks to list (lsblk)' + TEST_STACK_TOO;
+const NO_POOLS = 'The stand-in is not a NAS host: it has no btrfs filesystems to list (btrfs)' + TEST_STACK_TOO;
+const NO_DOCKER = 'The stand-in has no Docker, which runs the containers and the installed apps' + TEST_STACK_TOO;
+const NO_HOST_NETWORK =
+  "The stand-in cannot read the host's network: the network API enters the host's namespaces (nsenter, ip, ss)" +
+  TEST_STACK_TOO;
+const NO_DISK_HEALTH = 'The stand-in is not a NAS host: it has no disks to check (lsblk, smartctl)' + TEST_STACK_TOO;
+const NO_JOURNAL = 'The stand-in has no systemd journal (journalctl)' + TEST_STACK_TOO;
+const NO_PROC = "The stand-in has no Linux /proc with the host's uptime and load" + TEST_STACK_TOO;
 
 test.describe('API Tests', () => {
   test.beforeAll(async ({ request }) => {
     // Login to get token
-    const response = await request.post(`${BASE_URL}/api/v1/auth/login`, {
-      data: {
-        username: 'admin',
-        password: 'admin123',
-      },
-    });
+    const response = await request.post(`${BASE_URL}/api/v1/auth/login`, { data: E2E_ADMIN });
     expect(response.ok()).toBeTruthy();
     const data = await response.json();
     token = data.access_token;
@@ -128,6 +138,7 @@ test.describe('API Tests', () => {
 
   // ==================== Storage ====================
   test('GET /api/v1/storage/disks should return disks', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_DISKS);
     const response = await request.get(`${BASE_URL}/api/v1/storage/disks`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -137,6 +148,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/storage/pools should return pools', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_POOLS);
     const response = await request.get(`${BASE_URL}/api/v1/storage/pools`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -175,6 +187,7 @@ test.describe('API Tests', () => {
 
   // ==================== Containers ====================
   test('GET /api/v1/containers should return containers', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_DOCKER);
     const response = await request.get(`${BASE_URL}/api/v1/containers`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -207,6 +220,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/apps/installed should return installed apps', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_DOCKER);
     const response = await request.get(`${BASE_URL}/api/v1/apps/installed`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -249,6 +263,7 @@ test.describe('API Tests', () => {
 
   // ==================== Network ====================
   test('GET /api/v1/network/interfaces should return interfaces', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_HOST_NETWORK);
     const response = await request.get(`${BASE_URL}/api/v1/network/interfaces`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -259,6 +274,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/network/stats should return network stats', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_HOST_NETWORK);
     const response = await request.get(`${BASE_URL}/api/v1/network/stats`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -268,6 +284,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/network/dns should return DNS config', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_HOST_NETWORK);
     const response = await request.get(`${BASE_URL}/api/v1/network/dns`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -277,6 +294,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/network/hostname should return hostname', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_HOST_NETWORK);
     const response = await request.get(`${BASE_URL}/api/v1/network/hostname`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -286,6 +304,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/network/gateway should return gateway', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_HOST_NETWORK);
     const response = await request.get(`${BASE_URL}/api/v1/network/gateway`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -295,6 +314,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/network/routes should return routes', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_HOST_NETWORK);
     const response = await request.get(`${BASE_URL}/api/v1/network/routes`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -304,6 +324,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/network/connections should return connections', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_HOST_NETWORK);
     const response = await request.get(`${BASE_URL}/api/v1/network/connections`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -357,6 +378,7 @@ test.describe('API Tests', () => {
 
   // ==================== Health ====================
   test('GET /api/v1/health/overview should return health overview', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_DISK_HEALTH);
     const response = await request.get(`${BASE_URL}/api/v1/health/overview`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -364,6 +386,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/health/disks should return disk health', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_DISK_HEALTH);
     const response = await request.get(`${BASE_URL}/api/v1/health/disks`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -379,6 +402,7 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/logs/entries should return log entries', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_JOURNAL);
     const response = await request.get(`${BASE_URL}/api/v1/logs/entries`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -394,6 +418,7 @@ test.describe('API Tests', () => {
 
   // ==================== Power ====================
   test('GET /api/v1/power/status should return power status', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_PROC);
     const response = await request.get(`${BASE_URL}/api/v1/power/status`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -469,12 +494,11 @@ test.describe('API Tests', () => {
 });
 
 // ==================== SMB shares and accounts ====================
-// Safe everywhere, the device included: nothing below creates a share, a
-// folder or an SMB account (every share request is refused before that).
-// That holds for the API of this release only: the share requests are sent
-// only when the target has it (see "SMB API").
+// Nothing below creates a share, a folder or an SMB account: the API refuses
+// every share request before that.
 
-// Pools base of the stand-in the specs run against (the local one differs).
+// The pools folder of the target: E2E_POOLS_BASE, which scripts/standin/e2e.sh
+// sets to the stand-in's; /mnt/pools on the test stack.
 const POOLS = process.env.E2E_POOLS_BASE || '/mnt/pools';
 const POOL_ROOT_MESSAGE =
   'Share a folder inside the pool or a volume: the top level of a pool holds app data (apps/), volumes and snapshots';
@@ -490,28 +514,14 @@ async function loginToken(
 
 test.describe('SMB API', () => {
   let adminToken = '';
-  // Status of GET /shares/smb-status, which only the API of this release has.
-  // An older supervisor (404) accepts the share requests below as they are:
-  // it would create the shares and their folders, and rewrite smb.conf.
-  let smbStatus = 0;
   const auth = () => ({ Authorization: `Bearer ${adminToken}` });
 
   test.beforeAll(async ({ request }) => {
-    adminToken = await loginToken(request, { username: 'admin', password: 'admin123' });
-    smbStatus = (await request.get(`${BASE_URL}/api/v1/shares/smb-status`, { headers: auth() })).status();
-  });
-
-  test.beforeEach(() => {
-    test.skip(
-      smbStatus === 404,
-      'The target runs a supervisor without the SMB API of this release (no GET /shares/smb-status): ' +
-        'its share API would create the shares and folders these tests send.',
-    );
+    adminToken = await loginToken(request, E2E_ADMIN);
   });
 
   // Should a share have been created after all, it is removed (its folder stays).
   test.afterAll(async ({ request }) => {
-    if (smbStatus === 404) return;
     const response = await request.get(`${BASE_URL}/api/v1/shares/smb`, { headers: auth() });
     if (!response.ok()) return;
     for (const share of (await response.json()) as { name?: unknown }[]) {
@@ -613,7 +623,7 @@ test.describe('SMB API as a regular user', () => {
   const asUser = () => ({ Authorization: `Bearer ${userToken}` });
 
   test.beforeAll(async ({ request }) => {
-    adminToken = await loginToken(request, { username: 'admin', password: 'admin123' });
+    adminToken = await loginToken(request, E2E_ADMIN);
     const created = await request.post(`${BASE_URL}/api/v1/auth/users`, { headers: asAdmin(), data: regular });
     expect(created.ok(), `create ${regular.username}: HTTP ${created.status()}`).toBeTruthy();
     userId = (await created.json()).id;
@@ -665,7 +675,6 @@ test.describe('SMB API as a regular user', () => {
 // here have no SMB account, so no host account is touched.
 test.describe('User API: requests name the user', () => {
   let adminToken = '';
-  let smbStatus = 0;
   const asAdmin = () => ({ Authorization: `Bearer ${adminToken}` });
   let made: { id: number; username: string }[] = [];
 
@@ -682,12 +691,7 @@ test.describe('User API: requests name the user', () => {
   }
 
   test.beforeAll(async ({ request }) => {
-    adminToken = await loginToken(request, { username: 'admin', password: 'admin123' });
-    smbStatus = (await request.get(`${BASE_URL}/api/v1/shares/smb-status`, { headers: asAdmin() })).status();
-  });
-
-  test.beforeEach(() => {
-    test.skip(smbStatus === 404, 'The target runs a supervisor without the SMB API of this release');
+    adminToken = await loginToken(request, E2E_ADMIN);
   });
 
   test.afterEach(async ({ request }) => {

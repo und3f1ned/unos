@@ -1,4 +1,4 @@
-"""Bounded login and audit input (decision 13, sec-api-1).
+"""Bounded login and audit input (ADR-0065).
 
 A failed login needs no authentication, yet it adds an entry to audit_log.json (which
 every audit write rewrites whole) and a row to login_attempts. LoginRequest bounds its
@@ -36,7 +36,7 @@ def attempts(world: World) -> list[str]:
 
 class TestLoginRequest:
     def test_one_failed_login_with_a_huge_username(self, world):
-        """The verifier's repro: about 1 MiB of non-ASCII username (6 bytes each in the
+        """About 1 MiB of non-ASCII username (6 bytes each in the
         file) and an 8000-character User-Agent once grew audit_log.json by 3 MB."""
         body = json.dumps({"username": "é" * 520_000, "password": "x"}, ensure_ascii=False).encode()
 

@@ -1,4 +1,4 @@
-"""The one-time import of the existing smb.conf (spec 1.4 and 9.1, P1).
+"""The one-time import of the existing smb.conf (ADR-0084, ADR-0086).
 
 Each test has its own database file, pools base, smb.conf and audit log; host
 commands go to a fake behind ``src.host.run_on_host`` and the pool list is
@@ -171,7 +171,7 @@ def served_folder(env, name="x"):
     return f"{env.pool}/{name}"
 
 
-# --- the mapping table (spec 1.4) ---------------------------------------------------------------------
+# --- mapping a section to a share (ADR-0086) ---------------------------------------------------------------------
 
 
 class TestMapping:
@@ -280,7 +280,7 @@ class TestMapping:
         assert share.notes == [f"It had {command} with {close}, which UNOS does not support; access was removed: "
                                "review it and grant access"]
         assert (one(env, "y").access, one(env, "y").notes) == ({"bob": "read"}, None)
-        # A restriction gets a report line too, in a section as in [global] (decision 3).
+        # A restriction gets a report line too, in a section as in [global] (ADR-0086).
         assert [line for line in state(env).report if line.startswith("Share ")] == [
             f"Share x had {command} with {close}, which UNOS does not support: its access was removed; "
             "review it and grant access"]
@@ -635,7 +635,7 @@ class TestDeviceFiles:
         assert not env.backup.exists()
 
 
-# --- path rules (spec 1.4, 5.4) -----------------------------------------------------------------
+# --- path rules (ADR-0145) -----------------------------------------------------------------
 
 
 class TestPaths:
@@ -860,7 +860,7 @@ class TestMarker:
         assert service.last_import_problem() == "Shares were not imported from smb.conf: [Errno 13] Permission denied"
 
     async def test_a_database_error_names_only_its_type(self, env, monkeypatch):
-        """Account flows show this text to regular users (P2 turns it into their warning), and a
+        """Account flows show this text to regular users (shares/accounts.py turns it into their warning), and a
         database error carries its SQL statement and parameters: share names, folders, comments
         and user names. The log and the administrator's status keep the details."""
         write_conf(env, "[docs]\n path = {pool}/docs\n comment = Team\n valid users = alice\n")
@@ -992,7 +992,7 @@ class TestJsonLines:
         assert service.json_lines(value) == expected
 
 
-# --- the other triggers: the startup and the first read (spec 1.4) ---------------------------------
+# --- the other times the import runs: the startup and the first read (ADR-0084) ---------------------------------
 
 from unittest.mock import AsyncMock, MagicMock  # noqa: E402
 
@@ -1007,7 +1007,7 @@ from src.storage import disks  # noqa: E402
 
 @pytest.fixture
 def startup(env, monkeypatch):
-    """reconcile_smb_on_startup on the test database; P2's functions are mocked."""
+    """reconcile_smb_on_startup on the test database; the functions of shares/accounts.py are mocked."""
     maker = async_sessionmaker(create_async_engine(f"sqlite+aiosqlite:///{env.db_path}", poolclass=NullPool),
                                expire_on_commit=False)
     monkeypatch.setattr(src.database, "async_session", maker)

@@ -4,6 +4,13 @@ import secrets
 import tempfile
 from unittest.mock import patch, MagicMock
 
+# The suite runs git in temporary repositories of its own. git exports GIT_DIR, GIT_INDEX_FILE
+# and others to its hooks and to `git rebase -x` commands; inherited, they would point those git
+# runs at the developer's repository. They are removed here, when pytest loads this file and
+# before any test module builds an environment from os.environ.
+for _name in [name for name in os.environ if name.startswith("GIT_")]:
+    del os.environ[_name]
+
 # Set test environment variables before importing anything
 os.environ["UNOS_DB_PATH"] = ":memory:"
 # Random per run: secrets this repo published (such as the "test-secret-key"
@@ -16,8 +23,8 @@ os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"
 
 @pytest.fixture(autouse=True)
 def _test_pools_count_as_mounted(monkeypatch):
-    """A share folder is created only through a pool root on the pool's mount (spec 5.4
-    rule 7): where /proc/self/mountinfo exists (Linux), the pool root's mount ID must be
+    """A share folder is created only through a pool root on the pool's mount (ADR-0152):
+    where /proc/self/mountinfo exists (Linux), the pool root's mount ID must be
     a mount at <pools base>/<pool>. The tests' pools are plain folders, not mount
     points, so the check is replaced here. Tests of the check itself use the function
     as service imports it (test_share_api.REAL_POOL_ROOT_MOUNT_PROBLEM)."""

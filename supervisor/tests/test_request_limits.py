@@ -41,7 +41,7 @@ from websockets.sync.client import connect as websocket_connect
 from src.auth.models import User
 from src.auth.utils import create_access_token, verify_token
 from src.backup.router import MAX_ARCHIVE_BYTES
-from src.database import Base
+from src.database import Base, get_db
 from src.main import app
 from src.request_limits import (
     MAX_REQUEST_BODY,
@@ -682,3 +682,46 @@ def test_uvicorn_does_not_accept_websocket_compression(ws_token, compression):
             assert ws.protocol.extensions == []
             ws.send(json.dumps({"type": "auth", "token": ws_token}))
             assert json.loads(ws.recv(timeout=15)) == {"type": "auth_ok"}
+
+
+# --- signed in (feature-list.json: security.request-limits, step 2) -----------------
+
+
+@pytest.fixture
+def admin_token(tmp_path):
+    """A valid administrator token: the user is in a throwaway database behind get_db."""
+    path = tmp_path / "limits.db"
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(User(username="limits_admin", hashed_password="!", is_admin=True))
+        session.commit()
+    engine.dispose()
+    maker = async_sessionmaker(
+        create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool), expire_on_commit=False
+    )
+
+    async def override_get_db():
+        async with maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        yield create_access_token({"sub": "limits_admin"})
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_a_signed_in_client_gets_413_for_a_declared_and_a_chunked_body(admin_token):
+    client = TestClient(app)
+    auth = {"Authorization": f"Bearer {admin_token}"}
+    assert client.get("/api/v1/auth/me", headers=auth).status_code == 200  # the token is valid
+    headers = {**auth, "Content-Type": "application/json"}
+    body = _json_body(2 * MAX_REQUEST_BODY)
+
+    declared = client.post(VOLUMES, content=body, headers=headers)
+    chunked = client.post(VOLUMES, content=iter([body]), headers=headers)
+
+    assert "content-length" not in chunked.request.headers
+    assert (declared.status_code, declared.json()) == (413, TOO_LARGE)
+    assert (chunked.status_code, chunked.json()) == (413, TOO_LARGE)

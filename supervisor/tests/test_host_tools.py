@@ -147,7 +147,7 @@ def test_host_tools_list_names_the_programs_run_on_the_host():
 
 
 def test_host_tools_list_the_smb_account_programs():
-    """The startup check names the packages of the SMB account commands (spec 3.2)."""
+    """The startup check names the packages of the SMB account commands."""
     assert {
         "getent": "libc-bin",
         "groupadd": "passwd",

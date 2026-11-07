@@ -1,4 +1,4 @@
-"""Rendering smb.conf from the database and applying it (spec 2.4-2.7, 5.4 and 9.1, P1).
+"""Rendering smb.conf from the database and applying it (ADR-0088, ADR-0089).
 
 Each test has its own database file, pools base and smb.conf. Host commands
 go to ``FakeSmbHost`` behind ``src.host.run_on_host``; the pool list is
@@ -53,7 +53,7 @@ class FakeSmbHost:
     def run(self, cmd, **kwargs):
         cmd = list(cmd)
         self.calls.append(cmd)
-        assert "close-denied-share" not in cmd, "close-denied-share is never used (spec 2.5)"
+        assert "close-denied-share" not in cmd, "close-denied-share is never used (ADR-0103)"
         for prefix, outcome in self.fail.items():
             if tuple(cmd[: len(prefix)]) == prefix:
                 if isinstance(outcome, BaseException):
@@ -169,7 +169,7 @@ def temp_files(env) -> list[str]:
     return sorted(name for name in os.listdir(env.samba) if name.endswith(".unos-tmp"))
 
 
-# --- the apply pipeline (spec 2.4) ----------------------------------------------------------------
+# --- the apply pipeline (ADR-0089) ----------------------------------------------------------------
 
 
 class TestApply:
@@ -541,7 +541,7 @@ class TestReloadAndClose:
 
 
 class TestClosedShares:
-    """close-share after every shrink (spec 2.5), after the reload; nothing after additions."""
+    """close-share after every shrink (ADR-0103), after the reload; nothing after additions."""
 
     async def start(self, env, **share):
         add_share(env, "docs", "docs", **share)
@@ -725,7 +725,7 @@ class TestReplaced:
         assert replaced.read_text() == old
 
         # Another foreign section later (a rollback-era release, a hand edit): the copy is
-        # rewritten with it (spec 2.4 step 7: unless it has exactly these bytes).
+        # rewritten with it, unless it already holds exactly these bytes (ADR-0092).
         later = rendered + f"\n[later]\n   path = {env.pool}/later\n   read only = no\n"
         env.conf.write_text(later)
         result = await apply(env)
@@ -735,8 +735,8 @@ class TestReplaced:
         assert service.last_apply().replaced_problem == problem.replace("(legacy)", "(later)")
 
     async def test_a_failed_copy_keeps_smb_conf(self, env, monkeypatch):
-        """I1: sections that UNOS did not render are copied before they are overwritten; without
-        the copy, smb.conf is not replaced (spec 2.4 steps 7-8)."""
+        """ADR-0092: sections that UNOS did not render are copied before they are overwritten;
+        without the copy, smb.conf is not replaced."""
         add_share(env, "docs", "docs", access={ALICE: "read"})
         old = f"[global]\n   workgroup = OLD\n[legacy]\n   path = {env.pool}/legacy\n   read only = no\n"
         env.conf.write_text(old)
@@ -780,7 +780,7 @@ class TestReplaced:
         assert result.warnings == ["Open connections to print$ were not closed: not a valid share name"]
 
 
-# --- the render input (spec 2.4) -----------------------------------------------------------------
+# --- the render input -----------------------------------------------------------------
 
 
 class TestRenderInput:
@@ -916,7 +916,7 @@ class TestRenderInput:
 
     @pytest.mark.parametrize("order", [("read", "write"), ("write", "read")])
     async def test_two_rows_of_one_user_render_the_lower_level(self, env, order):
-        """I7: a restored smb_share_access without UNIQUE(share_id, user_id) passes
+        """ADR-0144: a restored smb_share_access without UNIQUE(share_id, user_id) passes
         ensure_smb_tables (it checks columns) and can hold two rows for one user. Neither the
         first nor the last row wins: the lower level does."""
         share_id = add_share(env, "docs", "docs")
@@ -963,7 +963,7 @@ class TestRenderInput:
         assert [(s.name, s.readers) for s in result.shares] == [("new", ("carol",))]
 
 
-# --- the path rules (spec 5.4) ---------------------------------------------------------------------
+# --- the path rules (ADR-0145) ---------------------------------------------------------------------
 
 
 class TestSharePathProblem:
@@ -1044,7 +1044,7 @@ class TestShareProblem:
                 await service.share_problem(db, fine)
 
 
-# --- rows (spec 1.3) -------------------------------------------------------------------------------
+# --- rows -------------------------------------------------------------------------------
 
 
 def rows(env, query):
@@ -1227,7 +1227,7 @@ class TestSmbHelpers:
         assert Path(smb.import_backup_path()).read_bytes() == b"first"
 
 
-# --- share mutations and the startup (the API and service parts of spec 2.4, 5.3) -----------------
+# --- share mutations and the startup -----------------
 
 from unittest.mock import AsyncMock, MagicMock  # noqa: E402
 
@@ -1377,7 +1377,7 @@ class TestShareMutations:
         return early, seen, result
 
     async def test_a_patch_waits_for_smb_lock(self, mutations, monkeypatch):
-        """I5: a PATCH must not read or stage while another SMB change (a restore, the startup
+        """ADR-0080: a PATCH must not read or stage while another SMB change (a restore, the startup
         reconcile, an account flow, another share change) holds smb_lock."""
         env = mutations
         add_share(env, "docs", "docs", access={ALICE: "read"})
@@ -1407,7 +1407,7 @@ class TestShareMutations:
     async def test_a_patch_or_delete_imports_first_and_the_import_commits_none_of_its_changes(
         self, mutations, monkeypatch, mutation
     ):
-        """Spec 5.3 and 9.1: the marker became NULL while the mutation waited on smb_lock (a
+        """ADR-0084: the marker became NULL while the mutation waited on smb_lock (a
         restore whose import failed): the mutation imports first, and that commit holds only
         the import."""
         env = mutations
@@ -1480,7 +1480,7 @@ class TestStartupStaleFiles:
 class TestDatabaseEngine:
     """The app's engine (database.engine_options): share mutations hold SQLite's write lock
     while testparm runs, and smb_lock holders may need a second connection while requests
-    waiting for the lock hold one each (concurrency-2 and -3)."""
+    waiting for the lock hold one each (ADR-0079)."""
 
     def test_options(self):
         options = src.database.engine_options("/data/unos.db")

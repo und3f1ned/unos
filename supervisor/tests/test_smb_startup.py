@@ -1,9 +1,9 @@
-"""The SMB startup reconcile (spec 4.2 and 9.1, P1): service.reconcile_smb_on_startup.
+"""The SMB startup reconcile (ADR-0138): service.reconcile_smb_on_startup.
 
-P2's functions are mocked: accounts.reconcile_accounts (an AsyncMock returning
+The functions of shares/accounts.py are mocked: accounts.reconcile_accounts (an AsyncMock returning
 a ReconcileResult), accounts.read_smb_sessions (returning SmbSession values)
 and accounts.end_smb_sessions. The real ``smbcontrol <pid> shutdown`` is
-asserted in P2's test_smb_integration.py.
+asserted in test_smb_integration.py.
 
 Each test has its own database file (alice, bob and carol have active SMB
 accounts, dave has none), pools base, smb.conf and audit log; host commands
@@ -385,7 +385,7 @@ class TestSteps:
         assert (service.last_apply().reload_pending, service.last_apply().close_after_full_reload) == (False, set())
 
     async def test_the_startup_reload_closes_pending_shares_again_after_the_full_reload(self, env):
-        """Step 5 of spec 4.2 (_reload_now) closes the pending shares after its reload; after a
+        """Step 5 of _reconcile (_reload_now) closes the pending shares after its reload; after a
         reload with systemctl only they are closed again after the next full reload."""
         service.last_apply().pending_close = {"docs"}
         env.host.fail[("smbcontrol", "all")] = HostResult(1, "", "no smbd")
@@ -450,7 +450,7 @@ class TestProblemsOnly:
         assert (await smb_status(env))["problems"] == ["SMB tools missing on the host: smbpasswd"]
 
 
-# --- the startup task and the first request (spec 4.2) ----------------------------------------------
+# --- the startup task and the first request (ADR-0138) ----------------------------------------------
 
 
 def _quiet_lifespan(monkeypatch):
