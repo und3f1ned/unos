@@ -135,6 +135,23 @@ export interface VolumeCreate {
 /** Volume names the API accepts (VOLUME_NAME_PATTERN in supervisor/src/security/validators.py). */
 export const VOLUME_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
 
+const GIB = 1024 ** 3;
+
+/** The largest quota the Volumes dialog takes, in whole GiB: its bytes must be exact in JSON. */
+export const MAX_QUOTA_GIB = Math.floor(Number.MAX_SAFE_INTEGER / GIB);
+
+/**
+ * VolumeCreate.quota in bytes for a quota typed in GiB ("10", "0.5"), or null
+ * when the text is not one: digits with an optional decimal point, more than 0
+ * and at most MAX_QUOTA_GIB (ADR-0243). Read from the text alone, so that "1e3",
+ * "1,5" or "10 GB" are refused instead of being taken for another number.
+ */
+export function quotaBytes(gib: string): number | null {
+  if (!/^\d+(\.\d+)?$/.test(gib)) return null;
+  const bytes = Math.round(Number(gib) * GIB);
+  return bytes >= 1 && bytes <= MAX_QUOTA_GIB * GIB ? bytes : null;
+}
+
 export interface ScrubStatus {
   pool: string;
   status: 'running' | 'finished' | 'aborted' | 'idle';

@@ -133,13 +133,19 @@ For each pool, you can:
 - **Scrub** - Check data integrity
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
-  shared on their own. Snapshots of the pool, manual or scheduled, do not
-  include the files in its volumes. Deleting a volume deletes its files and
-  asks you to type its name. Deleting is refused while a running app or
-  container, an SMB share or an NFS export uses the volume or a folder in it,
-  and while the volume holds snapshots or other subvolumes, which must be
-  deleted first. A pool mounted read-only lists its volumes but cannot create
-  or delete them.
+  shared on their own. **Quota in GiB** is optional: leave it empty for no
+  limit, or enter a size such as `10` or `0.5`. A quota needs quotas enabled
+  on the pool, which UNOS does not do itself: run
+  `btrfs quota enable /mnt/pools/<pool>` on the host. Without them the volume
+  is not created, the dialog says so, and you can create it without a quota.
+  Snapshots of the pool, manual or scheduled, do not include the files in its
+  volumes: take snapshots of each volume as well, on the **Snapshots** page
+  (see [Snapshots](#snapshots)); scheduled snapshot tasks take pools only.
+  Deleting a volume deletes its files and asks you to type its name.
+  Deleting is refused while a running app or container, an SMB share or an
+  NFS export uses the volume or a folder in it, and while the volume holds
+  snapshots or other subvolumes, which must be deleted first. A pool mounted
+  read-only lists its volumes but cannot create or delete them.
 - **Balance** - Redistribute data across devices
 - **Delete** - Unmount the pool and remove it from `/etc/fstab`. The disks are
   not wiped: the data stays on them and the pool can be mounted again later.
@@ -814,30 +820,67 @@ yet (feature-list entries `system.scheduled-power` and
 
 ### Snapshots
 
-BTRFS snapshots provide instant, space-efficient backups.
+A snapshot is a read-only copy of a pool or a volume at one point in time,
+kept in its `.snapshots` folder (`/mnt/pools/<pool>/.snapshots`,
+`/mnt/pools/<pool>/<volume>/.snapshots`). btrfs makes it at once and then
+stores only what changes. A snapshot is kept on the same disks as the files
+it copies. A snapshot of a pool does not include the files in the pool's
+volumes: take snapshots of each volume as well.
+
+The date and time in the names that UNOS gives, `snap_<date>_<time>`,
+`restore_<date>_<time>` and `auto_<date>_<time>`, are in UTC. The list shows
+when each snapshot was made in your browser's time zone.
 
 #### Creating a Snapshot
 
 1. Go to **Snapshots**
-2. Select a storage pool
+2. In **Pool or volume**, choose a mounted pool or one of its volumes. Its
+   snapshots are listed, newest first, with the time each was made in your
+   browser's time zone. When the volumes of a pool cannot be read (btrfs
+   fails on the pool or does not answer, as after its disk dropped off), the
+   pool is offered without them, and a warning says why.
 3. Click **Create Snapshot**
-4. Enter a name (optional)
-5. Click **Create**
+4. Enter a name (optional; without one it is `snap_<date>_<time>`, in UTC)
+5. Click **Create**: the new snapshot appears in the list.
+
+The list does not show how much space the snapshots take.
 
 #### Restoring from Snapshot
 
 Restoring does not overwrite the current data: it makes a writable copy of
-the snapshot, `restore_<date>_<time>`, in the folder the snapshot was taken
-of (for a snapshot of a pool, `/mnt/pools/<pool>/restore_<date>_<time>`).
+the snapshot, `restore_<date>_<time>` (in UTC), in the folder the snapshot was
+taken of (for a snapshot of a pool, `/mnt/pools/<pool>/restore_<date>_<time>`).
 
-1. Go to **Snapshots**
+1. Go to **Snapshots** and choose the pool or volume
 2. Find the snapshot to restore
-3. Click **Restore** and confirm. A message shows where the copy is.
+3. Click its **Restore** button and confirm. A message shows where the copy is.
 
 Copy what you need from it, for example in the **File Browser**. The copy of
 a pool snapshot is a volume of the pool: when you no longer need it, delete
 it with the pool's **Volumes** on the **Storage** page (see
-[Pool Operations](#pool-operations)).
+[Pool Operations](#pool-operations)). The copy of a volume's snapshot is a
+subvolume inside the volume: the web interface cannot delete it yet, and the
+volume cannot be deleted while it holds the copy.
+
+#### Deleting a Snapshot
+
+Click the snapshot's **Delete** button and confirm; this cannot be undone. A
+volume that holds snapshots cannot be deleted: delete its snapshots here
+first. When the snapshot was renamed or replaced while it was checked, for
+example by an app that writes in the volume, nothing is deleted and the
+dialog says so: try again.
+
+#### Scheduled Snapshots
+
+A task of the type **BTRFS Snapshot** in **System** → **Scheduler**
+(**New Task**) takes snapshots of a pool on a schedule; volumes are not
+offered there. Its snapshots are named `auto_<date>_<time>`, in UTC.
+**Keep Count** sets how many of them are kept: after each new snapshot, the
+oldest snapshots of the pool whose names start with `auto_` are deleted
+beyond that number, ordered by the time btrfs made them. Snapshots with
+other names are never deleted. A run on a pool that is not mounted fails
+with `Pool <name> is not mounted at /mnt/pools/<name>`, which the task's
+history shows.
 
 ### System Backup
 

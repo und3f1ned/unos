@@ -55,6 +55,7 @@ from ..security.validators import (
     validate_disk_target,
     validate_pool_name,
 )
+from ..snapshots.router import delete_snapshot_by_id, make_snapshot, utc_stamp
 from ..storage import disks as storage_disks
 from .schemas import ScheduledTask, ScheduledTaskInfo, TaskRun, TaskType, ScheduleFrequency
 
@@ -377,15 +378,13 @@ def _real_dir(path: Path) -> bool:
         return False
 
 
-def _snapshot_dir(pool: Path, *, create: bool) -> Path | None:
-    """``<pool>/.snapshots`` if it is a real directory (not a symlink), optionally created."""
+def _snapshot_dir(pool: Path) -> Path | None:
+    """``<pool>/.snapshots`` if it exists and is a real directory (not a symlink)."""
     snap_dir = pool / SNAPSHOT_DIR_NAME
     if os.path.islink(snap_dir):
         raise _bad_task(f"{snap_dir} must not be a symbolic link")
     if not os.path.lexists(snap_dir):
-        if not create:
-            return None
-        os.mkdir(snap_dir, 0o755)
+        return None
     if not _real_dir(snap_dir):
         raise _bad_task(f"{snap_dir} is not a directory")
     return snap_dir
@@ -491,7 +490,13 @@ def _create_scheduled_backup(keep_count: int | None, key: bytes) -> tuple[bool, 
 
 
 def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
-    snapshots_dir = _snapshot_dir(pool_path(pool_name), create=False)
+    """Delete the oldest ``auto_`` snapshots of a pool beyond ``keep_count``, by creation time.
+
+    Each is deleted by its subvolume id after the snapshot router's checks
+    (delete_snapshot_by_id, ADR-0242); one that fails them is kept.
+    """
+    pool = pool_path(pool_name)
+    snapshots_dir = _snapshot_dir(pool)
     if snapshots_dir is None:
         return ""
 
@@ -520,9 +525,11 @@ def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
     # Delete snapshots beyond keep_count
     deleted_count = 0
     for snap, _ in auto_snapshots[keep_count:]:
-        result = _run(["btrfs", "subvolume", "delete", str(snap)])
-        if result.returncode == 0:
-            deleted_count += 1
+        try:
+            delete_snapshot_by_id(pool, snap.name, snap.name)
+        except HTTPException:
+            continue
+        deleted_count += 1
 
     if deleted_count > 0:
         return f"Cleaned up {deleted_count} old snapshot(s)"
@@ -539,16 +546,19 @@ def _pool_is_mounted(pool: Path) -> bool:
 
 
 def _create_snapshot(pool_name: str) -> tuple[bool, str]:
+    """A read-only snapshot ``auto_<date>_<time>`` (UTC, ADR-0243) of a mounted pool.
+
+    Made like those of the Snapshots page, by make_snapshot of the snapshot
+    router (ADR-0242); its HTTPException becomes the run's error in
+    execute_task.
+    """
     pool = pool_path(pool_name)
     # Checked before .snapshots is created, so an unmounted pool does not get
     # a directory on the root filesystem under its mount point.
     if not _pool_is_mounted(pool):
         return False, f"Pool {pool_name} is not mounted at {pool}"
-    snap_dir = _snapshot_dir(pool, create=True)
-    name = f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    result = _run(["btrfs", "subvolume", "snapshot", "-r", str(pool), str(snap_dir / name)])
-    if result.returncode != 0:
-        return False, result.stderr
+    name = f"auto_{utc_stamp()}"
+    make_snapshot(pool, name)
     return True, name
 
 

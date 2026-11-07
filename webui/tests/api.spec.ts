@@ -243,14 +243,19 @@ test.describe('API Tests', () => {
   });
 
   // ==================== Snapshots ====================
-  test('GET /api/v1/snapshots should return snapshots or handle missing pools', async ({ request }) => {
-    const response = await request.get(`${BASE_URL}/api/v1/snapshots/`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    expect([200, 500]).toContain(response.status());
+  test('GET /api/v1/snapshots/ lists the snapshots of the pool or volume it is given, and needs one', async ({
+    request,
+  }) => {
+    const headers = { Authorization: `Bearer ${token}` };
+    // Without one it listed only the folders right in the pools base, not the volumes' snapshots (ADR-0243).
+    expect((await request.get(`${BASE_URL}/api/v1/snapshots/`, { headers })).status()).toBe(422);
+
+    // The stand-in's pool folder has no .snapshots folder; the test stack may have no such folder at all.
+    const subvolume = encodeURIComponent(`${POOLS}/testpool`);
+    const response = await request.get(`${BASE_URL}/api/v1/snapshots/?subvolume=${subvolume}`, { headers });
+    expect([200, 404]).toContain(response.status());
     if (response.ok()) {
-      const data = await response.json();
-      expect(Array.isArray(data)).toBeTruthy();
+      expect(Array.isArray(await response.json())).toBeTruthy();
     }
   });
 

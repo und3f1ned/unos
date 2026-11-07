@@ -11,7 +11,7 @@ import sqlite3
 import stat
 import subprocess
 import tarfile
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +25,7 @@ from src.main import app
 from src.scheduler.schemas import ScheduledTask
 
 from .test_pool_persistence import install_fake_host
+from .test_snapshots import FakeBtrfs, local_time_9_hours_ahead_of_utc
 
 scheduler = importlib.import_module("src.scheduler.router")
 backup_router = importlib.import_module("src.backup.router")
@@ -840,14 +841,38 @@ async def test_stored_invalid_targets_fail_at_run_time(env, overrides):
     env.run.assert_not_called()
 
 
+def _fake_btrfs(env) -> FakeBtrfs:
+    """btrfs-progs on the pool data of ``env`` (FakeBtrfs of test_snapshots.py)."""
+    fake = FakeBtrfs(env.pool)
+    env.run.side_effect = fake.run
+    return fake
+
+
 async def test_snapshot_task_creates_snapshot_dir_and_snapshot(env):
+    """As the Snapshots page makes them: of the opened pool into the opened .snapshots (ADR-0242)."""
+    btrfs = _fake_btrfs(env)
+
     ok, message = await scheduler.execute_task(ScheduledTask(**_task(keep_count=None)))
+
     assert ok, message
-    (command,) = _commands(env)
-    assert command[:5] == ["btrfs", "subvolume", "snapshot", "-r", str(env.pool)]
-    assert os.path.dirname(command[5]) == str(env.pool / ".snapshots")
-    assert os.path.basename(command[5]).startswith("auto_")
-    assert (env.pool / ".snapshots").is_dir()
+    (name,) = os.listdir(env.pool / ".snapshots")
+    assert message == f"Snapshot {name} created"
+    assert name.startswith("auto_")
+    assert btrfs.calls == [["btrfs", "subvolume", "snapshot", "-r", f"{env.pool}/.", f"{env.pool}/.snapshots/{name}"]]
+
+
+async def test_a_scheduled_snapshot_is_named_after_the_time_in_utc(env):
+    """As the Snapshots page and the guide say: the container's clock could be set to another time zone."""
+    _fake_btrfs(env)
+    before = datetime.now(timezone.utc).replace(microsecond=0)
+
+    with local_time_9_hours_ahead_of_utc():
+        ok, message = await scheduler.execute_task(ScheduledTask(**_task(keep_count=None)))
+
+    assert ok, message
+    (name,) = os.listdir(env.pool / ".snapshots")
+    named = datetime.strptime(name, "auto_%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
+    assert before <= named <= datetime.now(timezone.utc)
 
 
 async def test_snapshot_task_refuses_symlinked_snapshot_dir(env):
@@ -866,7 +891,22 @@ async def test_snapshot_task_requires_mounted_pool(env, monkeypatch):
     # An existing but unmounted mount point gets no .snapshots directory.
     monkeypatch.setattr(scheduler, "_pool_is_mounted", lambda pool: False)
     ok, message = await scheduler.execute_task(ScheduledTask(**_task()))
-    assert not ok and "not mounted" in message
+    assert not ok and message == f"Pool data is not mounted at {env.pool}"
+    assert not (env.pool / ".snapshots").exists()
+    env.run.assert_not_called()
+
+
+def test_a_scheduled_snapshot_of_an_unmounted_pool_is_recorded_as_failed(env, monkeypatch):
+    """What the Scheduler's history shows for the run: failed, with the reason."""
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task(keep_count=3)).json()
+    monkeypatch.setattr(scheduler, "_pool_is_mounted", lambda pool: False)
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    assert (run["status"], run["error"], run["output"]) == ("failed", f"Pool data is not mounted at {env.pool}", None)
+    (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
+    assert stored["last_status"] == "failed"
     assert not (env.pool / ".snapshots").exists()
     env.run.assert_not_called()
 
@@ -960,29 +1000,87 @@ def test_a_scheduled_scrub_is_recorded_when_btrfs_returns(env, monkeypatch, btrf
 
 
 async def test_cleanup_only_deletes_real_auto_snapshots(env):
+    btrfs = _fake_btrfs(env)
     snaps = env.pool / ".snapshots"
-    snaps.mkdir()
     for day in (1, 2, 3):
-        (snaps / f"auto_2025010{day}_000000").mkdir()
-    (snaps / "manual").mkdir()
-    victim = env.base / "victim"
-    victim.mkdir()
+        name = f"auto_2025010{day}_000000"
+        btrfs.snapshot(env.pool, name)
+        btrfs.state["created"][name] = f"2025-01-0{day} 00:00:00 +0000"
+    btrfs.snapshot(env.pool, "manual")
+    victim = btrfs.subvolume(env.pool / "victim")
     os.symlink(victim, snaps / "auto_29990101_000000")  # newest by name, but a symlink
 
-    def fake_run(cmd, **kwargs):
-        result = MagicMock(returncode=0, stdout="", stderr="")
-        if cmd[:3] == ["btrfs", "subvolume", "show"]:
-            stamp = os.path.basename(cmd[3])[5:13]
-            result.stdout = f"\tCreation time: \t\t{stamp[:4]}-{stamp[4:6]}-{stamp[6:]} 00:00:00 +0000\n"
-        return result
-
-    env.run.side_effect = fake_run
     message = await scheduler.cleanup_old_snapshots("data", 1)
 
-    deleted = [c[3] for c in _commands(env) if c[:3] == ["btrfs", "subvolume", "delete"]]
-    assert sorted(os.path.basename(d) for d in deleted) == ["auto_20250101_000000", "auto_20250102_000000"]
-    assert all(str(victim) not in " ".join(c) for c in _commands(env))
+    assert sorted(path.name for path in btrfs.deleted) == ["auto_20250101_000000", "auto_20250102_000000"]
+    assert all(str(victim) not in " ".join(c) for c in btrfs.calls)
+    assert victim.is_dir()
     assert "Cleaned up 2" in message
+
+
+async def test_cleanup_deletes_the_snapshot_that_was_checked(env):
+    """An old auto_ snapshot swapped for a link to a volume before btrfs runs: by path, the volume went (ADR-0242)."""
+    btrfs = _fake_btrfs(env)
+    snaps = env.pool / ".snapshots"
+    for day in (1, 2):
+        name = f"auto_2025010{day}_000000"
+        btrfs.snapshot(env.pool, name)
+        btrfs.state["created"][name] = f"2025-01-0{day} 00:00:00 +0000"
+    documents = btrfs.subvolume(env.pool / "documents")
+    (documents / "report.txt").write_text("x")
+
+    def swap():
+        os.rename(snaps / "auto_20250101_000000", snaps / "moved")
+        os.symlink(documents, snaps / "auto_20250101_000000")
+
+    btrfs.before[("btrfs", "subvolume", "delete")] = swap
+
+    message = await scheduler.cleanup_old_snapshots("data", 1)
+
+    assert btrfs.deleted == [snaps / "moved"]
+    assert (documents / "report.txt").read_text() == "x"
+    assert message == "Cleaned up 1 old snapshot(s)"
+
+
+def test_a_snapshot_task_with_keep_count_3_keeps_the_three_newest_auto_snapshots(env):
+    """Run through the API: the new snapshot and the two newest older ones stay, and nothing else goes.
+
+    Snapshots are ordered by the creation time that btrfs reports, not by their names.
+    """
+    btrfs = _fake_btrfs(env)
+    snaps = env.pool / ".snapshots"
+    created = {
+        "auto_20250101_000000": "2025-01-01 00:00:00 +0000",
+        "auto_20250102_000000": "2025-01-02 00:00:00 +0000",
+        # Its name sorts first, but btrfs made it last of these four: kept as the second newest.
+        "auto_20240101_000000": "2025-01-04 00:00:00 +0000",
+        "auto_20250103_000000": "2025-01-03 00:00:00 +0000",
+    }
+    for name in created:
+        btrfs.snapshot(env.pool, name)
+    # Not automatic snapshots: made by hand or by another tool.
+    others = ["manual", "before upgrade", "autosave_20200101_000000", "snap_20200101_000000"]
+    for name in others:
+        btrfs.snapshot(env.pool, name)
+    victim = btrfs.subvolume(env.pool / "victim")
+    os.symlink(victim, snaps / "auto_29990101_000000")  # newest by name, but a symlink
+    existing = set(os.listdir(snaps))
+    # The new snapshot gets the time of the fake btrfs show (CREATED, 2025-01-24): the newest.
+    btrfs.state["created"] = created
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task(keep_count=3)).json()
+    assert task["keep_count"] == 3
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    (new,) = set(os.listdir(snaps)) - existing
+    assert (run["status"], run["output"]) == ("success", f"Snapshot {new} created. Cleaned up 2 old snapshot(s)")
+    assert sorted(os.listdir(snaps)) == sorted(
+        [new, "auto_20240101_000000", "auto_20250103_000000", "auto_29990101_000000", *others]
+    )
+    assert sorted(path.name for path in btrfs.deleted) == ["auto_20250101_000000", "auto_20250102_000000"]
+    assert all(str(victim) not in " ".join(c) for c in btrfs.calls)
+    assert victim.is_dir()
 
 
 def test_scheduled_backup_passes_restore_validation(backup_env):

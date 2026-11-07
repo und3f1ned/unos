@@ -1,240 +1,417 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import {
-    getSubvolumes,
-    getSnapshots,
-    createSnapshot,
-    deleteSnapshot,
-    restoreSnapshot,
-    type SnapshotInfo,
-    type Subvolume,
-  } from "$lib/api/snapshots";
-  import {
-    Archive,
-    Plus,
-    Trash2,
-    RotateCcw,
-    RefreshCw,
-    HardDrive,
-    Calendar,
-    Database,
-  } from "lucide-svelte";
+	import { onMount } from 'svelte';
+	import {
+		getSubvolumes,
+		getSnapshots,
+		createSnapshot,
+		deleteSnapshot,
+		restoreSnapshot,
+		type SnapshotInfo,
+		type Subvolume
+	} from '$lib/api/snapshots';
+	import { Archive, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
+	import { Button, Card, Modal, Alert, Input, Select, EmptyState } from '$lib/components/ui';
 
-  let subvolumes: Subvolume[] = [];
-  let snapshots: SnapshotInfo[] = [];
-  let selectedSubvolume = "";
-  let loading = true;
-  let creating = false;
-  let newSnapshotName = "";
-  let showCreateDialog = false;
+	// The mounted pools and their volumes (ADR-0243), and the one whose snapshots are listed.
+	let subvolumes: Subvolume[] = [];
+	let subvolumesLoading = true;
+	let subvolumesError = '';
+	let selectedPath = '';
 
-  onMount(async () => {
-    await refresh();
-  });
+	let snapshots: SnapshotInfo[] = [];
+	let snapshotsLoading = false;
+	let snapshotsError = '';
+	// Only the latest request updates the list: another pool or volume may have been chosen meanwhile.
+	let snapshotsRequest = 0;
 
-  async function refresh() {
-    loading = true;
-    try {
-      subvolumes = await getSubvolumes();
-      if (subvolumes.length > 0 && !selectedSubvolume) {
-        selectedSubvolume = subvolumes[0].path;
-      }
-      snapshots = await getSnapshots(selectedSubvolume || undefined);
-    } catch (e) {
-      console.error(e);
-    }
-    loading = false;
-  }
+	// Where the last restore put its copy.
+	let restoredTo = '';
 
-  async function handleCreate() {
-    if (!selectedSubvolume) return;
-    creating = true;
-    try {
-      await createSnapshot(selectedSubvolume, newSnapshotName || undefined);
-      newSnapshotName = "";
-      showCreateDialog = false;
-      await refresh();
-    } catch (e: any) {
-      alert(e.message || "Failed to create snapshot");
-    }
-    creating = false;
-  }
+	let showCreate = false;
+	let newSnapshotName = '';
+	let creating = false;
+	let createError = '';
 
-  async function handleDelete(snap: SnapshotInfo) {
-    if (!confirm(`Delete snapshot "${snap.name}"?`)) return;
-    try {
-      await deleteSnapshot(snap.id, snap.subvolume);
-      await refresh();
-    } catch (e: any) {
-      alert(e.message || "Failed to delete snapshot");
-    }
-  }
+	let snapshotToRestore: SnapshotInfo | null = null;
+	let restoring = false;
+	let restoreError = '';
 
-  async function handleRestore(snap: SnapshotInfo) {
-    if (!confirm(`Restore from snapshot "${snap.name}"? This will create a new directory with the restored data.`)) return;
-    try {
-      const result = await restoreSnapshot(snap.path);
-      alert(`Restored to: ${result.target}`);
-      await refresh();
-    } catch (e: any) {
-      alert(e.message || "Failed to restore snapshot");
-    }
-  }
+	let snapshotToDelete: SnapshotInfo | null = null;
+	let deleting = false;
+	let deleteError = '';
 
-  function formatDate(dateStr: string): string {
-    if (!dateStr) return "-";
-    try {
-      return new Date(dateStr).toLocaleString();
-    } catch {
-      return dateStr;
-    }
-  }
+	$: options = subvolumes.map((sv) => ({ value: sv.path, label: label(sv) }));
+	// Pools offered without their volumes, which could not be read (a disk that dropped off, say).
+	$: unreadVolumes = subvolumes.filter((sv) => sv.volumes_error);
+	$: selected = subvolumes.find((sv) => sv.path === selectedPath) ?? null;
+	$: busy = subvolumesLoading || snapshotsLoading;
+	// The pool or volume that a restore makes its copy in.
+	$: restoreInto = snapshotToRestore
+		? (subvolumes.find((sv) => sv.path === snapshotToRestore?.subvolume) ?? null)
+		: null;
+
+	onMount(refresh);
+
+	function messageOf(e: unknown): string {
+		return e instanceof Error ? e.message : String(e);
+	}
+
+	function label(sv: Subvolume): string {
+		return sv.volume ? `${sv.pool}/${sv.volume} (Volume)` : `${sv.pool} (Pool)`;
+	}
+
+	// The server gives UTC times with their offset; the browser shows them in its own time zone.
+	function formatDate(value: string): string {
+		if (!value) return '-';
+		const date = new Date(value);
+		return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+	}
+
+	async function refresh() {
+		subvolumesLoading = true;
+		subvolumesError = '';
+		try {
+			subvolumes = await getSubvolumes();
+		} catch (e) {
+			subvolumes = [];
+			subvolumesError = messageOf(e);
+		} finally {
+			subvolumesLoading = false;
+		}
+		// The choice stays while it is offered.
+		if (!subvolumes.some((sv) => sv.path === selectedPath)) {
+			selectedPath = subvolumes[0]?.path ?? '';
+		}
+		await loadSnapshots();
+	}
+
+	async function loadSnapshots() {
+		const path = selectedPath;
+		const request = ++snapshotsRequest;
+		snapshotsError = '';
+		if (!path) {
+			snapshots = [];
+			snapshotsLoading = false;
+			return;
+		}
+		snapshotsLoading = true;
+		try {
+			const list = await getSnapshots(path);
+			if (request === snapshotsRequest) snapshots = list;
+		} catch (e) {
+			if (request === snapshotsRequest) {
+				snapshots = [];
+				snapshotsError = messageOf(e);
+			}
+		} finally {
+			if (request === snapshotsRequest) snapshotsLoading = false;
+		}
+	}
+
+	function choose(path: string) {
+		selectedPath = path;
+		restoredTo = '';
+		loadSnapshots();
+	}
+
+	function openCreate() {
+		if (!selected) return;
+		newSnapshotName = '';
+		createError = '';
+		showCreate = true;
+	}
+
+	function closeCreate() {
+		if (creating) return;
+		showCreate = false;
+	}
+
+	async function handleCreate() {
+		if (!selected || creating) return;
+		creating = true;
+		createError = '';
+		try {
+			// Without a name the server makes one (snap_<date>_<time>, in UTC).
+			await createSnapshot(selected.path, newSnapshotName.trim() || undefined);
+			creating = false;
+			showCreate = false;
+			await loadSnapshots();
+		} catch (e) {
+			// 400: the name is taken or invalid; 500: btrfs or the .snapshots folder failed
+			createError = messageOf(e);
+		} finally {
+			creating = false;
+		}
+	}
+
+	function askRestore(snap: SnapshotInfo) {
+		snapshotToRestore = snap;
+		restoreError = '';
+	}
+
+	function closeRestore() {
+		if (restoring) return;
+		snapshotToRestore = null;
+	}
+
+	async function handleRestore() {
+		if (!snapshotToRestore || restoring) return;
+		restoring = true;
+		restoreError = '';
+		try {
+			const result = await restoreSnapshot(snapshotToRestore.path);
+			restoredTo = result.target;
+			restoring = false;
+			snapshotToRestore = null;
+			// The copy of a pool's snapshot is a new volume of the pool.
+			await refresh();
+		} catch (e) {
+			restoreError = messageOf(e);
+		} finally {
+			restoring = false;
+		}
+	}
+
+	function askDelete(snap: SnapshotInfo) {
+		snapshotToDelete = snap;
+		deleteError = '';
+	}
+
+	function closeDelete() {
+		if (deleting) return;
+		snapshotToDelete = null;
+	}
+
+	async function handleDelete() {
+		if (!snapshotToDelete || deleting) return;
+		deleting = true;
+		deleteError = '';
+		try {
+			await deleteSnapshot(snapshotToDelete.id, snapshotToDelete.subvolume);
+			deleting = false;
+			snapshotToDelete = null;
+			await loadSnapshots();
+		} catch (e) {
+			deleteError = messageOf(e);
+		} finally {
+			deleting = false;
+		}
+	}
 </script>
 
-<div class="p-6">
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-2xl font-bold flex items-center gap-2">
-      <Archive class="w-7 h-7" />
-      Snapshots
-    </h1>
-    <div class="flex items-center gap-2">
-      <button
-        on:click={() => (showCreateDialog = true)}
-        class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition"
-        disabled={!selectedSubvolume}
-      >
-        <Plus class="w-5 h-5" />
-        Create Snapshot
-      </button>
-      <button
-        on:click={refresh}
-        class="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition"
-        disabled={loading}
-      >
-        <RefreshCw class={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-      </button>
-    </div>
-  </div>
+<div class="page-container">
+	<div class="page-header">
+		<h1 class="page-title">Snapshots</h1>
+		<div class="flex items-center gap-2">
+			<Button icon={Plus} disabled={!selected} on:click={openCreate}>Create Snapshot</Button>
+			<Button variant="secondary" size="icon" disabled={busy} on:click={refresh}>
+				<RefreshCw class="w-4 h-4 {busy ? 'animate-spin' : ''}" />
+				<span class="sr-only">Refresh</span>
+			</Button>
+		</div>
+	</div>
 
-  <!-- Subvolume Selector -->
-  <div class="mb-6">
-    <label class="block text-sm text-slate-400 mb-2">Select Storage Pool</label>
-    <div class="flex gap-2">
-      {#each subvolumes as sv}
-        <button
-          on:click={() => { selectedSubvolume = sv.path; refresh(); }}
-          class="flex items-center gap-2 px-4 py-2 rounded-lg transition {selectedSubvolume === sv.path ? 'bg-blue-600' : 'bg-slate-800 hover:bg-slate-700'}"
-        >
-          <HardDrive class="w-4 h-4" />
-          {sv.path.split("/").pop()}
-        </button>
-      {/each}
-      {#if subvolumes.length === 0}
-        <p class="text-slate-400">No btrfs volumes found</p>
-      {/if}
-    </div>
-  </div>
+	{#if subvolumesError}
+		<Alert variant="error" title="Could not load the pools and volumes">{subvolumesError}</Alert>
+	{/if}
 
-  <!-- Create Dialog -->
-  {#if showCreateDialog}
-    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div class="bg-slate-800 rounded-xl p-6 w-full max-w-md">
-        <h2 class="text-xl font-semibold mb-4">Create Snapshot</h2>
-        <div class="mb-4">
-          <label class="block text-sm text-slate-400 mb-1">Snapshot Name (optional)</label>
-          <input
-            type="text"
-            bind:value={newSnapshotName}
-            placeholder="Auto-generated if empty"
-            class="w-full px-4 py-2 bg-slate-900 rounded-lg border border-slate-700 focus:border-blue-500 focus:outline-none"
-          />
-        </div>
-        <p class="text-sm text-slate-400 mb-4">
-          Creating snapshot of: <span class="text-white">{selectedSubvolume}</span>
-        </p>
-        <div class="flex justify-end gap-2">
-          <button
-            on:click={() => { showCreateDialog = false; newSnapshotName = ""; }}
-            class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg"
-          >
-            Cancel
-          </button>
-          <button
-            on:click={handleCreate}
-            disabled={creating}
-            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg disabled:opacity-50"
-          >
-            {creating ? "Creating..." : "Create"}
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
+	{#if subvolumes.length > 0}
+		<Card>
+			<Select
+				label="Pool or volume"
+				{options}
+				bind:value={selectedPath}
+				on:change={(e) => choose(e.detail.value)}
+				class="max-w-md"
+			/>
+			{#each unreadVolumes as sv (sv.path)}
+				<Alert variant="warning" title="The volumes of {sv.pool} could not be read" class="mt-4">
+					{sv.volumes_error} The pool itself is offered; its volumes are missing from the list.
+				</Alert>
+			{/each}
+		</Card>
+	{:else if subvolumesLoading}
+		<p class="loading-text">Loading...</p>
+	{:else if !subvolumesError}
+		<Card>
+			<p class="text-muted">
+				No pool is mounted. Mount a pool on the <a href="/storage" class="text-info hover:underline"
+					>Storage page</a
+				>.
+			</p>
+		</Card>
+	{/if}
 
-  <!-- Snapshots List -->
-  <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-    <div class="grid grid-cols-[1fr_150px_100px_150px] gap-4 px-4 py-3 bg-slate-900/50 text-sm text-slate-400 border-b border-slate-700">
-      <div>Name</div>
-      <div>Created</div>
-      <div>Size</div>
-      <div>Actions</div>
-    </div>
+	{#if restoredTo}
+		<Alert variant="success" title="Snapshot restored" dismissible on:dismiss={() => (restoredTo = '')}>
+			The copy is at <span class="mono-xs break-all">{restoredTo}</span>.
+		</Alert>
+	{/if}
 
-    {#if loading}
-      <div class="p-8 text-center text-slate-400">Loading...</div>
-    {:else if snapshots.length === 0}
-      <div class="p-8 text-center text-slate-400">
-        <Database class="w-12 h-12 mx-auto mb-3 opacity-50" />
-        <p>No snapshots yet</p>
-        <p class="text-sm mt-1">Create a snapshot to backup your data</p>
-      </div>
-    {:else}
-      {#each snapshots as snap}
-        <div class="grid grid-cols-[1fr_150px_100px_150px] gap-4 px-4 py-3 border-b border-slate-700/50 hover:bg-slate-700/30 items-center">
-          <div class="flex items-center gap-3">
-            <Archive class="w-5 h-5 text-blue-400" />
-            <div>
-              <p class="font-medium">{snap.name}</p>
-              <p class="text-xs text-slate-500 truncate">{snap.path}</p>
-            </div>
-          </div>
-          <div class="text-sm text-slate-400">
-            <div class="flex items-center gap-1">
-              <Calendar class="w-4 h-4" />
-              {formatDate(snap.created)}
-            </div>
-          </div>
-          <div class="text-sm text-slate-400">
-            {snap.size || "-"}
-          </div>
-          <div class="flex items-center gap-2">
-            <button
-              on:click={() => handleRestore(snap)}
-              class="p-2 rounded-lg bg-slate-700 hover:bg-green-600 transition"
-              title="Restore"
-            >
-              <RotateCcw class="w-4 h-4" />
-            </button>
-            <button
-              on:click={() => handleDelete(snap)}
-              class="p-2 rounded-lg bg-slate-700 hover:bg-red-600 transition"
-              title="Delete"
-            >
-              <Trash2 class="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      {/each}
-    {/if}
-  </div>
+	{#if selected}
+		<Card>
+			<h2 class="section-title mb-4">
+				<Archive class="w-5 h-5" />
+				Snapshots of {label(selected)}
+			</h2>
+			{#if snapshotsLoading}
+				<p class="loading-text">Loading snapshots...</p>
+			{:else if snapshotsError}
+				<Alert variant="error" title="Could not load the snapshots">{snapshotsError}</Alert>
+			{:else if snapshots.length === 0}
+				<EmptyState
+					icon={Archive}
+					title="No snapshots yet"
+					description="A snapshot keeps the files as they are now, read-only."
+				/>
+			{:else}
+				<div class="overflow-x-auto">
+					<table class="table" aria-label="Snapshots">
+						<thead class="table-header">
+							<tr>
+								<th>Name</th>
+								<th>Created</th>
+								<th><span class="sr-only">Actions</span></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each snapshots as snap (snap.path)}
+								<tr class="table-row align-top">
+									<td>
+										<p class="font-medium break-all">{snap.name}</p>
+										<p class="mono-xs text-muted break-all">{snap.path}</p>
+									</td>
+									<td class="whitespace-nowrap">{formatDate(snap.created)}</td>
+									<td>
+										<div class="flex justify-end gap-1">
+											<Button variant="ghost" size="icon-sm" on:click={() => askRestore(snap)}>
+												<RotateCcw class="w-4 h-4" />
+												<span class="sr-only">Restore snapshot {snap.name}</span>
+											</Button>
+											<Button variant="ghost" size="icon-sm" on:click={() => askDelete(snap)}>
+												<Trash2 class="w-4 h-4 text-error" />
+												<span class="sr-only">Delete snapshot {snap.name}</span>
+											</Button>
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</Card>
+	{/if}
 
-  <!-- Info -->
-  <div class="mt-6 p-4 bg-slate-800/50 rounded-lg border border-slate-700">
-    <h3 class="font-medium mb-2">About Snapshots</h3>
-    <p class="text-sm text-slate-400">
-      Snapshots are instant, space-efficient backups using btrfs copy-on-write technology.
-      They capture the exact state of your data at a point in time. Restoring creates a new
-      directory with the snapshot's contents.
-    </p>
-  </div>
+	<Card>
+		<h2 class="section-title mb-2">About Snapshots</h2>
+		<p class="text-sm text-secondary">
+			A snapshot is a read-only copy of a pool or a volume at one point in time, kept in its
+			<span class="mono-xs">.snapshots</span> folder. btrfs makes it at once and then stores only
+			what changes. A snapshot of a pool does not include the files in its volumes: take
+			snapshots of each volume as well. Restoring makes a writable copy next to the original and
+			overwrites nothing. Scheduled snapshots (System, Scheduler) are made of pools only and are
+			named <span class="mono-xs">auto_&lt;date&gt;_&lt;time&gt;</span>. The date and time in the
+			names that UNOS gives, <span class="mono-xs">snap_</span>,
+			<span class="mono-xs">restore_</span> and <span class="mono-xs">auto_</span>, are in UTC;
+			Created shows the time in your browser's time zone.
+		</p>
+	</Card>
 </div>
+
+<Modal open={showCreate} title="Create Snapshot" closable={!creating} on:close={closeCreate}>
+	{#if selected}
+		<form on:submit|preventDefault={handleCreate} class="space-y-4">
+			<p class="text-sm text-secondary">
+				A read-only snapshot of <span class="mono-xs break-all">{selected.path}</span>, kept in
+				<span class="mono-xs break-all">{selected.path}/.snapshots</span>.
+				{#if !selected.volume}
+					It does not include the files in the pool's volumes: take snapshots of each volume as
+					well. Scheduled snapshot tasks take pools only.
+				{/if}
+			</p>
+			<Input
+				label="Snapshot name (optional)"
+				bind:value={newSnapshotName}
+				placeholder="Made from the date and time in UTC when empty"
+				autocomplete="off"
+				disabled={creating}
+			/>
+			{#if createError}
+				<Alert variant="error" title="Snapshot was not created">{createError}</Alert>
+			{/if}
+		</form>
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={creating} on:click={closeCreate}>
+			Cancel
+		</Button>
+		<Button class="flex-1" icon={Plus} loading={creating} on:click={handleCreate}>Create</Button>
+	</svelte:fragment>
+</Modal>
+
+<Modal open={snapshotToRestore !== null} title="Restore Snapshot" closable={!restoring} on:close={closeRestore}>
+	{#if snapshotToRestore}
+		<div class="space-y-4">
+			<p class="text-sm">
+				Restore snapshot <span class="font-semibold break-all">{snapshotToRestore.name}</span>? A
+				writable copy of it, <span class="mono-xs">restore_&lt;date&gt;_&lt;time&gt;</span> with the
+				date and time in UTC, is made in
+				<span class="mono-xs break-all">{snapshotToRestore.subvolume}</span>. Nothing is overwritten.
+			</p>
+			{#if restoreInto && !restoreInto.volume}
+				<p class="text-sm text-secondary">
+					The copy is a volume of the pool: delete it with the pool's Volumes on the Storage page
+					when it is no longer needed.
+				</p>
+			{:else if restoreInto}
+				<p class="text-sm text-secondary">
+					The copy is a subvolume inside the volume: it cannot be deleted in the web interface yet,
+					and the volume cannot be deleted while it holds the copy.
+				</p>
+			{/if}
+			{#if restoreError}
+				<Alert variant="error" title="Snapshot was not restored">{restoreError}</Alert>
+			{/if}
+		</div>
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={restoring} on:click={closeRestore}>
+			Cancel
+		</Button>
+		<Button class="flex-1" icon={RotateCcw} loading={restoring} on:click={handleRestore}>
+			Restore
+		</Button>
+	</svelte:fragment>
+</Modal>
+
+<Modal
+	open={snapshotToDelete !== null}
+	title="Delete Snapshot"
+	danger
+	closable={!deleting}
+	on:close={closeDelete}
+>
+	{#if snapshotToDelete}
+		<div class="space-y-4">
+			<p class="text-sm">
+				Delete snapshot <span class="font-semibold break-all">{snapshotToDelete.name}</span>
+				(<span class="mono-xs break-all">{snapshotToDelete.path}</span>)? This cannot be undone.
+			</p>
+			{#if deleteError}
+				<Alert variant="error" title="Snapshot was not deleted">{deleteError}</Alert>
+			{/if}
+		</div>
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={deleting} on:click={closeDelete}>
+			Cancel
+		</Button>
+		<Button variant="danger" class="flex-1" icon={Trash2} loading={deleting} on:click={handleDelete}>
+			Delete Snapshot
+		</Button>
+	</svelte:fragment>
+</Modal>

@@ -838,9 +838,10 @@
       "passes": false,
       "adr": [
         "ADR-0069",
-        "ADR-0070"
+        "ADR-0070",
+        "ADR-0243"
       ],
-      "notes": "Device check: 2026-11-06 (slice 1 deploy). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-06 (slice 1 deploy). 2026-11-07: the Volumes dialog sends the optional quota, typed in GiB, in bytes and shows the 409 when quotas are not enabled (ADR-0243, which superseded ADR-0241; storage.spec.ts). Open: the device check of a create with a quota (the 409 while quotas are off on the pool data; once the owner enabled them, the limit on the new volume's quota group) and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "storage.snapshots",
@@ -856,13 +857,16 @@
       "verified_by": [
         "supervisor/tests/test_snapshots.py",
         "supervisor/tests/test_scheduler_validation.py",
-        "webui/tests/snapshots.spec.ts"
+        "webui/tests/snapshots.spec.ts",
+        "webui/tests/scheduler.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0011"
+        "ADR-0011",
+        "ADR-0242",
+        "ADR-0243"
       ],
-      "notes": "The E2E spec only checks that the page renders, and the scheduler spec covers SMART tasks only. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built 2026-11-07 (ADR-0243, which superseded ADR-0241): GET /snapshots/subvolumes lists each mounted pool and its volumes, read through src/host.py, a pool whose volumes cannot be read alone with volumes_error, and the Snapshots page picks one; times come in UTC with their offset, the names snap_, restore_ and auto_ take UTC, the list runs no du and needs its pool or volume, and create, restore and delete use dialogs. Create, restore and delete, the scheduled ones included, act on the folders they opened, through /proc/self/fd paths, and delete by subvolume id (ADR-0242). Asserted on fakes: steps 1 to 3 by test_snapshots.py and snapshots.spec.ts, steps 4 and 5 by test_scheduler_validation.py and scheduler.spec.ts. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step; it is also the first run of the real btrfs-progs with /proc/self/fd paths, subvolid-resolve and delete --subvolid: GET /snapshots/subvolumes lists /mnt/pools/data and its volumes; a snapshot of a volume and one of the pool are listed with their local time; restoring the pool's snapshot makes the volume restore_<time>, which the Volumes dialog deletes (a volume's copy stays undeletable in the web UI, storage.restore-copies-deletable); delete removes a snapshot; a snapshot task with keep count 3 run four times keeps three auto_ snapshots; a run while the pool is unmounted fails with Pool data is not mounted."
     },
     {
       "id": "storage.scrub",
