@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
@@ -28,9 +28,29 @@ CERTS_DIR = "/data/certs"
 CADDY_CERTS_DIR = "/data/caddy/certificates"
 # Longest username a login attempt keeps (in characters).
 LOGIN_ATTEMPT_USERNAME_CHARS = 128
+# The longest period that clearing the login history counts back (100 years, in days; ADR-0249).
+MAX_HISTORY_DAYS = 36500
 
 
 # ==================== Login History ====================
+
+def _visible_attempts(current_user: User, username: str | None) -> list:
+    """The conditions that pick the login attempts ``current_user`` may see.
+
+    Administrators see every attempt, or those with ``username``. The history is kept by
+    name, also for names without an account, so a regular user sees the attempts on their
+    name since their account was created (ADR-0249): not those of a deleted account whose
+    name was given to them. Both times are SQLite's CURRENT_TIMESTAMP, text to the second;
+    datetime() compares them so, and a sign-in in the second of the account's creation is
+    the account's (a time bound from Python has microseconds and, as text, comes later).
+    """
+    if current_user.is_admin:
+        return [LoginAttempt.username == username] if username else []
+    return [
+        LoginAttempt.username == current_user.username,
+        func.datetime(LoginAttempt.timestamp) >= func.datetime(current_user.created_at),
+    ]
+
 
 @router.get("/login-history", response_model=LoginHistoryResponse)
 async def get_login_history(
@@ -42,23 +62,14 @@ async def get_login_history(
     db: AsyncSession = Depends(get_db)
 ):
     """Get login history. Admin sees all, users see only their own."""
-    query = select(LoginAttempt)
-
-    # Non-admin users can only see their own history
-    if not current_user.is_admin:
-        query = query.where(LoginAttempt.username == current_user.username)
-    elif username:
-        query = query.where(LoginAttempt.username == username)
+    visible = _visible_attempts(current_user, username)
+    query = select(LoginAttempt).where(*visible)
 
     if success is not None:
         query = query.where(LoginAttempt.success == success)
 
     # Get total counts
-    count_query = select(func.count()).select_from(LoginAttempt)
-    if not current_user.is_admin:
-        count_query = count_query.where(LoginAttempt.username == current_user.username)
-    elif username:
-        count_query = count_query.where(LoginAttempt.username == username)
+    count_query = select(func.count()).select_from(LoginAttempt).where(*visible)
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -84,7 +95,9 @@ async def get_login_history(
 
 @router.delete("/login-history")
 async def clear_login_history(
-    older_than_days: int = 30,
+    # Up to 100 years back: a negative period would put the cutoff in the future and delete
+    # every attempt, and a much longer one reaches before the year 1.
+    older_than_days: int = Query(30, ge=0, le=MAX_HISTORY_DAYS),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):

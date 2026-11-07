@@ -4,7 +4,7 @@
   import { user } from "$lib/stores/auth";
   import SmbAccessCard from "$lib/components/account/SmbAccessCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
-  import { Alert, Badge } from "$lib/components/ui";
+  import { Alert, Badge, Button } from "$lib/components/ui";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
     getLoginHistory, clearLoginHistory,
@@ -30,8 +30,12 @@
   let showCurrentPassword = false;
   let showNewPassword = false;
 
-  // 2FA state
+  // 2FA state. Until the status has loaded, the card offers neither Enable nor Disable: a
+  // status that could not be loaded is reported, not shown as off.
   let totpEnabled = false;
+  let totpStatusLoaded = false;
+  let totpStatusLoading = false;
+  let totpStatusError = "";
   let totpLoading = false;
   let totpSetupData: TOTPSetupResponse | null = null;
   let totpCode = "";
@@ -54,6 +58,8 @@
   let loginHistoryFailed = 0;
   let loginHistorySuccess = 0;
   let loginHistoryLoading = false;
+  // Why the last load failed: shown in place of the counts and the list.
+  let loginHistoryError = "";
   let showLoginHistory = false;
 
   // Firewall state
@@ -99,12 +105,21 @@
     ]);
   });
 
+  function messageOf(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
+
   async function loadTOTPStatus() {
+    totpStatusLoading = true;
     try {
       const status = await getTOTPStatus();
       totpEnabled = status.enabled;
+      totpStatusLoaded = true;
+      totpStatusError = "";
     } catch (e) {
-      console.error("Failed to load TOTP status:", e);
+      totpStatusError = messageOf(e);
+    } finally {
+      totpStatusLoading = false;
     }
   }
 
@@ -237,6 +252,7 @@
   // Login History functions
   async function loadLoginHistory() {
     loginHistoryLoading = true;
+    loginHistoryError = "";
     try {
       const response = await getLoginHistory(50, 0);
       loginHistory = response.attempts;
@@ -244,7 +260,9 @@
       loginHistoryFailed = response.failed_count;
       loginHistorySuccess = response.success_count;
     } catch (e) {
-      console.error("Failed to load login history:", e);
+      // Not an empty history: what the list and the counts would be is unknown.
+      loginHistory = [];
+      loginHistoryError = messageOf(e);
     } finally {
       loginHistoryLoading = false;
     }
@@ -454,7 +472,11 @@
         </p>
       </div>
       <div class="flex items-center gap-3">
-        {#if totpEnabled}
+        {#if !totpStatusLoaded}
+          {#if !totpStatusError}
+            <span class="text-sm text-content-muted">Loading...</span>
+          {/if}
+        {:else if totpEnabled}
           <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
             <CheckCircle class="w-4 h-4" />
             Enabled
@@ -480,8 +502,17 @@
       </div>
     </div>
 
+    {#if totpStatusError}
+      <Alert variant="error" title="Could not load the two-factor status" class="mt-4">
+        <p>{totpStatusError}</p>
+        <Button variant="secondary" size="sm" class="mt-3" loading={totpStatusLoading} on:click={loadTOTPStatus}
+          >Retry</Button
+        >
+      </Alert>
+    {/if}
+
     <!-- Turning 2FA off removes the codes, and a new setup starts without any. -->
-    {#if totpEnabled}
+    {#if totpStatusLoaded && totpEnabled}
       <RecoveryCodes />
     {/if}
   </div>
@@ -877,72 +908,79 @@
 
     {#if showLoginHistory}
       <div class="mt-4 space-y-4">
-        <!-- Stats -->
-        <div class="grid grid-cols-3 gap-4">
-          <div class="p-3 bg-slate-700 rounded-lg text-center">
-            <p class="text-2xl font-bold">{loginHistoryTotal}</p>
-            <p class="text-sm text-slate-400">Total Attempts</p>
-          </div>
-          <div class="p-3 bg-slate-700 rounded-lg text-center">
-            <p class="text-2xl font-bold text-green-400">{loginHistorySuccess}</p>
-            <p class="text-sm text-slate-400">Successful</p>
-          </div>
-          <div class="p-3 bg-slate-700 rounded-lg text-center">
-            <p class="text-2xl font-bold text-red-400">{loginHistoryFailed}</p>
-            <p class="text-sm text-slate-400">Failed</p>
-          </div>
-        </div>
-
-        <!-- History List -->
         {#if loginHistoryLoading}
           <div class="text-center py-4 text-slate-400">Loading...</div>
-        {:else if loginHistory.length === 0}
-          <p class="text-sm text-slate-400 text-center py-4">No login history found</p>
+        {:else if loginHistoryError}
+          <Alert variant="error" title="Could not load the login history">
+            <p>{loginHistoryError}</p>
+            <Button variant="secondary" size="sm" class="mt-3" on:click={loadLoginHistory}>Retry</Button>
+          </Alert>
         {:else}
-          <!-- Newest first; the times are the browser's local time (ADR-0248). -->
-          <ul class="space-y-2 max-h-80 overflow-y-auto" aria-label="Login history">
-            {#each loginHistory as attempt (attempt.id)}
-              <li class="flex items-center gap-3 p-3 bg-surface-overlay rounded-lg">
-                <Badge variant={attempt.success ? "success" : "error"}>
-                  {attempt.success ? "SUCCESS" : "FAILED"}
-                </Badge>
-                <div>
-                  <div class="flex items-center gap-2">
-                    <User class="w-4 h-4 text-content-secondary" />
-                    <span class="font-medium">{attempt.username}</span>
-                  </div>
-                  <div class="flex items-center gap-4 text-sm text-content-secondary">
-                    <span class="flex items-center gap-1">
-                      <Clock class="w-3 h-3" />
-                      <time datetime={attempt.timestamp ?? undefined}>{formatTimestamp(attempt.timestamp)}</time>
-                    </span>
-                    {#if attempt.ip_address}
+          <!-- Stats -->
+          <div class="grid grid-cols-3 gap-4">
+            <div class="p-3 bg-slate-700 rounded-lg text-center">
+              <p class="text-2xl font-bold">{loginHistoryTotal}</p>
+              <p class="text-sm text-slate-400">Total Attempts</p>
+            </div>
+            <div class="p-3 bg-slate-700 rounded-lg text-center">
+              <p class="text-2xl font-bold text-green-400">{loginHistorySuccess}</p>
+              <p class="text-sm text-slate-400">Successful</p>
+            </div>
+            <div class="p-3 bg-slate-700 rounded-lg text-center">
+              <p class="text-2xl font-bold text-red-400">{loginHistoryFailed}</p>
+              <p class="text-sm text-slate-400">Failed</p>
+            </div>
+          </div>
+
+          <!-- History List -->
+          {#if loginHistory.length === 0}
+            <p class="text-sm text-slate-400 text-center py-4">No login history found</p>
+          {:else}
+            <!-- Newest first; the times are the browser's local time (ADR-0248). -->
+            <ul class="space-y-2 max-h-80 overflow-y-auto" aria-label="Login history">
+              {#each loginHistory as attempt (attempt.id)}
+                <li class="flex items-center gap-3 p-3 bg-surface-overlay rounded-lg">
+                  <Badge variant={attempt.success ? "success" : "error"}>
+                    {attempt.success ? "SUCCESS" : "FAILED"}
+                  </Badge>
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <User class="w-4 h-4 text-content-secondary" />
+                      <span class="font-medium">{attempt.username}</span>
+                    </div>
+                    <div class="flex items-center gap-4 text-sm text-content-secondary">
                       <span class="flex items-center gap-1">
-                        <MapPin class="w-3 h-3" />
-                        {attempt.ip_address}
+                        <Clock class="w-3 h-3" />
+                        <time datetime={attempt.timestamp ?? undefined}>{formatTimestamp(attempt.timestamp)}</time>
                       </span>
-                    {/if}
-                    {#if attempt.user_agent}
-                      <span class="flex items-center gap-1">
-                        <Monitor class="w-3 h-3" />
-                        {parseUserAgent(attempt.user_agent)}
-                      </span>
+                      {#if attempt.ip_address}
+                        <span class="flex items-center gap-1">
+                          <MapPin class="w-3 h-3" />
+                          {attempt.ip_address}
+                        </span>
+                      {/if}
+                      {#if attempt.user_agent}
+                        <span class="flex items-center gap-1">
+                          <Monitor class="w-3 h-3" />
+                          {parseUserAgent(attempt.user_agent)}
+                        </span>
+                      {/if}
+                    </div>
+                    {#if attempt.failure_reason}
+                      <p class="text-xs text-status-error mt-1">{attempt.failure_reason}</p>
                     {/if}
                   </div>
-                  {#if attempt.failure_reason}
-                    <p class="text-xs text-status-error mt-1">{attempt.failure_reason}</p>
-                  {/if}
-                </div>
-              </li>
-            {/each}
-          </ul>
-          <button
-            on:click={loadLoginHistory}
-            class="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
-          >
-            <RefreshCw class="w-4 h-4" />
-            Refresh
-          </button>
+                </li>
+              {/each}
+            </ul>
+            <button
+              on:click={loadLoginHistory}
+              class="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <RefreshCw class="w-4 h-4" />
+              Refresh
+            </button>
+          {/if}
         {/if}
       </div>
     {/if}

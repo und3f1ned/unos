@@ -637,6 +637,9 @@ Protect your account with TOTP-based two-factor authentication:
 4. Enter the verification code and click **Enable 2FA**: the section shows
    **Enabled**
 
+When the page cannot load whether 2FA is on, the section says so with the
+reason and offers **Retry** instead of **Enable** or **Disable**.
+
 To sign in with 2FA, enter your username and password as before: UNOS then
 asks for the **Authentication Code**. Enter the 6-digit code that the app
 shows and click **Verify**; **← Back to login** returns to the password form.
@@ -694,14 +697,17 @@ left.
 
 Under **Login History** on the **Account** page (administrators: **System** →
 **Security**), **View History** lists the latest 50 sign-ins, newest first:
-those of your own account, and for administrators those of every account,
-also the attempts with names that do not exist. Each entry shows **SUCCESS**
-or **FAILED** with the reason (such as "Incorrect username or password" or
-"Invalid 2FA code"), the account, the time in your browser's time zone, the
-address of the computer that signed in (not that of the web interface's
-proxy) and the browser. Above the list are the number of attempts and how many
-succeeded and failed; **Refresh** loads the list again. A sign-in with 2FA is
-listed once, when its code was checked.
+those of your own account since it was created (an account created with the
+name of a deleted one does not see that account's), and for administrators
+those of every account, also of deleted accounts and the attempts with names
+that do not exist. Each entry shows **SUCCESS** or **FAILED** with the reason
+(such as "Incorrect username or password" or "Invalid 2FA code"), the
+account, the time in your browser's time zone, the address of the computer
+that signed in (not that of the web interface's proxy) and the browser. Above
+the list are the number of attempts and how many succeeded and failed;
+**Refresh** loads the list again. A sign-in with 2FA is listed once, when its
+code was checked. When the history cannot be loaded, the section says so with
+the reason, and **Retry** loads it again.
 
 ### API Tokens
 

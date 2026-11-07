@@ -100,6 +100,7 @@ and this index, and `make check-fast` runs it.
 | [0238](0238-recovery-codes-sign-in-once-in-place-of-a-two-factor-code.md) | Ten recovery codes each sign in once in place of a two-factor code, and end with two-factor authentication | accepted | 2026-11-07 |
 | [0239](0239-kept-authentication-practices-with-a-second-factor-before-any-token.md) | Auth keeps bcrypt, one JWT algorithm, a second factor before any token, and hashed API tokens | accepted | 2026-11-07 |
 | [0248](0248-login-history-times-in-utc-with-the-offset-newest-first.md) | The login history answers its times in UTC with the offset, newest first also within a second | accepted | 2026-11-07 |
+| [0249](0249-a-users-login-history-starts-with-their-account.md) | A regular user's login history starts with their account | accepted | 2026-11-08 |
 
 ## Storage
 

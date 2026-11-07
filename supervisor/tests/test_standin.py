@@ -20,7 +20,8 @@
   scripts/standin/e2e.sh serves the stand-in. Before the specs, e2e.sh creates
   the administrator they sign in as (E2E_ADMIN of webui/tests/fixtures.ts)
   through the /setup page: a run of webui/tests/first-run.spec.ts alone, with
-  E2E_FIRST_RUN=1, which is never retried (ADR-0247).
+  E2E_FIRST_RUN=1, which is never retried (ADR-0247). A copy of e2e.sh whose
+  stand-in, curl and Playwright are fakes shows the order of the two runs.
 * The specs skip only on the conditions listed in SKIP_CONDITIONS, never on
   the version of the supervisor they run against (ADR-0207), and every skip
   gives its reason: a skip on E2E_STAND_IN says what the stand-in lacks, then
@@ -35,6 +36,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -690,6 +692,77 @@ def _string_value(expression: str | None, text: str, depth: int = 0) -> str:
     return "" if operand else value
 
 
+def _free_ports(count: int) -> list[int]:
+    """Ports on 127.0.0.1 that nothing listens on (each was free a moment ago)."""
+    sockets = [socket.socket() for _ in range(count)]
+    try:
+        for sock in sockets:
+            sock.bind(("127.0.0.1", 0))
+        return [sock.getsockname()[1] for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
+
+
+def _run_e2e_sh_with_fakes(
+    tmp_path: Path, *args: str, first_run: int = 0, specs: int = 0, env: dict[str, str] | None = None
+) -> tuple[subprocess.CompletedProcess, list[str]]:
+    """Run a copy of scripts/standin/e2e.sh with ``args`` in a checkout in tmp_path, with fakes.
+
+    The supervisor and front.mjs only wait to be stopped, curl answers that the stand-in is up
+    and has no account yet, and the build is the existing one (E2E_SKIP_BUILD=1). Playwright
+    writes each run as a line "E2E_FIRST_RUN=<value> <arguments>" and exits with ``first_run``
+    for the first-run setup (E2E_FIRST_RUN=1) and with ``specs`` otherwise. Returns the result
+    and those lines.
+    """
+    node = _node()
+    standin = tmp_path / "scripts" / "standin"
+    standin.mkdir(parents=True)
+    shutil.copy2(STANDIN / "e2e.sh", standin / "e2e.sh")
+    (standin / "front.mjs").write_text("setTimeout(() => {}, 600_000);\n", encoding="utf-8")
+    build = tmp_path / "webui" / "build"
+    build.mkdir(parents=True)
+    (build / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
+    tls = tmp_path / ".standin" / "tls"
+    tls.mkdir(parents=True)
+    for name in ("cert.pem", "key.pem"):
+        (tls / name).write_text("not checked: OPENSSL is true\n", encoding="utf-8")
+    runs = tmp_path / "playwright-runs.txt"
+    fakes = {
+        "bin/curl": """case "$*" in *"/api/v1/auth/status"*) echo '{"setup_required": true}' ;; esac\n""",
+        "bin/python": '[ "$1" = -c ] && exit 0\nexec sleep 600\n',
+        "webui/node_modules/.bin/playwright": (
+            f'echo "E2E_FIRST_RUN=${{E2E_FIRST_RUN:-}} $*" >> "{runs}"\n'
+            f'[ "${{E2E_FIRST_RUN:-}}" = 1 ] && exit {first_run}\nexit {specs}\n'
+        ),
+    }
+    for name, body in fakes.items():
+        fake = tmp_path / name
+        fake.parent.mkdir(parents=True, exist_ok=True)
+        fake.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+        fake.chmod(0o755)
+    https_port, http_port, backend_port = _free_ports(3)
+    environment = {
+        "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "NODE": node,
+        "NPM": "false",
+        "OPENSSL": "true",
+        "PYTHON": str(tmp_path / "bin" / "python"),
+        "E2E_SKIP_BUILD": "1",
+        "E2E_HTTPS_PORT": str(https_port),
+        "E2E_HTTP_PORT": str(http_port),
+        "E2E_BACKEND_PORT": str(backend_port),
+        **(env or {}),
+    }
+    bash = shutil.which("bash") or "/bin/bash"
+    result = subprocess.run(
+        [bash, str(standin / "e2e.sh"), *args], cwd=tmp_path, env=environment, capture_output=True, text=True,
+        timeout=60,
+    )
+    return result, runs.read_text(encoding="utf-8").splitlines() if runs.exists() else []
+
+
 class TestSpecsAndRunner:
     def test_default_target_is_where_e2e_sh_serves_the_stand_in(self):
         target = (REPO / "webui" / "tests" / "target.ts").read_text(encoding="utf-8")
@@ -770,6 +843,32 @@ class TestSpecsAndRunner:
             if spec.name != "fixtures.ts" and admin[2] in spec.read_text(encoding="utf-8")
         ]
         assert copies == []
+
+    def test_e2e_sh_sets_up_the_new_stand_in_then_runs_the_specs(self, tmp_path):
+        # A caller's E2E_FIRST_RUN is dropped: only the first-run setup has it.
+        result, runs = _run_e2e_sh_with_fakes(tmp_path, "tests/auth.spec.ts", specs=3, env={"E2E_FIRST_RUN": "1"})
+
+        assert runs == ["E2E_FIRST_RUN=1 test --reporter=list", "E2E_FIRST_RUN= test tests/auth.spec.ts"]
+        assert result.returncode == 3, result.stderr
+        assert result.stdout.splitlines()[-1].startswith("== Playwright exit code 3 "), result.stdout
+
+    def test_e2e_sh_stops_when_the_first_run_setup_fails(self, tmp_path):
+        result, runs = _run_e2e_sh_with_fakes(tmp_path, first_run=1)
+
+        assert runs == ["E2E_FIRST_RUN=1 test --reporter=list"]
+        assert result.returncode == 1
+        assert "e2e.sh: creating the test administrator through the /setup page failed" in result.stderr
+
+    @pytest.mark.parametrize("spec", ["tests/first-run.spec.ts", "first-run.spec.ts"])
+    def test_the_first_run_spec_alone_is_the_first_run_setup(self, tmp_path, spec):
+        # The run of the specs ignores that file: there it would find no test, and fail.
+        result, runs = _run_e2e_sh_with_fakes(tmp_path, spec, specs=1)
+
+        assert runs == ["E2E_FIRST_RUN=1 test --reporter=list"]
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines()[-1] == (
+            "== Playwright exit code 0 (tests/first-run.spec.ts alone; logs: .standin/logs)"
+        )
 
     def test_the_first_run_setup_is_a_run_of_its_own_and_never_retried(self, load_config):
         files = ("tests/first-run.spec.ts", "tests/auth.spec.ts")

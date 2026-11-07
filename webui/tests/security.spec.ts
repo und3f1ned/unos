@@ -1,5 +1,8 @@
 import { test, expect } from './fixtures';
 
+// What the server answers for an error it did not handle; the page shows "Request failed".
+const SERVER_ERROR = { status: 500, contentType: 'text/plain', body: 'Internal Server Error' };
+
 test.describe('Security Settings', () => {
   test('should navigate to security tab', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
@@ -100,6 +103,60 @@ test.describe('Security Settings', () => {
     await expect(rows.first()).toBeVisible();
     await card.getByRole('button', { name: 'Hide' }).click();
     await expect(card.getByRole('list', { name: 'Login history' })).toHaveCount(0);
+  });
+
+  test('a login history that cannot be loaded is reported, not shown as empty', async ({
+    authenticatedPage: page,
+  }) => {
+    let failing = true;
+    await page.route(
+      (url) => url.pathname === '/api/v1/security/login-history',
+      (route) => (failing ? route.fulfill(SERVER_ERROR) : route.continue()),
+    );
+    await page.goto('/system#security');
+    const card = page.locator('div:has(> div > h3:has-text("Login History"))');
+    await card.getByRole('button', { name: 'View History' }).click();
+
+    const alert = card.locator('.alert-error');
+    await expect(alert.getByText('Could not load the login history', { exact: true })).toBeVisible();
+    await expect(alert).toContainText('Request failed');
+    // No list and no counts: none of them is known.
+    await expect(card.getByText('No login history found')).toHaveCount(0);
+    await expect(card.getByText('Total Attempts', { exact: true })).toHaveCount(0);
+
+    failing = false;
+    await alert.getByRole('button', { name: 'Retry' }).click();
+    await expect(alert).toHaveCount(0);
+    // The administrator's own sign-in of this test is in it.
+    await expect(card.getByRole('list', { name: 'Login history' }).getByRole('listitem').first()).toBeVisible();
+    await expect(card.getByText('Total Attempts', { exact: true })).toBeVisible();
+  });
+
+  test('a two-factor status that cannot be loaded is reported, not shown as Disabled', async ({
+    authenticatedPage: page,
+  }) => {
+    let failing = true;
+    await page.route(
+      (url) => url.pathname === '/api/v1/auth/totp/status',
+      (route) => (failing ? route.fulfill(SERVER_ERROR) : route.continue()),
+    );
+    await page.goto('/system#security');
+    const card = page.locator('div:has(> h3:has-text("Two-Factor Authentication"))');
+
+    const alert = card.locator('.alert-error');
+    await expect(alert.getByText('Could not load the two-factor status', { exact: true })).toBeVisible();
+    await expect(alert).toContainText('Request failed');
+    // Neither state, and no Enable, which a 2FA account would answer with "2FA is already enabled".
+    await expect(card.getByText('Disabled', { exact: true })).toHaveCount(0);
+    await expect(card.getByText('Enabled', { exact: true })).toHaveCount(0);
+    await expect(card.getByRole('button', { name: /^(Enable|Disable)$/ })).toHaveCount(0);
+
+    failing = false;
+    await alert.getByRole('button', { name: 'Retry' }).click();
+    await expect(alert).toHaveCount(0);
+    // E2E_ADMIN never has two-factor authentication (tests/accounts.ts).
+    await expect(card.getByText('Disabled', { exact: true })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Enable', exact: true })).toBeVisible();
   });
 
   test('should toggle firewall configuration', async ({ authenticatedPage: page }) => {

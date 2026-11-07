@@ -5,6 +5,7 @@
 #
 #   scripts/standin/e2e.sh [playwright test arguments...]       (make e2e-local)
 #   scripts/standin/e2e.sh tests/shares.spec.ts --grep Seeded
+#   scripts/standin/e2e.sh tests/first-run.spec.ts               the first-run setup alone (step 3)
 #   scripts/standin/e2e.sh --help                                this text
 #
 # 1. Builds the web UI into webui/build (E2E_SKIP_BUILD=1 serves the last build).
@@ -17,7 +18,9 @@
 # 3. Creates the administrator the specs sign in as (E2E_ADMIN of
 #    webui/tests/fixtures.ts) as the owner creates theirs: on the new stand-in,
 #    which has no account yet, a first Playwright run with E2E_FIRST_RUN=1 goes
-#    through the /setup page (webui/tests/first-run.spec.ts, ADR-0247).
+#    through the /setup page (webui/tests/first-run.spec.ts, ADR-0247). The run
+#    of the specs ignores that file: when the arguments name only it, its run
+#    here is the whole run, and step 4 is left out.
 # 4. Runs Playwright in webui/ with BASE_URL and HTTP_URL on localhost,
 #    E2E_STAND_IN=1 (the specs skip, with the reason, what the stand-in cannot
 #    provide: disks, Docker, the host's network, journal and /proc) and
@@ -50,6 +53,19 @@ esac
 # Set for the first-run setup alone (step 3): a caller's value would make the
 # specs' run that setup again.
 unset E2E_FIRST_RUN
+
+# Arguments that name only tests/first-run.spec.ts: the first-run setup of step
+# 3 is the whole run, because the run of the specs (step 4) ignores that file.
+first_run_only=
+if [ $# -gt 0 ]; then
+  first_run_only=1
+  for arg in "$@"; do
+    case $arg in
+      first-run.spec.ts | */first-run.spec.ts) ;;
+      *) first_run_only= ;;
+    esac
+  done
+fi
 
 # Physical paths: the supervisor resolves symbolic links in its pools base,
 # and the specs build share paths from E2E_POOLS_BASE.
@@ -220,6 +236,11 @@ if ! E2E_FIRST_RUN=1 E2E_STAND_IN=1 BASE_URL="$base_url" HTTP_URL="$http_url" \
   "$webui/node_modules/.bin/playwright" test --reporter=list > "$logs/first-run.log" 2>&1; then
   tail -40 "$logs/first-run.log" >&2
   die "creating the test administrator through the /setup page failed (log: .standin/logs/first-run.log)"
+fi
+if [ -n "$first_run_only" ]; then
+  cat "$logs/first-run.log"
+  echo "== Playwright exit code 0 (tests/first-run.spec.ts alone; logs: .standin/logs)"
+  exit 0
 fi
 echo "== created the test administrator; running Playwright (log: .standin/logs/playwright.log)"
 

@@ -1,12 +1,14 @@
+import QRCode from 'qrcode';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import { currentTotpCode, startOfStepAfter, totpCode, totpStep, TOTP_STEP_MS } from './totp';
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
 // Two-factor authentication with TOTP (feature auth.two-factor, ADR-0067, ADR-0027) against the
 // real supervisor: no route fakes. A regular account is created for this file through the API
-// and deleted afterwards, never E2E_ADMIN, whom the other specs sign in as. The codes are
-// computed from the secret that the setup dialog shows, as an authenticator app computes them
+// and deleted afterwards, never E2E_ADMIN, whom the other specs sign in as. The QR code that the
+// setup dialog draws must hold the otpauth:// URI that authenticator apps read, with the secret
+// shown beside it; the codes are computed from that secret, as an app computes them
 // (tests/totp.ts). The server accepts a code only in its 30-second step, and each step once per
 // user: the test waits for a new step between turning 2FA on, signing in and turning it off.
 
@@ -30,6 +32,47 @@ async function submitPassword(page: Page) {
   await page.getByLabel('Username').fill(USER.username);
   await page.getByLabel('Password').fill(USER.password);
   await page.getByRole('button', { name: 'Sign In' }).click();
+}
+
+/** The modules of a QR code of `size` modules a side, a line per row: # dark, . light. */
+function moduleRows(size: number, dark: (row: number, column: number) => boolean): string[] {
+  return Array.from({ length: size }, (_, row) =>
+    Array.from({ length: size }, (_, column) => (dark(row, column) ? '#' : '.')).join(''),
+  );
+}
+
+/**
+ * Whether each module of the QR code drawn in `qr`, a code of `size` modules a side, is dark,
+ * read at its centre: `size` x `size` booleans, row by row. The code is found by its dark
+ * extent, which its finder patterns give: they fill its first and last row and column.
+ */
+async function drawnModules(qr: Locator, size: number): Promise<boolean[]> {
+  return qr.evaluate((img: HTMLImageElement, size: number) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(img, 0, 0);
+    const { data, width, height } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const dark = (x: number, y: number) => data[(y * width + x) * 4] < 128;
+    let [left, top, right, bottom] = [width, height, -1, -1];
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (dark(x, y)) {
+          [left, top] = [Math.min(left, x), Math.min(top, y)];
+          [right, bottom] = [Math.max(right, x), Math.max(bottom, y)];
+        }
+      }
+    }
+    const [moduleWidth, moduleHeight] = [(right + 1 - left) / size, (bottom + 1 - top) / size];
+    const modules: boolean[] = [];
+    for (let row = 0; row < size; row++) {
+      for (let column = 0; column < size; column++) {
+        modules.push(dark(Math.floor(left + (column + 0.5) * moduleWidth), Math.floor(top + (row + 0.5) * moduleHeight)));
+      }
+    }
+    return modules;
+  }, size);
 }
 
 /** After the password, the code form: the code step of two-factor authentication, without a session yet. */
@@ -59,13 +102,38 @@ test.describe('Two-factor authentication', () => {
     await expect(card.getByText('Disabled', { exact: true })).toBeVisible();
 
     // Step 1: the setup draws the QR code in the browser and shows the secret beside it.
+    const setupAnswer = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/auth/totp/setup' && response.request().method() === 'POST',
+    );
     await card.getByRole('button', { name: 'Enable', exact: true }).click();
+    const { qr_uri: qrUri } = await (await setupAnswer).json();
     const setup = page.locator('div:has(> h3:has-text("Setup Two-Factor Authentication"))');
     const qr = setup.getByRole('img', { name: 'QR code for your authenticator app' });
     await expect(qr).toHaveAttribute('src', /^data:image\/png;base64,/);
     await expect.poll(() => qr.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
-    const secret = (await setup.locator('code').innerText()).trim();
-    expect(secret).toMatch(/^[A-Z2-7]{32}$/);
+    const shown = (await setup.locator('code').innerText()).trim();
+    expect(shown).toMatch(/^[A-Z2-7]{32}$/);
+    // What an app reads from the QR code (Key Uri Format): an account UNOS:<name>, the secret
+    // shown for manual entry, and no algorithm, digits or period other than SHA-1, 6 and 30 s.
+    const uri = new URL(qrUri);
+    expect([uri.protocol, uri.host, decodeURIComponent(uri.pathname)]).toEqual([
+      'otpauth:',
+      'totp',
+      `/UNOS:${USER.username}`,
+    ]);
+    expect(uri.searchParams.get('secret')).toBe(shown);
+    expect(uri.searchParams.get('issuer')).toBe('UNOS');
+    for (const [name, value] of [['algorithm', 'SHA1'], ['digits', '6'], ['period', '30']]) {
+      expect(uri.searchParams.get(name) ?? value, name).toBe(value);
+    }
+    // The image is the QR code of that URI, module by module, at the page's error correction (M).
+    const { size, data } = QRCode.create(qrUri, { errorCorrectionLevel: 'M' }).modules;
+    const drawn = await drawnModules(qr, size);
+    expect(moduleRows(size, (row, column) => drawn[row * size + column])).toEqual(
+      moduleRows(size, (row, column) => data[row * size + column] === 1),
+    );
+    const secret = uri.searchParams.get('secret')!;
 
     // Step 2: a code of the app turns two-factor authentication on.
     const enableCode = await currentTotpCode(secret);

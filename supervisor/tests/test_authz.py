@@ -626,6 +626,8 @@ class TestLoginHistory:
         # Times have whole seconds: a failed sign-in and the right one right after it share one.
         second = datetime(2026, 11, 7, 12, 0, 0)
         with Session(authz_db.engine) as session:
+            # Her account is older than these attempts: a user's history starts with the account (ADR-0249).
+            session.get(User, authz_db.alice_id).created_at = second - timedelta(days=1)
             session.add(LoginAttempt(username="alice", success=False, failure_reason="Incorrect username or password",
                                      timestamp=second))
             session.add(LoginAttempt(username="alice", success=True, timestamp=second))
@@ -637,6 +639,56 @@ class TestLoginHistory:
             (True, "2026-11-07T12:00:00Z"),
             (False, "2026-11-07T12:00:00Z"),
         ]
+
+    def test_a_user_created_again_with_an_old_name_sees_only_their_own_attempts(
+        self, client, authz_db, admin_headers
+    ):
+        # The history is kept by name: attempts on "bob" before his new account, a sign-in of the bob
+        # deleted below two days ago and a failed attempt a second ago. The administrators still see
+        # them; the new bob's history starts with his account (ADR-0249).
+        now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+        with Session(authz_db.engine) as session:
+            session.add_all([
+                LoginAttempt(username="bob", ip_address="203.0.113.7", success=True, timestamp=now - timedelta(days=2)),
+                LoginAttempt(username="bob", ip_address="203.0.113.8", success=False,
+                             failure_reason="Incorrect username or password", timestamp=now - timedelta(seconds=1)),
+            ])
+            session.commit()
+        assert client.delete(
+            f"{API}/auth/users/{authz_db.bob_id}", params={"username": "bob"}, headers=admin_headers
+        ).status_code == 200
+        created = client.post(f"{API}/auth/users", json={"username": "bob", "password": PASSWORD}, headers=admin_headers)
+        assert created.status_code == 200, created.text
+        # His first sign-in, in the second of his account's creation or later.
+        login = client.post(f"{API}/auth/login", json={"username": "bob", "password": PASSWORD})
+        assert login.status_code == 200, login.text
+
+        own = client.get(f"{API}/security/login-history", headers=_auth(login.json()["access_token"])).json()
+        failed = client.get(
+            f"{API}/security/login-history?success=false", headers=_auth(login.json()["access_token"])
+        ).json()
+        everyone = client.get(f"{API}/security/login-history?username=bob", headers=admin_headers).json()
+
+        assert [(a["success"], a["ip_address"]) for a in own["attempts"]] == [(True, "testclient")]
+        assert (own["total"], own["success_count"], own["failed_count"]) == (1, 1, 0)
+        assert (failed["attempts"], failed["total"]) == ([], 1)
+        assert [a["ip_address"] for a in everyone["attempts"]] == ["testclient", "203.0.113.8", "203.0.113.7"]
+        assert (everyone["total"], everyone["failed_count"]) == (3, 1)
+
+    @pytest.mark.parametrize("days", [-1, 36501, 800000])
+    def test_clearing_refuses_a_period_out_of_range(self, client, authz_db, attempts, admin_headers, days):
+        # A negative period moved the cutoff into the future and deleted every row; 800000 days
+        # back is before the year 1 (a 500).
+        response = client.delete(f"{API}/security/login-history?older_than_days={days}", headers=admin_headers)
+
+        assert response.status_code == 422, response.text
+        with Session(authz_db.engine) as session:
+            assert len(session.scalars(select(LoginAttempt)).all()) == 3
+
+    def test_clearing_counts_back_up_to_100_years(self, client, attempts, admin_headers):
+        response = client.delete(f"{API}/security/login-history?older_than_days=36500", headers=admin_headers)
+
+        assert response.json() == {"status": "ok", "deleted_count": 0}
 
 
 def _compose(name):
