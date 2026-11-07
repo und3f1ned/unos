@@ -872,16 +872,38 @@ SMB after a restore:
   belongs to another account on this NAS (for example in a backup of another
   installation).
 
-Encrypted backups (`.tar.gz.enc`) are made through the API, with
-`POST /api/v1/backup/create` and the body
+Encrypted backups (`.tar.gz.enc`) are made by backup tasks (below), or
+through the API, with `POST /api/v1/backup/create` and the body
 `{"encrypt": true, "passphrase": "..."}` (see [API Tokens](#api-tokens)).
 Without the passphrase they cannot be restored.
 
 For automatic backups, add a task of the type **System Backup** in
-**System** → **Scheduler** (**New Task**). These backups are unencrypted,
-are named `auto_backup_<date>_<time>.tar.gz` (with `_1`, `_2`, ... before
-`.tar.gz` when two are made in the same second) and appear in the list;
-**Keep Count** sets how many of them are kept.
+**System** → **Scheduler** (**New Task**). Its backups are always encrypted
+(AES-256-GCM) with the passphrase you enter twice, in **Passphrase** and
+**Confirm Passphrase**, at least 8 characters long. They are named `auto_backup_<date>_<time>.tar.gz.enc`
+(with `_1`, `_2`, ... before `.tar.gz.enc` when two are made in the same
+second) and appear in the list, marked encrypted; **Keep Count** sets how
+many of them are kept, counted over all backup tasks. Besides the database,
+they hold a copy of the scheduled tasks, without passphrases, which a
+restore does not restore.
+
+- Keep the passphrase somewhere safe: UNOS never shows it again, and
+  restoring a scheduled backup asks for it, as for any encrypted backup.
+  Without it, the backup cannot be restored. So that the task can run
+  unattended, the NAS keeps a key derived from the passphrase (not the
+  passphrase itself), readable only by the supervisor. No backup of
+  **Backup & Restore** and no scheduled backup holds that key; the copy of
+  the data volume that `update.sh` makes before an update does, next to the
+  scheduled backups (see [Upgrading](INSTALL.md#upgrading)).
+- Editing the task shows the passphrase fields empty. Leave them empty to
+  keep the passphrase, or enter a new one: it applies to the backups made
+  from then on, and older backups still need the passphrase they were made
+  with. The list does not show which task made a backup, so with several
+  backup tasks one passphrase for all of them is easier to keep.
+- A backup task without a passphrase, such as one whose key was lost, fails
+  each run with "No passphrase is set for this backup task: edit the task
+  and set one", and stores nothing. Editing it asks for a passphrase, as for
+  a new task.
 
 ---
 

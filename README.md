@@ -79,7 +79,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Automated Snapshots** - Schedule periodic snapshot creation with retention
 - **Scheduled Scrubs** - Automate BTRFS data integrity checks
 - **SMART Tests** - Schedule disk health tests
-- **Configuration Backups** - Automated system backup with cleanup
+- **Configuration Backups** - Automated system backups, always encrypted with the task's passphrase, with cleanup
 - **Custom Commands** - Run a shell command in the supervisor container on a schedule
 
 ### Network Management
