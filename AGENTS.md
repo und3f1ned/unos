@@ -104,13 +104,13 @@ Each rule names its decision and what enforces it. The guard checks the commands
 the desktop app's terminal tool, and this project denies the Desktop Commander tools (ADR-0211).
 A denial by the guard or the permission system is an answer: ask the owner how to go on.
 
-- The dev device's system disk is an SD card that cannot be replaced (ADR-0214). Reach the device
-  only through `scripts/dev/` (ADR-0016), with scratch files in its `/dev/shm`. `deploy.sh` and
-  `linux-tests.sh` hold the device lock (ADR-0210); they and `check.sh` print `SD writes`, and
-  `sd.sh measure` measures any other command. Builds, `up` and `rollback` go through `deploy.sh`
-  when the owner asks for a deploy (ADR-0223). Container runs, image pulls, prunes, package
-  installs and reboots on the device are owner actions (ADR-0211). Enforced by the guard, which
-  also blocks disk-wiping tools everywhere (`supervisor/tests/test_agent_guard.py`).
+- The dev device runs from an SD card that wears with every write; its eMMC keeps the vendor's
+  firmware and is never written (ADR-0214, ADR-0225). Reach the device only through `scripts/dev/`
+  (ADR-0016), scratch files in its `/dev/shm`. `deploy.sh` and `linux-tests.sh` hold the device
+  lock (ADR-0210) and print `SD writes`; `sd.sh measure` measures any command. Builds, `up` and
+  `rollback` go through `deploy.sh`, on the owner's request (ADR-0223). Container runs, image pulls,
+  prunes, package installs and reboots on the device are owner actions (ADR-0211). Enforced by the
+  guard, which also blocks disk-wiping tools everywhere (`supervisor/tests/test_agent_guard.py`).
 - Secrets live in `dev.env`, read only by the scripts (ADR-0212), and `tmp/dev/backup` holds the
   device's JWT secret, password hashes and database, read only by `deploy.sh rollback` (ADR-0223).
   Neither is ever shown or extracted, the main checkout's copy from a worktree included. Passwords

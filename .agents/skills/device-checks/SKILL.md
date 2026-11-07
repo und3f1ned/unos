@@ -5,7 +5,8 @@ description: Check the UNOS dev device without changing it (health, API answers,
 
 # Read-only checks on the dev device
 
-The device's system disk is an SD card that cannot be replaced (ADR-0214). Run every check from
+The device runs from an SD card that wears with every write, and its eMMC keeps the vendor's
+firmware and is never written (ADR-0214, ADR-0225). Run every check from
 the repository root, through `scripts/dev`:
 
 - `check.sh`, the API relay of `api.py`, the testparm shim `bin/testparm` and `linux-tests.sh`

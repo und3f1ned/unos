@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Writes to the dev device's system disk, an SD card that cannot be replaced (ADR-0214).
+# Writes to the dev device's system disk, the SD card it runs from (ADR-0214, ADR-0225).
 #
 #   scripts/dev/sd.sh sectors
 #       Sectors (512 bytes) written to the system disk since boot, after a sync.
