@@ -258,7 +258,7 @@ needs, and how decisions are recorded in [docs/adr/](docs/adr/README.md).
 
 ```bash
 make setup   # once per checkout: Python venv, lint tools, npm packages, Playwright, git hooks
-make check   # the quality gate: the backend tests, lint, svelte-check and the build, as in CI
+make check   # the quality gate: the backend tests, lint, svelte-check, the web UI's texts and the build, as in CI
 ```
 
 Developers and coding agents follow [AGENTS.md](AGENTS.md) for the commands and

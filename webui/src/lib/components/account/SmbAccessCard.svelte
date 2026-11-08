@@ -5,14 +5,10 @@
 	import { user } from '$lib/stores/auth';
 	import { Alert, Badge, Button, Card, EmptyState, Input, Modal } from '$lib/components/ui';
 	import { smbUrl, windowsAddress } from '$lib/components/shares/texts';
+	import { t } from '$lib/i18n';
 
 	// SMB (network file) access of the signed-in account. An administrator
 	// allows it; the user turns it on with the current password.
-
-	// After the server's "SMB passwords must ..." answer (e.g. a password made
-	// before the SMB rules, shorter than 8 characters, or a common password).
-	const PASSWORD_RULE_HINT =
-		'Change your password above (Change Password) so that it meets this rule, then turn SMB on.';
 
 	let status: MySmbStatus | null = null;
 	let loading = true;
@@ -76,7 +72,7 @@
 			const result = await enableMySmb(password, status.totp_required ? totpCode : undefined);
 			password = '';
 			totpCode = '';
-			notice = 'SMB is on for your account.';
+			notice = $t('account.smb.onNotice');
 			warnings = result?.warnings ?? [];
 			await load();
 		} catch (e) {
@@ -103,7 +99,7 @@
 		try {
 			const result = await disableMySmb();
 			confirmOff = false;
-			notice = 'SMB is off for your account.';
+			notice = $t('account.smb.offNotice');
 			warnings = result?.warnings ?? [];
 			actionError = '';
 			await load();
@@ -122,19 +118,22 @@
 	$: usableShares = status?.shares.filter((share) => share.usable) ?? [];
 	$: showConnect = allowed || usableShares.length > 0;
 	$: example = (allowed ? status?.shares[0] : usableShares[0])?.name ?? 'share';
+	// i18n-ignore: an option of the command below, the same in every language
 	$: mountOption = allowed ? `username=${signInName}` : 'guest';
+	// i18n-ignore: a command, the same in every language
+	$: mountCommand = `sudo mount -t cifs //${host}/${example} /mnt/${example} -o ${mountOption}`;
 </script>
 
 <Card>
 	<h3 class="section-title mb-4">
 		<Share2 class="w-5 h-5" />
-		Network file access (SMB)
+		{$t('account.smb.title')}
 	</h3>
 
 	{#if loading}
-		<p class="text-sm text-muted">Loading...</p>
+		<p class="text-sm text-muted">{$t('common.loading')}</p>
 	{:else if loadError || !status || !account}
-		<Alert variant="error" title="SMB access could not be loaded">{loadError}</Alert>
+		<Alert variant="error" title={$t('account.smb.loadError')}>{loadError}</Alert>
 	{:else}
 		<div class="space-y-4">
 			{#if notice}
@@ -149,28 +148,23 @@
 			{/if}
 
 			{#if account.state === 'unavailable'}
-				<Alert variant="info">{account.reason ?? 'SMB is not available for your account.'}</Alert>
+				<Alert variant="info">{account.reason ?? $t('account.smb.unavailable')}</Alert>
 			{:else if account.state === 'off'}
-				<p class="text-sm">
-					SMB access is not turned on for your account. Ask an administrator to allow it.
-				</p>
+				<p class="text-sm">{$t('account.smb.off')}</p>
 			{:else if account.state === 'password_needed'}
-				<p class="text-sm">
-					An administrator allowed SMB access. Enter your current password to turn it on: your SMB
-					password is your UNOS password.
-				</p>
+				<p class="text-sm">{$t('account.smb.passwordNeeded')}</p>
 				<form on:submit|preventDefault={turnOn} class="space-y-3 max-w-md">
 					<Input
 						id="smb-password"
 						type="password"
-						label="Password"
+						label={$t('common.password')}
 						bind:value={password}
 						autocomplete="current-password"
 					/>
 					{#if status.totp_required}
 						<Input
 							id="smb-totp-code"
-							label="Two-factor code"
+							label={$t('account.smb.totpCode')}
 							bind:value={totpCode}
 							autocomplete="one-time-code"
 							maxlength={16}
@@ -181,42 +175,46 @@
 						loading={busy}
 						disabled={!password || (status.totp_required && !totpCode)}
 					>
-						Turn on SMB
+						{$t('account.smb.turnOn')}
 					</Button>
 				</form>
 			{:else if account.state === 'active'}
 				<div class="flex flex-wrap items-center gap-3">
-					<Badge variant="success">Active</Badge>
-					<Button variant="ghost" size="sm" on:click={() => (confirmOff = true)}>Turn off SMB</Button>
+					<Badge variant="success">{$t('account.smb.active')}</Badge>
+					<Button variant="ghost" size="sm" on:click={() => (confirmOff = true)}>
+						{$t('account.smb.turnOff')}
+					</Button>
 				</div>
 				<p class="text-sm">
-					Sign in as <strong class="mono">{signInName}</strong> with your UNOS password. Changing your
-					UNOS password changes it for SMB too and ends your open SMB connections.
+					{$t('account.smb.signInBefore')} <strong class="mono">{signInName}</strong>
+					{$t('account.smb.signInAfter')}
 				</p>
 			{/if}
 
 			<!-- Outside the form: it stays shown when the status read after it changed the state. -->
 			{#if actionError}
-				<Alert variant="error" title="SMB was not turned on">
+				<Alert variant="error" title={$t('account.smb.notOn')}>
 					<p>{actionError}</p>
+					<!-- After the server's "SMB passwords must ..." answer (e.g. a password made
+					     before the SMB rules, shorter than 8 characters). -->
 					{#if actionError.startsWith('SMB passwords must')}
-						<p class="mt-1">{PASSWORD_RULE_HINT}</p>
+						<p class="mt-1">{$t('account.smb.passwordRule')}</p>
 					{/if}
 				</Alert>
 			{/if}
 
 			<div>
-				<h4 class="card-title mb-2">Shares you can use</h4>
+				<h4 class="card-title mb-2">{$t('account.smb.shares')}</h4>
 				{#if status.shares.length === 0}
-					<EmptyState icon={FolderOpen} title="No shares yet. Ask an administrator for access." />
+					<EmptyState icon={FolderOpen} title={$t('account.smb.noShares')} />
 				{:else}
 					<div class="overflow-x-auto">
 						<table class="table">
 							<thead class="table-header">
 								<tr>
-									<th>Name</th>
-									<th>Access</th>
-									<th>Comment</th>
+									<th>{$t('account.smb.name')}</th>
+									<th>{$t('account.smb.access')}</th>
+									<th>{$t('account.smb.comment')}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -225,13 +223,13 @@
 										<td>
 											<span class="mono">{share.name}</span>
 											{#if share.guest_ok}
-												<Badge variant="neutral" class="ml-1">Guest</Badge>
+												<Badge variant="neutral" class="ml-1">{$t('account.smb.guest')}</Badge>
 											{/if}
 											{#if !share.usable}
-												<p class="text-xs text-muted">Not usable until SMB is on</p>
+												<p class="text-xs text-muted">{$t('account.smb.notUsable')}</p>
 											{/if}
 										</td>
-										<td>{share.level === 'write' ? 'Read & write' : 'Read only'}</td>
+										<td>{share.level === 'write' ? $t('account.smb.readWrite') : $t('account.smb.readOnly')}</td>
 										<td class="text-secondary">{share.comment}</td>
 									</tr>
 								{/each}
@@ -243,48 +241,48 @@
 
 			{#if showConnect}
 				<div class="space-y-2">
-					<h4 class="card-title">How to connect</h4>
+					<h4 class="card-title">{$t('account.smb.connect')}</h4>
 					<ul class="space-y-1 text-sm">
 						<li>
-							<span class="text-secondary">Windows:</span>
+							<span class="text-secondary">{$t('account.smb.windows')}</span>
 							<span class="mono">{windowsAddress(host, example)}</span>
 						</li>
 						<li>
-							<span class="text-secondary">macOS:</span> Finder → Go → Connect to Server →
+							<span class="text-secondary">{$t('account.smb.macos')}</span>
+							{$t('account.smb.finder')}
 							<span class="mono">{smbUrl(host, example)}</span>
 						</li>
 						<li>
-							<span class="text-secondary">Linux:</span>
-							<span class="mono">{smbUrl(host, example)}</span> or
-							<span class="mono break-all"
-								>sudo mount -t cifs //{host}/{example} /mnt/{example} -o {mountOption}</span
-							>
+							<span class="text-secondary">{$t('account.smb.linux')}</span>
+							<span class="mono">{smbUrl(host, example)}</span>
+							{$t('account.smb.or')}
+							<span class="mono break-all">{mountCommand}</span>
 						</li>
 					</ul>
-					<p class="text-sm text-muted">
-						Two-factor authentication does not apply to SMB: use a strong password
-					</p>
-					<p class="text-sm text-muted">
-						Use the NAS's address on your local network (IPv4, or an IPv6 ULA or link-local
-						address); public addresses are refused.
-					</p>
+					<p class="text-sm text-muted">{$t('account.smb.noTwoFactor')}</p>
+					<p class="text-sm text-muted">{$t('account.smb.localAddress')}</p>
 				</div>
 			{/if}
 		</div>
 	{/if}
 </Card>
 
-<Modal open={confirmOff} title="Turn off SMB" size="md" closable={!busy} on:close={closeConfirm}>
-	<p>
-		Turn off SMB for your account? Your open SMB connections are ended. You can turn it on again here
-		with your password.
-	</p>
+<Modal
+	open={confirmOff}
+	title={$t('account.smb.offTitle')}
+	size="md"
+	closable={!busy}
+	on:close={closeConfirm}
+>
+	<p>{$t('account.smb.offConfirm')}</p>
 	{#if offError}
-		<Alert variant="error" title="SMB was not turned off">{offError}</Alert>
+		<Alert variant="error" title={$t('account.smb.notOff')}>{offError}</Alert>
 	{/if}
 
 	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>Cancel</Button>
-		<Button variant="danger" class="flex-1" loading={busy} on:click={turnOff}>Turn off SMB</Button>
+		<Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>
+			{$t('common.cancel')}
+		</Button>
+		<Button variant="danger" class="flex-1" loading={busy} on:click={turnOff}>{$t('account.smb.turnOff')}</Button>
 	</svelte:fragment>
 </Modal>

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
 # storage/disks.py (lsns and findmnt --task: the mount namespaces of other
-# processes, ADR-0287), shares/smb.py, shares/accounts.py (SMB accounts: getent
+# processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,

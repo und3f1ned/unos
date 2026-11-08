@@ -594,7 +594,7 @@ def test_forgetting_a_pool_stops_serving_its_shares(pool_cycle):
 @pytest.mark.parametrize(("method", "url"), [("post", "/storage/pools/data/unmount"),
                                              ("delete", "/storage/pools/data")])
 def test_a_pool_whose_mount_services_keep_copies_of_stops_serving_its_shares(pool_cycle, method, url):
-    """ADR-0287, ADR-0248: on Armbian, services with sandboxing keep copies of the pool's mount in
+    """ADR-0288, ADR-0248: on Armbian, services with sandboxing keep copies of the pool's mount in
     mount namespaces of their own. The unmount takes them too and succeeds, and smb.conf no longer
     serves the pool's shares; mounting the pool serves them again."""
     c, fake = pool_cycle, pool_cycle.fake

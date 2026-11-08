@@ -32,7 +32,7 @@ mounted (and written to) even after the host's mountpoint is gone. The copies
 of the pool's mount that systemd services keep in mount namespaces of their
 own, whose root is the host's, are unmounted there as well; a container whose
 namespace still has the pool mounted, also at its mountpoint, keeps it in use
-(ADR-0287).
+(ADR-0288).
 
 Deleting or unmounting a pool never touches the disks: the filesystem stays
 intact and can be mounted again.
@@ -1055,7 +1055,7 @@ def _root_of(table: list[disks.HostMount]) -> tuple[str, str] | None:
 
 
 def _pool_mounts_in(pid: int, target: str, mounts: list[disks.HostMount]) -> tuple[int, str | None]:
-    """How the mount namespace of the host's process ``pid`` has the pool mounted (ADR-0287).
+    """How the mount namespace of the host's process ``pid`` has the pool mounted (ADR-0288).
 
     ``mounts`` is the host's mount table before its umount. A mount of the
     pool's filesystem is recognised by the device number (MAJ:MIN) that
@@ -1099,7 +1099,7 @@ def _pool_mounts_in(pid: int, target: str, mounts: list[disks.HostMount]) -> tup
 
 
 def _namespace_copies(target: str, mounts: list[disks.HostMount]) -> tuple[dict[int, int], str | None]:
-    """The copies of the pool's host mount that other mount namespaces keep (ADR-0287).
+    """The copies of the pool's host mount that other mount namespaces keep (ADR-0288).
 
     systemd runs services with sandboxing (PrivateTmp=, ProtectSystem=, ...)
     in mount namespaces of their own, made as copies of the host's when they

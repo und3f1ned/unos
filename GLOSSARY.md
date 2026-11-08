@@ -17,6 +17,10 @@ reads and changes the host for the web UI (ADR-0002). Avoid: backend server, dae
 API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend server, dashboard
 (the Dashboard is one page).
 
+**Text catalog**: The texts of one area of the web UI in English and Russian
+(`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
+Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
+
 **Dev device**: The ArmSoM Sige7 board that UNOS is developed and checked on. It holds no data to
 preserve (ADR-0220). Avoid: production NAS, the server.
 
@@ -74,7 +78,7 @@ share's folder (ADR-0145). Avoid: pools directory (that is `/mnt/pools`).
 host's mount, in the mount namespace of another process whose root is the host's, such as a
 systemd service with sandboxing. The host's umount does not reach it, so an unmount of the pool
 unmounts it there too. Any other mount of the pool in another namespace keeps the pool mounted
-(ADR-0287): a container's bind mount, and also the pool's mount at its mountpoint in a container,
+(ADR-0288): a container's bind mount, and also the pool's mount at its mountpoint in a container,
 whose root is its own (`-v /mnt/pools:/mnt/pools`). Avoid: stale mount (the copy exists while the
 pool is mounted too).
 

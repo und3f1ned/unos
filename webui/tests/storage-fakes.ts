@@ -190,7 +190,7 @@ export const usedByContainers = (pool: string, containers: string[]) =>
 
 /**
  * The filesystem stays mounted outside the host after the host's umount, for example in a
- * container's mount namespace (ADR-0287), so the server mounted the pool again.
+ * container's mount namespace (ADR-0288), so the server mounted the pool again.
  */
 export const stillInUse = (pool: string, reason: string) =>
   `Pool '${pool}' is still in use outside the host (${reason}), so it was mounted again. Stop the apps and containers that use the pool and try again.`;

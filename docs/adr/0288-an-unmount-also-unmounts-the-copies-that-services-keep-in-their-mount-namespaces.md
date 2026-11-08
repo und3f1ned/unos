@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0287: An unmount also unmounts the copies of a pool's mount that services keep in mount namespaces of their own, and refuses every other user as before
+# ADR-0288: An unmount also unmounts the copies of a pool's mount that services keep in mount namespaces of their own, and refuses every other user as before
 
 ## Context
 

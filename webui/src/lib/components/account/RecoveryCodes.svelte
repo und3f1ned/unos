@@ -3,6 +3,7 @@
 	import { ApiError } from '$lib/api/client';
 	import { generateRecoveryCodes, getRecoveryCodesStatus, type RecoveryCodesStatus } from '$lib/api/auth';
 	import { Alert, Button, Modal } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 
 	// The recovery codes of the signed-in account, shown while two-factor
 	// authentication is on (ADR-0238). Each code signs in once in place of a
@@ -22,11 +23,6 @@
 	// saved ones no longer work. Its warning stays until a generation succeeds or is refused.
 	let outcomeUnknown = false;
 	let confirmNew = false;
-
-	const REFUSED_TITLE = 'No recovery codes were generated';
-	const UNKNOWN_TITLE = 'New recovery codes may have been generated';
-	const UNKNOWN_HINT =
-		'If they were, they never reached this page, and any codes you saved before no longer work. Generate new codes now.';
 
 	onMount(() => {
 		void load();
@@ -87,64 +83,67 @@
 	}
 
 	$: left = status?.remaining ?? 0;
-	$: leftText = left === 1 ? '1 recovery code left' : `${left} recovery codes left`;
-	$: errorTitle = outcomeUnknown ? UNKNOWN_TITLE : REFUSED_TITLE;
+	$: errorTitle = outcomeUnknown ? $t('account.recovery.unknown') : $t('account.recovery.refused');
 </script>
 
 <section aria-labelledby="recovery-codes-title" class="mt-4 pt-4 border-t border-border space-y-3">
-	<h4 id="recovery-codes-title" class="card-title">Recovery codes</h4>
+	<h4 id="recovery-codes-title" class="card-title">{$t('account.recovery.title')}</h4>
 
 	{#if codes.length > 0}
-		<Alert variant="warning" title="Save these codes now">
-			They are shown only this once. Keep them somewhere safe, away from this device: each code signs
-			you in once in place of a code from your authenticator app.
+		<Alert variant="warning" title={$t('account.recovery.saveTitle')}>
+			{$t('account.recovery.saveHint')}
 		</Alert>
-		<ul aria-label="Recovery codes" class="grid grid-cols-2 gap-2 max-w-xs mono">
+		<ul aria-label={$t('account.recovery.list')} class="grid grid-cols-2 gap-2 max-w-xs mono">
 			{#each codes as code}
 				<li>{code}</li>
 			{/each}
 		</ul>
-		<Button on:click={() => (codes = [])}>Done</Button>
+		<Button on:click={() => (codes = [])}>{$t('common.done')}</Button>
 	{:else if loading}
-		<p class="text-sm text-muted">Loading...</p>
+		<p class="text-sm text-muted">{$t('common.loading')}</p>
 	{:else if loadError || !status}
-		<Alert variant="error" title="Recovery codes could not be loaded">{loadError}</Alert>
+		<Alert variant="error" title={$t('account.recovery.loadError')}>{loadError}</Alert>
 	{:else if !status.generated}
-		<p class="text-sm text-secondary">
-			No recovery codes yet. If you lose your authenticator app, a recovery code signs you in once in
-			its place.
-		</p>
-		<Button loading={busy} on:click={generate}>Generate recovery codes</Button>
+		<p class="text-sm text-secondary">{$t('account.recovery.none')}</p>
+		<Button loading={busy} on:click={generate}>{$t('account.recovery.generate')}</Button>
 	{:else}
 		{#if left === 0}
-			<Alert variant="warning">No recovery codes left: generate new ones.</Alert>
+			<Alert variant="warning">{$t('account.recovery.noneLeft')}</Alert>
 		{:else}
-			<p class="text-sm">{leftText}</p>
+			<p class="text-sm">{$t('account.recovery.left', { n: left })}</p>
 		{/if}
 		<Button variant="secondary" loading={busy && !confirmNew} on:click={askForNewCodes}>
-			Generate new codes
+			{$t('account.recovery.generateNew')}
 		</Button>
 	{/if}
 
 	{#if error && !confirmNew}
 		<Alert variant="error" title={errorTitle}>
 			{error}
-			{#if outcomeUnknown}<p class="mt-1">{UNKNOWN_HINT}</p>{/if}
+			{#if outcomeUnknown}<p class="mt-1">{$t('account.recovery.unknownHint')}</p>{/if}
 		</Alert>
 	{/if}
 </section>
 
-<Modal open={confirmNew} title="Generate new recovery codes" size="md" closable={!busy} on:close={closeConfirm}>
-	<p>Your current recovery codes stop working. Ten new ones are shown once.</p>
+<Modal
+	open={confirmNew}
+	title={$t('account.recovery.confirmTitle')}
+	size="md"
+	closable={!busy}
+	on:close={closeConfirm}
+>
+	<p>{$t('account.recovery.confirmText')}</p>
 	{#if error}
 		<Alert variant="error" title={errorTitle}>
 			{error}
-			{#if outcomeUnknown}<p class="mt-1">{UNKNOWN_HINT}</p>{/if}
+			{#if outcomeUnknown}<p class="mt-1">{$t('account.recovery.unknownHint')}</p>{/if}
 		</Alert>
 	{/if}
 
 	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>Cancel</Button>
-		<Button class="flex-1" loading={busy} on:click={generate}>Generate new codes</Button>
+		<Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>
+			{$t('common.cancel')}
+		</Button>
+		<Button class="flex-1" loading={busy} on:click={generate}>{$t('account.recovery.generateNew')}</Button>
 	</svelte:fragment>
 </Modal>

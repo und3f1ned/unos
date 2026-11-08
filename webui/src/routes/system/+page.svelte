@@ -2,6 +2,7 @@
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
   import { isAdmin } from "$lib/stores/auth";
+  import { t } from "$lib/i18n";
   import {
     Settings,
     Gauge,
@@ -19,19 +20,19 @@
 
   // Sub-navigation for System page. Only the Security tab (own password,
   // 2FA and login history) works for regular accounts; the APIs behind the
-  // other tabs are administrator-only.
-  const tabs = [
-    { id: "general", icon: Settings, label: "General", adminOnly: true },
-    { id: "updates", icon: ArrowUpCircle, label: "Updates", adminOnly: true },
-    { id: "security", icon: Shield, label: "Security", adminOnly: false },
-    { id: "monitor", icon: Gauge, label: "Resource Monitor", adminOnly: true },
-    { id: "logs", icon: FileText, label: "System Logs", adminOnly: true },
-    { id: "health", icon: Heart, label: "Disk Health", adminOnly: true },
-    { id: "backup", icon: Database, label: "Backup & Restore", adminOnly: true },
-    { id: "scheduler", icon: Calendar, label: "Scheduler", adminOnly: true },
-    { id: "notifications", icon: Bell, label: "Notifications", adminOnly: true },
-    { id: "network", icon: Network, label: "Network", adminOnly: true },
-    { id: "power", icon: Power, label: "Power Management", adminOnly: true },
+  // other tabs are administrator-only. Reactive: the labels follow the language of the page.
+  $: tabs = [
+    { id: "general", icon: Settings, label: $t("system.tabs.general"), adminOnly: true },
+    { id: "updates", icon: ArrowUpCircle, label: $t("system.tabs.updates"), adminOnly: true },
+    { id: "security", icon: Shield, label: $t("system.tabs.security"), adminOnly: false },
+    { id: "monitor", icon: Gauge, label: $t("system.tabs.monitor"), adminOnly: true },
+    { id: "logs", icon: FileText, label: $t("system.tabs.logs"), adminOnly: true },
+    { id: "health", icon: Heart, label: $t("system.tabs.health"), adminOnly: true },
+    { id: "backup", icon: Database, label: $t("system.tabs.backup"), adminOnly: true },
+    { id: "scheduler", icon: Calendar, label: $t("system.tabs.scheduler"), adminOnly: true },
+    { id: "notifications", icon: Bell, label: $t("system.tabs.notifications"), adminOnly: true },
+    { id: "network", icon: Network, label: $t("system.tabs.network"), adminOnly: true },
+    { id: "power", icon: Power, label: $t("system.tabs.power"), adminOnly: true },
   ];
 
   $: visibleTabs = $isAdmin ? tabs : tabs.filter(t => !t.adminOnly);
@@ -66,7 +67,7 @@
 <div class="flex h-full -m-6">
   <!-- Sidebar tabs -->
   <div class="w-56 bg-slate-800 border-r border-slate-700 p-3 overflow-y-auto">
-    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">{$isAdmin ? "System" : "Account"}</h2>
+    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">{$isAdmin ? $t("system.heading.admin") : $t("system.heading.user")}</h2>
     <nav class="space-y-1">
       {#each visibleTabs as tab}
         <button

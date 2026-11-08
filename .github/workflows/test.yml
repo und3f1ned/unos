@@ -98,10 +98,10 @@ jobs:
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: pip-audit -r supervisor/requirements.txt
 
-  # The web UI: make frontend (svelte-check and the production build, which
-  # runs also when the type check failed), and the known vulnerabilities of
-  # its runtime dependencies. Node.js as in the builder stage of
-  # webui/Dockerfile.
+  # The web UI: make frontend (svelte-check, the check of the web UI's texts
+  # and the production build, each also when another one failed), and the
+  # known vulnerabilities of its runtime dependencies. Node.js as in the
+  # builder stage of webui/Dockerfile.
   frontend:
     name: Frontend Checks
     runs-on: ubuntu-latest

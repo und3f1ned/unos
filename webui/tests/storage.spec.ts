@@ -280,7 +280,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     });
   }
 
-  // ADR-0035, ADR-0070, ADR-0287: Unmount is refused (409) while running apps keep data on the
+  // ADR-0035, ADR-0070, ADR-0288: Unmount is refused (409) while running apps keep data on the
   // pool, also when the filesystem stays mounted in a container's mount namespace after the
   // host's umount; the server then mounts the pool again. The texts are the server's
   // (supervisor/tests/test_pool_persistence.py checks them).
@@ -396,7 +396,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(badge(card, 'Mounted at boot')).toBeVisible();
   });
 
-  // ADR-0287: after the host's umount, a mount namespace that has the pool mounted elsewhere
+  // ADR-0288: after the host's umount, a mount namespace that has the pool mounted elsewhere
   // keeps it in use; the server mounts the pool again and names the process.
   test('a removal refused while the pool is in use says why, and the pool stays', async ({
     authenticatedPage: page,

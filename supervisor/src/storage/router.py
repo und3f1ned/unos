@@ -214,7 +214,7 @@ async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_to
     """Unmount a pool on the host and remove its managed fstab entry.
 
     The copies of its mount that services keep in mount namespaces of their
-    own, whose root is the host's, are unmounted with it (ADR-0287). 409
+    own, whose root is the host's, are unmounted with it (ADR-0288). 409
     while host processes or running containers use the pool, such as smbd
     for an SMB client that has one of its shares open, and when the mount
     namespace of another process still has it mounted after the host's

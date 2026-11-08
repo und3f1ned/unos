@@ -1226,7 +1226,7 @@ class TestUnmountAndDelete:
     # -networkd, -logind, -udevd, rsyslogd) in mount namespaces of their own. Each keeps
     # a copy of the pool's mount (root "/" at /mnt/pools/data) in a peer group of its
     # own, which the host's umount does not reach: the filesystem stayed mounted, and
-    # every unmount was refused as still in use and mounted again (ADR-0287).
+    # every unmount was refused as still in use and mounted again (ADR-0288).
     SERVICES = (612, 640, 655)
     UNMOUNTED_IN_SERVICES = [["umount", "--namespace", str(pid), "/mnt/pools/data"] for pid in SERVICES]
 
@@ -1566,7 +1566,7 @@ class TestMountNamespaces:
 def test_the_e2e_fakes_answer_with_the_servers_texts(data_pool):
     """webui/tests/storage-fakes.ts refuses an unmount or a removal of a pool in use with these
     texts word for word (ADR-0189): running containers that Docker reports, and a mount namespace
-    that has the pool mounted elsewhere after the host's umount (ADR-0287)."""
+    that has the pool mounted elsewhere after the host's umount (ADR-0288)."""
     fakes = (Path(__file__).resolve().parents[2] / "webui" / "tests" / "storage-fakes.ts").read_text(encoding="utf-8")
     pools.mount_pool("data")
 
@@ -2398,7 +2398,7 @@ class TestPoolEndpoints:
     def test_a_pool_whose_mount_services_keep_copies_of_is_unmounted_and_smb_conf_applied(
         self, api, data_pool, method, url, answer
     ):
-        """ADR-0287: the copies in the services' mount namespaces are unmounted, the request
+        """ADR-0288: the copies in the services' mount namespaces are unmounted, the request
         succeeds, and smb.conf is applied after it as after any unmount (ADR-0248)."""
         pools.mount_pool("data")
         for pid in (612, 640):

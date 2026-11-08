@@ -3,6 +3,7 @@
   import { setup, login } from '$lib/api/auth';
   import { connectWebSocket } from '$lib/stores/stats';
   import { Server } from 'lucide-svelte';
+  import { t } from '$lib/i18n';
 
   let username = '';
   let password = '';
@@ -12,7 +13,7 @@
 
   async function handleSubmit() {
     if (password !== confirmPassword) {
-      error = 'Passwords do not match';
+      error = $t('setup.mismatch');
       return;
     }
 
@@ -25,7 +26,7 @@
       connectWebSocket();
       goto('/');
     } catch (e: any) {
-      error = e.message || 'Setup failed';
+      error = e.message || $t('setup.failed');
     } finally {
       loading = false;
     }
@@ -36,11 +37,11 @@
   <div class="bg-slate-800 p-8 rounded-lg shadow-xl w-full max-w-md">
     <div class="flex items-center justify-center gap-2 mb-4">
       <Server class="w-10 h-10 text-blue-500" />
-      <span class="text-2xl font-bold">UNOS</span>
+      <span class="text-2xl font-bold">{$t('common.product')}</span>
     </div>
 
     <p class="text-center text-slate-400 mb-8">
-      Create your admin account to get started
+      {$t('setup.intro')}
     </p>
 
     <form on:submit|preventDefault={handleSubmit} class="space-y-4">
@@ -52,7 +53,7 @@
 
       <div>
         <label for="username" class="block text-sm font-medium text-slate-400 mb-1">
-          Username
+          {$t('common.username')}
         </label>
         <input
           type="text"
@@ -66,7 +67,7 @@
 
       <div>
         <label for="password" class="block text-sm font-medium text-slate-400 mb-1">
-          Password
+          {$t('common.password')}
         </label>
         <input
           type="password"
@@ -81,7 +82,7 @@
 
       <div>
         <label for="confirmPassword" class="block text-sm font-medium text-slate-400 mb-1">
-          Confirm Password
+          {$t('setup.confirmPassword')}
         </label>
         <input
           type="password"
@@ -99,7 +100,7 @@
         class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800
                rounded-lg font-medium transition-colors"
       >
-        {loading ? 'Creating account...' : 'Create Admin Account'}
+        {loading ? $t('setup.creating') : $t('setup.create')}
       </button>
     </form>
   </div>

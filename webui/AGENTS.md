@@ -37,10 +37,35 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   once on a 401 and throws `ApiError` with the server's message.
 - Regular users see Dashboard and Account only (ADR-0030): every other page is for administrators.
 
+## Texts (ADR-0287)
+
+- Every text comes from a catalog in English and Russian: `src/lib/i18n/catalog/<area>.ts`
+  exports `en` and `ru: Translation<typeof en>`, keys start with `<area>.`. Markup and scripts use
+  `$t('area.key')`, `$t('area.key', { name })` for `{name}`, and `$t('area.key', { n })` for a
+  text with plural forms (`{ one, other }` in English, `{ one, few, many }` in Russian).
+  `$lib/i18n` collects every catalog file: an area adds its own file and edits no shared one;
+  `common.ts` has the words that many areas use. Dates take `$intlLocale`. A value that the
+  server answers as a word (an action, a state, a type) is shown through a map from the value to
+  a key, `{ allow: 'account.firewall.allow' }`, never as it comes.
+- English stays word for word what the specs select: `playwright.config.ts` runs an en-US
+  browser, and `tests/language.spec.ts` switches to Russian. The server's messages (the
+  `ApiError` texts) stay English, like the fakes' copies of them (ADR-0189).
+- `npm run i18n` (`scripts/i18n-check.mjs`) fails for a text of a `.svelte` file that does not
+  come from `$t`: text between tags, a user-facing attribute or prop, and every string literal of
+  a script or of a markup expression that is not code (compared or looked up, a key, a class, a
+  name, an id, a path); for a key that no catalog has, also in a map of keys; and for a catalog
+  whose halves differ. A literal that is the same in every language (a command, a browser's name)
+  gets `// i18n-ignore: <reason>` above its statement. The check cannot see a text that the code
+  puts together from data, a single lower-case word in a script, or a `.ts` module
+  (`$lib/components/shares/texts.ts`): translate those too. `scripts/i18n-untranslated.txt`
+  lists the files not translated yet; a translated file leaves it. The empty list is not enough:
+  the feature passes after a walk through every page in Russian (ADR-0287).
+
 ## Checks and build
 
 - `make frontend` runs `npm run check` (svelte-kit sync, then svelte-check `--threshold error`:
-  errors fail, warnings do not) and `npm run build` (into `webui/build`).
+  errors fail, warnings do not), `npm run i18n` (the texts, above) and `npm run build` (into
+  `webui/build`).
 - `webui/node_modules` comes from `make setup` (`npm ci` from `package-lock.json`). A new
   dependency is the owner's call: it needs the network and a lockfile change.
 - The Node.js version of `webui/Dockerfile`, of `engines` in `package.json` and of CI agree;

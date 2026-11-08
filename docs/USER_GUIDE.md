@@ -65,6 +65,21 @@ The UNOS interface consists of:
   [User Roles](#user-roles)).
 - **Main Content** - Current page content
 
+### Language
+
+The web interface is in English or Russian. Choose the language on the **Account**
+page (administrators: **System** → **Security**), under **Language**: the list
+names each language in its own language. The choice applies at once and is kept
+in this browser, for every account that signs in with it, and the login page
+shows it too. Without a choice, UNOS is in Russian when the browser's language is
+Russian, and in English otherwise. Dates and times follow the language: in the
+browser's own format when the browser is set to that language, otherwise with the
+day first and a 24-hour clock.
+
+So far the navigation, the login and first-run setup pages and the **Account**
+page are translated; the other pages are still in English. Messages from the
+server, such as the reason an action was refused, stay in English.
+
 ---
 
 ## Dashboard
@@ -813,7 +828,7 @@ tick **Administrator privileges**.
 | Role | Permissions |
 |------|-------------|
 | Admin | Full access to all features, except SMB: administrators cannot use SMB |
-| User | **Dashboard** (system overview and live statistics) and **Account** (own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
+| User | **Dashboard** (system overview and live statistics) and **Account** (language, own password, two-factor authentication, login history and SMB access); SMB shares as an administrator allows |
 
 Every other page and API is for administrators only; regular users do not see
 them. At least one administrator must remain: the last one cannot be demoted
