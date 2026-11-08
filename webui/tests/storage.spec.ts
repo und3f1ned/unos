@@ -1420,3 +1420,327 @@ test.describe('Storage volumes (fake data)', () => {
     expect(writes).toEqual([]);
   });
 });
+
+// The Storage page in Russian (webui.translations, ADR-0287): its texts come from the catalog
+// storage.ts, and the sizes and percentages the page writes take the number format and the units
+// of the page's language, and when the last scrub started its date format (ADR-0300). A disk's
+// in-use reason is the server's message and stays in English. The fakes answer every request, and
+// every dialog is cancelled: nothing is created, mounted, unmounted, imported or removed.
+test.describe('The Storage page in Russian', () => {
+  const GIB = 1024 ** 3;
+  const MIB = 1024 ** 2;
+  // As btrfs prints when a scrub started: in English, without a time zone.
+  const STARTED = 'Fri Nov  6 10:00:00 2026';
+  // What the dialogs ask of a pool's or a volume's name (POOL_NAME_PATTERN and VOLUME_NAME_PATTERN
+  // of src/lib/api/storage.ts): Latin letters only, which a Russian reader would not assume.
+  const NAME_RULE =
+    'Используйте латинские буквы, цифры, «-» и «_» (до 63 символов), начиная с латинской буквы или цифры';
+  const HALTED = {
+    ...HEALTHY_POOL, name: 'e2e_halt', uuid: '00000000-0000-4000-8000-0000000000e9', mountpoint: '/mnt/pools/e2e_halt',
+  };
+  const [unlabelled, , degraded] = FAKE_IMPORTABLE;
+  // A stick with a hybrid ISO image: a filesystem of the whole disk, and a partition table too.
+  const STICK = {
+    name: 'e2e-sd5', path: '/dev/e2e-sd5', model: 'E2E Stick', serial: null, wwn: null, size: 8e9, rotational: false,
+    mountpoint: null, type: 'disk', fstype: 'iso9660', label: 'Ubuntu', pttype: 'dos',
+    partitions: [
+      { name: 'e2e-sd5p1', path: '/dev/e2e-sd5p1', size: 5e9, fstype: 'iso9660', label: 'Ubuntu', mountpoints: [] },
+      { name: 'e2e-sd5p2', path: '/dev/e2e-sd5p2', size: 5e6, fstype: 'vfat', label: null, mountpoints: [] },
+    ],
+    mountpoints: [], has_data: true, is_system: false, in_use: false, in_use_reason: null, pool: null,
+  };
+  const scrubs: Record<string, FakeScrubStatus> = {
+    e2e_data: {
+      ...noScrub('e2e_data'), status: 'finished', duration: 256, total_bytes: 4 * GIB, rate: 16 * MIB, errors: 13,
+      last_run: STARTED,
+    },
+    e2e_media: {
+      ...noScrub('e2e_media'), status: 'running', duration: 64, bytes_scrubbed: GIB, total_bytes: 4 * GIB,
+      rate: 16 * MIB, last_run: STARTED,
+    },
+    // A date that does not exist is not turned into another one.
+    e2e_halt: {
+      ...noScrub('e2e_halt'), status: 'aborted', duration: 130, total_bytes: 4 * GIB, errors: 2,
+      last_run: 'Mon Feb 30 10:00:00 2026',
+    },
+  };
+  let writes: RecordedWrite[] = [];
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    writes = await fakeStorageApi(page, {
+      disks: () => [...FAKE_DISKS, STICK],
+      pools: [HEALTHY_POOL, FAKE_POOLS[1], FAKE_POOLS[0], HALTED],
+      importable: [unlabelled, degraded],
+      scrubStatus: (pool) => scrubs[pool],
+    });
+    // The language chosen in this browser, as the Account page keeps it (tests/language.spec.ts).
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), 'unos-locale');
+  });
+
+  test('the disks, the filesystems found on them and the pools', async ({ authenticatedPage: page }) => {
+    await page.goto('/storage');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+    const main = page.locator('main');
+    await expect(main.getByRole('heading', { level: 1 })).toHaveText('Хранилище');
+    await expect(main.getByRole('button', { name: 'Создать пул', exact: true })).toBeVisible();
+
+    // The sizes with a decimal comma and the Russian units; the reason a disk is in use is the
+    // server's (in_use_reason) and stays in English.
+    const disks = main.locator('.card').filter({ has: page.getByRole('heading', { name: 'Физические диски' }) });
+    await expect(disks.locator('thead th')).toHaveText([
+      'Устройство', 'Модель', 'Размер', 'Тип', 'Содержимое', 'Точка монтирования', 'Статус',
+    ]);
+    const cells = (path: string) =>
+      disks.getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
+    await expect(cells('/dev/e2e-sd0')).toHaveText([
+      '/dev/e2e-sd0', 'Boot card E2E0', '59,6 ГБ', 'SSD',
+      'Таблица разделов DOS, 1 раздел e2e-sd0p1 · 58,7 ГБ · ext4', '/', 'Системный Mounted at /',
+    ]);
+    await expect(cells('/dev/e2e-hd1')).toHaveText([
+      '/dev/e2e-hd1', 'E2E Disk E2E1', '3,6 ТБ', 'HDD', 'btrfs «e2e_tank»', '-', 'Пул «e2e_tank»',
+    ]);
+    await expect(cells('/dev/e2e-hd2')).toHaveText([
+      '/dev/e2e-hd2', 'E2E Disk E2E2', '3,6 ТБ', 'HDD', 'Пустой', '-', 'Свободен',
+    ]);
+    // In the middle of the list, the partition table goes on with a lower-case letter.
+    await expect(cells('/dev/e2e-sd5')).toHaveText([
+      '/dev/e2e-sd5', 'E2E Stick', '7,5 ГБ', 'SSD',
+      'iso9660 «Ubuntu», таблица разделов DOS, 2 раздела e2e-sd5p1 · 4,7 ГБ · iso9660 «Ubuntu» ' +
+        'e2e-sd5p2 · 4,8 МБ · vfat',
+      '-', 'Есть данные',
+    ]);
+
+    const found = main.getByRole('region', { name: 'Найдено на дисках' });
+    await expect(
+      found.getByText(
+        'Файловые системы btrfs на дисках хоста, которые ещё не стали пулами. При импорте данные сохраняются: ' +
+          'диски не форматируются.',
+      ),
+    ).toBeVisible();
+    const item = (uuid: string) => found.getByRole('listitem').filter({ hasText: uuid });
+    await expect(item(unlabelled.uuid)).toContainText('Без метки');
+    await expect(item(unlabelled.uuid)).toContainText(`UUID ${unlabelled.uuid}`);
+    await expect(item(unlabelled.uuid)).toContainText('/dev/e2e-hd10 · 3,6 ТБ, занято 651,9 ГБ');
+    await expect(item(unlabelled.uuid)).toContainText('У неё нет метки: выберите имя для пула.');
+    await expect(
+      item(unlabelled.uuid).getByRole('button', { name: `Импортировать файловую систему ${unlabelled.uuid}` }),
+    ).toBeEnabled();
+    await expect(item(degraded.uuid)).toContainText(
+      'Не хватает 1 устройства из 2. Подключите его, чтобы импортировать файловую систему.',
+    );
+    await expect(item(degraded.uuid).getByRole('button', { name: /^Импортировать/ })).toBeDisabled();
+
+    const data = poolCard(page, 'e2e_data');
+    await expect(badge(data, 'Исправен')).toBeVisible();
+    await expect(badge(data, 'Монтируется при загрузке')).toBeVisible();
+    await expect(field(data, 'RAID')).toHaveText('RAID: single');
+    await expect(field(data, 'Занято')).toHaveText('Занято: 931,3 ГБ / 3,6 ТБ');
+    await expect(field(data, 'Устройства')).toHaveText('Устройства: /dev/e2e-hd9');
+    await expect(field(data, 'Точка монтирования')).toHaveText('Точка монтирования: /mnt/pools/e2e_data');
+    for (const name of ['Проверить целостность', 'Тома', 'Отмонтировать', 'Убрать пул e2e_data']) {
+      await expect(data.getByRole('button', { name, exact: true })).toBeVisible();
+    }
+    // The errors of the last scrub in the plural form of their count, and when it started in the
+    // date format of the page, at the clock time btrfs printed.
+    await expect(data.getByText('Последняя проверка: 13 ошибок', { exact: true })).toBeVisible();
+    await expect(data.getByText('06.11.2026, 10:00:00', { exact: true })).toBeVisible();
+    await expect(data.getByText(/Fri|Nov/)).toHaveCount(0);
+    const halted = poolCard(page, 'e2e_halt');
+    await expect(
+      halted.getByText('Последняя проверка: отменена до завершения, найдены 2 ошибки', { exact: true }),
+    ).toBeVisible();
+    await expect(halted.getByText('Mon Feb 30 10:00:00 2026', { exact: true })).toBeVisible();
+
+    const media = poolCard(page, 'e2e_media');
+    await expect(badge(media, 'Деградирован')).toBeVisible();
+    await expect(field(media, 'RAID')).toHaveText('RAID: raid1');
+    await expect(media.locator('.alert', { hasText: 'В пуле не хватает устройств' })).toContainText(
+      'Не хватает 1 устройства. Подключите или замените его, пока не потеряна оставшаяся избыточность.',
+    );
+    await expect(media.locator('.alert', { hasText: 'Устройства сообщили об ошибках' })).toContainText(
+      'btrfs насчитал 2 ошибки чтения, записи или контрольной суммы на устройствах этого пула. Проверьте ' +
+        'состояние SMART дисков и запустите проверку целостности. Счётчики сохраняют значения, пока их не ' +
+        'сбросят командой btrfs device stats -z /mnt/pools/e2e_media.',
+    );
+    // A scrub in progress.
+    await expect(media.getByText('Идёт проверка целостности', { exact: true })).toBeVisible();
+    await expect(media.getByRole('progressbar', { name: 'Ход проверки целостности' })).toHaveAttribute(
+      'aria-valuenow',
+      '25',
+    );
+    await expect(media.getByText('1,0 ГБ / 4,0 ГБ', { exact: true })).toBeVisible();
+    await expect(media.getByText('25,0 %', { exact: true })).toBeVisible();
+    await expect(media.getByText('16,0 МБ/с', { exact: true })).toBeVisible();
+    await expect(media.getByRole('button', { name: 'Отменить проверку', exact: true })).toBeVisible();
+
+    const tank = poolCard(page, 'e2e_tank');
+    await expect(badge(tank, 'Не смонтирован')).toBeVisible();
+    await expect(field(tank, 'RAID')).toHaveText('RAID: неизвестно (не смонтирован)');
+    await expect(field(tank, 'Занято')).toHaveText('Занято: неизвестно (не смонтирован)');
+    await expect(field(tank, 'Точка монтирования')).toHaveText('Точка монтирования: Не смонтирован');
+    await expect(tank.getByRole('button', { name: 'Смонтировать', exact: true })).toBeVisible();
+
+    // Nothing of the English page is left.
+    for (const text of ['Physical Disks', 'Found on the disks', 'Storage Pools', 'Healthy', 'Last scrub', 'Scrub']) {
+      await expect(main.getByText(text)).toHaveCount(0);
+    }
+    await expect(main.getByRole('button', { name: 'Create Pool' })).toHaveCount(0);
+    expect(writes).toEqual([]);
+  });
+
+  test('the dialogs that create, mount, unmount, import and remove a pool and manage its volumes', async ({
+    authenticatedPage: page,
+  }) => {
+    const volumeWrites = await fakeVolumesApi(page, { e2e_data: ['documents'] });
+    await page.goto('/storage');
+    const main = page.locator('main');
+    const data = poolCard(page, 'e2e_data');
+
+    // A new pool: the erase warning, the RAID levels with their descriptions, and the disks.
+    await main.getByRole('button', { name: 'Создать пул', exact: true }).click();
+    const create = page.getByRole('dialog', { name: 'Новый пул хранения' });
+    await expect(create.locator('.alert', { hasText: 'Выбранные диски будут стёрты' })).toContainText(
+      'При создании пула выбранные диски форматируются в btrfs. ВСЕ ДАННЫЕ на выбранных дисках будут стёрты.',
+    );
+    await expect(create.getByLabel(/^Имя пула/)).toHaveAttribute('placeholder', 'data');
+    const level = create.getByRole('combobox', { name: 'Уровень RAID' });
+    await expect(level).toHaveText('Single (без RAID) — от 1 диска');
+    await expect(
+      create.getByText('Без избыточности. Доступно всё пространство. Отказ одного диска приводит к потере всех данных.'),
+    ).toBeVisible();
+    await expect(create.getByText('Выберите устройства', { exact: true })).toBeVisible();
+    const disk = (path: string) => create.getByRole('checkbox', { name: new RegExp(path) });
+    // The system disk cannot be selected, for the server's reason.
+    await expect(disk('/dev/e2e-sd0')).toBeDisabled();
+    await expect(create.getByText('Недоступен: Mounted at /', { exact: true })).toBeVisible();
+    await disk('/dev/e2e-hd1').check();
+    await expect(create.getByText('Выбрано: 1 устройство', { exact: true })).toBeVisible();
+    await expect(
+      create.locator('label', { hasText: '/dev/e2e-hd1' }).getByText('Содержит данные', { exact: true }),
+    ).toBeVisible();
+    const erase = create.locator('.alert', { hasText: 'Существующие данные будут уничтожены' });
+    await expect(erase).toContainText('Эти диски не пусты:');
+    await expect(erase).toContainText('/dev/e2e-hd1: btrfs «e2e_tank», входит в пул «e2e_tank»');
+    await expect(create.getByLabel('Стереть существующие данные на этих дисках')).not.toBeChecked();
+    await level.click();
+    await page.getByRole('option', { name: 'RAID 1C3 (зеркало, 3 копии) — от 3 дисков' }).click();
+    await expect(
+      create.getByText('Зеркалирование в 3 копии. Выдерживает отказ 2 дисков. Полезный объём: 33%.', { exact: true }),
+    ).toBeVisible();
+    await disk('/dev/e2e-hd2').check();
+    await expect(create.getByText('Выбрано: 2 устройства', { exact: true })).toBeVisible();
+    await expect(create.getByText('Для RAID1C3 нужно не меньше 3 устройств. Выбрано: 2.', { exact: true })).toBeVisible();
+    await create.getByLabel(/^Имя пула/).fill('e2e_new');
+    await create.getByLabel('Введите имя пула для подтверждения').fill('e2e_ne');
+    await expect(create.getByText('Не совпадает с именем пула', { exact: true })).toBeVisible();
+    await expect(create.getByRole('button', { name: 'Стереть диски и создать пул' })).toBeDisabled();
+    await create.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(create).toBeHidden();
+
+    await poolCard(page, 'e2e_tank').getByRole('button', { name: 'Смонтировать', exact: true }).click();
+    const mount = page.getByRole('dialog', { name: 'Смонтировать пул' });
+    await expect(mount).toContainText('Смонтировать «e2e_tank» в /mnt/pools/e2e_tank?');
+    await expect(mount).toContainText(
+      'Диски не форматируются: данные на них сохраняются. UNOS также добавит запись в /etc/fstab, чтобы пул ' +
+        'снова монтировался после перезагрузки.',
+    );
+    await expect(mount.getByRole('button', { name: 'Смонтировать', exact: true })).toBeVisible();
+    await mount.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(mount).toBeHidden();
+
+    await data.getByRole('button', { name: 'Отмонтировать', exact: true }).click();
+    const unmount = page.getByRole('dialog', { name: 'Отмонтировать пул' });
+    await expect(unmount).toContainText('Отмонтировать «e2e_data»?');
+    await expect(unmount).toContainText(
+      'Общие папки, приложения и задачи по расписанию теряют доступ к /mnt/pools/e2e_data до тех пор, пока пул ' +
+        'снова не будет смонтирован. Запись в /etc/fstab удаляется, поэтому при загрузке пул не монтируется. ' +
+        'Данные на дисках не затрагиваются.',
+    );
+    await unmount.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(unmount).toBeHidden();
+
+    // A filesystem found on the disks, and the names the dialog refuses before it sends one.
+    await main.getByRole('button', { name: `Импортировать файловую систему ${unlabelled.uuid}` }).click();
+    const importing = page.getByRole('dialog', { name: 'Импорт пула' });
+    await expect(importing).toContainText(
+      `Импортировать файловую систему btrfs ${unlabelled.uuid} (без метки) на /dev/e2e-hd10 как пул.`,
+    );
+    await expect(importing.locator('.alert', { hasText: 'Диски не форматируются' })).toContainText(
+      'Данные на них сохраняются. UNOS сделает имя пула меткой файловой системы, смонтирует её в ' +
+        '/mnt/pools/<имя> по UUID и добавит запись в /etc/fstab, чтобы пул снова монтировался после перезагрузки.',
+    );
+    const importName = importing.getByLabel('Имя пула');
+    // A name in Cyrillic letters is refused, and the hint says that the letters are Latin.
+    await importName.fill('резерв');
+    await expect(importing.getByText(NAME_RULE, { exact: true })).toBeVisible();
+    await expect(importing.getByRole('button', { name: 'Импортировать', exact: true })).toBeDisabled();
+    await importName.fill('e2e_media');
+    await expect(importing.getByText('Пул «e2e_media» уже есть. Выберите другое имя.', { exact: true })).toBeVisible();
+    await expect(importing.getByRole('button', { name: 'Импортировать', exact: true })).toBeDisabled();
+    await importing.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(importing).toBeHidden();
+
+    await data.getByRole('button', { name: 'Убрать пул e2e_data', exact: true }).click();
+    const remove = page.getByRole('dialog', { name: 'Убрать пул' });
+    await expect(remove.locator('.alert', { hasText: 'Убрать пул из UNOS' })).toContainText(
+      'Вы собираетесь убрать пул хранения «e2e_data». UNOS отмонтирует его и удалит его запись из /etc/fstab. ' +
+        'Диски не очищаются: файловая система btrfs и её данные остаются на них, и пул можно будет снова ' +
+        'смонтировать позже. Общие папки и приложения, которые его используют, перестанут работать.',
+    );
+    await expect(remove.getByText('Сведения о пуле:', { exact: true })).toBeVisible();
+    await expect(remove.getByRole('listitem')).toHaveText([
+      'Размер: 3,6 ТБ', 'Занято: 931,3 ГБ', 'Устройства: /dev/e2e-hd9', 'Точка монтирования: /mnt/pools/e2e_data',
+    ]);
+    await remove.getByRole('button', { name: 'Продолжить', exact: true }).click();
+    await expect(remove.locator('.alert', { hasText: 'Последнее подтверждение' })).toContainText(
+      'Для подтверждения введите имя пула:',
+    );
+    await expect(remove.getByLabel('Введите имя пула для подтверждения')).toHaveAttribute(
+      'placeholder',
+      'Введите имя пула',
+    );
+    await expect(remove.getByRole('button', { name: 'Убрать пул', exact: true })).toBeDisabled();
+    await remove.getByRole('button', { name: 'Назад', exact: true }).click();
+    await remove.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(remove).toBeHidden();
+
+    // The volumes of a pool: the names and quotas the dialog refuses, and the deletion of one.
+    await data.getByRole('button', { name: 'Тома', exact: true }).click();
+    const volumes = page.getByRole('dialog', { name: 'Тома в пуле e2e_data' });
+    await expect(volumes).toContainText(
+      'Том — это подтом btrfs в /mnt/pools/e2e_data — его можно сделать общей папкой отдельно от пула. Снимки ' +
+        'пула не включают файлы его томов: делайте снимки каждого тома тоже, на странице «Снимки». Задачи по ' +
+        'расписанию делают снимки только пулов.',
+    );
+    await expect(volumes.getByRole('listitem')).toContainText(['documents']);
+    const quota = volumes.getByLabel('Квота в ГиБ (необязательно)');
+    await expect(quota).toHaveAttribute('placeholder', 'Без ограничения');
+    await expect(
+      volumes.getByText('Оставьте пустым, чтобы не ограничивать. Для квоты в пуле должны быть включены квоты.', {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await volumes.getByLabel('Имя нового тома').fill('документы');
+    await expect(volumes.getByText(NAME_RULE, { exact: true })).toBeVisible();
+    await expect(volumes.getByRole('button', { name: 'Создать том', exact: true })).toBeDisabled();
+    await quota.fill('ten');
+    await expect(
+      volumes.getByText('Введите число ГиБ больше 0, например 10 или 0.5 (не больше 8388607)', { exact: true }),
+    ).toBeVisible();
+    await expect(volumes.getByRole('button', { name: 'Создать том', exact: true })).toBeDisabled();
+    await volumes.getByRole('button', { name: 'Удалить том documents', exact: true }).click();
+    await expect(volumes.locator('.alert', { hasText: 'Удалить том «documents»?' })).toContainText(
+      'Все файлы в /mnt/pools/e2e_data/documents будут удалены вместе с ним, включая файлы остановленных ' +
+        'приложений. Это нельзя отменить. Пока том используется работающим приложением или контейнером, общей ' +
+        'папкой SMB или экспортом NFS, он не удаляется.',
+    );
+    await expect(volumes.getByLabel('Введите имя тома для подтверждения')).toBeVisible();
+    await expect(volumes.getByRole('button', { name: 'Удалить том', exact: true })).toBeDisabled();
+    await volumes.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await volumes.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await expect(volumes).toBeHidden();
+
+    expect(writes).toEqual([]);
+    expect(volumeWrites).toEqual([]);
+  });
+});

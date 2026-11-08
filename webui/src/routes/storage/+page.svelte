@@ -56,6 +56,7 @@
 		Input,
 		Select
 	} from '$lib/components/ui';
+	import { intlLocale, locale, t } from '$lib/i18n';
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
 
@@ -235,25 +236,67 @@
 		}
 	}
 
+	// How a scrub that did not finish ended, as btrfs names it; another value is shown as it comes.
+	const SCRUB_STOPPED: Record<string, string> = {
+		aborted: 'storage.scrub.aborted',
+		interrupted: 'storage.scrub.interrupted'
+	};
+
 	/** The result of a pool's last scrub, as btrfs reports it (ADR-0272). */
-	function scrubResult(status: ScrubStatus): { text: string; tone: 'success' | 'warning' | 'error' } {
-		const found = `${status.errors} error(s)`;
+	$: scrubResult = (status: ScrubStatus): { text: string; tone: 'success' | 'warning' | 'error' } => {
 		if (status.status === 'finished') {
 			return status.errors > 0
-				? { text: `Last scrub: ${found}`, tone: 'error' }
-				: { text: 'Last scrub: No errors', tone: 'success' };
+				? { text: $t('storage.scrub.errors', { n: status.errors }), tone: 'error' }
+				: { text: $t('storage.scrub.noErrors'), tone: 'success' };
 		}
-		const stopped =
-			status.status === 'aborted'
-				? 'cancelled before it finished'
-				: status.status === 'interrupted'
-					? 'interrupted before it finished'
-					: status.status;
+		const stopped = SCRUB_STOPPED[status.status] ? $t(SCRUB_STOPPED[status.status]) : status.status;
 		return {
-			text: `Last scrub: ${stopped}${status.errors > 0 ? `, ${found} found` : ''}`,
+			text:
+				status.errors > 0
+					? $t('storage.scrub.stoppedErrors', { stopped, n: status.errors })
+					: $t('storage.scrub.stopped', { stopped }),
 			tone: status.errors > 0 ? 'error' : 'warning'
 		};
-	}
+	};
+
+	// btrfs prints when a scrub started as C's ctime does, in English and in the time zone of the
+	// supervisor's container, which it does not name: "Fri Nov  6 10:00:00 2026".
+	const BTRFS_DATE = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/;
+	// i18n-ignore: the names of the months in btrfs's dates
+	const BTRFS_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+	// A date and a time as toLocaleString writes them, in UTC: the clock time that btrfs printed.
+	$: startedFormat = new Intl.DateTimeFormat($intlLocale, {
+		year: 'numeric',
+		month: 'numeric',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: 'numeric',
+		second: 'numeric',
+		// i18n-ignore: a time zone, the same in every language
+		timeZone: 'UTC'
+	});
+
+	/**
+	 * When the last scrub started (ADR-0300): as btrfs prints it on an English page, else the same
+	 * date and clock time in the date format of the page's language; a value of another form, or a
+	 * date that does not exist, as it comes.
+	 */
+	$: scrubStarted = (value: string): string => {
+		const match = BTRFS_DATE.exec(value);
+		const month = match ? BTRFS_MONTHS.indexOf(match[1]) : -1;
+		if ($locale === 'en' || !match || month < 0) return value;
+		const [, , day, hours, minutes, seconds, year] = match.map(Number);
+		const date = new Date(Date.UTC(year, month, day, hours, minutes, seconds));
+		// Date.UTC carries what is out of range over to the next field: 30 February is 2 March.
+		const exists =
+			date.getUTCFullYear() === year &&
+			date.getUTCMonth() === month &&
+			date.getUTCDate() === day &&
+			date.getUTCHours() === hours &&
+			date.getUTCMinutes() === minutes &&
+			date.getUTCSeconds() === seconds;
+		return exists ? startedFormat.format(date) : value;
+	};
 
 	const scrubResultStyles = {
 		success: { icon: CheckCircle, class: 'text-success' },
@@ -275,44 +318,72 @@
 		return (status.bytes_scrubbed / status.total_bytes) * 100;
 	}
 
-	function formatBytes(bytes: number): string {
-		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		let i = 0;
-		while (bytes >= 1024 && i < units.length - 1) {
-			bytes /= 1024;
-			i++;
+	// The units of the sizes the page writes, by powers of 1024 (ADR-0300).
+	const SIZE_UNITS = ['storage.size.bytes', 'storage.size.kb', 'storage.size.mb', 'storage.size.gb', 'storage.size.tb'];
+	// One decimal, without grouping, as the page has always written its sizes and percentages.
+	$: oneDecimal = new Intl.NumberFormat($intlLocale, {
+		minimumFractionDigits: 1,
+		maximumFractionDigits: 1,
+		useGrouping: false
+	});
+	$: percentFormat = new Intl.NumberFormat($intlLocale, {
+		style: 'percent',
+		minimumFractionDigits: 1,
+		maximumFractionDigits: 1
+	});
+
+	/** A size in the language of the page: the number in its format, with the unit of the catalog. */
+	$: formatBytes = (bytes: number): string => {
+		let size = bytes;
+		let unit = 0;
+		while (size >= 1024 && unit < SIZE_UNITS.length - 1) {
+			size /= 1024;
+			unit++;
 		}
-		return `${bytes.toFixed(1)} ${units[i]}`;
+		return $t(SIZE_UNITS[unit], { size: oneDecimal.format(size) });
+	};
+
+	/** A label or a name shown on its own, in the quotes of the page's language. */
+	$: quoted = (name: string): string => $t('storage.quoted', { name });
+
+	/** Where UNOS mounts the pool of this name. */
+	function poolMountpoint(name: string): string {
+		return `/mnt/pools/${name}`;
 	}
+
+	// i18n-ignore: a command, the same in every language
+	const RESET_COUNTERS = 'btrfs device stats -z';
 
 	// ---- Disks ----
 
 	/** Why a disk cannot be used for a new pool, or null if it can. */
-	function unavailableReason(disk: Disk): string | null {
-		if (disk.is_system) return disk.in_use_reason || 'System disk';
-		if (disk.in_use) return disk.in_use_reason || 'In use';
+	$: unavailableReason = (disk: Disk): string | null => {
+		if (disk.is_system) return disk.in_use_reason || $t('storage.create.systemDisk');
+		if (disk.in_use) return disk.in_use_reason || $t('storage.create.inUse');
 		return null;
-	}
+	};
 
-	function describeContents(disk: Disk): string {
+	$: describeContents = (disk: Disk): string => {
 		const parts: string[] = [];
-		if (disk.fstype) parts.push(disk.label ? `${disk.fstype} "${disk.label}"` : disk.fstype);
-		if (disk.pttype) parts.push(`${disk.pttype.toUpperCase()} partition table`);
-		const partitionCount = disk.partitions?.length ?? 0;
-		if (partitionCount > 0) {
-			parts.push(`${partitionCount} partition${partitionCount === 1 ? '' : 's'}`);
+		if (disk.fstype) parts.push(disk.label ? `${disk.fstype} ${quoted(disk.label)}` : disk.fstype);
+		if (disk.pttype) {
+			// After a filesystem of the whole disk, such as a hybrid ISO image, it continues the list.
+			const key = parts.length > 0 ? 'storage.disks.partitionTableAfter' : 'storage.disks.partitionTable';
+			parts.push($t(key, { type: disk.pttype.toUpperCase() }));
 		}
+		const partitionCount = disk.partitions?.length ?? 0;
+		if (partitionCount > 0) parts.push($t('storage.disks.partitions', { n: partitionCount }));
 		if (parts.length > 0) return parts.join(', ');
-		return disk.has_data ? 'Unrecognized data' : 'Empty';
-	}
+		return $t(disk.has_data ? 'storage.disks.unrecognized' : 'storage.disks.empty');
+	};
 
-	function diskStatus(disk: Disk): { variant: BadgeVariant; label: string } {
-		if (disk.is_system) return { variant: 'error', label: 'System' };
-		if (disk.in_use) return { variant: 'warning', label: 'In use' };
-		if (disk.pool) return { variant: 'info', label: `Pool "${disk.pool}"` };
-		if (disk.has_data) return { variant: 'orange', label: 'Has data' };
-		return { variant: 'success', label: 'Free' };
-	}
+	$: diskStatus = (disk: Disk): { variant: BadgeVariant; label: string } => {
+		if (disk.is_system) return { variant: 'error', label: $t('storage.disks.status.system') };
+		if (disk.in_use) return { variant: 'warning', label: $t('storage.disks.status.inUse') };
+		if (disk.pool) return { variant: 'info', label: $t('storage.disks.status.pool', { pool: disk.pool }) };
+		if (disk.has_data) return { variant: 'orange', label: $t('storage.disks.status.hasData') };
+		return { variant: 'success', label: $t('storage.disks.status.free') };
+	};
 
 	function diskMountpoints(disk: Disk): string {
 		if (disk.mountpoints?.length) return disk.mountpoints.join(', ');
@@ -321,17 +392,38 @@
 
 	// ---- Pools ----
 
-	const healthBadges: Record<string, { variant: BadgeVariant; label: string }> = {
-		healthy: { variant: 'success', label: 'Healthy' },
-		degraded: { variant: 'warning', label: 'Degraded' },
-		unmounted: { variant: 'orange', label: 'Not mounted' },
-		error: { variant: 'error', label: 'Error' },
-		unknown: { variant: 'neutral', label: 'Unknown' }
+	// A pool's health as the server answers it, with the variant and the key of its badge.
+	const HEALTH_BADGES: Record<string, { variant: BadgeVariant; key: string }> = {
+		healthy: { variant: 'success', key: 'storage.health.healthy' },
+		degraded: { variant: 'warning', key: 'storage.health.degraded' },
+		unmounted: { variant: 'orange', key: 'storage.health.unmounted' },
+		error: { variant: 'error', key: 'storage.health.error' },
+		unknown: { variant: 'neutral', key: 'storage.health.unknown' }
 	};
 
-	function healthBadge(pool: Pool): { variant: BadgeVariant; label: string } {
-		return healthBadges[pool.health] ?? { variant: 'error', label: pool.health || 'Unknown' };
-	}
+	/** A pool's health badge; a value without a key is shown as it comes. */
+	$: healthBadge = (pool: Pool): { variant: BadgeVariant; label: string } => {
+		const badge = HEALTH_BADGES[pool.health];
+		return badge
+			? { variant: badge.variant, label: $t(badge.key) }
+			: { variant: 'error', label: pool.health || $t('storage.health.unknown') };
+	};
+
+	// btrfs's data profiles, as the server answers a pool's raid_level (ADR-0300).
+	const PROFILES: Record<string, string> = {
+		single: 'storage.profile.single',
+		dup: 'storage.profile.dup',
+		raid0: 'storage.profile.raid0',
+		raid1: 'storage.profile.raid1',
+		raid1c3: 'storage.profile.raid1c3',
+		raid1c4: 'storage.profile.raid1c4',
+		raid10: 'storage.profile.raid10',
+		raid5: 'storage.profile.raid5',
+		raid6: 'storage.profile.raid6'
+	};
+
+	/** A pool's RAID profile in the language of the page; one without a key as it comes. */
+	$: profileLabel = (profile: string): string => (PROFILES[profile] ? $t(PROFILES[profile]) : profile);
 
 	function openPoolAction(kind: 'mount' | 'unmount', pool: Pool) {
 		poolAction = { kind, pool };
@@ -502,37 +594,27 @@
 	$: importNameError = !importName
 		? ''
 		: !importNameValid
-			? "Use letters, numbers, '-' and '_' (up to 63), starting with a letter or number"
+			? $t('storage.nameRule')
 			: importNameTaken
-				? `A pool named "${importName}" exists already. Choose another name.`
+				? $t('storage.import.nameTaken', { name: importName })
 				: importLabelTaken
-					? `Another btrfs filesystem found on the disks is labelled "${importName}". Choose another name.`
+					? $t('storage.import.labelTaken', { name: importName })
 					: '';
 	$: canImport =
 		importTarget !== null && importNameValid && !importNameTaken && !importLabelTaken && !importing;
 
-	function describeFilesystem(fs: ImportableFilesystem): string {
-		return fs.label === null ? 'No label' : `Label "${fs.label}"`;
-	}
+	$: describeFilesystem = (fs: ImportableFilesystem): string =>
+		fs.label === null ? $t('storage.found.noLabel') : $t('storage.found.label', { label: fs.label });
 
 	/** Why the filesystem is not a pool yet: the API mounts a pool under its label. */
-	function labelHint(fs: ImportableFilesystem): string {
-		if (fs.label_problem === 'duplicate') {
-			return `Another btrfs filesystem is labelled "${fs.label}" too: import this one under another name.`;
-		}
-		if (fs.label_problem === 'invalid') {
-			return 'Its label is not a valid pool name: choose one for the pool.';
-		}
-		return 'It has no label: choose a name for the pool.';
-	}
+	$: labelHint = (fs: ImportableFilesystem): string => {
+		if (fs.label_problem === 'duplicate') return $t('storage.found.duplicate', { label: fs.label ?? '' });
+		if (fs.label_problem === 'invalid') return $t('storage.found.invalid');
+		return $t('storage.found.missing');
+	};
 
-	function missingDevicesText(fs: ImportableFilesystem): string {
-		const one = fs.missing_devices === 1;
-		return (
-			`${fs.missing_devices} of its ${fs.total_devices} devices ${one ? 'is' : 'are'} missing. ` +
-			`Reconnect ${one ? 'it' : 'them'} to import the filesystem.`
-		);
-	}
+	$: missingDevicesText = (fs: ImportableFilesystem): string =>
+		$t('storage.found.missingDevices', { n: fs.missing_devices, total: fs.total_devices });
 
 	function openImport(fs: ImportableFilesystem) {
 		importTarget = fs;
@@ -586,15 +668,12 @@
 	// btrfs cannot create or delete subvolumes on a read-only pool (the API answers 409).
 	$: volumesReadOnly = volumesPool?.read_only ?? false;
 	$: newVolumeNameValid = VOLUME_NAME_PATTERN.test(newVolumeName);
-	$: newVolumeNameError =
-		newVolumeName && !newVolumeNameValid
-			? "Use letters, numbers, '-' and '_' (up to 63), starting with a letter or number"
-			: '';
+	$: newVolumeNameError = newVolumeName && !newVolumeNameValid ? $t('storage.nameRule') : '';
 	// null: no quota; NaN: one that cannot be sent.
 	$: newVolumeQuotaBytes =
 		newVolumeQuota.trim() === '' ? null : (quotaBytes(newVolumeQuota.trim()) ?? Number.NaN);
 	$: newVolumeQuotaError = Number.isNaN(newVolumeQuotaBytes)
-		? `Enter a number of GiB greater than 0, such as 10 or 0.5 (at most ${MAX_QUOTA_GIB})`
+		? $t('storage.volumes.quotaError', { max: MAX_QUOTA_GIB })
 		: '';
 
 	async function openVolumes(pool: Pool) {
@@ -691,30 +770,22 @@
 		}
 	}
 
-	const raidOptions = [
-		{ value: 'single', label: 'Single (No RAID) — 1+ disk' },
-		{ value: 'raid0', label: 'RAID 0 (Striping) — 2+ disks' },
-		{ value: 'raid1', label: 'RAID 1 (Mirror, 2 copies) — 2+ disks' },
-		{ value: 'raid1c3', label: 'RAID 1C3 (Mirror, 3 copies) — 3+ disks' },
-		{ value: 'raid1c4', label: 'RAID 1C4 (Mirror, 4 copies) — 4+ disks' },
-		{ value: 'raid10', label: 'RAID 10 (Mirrored stripes) — 4+ disks' }
+	// The RAID levels a new pool can have: the keys of their names and of what they do, and the
+	// disks they need at least.
+	const RAID_LEVELS: { value: RaidLevel; labelKey: string; hintKey: string; minDevices: number }[] = [
+		{ value: 'single', labelKey: 'storage.raid.single', hintKey: 'storage.raid.singleHint', minDevices: 1 },
+		{ value: 'raid0', labelKey: 'storage.raid.raid0', hintKey: 'storage.raid.raid0Hint', minDevices: 2 },
+		{ value: 'raid1', labelKey: 'storage.raid.raid1', hintKey: 'storage.raid.raid1Hint', minDevices: 2 },
+		{ value: 'raid1c3', labelKey: 'storage.raid.raid1c3', hintKey: 'storage.raid.raid1c3Hint', minDevices: 3 },
+		{ value: 'raid1c4', labelKey: 'storage.raid.raid1c4', hintKey: 'storage.raid.raid1c4Hint', minDevices: 4 },
+		{ value: 'raid10', labelKey: 'storage.raid.raid10', hintKey: 'storage.raid.raid10Hint', minDevices: 4 }
 	];
 
-	const raidDescriptions: Record<string, string> = {
-		single: 'No redundancy. All space available. A single disk failure loses all data.',
-		raid0: 'Striped across disks for performance. No redundancy. Any disk failure loses all data.',
-		raid1: 'Mirrored to 2 copies. Survives 1 disk failure. 50% space efficiency.',
-		raid1c3: 'Mirrored to 3 copies. Survives 2 disk failures. 33% space efficiency.',
-		raid1c4: 'Mirrored to 4 copies. Survives 3 disk failures. 25% space efficiency.',
-		raid10: 'Striped mirrors. Survives 1 failure per mirror pair. 50% space efficiency.'
-	};
+	$: raidOptions = RAID_LEVELS.map((level) => ({ value: level.value, label: $t(level.labelKey) }));
 
-	const minDevices: Record<string, number> = {
-		single: 1, raid0: 2, raid1: 2, raid1c3: 3, raid1c4: 4, raid10: 4
-	};
-
-	$: selectedRaidDescription = raidDescriptions[poolForm.raid_level] || '';
-	$: requiredDevices = minDevices[poolForm.raid_level] || 1;
+	$: selectedRaidLevel = RAID_LEVELS.find((level) => level.value === poolForm.raid_level);
+	$: selectedRaidDescription = selectedRaidLevel ? $t(selectedRaidLevel.hintKey) : '';
+	$: requiredDevices = selectedRaidLevel?.minDevices ?? 1;
 	$: hasEnoughDevices = poolForm.devices.length >= requiredDevices;
 	$: selectedDisks = disks.filter((d) => poolForm.devices.includes(d.path));
 	$: selectedWithData = selectedDisks.filter((d) => d.has_data);
@@ -729,8 +800,8 @@
 
 <div class="page-container">
 	<div class="page-header">
-		<h1 class="page-title">Storage</h1>
-		<Button icon={Plus} on:click={openCreateModal}>Create Pool</Button>
+		<h1 class="page-title">{$t('storage.title')}</h1>
+		<Button icon={Plus} on:click={openCreateModal}>{$t('storage.createPool')}</Button>
 	</div>
 
 	{#if error}
@@ -738,31 +809,31 @@
 	{/if}
 
 	{#if loading}
-		<p class="loading-text">Loading...</p>
+		<p class="loading-text">{$t('common.loading')}</p>
 	{:else}
 		<!-- Disks Section -->
 		<Card>
 			<h2 class="section-title mb-4">
 				<HardDrive class="w-5 h-5" />
-				Physical Disks
+				{$t('storage.disks.title')}
 			</h2>
 
 			{#if disksError}
-				<Alert variant="error" title="Could not load the disks">{disksError}</Alert>
+				<Alert variant="error" title={$t('storage.disks.loadError')}>{disksError}</Alert>
 			{:else if disks.length === 0}
-				<p class="text-muted">No disks found</p>
+				<p class="text-muted">{$t('storage.disks.none')}</p>
 			{:else}
 				<div class="overflow-x-auto">
 					<table class="table">
 						<thead class="table-header">
 							<tr>
-								<th>Device</th>
-								<th>Model</th>
-								<th>Size</th>
-								<th>Type</th>
-								<th>Contents</th>
-								<th>Mounted at</th>
-								<th>Status</th>
+								<th>{$t('storage.disks.column.device')}</th>
+								<th>{$t('storage.disks.column.model')}</th>
+								<th>{$t('storage.disks.column.size')}</th>
+								<th>{$t('storage.disks.column.type')}</th>
+								<th>{$t('storage.disks.column.contents')}</th>
+								<th>{$t('storage.disks.column.mountedAt')}</th>
+								<th>{$t('storage.disks.column.status')}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -779,7 +850,7 @@
 									<td>{formatBytes(disk.size)}</td>
 									<td>
 										<Badge variant={disk.rotational ? 'warning' : 'success'}>
-											{disk.rotational ? 'HDD' : 'SSD'}
+											{$t(disk.rotational ? 'storage.disks.hdd' : 'storage.disks.ssd')}
 										</Badge>
 									</td>
 									<td>
@@ -788,7 +859,7 @@
 											<p class="mono-xs text-muted">
 												{part.name} · {formatBytes(part.size)}{part.fstype
 													? ` · ${part.fstype}`
-													: ''}{part.label ? ` "${part.label}"` : ''}
+													: ''}{part.label ? ` ${quoted(part.label)}` : ''}
 											</p>
 										{/each}
 									</td>
@@ -816,25 +887,23 @@
 				<section aria-labelledby="found-on-the-disks">
 					<h2 id="found-on-the-disks" class="section-title mb-4">
 						<HardDriveDownload class="w-5 h-5" />
-						Found on the disks
+						{$t('storage.found.title')}
 					</h2>
 					{#if importableError}
-						<Alert variant="error" title="Could not look for pools to import">{importableError}</Alert>
+						<Alert variant="error" title={$t('storage.found.searchError')}>{importableError}</Alert>
 					{:else}
-						<p class="text-sm text-secondary mb-4">
-							btrfs filesystems on the host's disks that are not pools yet. Importing one keeps its
-							data: the disks are not formatted.
-						</p>
+						<p class="text-sm text-secondary mb-4">{$t('storage.found.intro')}</p>
 						<ul class="space-y-3">
 							{#each importable as fs (fs.uuid)}
 								<li class="card-nested flex flex-wrap items-start justify-between gap-3">
 									<div class="min-w-0 space-y-1">
 										<p class="font-semibold">{describeFilesystem(fs)}</p>
-										<p class="mono-xs text-muted break-all">UUID {fs.uuid}</p>
+										<p class="mono-xs text-muted break-all">{$t('storage.found.uuid', { uuid: fs.uuid })}</p>
 										<p class="text-sm text-secondary">
-											<span class="mono-xs">{fs.devices.join(', ')}</span> · {formatBytes(fs.size)}, {formatBytes(
-												fs.used
-											)} used
+											<span class="mono-xs">{fs.devices.join(', ')}</span> · {$t('storage.found.usage', {
+												size: formatBytes(fs.size),
+												used: formatBytes(fs.used)
+											})}
 										</p>
 										<p class="text-xs text-muted">{labelHint(fs)}</p>
 										{#if fs.missing_devices > 0}
@@ -847,7 +916,9 @@
 										disabled={fs.missing_devices > 0}
 										on:click={() => openImport(fs)}
 									>
-										Import<span class="sr-only"> the filesystem {fs.uuid}</span>
+										{$t('storage.found.import')}<span class="sr-only"
+											> {$t('storage.found.importOne', { uuid: fs.uuid })}</span
+										>
 									</Button>
 								</li>
 							{/each}
@@ -861,21 +932,17 @@
 		<Card>
 			<h2 class="section-title mb-4">
 				<Database class="w-5 h-5" />
-				Storage Pools
+				{$t('storage.pools.title')}
 			</h2>
 
 			{#if pools.some(p => p.raid_level === 'raid5' || p.raid_level === 'raid6')}
-				<Alert variant="warning" title="Unsafe RAID Configuration Detected">
-					One or more pools use BTRFS RAID5/RAID6, which has a known write-hole bug
-					that can cause data corruption on power failure. Consider backing up and
-					recreating the pool with a safe RAID level (RAID1, RAID1C3, or RAID1C4).
-				</Alert>
+				<Alert variant="warning" title={$t('storage.pools.unsafeTitle')}>{$t('storage.pools.unsafe')}</Alert>
 			{/if}
 
 			{#if poolsError}
-				<Alert variant="error" title="Could not load the pools">{poolsError}</Alert>
+				<Alert variant="error" title={$t('storage.pools.loadError')}>{poolsError}</Alert>
 			{:else if pools.length === 0}
-				<p class="text-muted">No pools configured</p>
+				<p class="text-muted">{$t('storage.pools.none')}</p>
 			{:else}
 				<div class="space-y-4">
 					{#each pools as pool}
@@ -887,11 +954,11 @@
 									<h3 class="font-semibold">{pool.name}</h3>
 									<Badge variant={health.variant}>{health.label}</Badge>
 									{#if pool.mounted && !pool.persistent}
-										<Badge variant="warning">Not mounted at boot</Badge>
+										<Badge variant="warning">{$t('storage.pool.notMountedAtBoot')}</Badge>
 									{:else if pool.mounted}
-										<Badge variant="neutral">Mounted at boot</Badge>
+										<Badge variant="neutral">{$t('storage.pool.mountedAtBoot')}</Badge>
 									{:else if pool.persistent}
-										<Badge variant="warning">In fstab, but not mounted</Badge>
+										<Badge variant="warning">{$t('storage.pool.inFstab')}</Badge>
 									{/if}
 								</div>
 								<div class="flex items-center gap-2">
@@ -903,7 +970,7 @@
 												icon={XCircle}
 												on:click={() => handleCancelScrub(pool.name)}
 											>
-												Cancel Scrub
+												{$t('storage.pool.cancelScrub')}
 											</Button>
 										{:else}
 											<Button
@@ -913,7 +980,7 @@
 												disabled={startingScrub[pool.name]}
 												on:click={() => handleStartScrub(pool.name)}
 											>
-												Scrub
+												{$t('storage.pool.scrub')}
 											</Button>
 										{/if}
 										<Button
@@ -922,7 +989,7 @@
 											icon={Layers}
 											on:click={() => openVolumes(pool)}
 										>
-											Volumes
+											{$t('storage.pool.volumes')}
 										</Button>
 										<Button
 											variant="secondary"
@@ -930,7 +997,7 @@
 											icon={Unplug}
 											on:click={() => openPoolAction('unmount', pool)}
 										>
-											Unmount
+											{$t('storage.pool.unmount')}
 										</Button>
 									{:else}
 										<Button
@@ -939,7 +1006,7 @@
 											icon={Plug}
 											on:click={() => openPoolAction('mount', pool)}
 										>
-											Mount
+											{$t('storage.pool.mount')}
 										</Button>
 									{/if}
 									<Button
@@ -948,43 +1015,45 @@
 										on:click={() => openDeleteModal(pool)}
 									>
 										<Trash2 class="w-4 h-4 text-error" />
-										<span class="sr-only">Remove pool {pool.name}</span>
+										<span class="sr-only">{$t('storage.pool.remove', { name: pool.name })}</span>
 									</Button>
 								</div>
 							</div>
 
 							<div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
 								<div>
-									<span class="text-secondary">RAID:</span>
+									<span class="text-secondary">{$t('storage.pool.raid')}</span>
 									{#if pool.raid_level}
-										<span class="ml-2">{pool.raid_level}</span>
+										<span class="ml-2">{profileLabel(pool.raid_level)}</span>
 										{#if pool.raid_level === 'raid5' || pool.raid_level === 'raid6'}
-											<Badge variant="error">Unsafe</Badge>
+											<Badge variant="error">{$t('storage.pool.unsafe')}</Badge>
 										{/if}
 									{:else}
 										<!-- The profile is only read from a mounted filesystem. -->
 										<span class="ml-2 text-muted"
-											>{pool.mounted ? 'unknown' : 'unknown (not mounted)'}</span
+											>{$t(pool.mounted ? 'storage.pool.unknown' : 'storage.pool.unknownNotMounted')}</span
 										>
 									{/if}
 								</div>
 								<div>
-									<span class="text-secondary">Used:</span>
+									<span class="text-secondary">{$t('storage.pool.used')}</span>
 									{#if pool.mounted}
 										<span class="ml-2"
 											>{formatBytes(pool.used_size)} / {formatBytes(pool.total_size)}</span
 										>
 									{:else}
-										<span class="ml-2 text-muted">unknown (not mounted)</span>
+										<span class="ml-2 text-muted">{$t('storage.pool.unknownNotMounted')}</span>
 									{/if}
 								</div>
 								<div>
-									<span class="text-secondary">Devices:</span>
+									<span class="text-secondary">{$t('storage.pool.devices')}</span>
 									<span class="ml-2 mono-xs">{pool.devices.join(', ') || '-'}</span>
 								</div>
 								<div>
-									<span class="text-secondary">Mount:</span>
-									<span class="ml-2 mono-xs">{pool.mounted ? pool.mountpoint || '-' : 'Not mounted'}</span>
+									<span class="text-secondary">{$t('storage.pool.mountpoint')}</span>
+									<span class="ml-2 mono-xs"
+										>{pool.mounted ? pool.mountpoint || '-' : $t('storage.pool.notMounted')}</span
+									>
 								</div>
 							</div>
 
@@ -997,43 +1066,36 @@
 							{/if}
 
 							{#if pool.missing_devices > 0}
-								<Alert variant="error" title="Pool is missing devices" class="mt-3">
-									{pool.missing_devices} device{pool.missing_devices === 1 ? ' is' : 's are'} missing.
-									Reconnect or replace {pool.missing_devices === 1 ? 'it' : 'them'} before the
-									remaining redundancy is lost.
+								<Alert variant="error" title={$t('storage.pool.missingTitle')} class="mt-3">
+									{$t('storage.pool.missing', { n: pool.missing_devices })}
 								</Alert>
 							{/if}
 							{#if pool.forced_read_only}
-								<Alert variant="error" title="The filesystem is read-only" class="mt-3">
-									Writes to this pool fail. btrfs stops writing after a serious error, such as an
-									aborted transaction; check the kernel log (dmesg) for the cause.
+								<Alert variant="error" title={$t('storage.pool.forcedReadOnlyTitle')} class="mt-3">
+									{$t('storage.pool.forcedReadOnly')}
 								</Alert>
 							{:else if pool.read_only}
-								<Alert variant="warning" title="Mounted read-only" class="mt-3">
-									Shares and apps cannot write to this pool until it is mounted read-write again.
+								<Alert variant="warning" title={$t('storage.pool.readOnlyTitle')} class="mt-3">
+									{$t('storage.pool.readOnly')}
 								</Alert>
 							{/if}
 							{#if pool.device_errors > 0}
-								<Alert variant="error" title="Device errors reported" class="mt-3">
-									btrfs counted {pool.device_errors} read/write/checksum error{pool.device_errors === 1
-										? ''
-										: 's'} on this pool's devices. Check the disks' SMART health and run a scrub.
-									The counters keep their values until they are reset with
+								<Alert variant="error" title={$t('storage.pool.deviceErrorsTitle')} class="mt-3">
+									{$t('storage.pool.deviceErrors', { n: pool.device_errors })}
 									<span class="mono-xs"
-										>btrfs device stats -z {pool.mountpoint || `/mnt/pools/${pool.name}`}</span
+										>{RESET_COUNTERS} {pool.mountpoint || poolMountpoint(pool.name)}</span
 									>.
 								</Alert>
 							{/if}
 							{#if pool.health === 'unknown'}
-								<Alert variant="warning" title="Pool state could not be read" class="mt-3">
-									UNOS could not read the host mount table or this pool's btrfs error counters, so its
-									health is unknown. Check the system logs.
+								<Alert variant="warning" title={$t('storage.pool.unreadableTitle')} class="mt-3">
+									{$t('storage.pool.unreadable')}
 								</Alert>
 							{/if}
 
 							<!-- Scrub Status: progress while it runs, then the result (ADR-0272) -->
 							{#if pool.mounted && scrubErrors[pool.name]}
-								<Alert variant="warning" title="Could not read the scrub status" class="mt-3">
+								<Alert variant="warning" title={$t('storage.scrub.statusError')} class="mt-3">
 									{scrubErrors[pool.name]}
 								</Alert>
 							{:else if pool.mounted && scrubStatus && scrubStatus.status !== 'idle'}
@@ -1043,7 +1105,7 @@
 											<div class="flex items-center justify-between text-sm">
 												<span class="flex items-center gap-2 text-info">
 													<Loader2 class="w-4 h-4 loading-spinner" />
-													Scrub in progress
+													{$t('storage.scrub.running')}
 												</span>
 												<span class="text-secondary">
 													{#if scrubStatus.duration}
@@ -1055,7 +1117,7 @@
 												<ProgressBar
 													value={getScrubProgress(scrubStatus)}
 													variant="info"
-													label="Scrub progress"
+													label={$t('storage.scrub.progress')}
 												/>
 												<div class="flex justify-between text-xs text-secondary">
 													<span
@@ -1063,9 +1125,9 @@
 															scrubStatus.total_bytes
 														)}</span
 													>
-													<span>{getScrubProgress(scrubStatus).toFixed(1)}%</span>
+													<span>{percentFormat.format(getScrubProgress(scrubStatus) / 100)}</span>
 													{#if scrubStatus.rate}
-														<span>{formatBytes(scrubStatus.rate)}/s</span>
+														<span>{$t('storage.scrub.rate', { rate: formatBytes(scrubStatus.rate) })}</span>
 													{/if}
 												</div>
 											{/if}
@@ -1080,7 +1142,7 @@
 											</span>
 											<span class="text-xs text-muted">
 												{#if scrubStatus.last_run}
-													{scrubStatus.last_run}
+													{scrubStarted(scrubStatus.last_run)}
 												{/if}
 											</span>
 										</div>
@@ -1098,7 +1160,7 @@
 <!-- Create Pool Modal -->
 <Modal
 	open={showCreateModal}
-	title="Create Storage Pool"
+	title={$t('storage.create.title')}
 	size="lg"
 	closable={!saving}
 	on:close={closeCreateModal}
@@ -1108,26 +1170,31 @@
 		on:submit|preventDefault={handleCreatePool}
 		class="space-y-4 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
 	>
-		<Alert variant="error" title="This erases the selected disks">
-			Creating a pool formats the selected disks with btrfs.
-			<strong>ALL DATA on the selected disks will be erased.</strong>
+		<Alert variant="error" title={$t('storage.create.eraseTitle')}>
+			{$t('storage.create.erase')}
+			<strong>{$t('storage.create.eraseAll')}</strong>
 		</Alert>
 
-		<Input label="Pool Name" bind:value={poolForm.name} placeholder="data" required />
+		<Input
+			label={$t('storage.create.name')}
+			bind:value={poolForm.name}
+			placeholder={$t('storage.create.namePlaceholder')}
+			required
+		/>
 
-		<Select label="RAID Level" bind:value={poolForm.raid_level} options={raidOptions} />
+		<Select label={$t('storage.create.raidLevel')} bind:value={poolForm.raid_level} options={raidOptions} />
 		{#if selectedRaidDescription}
 			<p class="text-sm text-secondary -mt-2">{selectedRaidDescription}</p>
 		{/if}
 
 		<div>
-			<p class="form-label">Select Devices</p>
+			<p class="form-label">{$t('storage.create.devices')}</p>
 			{#if disksLoading}
-				<p class="text-muted text-sm">Checking disks...</p>
+				<p class="text-muted text-sm">{$t('storage.create.checkingDisks')}</p>
 			{:else if disksError}
-				<Alert variant="error" title="Could not load the disks">{disksError}</Alert>
+				<Alert variant="error" title={$t('storage.disks.loadError')}>{disksError}</Alert>
 			{:else if disks.length === 0}
-				<p class="text-muted text-sm">No disks found</p>
+				<p class="text-muted text-sm">{$t('storage.disks.none')}</p>
 			{:else}
 				<div class="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
 					{#each disks as disk}
@@ -1156,12 +1223,14 @@
 									{/if}
 								</div>
 								<p class="text-xs text-secondary">
-									{describeContents(disk)}{disk.pool ? ` · member of pool "${disk.pool}"` : ''}
+									{describeContents(disk)}{disk.pool
+										? ` · ${$t('storage.create.memberOf', { pool: disk.pool })}`
+										: ''}
 								</p>
 								{#if reason}
-									<Badge variant="error" class="mt-1">Not available: {reason}</Badge>
+									<Badge variant="error" class="mt-1">{$t('storage.create.unavailable', { reason })}</Badge>
 								{:else if disk.has_data}
-									<Badge variant="warning" class="mt-1">Contains data</Badge>
+									<Badge variant="warning" class="mt-1">{$t('storage.create.containsData')}</Badge>
 								{/if}
 							</div>
 						</label>
@@ -1170,56 +1239,53 @@
 			{/if}
 			{#if poolForm.devices.length > 0}
 				<p class="text-sm text-secondary mt-2">
-					Selected: {poolForm.devices.length} device(s)
+					{$t('storage.create.selected', { n: poolForm.devices.length })}
 				</p>
 			{/if}
 			{#if poolForm.devices.length > 0 && !hasEnoughDevices}
 				<Alert variant="warning">
-					{poolForm.raid_level.toUpperCase()} requires at least {requiredDevices} devices.
-					You have selected {poolForm.devices.length}.
+					{$t('storage.create.tooFew', {
+						level: poolForm.raid_level.toUpperCase(),
+						required: requiredDevices,
+						selected: poolForm.devices.length
+					})}
 				</Alert>
 			{/if}
 		</div>
 
 		{#if selectedWithData.length > 0}
-			<Alert variant="warning" title="Existing data will be destroyed">
-				<p>These disks are not empty:</p>
+			<Alert variant="warning" title={$t('storage.create.dataTitle')}>
+				<p>{$t('storage.create.notEmpty')}</p>
 				<ul class="list-disc ml-5 mt-1 text-sm">
 					{#each selectedWithData as disk}
 						<li>
 							<span class="mono-xs">{disk.path}</span>: {describeContents(disk)}{disk.pool
-								? `, member of pool "${disk.pool}"`
+								? `, ${$t('storage.create.memberOf', { pool: disk.pool })}`
 								: ''}
 						</li>
 					{/each}
 				</ul>
 				<label class="flex items-center gap-2 mt-3 text-content cursor-pointer">
 					<input type="checkbox" bind:checked={poolForm.force} class="form-checkbox" />
-					Erase the existing data on these disks
+					{$t('storage.create.eraseData')}
 				</label>
 			</Alert>
 		{/if}
 
 		<Input
-			label="Type the pool name to confirm"
+			label={$t('storage.create.confirm')}
 			bind:value={poolForm.confirm_name}
-			placeholder={poolForm.name || 'pool name'}
+			placeholder={poolForm.name || $t('storage.create.confirmPlaceholder')}
 			autocomplete="off"
-			error={poolForm.confirm_name && !confirmNameMatches ? 'Does not match the pool name' : ''}
+			error={poolForm.confirm_name && !confirmNameMatches ? $t('storage.create.mismatch') : ''}
 		/>
 
 		{#if createError}
-			<Alert variant="error" title="Pool was not created">
+			<Alert variant="error" title={$t('storage.create.failed')}>
 				<p>{createError}</p>
 				{#if selectionCleared && !disksLoading}
 					<p class="mt-2">
-						{#if disksError}
-							The selection has been cleared. Close this dialog and open it again to reload the
-							disks.
-						{:else}
-							The disk list has been reloaded and the selection cleared. Check the disks and select
-							them again.
-						{/if}
+						{$t(disksError ? 'storage.create.cleared' : 'storage.create.reloaded')}
 					</p>
 				{/if}
 			</Alert>
@@ -1228,7 +1294,7 @@
 
 	<svelte:fragment slot="footer">
 		<Button variant="secondary" class="flex-1" disabled={saving} on:click={closeCreateModal}>
-			Cancel
+			{$t('common.cancel')}
 		</Button>
 		<Button
 			variant="danger"
@@ -1237,7 +1303,7 @@
 			disabled={!canCreate}
 			on:click={handleCreatePool}
 		>
-			Erase Disks &amp; Create Pool
+			{$t('storage.create.submit')}
 		</Button>
 	</svelte:fragment>
 </Modal>
@@ -1245,7 +1311,7 @@
 <!-- Mount / Unmount Modal -->
 <Modal
 	open={poolAction !== null}
-	title={poolAction?.kind === 'mount' ? 'Mount Pool' : 'Unmount Pool'}
+	title={$t(poolAction?.kind === 'mount' ? 'storage.mount.title' : 'storage.unmount.title')}
 	size="md"
 	closable={!poolActionBusy}
 	on:close={closePoolAction}
@@ -1253,29 +1319,28 @@
 	{#if poolAction}
 		{#if poolAction.kind === 'mount'}
 			<p>
-				Mount <strong class="text-content">"{poolAction.pool.name}"</strong> at
-				<span class="mono">/mnt/pools/{poolAction.pool.name}</span>?
+				{$t('storage.mount.question')}
+				<strong class="text-content">{quoted(poolAction.pool.name)}</strong>
+				{$t('storage.mount.at')}
+				<span class="mono">{poolMountpoint(poolAction.pool.name)}</span>?
 			</p>
 			<!-- Also how a pool found on the disks is imported (ADR-0283). -->
-			<p class="text-sm text-secondary">
-				The disks are not formatted: the data on them is kept. UNOS also adds an /etc/fstab entry
-				so the pool is mounted again after a reboot.
-			</p>
+			<p class="text-sm text-secondary">{$t('storage.mount.kept')}</p>
 		{:else}
 			<p>
-				Unmount <strong class="text-content">"{poolAction.pool.name}"</strong>?
+				{$t('storage.unmount.question')}
+				<strong class="text-content">{quoted(poolAction.pool.name)}</strong>?
 			</p>
 			<Alert variant="warning">
-				Shares, apps and scheduled tasks that use
-				<span class="mono-xs">{poolAction.pool.mountpoint || `/mnt/pools/${poolAction.pool.name}`}</span>
-				lose access until the pool is mounted again. The /etc/fstab entry is removed, so the pool
-				is not mounted at boot. The data on the disks is not touched.
+				{$t('storage.unmount.before')}
+				<span class="mono-xs">{poolAction.pool.mountpoint || poolMountpoint(poolAction.pool.name)}</span>
+				{$t('storage.unmount.after')}
 			</Alert>
 		{/if}
 		{#if poolActionError}
 			<Alert
 				variant="error"
-				title={poolAction.kind === 'mount' ? 'Mount failed' : 'Unmount failed'}
+				title={$t(poolAction.kind === 'mount' ? 'storage.mount.failed' : 'storage.unmount.failed')}
 			>
 				{poolActionError}
 			</Alert>
@@ -1284,7 +1349,7 @@
 
 	<svelte:fragment slot="footer">
 		<Button variant="secondary" class="flex-1" disabled={poolActionBusy} on:click={closePoolAction}>
-			Cancel
+			{$t('common.cancel')}
 		</Button>
 		<Button
 			variant={poolAction?.kind === 'unmount' ? 'warning' : 'primary'}
@@ -1292,7 +1357,7 @@
 			loading={poolActionBusy}
 			on:click={confirmPoolAction}
 		>
-			{poolAction?.kind === 'mount' ? 'Mount' : 'Unmount'}
+			{$t(poolAction?.kind === 'mount' ? 'storage.pool.mount' : 'storage.pool.unmount')}
 		</Button>
 	</svelte:fragment>
 </Modal>
@@ -1300,7 +1365,7 @@
 <!-- Import Pool Modal (ADR-0283) -->
 <Modal
 	open={importTarget !== null}
-	title="Import Pool"
+	title={$t('storage.import.title')}
 	size="md"
 	closable={!importing}
 	on:close={closeImport}
@@ -1308,31 +1373,36 @@
 	{#if importTarget}
 		<form on:submit|preventDefault={handleImport} class="space-y-4">
 			<p>
-				Import the btrfs filesystem <span class="mono-xs break-all">{importTarget.uuid}</span>
-				({importTarget.label === null ? 'no label' : `label "${importTarget.label}"`}) on
-				<span class="mono-xs">{importTarget.devices.join(', ')}</span> as a pool.
+				{$t('storage.import.filesystem')}
+				<span class="mono-xs break-all">{importTarget.uuid}</span>
+				({importTarget.label === null
+					? $t('storage.import.noLabel')
+					: $t('storage.import.label', { label: importTarget.label })})
+				{$t('storage.import.on')}
+				<span class="mono-xs">{importTarget.devices.join(', ')}</span>
+				{$t('storage.import.asPool')}
 			</p>
-			<Alert variant="info" title="The disks are not formatted">
-				The data on them is kept. UNOS gives the filesystem the pool name as its label, mounts it at
-				<span class="mono-xs">/mnt/pools/{importName || '<name>'}</span> by its UUID and adds an
-				/etc/fstab entry, so the pool is mounted again after a reboot.
+			<Alert variant="info" title={$t('storage.import.keptTitle')}>
+				{$t('storage.import.keptBefore')}
+				<span class="mono-xs">{poolMountpoint(importName || $t('storage.import.nameSlot'))}</span>
+				{$t('storage.import.keptAfter')}
 			</Alert>
 			<Input
-				label="Pool name"
+				label={$t('storage.import.name')}
 				bind:value={importName}
-				placeholder="backup"
+				placeholder={$t('storage.import.namePlaceholder')}
 				autocomplete="off"
 				error={importNameError}
 			/>
 			{#if importError}
-				<Alert variant="error" title="Pool was not imported">{importError}</Alert>
+				<Alert variant="error" title={$t('storage.import.failed')}>{importError}</Alert>
 			{/if}
 		</form>
 	{/if}
 
 	<svelte:fragment slot="footer">
 		<Button variant="secondary" class="flex-1" disabled={importing} on:click={closeImport}>
-			Cancel
+			{$t('common.cancel')}
 		</Button>
 		<Button
 			class="flex-1"
@@ -1341,7 +1411,7 @@
 			disabled={!canImport}
 			on:click={handleImport}
 		>
-			Import
+			{$t('storage.found.import')}
 		</Button>
 	</svelte:fragment>
 </Modal>
@@ -1349,7 +1419,7 @@
 <!-- Delete Pool Modal -->
 <Modal
 	open={showDeleteModal}
-	title="Remove Pool"
+	title={$t('storage.remove.title')}
 	size="md"
 	danger
 	closable={!deleting}
@@ -1362,48 +1432,51 @@
 	{#if poolToDelete}
 		{#if deleteStep === 1}
 			<div class="space-y-4">
-				<Alert variant="warning" title="Remove pool from UNOS">
+				<Alert variant="warning" title={$t('storage.remove.warningTitle')}>
 					<p>
-						You are about to remove the storage pool <strong class="text-content"
-							>"{poolToDelete.name}"</strong
-						>.
+						{$t('storage.remove.about')}
+						<strong class="text-content">{quoted(poolToDelete.name)}</strong>.
 					</p>
-					<p class="mt-2 text-sm">
-						UNOS unmounts it and removes its /etc/fstab entry. The disks are not wiped:
-						the btrfs filesystem and its data stay on them, and the pool can be mounted
-						again later. Shares and apps that use it stop working.
-					</p>
+					<p class="mt-2 text-sm">{$t('storage.remove.kept')}</p>
 				</Alert>
 
 				<div class="card-nested text-sm">
-					<p class="text-secondary">Pool details:</p>
+					<p class="text-secondary">{$t('storage.remove.details')}</p>
 					<ul class="mt-2 space-y-1">
-						<li>Size: {formatBytes(poolToDelete.total_size)}</li>
-						<li>Used: {poolToDelete.mounted ? formatBytes(poolToDelete.used_size) : 'unknown'}</li>
-						<li>Devices: {poolToDelete.devices.join(', ') || '-'}</li>
-						<li>Mount: {poolToDelete.mounted ? poolToDelete.mountpoint || '-' : 'Not mounted'}</li>
+						<li>{$t('storage.remove.size', { size: formatBytes(poolToDelete.total_size) })}</li>
+						<li>
+							{$t('storage.remove.used', {
+								used: poolToDelete.mounted ? formatBytes(poolToDelete.used_size) : $t('storage.pool.unknown')
+							})}
+						</li>
+						<li>{$t('storage.remove.devices', { devices: poolToDelete.devices.join(', ') || '-' })}</li>
+						<li>
+							{$t('storage.remove.mount', {
+								mount: poolToDelete.mounted ? poolToDelete.mountpoint || '-' : $t('storage.pool.notMounted')
+							})}
+						</li>
 					</ul>
 				</div>
 			</div>
 		{:else}
 			<div class="space-y-4">
-				<Alert variant="error" title="Final Confirmation">
-					<p>To confirm, please type the pool name:</p>
+				<Alert variant="error" title={$t('storage.remove.finalTitle')}>
+					<p>{$t('storage.remove.typeName')}</p>
 					<p class="font-mono text-lg mt-2 bg-surface-overlay px-3 py-2 rounded-lg">
 						{poolToDelete.name}
 					</p>
 				</Alert>
 
 				<Input
-					label="Type pool name to confirm"
+					label={$t('storage.remove.confirm')}
 					bind:value={deleteConfirmName}
-					placeholder="Enter pool name"
+					placeholder={$t('storage.remove.confirmPlaceholder')}
 					autocomplete="off"
 				/>
 			</div>
 		{/if}
 		{#if deleteError}
-			<Alert variant="error" title="Pool was not removed">{deleteError}</Alert>
+			<Alert variant="error" title={$t('storage.remove.failed')}>{deleteError}</Alert>
 		{/if}
 	{/if}
 
@@ -1411,9 +1484,11 @@
 		{#if poolToDelete}
 			{#if deleteStep === 1}
 				<Button variant="secondary" class="flex-1" on:click={closeDeleteModal}
-					>Cancel</Button
+					>{$t('common.cancel')}</Button
 				>
-				<Button variant="danger" class="flex-1" on:click={proceedToStep2}>Continue</Button>
+				<Button variant="danger" class="flex-1" on:click={proceedToStep2}
+					>{$t('storage.remove.continue')}</Button
+				>
 			{:else}
 				<Button
 					variant="secondary"
@@ -1421,7 +1496,7 @@
 					disabled={deleting}
 					on:click={() => (deleteStep = 1)}
 				>
-					Back
+					{$t('storage.remove.back')}
 				</Button>
 				<Button
 					variant="danger"
@@ -1430,7 +1505,7 @@
 					disabled={deleteConfirmName !== poolToDelete.name}
 					on:click={handleDeletePool}
 				>
-					Remove Pool
+					{$t('storage.remove.submit')}
 				</Button>
 			{/if}
 		{/if}
@@ -1440,7 +1515,9 @@
 <!-- Volumes Modal -->
 <Modal
 	open={volumesPool !== null}
-	title={volumesPool ? `Volumes on ${volumesPool.name}` : 'Volumes'}
+	title={volumesPool
+		? $t('storage.volumes.title', { pool: volumesPool.name })
+		: $t('storage.volumes.titleNone')}
 	size="lg"
 	closable={!volumeBusy}
 	on:close={closeVolumes}
@@ -1450,28 +1527,26 @@
 			<!-- btrfs snapshots are not recursive, and scheduled snapshot tasks only take
 			     pools: say so before files move into a volume (ADR-0243). -->
 			<p class="text-sm text-secondary">
-				A volume is a btrfs subvolume in
-				<span class="mono-xs">{volumesPool.mountpoint || `/mnt/pools/${volumesPool.name}`}</span>
-				that can be shared on its own. Snapshots of the pool do not include the files in its
-				volumes: take snapshots of each volume as well, on the Snapshots page. Scheduled snapshot
-				tasks take pools only.
+				{$t('storage.volumes.introBefore')}
+				<span class="mono-xs">{volumesPool.mountpoint || poolMountpoint(volumesPool.name)}</span>
+				{$t('storage.volumes.introAfter')}
 			</p>
 
 			{#if volumesReadOnly}
-				<Alert variant="warning" title="Mounted read-only">
-					Volumes cannot be created or deleted while the pool is mounted read-only.
+				<Alert variant="warning" title={$t('storage.pool.readOnlyTitle')}>
+					{$t('storage.volumes.readOnly')}
 					{#if volumesPool.forced_read_only}
-						btrfs made it read-only after an error; check the kernel log (dmesg).
+						{$t('storage.volumes.forcedReadOnly')}
 					{/if}
 				</Alert>
 			{/if}
 
 			{#if volumesLoading}
-				<p class="loading-text">Loading volumes...</p>
+				<p class="loading-text">{$t('storage.volumes.loading')}</p>
 			{:else if volumesError}
-				<Alert variant="error" title="Could not load the volumes">{volumesError}</Alert>
+				<Alert variant="error" title={$t('storage.volumes.loadError')}>{volumesError}</Alert>
 			{:else if volumes.length === 0}
-				<p class="text-muted text-sm">No volumes yet</p>
+				<p class="text-muted text-sm">{$t('storage.volumes.none')}</p>
 			{:else}
 				<ul class="space-y-2">
 					{#each volumes as volume (volume.name)}
@@ -1487,7 +1562,7 @@
 								on:click={() => askDeleteVolume(volume)}
 							>
 								<Trash2 class="w-4 h-4 text-error" />
-								<span class="sr-only">Delete volume {volume.name}</span>
+								<span class="sr-only">{$t('storage.volumes.deleteOne', { name: volume.name })}</span>
 							</Button>
 						</li>
 					{/each}
@@ -1495,19 +1570,19 @@
 			{/if}
 
 			{#if volumeToDelete}
-				<Alert variant="error" title={`Delete volume "${volumeToDelete.name}"?`}>
-					All files in <span class="mono-xs">{volumeToDelete.path}</span> are deleted with it,
-					including those of stopped apps. This cannot be undone. While a running app or
-					container, an SMB share or an NFS export uses the volume, it is not deleted.
+				<Alert variant="error" title={$t('storage.volumes.deleteTitle', { name: volumeToDelete.name })}>
+					{$t('storage.volumes.deleteBefore')}
+					<span class="mono-xs">{volumeToDelete.path}</span>
+					{$t('storage.volumes.deleteAfter')}
 				</Alert>
 				<Input
-					label="Type the volume name to confirm"
+					label={$t('storage.volumes.confirm')}
 					bind:value={deleteVolumeConfirm}
 					placeholder={volumeToDelete.name}
 					autocomplete="off"
 				/>
 				{#if deleteVolumeError}
-					<Alert variant="error" title="Volume was not deleted">{deleteVolumeError}</Alert>
+					<Alert variant="error" title={$t('storage.volumes.deleteFailed')}>{deleteVolumeError}</Alert>
 				{/if}
 				<div class="flex gap-2">
 					<Button
@@ -1516,7 +1591,7 @@
 						disabled={deletingVolume}
 						on:click={cancelDeleteVolume}
 					>
-						Cancel
+						{$t('common.cancel')}
 					</Button>
 					<Button
 						variant="danger"
@@ -1525,30 +1600,30 @@
 						disabled={deleteVolumeConfirm !== volumeToDelete.name}
 						on:click={handleDeleteVolume}
 					>
-						Delete Volume
+						{$t('storage.volumes.delete')}
 					</Button>
 				</div>
 			{:else}
 				<form on:submit|preventDefault={handleCreateVolume} class="space-y-2">
 					<Input
-						label="New volume name"
+						label={$t('storage.volumes.name')}
 						bind:value={newVolumeName}
-						placeholder="documents"
+						placeholder={$t('storage.volumes.namePlaceholder')}
 						autocomplete="off"
 						disabled={volumesReadOnly}
 						error={newVolumeNameError}
 					/>
 					<Input
-						label="Quota in GiB (optional)"
+						label={$t('storage.volumes.quota')}
 						bind:value={newVolumeQuota}
-						placeholder="No limit"
+						placeholder={$t('storage.volumes.quotaPlaceholder')}
 						autocomplete="off"
 						disabled={volumesReadOnly}
 						error={newVolumeQuotaError}
-						hint="Empty for no limit. A quota needs quotas enabled on the pool."
+						hint={$t('storage.volumes.quotaHint')}
 					/>
 					{#if createVolumeError}
-						<Alert variant="error" title="Volume was not created">{createVolumeError}</Alert>
+						<Alert variant="error" title={$t('storage.volumes.createFailed')}>{createVolumeError}</Alert>
 					{/if}
 					<Button
 						type="submit"
@@ -1559,7 +1634,7 @@
 							volumeBusy ||
 							volumesReadOnly}
 					>
-						Create Volume
+						{$t('storage.volumes.create')}
 					</Button>
 				</form>
 			{/if}
@@ -1568,7 +1643,7 @@
 
 	<svelte:fragment slot="footer">
 		<Button variant="secondary" class="flex-1" disabled={volumeBusy} on:click={closeVolumes}>
-			Close
+			{$t('storage.volumes.close')}
 		</Button>
 	</svelte:fragment>
 </Modal>

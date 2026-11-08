@@ -326,6 +326,7 @@ and this index, and `make check-fast` runs it.
 | [0297](0297-the-dashboard-and-files-take-the-units-after-a-number-from-their-catalogs.md) | The dashboard and Files take the units they write after a number from their catalogs, and numbers keep their decimal point | accepted | 2026-11-08 |
 | [0298](0298-a-russian-audit-log-names-actions-in-russian-and-its-search-finds-english-words.md) | A Russian Audit Log page names actions and resources in Russian, and its search still finds them by their English words | proposed | 2026-11-08 |
 | [0299](0299-the-shares-page-writes-a-locations-kind-in-its-language-from-the-name-the-server-answers.md) | The Shares page writes a location's kind in its language from the name that the server answers | accepted | 2026-11-08 |
+| [0300](0300-the-storage-page-writes-its-values-in-the-pages-language-and-keeps-the-servers-reasons.md) | The Storage page writes its sizes and the start of a scrub in the page's language and keeps the server's reasons and btrfs's names | accepted | 2026-11-08 |
 
 ## Deploy
 

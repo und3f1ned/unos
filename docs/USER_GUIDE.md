@@ -145,7 +145,10 @@ partitions), where it is mounted, and its status:
   signature;
 - **Free**: it is empty.
 
-The reason, such as "Mounted at /srv/backup", is shown below the badge.
+The reason, such as "Mounted at /srv/backup", is shown below the badge, in
+English in every language, like the other messages of the server. Sizes are
+written with one decimal in powers of 1024, in the number format of the
+interface's language as the browser writes it, such as 59.6 GB.
 When the disks cannot be listed, for example because `lsblk` fails on the
 host, the card says so with the reason instead of the list; the pools are
 still shown, and the other way round.
@@ -248,7 +251,9 @@ For each pool, you can:
 - **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
   the pool shows its progress (bytes, percent, rate and duration), updated
   every 2 seconds, and **Cancel Scrub** stops it. At the end it shows the
-  result with the time the scrub started: **Last scrub: No errors**, the
+  result with the time the scrub started, as btrfs writes it (in English, such
+  as `Fri Nov  6 10:00:00 2026`) or, when the interface is in another language,
+  the same date and time in that language's format: **Last scrub: No errors**, the
   number of errors btrfs counted (read, super, verify and checksum errors),
   or that the scrub was cancelled or interrupted before it finished, with
   the errors found until then; start a scrub again to check the whole pool.
