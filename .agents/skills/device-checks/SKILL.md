@@ -13,12 +13,13 @@ the repository root, through `scripts/dev`:
   run on the device in a private mount namespace with the root filesystem read-only and
   noatime (ADR-0221), and keep scratch files in RAM (`/dev/shm`). A command you give `ssh.sh`
   runs as it is.
-- Only `deploy.sh` (every step) and `linux-tests.sh` take the device lock (ADR-0210); a second
-  run waits. `check.sh`, `api.py`, `ssh.sh`, `sd.sh` and the testparm shim take none.
-- `check.sh`, `linux-tests.sh`, `deploy.sh` and `sd.sh measure` print
-  `SD writes <label>: <MiB> MiB (<sectors> sectors)`. `ssh.sh`, `api.py` and the testparm shim
-  print nothing of the kind: run them under `scripts/dev/sd.sh measure <label> -- <command>`,
-  as the steps below do.
+- Only `deploy.sh` (every step), `linux-tests.sh` and `ipv6-filter.sh` (install and remove) take
+  the device lock (ADR-0210); a second run waits. `check.sh`, `api.py`, `ssh.sh`, `sd.sh` and
+  the testparm shim take none.
+- `check.sh`, `linux-tests.sh`, `deploy.sh`, `ipv6-filter.sh` (install and remove) and
+  `sd.sh measure` print `SD writes <label>: <MiB> MiB (<sectors> sectors)`. `ssh.sh`, `api.py`
+  and the testparm shim print nothing of the kind: run them under
+  `scripts/dev/sd.sh measure <label> -- <command>`, as the steps below do.
 
 Settings come from `dev.env` (mode 600, ADR-0212); in a git worktree without one, the scripts
 use the main checkout's. Output shows secrets as `<redacted>`.
@@ -32,7 +33,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    old key (`ssh-keygen -R <host>`).
 
 2. **Check its health.** `scripts/dev/check.sh`. Result: `check: OK`, exit status 0, the lock
-   holder if a deploy or a test run is in progress, and its own `SD writes check.sh` line.
+   holder if a deploy or a test run is in progress, the inbound IPv6 filter active and loaded
+   (ADR-0301), and its own `SD writes check.sh` line.
 
 3. **Ask the API.** `scripts/dev/sd.sh measure api -- scripts/dev/api.py GET /system/stats` (any
    path under `/api/v1`, query parameters with `--param key=value`). Result: `HTTP 200`, the

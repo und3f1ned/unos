@@ -5,11 +5,11 @@
 # containers (state, health, restarts), every container's log configuration (driver and
 # options, such as the max-size and max-file of a rotation set in the host's
 # /etc/docker/daemon.json, ADR-0178), the images, errors in the supervisor's log of the last 24
-# hours, smbd (and nmbd where NetBIOS is on), the API's health answer, the system disk's writes since boot (and its
-# wear data where the card reports it), free RAM and the mounted pools. Exits 0 when
-# unos-supervisor and unos-webui run and are healthy, smbd is active (nmbd too, unless smb.conf
-# turns NetBIOS off: ADR-0275) and the API
-# answers; 1 otherwise ("check: problems").
+# hours, smbd (and nmbd where NetBIOS is on), the API's health answer, the inbound IPv6 filter
+# (ADR-0301), the system disk's writes since boot (and its wear data where the card reports it),
+# free RAM and the mounted pools. Exits 0 when unos-supervisor and unos-webui run and are
+# healthy, smbd is active (nmbd too, unless smb.conf turns NetBIOS off: ADR-0275), the API
+# answers and the filter's unit is active with its table loaded; 1 otherwise ("check: problems").
 #
 # It runs one script on the device, with the root filesystem read-only (dev_remote_ro of
 # env.sh, ADR-0221), starts no container (ADR-0183), takes no lock (it waits for nobody) and
@@ -96,13 +96,20 @@ code=$(python3 -I -c "import ssl, urllib.request as u; print(u.urlopen(\"https:/
 echo "https://127.0.0.1/api/v1/health: $code"
 [ "$code" = 200 ] || problem "the API health check answers $code"
 
+# The filter fails open (ADR-0301): without its table every service answers over IPv6.
+echo "== inbound IPv6 filter"
+unit=$(systemctl is-active unos-ipv6-inbound.service 2> /dev/null) || true
+if nft list table ip6 unos_ipv6_inbound > /dev/null 2>&1; then table=loaded; else table=missing; fi
+echo "unos-ipv6-inbound.service: ${unit:-unknown}, table ip6 unos_ipv6_inbound: $table"
+[ "$unit" = active ] && [ "$table" = loaded ] || problem "the inbound IPv6 filter is not loaded (scripts/dev/ipv6-filter.sh status)"
+
 echo "== system disk"
 d=$disk
 [ -n "$d" ] || d=$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")
-read -r up _ < /proc/uptime
+read -r up _ < /proc/uptime || up=0
 sectors=$(awk "{print \$7}" "/sys/block/$d/stat")
 type=$(cat "/sys/block/$d/device/type" 2> /dev/null || echo unknown)
-awk -v d="$d" -v t="$type" -v s="$sectors" -v u="$up" "BEGIN { printf \"%s (%s): %.1f MiB written since boot, %.1f hours ago: %.2f MiB per hour\n\", d, t, s * 512 / 1048576, u / 3600, s * 512 / 1048576 / (u / 3600) }"
+awk -v d="$d" -v t="$type" -v s="$sectors" -v u="$up" "BEGIN { printf \"%s (%s): %.1f MiB written since boot, %.1f hours ago: %.2f MiB per hour\n\", d, t, s * 512 / 1048576, u / 3600, (u > 0 ? s * 512 / 1048576 / (u / 3600) : 0) }"
 if [ -r "/sys/block/$d/device/life_time" ]; then
     echo "wear estimate (life_time, 0x01 = up to 10% used): $(cat "/sys/block/$d/device/life_time"), pre_eol_info: $(cat "/sys/block/$d/device/pre_eol_info" 2> /dev/null)"
 else

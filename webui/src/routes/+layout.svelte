@@ -158,7 +158,7 @@
 	}
 
 	// Below Tailwind's md breakpoint the sidebar's logo row is the header bar, and the rest of the
-	// sidebar is a drawer under it that the menu button opens (ADR-0301). Escape and a click
+	// sidebar is a drawer under it that the menu button opens (ADR-0302). Escape and a click
 	// outside it close it and give the focus back to the button; a link closes it, and the
 	// navigation moves the focus to the new page. Back and Forward close it too.
 	// The button exists only below md, the same 768 px as the md: classes of the markup: from md
@@ -234,7 +234,7 @@
 {:else}
 	<div class="flex flex-col md:flex-row h-dvh bg-surface">
 		<!-- Sidebar. Below md its logo row is the header bar, with the menu button, and the rest of
-		     it is the drawer that the button opens over the page (ADR-0301). -->
+		     it is the drawer that the button opens over the page (ADR-0302). -->
 		<aside class="shrink-0 md:w-56 bg-surface-elevated flex flex-col md:border-r border-border">
 			<!-- Logo -->
 			<div class="flex items-center gap-2 h-14 px-2 md:h-auto md:p-4 border-b border-border">

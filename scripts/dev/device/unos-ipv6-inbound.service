@@ -1,0 +1,21 @@
+# The dev device's inbound IPv6 filter (ADR-0301): scripts/dev/ipv6-filter.sh installs this unit
+# as /etc/systemd/system/unos-ipv6-inbound.service. Like Debian's nftables.service it loads its
+# rules before the network comes up, but it stops by deleting its own table only, never the
+# whole ruleset, which holds Docker's rules too; a table already gone does not fail the stop.
+# Its file is in /etc/unos-dev, apart from the /etc/unos that deploy/uninstall.sh deletes.
+[Unit]
+Description=UNOS dev device: inbound IPv6 filter
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/unos-dev/ipv6-inbound.nft
+ExecReload=/usr/sbin/nft -f /etc/unos-dev/ipv6-inbound.nft
+ExecStop=-/usr/sbin/nft delete table ip6 unos_ipv6_inbound
+
+[Install]
+WantedBy=sysinit.target

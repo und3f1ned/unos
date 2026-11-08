@@ -999,7 +999,7 @@
                   <Badge variant={attempt.success ? "success" : "error"}>
                     {attempt.success ? $t("account.history.success") : $t("account.history.failure")}
                   </Badge>
-                  <!-- On a phone the details wrap, and a long name or IPv6 address breaks (ADR-0301). -->
+                  <!-- On a phone the details wrap, and a long name or IPv6 address breaks (ADR-0302). -->
                   <div class="min-w-0">
                     <div class="flex items-center gap-2">
                       <User class="w-4 h-4 text-content-secondary flex-shrink-0" />
@@ -1044,7 +1044,7 @@
   </div>
 </div>
 
-<!-- The dialogs below take Modal's overlay (ADR-0301): one taller than the window scrolls with
+<!-- The dialogs below take Modal's overlay (ADR-0302): one taller than the window scrolls with
      it, so that its title and buttons stay reachable; my-auto centers it while it fits. -->
 
 <!-- TOTP Setup Modal -->

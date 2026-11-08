@@ -419,7 +419,7 @@
       <div class="space-y-2">
         {#each tasks as task}
           {@const TypeIcon = getTaskTypeIcon(task.task_type)}
-          <!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0301). -->
+          <!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0302). -->
           <div class="flex flex-wrap gap-y-2 items-center justify-between p-3 bg-slate-700 rounded-lg">
             <div class="flex items-center gap-3 flex-1 max-sm:basis-full min-w-0">
               <!-- Enable/Disable Toggle -->

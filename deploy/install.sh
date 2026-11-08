@@ -360,7 +360,7 @@ EOF
 # LLMNR for the server's name. Both answer over IPv4 only: clients would use
 # an announced global IPv6 address, from which SMB refuses them (hosts allow),
 # and over IPv6 wsdd2 would also open its TCP ports on tunnels, whose global
-# addresses nothing filters (ADR-0227). avahi-daemon reads UNOS's file in
+# addresses UNOS does not filter (ADR-0301). avahi-daemon reads UNOS's file in
 # /etc/avahi, which uninstall.sh keeps: Debian's settings without the IPv6
 # addresses, which use-ipv6=no alone would still announce over IPv4
 # (publish-aaaa-on-ipv4). The files are in place before the packages, whose

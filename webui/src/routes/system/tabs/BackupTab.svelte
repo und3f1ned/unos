@@ -285,7 +285,7 @@
   </div>
 </div>
 
-<!-- Restore Confirmation Modal. Modal's overlay (ADR-0301): taller than the window, the dialog
+<!-- Restore Confirmation Modal. Modal's overlay (ADR-0302): taller than the window, the dialog
      scrolls with it, so that its buttons stay reachable; my-auto centers it while it fits. -->
 {#if showRestoreModal && restoreTarget}
   <div class="modal-overlay items-start overflow-y-auto p-4">

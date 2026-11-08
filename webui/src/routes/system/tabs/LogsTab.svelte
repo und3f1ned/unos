@@ -465,7 +465,7 @@
             />
           {:else}
             <!-- Below sm each entry stacks: its time, level and program on a line, the message
-                 below them at the full width (ADR-0301). -->
+                 below them at the full width (ADR-0302). -->
             <table class="w-full text-sm max-sm:block">
               <thead class="sticky top-0 bg-surface-overlay border-b border-border max-sm:hidden">
                 <tr>

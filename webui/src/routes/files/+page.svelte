@@ -458,7 +458,7 @@
 
 <!-- On a narrow screen the page has no padding of its own beside main's, its buttons wrap, the
      list leaves out the Modified column, and the page grows with the list, so that main scrolls
-     it as a whole. From md the list fills the rest of the window and scrolls inside it (ADR-0301). -->
+     it as a whole. From md the list fills the rest of the window and scrolls inside it (ADR-0302). -->
 <div class="md:p-6 md:h-full flex flex-col">
   <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
     <h1 class="text-2xl font-bold flex items-center gap-2">
@@ -589,7 +589,7 @@
     </div>
   {/if}
 
-  <!-- New Folder: on a narrow screen the buttons wrap below the field (ADR-0301). -->
+  <!-- New Folder: on a narrow screen the buttons wrap below the field (ADR-0302). -->
   {#if showNewFolder}
     <div class="mb-4 flex flex-wrap items-center gap-2">
       <Input

@@ -223,6 +223,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- NFS exports reach the host: UNOS writes its own file
+  `/etc/exports.d/unos.exports`, runs `exportfs -ra` on the host, lists every
+  export of every export file and changes only its own lines. An export is a
+  folder of a mounted pool, for one local address or network, read-only or
+  read-write, and is served only while its pool is mounted.
 - Network discovery: macOS (Bonjour, through avahi-daemon) and Windows
   (WS-Discovery, through wsdd2) list the NAS, and NetBIOS is off; `install.sh`
   sets them up.
@@ -594,6 +599,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   which is restored.
 
 ### Fixed
+- A btrfs or smartctl command that hangs in the kernel no longer holds a
+  worker thread after its timeout.
 - Unmounting or removing a pool works on hosts whose sandboxed systemd
   services keep copies of its mount in their own mount namespaces; before, it
   was always refused and the pool was mounted again.
@@ -858,8 +865,6 @@ manager, encrypted backup uploads, health checks, CI checks).
 
 ### Known issues
 - Not working yet, each with an entry in `feature-list.json`:
-  - NFS exports are written inside the supervisor container and do not reach
-    the host (`shares.nfs-exports`).
   - The UPS state is never read, because the supervisor image has no NUT client,
     and the shutdown on low battery is skipped inside a container
     (`system.ups-monitoring`).

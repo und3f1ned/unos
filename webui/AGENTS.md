@@ -17,7 +17,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 - Layout uses the classes of `src/app.css`: `page-container`, `page-header`, `page-title`,
   `section-title`, `card`, `card-header`, `card-title`, `card-nested`, `table`, `table-header`,
   `table-row`, `table-frame`.
-- Every page fits a 375 px phone (ADR-0301): below `md` the sidebar is the drawer of the header
+- Every page fits a 375 px phone (ADR-0302): below `md` the sidebar is the drawer of the header
   bar's menu button. The page never scrolls sideways: a table that can be wider than the screen
   sits in a `table-frame` and scrolls inside it, rows of buttons and fields wrap (`flex-wrap`),
   long names and paths break. A dialog is a `Modal`, or its overlay takes Modal's classes

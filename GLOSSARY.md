@@ -22,7 +22,7 @@ API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend 
 Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
 
 **Table frame**: The element of the class `table-frame` around a table that can be wider than a
-phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0301).
+phone's screen: the table scrolls sideways inside it, while the page never does (ADR-0302).
 Avoid: scroll wrapper, responsive table.
 
 **Dev device**: The ArmSoM Sige7 board that UNOS is developed and checked on. It holds no data to

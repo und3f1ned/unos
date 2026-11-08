@@ -327,7 +327,7 @@ and this index, and `make check-fast` runs it.
 | [0298](0298-a-russian-audit-log-names-actions-in-russian-and-its-search-finds-english-words.md) | A Russian Audit Log page names actions and resources in Russian, and its search still finds them by their English words | proposed | 2026-11-08 |
 | [0299](0299-the-shares-page-writes-a-locations-kind-in-its-language-from-the-name-the-server-answers.md) | The Shares page writes a location's kind in its language from the name that the server answers | accepted | 2026-11-08 |
 | [0300](0300-the-storage-page-writes-its-values-in-the-pages-language-and-keeps-the-servers-reasons.md) | The Storage page writes its sizes and the start of a scrub in the page's language and keeps the server's reasons and btrfs's names | accepted | 2026-11-08 |
-| [0301](0301-below-the-md-breakpoint-the-sidebar-is-a-drawer-and-only-a-table-scrolls-sideways.md) | Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways | accepted | 2026-11-08 |
+| [0302](0302-below-the-md-breakpoint-the-sidebar-is-a-drawer-and-only-a-table-scrolls-sideways.md) | Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways | accepted | 2026-11-08 |
 
 ## Deploy
 
@@ -365,8 +365,9 @@ and this index, and `make check-fast` runs it.
 | [0223](0223-device-deploys-keep-backups-and-rollback-copies-on-the-workstation.md) | Device deploys keep backups and rollback copies on the workstation | accepted | 2026-11-07 |
 | [0225](0225-the-device-runs-from-its-sd-card-and-never-writes-the-emmc.md) | The dev device runs from its SD card and never writes its eMMC | accepted | 2026-11-07 |
 | [0226](0226-dev-device-ssh-by-key-only-with-rotated-passwords.md) | The dev device takes SSH by key only, and the passwords once published are rotated | accepted | 2026-11-07 |
-| [0227](0227-no-ipv6-inbound-filter-on-the-dev-device-for-now.md) | No inbound IPv6 filter on the dev device for now; each service protects itself | accepted | 2026-11-07 |
+| [0227](0227-no-ipv6-inbound-filter-on-the-dev-device-for-now.md) | No inbound IPv6 filter on the dev device for now; each service protects itself | superseded by [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | 2026-11-07 |
 | [0228](0228-docker-data-root-stays-on-the-sd-card.md) | Docker's data root stays on the dev device's SD card | accepted | 2026-11-07 |
+| [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | The dev device admits inbound IPv6 to its services only from the LAN | accepted | 2026-11-08 |
 
 ## Testing
 

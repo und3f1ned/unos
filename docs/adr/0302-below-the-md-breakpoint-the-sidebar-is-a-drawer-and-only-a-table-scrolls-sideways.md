@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0301: Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways
+# ADR-0302: Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways
 
 ## Context
 

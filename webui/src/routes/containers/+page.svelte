@@ -728,7 +728,7 @@
 		<!-- Port Mappings -->
 		<div>
 			<label class="form-label">{$t('containers.create.ports')}</label>
-			<!-- The fields and Add wrap on a narrow screen (ADR-0301). -->
+			<!-- The fields and Add wrap on a narrow screen (ADR-0302). -->
 			<div class="flex flex-wrap gap-2 mb-2">
 				<input
 					type="number"

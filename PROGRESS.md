@@ -11,10 +11,14 @@ significant step. Features and their state live in `feature-list.json`, decision
   of the host, the Images view, the scheduler's command output and the host's time zone, smb.conf
   re-applied when a pool goes, sign-in with a full system disk and API token fixes, and tests that
   prove the first-run setup, two-factor sign-in, the disk list, mounts, forget and scrub.
-- The third batch is in main except NFS exports and the storage commands' timeouts (in review):
-  group-writable files in shares, apps in the SMB group, network discovery, Samba's logs and
-  sign-in audit, importing a pool, the emergency runbook (#53 to #58), and the fix of unmounting
-  (#60). The Russian web UI's shell is in main (#59); the pages are being translated.
+- Done in the night of 2026-11-08 (#32 to #73): three feature batches, the fix of unmounting, NFS
+  exports, the command timeouts and the whole web UI in Russian (Language on the Account page).
+  The dev device runs main ebb1856. In progress: `webui.mobile-layout`.
+- On the device, nfs-kernel-server is installed, and nfs-server and rpcbind are stopped and
+  disabled. Since 2026-11-08 inbound IPv6 reaches the services only from LAN sources (ADR-0301):
+  `systemctl enable --now nfs-server` would turn NFS on for the LAN only, save for datagrams
+  that forge a LAN source, which only the router's ingress filtering stops. avahi-daemon and
+  wsdd2 run (network discovery).
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
@@ -58,9 +62,12 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
 - Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220).
   The share DATA is served from /mnt/pools/data/shared (root:unos-smb 2770); no account has
   access to it yet. The regular account `test` stays for checks of a regular user's view.
-- Network: global IPv6 from a Hurricane Electric tunnel prefix; the services listen on every
-  IPv6 address and the device filters nothing itself (ADR-0227). Samba admits only private,
-  unique-local and link-local addresses. smbd runs unconfined by AppArmor (ADR-0162).
+- Network: global IPv6 from a Hurricane Electric tunnel prefix. Since 2026-11-08 the services
+  answer over IPv6 only the LAN (link-local, unique-local and the LAN's global prefix), and the
+  BitTorrent port 51413 everyone: the table `ip6 unos_ipv6_inbound`, loaded at boot by
+  `unos-ipv6-inbound.service` (ADR-0301, `scripts/dev/ipv6-filter.sh status`). IPv4 is not
+  filtered on the device. Samba admits only private, unique-local and link-local addresses.
+  smbd runs unconfined by AppArmor (ADR-0162).
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -78,9 +85,46 @@ Open owner actions:
 3. The reboot of the device for the re-check of ADR-0018, once `device.scenario-checks-in-repo`
    is done; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh` is made again.
 4. Who gets access to the share DATA (an SMB account for a regular user).
-5. Whether the services are used from outside over IPv6 (`device.ipv6-inbound-filter`).
 
 ## Log
+
+### 2026-11-08: the inbound IPv6 filter on the dev device
+
+- At the owner's request ("Yes, turn it on") the device admits inbound IPv6 to its services only
+  from the LAN (ADR-0301, superseding ADR-0227): `scripts/dev/ipv6-filter.sh install` put the
+  table `ip6 unos_ipv6_inbound` (`/etc/unos-dev/ipv6-inbound.nft`) and
+  `unos-ipv6-inbound.service` on the device, with the LAN's global prefix read there, so it stays
+  out of the repository. The first install wrote 0.164 MiB, the reviewed one 0.133 MiB and a
+  rerun 0 MiB; deleting the first install's copy under `/etc/unos` 0.098 MiB.
+- Before: from a network outside the LAN (a network namespace on the device with the source
+  2001:db8:6::2, routed to the device's global address) every service port answered. After, and
+  again after two reboots from the API: 22, 80, 443, 445, 5355 and 9091 closed, 51413 open, ping
+  answers. From the workstation 22, 80, 443, 445, 9091 and 51413 answer over both global and
+  both unique-local addresses and the link-local one, and 22, 443 and 445 over IPv4; Bonjour,
+  the router over link-local and outbound IPv6 work. The unit is active before systemd-networkd,
+  no unit failed, and check.sh, which now reports the filter, is OK. The probes wrote 0 to
+  0.023 MiB each.
+- Reviewed twice in a fresh context, the second time by a workflow of four lenses (netfilter,
+  systemd, shell, the repository's rules) with a skeptic per finding: 16 of 22 findings held and
+  are fixed, among them check.sh's system-disk line, install's unchecked writes and a SIGPIPE
+  race in its refusal, `remove --help` removing the filter, remove's leftovers, multipath
+  routes, the file's place under `/etc/unos` (which `deploy/uninstall.sh` deletes) and the
+  docs' ICMPv6 and NFS claims. Kept by design: every on-link global route counts as LAN (a VPN or
+  Docker network served by the device).
+- `device.ipv6-inbound-filter` passes. Not probed: the router's own inbound IPv6 filtering from
+  the internet. The filter decides by source address, so a datagram from outside that forges a
+  unique-local or LAN source is stopped only by the router's ingress filtering (the UDP services;
+  a forged source cannot complete a TCP handshake).
+
+### 2026-11-08: NFS, the command timeouts and the Russian web UI, on the dev device
+
+- Merged: NFS exports on the host (#65), the command timeouts (#62), and the web UI's translation
+  into Russian in nine branches (#59, #63, #64, #66 to #73): 1782 keys in English and Russian, and
+  no text outside the catalogs. Deployed main ebb1856: the supervisor 12.4 MiB, the web UI 18.6
+  MiB, up 5.5 MiB; 41.2 MiB in all.
+- NFS on the device (nfs-kernel-server installed, 27 MiB): an export written to UNOS's own file,
+  listed by exportfs and by the workstation's showmount, and deleted again; then nfs-server and
+  rpcbind stopped and disabled, as inbound IPv6 is not filtered.
 
 ### 2026-11-08: the third feature batch and unmounting, on the dev device
 

@@ -33,8 +33,9 @@ One shared board. It runs from an SD card that wears with every write, and its e
 vendor's firmware and is never written, so every write counts (ADR-0214, ADR-0225).
 
 - Every action goes through `scripts/dev/`, with the settings of `dev.env`: the deploy-device
-  skill for deploys, the device-checks skill for checks. `deploy.sh` and `linux-tests.sh` hold the
-  device lock `/run/unos-dev.lock` (ADR-0210). They and `check.sh` print
+  skill for deploys, the device-checks skill for checks. `deploy.sh`, `linux-tests.sh` and
+  `ipv6-filter.sh` (install, remove) hold the device lock `/run/unos-dev.lock` (ADR-0210). They
+  and `check.sh` print
   `SD writes <label>: <MiB>`; `ssh.sh`, `api.py` and `bin/testparm` print none, so wrap them in
   `scripts/dev/sd.sh measure <label> -- ...`. The report carries those numbers.
 - A linked worktree without a `dev.env` of its own uses the main checkout's (`scripts/dev/env.sh`),
@@ -61,3 +62,7 @@ vendor's firmware and is never written, so every write counts (ADR-0214, ADR-022
   the SD MiB of each step (ADR-0204).
 - Reboots, image prunes and package installs (ADR-0211), credentials and the device's security
   settings (ADR-0024) are owner actions.
+- Over IPv6 the device's services answer only the LAN: `scripts/dev/ipv6-filter.sh` installs the
+  inbound filter of `scripts/dev/device/` (ADR-0301), `status` shows it and `check.sh` reports it
+  missing. `install` and `remove` change a security setting: on the owner's request only
+  (ADR-0024). The workstation reaches the device over IPv4, which the filter does not touch.

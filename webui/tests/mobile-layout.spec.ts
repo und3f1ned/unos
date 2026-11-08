@@ -7,7 +7,7 @@ import { HEALTHY_HDD_2, REPLACE_SOON, fakeHealthApi, predictionsAnswer } from '.
 import { fakeNetworkApi } from './network-fakes';
 import { fakeNotificationsApi, type Channel } from './notifications-fakes';
 
-// The web UI on a phone (feature webui.mobile-layout, ADR-0301). At 375 x 812, a small phone,
+// The web UI on a phone (feature webui.mobile-layout, ADR-0302). At 375 x 812, a small phone,
 // every page of the navigation, the views behind its tabs, each tab of System, the main dialogs,
 // a regular user's Account page, sign-in and first run fit the width of the screen, in English
 // and in Russian, whose texts are longer: neither the page nor a part of it scrolls sideways,

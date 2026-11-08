@@ -452,7 +452,7 @@
 				{#each installed as app}
 					{@const template = catalog.find((c) => c.id === app.template_id)}
 					<Card>
-						<!-- On a narrow screen the buttons wrap below the app (ADR-0301). -->
+						<!-- On a narrow screen the buttons wrap below the app (ADR-0302). -->
 						<div class="flex flex-wrap items-center gap-4">
 							<div
 								class="w-14 h-14 rounded-xl bg-surface-muted flex items-center justify-center text-3xl flex-shrink-0"

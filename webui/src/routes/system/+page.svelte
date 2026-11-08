@@ -65,7 +65,7 @@
 </script>
 
 <!-- From md the tabs are a sidebar beside the tab, which scrolls on its own; below md they wrap
-     above it, and the page scrolls as a whole (ADR-0301). -->
+     above it, and the page scrolls as a whole (ADR-0302). -->
 <div class="flex flex-col md:flex-row md:h-full -m-4 md:-m-6">
   <!-- Sidebar tabs -->
   <div class="md:w-56 md:shrink-0 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 p-3 md:overflow-y-auto">

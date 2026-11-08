@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: device
 decided-by: agent
+superseded-by: ADR-0301
 ---
 
 # ADR-0227: No inbound IPv6 filter on the dev device for now; each service protects itself
 
 ## Context
+
+Superseded by ADR-0301: at the owner's request the dev device admits inbound IPv6 to its services only from the LAN.
 
 The dev device has global IPv6 addresses from a Hurricane Electric tunnel prefix, and its services listen on every IPv6 address: SSH (22), the web UI (80, 443), Samba (139, 445), transmission (9091, 51413) and LLMNR (5355). The device itself filters nothing (ip6tables INPUT policy ACCEPT). Whether the router filters inbound IPv6 could not be checked from here: there is no access to the router and no outside host to probe from. Checking the router's inbound IPv6 filter was an owner action (ADR-0024, ADR-0095).
 

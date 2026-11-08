@@ -2,7 +2,7 @@ import type { Translation } from '../translate';
 
 // The frame of every signed-in page: src/routes/+layout.svelte. The page names of the
 // navigation are the names the pages go by; the menu button opens the navigation on a narrow
-// screen (ADR-0301).
+// screen (ADR-0302).
 
 export const en = {
 	'layout.nav.dashboard': 'Dashboard',
