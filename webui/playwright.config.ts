@@ -69,6 +69,10 @@ export default defineConfig({
     // stand-in's self-signed one: the test machine trusts neither. Also
     // applies to the `request` fixture.
     ignoreHTTPSErrors: true,
+    // The web UI starts in the browser's language when none was chosen in it (ADR-0273), and
+    // the specs find its elements by their English texts: an English browser on any machine.
+    // tests/language.spec.ts switches to Russian.
+    locale: 'en-US',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: isCI ? 'on-first-retry' : 'off',

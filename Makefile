@@ -54,7 +54,7 @@ run_all = failed=; for target in $(1); do echo "== make $@: $$target"; \
 
 .DEFAULT_GOAL := help
 .PHONY: help setup check check-fast lint lint-ruff lint-shell lint-json test test-fast smoke
-.PHONY: frontend frontend-check frontend-build e2e-local audit
+.PHONY: frontend frontend-check frontend-i18n frontend-build e2e-local audit
 
 help: ## List the targets and the variables
 	@echo "UNOS: make <target> [VARIABLE=value ...], from the repository root"
@@ -100,11 +100,14 @@ test-fast: ## The convention tests: ADRs, ledger, guard, repo tooling and secret
 smoke: ## A few seconds: the app starts and serves health, first-run setup and login (backend tests)
 	cd supervisor && $(LOCK) $(PY) -m pytest $(SMOKE) -q --tb=short $(PYTEST_ARGS)
 
-frontend: ## svelte-check and the production build of the web UI; both run
-	+@$(call run_all,frontend-check frontend-build)
+frontend: ## svelte-check, the check of the web UI's texts (ADR-0273) and the production build; all run
+	+@$(call run_all,frontend-check frontend-i18n frontend-build)
 
 frontend-check:
 	cd webui && $(NPM_BIN) run check
+
+frontend-i18n:
+	cd webui && $(NPM_BIN) run i18n
 
 frontend-build:
 	cd webui && $(NPM_BIN) run build

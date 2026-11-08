@@ -17,6 +17,10 @@ reads and changes the host for the web UI (ADR-0002). Avoid: backend server, dae
 API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend server, dashboard
 (the Dashboard is one page).
 
+**Text catalog**: The texts of one area of the web UI in English and Russian
+(`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
+Account page; the server's messages stay English (ADR-0273). Avoid: dictionary, locale file.
+
 **Dev device**: The ArmSoM Sige7 board that UNOS is developed and checked on. It holds no data to
 preserve (ADR-0220). Avoid: production NAS, the server.
 

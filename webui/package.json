@@ -6,6 +6,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "check": "svelte-kit sync && svelte-check --threshold error",
+    "i18n": "node scripts/i18n-check.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

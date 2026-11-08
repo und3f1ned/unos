@@ -10,7 +10,7 @@ template point here.
 
 | Level | Command | Where it runs | What it proves |
 |-------|---------|---------------|----------------|
-| 1. The gate | `make check` | this machine (CI is off, ADR-0230) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere), svelte-check and the production build |
+| 1. The gate | `make check` | this machine (CI is off, ADR-0230) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere), svelte-check, the check of the web UI's texts and the production build |
 | 2. E2E against the local stand-in | `make e2e-local` | this machine | the user flows of the web UI against the real supervisor and the built web UI |
 | 3. The dev device | `scripts/dev/` with the deploy-device and device-checks skills | the dev device | what only a real NAS host has: disks, btrfs, Samba, Docker, a reboot |
 
@@ -70,7 +70,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make test` | all backend tests (`supervisor/tests`); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options |
 | `make test-fast` | the convention tests: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
-| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check) and `npm run build` in `webui/` |
+| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run i18n` (`scripts/i18n-check.mjs`: every text of the web UI comes from a catalog in English and Russian, ADR-0273) and `npm run build` in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
 | `make audit` | `pip-audit -r supervisor/requirements.txt` and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
 | `make setup` | `scripts/setup.sh` (needs the network) |
@@ -284,7 +284,9 @@ is set, and throws for a `BASE_URL` or `HTTP_URL` whose host is not `localhost`,
 (`ignoreHTTPSErrors`), because the certificates are self-signed or come from Caddy's local CA.
 `HTTP_URL` is the plain-HTTP address of the same server, for the redirect and health checks in
 `tests/https.spec.ts`. `E2E_CHROMIUM_PATH` points Playwright at another Chromium binary on a
-machine that cannot download Playwright's own.
+machine that cannot download Playwright's own. The browser runs in en-US (`locale`): without a
+language chosen in it, the web UI starts in the browser's language, and the specs find its
+elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0273).
 
 The stand-in is not a NAS host: it has no disks or pools that UNOS manages, no Docker, no Samba,
 and not the host's network, journal or `/proc`. With `E2E_STAND_IN=1`, the specs that need those
@@ -380,7 +382,8 @@ request against `main`; a new push to a pull request cancels the run for the pre
 3. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
-     error`) and `npm run build`, the build also when the check failed
+     error`), `npm run i18n` (the web UI's texts, ADR-0273) and `npm run build`, each also when
+     another one failed
    - `npm audit --omit=dev --audit-level=high`: high and critical
      vulnerabilities in the `dependencies` of `webui/package.json`
      (lucide-svelte with its peer svelte, and qrcode) and everything they

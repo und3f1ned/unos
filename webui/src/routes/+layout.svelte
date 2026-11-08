@@ -19,6 +19,7 @@
 	} from '$lib/api/client';
 	import { logout, type User } from '$lib/api/auth';
 	import { Alert, Button } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 	import {
 		LayoutDashboard,
 		HardDrive,
@@ -35,24 +36,25 @@
 		ScrollText
 	} from 'lucide-svelte';
 
-	const adminNavItems = [
-		{ href: '/', icon: LayoutDashboard, label: 'Dashboard' },
-		{ href: '/storage', icon: HardDrive, label: 'Storage' },
-		{ href: '/snapshots', icon: Archive, label: 'Snapshots' },
-		{ href: '/shares', icon: Share2, label: 'Shares' },
-		{ href: '/files', icon: FolderOpen, label: 'Files' },
-		{ href: '/containers', icon: Container, label: 'Containers' },
-		{ href: '/apps', icon: Package, label: 'App Store' },
-		{ href: '/users', icon: Users, label: 'Users' },
-		{ href: '/audit', icon: ScrollText, label: 'Audit Log' },
-		{ href: '/system', icon: Wrench, label: 'System' }
+	// Reactive: the labels follow the language of the page.
+	$: adminNavItems = [
+		{ href: '/', icon: LayoutDashboard, label: $t('layout.nav.dashboard') },
+		{ href: '/storage', icon: HardDrive, label: $t('layout.nav.storage') },
+		{ href: '/snapshots', icon: Archive, label: $t('layout.nav.snapshots') },
+		{ href: '/shares', icon: Share2, label: $t('layout.nav.shares') },
+		{ href: '/files', icon: FolderOpen, label: $t('layout.nav.files') },
+		{ href: '/containers', icon: Container, label: $t('layout.nav.containers') },
+		{ href: '/apps', icon: Package, label: $t('layout.nav.apps') },
+		{ href: '/users', icon: Users, label: $t('layout.nav.users') },
+		{ href: '/audit', icon: ScrollText, label: $t('layout.nav.audit') },
+		{ href: '/system', icon: Wrench, label: $t('layout.nav.system') }
 	];
 
 	// Regular accounts only get live system stats and their own account settings;
 	// every other API is administrator-only.
-	const userNavItems = [
-		{ href: '/', icon: LayoutDashboard, label: 'Dashboard' },
-		{ href: '/system#security', icon: UserCog, label: 'Account' }
+	$: userNavItems = [
+		{ href: '/', icon: LayoutDashboard, label: $t('layout.nav.dashboard') },
+		{ href: '/system#security', icon: UserCog, label: $t('layout.nav.account') }
 	];
 
 	$: navItems = !$user ? [] : $user.is_admin ? adminNavItems : userNavItems;
@@ -108,7 +110,7 @@
 				endSession();
 				return;
 			}
-			userLoadError = e instanceof Error ? e.message : 'Failed to load your account';
+			userLoadError = e instanceof Error ? e.message : $t('layout.accountFailed');
 		}
 	}
 
@@ -164,7 +166,7 @@
 			<div class="p-4 border-b border-border">
 				<div class="flex items-center gap-2">
 					<Server class="w-7 h-7 text-blue-500" />
-					<span class="text-lg font-bold text-content">UNOS</span>
+					<span class="text-lg font-bold text-content">{$t('common.product')}</span>
 				</div>
 			</div>
 
@@ -199,13 +201,13 @@
 							</div>
 							<div class="min-w-0">
 								<p class="text-sm text-content-secondary truncate">{$user.username}</p>
-								<p class="text-xs text-muted">{$user.is_admin ? 'Administrator' : 'User'}</p>
+								<p class="text-xs text-muted">{$user.is_admin ? $t('layout.role.admin') : $t('layout.role.user')}</p>
 							</div>
 						</div>
 						<button
 							on:click={handleLogout}
 							class="btn btn-ghost btn-icon-sm"
-							title="Logout"
+							title={$t('layout.logout')}
 						>
 							<LogOut class="w-4 h-4" />
 						</button>
@@ -219,12 +221,12 @@
 			{#if gate === 'allowed' && showSlot}
 				<slot />
 			{:else if userLoadError}
-				<Alert variant="error" title="Could not load your account">
+				<Alert variant="error" title={$t('layout.accountError')}>
 					<p>{userLoadError}</p>
-					<Button variant="secondary" size="sm" class="mt-3" on:click={ensureUser}>Retry</Button>
+					<Button variant="secondary" size="sm" class="mt-3" on:click={ensureUser}>{$t('common.retry')}</Button>
 				</Alert>
 			{:else}
-				<p class="loading-text">Loading...</p>
+				<p class="loading-text">{$t('common.loading')}</p>
 			{/if}
 		</main>
 	</div>

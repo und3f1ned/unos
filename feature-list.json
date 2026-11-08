@@ -2764,10 +2764,16 @@
         "The Account page offers English and Russian",
         "Every text of the web UI comes from a catalog with both"
       ],
+      "verified_by": [
+        "webui/tests/language.spec.ts",
+        "supervisor/tests/test_i18n.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0023"
-      ]
+        "ADR-0023",
+        "ADR-0273"
+      ],
+      "notes": "First of two phases (ADR-0273). Built: the lookup and the stores of webui/src/lib/i18n/ (one catalog per area with English and Russian halves, plural forms by Intl.PluralRules, the choice kept in this browser as unos-locale, <html lang> after it, Russian by default for a browser set to Russian), the Language card of the Account page, and the texts in both languages of the navigation and the frame (+layout.svelte, the tabs of the System page), the login and setup pages, the Account page (SecurityTab.svelte with RecoveryCodes and SmbAccessCard) and the shared components of src/lib/components/ui. Step 1: webui/tests/language.spec.ts switches an administrator's and a regular user's Account page to Russian, sees the navigation and the Account page change at once and stay Russian after a reload, the login page in Russian after signing out, and the way back to English; a browser set to Russian starts in Russian. Step 2 is not done: the .svelte files listed in webui/scripts/i18n-untranslated.txt still show English texts, and the second phase translates them one area at a time, each taking its files off the list. passes stays false until the list is empty. make frontend runs webui/scripts/i18n-check.mjs, which fails for a text outside $t in a .svelte file that is not listed, for a listed file with nothing left to translate, for a key that no catalog has and for a catalog whose ru half differs from the en half (supervisor/tests/test_i18n.py); a text that a function returns is out of its reach and needs review. The server's messages stay English. Not host-level (GLOSSARY.md): no device check needed."
     },
     {
       "id": "webui.command-palette",
