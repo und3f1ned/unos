@@ -13,7 +13,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   prove the first-run setup, two-factor sign-in, the disk list, mounts, forget and scrub.
 - Done in the night of 2026-11-08 (#32 to #73): three feature batches, the fix of unmounting, NFS
   exports, the command timeouts and the whole web UI in Russian (Language on the Account page).
-  The dev device runs main ebb1856. In progress: `webui.mobile-layout`.
+  That morning: the dev device's inbound IPv6 filter (#75, ADR-0301) and the web UI on a phone
+  (#76, ADR-0302). The dev device runs main 36a6c1b.
 - On the device, nfs-kernel-server is installed, and nfs-server and rpcbind are stopped and
   disabled. Since 2026-11-08 inbound IPv6 reaches the services only from LAN sources (ADR-0301):
   `systemctl enable --now nfs-server` would turn NFS on for the LAN only, save for datagrams
@@ -41,7 +42,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-07, 20:45 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-08, 11:00 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -49,10 +50,12 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main cce0def (the first feature batch, #32 to #40), deployed on 2026-11-07 at 20:29 UTC,
-  with the supervisor rebuilt once more by this branch's `deploy.sh` to carry its version. The
+- Runs main 36a6c1b: the web UI with the phone layout, deployed on 2026-11-08 at about 11:00
+  UTC, and the supervisor built from ebb1856 in the night (no supervisor file changed since). The
   device checkout `/opt/unos` equals main's tree; the deploy's backup and rollback copies are in
-  the main checkout's `tmp/dev/`. Rebooted from the API at 20:36 UTC.
+  the main checkout's `tmp/dev/`. Rebooted from the API twice that morning, for the reboot checks of
+  the IPv6 filter. Docker lists 9 dangling images, the old builds' layers: pruning them is the
+  owner's call (ADR-0211).
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest, deploy-webui:latest, lscr.io/linuxserver/transmission,
   alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base).
@@ -87,6 +90,20 @@ Open owner actions:
 4. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-08: the web UI on a phone, on the dev device
+
+- Merged #76 (`webui.mobile-layout`, ADR-0302): below 768 px a menu button in the top bar opens
+  the navigation as a drawer, and every page, tab and dialog fits a 375 px screen without
+  scrolling sideways; only a table scrolls, inside its `.table-frame`.
+  `webui/tests/mobile-layout.spec.ts` checks it in English and Russian at 375 x 812, sideways at
+  667 x 375, and from 768 px up; the whole E2E suite passed on the stand-in (631 passed, 16
+  skipped). A fresh-context review found six problems (the New Folder row, a long folder cut
+  off, Back to a hash leaving the drawer open, a tap beside the drawer on iOS, dialogs that did
+  not scroll, notes that said more than the spec checks); all are fixed, with three more
+  overflows found on the way. Not checked: a phone's own browser.
+- Deployed the web UI only (no supervisor file changed): sync 2.105 MiB, build-webui
+  18.555 MiB, up 2.969 MiB; check.sh OK, the IPv6 filter loaded.
 
 ### 2026-11-08: the inbound IPv6 filter on the dev device
 
