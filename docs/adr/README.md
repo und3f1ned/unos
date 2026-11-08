@@ -140,7 +140,7 @@ and this index, and `make check-fast` runs it.
 | [0084](0084-import-the-existing-smb-conf-once.md) | The existing smb.conf is imported once per database, controlled by a marker | accepted | 2026-11-06 |
 | [0085](0085-keep-the-original-smb-conf-as-import-backup.md) | The original smb.conf is kept once as smb.conf.unos-import-backup | accepted | 2026-11-06 |
 | [0086](0086-the-import-only-narrows-access.md) | The smb.conf import only narrows access and reports every option it drops | accepted | 2026-11-06 |
-| [0087](0087-hardened-pinned-global-section.md) | UNOS renders a hardened [global] section with pinned values | accepted | 2026-11-06 |
+| [0087](0087-hardened-pinned-global-section.md) | UNOS renders a hardened [global] section with pinned values | superseded by [0265](0265-hardened-pinned-global-section-with-auth-audit-logging.md) | 2026-11-06 |
 | [0088](0088-fail-safe-share-sections.md) | Share sections never express a restriction by leaving a line out | accepted | 2026-11-06 |
 | [0089](0089-apply-is-checked-by-testparm-and-atomic.md) | Every apply is checked by testparm and installed atomically | accepted | 2026-11-06 |
 | [0090](0090-reload-all-and-retry-failed-reloads.md) | Samba is reloaded with smbcontrol all, and failed reloads and closes are retried | accepted | 2026-11-06 |
@@ -229,6 +229,7 @@ and this index, and `make check-fast` runs it.
 | [0262](0262-samba-keeps-a-password-history-of-three.md) | Samba keeps a password history of 3, so that retries with an account's previous passwords write nothing to passdb | accepted | 2026-11-08 |
 | [0263](0263-smb-bound-passwords-must-not-be-common-passwords.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters, and must not be common passwords | accepted | 2026-11-08 |
 | [0264](0264-smb-logins-stay-unthrottled-until-the-owner-chooses-a-limit.md) | SMB logins have no rate limit and no lockout, as an accepted risk until the owner chooses how to limit them | accepted | 2026-11-08 |
+| [0265](0265-hardened-pinned-global-section-with-auth-audit-logging.md) | UNOS renders a hardened [global] section with pinned values, among them Samba's logging lines of ADR-0261 | accepted | 2026-11-08 |
 
 ## Apps
 

@@ -405,9 +405,10 @@ def ensure_password_history() -> str | None:
     then writes nothing to passdb.tdb, while every other wrong password still
     writes the entry (source3/auth/check_samsec.c): a client that keeps a saved
     old password after a change no longer writes to the system disk at each
-    attempt. ``pdbedit -P`` reads the account policy at every start; it is set,
-    which writes account_policy.tdb, only when it differs. Returns the change
-    to report, or None; raises SmbHostError.
+    attempt. Only a password set while the policy is 3 enters the history
+    (source3/passdb/passdb.c). ``pdbedit -P`` reads the account policy at every
+    start; it is set, which writes account_policy.tdb, only when it differs.
+    Returns the change to report, or None; raises SmbHostError.
     """
     result = _run(["pdbedit", "-P", PASSWORD_HISTORY_POLICY], timeout=CHANGE_TIMEOUT)
     if not result.ok:
@@ -541,19 +542,23 @@ def _remove_host_account(name: str, *, expected_uid: int | None = None) -> str:
     raise SmbHostCommandFailed(503, f"userdel could not remove the host account {name}: {_last_line(result)}")
 
 
-def set_samba_password(name: str, password: str) -> None:
-    """``smbpasswd -s -a <name>`` with the password twice on stdin (never in argv)."""
+def set_samba_password(name: str, password: str, *, restoring: bool = False) -> None:
+    """``smbpasswd -s -a <name>`` with the password twice on stdin (never in argv).
+
+    ``restoring``: the password goes back after a change that failed (ADR-0124), and
+    is not checked against the list of common passwords (ADR-0263).
+    """
     name = _checked_name(name, "smbpasswd")
-    problem = constants.smb_password_problem(password)
+    problem = constants.smb_password_problem(password, restoring=restoring)
     if problem is not None:
         raise SmbHostError(400, problem)
     result = _run(["smbpasswd", "-s", "-a", name], timeout=CHANGE_TIMEOUT, input=f"{password}\n{password}\n")
     if not result.ok:
         raise SmbHostCommandFailed(503, f"Samba did not accept the password: {_last_line(result, secret=password)}")
-    logger.info("Samba has a new password for %s", name)
+    logger.info("Samba has its previous password back for %s" if restoring else "Samba has a new password for %s", name)
 
 
-def set_own_samba_password(name: str, password: str) -> None:
+def set_own_samba_password(name: str, password: str, *, restoring: bool = False) -> None:
     """set_samba_password() for an account that UNOS activated earlier.
 
     The host may have changed since the activation: the host account of the
@@ -562,7 +567,7 @@ def set_own_samba_password(name: str, password: str) -> None:
     smbpasswd never writes a passdb entry for a foreign account.
     """
     name = _checked_name(name, "smbpasswd")
-    problem = constants.smb_password_problem(password)
+    problem = constants.smb_password_problem(password, restoring=restoring)
     if problem is not None:
         raise SmbHostError(400, problem)
     account = _read_host_account(name)
@@ -571,7 +576,7 @@ def set_own_samba_password(name: str, password: str) -> None:
     stored = read_passdb_names().get(name.lower())
     if stored is not None and stored != name:
         raise SmbHostError(409, _other_case_message(name, stored))
-    set_samba_password(name, password)
+    set_samba_password(name, password, restoring=restoring)
 
 
 def _delete_unos_entry(
@@ -1242,13 +1247,14 @@ async def _reset_account(db: AsyncSession, user_id: int, name: str) -> str | Non
 
 async def _compensate_password(db: AsyncSession, user_id: int, name: str, current_password: str | None) -> str | None:
     """Samba may hold a new password that UNOS did not store (ADR-0124): a self change
-    puts the current password back; otherwise, or when that fails, _reset_account().
+    puts the current password back, also a common one that the account got before the
+    list of ADR-0263; otherwise, or when that fails, _reset_account().
 
     Returns why this failed, or None.
     """
     if current_password is not None:
         try:
-            await asyncio.to_thread(set_own_samba_password, name, current_password)
+            await asyncio.to_thread(set_own_samba_password, name, current_password, restoring=True)
             return None
         except SmbHostError as error:
             logger.warning("Samba's previous password of %s could not be restored: %s", name, error.message)

@@ -24,4 +24,4 @@ ADR-0102 accepted two gaps of SMB sign-ins as a risk: no rate limit or lockout, 
 ## Consequences
 
 - A client on the LAN can still try SMB passwords without being slowed down: the first step of `shares.smb-login-protection` stays open until the owner chooses.
-- Each failed sign-in of an account with a passdb entry still writes to the system disk, unless it is a retry with one of the account's two previous passwords (ADR-0159, ADR-0262).
+- Each failed sign-in of an account with a passdb entry still writes to the system disk, unless it is a retry with one of the two previous passwords that the account's history holds (ADR-0159, ADR-0262).

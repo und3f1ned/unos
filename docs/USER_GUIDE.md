@@ -657,9 +657,10 @@ passwords must not be common passwords: this one is on the list of passwords
 that attackers try first". This holds when SMB is turned on with a password
 (by the user or in the **Users** page, also when a user is created with SMB)
 and when a user with SMB on changes the password; users without SMB may
-keep a shorter or common UNOS password. A user whose UNOS password breaks
-these rules (scripts that use the API can set such passwords) first changes
-it under **Change Password**, then turns SMB on. A two-factor code works only once:
+keep a shorter or common UNOS password (the web UI asks only for 8
+characters, and scripts that use the API can set shorter ones). A user whose
+UNOS password breaks these rules first changes it under **Change Password**,
+then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 

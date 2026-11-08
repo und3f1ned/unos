@@ -36,7 +36,7 @@ DEFAULT_FSTAB = (
 )
 
 # The parameters that UNOS renders, in [global] and in share sections (the testparm
-# allowlist; ADR-0087, ADR-0088).
+# allowlist; ADR-0265, ADR-0088).
 SMB_CONF_KEYS = frozenset({
     "workgroup", "server string", "server role", "security", "passdb backend", "map to guest",
     "restrict anonymous", "guest account", "invalid users", "hosts allow", "server min protocol",

@@ -100,7 +100,7 @@ def _safe_user(name: object) -> str:
     return name  # type: ignore[return-value]
 
 
-# --- rendering (ADR-0087, ADR-0088) ------------------------------------------------------
+# --- rendering (ADR-0265, ADR-0088) ------------------------------------------------------
 
 
 def _line(key: str, value: str) -> str:
@@ -154,7 +154,7 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
 
 
 def render_global(guest_enabled: bool) -> str:
-    """The ``[global]`` section (ADR-0087); three lines depend on whether a guest share exists (ADR-0098)."""
+    """The ``[global]`` section (ADR-0265); three lines depend on whether a guest share exists (ADR-0098)."""
     return "[global]\n" + "".join(_line(key, value) for key, value in global_settings(guest_enabled))
 
 

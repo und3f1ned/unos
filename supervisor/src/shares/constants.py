@@ -95,11 +95,13 @@ def common_passwords() -> frozenset[str]:
     return frozenset(line for line in lines if line and not line.startswith("#"))
 
 
-def smb_password_problem(password: str) -> str | None:
+def smb_password_problem(password: str, *, restoring: bool = False) -> str | None:
     """Why ``password`` cannot be given to Samba (smbpasswd reads it as a line on stdin), or None.
 
     The rules of ADR-0263, in this order: at least 8 characters, at most 72 bytes of valid UTF-8,
-    no control characters, and not a common password (compared ignoring case).
+    no control characters, and not a common password (compared ignoring case). ``restoring``: the
+    password that Samba held before a change that failed goes back to it (ADR-0124); the list
+    applies only to new passwords, and an account may have got its password before the list.
     """
     if len(password) < SMB_PASSWORD_MIN_CHARS:
         return f"SMB passwords must have at least {SMB_PASSWORD_MIN_CHARS} characters"
@@ -111,7 +113,7 @@ def smb_password_problem(password: str) -> str | None:
         return f"SMB passwords must not be longer than {SMB_PASSWORD_MAX_BYTES} bytes (UTF-8)"
     if any(unicodedata.category(c) in ("Cc", "Cs") for c in password):
         return "SMB passwords must not contain control characters such as tabs or line breaks"
-    if password.casefold() in common_passwords():
+    if not restoring and password.casefold() in common_passwords():
         return COMMON_PASSWORD_RULE
     return None
 

@@ -1671,6 +1671,25 @@ class TestCommitFailureAfterSmbpasswd:
         assert world.fake.passdb == {}
         assert world.row("alice").password_state == "needed"
 
+    def test_self_change_puts_back_a_common_password_that_samba_held(self, world, failing_commit):
+        """An account that got a common password before the list (ADR-0263) keeps SMB when a change
+        from it fails: the list applies to new passwords, not to the one that goes back (ADR-0124)."""
+        world.add_user("carol", COMMON_PW)
+        world.make_active("carol", 70000, COMMON_PW)
+        pid = world.fake.add_session("carol", ["media"])
+        failing_commit.fail_at = 1
+
+        response = world.change_password("carol", COMMON_PW, NEW_PW)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == NOTHING_CHANGED
+        assert world.fake.stdin_of("smbpasswd") == [f"{NEW_PW}\n{NEW_PW}\n", f"{COMMON_PW}\n{COMMON_PW}\n"]
+        assert world.fake.passdb["carol"]["password"] == COMMON_PW
+        assert world.fake.commands("pdbedit", "-x") == []
+        assert bcrypt.checkpw(COMMON_PW.encode(), world.user("carol").hashed_password.encode())
+        assert world.row("carol").password_state == "set"
+        assert world.fake.session_pids() == [pid]
+
     def test_admin_reset(self, world, failing_commit):
         world.make_active("alice", 70000, ALICE_PW)
         pid = world.fake.add_session("alice", ["media"])
@@ -1932,6 +1951,24 @@ class TestSmbpasswdTimeout:
         assert bcrypt.checkpw(ALICE_PW.encode(), world.user("alice").hashed_password.encode())
         assert world.row("alice").password_state == "set"
         assert world.fake.session_pids() == [pid]  # nothing changed for the open session
+
+    def test_self_change_puts_back_a_common_password_that_samba_held(self, world, monkeypatch):
+        """As TestCommitFailureAfterSmbpasswd: the password that goes back is not checked against the list."""
+        world.add_user("carol", COMMON_PW)
+        world.make_active("carol", 70000, COMMON_PW)
+        pid = world.fake.add_session("carol", ["media"])
+        smbpasswd_times_out_after_writing(world, monkeypatch)
+
+        response = world.change_password("carol", COMMON_PW, NEW_PW)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == SMBPASSWD_TIMEOUT
+        assert world.fake.stdin_of("smbpasswd") == [f"{NEW_PW}\n{NEW_PW}\n", f"{COMMON_PW}\n{COMMON_PW}\n"]
+        assert world.fake.passdb["carol"]["password"] == COMMON_PW
+        assert world.fake.commands("pdbedit", "-x") == []
+        assert bcrypt.checkpw(COMMON_PW.encode(), world.user("carol").hashed_password.encode())
+        assert world.row("carol").password_state == "set"
+        assert world.fake.session_pids() == [pid]
 
     def test_admin_reset(self, world, monkeypatch):
         world.make_active("alice", 70000, ALICE_PW)

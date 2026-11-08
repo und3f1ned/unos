@@ -530,6 +530,16 @@ class TestConstants:
             "SMB passwords must not contain control characters such as tabs or line breaks"
         )
 
+    def test_a_password_that_goes_back_to_samba_is_not_checked_against_the_list(self):
+        """``restoring``: the password Samba held before a change that failed goes back to it (ADR-0124),
+        also a common one that an account got before the list; the other rules still apply (ADR-0263)."""
+        assert smb_password_problem("Password123") == constants.COMMON_PASSWORD_RULE
+        assert smb_password_problem("Password123", restoring=True) is None
+        assert smb_password_problem("letmein", restoring=True) == "SMB passwords must have at least 8 characters"
+        assert smb_password_problem("password\n", restoring=True) == (
+            "SMB passwords must not contain control characters such as tabs or line breaks"
+        )
+
     def test_the_list_of_common_passwords(self):
         """common_passwords.txt: a comment header, then one password per line, in lower case (casefolded),
         sorted and unique, each one that the other rules would take; it ships with the code (src/)."""
