@@ -613,7 +613,7 @@ test.describe('Users page SMB (fake data)', () => {
   });
 
   test('the delete confirmation reads whole, with the name in its place', async ({ authenticatedPage: page }) => {
-    // Translated in parts around the name (ADR-0295), as is the Turn off SMB confirmation, which
+    // Translated in parts around the name (ADR-0296), as is the Turn off SMB confirmation, which
     // 'allowing SMB acts at once, and turning it off asks first' reads whole.
     const fake = await fakeSmbApi(page, { users: fakeUsers() });
     await page.goto('/users');

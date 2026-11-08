@@ -13,7 +13,7 @@
 	import { Button, Card, Modal, Alert, Input, Select, EmptyState } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 
-	// Names on the disk, the same in every language (ADR-0295): the folder of a pool or a volume
+	// Names on the disk, the same in every language (ADR-0296): the folder of a pool or a volume
 	// that holds its snapshots, and the prefixes of the names that UNOS gives, which a name's
 	// pattern puts before its translated <date>_<time>. They are the server's
 	// (supervisor/tests/test_snapshots.py), and no text of the catalog holds one.
@@ -324,7 +324,7 @@
 	{/if}
 
 	<!-- Sentences with a name, a path or a link inside are translated in parts around them, and a
-	     part that starts with punctuation follows its element without a space (ADR-0295). -->
+	     part that starts with punctuation follows its element without a space (ADR-0296). -->
 	<Card>
 		<h2 class="section-title mb-2">{$t('snapshots.about.title')}</h2>
 		<p class="text-sm text-secondary">

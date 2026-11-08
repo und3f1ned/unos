@@ -265,6 +265,32 @@ test.describe('Notifications', () => {
     expect(fake.tests).toEqual([ADMIN_MAIL.id]);
   });
 
+  test('a channel lists the events it is for by their names, in English and in Russian', async ({
+    authenticatedPage: page,
+  }) => {
+    // Three events of the server's list and one that the server does not know: up to three show, and
+    // a count of the rest.
+    const events = ['disk_warning', 'smart_error', 'ups_on_battery', 'backup_failed'];
+    await fakeNotificationsApi(page, [{ ...HOOK_WITH_HEADERS, events }]);
+    await openTab(page);
+    const channel = channelItem(page, 'Home hook');
+
+    for (const text of ['Disk Space Warning', 'SMART Error', 'ups_on_battery', '+1 more']) {
+      await expect(channel.getByText(text, { exact: true })).toBeVisible();
+    }
+    await expect(channel).not.toContainText('disk_warning');
+
+    // The language that the Account page keeps in this browser (ADR-0287).
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.reload();
+    const russian = page.getByRole('list', { name: 'Каналы уведомлений' }).getByRole('listitem')
+      .filter({ hasText: 'Home hook' });
+    for (const text of ['Мало места на диске', 'Ошибка SMART', 'ups_on_battery', 'ещё 1']) {
+      await expect(russian.getByText(text, { exact: true })).toBeVisible();
+    }
+    await expect(russian).not.toContainText('smart_error');
+  });
+
   test('a disabled channel can be tested before it receives notifications', async ({ authenticatedPage: page }) => {
     const fake = await fakeNotificationsApi(page, [{ ...ADMIN_MAIL, enabled: false }]);
     await openTab(page);
@@ -377,6 +403,66 @@ test.describe('Notifications', () => {
       name: 'Upload hook', channel: 'webhook', enabled: true, events: [],
       webhook_config: { ...LOWER_CASE_PUT.webhook_config as object, method: 'PUT' },
     });
+  });
+
+  test('in Russian, the summary, a channel, its dialogs and the history speak Russian', async ({
+    authenticatedPage: page,
+  }) => {
+    // The language that the Account page keeps in this browser (ADR-0287).
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    const fake = await fakeNotificationsApi(page, [ADMIN_MAIL]);
+    await page.goto('/system#notifications');
+
+    for (const label of ['Активные каналы', 'Всего отправлено', 'Доставлено', 'Не доставлено']) {
+      await expect(page.getByText(label, { exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole('button', { name: 'Каналы', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    for (const add of ['Добавить эл. почту', 'Добавить Telegram', 'Добавить вебхук', 'Добавить Discord', 'Добавить Slack']) {
+      await expect(page.getByRole('button', { name: add, exact: true })).toBeVisible();
+    }
+    const channel = page.getByRole('list', { name: 'Каналы уведомлений' }).getByRole('listitem')
+      .filter({ hasText: 'Admin mail' });
+    await expect(channel).toContainText('Эл. почта');
+    await expect(channel).toContainText('me@example.com через mail.example.com:587');
+    await expect(channel.getByRole('button', { name: 'Выключить канал «Admin mail»' })).toBeVisible();
+
+    // A new channel's dialog, with its default name, and an existing one's with the events of the
+    // server's list by their names in Russian.
+    await page.getByRole('button', { name: 'Добавить эл. почту' }).click();
+    const create = page.getByRole('dialog', { name: 'Новый канал: Эл. почта' });
+    await expect(field(create, 'Название канала')).toHaveValue('Уведомления: Эл. почта');
+    await expect(create.getByRole('checkbox', { name: 'Проверять сертификат сервера' })).toBeChecked();
+    await expect(create.getByRole('button', { name: 'Добавить канал' })).toBeDisabled();
+    await create.getByRole('button', { name: 'Отмена' }).click();
+    await expect(create).toBeHidden();
+    await channel.getByRole('button', { name: 'Изменить канал «Admin mail»' }).click();
+    const edit = page.getByRole('dialog', { name: 'Изменение канала: Эл. почта' });
+    await expect(field(edit, 'SMTP-сервер')).toHaveValue('mail.example.com');
+    await expect(edit.getByText('Мало места на диске', { exact: true })).toBeVisible();
+    await expect(edit.getByText('Когда на диске заканчивается место', { exact: true })).toBeVisible();
+    await edit.getByRole('button', { name: 'Отмена' }).click();
+    await expect(edit).toBeHidden();
+
+    await channel.getByRole('button', { name: 'Отправить тест в канал «Admin mail»' }).click();
+    await expect(channel.getByRole('status')).toHaveText('Тестовое уведомление отправлено');
+    expect(fake.tests).toEqual([ADMIN_MAIL.id]);
+
+    // The history: the outcome, the type and the time in Russian; the server's texts as they come.
+    await page.getByRole('button', { name: 'История', exact: true }).click();
+    await expect(page.getByRole('combobox', { name: 'Канал' })).toHaveText('Все каналы');
+    const entry = page.getByRole('list', { name: 'Отправленные уведомления' }).getByRole('listitem').first();
+    await expect(entry).toContainText('Доставлено');
+    await expect(entry).toContainText('Только что');
+    await expect(entry).toContainText(TEST_TITLE);
+    await entry.getByRole('button').click();
+    await expect(entry.getByText('Информация', { exact: true })).toBeVisible();
+    await expect(entry.getByText('Отправлено', { exact: true }).locator('xpath=following-sibling::dd'))
+      .toHaveText(/^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/);
+
+    // Nothing of the English tab is left.
+    for (const english of ['Active Channels', 'Total Sent', 'Sent at', 'Just now']) {
+      await expect(page.getByText(english)).toHaveCount(0);
+    }
   });
 
   test('on the stand-in itself, a test to a mail server that is not there names the error in the list and History', async ({
