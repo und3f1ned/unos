@@ -31,10 +31,11 @@
 	} from 'lucide-svelte';
 	import { Button, Card, Badge, Input, Select, Modal, Alert, EmptyState } from '$lib/components/ui';
 	import { ContainerDetailDrawer, ImageList } from '$lib/components/containers';
+	import { t } from '$lib/i18n';
 
 	const tabs = [
-		{ id: 'containers', label: 'Containers' },
-		{ id: 'images', label: 'Images' }
+		{ id: 'containers', key: 'containers.tabs.containers' },
+		{ id: 'images', key: 'containers.tabs.images' }
 	] as const;
 	type TabId = (typeof tabs)[number]['id'];
 
@@ -171,7 +172,7 @@
 
 	async function handleCreate() {
 		if (!formData.name || !formData.image) {
-			error = 'Name and image are required';
+			error = $t('containers.create.required');
 			return;
 		}
 
@@ -210,7 +211,7 @@
 
 		if (action === 'remove') {
 			const container = containers.find((c) => c.id === containerId);
-			if (!confirm(`Remove container "${container?.name}"?`)) return;
+			if (!confirm($t('containers.confirmRemove', { name: container?.name ?? containerId }))) return;
 		}
 
 		try {
@@ -255,6 +256,22 @@
 		}
 	}
 
+	// A container's state as the server answers it (Docker's State.Status): keys of the catalog,
+	// by value. ContainerDetailDrawer.svelte has the same map.
+	const STATES: Record<string, string> = {
+		created: 'containers.state.created',
+		running: 'containers.state.running',
+		paused: 'containers.state.paused',
+		restarting: 'containers.state.restarting',
+		removing: 'containers.state.removing',
+		exited: 'containers.state.exited',
+		dead: 'containers.state.dead'
+	};
+
+	/** A state in the language of the page; a state without a key as it comes. */
+	$: stateLabel = (state: string): string =>
+		Object.prototype.hasOwnProperty.call(STATES, state) ? $t(STATES[state]) : state;
+
 	function getStateVariant(
 		state: string
 	): 'success' | 'error' | 'warning' | 'info' | 'neutral' | 'purple' | 'cyan' | 'orange' {
@@ -297,8 +314,8 @@
 				<ContainerIcon class="w-5 h-5 icon-container" />
 			</div>
 			<div>
-				<h1 class="page-title">Containers</h1>
-				<p class="text-sm text-secondary">Manage Docker containers and images</p>
+				<h1 class="page-title">{$t('containers.title')}</h1>
+				<p class="text-sm text-secondary">{$t('containers.subtitle')}</p>
 			</div>
 		</div>
 		<div class="flex items-center gap-2">
@@ -309,15 +326,21 @@
 				disabled={activeTab === 'containers' && loading}
 			>
 				<RefreshCw class="w-4 h-4 {activeTab === 'containers' && loading ? 'animate-spin' : ''}" />
-				<span class="sr-only">Refresh</span>
+				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
 			{#if activeTab === 'containers'}
-				<Button variant="primary" icon={Plus} on:click={openCreateModal}>Create Container</Button>
+				<Button variant="primary" icon={Plus} on:click={openCreateModal}
+					>{$t('containers.create.button')}</Button
+				>
 			{/if}
 		</div>
 	</div>
 
-	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit" role="tablist" aria-label="Docker">
+	<div
+		class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit"
+		role="tablist"
+		aria-label={$t('containers.tabs.label')}
+	>
 		{#each tabs as tab (tab.id)}
 			<button
 				type="button"
@@ -332,7 +355,7 @@
 				on:click={() => (activeTab = tab.id)}
 				on:keydown={(event) => tabKeydown(event, tab.id)}
 			>
-				{tab.label}
+				{$t(tab.key)}
 			</button>
 		{/each}
 	</div>
@@ -355,7 +378,7 @@
 			>
 				<div class="flex items-center justify-between">
 					<div>
-						<p class="text-secondary text-sm">Running</p>
+						<p class="text-secondary text-sm">{$t('containers.filter.running')}</p>
 						<p class="text-2xl font-bold text-success">{runningCount}</p>
 					</div>
 					<div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
@@ -373,7 +396,7 @@
 			>
 				<div class="flex items-center justify-between">
 					<div>
-						<p class="text-secondary text-sm">Stopped</p>
+						<p class="text-secondary text-sm">{$t('containers.filter.stopped')}</p>
 						<p class="text-2xl font-bold text-error">{stoppedCount}</p>
 					</div>
 					<div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
@@ -391,7 +414,7 @@
 			>
 				<div class="flex items-center justify-between">
 					<div>
-						<p class="text-secondary text-sm">Total</p>
+						<p class="text-secondary text-sm">{$t('containers.filter.total')}</p>
 						<p class="text-2xl font-bold">{containers.length}</p>
 					</div>
 					<div class="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
@@ -414,31 +437,31 @@
 					/>
 					<input
 						type="text"
-						placeholder="Search containers..."
+						placeholder={$t('containers.search')}
 						bind:value={searchQuery}
 						class="form-input pl-10"
 					/>
 				</div>
 				<div class="flex items-center gap-2">
 					<select bind:value={stateFilter} class="form-select w-auto">
-						<option value="">All States</option>
-						<option value="running">Running</option>
-						<option value="exited">Stopped</option>
-						<option value="paused">Paused</option>
-						<option value="restarting">Restarting</option>
+						<option value="">{$t('containers.filter.all')}</option>
+						<option value="running">{$t('containers.filter.running')}</option>
+						<option value="exited">{$t('containers.filter.stopped')}</option>
+						<option value="paused">{$t('containers.filter.paused')}</option>
+						<option value="restarting">{$t('containers.filter.restarting')}</option>
 					</select>
 					<div class="flex border border-border rounded-lg overflow-hidden">
 						<button
 							class="p-2 {viewMode === 'table' ? 'bg-surface-overlay' : 'bg-transparent'}"
 							on:click={() => (viewMode = 'table')}
-							title="Table view"
+							title={$t('containers.view.table')}
 						>
 							<List class="w-4 h-4" />
 						</button>
 						<button
 							class="p-2 {viewMode === 'cards' ? 'bg-surface-overlay' : 'bg-transparent'}"
 							on:click={() => (viewMode = 'cards')}
-							title="Card view"
+							title={$t('containers.view.cards')}
 						>
 							<LayoutGrid class="w-4 h-4" />
 						</button>
@@ -449,24 +472,26 @@
 
 		<!-- Container List -->
 		{#if loading}
-			<p class="loading-text">Loading containers...</p>
+			<p class="loading-text">{$t('containers.loading')}</p>
 		{:else if filteredContainers.length === 0}
 			<EmptyState
 				icon={ContainerIcon}
-				title="No containers found"
+				title={$t('containers.empty.title')}
 				description={searchQuery || stateFilter
-					? 'Try adjusting your search or filter'
-					: 'Create your first container to get started'}
+					? $t('containers.empty.filtered')
+					: $t('containers.empty.none')}
 			>
 				{#if !searchQuery && !stateFilter}
-					<Button variant="primary" icon={Plus} on:click={openCreateModal}>Create Container</Button>
+					<Button variant="primary" icon={Plus} on:click={openCreateModal}
+						>{$t('containers.create.button')}</Button
+					>
 				{:else}
 					<Button
 						variant="secondary"
 						on:click={() => {
 							searchQuery = '';
 							stateFilter = '';
-						}}>Clear Filters</Button
+						}}>{$t('containers.empty.clear')}</Button
 					>
 				{/if}
 			</EmptyState>
@@ -478,11 +503,11 @@
 						<thead class="table-header">
 							<tr>
 								<th class="w-12"></th>
-								<th>Name</th>
-								<th>Image</th>
-								<th>State</th>
-								<th>Ports</th>
-								<th class="text-right">Actions</th>
+								<th>{$t('containers.column.name')}</th>
+								<th>{$t('containers.column.image')}</th>
+								<th>{$t('containers.column.state')}</th>
+								<th>{$t('containers.column.ports')}</th>
+								<th class="text-right">{$t('containers.column.actions')}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -508,7 +533,7 @@
 										<div class="mono text-sm truncate max-w-48">{container.image}</div>
 									</td>
 									<td>
-										<Badge variant={getStateVariant(container.state)}>{container.state}</Badge>
+										<Badge variant={getStateVariant(container.state)}>{stateLabel(container.state)}</Badge>
 									</td>
 									<td>
 										<div class="flex items-center gap-2">
@@ -520,7 +545,7 @@
 													rel="noopener"
 													on:click|stopPropagation
 													class="text-info hover:text-blue-300"
-													title="Open in browser"
+													title={$t('containers.openInBrowser')}
 												>
 													<ExternalLink class="w-3.5 h-3.5" />
 												</a>
@@ -533,14 +558,14 @@
 												<button
 													on:click={(e) => handleQuickAction(e, container.id, 'stop')}
 													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
-													title="Stop"
+													title={$t('containers.action.stop')}
 												>
 													<Square class="w-4 h-4" />
 												</button>
 												<button
 													on:click={(e) => handleQuickAction(e, container.id, 'restart')}
 													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-info transition-colors"
-													title="Restart"
+													title={$t('containers.action.restart')}
 												>
 													<RotateCw class="w-4 h-4" />
 												</button>
@@ -548,7 +573,7 @@
 												<button
 													on:click={(e) => handleQuickAction(e, container.id, 'start')}
 													class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
-													title="Start"
+													title={$t('containers.action.start')}
 												>
 													<Play class="w-4 h-4" />
 												</button>
@@ -556,7 +581,7 @@
 											<button
 												on:click={(e) => handleQuickAction(e, container.id, 'remove')}
 												class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
-												title="Remove"
+												title={$t('containers.action.remove')}
 											>
 												<Trash2 class="w-4 h-4" />
 											</button>
@@ -591,12 +616,12 @@
 									<p class="text-sm text-secondary truncate">{container.image}</p>
 								</div>
 							</div>
-							<Badge variant={getStateVariant(container.state)}>{container.state}</Badge>
+							<Badge variant={getStateVariant(container.state)}>{stateLabel(container.state)}</Badge>
 						</div>
 
 						{#if container.ports.length > 0}
 							<div class="mb-3">
-								<p class="text-xs text-muted mb-1">Ports</p>
+								<p class="text-xs text-muted mb-1">{$t('containers.column.ports')}</p>
 								<div class="flex flex-wrap gap-1">
 									{#each container.ports.filter((p) => p.host_port) as port}
 										<span class="badge badge-info">
@@ -617,7 +642,7 @@
 										rel="noopener"
 										on:click|stopPropagation
 										class="p-1.5 rounded hover:bg-surface-muted text-info transition-colors"
-										title="Open in browser"
+										title={$t('containers.openInBrowser')}
 									>
 										<ExternalLink class="w-4 h-4" />
 									</a>
@@ -626,7 +651,7 @@
 									<button
 										on:click={(e) => handleQuickAction(e, container.id, 'stop')}
 										class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-warning transition-colors"
-										title="Stop"
+										title={$t('containers.action.stop')}
 									>
 										<Square class="w-4 h-4" />
 									</button>
@@ -634,7 +659,7 @@
 									<button
 										on:click={(e) => handleQuickAction(e, container.id, 'start')}
 										class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-success transition-colors"
-										title="Start"
+										title={$t('containers.action.start')}
 									>
 										<Play class="w-4 h-4" />
 									</button>
@@ -642,7 +667,7 @@
 								<button
 									on:click={(e) => handleQuickAction(e, container.id, 'remove')}
 									class="p-1.5 rounded hover:bg-surface-muted text-secondary hover:text-error transition-colors"
-									title="Remove"
+									title={$t('containers.action.remove')}
 								>
 									<Trash2 class="w-4 h-4" />
 								</button>
@@ -667,56 +692,63 @@
 </div>
 
 <!-- Create Container Modal -->
-<Modal bind:open={showCreateModal} title="Create Container" size="lg" on:close={closeCreateModal}>
+<Modal
+	bind:open={showCreateModal}
+	title={$t('containers.create.title')}
+	size="lg"
+	on:close={closeCreateModal}
+>
 	<form on:submit|preventDefault={handleCreate} class="space-y-4">
 		<Input
-			label="Container Name"
+			label={$t('containers.create.name')}
 			bind:value={formData.name}
-			placeholder="my-container"
+			placeholder={$t('containers.create.namePlaceholder')}
 			required
 		/>
 
 		<Input
-			label="Image"
+			label={$t('containers.create.image')}
 			bind:value={formData.image}
-			placeholder="nginx:latest"
-			hint="Docker image name with optional tag"
+			placeholder={$t('containers.create.imagePlaceholder')}
+			hint={$t('containers.create.imageHint')}
 			required
 		/>
 
 		<Select
-			label="Restart Policy"
+			label={$t('containers.create.restartPolicy')}
 			bind:value={formData.restart_policy}
 			options={[
-				{ value: 'no', label: 'No' },
-				{ value: 'always', label: 'Always' },
-				{ value: 'unless-stopped', label: 'Unless Stopped' },
-				{ value: 'on-failure', label: 'On Failure' }
+				{ value: 'no', label: $t('containers.create.restartNo') },
+				{ value: 'always', label: $t('containers.create.restartAlways') },
+				{ value: 'unless-stopped', label: $t('containers.create.restartUnlessStopped') },
+				{ value: 'on-failure', label: $t('containers.create.restartOnFailure') }
 			]}
 		/>
 
 		<!-- Port Mappings -->
 		<div>
-			<label class="form-label">Port Mappings</label>
+			<label class="form-label">{$t('containers.create.ports')}</label>
 			<div class="flex gap-2 mb-2">
 				<input
 					type="number"
 					bind:value={portMapping.host}
-					placeholder="Host"
+					placeholder={$t('containers.create.hostPort')}
 					class="form-input w-24"
 				/>
 				<span class="text-secondary self-center">:</span>
 				<input
 					type="number"
 					bind:value={portMapping.container}
-					placeholder="Container"
+					placeholder={$t('containers.create.containerPort')}
 					class="form-input w-24"
 				/>
 				<select bind:value={portMapping.protocol} class="form-select w-24">
-					<option value="tcp">TCP</option>
-					<option value="udp">UDP</option>
+					<option value="tcp">{$t('containers.create.tcp')}</option>
+					<option value="udp">{$t('containers.create.udp')}</option>
 				</select>
-				<Button variant="secondary" size="sm" on:click={addPort} type="button">Add</Button>
+				<Button variant="secondary" size="sm" on:click={addPort} type="button"
+					>{$t('containers.create.add')}</Button
+				>
 			</div>
 			{#if portsList.length > 0}
 				<div class="space-y-1">
@@ -740,17 +772,24 @@
 
 		<!-- Environment Variables -->
 		<div>
-			<label class="form-label">Environment Variables</label>
+			<label class="form-label">{$t('containers.create.environment')}</label>
 			<div class="flex gap-2 mb-2">
-				<input type="text" bind:value={envVar.key} placeholder="KEY" class="form-input flex-1" />
+				<input
+					type="text"
+					bind:value={envVar.key}
+					placeholder={$t('containers.create.envKey')}
+					class="form-input flex-1"
+				/>
 				<span class="text-secondary self-center">=</span>
 				<input
 					type="text"
 					bind:value={envVar.value}
-					placeholder="value"
+					placeholder={$t('containers.create.envValue')}
 					class="form-input flex-1"
 				/>
-				<Button variant="secondary" size="sm" on:click={addEnvVar} type="button">Add</Button>
+				<Button variant="secondary" size="sm" on:click={addEnvVar} type="button"
+					>{$t('containers.create.add')}</Button
+				>
 			</div>
 			{#if envList.length > 0}
 				<div class="space-y-1">
@@ -778,7 +817,9 @@
 	</form>
 
 	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" on:click={closeCreateModal}>Cancel</Button>
+		<Button variant="secondary" class="flex-1" on:click={closeCreateModal}
+			>{$t('common.cancel')}</Button
+		>
 		<Button
 			variant="primary"
 			class="flex-1"
@@ -786,7 +827,7 @@
 			on:click={handleCreate}
 			icon={Plus}
 		>
-			Create Container
+			{$t('containers.create.button')}
 		</Button>
 	</svelte:fragment>
 </Modal>

@@ -25,6 +25,7 @@
 		removeContainer,
 		streamContainerLogs
 	} from '$lib/api/containers';
+	import { intlLocale, t } from '$lib/i18n';
 
 	export let container: Container | null = null;
 	export let open = false;
@@ -37,14 +38,40 @@
 	const FOLLOW_SLACK_PX = 24;
 
 	type LogState = 'idle' | 'connecting' | 'live' | 'ended' | 'lost' | 'forbidden';
-	const LOG_STATE_TEXT: Record<LogState, string> = {
-		idle: '',
-		connecting: 'Connecting to the log...',
-		live: 'Live: new lines appear as the container writes them',
-		ended: 'The log stream ended',
-		lost: 'The connection to the log was lost',
-		forbidden: 'Only administrators can read container logs'
+	// What the Logs tab says in each state but idle: keys of the catalog.
+	const LOG_STATE_KEYS: Record<Exclude<LogState, 'idle'>, string> = {
+		connecting: 'containers.drawer.log.connecting',
+		live: 'containers.drawer.log.live',
+		ended: 'containers.drawer.log.ended',
+		lost: 'containers.drawer.log.lost',
+		forbidden: 'containers.drawer.log.forbidden'
 	};
+
+	type Action = 'start' | 'stop' | 'restart' | 'remove';
+	// What an action that failed without a message from the server says.
+	const ACTION_FAILED_KEYS: Record<Action, string> = {
+		start: 'containers.drawer.startFailed',
+		stop: 'containers.drawer.stopFailed',
+		restart: 'containers.drawer.restartFailed',
+		remove: 'containers.drawer.removeFailed'
+	};
+
+	// A container's state and status as the server answers them (Docker's State.Status): keys of
+	// the catalog, by value. The Containers page (src/routes/containers/+page.svelte) has the same
+	// map.
+	const STATES: Record<string, string> = {
+		created: 'containers.state.created',
+		running: 'containers.state.running',
+		paused: 'containers.state.paused',
+		restarting: 'containers.state.restarting',
+		removing: 'containers.state.removing',
+		exited: 'containers.state.exited',
+		dead: 'containers.state.dead'
+	};
+
+	/** A state in the language of the page; a state without a key as it comes. */
+	$: stateLabel = (state: string): string =>
+		Object.prototype.hasOwnProperty.call(STATES, state) ? $t(STATES[state]) : state;
 
 	let activeTab: 'overview' | 'logs' | 'network' = 'overview';
 	let logs = '';
@@ -120,12 +147,11 @@
 		}
 	}
 
-	async function handleAction(action: 'start' | 'stop' | 'restart' | 'remove') {
+	async function handleAction(action: Action) {
 		if (!container) return;
 
 		if (action === 'remove') {
-			if (!confirm(`Are you sure you want to remove "${container.name}"? This cannot be undone.`))
-				return;
+			if (!confirm($t('containers.drawer.confirmRemove', { name: container.name }))) return;
 		}
 
 		actionLoading = action;
@@ -147,7 +173,7 @@
 			}
 			dispatch('action', { action, containerId: container.id });
 		} catch (e: any) {
-			alert(e.message || `${action} failed`);
+			alert(e.message || $t(ACTION_FAILED_KEYS[action]));
 		} finally {
 			actionLoading = '';
 		}
@@ -178,9 +204,8 @@
 		}
 	}
 
-	function formatDate(dateStr: string): string {
-		return new Date(dateStr).toLocaleString();
-	}
+	// Reactive, so that an open drawer follows a change of the language.
+	$: formatDate = (dateStr: string): string => new Date(dateStr).toLocaleString($intlLocale);
 
 	function getWebUrl(container: Container): string | null {
 		const webPort = container.ports.find((p) => p.host_port);
@@ -224,14 +249,14 @@
 				</div>
 			</div>
 			<div class="flex items-center gap-3">
-				<Badge variant={getStateVariant(container.state)}>{container.state}</Badge>
+				<Badge variant={getStateVariant(container.state)}>{stateLabel(container.state)}</Badge>
 				{#if getWebUrl(container)}
 					<a
 						href={getWebUrl(container)}
 						target="_blank"
 						rel="noopener"
 						class="btn btn-secondary btn-icon"
-						title="Open in browser"
+						title={$t('containers.openInBrowser')}
 					>
 						<ExternalLink class="w-4 h-4" />
 					</a>
@@ -252,7 +277,7 @@
 					loading={actionLoading === 'stop'}
 					on:click={() => handleAction('stop')}
 				>
-					Stop
+					{$t('containers.action.stop')}
 				</Button>
 				<Button
 					variant="secondary"
@@ -261,7 +286,7 @@
 					loading={actionLoading === 'restart'}
 					on:click={() => handleAction('restart')}
 				>
-					Restart
+					{$t('containers.action.restart')}
 				</Button>
 			{:else}
 				<Button
@@ -271,7 +296,7 @@
 					loading={actionLoading === 'start'}
 					on:click={() => handleAction('start')}
 				>
-					Start
+					{$t('containers.action.start')}
 				</Button>
 			{/if}
 			<div class="flex-1"></div>
@@ -282,7 +307,7 @@
 				loading={actionLoading === 'remove'}
 				on:click={() => handleAction('remove')}
 			>
-				Remove
+				{$t('containers.action.remove')}
 			</Button>
 		</div>
 
@@ -296,7 +321,7 @@
 				on:click={() => (activeTab = 'overview')}
 			>
 				<Info class="w-4 h-4" />
-				Overview
+				{$t('containers.drawer.overview')}
 			</button>
 			<button
 				class="flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors {activeTab ===
@@ -306,7 +331,7 @@
 				on:click={() => (activeTab = 'logs')}
 			>
 				<Terminal class="w-4 h-4" />
-				Logs
+				{$t('containers.drawer.logs')}
 			</button>
 			<button
 				class="flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors {activeTab ===
@@ -316,7 +341,7 @@
 				on:click={() => (activeTab = 'network')}
 			>
 				<Network class="w-4 h-4" />
-				Network
+				{$t('containers.drawer.network')}
 			</button>
 		</div>
 
@@ -327,11 +352,11 @@
 					<!-- Container ID -->
 					<div class="card-nested p-4">
 						<div class="flex items-center justify-between mb-2">
-							<span class="text-secondary text-sm font-medium">Container ID</span>
+							<span class="text-secondary text-sm font-medium">{$t('containers.drawer.id')}</span>
 							<button
 								on:click={copyId}
 								class="p-1.5 rounded hover:bg-surface-overlay text-secondary hover:text-content transition-colors"
-								title="Copy ID"
+								title={$t('containers.drawer.copyId')}
 							>
 								{#if copiedId}
 									<Check class="w-4 h-4 text-success" />
@@ -346,18 +371,18 @@
 					<!-- Status & Created -->
 					<div class="grid grid-cols-2 gap-4">
 						<div class="card-nested p-4">
-							<div class="text-secondary text-sm font-medium mb-2">Status</div>
-							<div class="font-medium text-lg">{container.status}</div>
+							<div class="text-secondary text-sm font-medium mb-2">{$t('containers.drawer.status')}</div>
+							<div class="font-medium text-lg">{stateLabel(container.status)}</div>
 						</div>
 						<div class="card-nested p-4">
-							<div class="text-secondary text-sm font-medium mb-2">Created</div>
+							<div class="text-secondary text-sm font-medium mb-2">{$t('containers.drawer.created')}</div>
 							<div class="font-medium">{formatDate(container.created)}</div>
 						</div>
 					</div>
 
 					<!-- Image -->
 					<div class="card-nested p-4">
-						<div class="text-secondary text-sm font-medium mb-2">Image</div>
+						<div class="text-secondary text-sm font-medium mb-2">{$t('containers.drawer.image')}</div>
 						<code class="mono text-content break-all">{container.image}</code>
 					</div>
 
@@ -366,7 +391,7 @@
 						<div class="card-nested p-4">
 							<div class="flex items-center gap-2 mb-4">
 								<Tag class="w-4 h-4 text-secondary" />
-								<span class="text-secondary text-sm font-medium">Labels</span>
+								<span class="text-secondary text-sm font-medium">{$t('containers.drawer.labels')}</span>
 								<Badge variant="neutral">{Object.keys(container.labels).length}</Badge>
 							</div>
 							<div class="space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
@@ -394,27 +419,29 @@
 											: 'error'}
 								pulse={logState === 'live'}
 							/>
-							{LOG_STATE_TEXT[logState]}
+							{logState === 'idle' ? '' : $t(LOG_STATE_KEYS[logState])}
 						</p>
 						{#if logState === 'ended' || logState === 'lost'}
 							<Button variant="secondary" size="sm" icon={RotateCw} on:click={reconnectLogs}>
-								Reconnect
+								{$t('containers.drawer.reconnect')}
 							</Button>
 						{/if}
 					</div>
 
 					{#if logsError}
-						<Alert variant="error" title="The log could not be read">{logsError}</Alert>
+						<Alert variant="error" title={$t('containers.drawer.logError')}>{logsError}</Alert>
 					{/if}
 
 					<div class="flex-1 min-h-0">
 						{#if logs}
 							<pre
 								bind:this={logView}
-								aria-label="Log of {container.name}"
+								aria-label={$t('containers.drawer.logOf', { name: container.name })}
 								class="bg-surface rounded-lg p-4 text-xs font-mono text-content-secondary overflow-auto h-full max-h-[60vh] scrollbar-thin whitespace-pre-wrap">{logs}</pre>
 						{:else if logState === 'live'}
-							<p class="text-center text-content-muted py-8">The container has written no log yet</p>
+							<p class="text-center text-content-muted py-8">
+								{$t('containers.drawer.noLog')}
+							</p>
 						{/if}
 					</div>
 				</div>
@@ -424,7 +451,7 @@
 						<div class="space-y-3">
 							<div class="flex items-center gap-2 mb-2">
 								<Network class="w-4 h-4 text-secondary" />
-								<span class="text-secondary text-sm font-medium">Port Mappings</span>
+								<span class="text-secondary text-sm font-medium">{$t('containers.drawer.ports')}</span>
 							</div>
 							{#each container.ports as port}
 								<div
@@ -432,14 +459,14 @@
 								>
 									<div class="flex items-center gap-4">
 										<div class="text-center">
-											<div class="text-xs text-secondary mb-1">Host</div>
+											<div class="text-xs text-secondary mb-1">{$t('containers.drawer.host')}</div>
 											<div class="font-mono font-medium text-lg">
 												{port.host_port || '-'}
 											</div>
 										</div>
 										<div class="text-secondary">→</div>
 										<div class="text-center">
-											<div class="text-xs text-secondary mb-1">Container</div>
+											<div class="text-xs text-secondary mb-1">{$t('containers.drawer.container')}</div>
 											<div class="font-mono font-medium text-lg">
 												{port.container_port}
 											</div>
@@ -452,8 +479,8 @@
 					{:else}
 						<div class="text-center py-12">
 							<Network class="w-12 h-12 mx-auto mb-3 text-muted opacity-50" />
-							<p class="text-secondary font-medium">No port mappings</p>
-							<p class="text-muted text-sm">This container has no exposed ports</p>
+							<p class="text-secondary font-medium">{$t('containers.drawer.noPorts')}</p>
+							<p class="text-muted text-sm">{$t('containers.drawer.noPortsHint')}</p>
 						</div>
 					{/if}
 				</div>

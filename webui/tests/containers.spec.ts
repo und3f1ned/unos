@@ -25,9 +25,10 @@ interface FakeImage {
   created: string;
 }
 
+// The server's status is docker-py's Container.status, Docker's State.Status: the same word as
+// the state (list_containers of docker.py), not the "Up 2 hours" of `docker ps`.
 function container(id: string, name: string, image: string, state: string): FakeContainer {
-  const status = state === 'running' ? 'Up 2 hours' : state === 'paused' ? 'Up 2 hours (Paused)' : 'Exited (0) 3 hours ago';
-  return { id, name, image, status, state, created: '2026-11-01T10:00:00Z', ports: [], labels: {} };
+  return { id, name, image, status: state, state, created: '2026-11-01T10:00:00Z', ports: [], labels: {} };
 }
 
 const WEB = container('0d1f2e3c4b5a', 'e2e-web', 'nginx:1.27', 'running');
@@ -114,7 +115,7 @@ async function fakeContainersApi(page: Page, options: FakeDockerOptions = {}): P
           return route.fulfill({ status: 409, json: { detail: MEDIA_REFUSED } });
         }
         target.state = action[2] === 'stop' ? 'exited' : 'running';
-        target.status = action[2] === 'stop' ? 'Exited (0) 1 second ago' : 'Up 1 second';
+        target.status = target.state;
         return route.fulfill({ json: target });
       }
       return route.abort();
@@ -440,5 +441,70 @@ test.describe('Images', () => {
     await expect(page.getByText('The image was not pulled')).toBeVisible();
     await expect(page.getByText(NOT_PULLED)).toBeVisible();
     await expect(page.getByRole('table', { name: 'Images' }).locator('tbody tr')).toHaveCount(3);
+  });
+});
+
+test.describe('In Russian', () => {
+  // The language chosen in this browser, as the Account page keeps it (ADR-0287).
+  const LOCALE_KEY = 'unos-locale';
+
+  test('the page, the drawer and the Images tab come from the catalog', async ({ authenticatedPage: page }) => {
+    await fakeContainersApi(page);
+    await fakeLogSockets(page, [LINE_1]);
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await page.goto('/containers');
+
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Контейнеры');
+    await expect(page.getByRole('tab')).toHaveText(['Контейнеры', 'Образы']);
+    await expect(page.locator('#docker-panel-containers thead th')).toHaveText([
+      '', 'Имя', 'Образ', 'Состояние', 'Порты', 'Действия',
+    ]);
+    // A state is the server's word, shown through its key; the buttons are named by their titles.
+    const web = rowOf(page, 'e2e-web');
+    await expect(web.getByText('работает', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-db').getByText('остановлен', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-cache').getByText('приостановлен', { exact: true })).toBeVisible();
+    await expect(page.locator('#docker-panel-containers').getByText('running', { exact: true })).toHaveCount(0);
+    await expect(web.getByRole('button', { name: 'Остановить' })).toBeVisible();
+
+    // The form of a new container.
+    await page.getByRole('button', { name: 'Создать контейнер' }).click();
+    const form = page.getByRole('dialog', { name: 'Новый контейнер' });
+    await expect(form.getByLabel('Имя контейнера')).toBeVisible();
+    await expect(form.getByLabel('Политика перезапуска')).toBeVisible();
+    await form.getByRole('button', { name: 'Отмена' }).click();
+    await expect(form).toBeHidden();
+
+    // The drawer: its tabs, the status (Docker's word) in the page's language, the date day
+    // first, and the state of the log.
+    await web.getByText('e2e-web').click();
+    const drawer = page.getByRole('dialog', { name: 'e2e-web' });
+    await expect(drawer.getByRole('button', { name: 'Сведения' })).toBeVisible();
+    await expect(drawer.locator('.card-nested').filter({ hasText: 'Статус' })).toContainText('работает');
+    await expect(drawer.locator('.card-nested').filter({ hasText: 'Создан' }).locator('div').last()).toHaveText(
+      /^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/,
+    );
+    await drawer.getByRole('button', { name: 'Журнал' }).click();
+    await expect(
+      drawer.getByText('В реальном времени: новые строки появляются, как только контейнер их записывает'),
+    ).toBeVisible();
+    await expect(drawer.getByLabel('Журнал контейнера e2e-web')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(drawer).toBeHidden();
+
+    // The Images tab and the removal of an image with two tags.
+    await page.getByRole('tab', { name: 'Образы' }).click();
+    const table = page.getByRole('table', { name: 'Образы' });
+    await expect(table.getByRole('columnheader')).toHaveText(['Образ', 'ID', 'Размер', 'Создан', 'Действия']);
+    await expect(page.getByLabel('Образ', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Скачать' })).toBeVisible();
+    await page.getByRole('button', { name: 'Удалить образ alpine:3.19' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Удаление образа' });
+    await expect(dialog).toContainText(
+      `Удалить образ alpine:3.19 (${ALPINE_OLD.id})? Вместе с ним удаляются и другие его теги: alpine:3.`,
+    );
+    await dialog.getByRole('button', { name: 'Отмена' }).click();
+    await expect(dialog).toBeHidden();
   });
 });
