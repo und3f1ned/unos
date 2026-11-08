@@ -18,11 +18,9 @@
 	import { Edit, Shield, ShieldOff, Trash2, UserPlus, Users } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
+	import { intlLocale, t } from '$lib/i18n';
 
-	const USERNAME_HINT = '1–32 lowercase letters, digits, _ or -, starting with a letter';
 	const MIN_PASSWORD_LENGTH = 8;
-	const PASSWORD_NEEDED_HINT =
-		'The user turns SMB on in their Account page with their password, or set a new password here';
 
 	let users: User[] = [];
 	let loading = true;
@@ -57,7 +55,7 @@
 			users = await getUsers();
 			error = '';
 		} catch (e) {
-			error = messageOf(e) || 'Failed to load users';
+			error = messageOf(e) || $t('users.loadFailed');
 		} finally {
 			loading = false;
 		}
@@ -83,26 +81,24 @@
 		return now !== undefined && now.username === target.username ? now : null;
 	}
 
-	function formatDate(date: string | null): string {
-		if (!date) return 'Unknown';
-		return new Date(date).toLocaleString();
-	}
+	// The texts that the functions below make are reactive, so that they follow a change of the
+	// language. Dates are in the language of the page (ADR-0287).
+	$: formatDate = (date: string | null): string =>
+		date ? new Date(date).toLocaleString($intlLocale) : $t('common.unknown');
 
-	function smbHint(user: User): string {
-		if (user.smb?.state === 'password_needed') return PASSWORD_NEEDED_HINT;
+	$: smbHint = (user: User): string => {
+		if (user.smb?.state === 'password_needed') return $t('users.smbPasswordNeeded');
 		if (user.smb?.state === 'unavailable') return user.smb.reason ?? '';
 		return '';
-	}
+	};
 
-	function passwordError(password: string): string {
-		return password && password.length < MIN_PASSWORD_LENGTH
-			? `Use at least ${MIN_PASSWORD_LENGTH} characters`
+	$: passwordError = (password: string): string =>
+		password && password.length < MIN_PASSWORD_LENGTH
+			? $t('users.password.short', { n: MIN_PASSWORD_LENGTH })
 			: '';
-	}
 
-	function confirmError(password: string, confirmation: string): string {
-		return confirmation && confirmation !== password ? 'Passwords do not match' : '';
-	}
+	$: confirmError = (password: string, confirmation: string): string =>
+		confirmation && confirmation !== password ? $t('users.password.mismatch') : '';
 
 	// ---- Create ----
 
@@ -115,7 +111,7 @@
 	let createError = '';
 
 	$: newUsernameError =
-		newUsername && !USERNAME_PATTERN.test(newUsername) ? `Use ${USERNAME_HINT}` : '';
+		newUsername && !USERNAME_PATTERN.test(newUsername) ? $t('users.username.invalid') : '';
 	$: canCreate =
 		USERNAME_PATTERN.test(newUsername) &&
 		newPassword.length >= MIN_PASSWORD_LENGTH &&
@@ -148,7 +144,7 @@
 			creating = false;
 			closeCreate();
 			// e.g. "User created, but SMB access could not be turned on: ..."
-			showOutcome(`User "${username}" created`, created.warnings);
+			showOutcome($t('users.new.done', { name: username }), created.warnings);
 			await loadUsers(false);
 		} catch (e) {
 			createError = messageOf(e);
@@ -229,7 +225,7 @@
 			// The id names someone else now: close the dialog, so that none of
 			// its controls can act on them; the reloaded list shows who is who.
 			closeEdit(true);
-			actionError = { title: 'The change was not made', message };
+			actionError = { title: $t('users.edit.failed'), message };
 			return;
 		}
 		// The same user: show their SMB state as stored now (e.g. SMB was not
@@ -238,18 +234,21 @@
 		editError = message;
 	}
 
-	function smbStateText(user: User): string {
+	$: smbStateText = (user: User): string => {
 		switch (user.smb?.state) {
 			case 'active':
-				return `SMB is on: ${user.username} signs in as ${user.smb.linux_name ?? user.username} with their UNOS password.`;
+				return $t('users.edit.smbOn', {
+					name: user.username,
+					login: user.smb.linux_name ?? user.username
+				});
 			case 'password_needed':
-				return PASSWORD_NEEDED_HINT;
+				return $t('users.smbPasswordNeeded');
 			case 'off':
-				return `SMB is off for ${user.username}.`;
+				return $t('users.edit.smbOff', { name: user.username });
 			default:
 				return '';
 		}
-	}
+	};
 
 	async function saveEdit() {
 		if (!editing || !canSave) return;
@@ -270,7 +269,7 @@
 			}
 			saving = false;
 			closeEdit(true);
-			showOutcome(`User "${target.username}" updated`, [
+			showOutcome($t('users.edit.done', { name: target.username }), [
 				...editWarnings,
 				...(result.warnings ?? [])
 			]);
@@ -354,7 +353,7 @@
 			const result = await deleteUser(target.id, target.username);
 			deleting = false;
 			userToDelete = null;
-			showOutcome(`User "${target.username}" deleted`, result?.warnings);
+			showOutcome($t('users.delete.done', { name: target.username }), result?.warnings);
 			await loadUsers(false);
 		} catch (e) {
 			const message = messageOf(e);
@@ -362,7 +361,7 @@
 				// From a list loaded before the id named someone else (or nobody).
 				deleting = false;
 				userToDelete = null;
-				actionError = { title: 'User was not deleted', message };
+				actionError = { title: $t('users.delete.failed'), message };
 				return;
 			}
 			deleteError = message;
@@ -376,8 +375,8 @@
 {#if $currentUser?.is_admin}
 	<div class="page-container">
 		<div class="page-header">
-			<h1 class="page-title">Users</h1>
-			<Button icon={UserPlus} on:click={openCreate}>Add user</Button>
+			<h1 class="page-title">{$t('users.title')}</h1>
+			<Button icon={UserPlus} on:click={openCreate}>{$t('users.add')}</Button>
 		</div>
 
 		{#if error}
@@ -403,27 +402,27 @@
 		{/if}
 
 		{#if loading}
-			<p class="loading-text">Loading...</p>
+			<p class="loading-text">{$t('common.loading')}</p>
 		{:else}
 			<Card>
 				<h2 class="section-title mb-4">
 					<Users class="w-5 h-5" />
-					Users ({users.length})
+					{$t('users.count', { count: users.length })}
 				</h2>
 
 				{#if users.length === 0}
-					<p class="text-muted">No users found</p>
+					<p class="text-muted">{$t('users.empty')}</p>
 				{:else}
 					<div class="overflow-x-auto">
 						<table class="table">
 							<thead class="table-header">
 								<tr>
-									<th>Username</th>
-									<th>Role</th>
-									<th>2FA</th>
-									<th>SMB</th>
-									<th>Created</th>
-									<th class="text-right">Actions</th>
+									<th>{$t('common.username')}</th>
+									<th>{$t('users.role')}</th>
+									<th>{$t('users.twoFactor')}</th>
+									<th>{$t('users.smb')}</th>
+									<th>{$t('users.created')}</th>
+									<th class="text-right">{$t('users.actions')}</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -433,7 +432,7 @@
 											<div class="flex items-center gap-2">
 												<span class="font-medium">{user.username}</span>
 												{#if $currentUser?.id === user.id}
-													<Badge variant="info">You</Badge>
+													<Badge variant="info">{$t('users.you')}</Badge>
 												{/if}
 											</div>
 										</td>
@@ -441,20 +440,20 @@
 											{#if user.is_admin}
 												<span class="flex items-center gap-1 text-warning">
 													<Shield class="w-4 h-4" />
-													Admin
+													{$t('users.admin')}
 												</span>
 											{:else}
 												<span class="flex items-center gap-1 text-secondary">
 													<ShieldOff class="w-4 h-4" />
-													User
+													{$t('users.user')}
 												</span>
 											{/if}
 										</td>
 										<td>
 											{#if user.totp_enabled}
-												<span class="text-success">Enabled</span>
+												<span class="text-success">{$t('users.twoFactorOn')}</span>
 											{:else}
-												<span class="text-muted">Disabled</span>
+												<span class="text-muted">{$t('users.twoFactorOff')}</span>
 											{/if}
 										</td>
 										<td>
@@ -469,12 +468,12 @@
 											<div class="flex items-center justify-end gap-2">
 												<Button variant="secondary" size="icon-sm" on:click={() => openEdit(user)}>
 													<Edit class="w-4 h-4" />
-													<span class="sr-only">Edit user {user.username}</span>
+													<span class="sr-only">{$t('users.editUser', { name: user.username })}</span>
 												</Button>
 												{#if $currentUser?.id !== user.id}
 													<Button variant="ghost" size="icon-sm" on:click={() => openDelete(user)}>
 														<Trash2 class="w-4 h-4 text-error" />
-														<span class="sr-only">Delete user {user.username}</span>
+														<span class="sr-only">{$t('users.deleteUser', { name: user.username })}</span>
 													</Button>
 												{/if}
 											</div>
@@ -488,38 +487,41 @@
 			</Card>
 
 			<Card>
-				<h2 class="section-title mb-4">About user management</h2>
+				<h2 class="section-title mb-4">{$t('users.about.title')}</h2>
 				<ul class="space-y-2 text-sm text-secondary list-disc ml-5">
-					<li>Admin users have full access to all UNOS features including user management.</li>
-					<li>Regular users can access basic features but cannot manage other users.</li>
-					<li>You cannot delete your own account.</li>
-					<li>Passwords must be at least {MIN_PASSWORD_LENGTH} characters long.</li>
-					<li>
-						SMB (network file) access is off by default. Allow it per user; administrators cannot
-						use SMB.
-					</li>
-					<li>2FA protects only the web interface.</li>
+					<li>{$t('users.about.admins')}</li>
+					<li>{$t('users.about.users')}</li>
+					<li>{$t('users.about.self')}</li>
+					<li>{$t('users.about.passwords', { n: MIN_PASSWORD_LENGTH })}</li>
+					<li>{$t('users.about.smb')}</li>
+					<li>{$t('users.about.twoFactor')}</li>
 				</ul>
 			</Card>
 		{/if}
 	</div>
 
 	<!-- Create user -->
-	<Modal open={createOpen} title="Add user" size="md" closable={!creating} on:close={closeCreate}>
+	<Modal
+		open={createOpen}
+		title={$t('users.new.title')}
+		size="md"
+		closable={!creating}
+		on:close={closeCreate}
+	>
 		<form on:submit|preventDefault={handleCreate} class="space-y-4">
 			<Input
 				id="new-username"
-				label="Username"
+				label={$t('common.username')}
 				bind:value={newUsername}
 				autocomplete="off"
 				maxlength={32}
-				hint={USERNAME_HINT}
+				hint={$t('users.username.hint')}
 				error={newUsernameError}
 			/>
 			<Input
 				id="new-password"
 				type="password"
-				label="Password"
+				label={$t('common.password')}
 				bind:value={newPassword}
 				autocomplete="new-password"
 				error={passwordError(newPassword)}
@@ -527,7 +529,7 @@
 			<Input
 				id="new-password-confirm"
 				type="password"
-				label="Confirm password"
+				label={$t('users.new.confirm')}
 				bind:value={newConfirm}
 				autocomplete="new-password"
 				error={confirmError(newPassword, newConfirm)}
@@ -535,21 +537,21 @@
 			<div>
 				<label class="flex items-center gap-2 cursor-pointer">
 					<input type="checkbox" class="form-checkbox" bind:checked={newSmb} />
-					Allow SMB (network file) access
+					{$t('users.new.smb')}
 				</label>
-				<p class="form-hint">Uses the same password. SMB has no two-factor authentication.</p>
+				<p class="form-hint">{$t('users.new.smbHint')}</p>
 			</div>
 			{#if createError}
-				<Alert variant="error" title="User was not created">{createError}</Alert>
+				<Alert variant="error" title={$t('users.new.failed')}>{createError}</Alert>
 			{/if}
 		</form>
 
 		<svelte:fragment slot="footer">
 			<Button variant="secondary" class="flex-1" disabled={creating} on:click={closeCreate}>
-				Cancel
+				{$t('common.cancel')}
 			</Button>
 			<Button class="flex-1" loading={creating} disabled={!canCreate} on:click={handleCreate}>
-				Create user
+				{$t('users.new.submit')}
 			</Button>
 		</svelte:fragment>
 	</Modal>
@@ -557,20 +559,27 @@
 	<!-- Turn off SMB, asked from the edit dialog below. Declared before it on purpose: its Escape
 	     shows the edit dialog again before that dialog's key handler runs, and the edit dialog
 	     must stay open (Modal; users.spec 'Escape in the Turn off SMB confirmation ...'). -->
-	<Modal open={confirmSmbOff} title="Turn off SMB" size="md" closable={!smbBusy} on:close={cancelSmbOff}>
+	<Modal
+		open={confirmSmbOff}
+		title={$t('users.smbOff.title')}
+		size="md"
+		closable={!smbBusy}
+		on:close={cancelSmbOff}
+	>
 		{#if editing}
+			<!-- In parts around the name: ADR-0288. -->
 			<p>
-				Turn off SMB for <strong class="text-content">{editing.username}</strong>? Their open SMB
-				connections are ended.
+				{$t('users.smbOff.before')}
+				<strong class="text-content">{editing.username}</strong>{$t('users.smbOff.after')}
 			</p>
 		{/if}
 
 		<svelte:fragment slot="footer">
 			<Button variant="secondary" class="flex-1" disabled={smbBusy} on:click={cancelSmbOff}>
-				Cancel
+				{$t('common.cancel')}
 			</Button>
 			<Button variant="danger" class="flex-1" loading={smbBusy} on:click={confirmTurnOffSmb}>
-				Turn off SMB
+				{$t('users.smbOff.submit')}
 			</Button>
 		</svelte:fragment>
 	</Modal>
@@ -578,7 +587,9 @@
 	<!-- Edit user; hidden while its SMB confirmation is shown (one dialog at a time). -->
 	<Modal
 		open={editing !== null && !confirmSmbOff}
-		title={editing ? `Edit user ${editing.username}` : 'Edit user'}
+		title={editing
+			? $t('users.edit.title', { name: editing.username })
+			: $t('users.edit.titleWithoutName')}
 		size="lg"
 		closable={!saving && !smbBusy}
 		on:close={() => closeEdit()}
@@ -589,7 +600,7 @@
 				class="space-y-5 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
 			>
 				<section class="space-y-2">
-					<h3 class="card-title">Role</h3>
+					<h3 class="card-title">{$t('users.role')}</h3>
 					<label class="flex items-center gap-2 cursor-pointer">
 						<input
 							type="checkbox"
@@ -597,41 +608,38 @@
 							bind:checked={editIsAdmin}
 							disabled={saving || smbBusy}
 						/>
-						Administrator
+						{$t('users.edit.admin')}
 					</label>
 					{#if adminWarning}
 						<Alert variant="warning">
-							Administrators cannot use SMB: making {editing.username} an administrator removes SMB
-							access and their share permissions, and ends their open SMB connections
+							{$t('users.edit.adminWarning', { name: editing.username })}
 						</Alert>
 					{/if}
 				</section>
 
 				<section class="space-y-2">
-					<h3 class="card-title">Password</h3>
+					<h3 class="card-title">{$t('common.password')}</h3>
 					<Input
 						id="edit-password"
 						type="password"
-						label="New password"
+						label={$t('users.edit.password')}
 						bind:value={editPassword}
 						autocomplete="new-password"
-						hint="Leave empty to keep the current password"
+						hint={$t('users.edit.passwordHint')}
 						error={passwordError(editPassword)}
 						disabled={saving}
 					/>
 					<Input
 						id="edit-password-confirm"
 						type="password"
-						label="Confirm new password"
+						label={$t('users.edit.confirm')}
 						bind:value={editConfirm}
 						autocomplete="new-password"
 						error={confirmError(editPassword, editConfirm)}
 						disabled={saving}
 					/>
 					{#if editState === 'active'}
-						<p class="form-hint">
-							Also changes the SMB password and ends the user's open SMB connections
-						</p>
+						<p class="form-hint">{$t('users.edit.smbPassword')}</p>
 					{:else if editState === 'password_needed' && !editIsAdmin}
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input
@@ -640,15 +648,15 @@
 								bind:checked={alsoTurnOnSmb}
 								disabled={saving}
 							/>
-							Also turn SMB on with this password
+							{$t('users.edit.turnOnSmb')}
 						</label>
 					{/if}
 				</section>
 
 				<section class="space-y-2">
-					<h3 class="card-title">SMB access</h3>
+					<h3 class="card-title">{$t('users.edit.smbTitle')}</h3>
 					{#if !editing.smb}
-						<p class="text-sm text-muted">The SMB state of this user is not known.</p>
+						<p class="text-sm text-muted">{$t('users.edit.smbUnknown')}</p>
 					{:else if editing.smb.state === 'unavailable'}
 						<p class="text-sm text-secondary">{editing.smb.reason ?? ''}</p>
 					{:else}
@@ -666,10 +674,10 @@
 								disabled={smbToggleDisabled}
 								on:change={onSmbToggle}
 							/>
-							Allow SMB access
+							{$t('users.edit.allowSmb')}
 						</label>
 						{#if smbBusy}
-							<p class="text-sm text-muted">Saving...</p>
+							<p class="text-sm text-muted">{$t('users.edit.saving')}</p>
 						{/if}
 					{/if}
 				</section>
@@ -684,7 +692,7 @@
 				</Alert>
 			{/if}
 			{#if editError}
-				<Alert variant="error" title="The change was not made">{editError}</Alert>
+				<Alert variant="error" title={$t('users.edit.failed')}>{editError}</Alert>
 			{/if}
 		{/if}
 
@@ -695,37 +703,39 @@
 				disabled={saving || smbBusy}
 				on:click={() => closeEdit()}
 			>
-				Close
+				{$t('users.edit.close')}
 			</Button>
-			<Button class="flex-1" loading={saving} disabled={!canSave} on:click={saveEdit}>Save</Button>
+			<Button class="flex-1" loading={saving} disabled={!canSave} on:click={saveEdit}>
+				{$t('users.edit.save')}
+			</Button>
 		</svelte:fragment>
 	</Modal>
 
 	<Modal
 		open={userToDelete !== null}
-		title="Delete user"
+		title={$t('users.delete.title')}
 		size="md"
 		danger
 		closable={!deleting}
 		on:close={closeDelete}
 	>
 		{#if userToDelete}
+			<!-- In parts around the name: ADR-0288. -->
 			<p>
-				Are you sure you want to delete user <strong class="text-content"
-					>{userToDelete.username}</strong
-				>? This action cannot be undone.
+				{$t('users.delete.before')}
+				<strong class="text-content">{userToDelete.username}</strong>{$t('users.delete.after')}
 			</p>
 			{#if deleteError}
-				<Alert variant="error" title="User was not deleted">{deleteError}</Alert>
+				<Alert variant="error" title={$t('users.delete.failed')}>{deleteError}</Alert>
 			{/if}
 		{/if}
 
 		<svelte:fragment slot="footer">
 			<Button variant="secondary" class="flex-1" disabled={deleting} on:click={closeDelete}>
-				Cancel
+				{$t('common.cancel')}
 			</Button>
 			<Button variant="danger" class="flex-1" loading={deleting} on:click={confirmDelete}>
-				Delete user
+				{$t('users.delete.submit')}
 			</Button>
 		</svelte:fragment>
 	</Modal>
