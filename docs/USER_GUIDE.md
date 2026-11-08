@@ -30,10 +30,22 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
    certificate authority. Continue to the site, or make your devices trust that
    authority once (see
    [HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)).
-4. On the very first visit UNOS asks you to create the administrator account:
-   choose a user name and a password (at least 8 characters). There are no
-   default credentials.
-5. Afterwards you sign in on the login page.
+4. On the very first visit UNOS opens **Create your admin account to get
+   started** (`/setup`): choose a user name and a password (at least 8
+   characters), enter the password again and click **Create Admin Account**.
+   The dashboard opens, signed in as that administrator. There are no default
+   credentials: until this account exists, nobody can sign in. Whoever opens a
+   new installation first creates its administrator, so do it right after
+   installing.
+5. Afterwards you sign in on the login page. The setup page refuses a second
+   administrator with "Admin user already exists. Use /login instead." and
+   creates nobody; administrators add further users on the **Users** page.
+
+A session lasts 24 hours. When it has ended, the page you have open goes to
+the login page once, at its next request (also during an upload or a
+download) or when the server ends its live statistics. **Logout** in one
+browser tab signs out the other tabs too, and signing in as another account
+in one tab switches the other tabs to that account.
 
 Signing in works also while the disk that holds the UNOS data (`/data`, on the
 system disk) is full, so that an administrator can sign in and free space, for
@@ -680,7 +692,15 @@ was made shows **Password needed** and must turn SMB on again.
 
 Users can change their own password:
 1. Go to **Account** (administrators: **System** → **Security**)
-2. Under **Change Password**, enter the current and the new password
+2. Under **Change Password**, enter the **Current Password**, the **New
+   Password** (at least 8 characters) and the new one again under **Confirm
+   New Password**; all three are required
+3. Click **Change Password**: the page confirms "Password changed
+   successfully"
+
+From then on the old password no longer signs in, and the new one does.
+Sessions that were open before stay signed in until they end (see
+[First Login](#first-login)).
 
 Admins can reset any user's password via **Users** page.
 
@@ -702,7 +722,15 @@ Protect your account with TOTP-based two-factor authentication:
 3. Scan the QR code with an authenticator app (Google Authenticator, Authy,
    etc.). The QR code is drawn in your browser; the secret is never sent to
    another service.
-4. Enter the verification code and click **Enable 2FA**
+4. Enter the verification code and click **Enable 2FA**: the section shows
+   **Enabled**
+
+When the page cannot load whether 2FA is on, the section says so with the
+reason and offers **Retry** instead of **Enable** or **Disable**.
+
+To sign in with 2FA, enter your username and password as before: UNOS then
+asks for the **Authentication Code**. Enter the 6-digit code that the app
+shows and click **Verify**; **← Back to login** returns to the password form.
 
 To disable 2FA:
 1. Go to **Account** (administrators: **System** → **Security**)
@@ -712,7 +740,8 @@ To disable 2FA:
 Each code works once: a code that was accepted (to sign in, to turn SMB on,
 or to turn 2FA on or off) is refused when it is used again, with "This
 two-factor code was already used; wait for the next one". The app shows a new
-code every 30 seconds.
+code every 30 seconds; at the sign-in the code form stays, so you enter the
+next code without your password again.
 
 2FA protects only the web interface, not SMB: SMB signs in with the password
 alone. Turning SMB on yourself needs your two-factor code as well.
@@ -751,6 +780,22 @@ Scripts send the code as `recovery_code` in place of `totp_code` to
 `POST /api/v1/auth/login`; `POST /api/v1/auth/recovery-codes/generate`
 answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
 left.
+
+### Login History
+
+Under **Login History** on the **Account** page (administrators: **System** →
+**Security**), **View History** lists the latest 50 sign-ins, newest first:
+those of your own account since it was created (an account created with the
+name of a deleted one does not see that account's), and for administrators
+those of every account, also of deleted accounts and the attempts with names
+that do not exist. Each entry shows **SUCCESS** or **FAILED** with the reason
+(such as "Incorrect username or password" or "Invalid 2FA code"), the
+account, the time in your browser's time zone, the address of the computer
+that signed in (not that of the web interface's proxy) and the browser. Above
+the list are the number of attempts and how many succeeded and failed;
+**Refresh** loads the list again. A sign-in with 2FA is listed once, when its
+code was checked. When the history cannot be loaded, the section says so with
+the reason, and **Retry** loads it again.
 
 ### API Tokens
 

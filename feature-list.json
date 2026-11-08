@@ -359,13 +359,16 @@
       ],
       "verified_by": [
         "supervisor/tests/test_auth.py",
-        "supervisor/tests/test_usernames.py"
+        "supervisor/tests/test_usernames.py",
+        "supervisor/tests/test_standin.py",
+        "webui/tests/first-run.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0029"
+        "ADR-0029",
+        "ADR-0261"
       ],
-      "notes": "No E2E test covers the /setup page: scripts/standin/e2e.sh creates the administrator through the API."
+      "notes": "webui/tests/first-run.spec.ts runs on the stand-in's real supervisor, on the new installation that scripts/standin/e2e.sh starts without any account: e2e.sh runs it alone with E2E_FIRST_RUN=1, never retried, before the specs, and stops when it fails (ADR-0261; test_standin.py checks that and that e2e.sh sends no setup request, and runs a copy of e2e.sh with a faked stand-in and Playwright: the setup with E2E_FIRST_RUN=1, then the specs without it, a stop when the setup fails). Named alone, scripts/standin/e2e.sh tests/first-run.spec.ts runs that setup as the whole run. Step 4: /api/v1/auth/status answers setup_required and admin/admin does not sign in. Step 1: the web UI leads to /setup, whose name and password fields are reached through their labels. Step 2: creating E2E_ADMIN there opens the dashboard with that name and Administrator in the sidebar. Step 3: a second setup through the page shows \"Admin user already exists. Use /login instead.\", and the users list holds only the first administrator. test_auth.py's TestFirstRunSetup adds two setups sent at the same moment (200 and 400, one administrator), a refused setup that creates nobody, the new administrator signing in, an app started on a new database without any account, and the one uvicorn process that _setup_lock needs. Database only: not host-level (GLOSSARY.md). The compose test stack still creates its administrator through the API."
     },
     {
       "id": "auth.sign-in-and-out",
@@ -401,15 +404,17 @@
       ],
       "verified_by": [
         "supervisor/tests/test_totp_once.py",
+        "webui/tests/two-factor.spec.ts",
         "webui/tests/auth.spec.ts",
-        "webui/tests/roles.spec.ts"
+        "webui/tests/roles.spec.ts",
+        "webui/tests/security.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0067",
         "ADR-0027"
       ],
-      "notes": "The API tests cover the setup, single-use codes and turning it off; the E2E specs draw the QR code and show the code form with canned answers, but never enter a code to turn two-factor authentication on or off."
+      "notes": "webui/tests/two-factor.spec.ts on the stand-in's real supervisor, for a regular test user (never E2E_ADMIN), with codes computed from the secret of the QR code (tests/totp.ts, RFC 6238). Step 1: Enable draws the QR code from a data: URL in the browser, and the image is, module by module, the QR code of the setup's otpauth://totp/UNOS:<name> URI (the qrcode package, error correction M), whose secret is the one shown for manual entry, with the issuer UNOS and SHA-1, 6 digits and 30 seconds. Step 2: a code turns 2FA on; the card says Enabled and /auth/totp/status agrees. Step 3: after the password the code form appears, and a code of the next 30-second step opens the dashboard. Step 4: the same code again, in the same step, answers \"This two-factor code was already used; wait for the next one\" and the code form stays. Step 5: a code of a newer step turns 2FA off, and the password alone signs in again. The spec waits for new steps (about 40 to 60 seconds). test_totp_once.py reads that URI as an app does (its secret is the stored one, and its code turns 2FA on) and covers the single use at every check, roles.spec.ts that no QR code service is asked, auth.spec.ts the errors of the code form. A status that cannot be loaded is reported with its reason and Retry, not shown as Disabled with Enable (security.spec.ts). Database only: not host-level (GLOSSARY.md). A lost authenticator needs a recovery code (auth.recovery-codes); no administrator can reset another user's 2FA (system.emergency-runbook-and-cli)."
     },
     {
       "id": "auth.login-rate-limit",
@@ -486,14 +491,15 @@
         "supervisor/tests/test_usernames.py",
         "supervisor/tests/test_smb_accounts.py",
         "supervisor/tests/test_smb_integration.py",
+        "webui/tests/change-password.spec.ts",
         "webui/tests/security.spec.ts",
         "webui/tests/account-smb.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0119"
       ],
-      "notes": "The tests check the answer and Samba's copy of the new password, not a sign-in with it; the E2E spec uses a canned answer."
+      "notes": "webui/tests/change-password.spec.ts on the stand-in's real supervisor, for a regular test user without SMB. Step 2: the three fields are filled through their labels, and with any one of them empty the browser reports it missing and sends nothing. Step 1: with all three the page says \"Password changed successfully\" and clears the form. Step 4: after Logout the old password answers \"Incorrect username or password\" and the new one opens the dashboard. Step 3: account-smb.spec.ts shows the warnings of an answer until Dismiss, with a canned answer because ending SMB sessions needs Samba; test_smb_accounts.py makes the server send them. TestPasswordChange of test_smb_accounts.py signs in with the old and the new password after a change, with and without an active SMB account, and refuses a request that lacks a field (422). Without SMB the change is database only: not host-level (GLOSSARY.md); Samba's copy of an active account is shares.password-follows-unos. The server takes a new password of any length from a user without SMB: the 8 characters are the page's rule. Sessions signed in before the change stay valid (auth.session-revocation)."
     },
     {
       "id": "auth.api-tokens",
@@ -532,13 +538,16 @@
       "verified_by": [
         "supervisor/tests/test_authz.py",
         "supervisor/tests/test_security.py",
+        "webui/tests/login-history.spec.ts",
         "webui/tests/security.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0048"
+        "ADR-0048",
+        "ADR-0262",
+        "ADR-0263"
       ],
-      "notes": "The API tests cover it; the E2E spec only opens the section, and also passes while the list says Loading."
+      "notes": "webui/tests/login-history.spec.ts on the stand-in's real supervisor, for a regular test user, with the browser in Asia/Kathmandu (UTC+05:45): a wrong password, then the right one. Login History, once loaded, lists exactly those two, newest first: SUCCESS, then FAILED with \"Incorrect username or password\", each with the time of its sign-in in the browser's time zone and the address that the server recorded for the test process's own sign-in through the API from the same machine (127.0.0.1 and ::1 count as one), and the counts 2, 1 and 1 (steps 1 and 2). On the compose test stack that address is the test-runner's, and the spec also checks that it is not the proxy's (Caddy, the host webui). Fixed with it (ADR-0262): the times were answered without their UTC offset and shown hours off, the attempts of one second came in any order, and clearing the history counted its days in the server's local time. On the stand-in the browser and the proxy share an address; that the list shows the browser's address and not the proxy's is TestRealClientAddress of test_authz.py, through the proxy layer of deploy/docker-compose.yml. The history is kept by name: a regular user sees the attempts on their name since their account was created (ADR-0263), so a user created again with the name of a deleted one does not see that account's rows, which administrators still see (TestLoginHistory). A history that cannot be loaded is reported with its reason and Retry, not shown as empty with counts of 0 (security.spec.ts). DELETE /api/v1/security/login-history takes older_than_days from 0 to 36500 and answers 422 otherwise. Database only: not host-level (GLOSSARY.md)."
     },
     {
       "id": "auth.websocket-auth",
@@ -2637,13 +2646,14 @@
       "verified_by": [
         "webui/tests/roles.spec.ts",
         "webui/tests/files.spec.ts",
-        "webui/tests/backup-restore.spec.ts"
+        "webui/tests/backup-restore.spec.ts",
+        "webui/tests/websocket.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0031"
       ],
-      "notes": "No E2E test closes the stats WebSocket with 4401."
+      "notes": "Step 2: websocket.spec.ts fakes the stats socket only (page.routeWebSocket): after the sign-in and auth_ok it closes with 4401, and the page goes to /login once, the token is gone, and no new socket opens after the first reconnect delay; the HTTP requests keep a valid token, so only the socket path can end the session. Step 1: roles.spec.ts (a request without a token leads to /login once), files.spec.ts and backup-restore.spec.ts (an upload and a download answered 401). Steps 3 and 4: roles.spec.ts (a logout, and a login as another account, in another tab). test_ws_auth.py covers the server's 4401. Web UI only: not host-level (GLOSSARY.md)."
     },
     {
       "id": "webui.keyboard-and-screen-readers",

@@ -102,6 +102,8 @@ and this index, and `make check-fast` runs it.
 | [0251](0251-a-sign-in-answers-while-data-is-full-and-its-lost-records-go-to-the-log.md) | A sign-in answers while /data is full, and the records it cannot write go to the supervisor's log | accepted | 2026-11-07 |
 | [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | An API token's last use is committed at most once an hour | accepted | 2026-11-07 |
 | [0253](0253-only-a-session-token-manages-api-tokens-and-their-number-and-names-are-bounded.md) | Only a session token manages API tokens, and their number, names and permissions are bounded | accepted | 2026-11-07 |
+| [0262](0262-login-history-times-in-utc-with-the-offset-newest-first.md) | The login history answers its times in UTC with the offset, newest first also within a second | accepted | 2026-11-07 |
+| [0263](0263-a-users-login-history-starts-with-their-account.md) | A regular user's login history starts with their account | accepted | 2026-11-08 |
 
 ## Storage
 
@@ -337,6 +339,7 @@ and this index, and `make check-fast` runs it.
 | [0188](0188-test-environments-with-known-failure-baselines.md) | Tests run in fixed environments against lists of known failures | superseded by [0215](0215-e2e-only-against-a-local-stand-in.md) | 2026-11-06 |
 | [0189](0189-smb-code-tested-against-a-fake-host.md) | SMB code is tested against a fake host layer, real testparm and the local stand-in | accepted | 2026-11-06 |
 | [0215](0215-e2e-only-against-a-local-stand-in.md) | E2E tests run only against local targets, never against the device | accepted | 2026-11-07 |
+| [0261](0261-the-stand-ins-test-administrator-is-created-through-the-setup-page.md) | The stand-in's test administrator is created through the setup page, by a first Playwright run | accepted | 2026-11-07 |
 
 ## CI
 
