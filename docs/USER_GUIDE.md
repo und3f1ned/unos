@@ -78,12 +78,15 @@ day first and a 24-hour clock.
 
 So far the navigation, the login and first-run setup pages, the **Account**
 page, the **Containers** page, the **App Store**, the **Audit Log** page and,
-under **System**, **Resource Monitor**, **System Logs**, **Disk Health** and
-**Power Management** are translated; the other pages are still in English.
-Messages from the server, such as the reason an action was refused, stay in
-English, and so do the server's records: the log entries, the details of the
-audit log, smartctl's names, and the reasons and the advice of a failure
-prediction.
+under **System**, **Resource Monitor**, **System Logs**, **Disk Health**,
+**Notifications**, **Network** and **Power Management** are translated; the
+other pages are still in English. Messages from the server, such as the reason
+an action was refused or the title and text of a notification in the history,
+stay in English, and so do the server's records (the log entries, the details
+of the audit log, smartctl's names, and the reasons and the advice of a failure
+prediction) and the values that ip and ss print in the tables of the
+**Network** tab, such as a connection's state (ESTAB) or an interface's link
+type (ether).
 
 ---
 
