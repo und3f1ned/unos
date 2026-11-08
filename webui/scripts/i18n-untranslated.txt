@@ -16,7 +16,6 @@ src/lib/components/widgets/StorageWidget.svelte
 src/lib/components/widgets/SystemStatsWidget.svelte
 
 # storage
-src/routes/storage/+page.svelte
 
 # snapshots
 src/routes/snapshots/+page.svelte
