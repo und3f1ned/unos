@@ -330,11 +330,13 @@ files everyone on your network may read, and keep them few.
 #### Repair Permissions
 
 UNOS creates share folders with the group `unos-smb` and the mode 2770, and
-files created over SMB get that group and the mode 660. Files that did not
-come in over SMB (from an app, from the File Browser, or already in the folder
-when the share was created) keep their permissions until you press **Repair
-permissions** on the share. A share marked **Permissions need repair** needs
-it. Repairing:
+files created over SMB get that group and the mode 660. In such a folder,
+folders made with **New Folder** in the File Browser get the mode 2770 and
+uploaded files 660 as well (see [File Browser](#file-browser)). Files that
+came in another way (from an app, copied or moved in the File Browser, or
+already in the folder when the share was created) keep their permissions
+until you press **Repair permissions** on the share. A share marked
+**Permissions need repair** needs it. Repairing:
 - gives every file and folder of the share the group `unos-smb` and group
   read and write access (folders 2770, files 660, or 770 for files their
   owner may run);
@@ -456,6 +458,18 @@ in your storage pools from the web interface. It starts in the pools directory
   the item. After a rename, or Escape in the name field, the focus is on the
   item's checkbox, unless Tab or a click took it to another control. Screen
   readers announce error messages.
+
+In a folder with the permissions of share folders, the group `unos-smb` and
+the mode 2770 (a share's folder that UNOS created or repaired, and the
+folders in it that SMB users, **Repair permissions** or the File Browser
+made; see [Repair Permissions](#repair-permissions)), **New Folder** gives the
+new folder the mode 2770 and **Upload** gives the file the mode 660, also a
+file that replaces one, both in the group `unos-smb`: the users with **Read &
+write** access to the share can change them, and add files to the new
+folder, over SMB at once. Elsewhere new folders get the mode 755 and uploaded
+files 644, which let other accounts read them but not change them. **Copy**
+and **Move** keep the permissions of the items, also into a share: run
+**Repair permissions** on the share afterwards.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other

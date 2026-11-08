@@ -29,6 +29,11 @@ or a bind mount, cannot be deleted, or moved to another pool or volume
 Delete moves items into the trash of their pool or volume, from where they
 are restored, deleted for good, or deleted for good by the daily expiry
 after TRASH_RETENTION_DAYS (ADR-0259, "the trash" below).
+
+New folders and uploads in a share folder (_share_folder: a folder set up
+for the SMB group as UNOS makes a share's) get the modes that Samba gives
+the entries of SMB users, 2770 and 0660, so that the share's SMB users can
+change them at once (ADR-0261); elsewhere they get what the umask leaves.
 """
 
 import asyncio
@@ -56,6 +61,7 @@ from ..auth.utils import verify_token
 from ..config import get_settings
 from ..request_limits import UPLOAD_OPENAPI, UploadSink, receive_upload
 from ..security.validators import open_dir_nofollow, open_subdirs_nofollow
+from ..shares import constants as smb_constants
 from .schemas import (
     CreateDirectoryRequest,
     DirectoryListing,
@@ -454,6 +460,21 @@ def _open_parent_or_none(parts: list[str]) -> int | None:
         return None
 
 
+def _share_folder(dir_fd: int) -> bool:
+    """Whether the open folder ``dir_fd`` is set up for the SMB group as a share's folder (ADR-0261).
+
+    It is setgid, the group unos-smb may read, write and search it, and
+    others nothing (constants.share_root_mode_ok): as UNOS makes a share's
+    folder, Repair permissions every folder of a share that is not private,
+    and Samba every folder that an SMB user creates. The kernel gives a new
+    entry in it the folder's group, and whoever is in that group can already
+    replace the entry: the share's modes give the group nothing that the
+    folder does not.
+    """
+    st = os.fstat(dir_fd)
+    return smb_constants.share_root_mode_ok(st.st_mode, st.st_gid)
+
+
 def _file_type(st: os.stat_result) -> FileType:
     """What an entry is, from its lstat() result."""
     if stat.S_ISLNK(st.st_mode):
@@ -609,6 +630,11 @@ class _FileUpload(UploadSink):
     its file has its name leaves nothing behind: discard closes the unnamed
     file (the kernel frees it with its last descriptor), or removes the
     temporary file.
+
+    In a share folder (_share_folder) the file gets the mode of the files of
+    SMB users, 0660, through its descriptor as soon as it exists: before any
+    of it is written and before it has a name, also when it replaces a file
+    (ADR-0261). Elsewhere it has what the umask leaves of 0666.
     """
 
     def __init__(self, path: str) -> None:
@@ -634,11 +660,18 @@ class _FileUpload(UploadSink):
         if existing is not None and stat.S_ISDIR(existing.st_mode):
             raise HTTPException(400, f"A folder named {name} already exists")
         self.name = name
+        share = _share_folder(self.dir_fd)
         fd = self._open_unnamed()
         if fd is None:
             tmp_name = _upload_temp_name()
             fd = os.open(tmp_name, _CREATE_FLAGS, 0o666, dir_fd=self.dir_fd)
             self.tmp_name = tmp_name
+        if share:
+            try:
+                os.fchmod(fd, smb_constants.SHARE_FILE_MODE)
+            except BaseException:
+                os.close(fd)  # discard() frees the unnamed file, or removes the hidden one
+                raise
         return fd
 
     def _open_unnamed(self) -> int | None:
@@ -725,19 +758,50 @@ class _FileUpload(UploadSink):
 
 
 def _create_directory(path: str, name: str) -> FileInfo:
+    """Create the folder ``name`` in ``path``: in a share folder with the share's modes (ADR-0261)."""
     parts = _split(path)
     name = _validate_name(name)
     _require_inside_pool(parts)
     dir_fd = _open_dir(parts)
     try:
+        share = _share_folder(dir_fd)
         try:
-            os.mkdir(name, 0o777, dir_fd=dir_fd)
+            # In a share folder private until it has the share's modes (_give_share_mode).
+            os.mkdir(name, 0o700 if share else 0o777, dir_fd=dir_fd)
         except FileExistsError:
             raise HTTPException(400, f"Already exists: {name}") from None
+        if share:
+            _give_share_mode(dir_fd, name)
         st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
     finally:
         os.close(dir_fd)
     return get_file_info(name, _display_path([*parts, name]), st)
+
+
+def _give_share_mode(dir_fd: int, name: str) -> None:
+    """Give the folder ``name`` that _create_directory has just made in the share folder ``dir_fd`` 2770.
+
+    Whoever can write the share folder can put another folder at that name
+    before it is opened here. Only the folder this mkdir made is changed,
+    through its descriptor: the supervisor's, still private (0700) and
+    empty. Any other entry there keeps its modes.
+    """
+    try:
+        fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    except OSError as exc:
+        if exc.errno in _GONE:  # removed, or replaced by a file or a symlink
+            return
+        raise
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o777 != 0o700:
+            return
+        with os.scandir(fd) as entries:
+            if next(entries, None) is not None:
+                return
+        os.fchmod(fd, smb_constants.SHARE_DIR_MODE)
+    finally:
+        os.close(fd)
 
 
 def _c_exclusive_rename() -> Callable[[int, str, int, str], None] | None:
@@ -1818,7 +1882,8 @@ async def upload_file(path: str, request: Request, _: dict = Depends(verify_toke
     until then: nothing of it can be seen in the folder, and if the
     supervisor stops in the middle, nothing of it stays. Elsewhere, and on
     filesystems without unnamed files, it is a hidden temporary file, which
-    a stop in the middle leaves behind.
+    a stop in the middle leaves behind. In a share folder the file gets the
+    mode 0660, which lets the share's SMB users change it (ADR-0261).
     """
     try:
         return await receive_upload(request, _FileUpload(path))
@@ -1830,7 +1895,7 @@ async def upload_file(path: str, request: Request, _: dict = Depends(verify_toke
 
 @router.post("/mkdir", response_model=FileInfo)
 async def create_directory(req: CreateDirectoryRequest, _: dict = Depends(verify_token)):
-    """Create a new directory."""
+    """Create a new directory; in a share folder with the mode 2770, which lets the share's SMB users fill it."""
     return await _run(_create_directory, req.path, req.name)
 
 

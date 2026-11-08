@@ -2138,12 +2138,19 @@
         "An SMB user with write access to the share changes the file and creates entries in the folder at once",
         "Outside share folders the File Manager creates entries as before"
       ],
+      "verified_by": [
+        "supervisor/tests/test_files_security.py",
+        "supervisor/tests/test_upload_streaming.py",
+        "supervisor/tests/test_share_api.py",
+        "webui/tests/files.spec.ts"
+      ],
       "passes": false,
       "adr": [
         "ADR-0160",
-        "ADR-0150"
+        "ADR-0150",
+        "ADR-0261"
       ],
-      "notes": "Today such entries get the group unos-smb from the setgid folder but no group write, until a Repair (ADR-0155)."
+      "notes": "Built (ADR-0261): New Folder and Upload give the new entry 2770 or 0660 when the folder it is made in is setgid, of the group unos-smb with group rwx and nothing for others (_share_folder in supervisor/src/files/router.py); the group comes from the folder, and elsewhere new entries keep what the umask leaves. Steps 1 and 3 are asserted by test_files_security.py, test_upload_streaming.py and test_share_api.py (TestFileManagerInAShareFolder) with the runner's gid as the SMB group, and step 3 in the web UI by files.spec.ts ('outside share folders, a new folder and an upload give the group no write access'); the stand-in cannot give a folder gid 70000. The unnamed upload file (O_TMPFILE) is checked on Linux only: scripts/dev/linux-tests.sh tests/test_upload_streaming.py -k share_folder. Open: the device check, and again after a reboot (ADR-0018). In the folder of a share that UNOS created (2770 root:unos-smb) and that gives an active SMB user Read & write, create a folder and upload a file in Files: stat -c '%a %U:%G' shows 2770 root:unos-smb and 660 root:unos-smb. That user then, over SMB (smbclient), overwrites the file and puts a file into the new folder, without a Repair. A folder and an upload made in Files in a pool's top folder show 755 and 644 root:root."
     },
     {
       "id": "files.delete-to-trash",

@@ -58,6 +58,7 @@ from fastapi.testclient import TestClient
 
 from src.auth.utils import verify_token
 from src.main import app
+from src.shares import constants
 
 from .test_backup_restore import MANIFEST, _file, _tar_gz
 from .test_request_limits import _scope, _uvicorn
@@ -985,6 +986,81 @@ async def test_both_ways_give_the_same_file(env, monkeypatch):
     assert (one.st_mode, one.st_uid, one.st_gid, one.st_nlink) == (two.st_mode, two.st_uid, two.st_gid, two.st_nlink)
     assert one.st_nlink == 1
     assert (env.pool / "unnamed.bin").read_bytes() == (env.pool / "named.bin").read_bytes() == content
+
+
+def _mode_of(env, file: _Unfinished) -> int:
+    """The mode bits of an unfinished upload's file: by its hidden name, or (unnamed) by a descriptor of this process."""
+    if file.name is not None:
+        return stat.S_IMODE(os.stat(env.pool / file.name).st_mode)
+    for number in os.listdir("/proc/self/fd"):
+        try:
+            st = os.stat(f"/proc/self/fd/{number}")
+        except OSError:  # closed meanwhile
+            continue
+        if (st.st_dev, st.st_ino) == file.key:
+            return stat.S_IMODE(st.st_mode)
+    raise AssertionError(f"no descriptor of {file}")
+
+
+async def test_in_a_share_folder_the_file_is_writable_for_the_smb_group_before_any_of_it_is_written(
+    env, creation, monkeypatch
+):
+    """In a folder set up as a share's (setgid, the SMB group, 2770), the file is 0660 from its creation (ADR-0261).
+
+    Unnamed or hidden, it has that mode before any of its data is written and
+    before it gets its name, and keeps it under its name, in the folder's
+    group. The SMB group is the runner's own group here.
+    """
+    monkeypatch.setattr(constants, "SMB_GROUP_GID", os.getgid())
+    os.chown(env.pool, -1, os.getgid())
+    os.chmod(env.pool, 0o2770)
+    target = _Target("files", env)
+    content = os.urandom(2 * MIB)
+    chunks = _file_upload(content)
+    created = []
+
+    def on_read(n):
+        if n == 1:  # the headers of the part have arrived, none of its data
+            (file,) = _temporary_files(env)
+            created.append((file.size, _mode_of(env, file)))
+
+    sender = _Sender(chunks, on_read=on_read)
+
+    await app(target.scope(), sender.receive, sender.send)
+
+    assert sender.status == 200, sender.json
+    assert created == [(0, 0o660)]
+    assert sender.json["permissions"] == "-rw-rw----"
+    assert target.stored_content() == content
+    st = os.stat(env.pool / "big.bin")
+    assert (stat.S_IMODE(st.st_mode), st.st_gid) == (0o660, os.getgid())
+
+
+async def test_a_file_that_cannot_get_the_mode_of_shares_leaves_nothing_either_way(env, creation, monkeypatch):
+    """An upload whose file cannot be given 0660 in a share folder is answered with the error; nothing of it stays."""
+    monkeypatch.setattr(constants, "SMB_GROUP_GID", os.getgid())
+    os.chown(env.pool, -1, os.getgid())
+    os.chmod(env.pool, 0o2770)
+    real_fchmod = os.fchmod
+    refused = []
+
+    def fchmod(fd, mode):
+        if _is_destination(env, fd):
+            refused.append(mode)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real_fchmod(fd, mode)
+
+    monkeypatch.setattr(os, "fchmod", fchmod)
+    target = _Target("files", env)
+    sender = _Sender(_file_upload(os.urandom(2 * MIB)))
+    descriptors = len(os.listdir("/dev/fd"))
+
+    await app(target.scope(), sender.receive, sender.send)
+
+    assert (sender.status, sender.json) == (500, {"detail": "File operation failed: Input/output error"})
+    assert refused == [0o660]
+    assert target.stored() == []
+    assert len(os.listdir("/dev/fd")) == descriptors  # the file's descriptors are closed too
 
 
 @pytest.mark.parametrize("existing", ["a-file", "a-symlink", "a-dangling-symlink", "a-symlink-to-a-folder"])
