@@ -34,6 +34,30 @@ const CONTAINERS = [
     created: '2026-11-01T10:00:00Z', ports: [], labels: {} },
 ];
 
+// Live stats as the server sends them over /ws/v1/events (supervisor/src/websocket/events.py),
+// with the part that the dashboard's stats cards show: 12.5% CPU, 768 MiB of 2 GiB memory, 1.2 MiB/s
+// received and 512 bytes/s sent, and a sensor at 45.8 degrees, which the card rounds.
+const LIVE_STATS = {
+  cpu_percent: 12.5, cpu_count: 4,
+  memory_total: 2 * 1024 ** 3, memory_used: 768 * 1024 ** 2, memory_percent: 37.5,
+  disk_total: 0, disk_used: 0, disk_percent: 0, network_sent: 0, network_recv: 0,
+  temperatures: { cpu_thermal: 45.8 },
+  network: {
+    bytes_sent: 0, bytes_recv: 0, bytes_sent_rate: 512, bytes_recv_rate: 1.2 * 1024 ** 2,
+    packets_sent: 0, packets_recv: 0, interfaces: [],
+  },
+};
+
+/** Answer the live stats socket like the server: auth_ok to the page's first message, then LIVE_STATS. */
+async function fakeLiveStats(page: Page) {
+  await page.routeWebSocket('**/ws/v1/events', (ws) => {
+    ws.onMessage(() => {
+      ws.send(JSON.stringify({ type: 'auth_ok' }));
+      ws.send(JSON.stringify({ type: 'stats', data: LIVE_STATS }));
+    });
+  });
+}
+
 /** A test notification in the history of GET /api/v1/notifications/logs, sent `minutes` ago. */
 function notificationLog(minutes: number) {
   const sent = new Date(Date.now() - minutes * 60_000).toISOString();
@@ -78,6 +102,22 @@ test.describe('Dashboard', () => {
     // Look for storage related elements
     const storageSection = page.locator('text=/Storage|Disk/i').first();
     await expect(storageSection).toBeVisible();
+  });
+
+  // ADR-0292: the stats cards take their units from the catalog, and English keeps the words that
+  // the code wrote before.
+  test('the stats cards write sizes, rates and the temperature with their units', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeLiveStats(page);
+    await page.goto('/');
+
+    const card = (label: string) => page.locator('main .card', { has: page.getByText(label, { exact: true }) });
+    await expect(card('CPU').locator('.stat-card-value')).toHaveText('12.5%');
+    await expect(card('Memory').locator('.stat-card-sublabel')).toHaveText('768 MB / 2 GB');
+    // Received, then sent.
+    await expect(card('Network').locator('.text-lg')).toHaveText(['1.2 MB/s', '512 B/s']);
+    await expect(card('Temperature').locator('.stat-card-value')).toHaveText('46°C');
   });
 
   test('storage widget shows the health the API reports', async ({ authenticatedPage: page }) => {
@@ -179,16 +219,24 @@ test.describe('Dashboard', () => {
       (url) => url.pathname === '/api/v1/notifications/logs',
       (route) => (route.request().method() === 'GET' ? route.fulfill({ json: [notificationLog(5)] }) : route.abort()),
     );
+    await fakeLiveStats(page);
     await chooseRussian(page);
     await page.goto('/');
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
     const main = page.locator('main');
 
-    // The live stats, the time of their last update on a 24-hour clock, and the uptime. A regular
-    // expression of getByText meets the text with the white space of the markup around it.
+    // The live stats of the fake socket, with Russian units (ADR-0292): sizes, rates per second and
+    // degrees with a space before them. Then the time of their last update on a 24-hour clock, and
+    // the uptime. A regular expression of getByText meets the text with the white space of the
+    // markup around it.
     for (const label of ['Процессор', 'Память', 'Сеть', 'Температура']) {
       await expect(main.getByText(label, { exact: true })).toBeVisible();
     }
+    const card = (label: string) => main.locator('.card', { has: page.getByText(label, { exact: true }) });
+    await expect(card('Процессор').locator('.stat-card-value')).toHaveText('12.5%');
+    await expect(card('Память').locator('.stat-card-sublabel')).toHaveText('768 МБ / 2 ГБ');
+    await expect(card('Сеть').locator('.text-lg')).toHaveText(['1.2 МБ/с', '512 Б/с']);
+    await expect(card('Температура').locator('.stat-card-value')).toHaveText('46 °C');
     await expect(main.getByText(/^\s*Обновлено \d{2}:\d{2}:\d{2}\s*$/)).toBeVisible();
     await expect(main.getByText(/ • Время работы: (\d+ дн\. \d+ ч|\d+ ч \d+ мин|\d+ мин)\s*$/)).toBeVisible();
 
