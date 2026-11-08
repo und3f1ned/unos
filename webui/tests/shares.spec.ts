@@ -391,6 +391,11 @@ test.describe('SMB shares page (fake data)', () => {
     await card.getByRole('button', { name: 'Edit' }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit share legacy' });
     await expect(dialog.getByText('This share is not served')).toBeVisible();
+    // Translated in parts around the folder's path (ADR-0296), so read whole: a part that loses
+    // its space or its period fails.
+    await expect(dialog.getByText(/^Folder now:/)).toHaveText(
+      `Folder now: ${POOLS}/tank. Choose a folder that can be shared.`,
+    );
     await expect(dialog.getByRole('combobox', { name: 'Location' })).toHaveText('tank (Pool)');
     const folder = dialog.getByLabel('Folder', { exact: true });
     await expect(folder).toBeEnabled();
@@ -1210,6 +1215,21 @@ test.describe('In Russian', () => {
     await expect(legacy.locator('.badge')).toHaveText(['Не раздаётся']);
     await expect(legacy.getByText(POOL_ROOT_MESSAGE)).toBeVisible();
     await expect(legacy).toContainText('Ни у одного пользователя нет доступа.');
+
+    // Its dialog: the server's reason as it comes, and the sentence around the path of its
+    // folder, translated in parts (ADR-0296) and read whole.
+    await legacy.getByRole('button', { name: 'Изменить общую папку legacy' }).click();
+    const edit = page.getByRole('dialog', { name: 'Изменение общей папки legacy' });
+    await expect(edit.getByText('Эта общая папка не раздаётся')).toBeVisible();
+    await expect(edit.getByText(POOL_ROOT_MESSAGE)).toBeVisible();
+    await expect(edit.getByText(/^Папка сейчас:/)).toHaveText(
+      `Папка сейчас: ${POOLS}/tank. Выберите папку, которую можно сделать общей.`,
+    );
+    await expect(
+      edit.getByText('Сначала исправьте папку: общей папке, которая не раздаётся, нельзя выдать доступ'),
+    ).toBeVisible();
+    await edit.getByRole('button', { name: 'Отмена' }).click();
+    await expect(edit).toBeHidden();
 
     await page.getByRole('button', { name: 'Добавить общую папку SMB' }).click();
     const dialog = page.getByRole('dialog', { name: 'Новая общая папка SMB' });

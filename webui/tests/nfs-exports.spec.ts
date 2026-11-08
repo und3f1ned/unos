@@ -103,6 +103,10 @@ test.describe('NFS exports', () => {
     await created.getByRole('button', { name: `Delete export ${folder}` }).click();
     const confirm = page.getByRole('dialog', { name: 'Delete NFS export' });
     await expect(confirm.getByText('The folder and its files are kept.')).toBeVisible();
+    // Translated in parts around the folder's path (ADR-0296), so read whole.
+    await expect(confirm).toContainText(
+      `Delete the export of ${folder}? NFS clients lose access to it. The folder and its files are kept.`,
+    );
     await confirm.getByRole('button', { name: 'Delete export' }).click();
     await expect(confirm).toBeHidden();
 

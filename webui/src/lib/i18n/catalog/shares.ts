@@ -40,9 +40,10 @@ export const en = {
 	'shares.smb.saved': 'Share "{name}" saved',
 	'shares.smb.deleted': 'Share "{name}" deleted',
 	'shares.smb.deleteTitle': 'Delete share',
-	// The question of the dialog, before the share's name: "Delete share <name>?"
-	'shares.smb.deleteQuestion': 'Delete share',
-	'shares.smb.deleteNote': 'The folder and its files are kept. Open connections to the share are closed.',
+	// The question of the dialog, in parts around the share's name (ADR-0296): "Delete share <name>? The
+	// folder and its files are kept. ..."
+	'shares.smb.deleteBefore': 'Delete share',
+	'shares.smb.deleteAfter': '? The folder and its files are kept. Open connections to the share are closed.',
 	'shares.smb.notDeleted': 'Share was not deleted',
 	'shares.smb.delete': 'Delete share',
 
@@ -76,9 +77,10 @@ export const en = {
 	'shares.nfs.created': 'NFS export of {path} created',
 	'shares.nfs.deleted': 'NFS export of {path} deleted',
 	'shares.nfs.deleteTitle': 'Delete NFS export',
-	// The question of the dialog, before the folder: "Delete the export of <folder>?"
-	'shares.nfs.deleteQuestion': 'Delete the export of',
-	'shares.nfs.deleteNote': 'NFS clients lose access to it. The folder and its files are kept.',
+	// The question of the dialog, in parts around the folder's path (ADR-0296): "Delete the export of
+	// <folder>? NFS clients lose access to it. ..."
+	'shares.nfs.deleteBefore': 'Delete the export of',
+	'shares.nfs.deleteAfter': '? NFS clients lose access to it. The folder and its files are kept.',
 	'shares.nfs.notDeleted': 'Export was not deleted',
 	'shares.nfs.delete': 'Delete export',
 
@@ -110,9 +112,10 @@ export const en = {
 	'shares.form.nameRequired': 'Enter a name for the share',
 	'shares.form.notServed': 'This share is not served',
 	'shares.form.cannotBeShared': 'Its folder cannot be shared.',
-	// Before the folder's path, then chooseFolder: "Folder now: <path>. Choose a folder that can be shared."
-	'shares.form.folderNow': 'Folder now:',
-	'shares.form.chooseFolder': 'Choose a folder that can be shared.',
+	// In parts around the path of the folder it has (ADR-0296): "Folder now: <path>. Choose a folder that
+	// can be shared."
+	'shares.form.currentFolderBefore': 'Folder now:',
+	'shares.form.currentFolderAfter': '. Choose a folder that can be shared.',
 	// A share that is not served is saved only once it grants nothing, or with a folder that can be shared.
 	'shares.form.notServedGrants':
 		'Its access entries and guest access do not count while it is not served. To save other changes without a new folder, remove them: No access for every user, and guest access off.',
@@ -279,8 +282,8 @@ export const ru: Translation<typeof en> = {
 	'shares.smb.saved': 'Общая папка «{name}» сохранена',
 	'shares.smb.deleted': 'Общая папка «{name}» удалена',
 	'shares.smb.deleteTitle': 'Удаление общей папки',
-	'shares.smb.deleteQuestion': 'Удалить общую папку',
-	'shares.smb.deleteNote': 'Папка и её файлы сохранятся. Открытые подключения к общей папке будут закрыты.',
+	'shares.smb.deleteBefore': 'Удалить общую папку',
+	'shares.smb.deleteAfter': '? Папка и её файлы сохранятся. Открытые подключения к общей папке будут закрыты.',
 	'shares.smb.notDeleted': 'Общая папка не удалена',
 	'shares.smb.delete': 'Удалить общую папку',
 
@@ -312,8 +315,8 @@ export const ru: Translation<typeof en> = {
 	'shares.nfs.created': 'Экспорт NFS папки {path} создан',
 	'shares.nfs.deleted': 'Экспорт NFS папки {path} удалён',
 	'shares.nfs.deleteTitle': 'Удаление экспорта NFS',
-	'shares.nfs.deleteQuestion': 'Удалить экспорт папки',
-	'shares.nfs.deleteNote': 'Клиенты NFS потеряют доступ к ней. Папка и её файлы сохранятся.',
+	'shares.nfs.deleteBefore': 'Удалить экспорт папки',
+	'shares.nfs.deleteAfter': '? Клиенты NFS потеряют доступ к ней. Папка и её файлы сохранятся.',
 	'shares.nfs.notDeleted': 'Экспорт не удалён',
 	'shares.nfs.delete': 'Удалить экспорт',
 
@@ -343,8 +346,8 @@ export const ru: Translation<typeof en> = {
 	'shares.form.nameRequired': 'Введите имя общей папки',
 	'shares.form.notServed': 'Эта общая папка не раздаётся',
 	'shares.form.cannotBeShared': 'Её папку нельзя сделать общей.',
-	'shares.form.folderNow': 'Папка сейчас:',
-	'shares.form.chooseFolder': 'Выберите папку, которую можно сделать общей.',
+	'shares.form.currentFolderBefore': 'Папка сейчас:',
+	'shares.form.currentFolderAfter': '. Выберите папку, которую можно сделать общей.',
 	'shares.form.notServedGrants':
 		'Пока общая папка не раздаётся, её записи доступа и гостевой доступ не действуют. Чтобы сохранить другие изменения без новой папки, уберите их: «Нет доступа» для каждого пользователя и выключенный гостевой доступ.',
 	'shares.form.unmanagedPools':

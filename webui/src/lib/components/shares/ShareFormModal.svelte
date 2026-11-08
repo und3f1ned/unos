@@ -257,9 +257,10 @@
 			{#if loaded && !loaded.served}
 				<Alert variant="error" title={$t('shares.form.notServed')}>
 					<p>{loaded.path_problem ?? $t('shares.form.cannotBeShared')}</p>
+					<!-- In parts around the folder's path: ADR-0296. -->
 					<p class="mt-1">
-						{$t('shares.form.folderNow')}
-						<span class="mono-xs break-all">{loaded.path}</span>. {$t('shares.form.chooseFolder')}
+						{$t('shares.form.currentFolderBefore')}
+						<span class="mono-xs break-all">{loaded.path}</span>{$t('shares.form.currentFolderAfter')}
 					</p>
 					{#if loadedGrants}
 						<p class="mt-1">{$t('shares.form.notServedGrants')}</p>

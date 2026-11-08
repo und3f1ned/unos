@@ -547,9 +547,10 @@
 	on:close={closeDelete}
 >
 	{#if shareToDelete}
+		<!-- In parts around the share's name: ADR-0296. -->
 		<p>
-			{$t('shares.smb.deleteQuestion')}
-			<strong class="text-content">{shareToDelete.name}</strong>? {$t('shares.smb.deleteNote')}
+			{$t('shares.smb.deleteBefore')}
+			<strong class="text-content">{shareToDelete.name}</strong>{$t('shares.smb.deleteAfter')}
 		</p>
 		{#if deleteError}
 			<Alert variant="error" title={$t('shares.smb.notDeleted')}>{deleteError}</Alert>
@@ -579,9 +580,10 @@
 	on:close={closeNfsDelete}
 >
 	{#if exportToDelete}
+		<!-- In parts around the folder's path: ADR-0296. -->
 		<p>
-			{$t('shares.nfs.deleteQuestion')}
-			<span class="mono break-all">{exportToDelete.path}</span>? {$t('shares.nfs.deleteNote')}
+			{$t('shares.nfs.deleteBefore')}
+			<span class="mono break-all">{exportToDelete.path}</span>{$t('shares.nfs.deleteAfter')}
 		</p>
 		{#if nfsDeleteError}
 			<Alert variant="error" title={$t('shares.nfs.notDeleted')}>{nfsDeleteError}</Alert>
