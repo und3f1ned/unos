@@ -26,12 +26,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.audit import router as audit_router
-from src.audit.schemas import AuditAction
+from src.audit.schemas import AuditAction, AuditEntry
 from src.auth import router as auth_router
 from src.main import app
 
 from .audit_helpers import audit_entries
 from .test_smb_accounts import ADMIN_PW, API, RecordingClient, World
+from .webui_catalogs import REPO, key_map, read_catalog
 
 
 @pytest.fixture
@@ -773,3 +774,23 @@ class TestExport:
         assert 0 < len(shown) < len(SEEDED)  # the filter narrowed the list
         assert exported["entries"] == shown
         assert exported["count"] == len(shown)
+
+
+AUDIT_PAGE = REPO / "webui" / "src" / "routes" / "audit" / "+page.svelte"
+
+
+def test_the_web_ui_names_every_action_by_words_the_search_finds():
+    """The Audit Log page shows an action by its name in the audit catalog (ADR-0287, ADR-0288):
+    one for every AuditAction, in Russian and in English, where the name is the action with spaces
+    for its underscores and a capital (ADR-0237), words that the search of the list finds in the
+    action's entries."""
+    actions = key_map(AUDIT_PAGE, "ACTION_NAMES")
+    catalog = read_catalog("audit")
+
+    assert sorted(actions) == sorted(action.value for action in AuditAction)
+    for action in AuditAction:
+        english = catalog["en"][actions[action.value]]
+        assert english == action.value.replace("_", " ").capitalize()
+        entry = AuditEntry(id="audit_1", timestamp="2026-11-08T10:00:00", action=action)
+        assert audit_router.AuditFilter(search=english.casefold()).matches(entry), english
+        assert catalog["ru"][actions[action.value]]

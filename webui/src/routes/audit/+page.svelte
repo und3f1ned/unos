@@ -2,7 +2,6 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { Download, ScrollText, X } from 'lucide-svelte';
 	import {
-		actionLabel,
 		exportAuditLog,
 		getAuditActions,
 		getAuditCount,
@@ -14,6 +13,7 @@
 		type AuditSeverity
 	} from '$lib/api/audit';
 	import { Alert, Badge, Button, Card, EmptyState, Input, Select } from '$lib/components/ui';
+	import { intlLocale, t } from '$lib/i18n';
 
 	// The audit log as a timeline, newest first (ADR-0237). Times are the server's local time
 	// as the entries carry it, without a zone: the page shows them as they are, and the date
@@ -61,17 +61,80 @@
 	// A change of the filters shows the newest entries that match, from the first page.
 	$: if (mounted) schedule(filters);
 
+	// The server's values, shown by the keys of their texts in the catalog (ADR-0287); a value
+	// without a key shows as it comes. The actions of AuditAction (supervisor/src/audit/schemas.py),
+	// whose English names are the words the search finds (ADR-0288,
+	// supervisor/tests/test_audit_log.py), the severities and the types of resource it records.
+	const ACTION_NAMES: Record<string, string> = {
+		login_success: 'audit.action.loginSuccess',
+		login_failed: 'audit.action.loginFailed',
+		logout: 'audit.action.logout',
+		password_change: 'audit.action.passwordChange',
+		totp_enabled: 'audit.action.totpEnabled',
+		totp_disabled: 'audit.action.totpDisabled',
+		user_created: 'audit.action.userCreated',
+		user_updated: 'audit.action.userUpdated',
+		user_deleted: 'audit.action.userDeleted',
+		pool_created: 'audit.action.poolCreated',
+		pool_deleted: 'audit.action.poolDeleted',
+		volume_created: 'audit.action.volumeCreated',
+		volume_deleted: 'audit.action.volumeDeleted',
+		snapshot_created: 'audit.action.snapshotCreated',
+		snapshot_deleted: 'audit.action.snapshotDeleted',
+		snapshot_restored: 'audit.action.snapshotRestored',
+		share_created: 'audit.action.shareCreated',
+		share_updated: 'audit.action.shareUpdated',
+		share_deleted: 'audit.action.shareDeleted',
+		container_started: 'audit.action.containerStarted',
+		container_stopped: 'audit.action.containerStopped',
+		container_removed: 'audit.action.containerRemoved',
+		app_installed: 'audit.action.appInstalled',
+		app_uninstalled: 'audit.action.appUninstalled',
+		backup_created: 'audit.action.backupCreated',
+		backup_restored: 'audit.action.backupRestored',
+		backup_deleted: 'audit.action.backupDeleted',
+		system_reboot: 'audit.action.systemReboot',
+		system_shutdown: 'audit.action.systemShutdown',
+		settings_changed: 'audit.action.settingsChanged',
+		task_created: 'audit.action.taskCreated',
+		task_updated: 'audit.action.taskUpdated',
+		task_deleted: 'audit.action.taskDeleted',
+		firewall_rule_added: 'audit.action.firewallRuleAdded',
+		firewall_rule_deleted: 'audit.action.firewallRuleDeleted',
+		ssl_cert_uploaded: 'audit.action.sslCertUploaded',
+		network_config_changed: 'audit.action.networkConfigChanged',
+		other: 'audit.action.other'
+	};
+	const SEVERITIES: Record<AuditSeverity, { key: string; variant: 'info' | 'warning' | 'error' }> = {
+		info: { key: 'audit.severity.info', variant: 'info' },
+		warning: { key: 'audit.severity.warning', variant: 'warning' },
+		critical: { key: 'audit.severity.critical', variant: 'error' }
+	};
+	const RESOURCE_TYPES: Record<string, string> = {
+		user: 'audit.resource.user',
+		share: 'audit.resource.share',
+		smb: 'audit.resource.smb',
+		smb_account: 'audit.resource.smbAccount',
+		api_token: 'audit.resource.apiToken',
+		recovery_codes: 'audit.resource.recoveryCodes',
+		audit_log: 'audit.resource.auditLog'
+	};
+
+	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */
+	$: textOf = (keys: Record<string, string>, value: string): string =>
+		Object.prototype.hasOwnProperty.call(keys, value) ? $t(keys[value]) : value;
+
 	$: actionOptions = [
-		{ value: '', label: 'All actions' },
+		{ value: '', label: $t('audit.filter.allActions') },
 		...actions
-			.map((a) => ({ value: a.value, label: actionLabel(a.value) }))
-			.sort((a, b) => a.label.localeCompare(b.label))
+			.map((a) => ({ value: a.value, label: textOf(ACTION_NAMES, a.value) }))
+			.sort((a, b) => a.label.localeCompare(b.label, $intlLocale))
 	];
 	$: days = byDay(entries);
 	$: countText =
 		entries.length < total
-			? `Showing ${entries.length} of ${total} entries`
-			: `${total} ${total === 1 ? 'entry' : 'entries'}`;
+			? $t('audit.showing', { shown: entries.length, n: total })
+			: $t('audit.count', { n: total });
 
 	onMount(() => {
 		mounted = true;
@@ -126,7 +189,7 @@
 			actions = await getAuditActions();
 			actionsError = '';
 		} catch (e) {
-			actionsError = `Could not load the actions: ${messageOf(e)}`;
+			actionsError = messageOf(e);
 		}
 	}
 
@@ -186,22 +249,17 @@
 		return groups;
 	}
 
-	function dayLabel(day: string): string {
+	// In the language of the page; reactive, so that the timeline follows a change of the language.
+	$: dayLabel = (day: string): string => {
 		const [year, month, date] = day.split('-').map(Number);
 		const moment = new Date(year, month - 1, date);
 		if (Number.isNaN(moment.getTime())) return day;
-		return moment.toLocaleDateString(undefined, {
+		return moment.toLocaleDateString($intlLocale, {
 			weekday: 'long',
 			year: 'numeric',
 			month: 'long',
 			day: 'numeric'
 		});
-	}
-
-	const SEVERITY: Record<AuditSeverity, { label: string; variant: 'info' | 'warning' | 'error' }> = {
-		info: { label: 'Info', variant: 'info' },
-		warning: { label: 'Warning', variant: 'warning' },
-		critical: { label: 'Critical', variant: 'error' }
 	};
 
 	function markerClass(entry: AuditEntry): string {
@@ -210,28 +268,29 @@
 		return 'bg-status-info';
 	}
 
-	function resourceOf(entry: AuditEntry): string {
-		return [entry.resource_type, entry.resource_id].filter(Boolean).join(' ');
-	}
+	$: resourceOf = (entry: AuditEntry): string =>
+		[entry.resource_type && textOf(RESOURCE_TYPES, entry.resource_type), entry.resource_id]
+			.filter(Boolean)
+			.join(' ');
 </script>
 
 <div class="page-container">
 	<div class="page-header">
-		<h1 class="page-title">Audit Log</h1>
+		<h1 class="page-title">{$t('audit.title')}</h1>
 		<div class="flex items-center gap-2">
 			<Button
 				variant="secondary"
 				icon={Download}
 				loading={exporting === 'csv'}
 				disabled={exporting !== null}
-				on:click={() => exportAs('csv')}>Export CSV</Button
+				on:click={() => exportAs('csv')}>{$t('audit.exportCsv')}</Button
 			>
 			<Button
 				variant="secondary"
 				icon={Download}
 				loading={exporting === 'json'}
 				disabled={exporting !== null}
-				on:click={() => exportAs('json')}>Export JSON</Button
+				on:click={() => exportAs('json')}>{$t('audit.exportJson')}</Button
 			>
 		</div>
 	</div>
@@ -239,7 +298,7 @@
 	{#if exportError}
 		<Alert
 			variant="error"
-			title="Could not export the audit log"
+			title={$t('audit.exportError')}
 			dismissible
 			on:dismiss={() => (exportError = '')}>{exportError}</Alert
 		>
@@ -250,66 +309,62 @@
 			<Input
 				id="audit-search"
 				type="search"
-				label="Search"
+				label={$t('audit.filter.search')}
 				bind:value={search}
-				placeholder="User, address, resource or details"
+				placeholder={$t('audit.filter.searchPlaceholder')}
 				maxlength={SEARCH_MAX_CHARS}
 				class="sm:col-span-2"
 			/>
 			<Input
 				id="audit-user"
-				label="User"
+				label={$t('audit.filter.user')}
 				bind:value={username}
-				placeholder="The exact name"
+				placeholder={$t('audit.filter.userPlaceholder')}
 				autocomplete="off"
 			/>
 			<Select
 				id="audit-action"
-				label="Action"
+				label={$t('audit.filter.action')}
 				bind:value={action}
 				options={actionOptions}
-				error={actionsError}
+				error={actionsError && $t('audit.filter.actionsError', { message: actionsError })}
 			/>
-			<Input id="audit-from" type="date" label="From" bind:value={startDate} />
-			<Input id="audit-to" type="date" label="To" bind:value={endDate} />
+			<Input id="audit-from" type="date" label={$t('audit.filter.from')} bind:value={startDate} />
+			<Input id="audit-to" type="date" label={$t('audit.filter.to')} bind:value={endDate} />
 		</div>
 		<div class="mt-3 flex min-h-8 items-center justify-between gap-2">
 			<p class="text-sm text-content-secondary" role="status">{loaded && !error ? countText : ''}</p>
 			{#if filtered}
-				<Button variant="ghost" size="sm" icon={X} on:click={clearFilters}>Clear filters</Button>
+				<Button variant="ghost" size="sm" icon={X} on:click={clearFilters}>{$t('audit.filter.clear')}</Button>
 			{/if}
 		</div>
 	</Card>
 
 	{#if error}
-		<Alert variant="error" title="Could not load the audit log">
+		<Alert variant="error" title={$t('audit.loadError')}>
 			<p>{error}</p>
 			<Button variant="secondary" size="sm" class="mt-3" loading={loading} on:click={retry}
-				>Retry</Button
+				>{$t('common.retry')}</Button
 			>
 		</Alert>
 	{:else if !loaded}
-		<p class="loading-text">Loading...</p>
+		<p class="loading-text">{$t('common.loading')}</p>
 	{:else if entries.length === 0}
 		<Card>
 			{#if filtered}
 				<EmptyState
 					icon={ScrollText}
-					title="No entries match the filters"
-					description="Change or clear the filters to see more entries."
+					title={$t('audit.noMatches')}
+					description={$t('audit.noMatchesHint')}
 				/>
 			{:else}
-				<EmptyState
-					icon={ScrollText}
-					title="No audit entries yet"
-					description="Sign-ins and changes by administrators appear here."
-				/>
+				<EmptyState icon={ScrollText} title={$t('audit.empty')} description={$t('audit.emptyHint')} />
 			{/if}
 		</Card>
 	{:else}
 		<Card>
 			<section
-				aria-label="Timeline"
+				aria-label={$t('audit.timeline')}
 				aria-busy={loading}
 				class="space-y-6 transition-opacity"
 				class:opacity-60={loading}
@@ -330,13 +385,14 @@
 										<time datetime={entry.timestamp.slice(0, 19)} class="mono text-content-muted"
 											>{entry.timestamp.slice(11, 19)}</time
 										>
-										<span class="font-medium text-content">{actionLabel(entry.action)}</span>
+										<span class="font-medium text-content">{textOf(ACTION_NAMES, entry.action)}</span>
 										{#if !entry.success}
-											<Badge variant="error">Failed</Badge>
+											<Badge variant="error">{$t('audit.failed')}</Badge>
 										{/if}
 										{#if entry.severity !== 'info'}
-											<Badge variant={SEVERITY[entry.severity]?.variant ?? 'neutral'}
-												>{SEVERITY[entry.severity]?.label ?? entry.severity}</Badge
+											{@const severity = SEVERITIES[entry.severity]}
+											<Badge variant={severity?.variant ?? 'neutral'}
+												>{severity ? $t(severity.key) : entry.severity}</Badge
 											>
 										{/if}
 									</div>
@@ -346,25 +402,25 @@
 									<dl class="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
 										{#if entry.username}
 											<div class="flex gap-1">
-												<dt class="text-content-muted">User</dt>
+												<dt class="text-content-muted">{$t('audit.field.user')}</dt>
 												<dd class="text-content-secondary">{entry.username}</dd>
 											</div>
 										{/if}
 										{#if entry.ip_address}
 											<div class="flex gap-1">
-												<dt class="text-content-muted">Address</dt>
+												<dt class="text-content-muted">{$t('audit.field.address')}</dt>
 												<dd class="text-content-secondary">{entry.ip_address}</dd>
 											</div>
 										{/if}
 										{#if resourceOf(entry)}
 											<div class="flex gap-1">
-												<dt class="text-content-muted">Resource</dt>
+												<dt class="text-content-muted">{$t('audit.field.resource')}</dt>
 												<dd class="text-content-secondary">{resourceOf(entry)}</dd>
 											</div>
 										{/if}
 										{#if entry.user_agent}
 											<div class="flex min-w-0 gap-1">
-												<dt class="text-content-muted">Browser</dt>
+												<dt class="text-content-muted">{$t('audit.field.browser')}</dt>
 												<dd class="break-all text-content-secondary">{entry.user_agent}</dd>
 											</div>
 										{/if}
@@ -377,7 +433,7 @@
 			</section>
 			{#if entries.length < total}
 				<div class="mt-4 flex justify-center">
-					<Button variant="secondary" loading={loading} on:click={showMore}>Show more</Button>
+					<Button variant="secondary" loading={loading} on:click={showMore}>{$t('audit.showMore')}</Button>
 				</div>
 			{/if}
 		</Card>

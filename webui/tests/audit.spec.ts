@@ -333,3 +333,87 @@ test.describe('Audit log errors', () => {
     await expect(alert).toHaveCount(0);
   });
 });
+
+// webui.translations: the page in Russian. The actions, the severities and the resource types
+// are the server's values, shown through the catalog; the counts take their Russian plural forms
+// and the days the Russian format. The details are the server's text and stay in English.
+test.describe('Audit log in Russian', () => {
+  // Where this browser keeps the language chosen on the Account page (ADR-0287).
+  const LOCALE_KEY = 'unos-locale';
+  // In the server's form, newest first: a failed sign-in and a user created on one day, and 99
+  // sign-ins the day before.
+  const ENTRIES = [
+    {
+      id: 'audit_ru_failed', timestamp: '2026-11-07T14:30:12', action: 'login_failed', severity: 'warning',
+      username: 'mallory', ip_address: '192.0.2.7', user_agent: 'curl/8.5.0', resource_type: null,
+      resource_id: null, details: null, success: false,
+    },
+    {
+      id: 'audit_ru_created', timestamp: '2026-11-07T09:15:00', action: 'user_created', severity: 'info',
+      username: 'admin', ip_address: '192.0.2.10', user_agent: null, resource_type: 'user', resource_id: 'alice',
+      details: 'Created new user: alice', success: true,
+    },
+    ...Array.from({ length: 99 }, (_, n) => ({
+      id: `audit_ru_${n}`,
+      timestamp: new Date(Date.UTC(2026, 10, 6, 23, 59) - n * 60_000).toISOString().slice(0, 19),
+      action: 'login_success', severity: 'info', username: `fake_user_${n}`, ip_address: '192.0.2.10',
+      user_agent: null, resource_type: null, resource_id: null, details: null, success: true,
+    })),
+  ];
+
+  test('names the actions, the counts and the days in Russian', async ({ authenticatedPage: page }) => {
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/audit/'),
+      (route) => {
+        const url = new URL(route.request().url());
+        const action = url.searchParams.get('action');
+        const matching = ENTRIES.filter((entry) => !action || entry.action === action);
+        if (url.pathname === '/api/v1/audit/logs') {
+          return route.fulfill({ json: matching.slice(0, Number(url.searchParams.get('limit'))) });
+        }
+        if (url.pathname === '/api/v1/audit/logs/count') return route.fulfill({ json: { count: matching.length } });
+        // The server's list of actions: every one of them has its Russian name.
+        if (url.pathname === '/api/v1/audit/actions') return route.continue();
+        return route.abort();
+      },
+    );
+    await page.goto('/audit');
+
+    await expect(page.getByRole('heading', { name: 'Журнал аудита', level: 1 })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Экспорт в CSV' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Экспорт в JSON' })).toBeVisible();
+    for (const label of ['Поиск', 'Пользователь', 'С', 'По']) await expect(filter(page, label)).toBeVisible();
+    await expect(page.getByRole('status')).toHaveText('Показано 100 из 101 записи');
+
+    const timeline = page.getByRole('region', { name: 'Хронология' });
+    await expect(timeline.locator('h2 time')).toHaveText([/^суббота, 7 ноября 2026/, /^пятница, 6 ноября 2026/]);
+    const [failed, created] = [timeline.getByRole('listitem').nth(0), timeline.getByRole('listitem').nth(1)];
+    await expect(failed).toContainText('Неудачный вход');
+    await expect(failed.locator('.badge')).toHaveText(['Неудачно', 'Предупреждение']);
+    await expect(failed.locator('dt')).toHaveText(['Пользователь', 'Адрес', 'Браузер']);
+    await expect(created).toContainText('Пользователь создан');
+    await expect(created).toContainText('Created new user: alice');
+    await expect(created.locator('dd')).toHaveText(['admin', '192.0.2.10', 'пользователь alice']);
+    await expect(timeline.getByRole('listitem').nth(2)).toContainText('Успешный вход');
+
+    await page.getByRole('button', { name: 'Показать ещё' }).click();
+    await expect(page.getByRole('status')).toHaveText('101 запись');
+
+    await page.getByRole('combobox', { name: 'Действие' }).click();
+    await expect(page.getByRole('option', { name: 'Пользователь удалён', exact: true })).toBeVisible();
+    const options = (await page.getByRole('option').allTextContents()).map((text) => text.trim());
+    expect(options[0]).toBe('Все действия');
+    expect(options.length).toBeGreaterThan(30);
+    // A name for each of the server's actions: none is shown as its value.
+    expect(options.filter((option) => option.includes('_'))).toEqual([]);
+    await page.getByRole('option', { name: 'Успешный вход', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('99 записей');
+
+    await page.getByRole('combobox', { name: 'Действие' }).click();
+    await page.getByRole('option', { name: 'Неудачный вход', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('1 запись');
+    await page.getByRole('button', { name: 'Сбросить фильтры' }).click();
+    await expect(page.getByRole('status')).toHaveText('Показано 100 из 101 записи');
+  });
+});

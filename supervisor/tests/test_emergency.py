@@ -820,7 +820,8 @@ def _flat(text: str) -> str:
 
 
 def _action_label(action: AuditAction) -> str:
-    """An action as the Audit Log page shows it (actionLabel of webui/src/lib/api/audit.ts)."""
+    """An action as the English Audit Log page shows it: its name in the audit catalog of the web UI,
+    the words the search finds (ADR-0288, test_audit_log.py)."""
     return action.value.replace("_", " ").capitalize()
 
 

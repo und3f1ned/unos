@@ -1,0 +1,157 @@
+import type { Translation } from '../translate';
+
+// System > Logs: src/routes/system/tabs/LogsTab.svelte. The sources, the levels and the time
+// ranges are the server's values, shown through maps of the tab; a source's English texts are
+// the server's (LOG_SOURCES of supervisor/src/logs/router.py, supervisor/tests/test_logs_sources.py).
+
+export const en = {
+	'logs.title': 'System Logs',
+	'logs.autoStart': 'Start auto-refresh (5s)',
+	'logs.autoStop': 'Stop auto-refresh',
+	'logs.auto': 'Auto',
+	'logs.filters': 'Filters',
+	'logs.searchPlaceholder': 'Search in logs... (press Enter)',
+	'logs.search': 'Search',
+
+	'logs.source.journal': 'System Journal',
+	'logs.source.journalDescription': "Everything in the host's systemd journal",
+	'logs.source.dmesg': 'Kernel',
+	'logs.source.dmesgDescription': "The kernel's messages since the host started",
+	'logs.source.docker': 'Docker',
+	'logs.source.dockerDescription': 'The Docker daemon',
+	'logs.source.samba': 'Samba',
+	'logs.source.sambaDescription': 'The SMB file server: smbd, and nmbd where NetBIOS is on',
+	'logs.source.auth': 'Authentication',
+	'logs.source.authDescription': 'Sign-ins, sudo and the other messages of the auth and authpriv facilities',
+	'logs.source.cron': 'Cron Jobs',
+	'logs.source.cronDescription': "The host's cron daemon",
+
+	'logs.filter.priority': 'Priority Level',
+	'logs.filter.allPriorities': 'All priorities',
+	'logs.filter.timeRange': 'Time Range',
+	'logs.filter.limit': 'Limit',
+	'logs.filter.clear': 'Clear filters',
+	'logs.filter.active': 'Active filters:',
+	'logs.filter.priorityBadge': 'Priority: {level}',
+	'logs.filter.timeBadge': 'Time: {range}',
+	'logs.filter.searchBadge': 'Search: "{text}"',
+
+	// The levels of the filter, the most severe first.
+	'logs.priority.emerg': 'Emergency',
+	'logs.priority.alert': 'Alert',
+	'logs.priority.crit': 'Critical',
+	'logs.priority.err': 'Error',
+	'logs.priority.warning': 'Warning',
+	'logs.priority.notice': 'Notice',
+	'logs.priority.info': 'Info',
+	'logs.priority.debug': 'Debug',
+	// An entry's level in the list: in English the journal's own short name.
+	'logs.level.emerg': 'emerg',
+	'logs.level.alert': 'alert',
+	'logs.level.crit': 'crit',
+	'logs.level.err': 'err',
+	'logs.level.warning': 'warning',
+	'logs.level.notice': 'notice',
+	'logs.level.info': 'info',
+	'logs.level.debug': 'debug',
+
+	'logs.time.all': 'All time',
+	'logs.time.last5Minutes': 'Last 5 minutes',
+	'logs.time.last15Minutes': 'Last 15 minutes',
+	'logs.time.lastHour': 'Last hour',
+	'logs.time.last6Hours': 'Last 6 hours',
+	'logs.time.last24Hours': 'Last 24 hours',
+	'logs.time.last7Days': 'Last 7 days',
+
+	'logs.loadError': 'Error loading logs',
+	'logs.loadFailed': 'Failed to load logs',
+	// English as before the catalogs, also for one entry.
+	'logs.count': {
+		one: 'Showing {n} log entries, newest first',
+		other: 'Showing {n} log entries, newest first'
+	},
+	'logs.autoRefreshing': 'Auto-refreshing every 5s',
+	'logs.loadingEntries': 'Loading logs...',
+	'logs.empty': 'No logs found',
+	'logs.emptyFiltered': 'Try adjusting your filters or search terms',
+	'logs.emptySource': 'No log entries available for this source',
+	'logs.column.time': 'Time',
+	'logs.column.level': 'Level',
+	'logs.column.source': 'Source',
+	'logs.column.message': 'Message'
+};
+
+export const ru: Translation<typeof en> = {
+	'logs.title': 'Системные журналы',
+	'logs.autoStart': 'Включить автообновление (5 с)',
+	'logs.autoStop': 'Остановить автообновление',
+	'logs.auto': 'Авто',
+	'logs.filters': 'Фильтры',
+	'logs.searchPlaceholder': 'Поиск в журналах... (нажмите Enter)',
+	'logs.search': 'Найти',
+
+	'logs.source.journal': 'Системный журнал',
+	'logs.source.journalDescription': 'Весь журнал systemd хоста',
+	'logs.source.dmesg': 'Ядро',
+	'logs.source.dmesgDescription': 'Сообщения ядра с момента запуска хоста',
+	'logs.source.docker': 'Docker',
+	'logs.source.dockerDescription': 'Служба Docker',
+	'logs.source.samba': 'Samba',
+	'logs.source.sambaDescription': 'Файловый сервер SMB: smbd, а также nmbd, если включён NetBIOS',
+	'logs.source.auth': 'Аутентификация',
+	'logs.source.authDescription': 'Входы, sudo и другие сообщения категорий auth и authpriv',
+	'logs.source.cron': 'Задания cron',
+	'logs.source.cronDescription': 'Служба cron хоста',
+
+	'logs.filter.priority': 'Уровень важности',
+	'logs.filter.allPriorities': 'Все уровни',
+	'logs.filter.timeRange': 'Период',
+	'logs.filter.limit': 'Количество',
+	'logs.filter.clear': 'Сбросить фильтры',
+	'logs.filter.active': 'Активные фильтры:',
+	'logs.filter.priorityBadge': 'Уровень: {level}',
+	'logs.filter.timeBadge': 'Период: {range}',
+	'logs.filter.searchBadge': 'Поиск: «{text}»',
+
+	'logs.priority.emerg': 'Авария',
+	'logs.priority.alert': 'Тревога',
+	'logs.priority.crit': 'Критично',
+	'logs.priority.err': 'Ошибка',
+	'logs.priority.warning': 'Предупреждение',
+	'logs.priority.notice': 'Уведомление',
+	'logs.priority.info': 'Информация',
+	'logs.priority.debug': 'Отладка',
+	'logs.level.emerg': 'авария',
+	'logs.level.alert': 'тревога',
+	'logs.level.crit': 'критично',
+	'logs.level.err': 'ошибка',
+	'logs.level.warning': 'предупреждение',
+	'logs.level.notice': 'уведомление',
+	'logs.level.info': 'информация',
+	'logs.level.debug': 'отладка',
+
+	'logs.time.all': 'За всё время',
+	'logs.time.last5Minutes': 'За последние 5 минут',
+	'logs.time.last15Minutes': 'За последние 15 минут',
+	'logs.time.lastHour': 'За последний час',
+	'logs.time.last6Hours': 'За последние 6 часов',
+	'logs.time.last24Hours': 'За последние 24 часа',
+	'logs.time.last7Days': 'За последние 7 дней',
+
+	'logs.loadError': 'Не удалось загрузить журналы',
+	'logs.loadFailed': 'Не удалось загрузить журналы',
+	'logs.count': {
+		one: 'Показана {n} запись, сначала новые',
+		few: 'Показаны {n} записи, сначала новые',
+		many: 'Показано {n} записей, сначала новые'
+	},
+	'logs.autoRefreshing': 'Автообновление каждые 5 с',
+	'logs.loadingEntries': 'Загрузка журналов...',
+	'logs.empty': 'Записей не найдено',
+	'logs.emptyFiltered': 'Измените фильтры или условия поиска',
+	'logs.emptySource': 'В этом источнике нет записей',
+	'logs.column.time': 'Время',
+	'logs.column.level': 'Уровень',
+	'logs.column.source': 'Источник',
+	'logs.column.message': 'Сообщение'
+};

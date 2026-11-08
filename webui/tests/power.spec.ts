@@ -125,6 +125,9 @@ async function shownTime(page: Page, at: string): Promise<string> {
 
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
 
+// Where this browser keeps the language chosen on the Account page (ADR-0287).
+const LOCALE_KEY = 'unos-locale';
+
 test.describe('Power Management', () => {
   test('the local supervisor refuses power actions, and the tab says why', async ({
     authenticatedPage: page,
@@ -344,5 +347,45 @@ test.describe('Power Management', () => {
     await expect(page.getByRole('alert')).toContainText(NO_MAGIC_PACKET);
     const eth1 = page.getByRole('row').filter({ has: page.getByRole('cell', { name: 'eth1', exact: true }) });
     await expect(eth1).toContainText('Not supported');
+  });
+
+  // webui.translations: the tab's texts and a pending action's time in Russian; the host's
+  // answers stay in English.
+  test('in Russian: a confirmed reboot, its cancel, and Wake-on-LAN', async ({ authenticatedPage: page }) => {
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    const host = await fakePowerApi(page);
+    await page.goto('/system#power');
+
+    await expect(page.getByRole('heading', { name: 'Управление питанием' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Перезагрузка, выключение и спящий режим' })).toBeVisible();
+    await expect(button(page, 'Выключить')).toBeVisible();
+    await expect(button(page, 'Спящий режим')).toBeVisible();
+
+    await button(page, 'Перезагрузить').click();
+    const dialog = page.getByRole('dialog', { name: 'Перезагрузить хост?' });
+    await expect(dialog).toContainText('Хост перезагрузится через минуту после подтверждения');
+    await dialog.getByRole('button', { name: 'Перезагрузить через 1 минуту' }).click();
+
+    await expect(page.getByRole('status')).toContainText(REBOOTS);
+    await expect(page.getByText('Запланирована перезагрузка')).toBeVisible();
+    const at = host.pending.at as string;
+    const time = await page.evaluate(
+      (value) => new Date(value).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }),
+      at,
+    );
+    await expect(page.getByText(`Хост перезагрузится в ${time}.`)).toBeVisible();
+    await button(page, 'Отменить перезагрузку').click();
+    await expect(page.getByRole('status')).toContainText(REBOOT_CANCELLED);
+    await expect(page.getByText('Запланирована перезагрузка')).toHaveCount(0);
+
+    const row = (name: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name, exact: true }) });
+    await expect(page.getByRole('columnheader')).toHaveText(['Интерфейс', 'MAC-адрес', 'Wake-on-LAN', 'Изменить']);
+    await expect(row('eth0').locator('.badge')).toHaveText('Выключен');
+    await expect(row('eth1').locator('.badge')).toHaveText('Не поддерживается');
+    await button(page, 'Включить Wake-on-LAN для eth0').click();
+    await expect(row('eth0').locator('.badge')).toHaveText('Включён');
+    await expect(page.getByRole('status')).toContainText('Wake-on-LAN включён для eth0');
+    await expect(button(page, 'Выключить Wake-on-LAN для eth0')).toBeVisible();
+    expect(host.changes).toEqual(['POST /reboot', 'POST /cancel', 'POST /wol/eth0/enable']);
   });
 });
