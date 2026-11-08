@@ -1121,7 +1121,7 @@ def _gunzip(src, dest):
 
 
 async def test_custom_command_runs_with_a_shell_off_the_event_loop(env):
-    """A shell command (here a pipe), waited for by the event loop, which goes on meanwhile (ADR-0250)."""
+    """A shell command (here a pipe), waited for by the event loop, which goes on meanwhile (ADR-0267)."""
     import asyncio
 
     ticks = 0

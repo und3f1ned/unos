@@ -37,10 +37,21 @@ within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` 
 
 **Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
 clock of the host's time zone: a snapshot, a scrub, a SMART test, a backup or a custom task. Each
-run is recorded with its status in the task's history (ADR-0044, ADR-0249, ADR-0251). Avoid: job, cron job.
+run is recorded with its status in the task's history (ADR-0044, ADR-0266, ADR-0268). Avoid: job, cron job.
 
 **Custom task**: A scheduled task that runs a shell command as root in the supervisor's container;
-its runs record the command's output and exit status (ADR-0044, ADR-0250). Avoid: script.
+its runs record the command's output and exit status (ADR-0044, ADR-0267). Avoid: script.
+
+**Notification channel**: Where UNOS sends notifications: e-mail through a mail server, a Telegram
+chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0260).
+Avoid: notifier, integration.
+
+**Alert**: A notification that a monitor sends on its own, for a pool's RAID errors or a disk's
+rising SMART counters, to every enabled e-mail and Telegram channel (ADR-0047). Avoid: alarm.
+
+**Notification history**: The latest 100 notifications sent, tests and alerts included, with the
+channel and the result of each: History in System > Notifications (ADR-0260). Avoid: log (the
+Logs tab shows the journal and container output).
 
 ## Storage
 
@@ -59,6 +70,10 @@ Avoid: subvolume (snapshots are subvolumes too), dataset.
 
 **Snapshot**: A read-only btrfs snapshot of a pool or a volume. Restoring one makes a writable copy
 and overwrites nothing (ADR-0011). Avoid: backup.
+
+**Trash**: The hidden folder `.unos-trash` at the top of each pool and volume that takes what Delete
+in Files deletes there, until it is restored, deleted for good, or deleted for good 30 days after
+its deletion (ADR-0259). Avoid: recycle bin, snapshot.
 
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
 hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0235). Avoid: SMART
@@ -130,7 +145,8 @@ accounts; UNOS leaves every other one alone (ADR-0108). Avoid: user.
 it expires (ADR-0009, ADR-0028). Avoid: cookie, API token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
-once (ADR-0239). Avoid: session token, API key.
+once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). Avoid:
+session token, API key.
 
 **Recovery code**: One of the ten codes that a user with two-factor authentication generates on the
 Account page and keeps; each one signs in once in place of a code of the authenticator app

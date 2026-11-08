@@ -59,7 +59,7 @@ class ScheduledTaskInfo(ScheduledTask):
     # when the key file cannot be read.
     has_backup_key: Optional[bool] = None
     # When the task runs next by the clock of the host's time zone, which its hour
-    # and minute follow (ISO 8601 with that zone's offset, ADR-0249); None when its
+    # and minute follow (ISO 8601 with that zone's offset, ADR-0266); None when its
     # schedule has no next time.
     next_run: Optional[str] = None
 
@@ -70,7 +70,7 @@ class TaskRun(BaseModel):
     task_name: str
     started_at: str  # ISO 8601 in UTC, with its offset, as finished_at
     # None while it runs. For a run that a stop of the supervisor cut off, when the
-    # supervisor started again (ADR-0251).
+    # supervisor started again (ADR-0268).
     finished_at: Optional[str] = None
     status: str  # running, success, failed
     # What a run of a custom task printed (its last 16 KiB), or what another task reports when it succeeded.

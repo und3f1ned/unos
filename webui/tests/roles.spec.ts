@@ -12,7 +12,9 @@ const REGULAR = {
   username: `e2e_user_${Date.now().toString(36)}`,
   password: 'e2e-Regular-Password-1',
 };
-const ADMIN_ONLY_PAGES = ['/storage', '/snapshots', '/shares', '/files', '/containers', '/apps', '/users', '/audit'];
+const ADMIN_ONLY_PAGES = [
+  '/storage', '/snapshots', '/shares', '/files', '/files/trash', '/containers', '/apps', '/users', '/audit',
+];
 
 let adminToken = '';
 let userToken = '';

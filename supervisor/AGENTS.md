@@ -15,13 +15,16 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 - The supervisor runs in a container with `pid: host`. Whatever must read or change the host
   (mounts, `/etc/fstab`, disks, Samba, host accounts) goes through `src/host.py`: `run_on_host`,
   `run_on_host_async`, `read_host_file`, `write_host_file_atomic`, `sync_host_path`. A plain
-  `subprocess.run` reaches only the container: the system, security, logs and NFS routers
-  still work that way or call nsenter (architecture.host-command-layer).
+  `subprocess.run` reaches only the container: the system, security and NFS routers still work
+  that way or call nsenter, and the logs router's `/files` and `/file/{filename}` read the
+  container's `/var/log` (architecture.host-command-layer).
 - Commands are argv lists, values validated (ADR-0037); secrets go in `input=`, not argv (ADR-0125).
 - Call `host.run_on_host(...)` after `from .. import host`: tests replace the attribute
   `src.host.run_on_host`, and a name imported with `from ..host import run_on_host` escapes them.
 - A program new to the host joins `HOST_TOOLS` with its Debian package. Blocking work (host
   commands, smartctl, bcrypt, Docker, e-mail) runs off the event loop with a timeout (ADR-0021).
+  The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
+  can run long runs under the host's `timeout` (ADR-0258).
 
 ## Routers and roles (ADR-0030)
 

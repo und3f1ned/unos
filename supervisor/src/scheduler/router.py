@@ -22,10 +22,10 @@ TASKS_FILE, which the API returns and every scheduled backup contains.
 
 Schedules follow the clock of the host's time zone, read on the host for each
 pass of the scheduler loop and each answer, and the zone read last while the
-host cannot be asked (ADR-0249). A custom task's run records the command's
+host cannot be asked (ADR-0266). A custom task's run records the command's
 output and exit status; the command is stopped after COMMAND_TIMEOUT, and the
-processes of its session end with it (ADR-0250). A run that a stop of the
-supervisor interrupts is recorded as failed (ADR-0251).
+processes of its session end with it (ADR-0267). A run that a stop of the
+supervisor interrupts is recorded as failed (ADR-0268).
 """
 
 import base64
@@ -92,7 +92,7 @@ SMART_TEST_TIMEOUT = 60
 # background, unless the filesystem hangs (as storage.pools.SCRUB_COMMAND_TIMEOUT).
 SCRUB_START_TIMEOUT = 60
 # Seconds the command of a custom task may run; then it is stopped, with what it
-# started (ADR-0250). Long enough for a copy of a pool to another disk.
+# started (ADR-0267). Long enough for a copy of a pool to another disk.
 COMMAND_TIMEOUT = 24 * 3600
 # What a run keeps of a command's output: its last part, so that RUNS_FILE, which
 # is rewritten on the system disk at each run, stays small (_save_runs).
@@ -102,13 +102,13 @@ OUTPUT_CUT = "[Only the last 16 KiB of the output are kept.]\n"
 # and for the rest of their output: a process in the kernel's uninterruptible
 # sleep ends only when the kernel lets it.
 STOP_WAIT = 5
-# The error of a run that a stop of the supervisor interrupted (ADR-0251).
+# The error of a run that a stop of the supervisor interrupted (ADR-0268).
 STOPPED_DURING_RUN = "The supervisor stopped during the run"
 # How far back a pass of the scheduler loop looks for the times it has not
 # handled yet: a pass that comes late still starts the runs of the minutes
 # since the pass before, but a clock set forward by hours (a resume from
 # suspend, NTP after a boot without a real-time clock) does not start every task
-# of the hours it skipped (ADR-0249).
+# of the hours it skipped (ADR-0266).
 CATCH_UP = timedelta(minutes=5)
 MINUTE = timedelta(minutes=1)
 
@@ -197,7 +197,7 @@ def _save_runs(runs: list[TaskRun]) -> None:
 
     As UTF-8 text, not with JSON's \\u escapes, so that the output a run keeps (MAX_OUTPUT_BYTES)
     takes about as many bytes in the file in any language: an escaped Cyrillic letter takes 6
-    bytes instead of 2 (ADR-0250). A lone surrogate, which UTF-8 cannot hold (the bytes of a
+    bytes instead of 2 (ADR-0267). A lone surrogate, which UTF-8 cannot hold (the bytes of a
     file name that are not UTF-8, in an error), is written as its JSON escape.
     """
     path = Path(RUNS_FILE)
@@ -325,7 +325,7 @@ def _named_zone(name: str | None) -> tuple[tzinfo, str | None]:
 
 
 def schedule_zone() -> tzinfo:
-    """The host's time zone, whose clock the schedules follow (ADR-0249).
+    """The host's time zone, whose clock the schedules follow (ADR-0266).
 
     Read on the host each time (host.time_zone_name), so that the schedules follow a
     change of the zone at once; its rules come from the supervisor's own time zone
@@ -355,7 +355,7 @@ def _first_instant(wall: datetime, zone: tzinfo) -> datetime:
 
     That is the first of the two in the hour that the clock shows twice when daylight
     saving time ends, and for a time that the clock skips when it begins, the end of
-    the skip: 02:30 comes at 03:00 in central Europe (ADR-0249).
+    the skip: 02:30 comes at 03:00 in central Europe (ADR-0266).
     """
     at = wall.replace(tzinfo=zone, fold=0).astimezone(timezone.utc)
     # A skipped time is read with the offset before the change, which gives an
@@ -869,7 +869,7 @@ async def _end_session(sid: int) -> None:
     the session. Again and again, as a process may start another before it is killed, and
     one in the kernel's uninterruptible sleep ends only when the kernel lets it. The session's
     id stays taken while a process is left in it, and Linux gives out process ids in turn, up
-    to pid_max: a process found here is the command's (ADR-0250).
+    to pid_max: a process found here is the command's (ADR-0267).
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + STOP_WAIT
@@ -908,7 +908,7 @@ async def run_command(command: str) -> CommandResult:
     pipe, which keeps their order, and the run keeps the last MAX_OUTPUT_BYTES.
     It runs in a session of its own: when its shell exits, the processes it left
     running in that session are killed, and so is all of it after COMMAND_TIMEOUT
-    seconds, or when the run is cancelled (ADR-0250). The event loop waits for it,
+    seconds, or when the run is cancelled (ADR-0267). The event loop waits for it,
     no worker thread. Raises OSError when the shell cannot start.
     """
     read_end, write_end = os.pipe()
@@ -1012,7 +1012,7 @@ async def run_task(task: ScheduledTask) -> None:
                 run.error = message
     except asyncio.CancelledError:
         # The supervisor stops (stop_scheduler, or the end of its event loop); a command's
-        # processes have been killed (run_command). Recorded, never left "running" (ADR-0251).
+        # processes have been killed (run_command). Recorded, never left "running" (ADR-0268).
         run.error = STOPPED_DURING_RUN
         _record_end(run, False)
         raise
@@ -1020,7 +1020,7 @@ async def run_task(task: ScheduledTask) -> None:
 
 
 def finish_interrupted_runs() -> None:
-    """Record the runs that a stop of the supervisor interrupted as failed, with their tasks (ADR-0251).
+    """Record the runs that a stop of the supervisor interrupted as failed, with their tasks (ADR-0268).
 
     A run is saved as "running" when it starts. One that is still "running" when the
     supervisor starts was cut off by its stop (a deploy, an update, a reboot, a crash),
@@ -1046,7 +1046,7 @@ def _seconds_to_next_pass(now: datetime) -> float:
 
 
 async def scheduler_loop():
-    """Start the runs of the enabled tasks when their time comes (ADR-0249).
+    """Start the runs of the enabled tasks when their time comes (ADR-0266).
 
     A pass, a second after each minute begins, starts the tasks with a time in the
     minutes since the pass before, by the clock of the host's time zone, which it
@@ -1078,7 +1078,7 @@ async def start_scheduler():
 
 async def stop_scheduler():
     """Stop the scheduler on app shutdown, and end the runs that it started: each is
-    recorded as failed, with the processes of a command killed (run_task, ADR-0251)."""
+    recorded as failed, with the processes of a command killed (run_task, ADR-0268)."""
     global _scheduler_running, _scheduler_task
     _scheduler_running = False
     stopping = [t for t in (_scheduler_task, *_runs) if t is not None]

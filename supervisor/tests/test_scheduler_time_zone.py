@@ -1,4 +1,4 @@
-"""Schedules follow the time zone of the host, also across a change of daylight saving time (ADR-0249).
+"""Schedules follow the time zone of the host, also across a change of daylight saving time (ADR-0266).
 
 The scheduler loop runs here on a fake clock (run_scheduler): each of its sleeps moves the
 clock on, once the runs it started have ended. The host is the fake host of

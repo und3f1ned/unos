@@ -31,10 +31,11 @@ logger = logging.getLogger(__name__)
 # storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
-# systemd-resolved runs, else /etc/resolv.conf), and power/router.py (shutdown,
-# busctl, systemctl, ip, ethtool: ADR-0233). cat, test, mkdir, rmdir, rm, find,
-# sync, sleep, hostname, readlink (the time zone: scheduler/router.py, ADR-0249)
-# and sh also run there but come from essential packages.
+# systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
+# busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl, under
+# timeout: ADR-0257, ADR-0258). cat, test, mkdir, rmdir, rm, find, sync, sleep,
+# timeout, hostname, readlink (the time zone: scheduler/router.py, ADR-0266) and sh
+# also run there but come from essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
@@ -64,6 +65,7 @@ HOST_TOOLS: dict[str, str] = {
     "shutdown": "systemd-sysv",
     "busctl": "systemd",
     "ethtool": "ethtool",
+    "journalctl": "systemd",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.

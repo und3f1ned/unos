@@ -1,10 +1,12 @@
+import logging
 import os
 import subprocess
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
@@ -22,15 +24,36 @@ from .schemas import (
 )
 
 router = APIRouter(prefix="/security", tags=["security"])
+logger = logging.getLogger(__name__)
 
 FIREWALL_RULES_FILE = "/data/firewall_rules.json"
 CERTS_DIR = "/data/certs"
 CADDY_CERTS_DIR = "/data/caddy/certificates"
 # Longest username a login attempt keeps (in characters).
 LOGIN_ATTEMPT_USERNAME_CHARS = 128
+# The longest period that clearing the login history counts back (100 years, in days; ADR-0263).
+MAX_HISTORY_DAYS = 36500
 
 
 # ==================== Login History ====================
+
+def _visible_attempts(current_user: User, username: str | None) -> list:
+    """The conditions that pick the login attempts ``current_user`` may see.
+
+    Administrators see every attempt, or those with ``username``. The history is kept by
+    name, also for names without an account, so a regular user sees the attempts on their
+    name since their account was created (ADR-0263): not those of a deleted account whose
+    name was given to them. Both times are SQLite's CURRENT_TIMESTAMP, text to the second;
+    datetime() compares them so, and a sign-in in the second of the account's creation is
+    the account's (a time bound from Python has microseconds and, as text, comes later).
+    """
+    if current_user.is_admin:
+        return [LoginAttempt.username == username] if username else []
+    return [
+        LoginAttempt.username == current_user.username,
+        func.datetime(LoginAttempt.timestamp) >= func.datetime(current_user.created_at),
+    ]
+
 
 @router.get("/login-history", response_model=LoginHistoryResponse)
 async def get_login_history(
@@ -42,23 +65,14 @@ async def get_login_history(
     db: AsyncSession = Depends(get_db)
 ):
     """Get login history. Admin sees all, users see only their own."""
-    query = select(LoginAttempt)
-
-    # Non-admin users can only see their own history
-    if not current_user.is_admin:
-        query = query.where(LoginAttempt.username == current_user.username)
-    elif username:
-        query = query.where(LoginAttempt.username == username)
+    visible = _visible_attempts(current_user, username)
+    query = select(LoginAttempt).where(*visible)
 
     if success is not None:
         query = query.where(LoginAttempt.success == success)
 
     # Get total counts
-    count_query = select(func.count()).select_from(LoginAttempt)
-    if not current_user.is_admin:
-        count_query = count_query.where(LoginAttempt.username == current_user.username)
-    elif username:
-        count_query = count_query.where(LoginAttempt.username == username)
+    count_query = select(func.count()).select_from(LoginAttempt).where(*visible)
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
@@ -68,8 +82,9 @@ async def get_login_history(
     failed_result = await db.execute(failed_query)
     failed_count = failed_result.scalar() or 0
 
-    # Get attempts with pagination
-    query = query.order_by(desc(LoginAttempt.timestamp)).offset(offset).limit(limit)
+    # Get attempts with pagination, newest first. Times have whole seconds: the id orders
+    # the attempts of one second (ADR-0262).
+    query = query.order_by(desc(LoginAttempt.timestamp), desc(LoginAttempt.id)).offset(offset).limit(limit)
     result = await db.execute(query)
     attempts = result.scalars().all()
 
@@ -83,12 +98,15 @@ async def get_login_history(
 
 @router.delete("/login-history")
 async def clear_login_history(
-    older_than_days: int = 30,
+    # Up to 100 years back: a negative period would put the cutoff in the future and delete
+    # every attempt, and a much longer one reaches before the year 1.
+    older_than_days: int = Query(30, ge=0, le=MAX_HISTORY_DAYS),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Clear login history older than specified days. Admin only."""
-    cutoff = datetime.now() - timedelta(days=older_than_days)
+    # The stored times are UTC without a zone, as SQLite's CURRENT_TIMESTAMP gives them (ADR-0262).
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=older_than_days)
 
     from sqlalchemy import delete
     stmt = delete(LoginAttempt).where(LoginAttempt.timestamp < cutoff)
@@ -755,7 +773,12 @@ async def record_login_attempt(
     request: Request | None = None,
     failure_reason: str | None = None
 ):
-    """Record a login attempt in the database."""
+    """Record a login attempt in the database.
+
+    An attempt that cannot be stored, such as on a full /data, is reported in the log and the
+    sign-in goes on (ADR-0251). The rollback then expires the rows the caller loaded with
+    ``db``: read what the sign-in needs of them before.
+    """
     ip_address = None
     user_agent = None
 
@@ -765,14 +788,22 @@ async def record_login_attempt(
         ip_address = client_ip(request)
         user_agent = request.headers.get("User-Agent", "")[:500]  # Limit length
 
-    attempt = LoginAttempt(
+    fields = {
         # Failed logins are recorded before anyone is authenticated: keep the name short.
-        username=username[:LOGIN_ATTEMPT_USERNAME_CHARS] if isinstance(username, str) else username,
-        ip_address=ip_address,
-        user_agent=user_agent,
-        success=success,
-        failure_reason=failure_reason
-    )
-
-    db.add(attempt)
-    await db.commit()
+        "username": username[:LOGIN_ATTEMPT_USERNAME_CHARS] if isinstance(username, str) else username,
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+        "success": success,
+        "failure_reason": failure_reason,
+    }
+    # The row takes its time from the database (server_default); the log line has to carry it.
+    attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    db.add(LoginAttempt(**fields))
+    try:
+        await db.commit()
+    except OperationalError as exc:
+        await db.rollback()
+        logger.error(
+            "Could not store this login attempt in the login history: %s (%s)",
+            json.dumps({"timestamp": attempted_at, **fields}), exc.orig or exc,
+        )

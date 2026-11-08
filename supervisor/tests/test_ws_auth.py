@@ -1,4 +1,6 @@
 """WebSocket authentication handshake (first-message auth, 4401/4403 close codes)."""
+import json
+import logging
 import queue
 import threading
 import time
@@ -9,19 +11,26 @@ from unittest.mock import patch
 import bcrypt
 import jwt
 import pytest
+from docker.errors import NotFound
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 from starlette.websockets import WebSocketDisconnect
+from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import connect as ws_connect
 
+from src.auth import utils as auth_utils
 from src.auth.models import APIToken, User
 from src.auth.utils import create_access_token, generate_api_token
 from src.config import get_settings
 from src.database import Base
 from src.main import app
 from src.websocket import events
+
+from .test_api_token_last_use import FAILURES, START
+from .test_containers import served_by_uvicorn
 
 _FAST_HASH = bcrypt.hashpw(b"irrelevant", bcrypt.gensalt(rounds=4)).decode()
 
@@ -42,7 +51,7 @@ def ws_db(tmp_path):
     async_engine = create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool)
     maker = async_sessionmaker(async_engine, expire_on_commit=False)
     with patch.object(events, "async_session", maker):
-        yield SimpleNamespace(engine=sync_engine)
+        yield SimpleNamespace(engine=sync_engine, async_engine=async_engine)
     sync_engine.dispose()
 
 
@@ -239,6 +248,87 @@ class TestContainerLogsSocket:
         assert stream.closed.is_set()
         assert _FakeDockerClient.instances and _FakeDockerClient.instances[0].closed
 
+    def test_the_stream_starts_with_the_last_lines_and_follows_the_log(self, client, admin_token):
+        # The container drawer of the web UI shows what this socket sends: the
+        # last LOG_STREAM_TAIL_LINES lines, then each new one, each line with the
+        # time Docker received it, as GET /containers/{id}/logs has it (ADR-0255).
+        stream = _BlockingLogStream([b"line 1\n"])
+        asked = []
+
+        class _AskedDockerClient(_FakeDockerClient):
+            def _get(self, container_id):
+                asked.append(container_id)
+
+                def logs(**kwargs):
+                    asked.append(kwargs)
+                    return self.stream
+
+                return SimpleNamespace(logs=logs)
+
+        with patch("docker.DockerClient", lambda *a, **kw: _AskedDockerClient(stream, *a, **kw)):
+            with client.websocket_connect("/ws/v1/logs/abc") as ws:
+                _auth(ws, admin_token)
+                assert ws.receive_json() == {"type": "auth_ok"}
+                assert ws.receive_json() == {"type": "log", "container_id": "abc", "data": "line 1\n"}
+
+        assert events.LOG_STREAM_TAIL_LINES == 200
+        assert asked == ["abc", {"stream": True, "follow": True, "tail": 200, "timestamps": True}]
+
+
+class _GoneDockerClient(_FakeDockerClient):
+    """Docker that no longer knows the container."""
+
+    def _get(self, container_id):
+        raise NotFound(f"No such container: {container_id}")
+
+
+class TestTheLogSocketClosesWhenItsLogEnds:
+    """What a browser sees of the end of a log, through uvicorn as in the image.
+
+    The web UI shows a close with 1000 as "The log stream ended" and any other end
+    as a lost connection (streamContainerLogs of webui/src/lib/api/containers.ts,
+    ADR-0255). An endpoint that returns without closing makes uvicorn drop the
+    connection without a close frame, which a browser reports as 1006.
+    """
+
+    @pytest.mark.parametrize(
+        "docker_client,last_message",
+        [
+            # Docker's follow stream of a stopped container ends after its last lines.
+            (
+                lambda stream: _FakeDockerClient(stream),
+                {"type": "log", "container_id": "abc", "data": "line 1\n"},
+            ),
+            (
+                lambda stream: _GoneDockerClient(stream),
+                {"type": "error", "message": "No such container: abc"},
+            ),
+        ],
+        ids=["the-log-ends", "the-log-cannot-be-read"],
+    )
+    def test_the_server_closes_the_socket_with_1000(self, ws_db, admin_token, docker_client, last_message):
+        stream = _FedLogStream()
+        stream.feed(b"line 1\n")
+        stream.feed(None)  # the end of the log
+        made = []
+
+        def make_client(*args, **kwargs):
+            made.append(docker_client(stream))
+            return made[-1]
+
+        with patch("docker.DockerClient", make_client), served_by_uvicorn() as address:
+            with ws_connect(f"ws://{address}/ws/v1/logs/abc", proxy=None, open_timeout=10, close_timeout=5) as ws:
+                ws.send(json.dumps({"type": "auth", "token": admin_token}))
+                assert json.loads(ws.recv(timeout=10)) == {"type": "auth_ok"}
+                assert json.loads(ws.recv(timeout=10)) == last_message
+                with pytest.raises(ConnectionClosed) as closed:
+                    ws.recv(timeout=10)
+            # The end released Docker too.
+            _wait_for(lambda: made and made[0].closed)
+
+        assert closed.value.rcvd is not None, "the server dropped the connection without a close frame (1006)"
+        assert closed.value.rcvd.code == 1000
+
 
 # ---------------------------------------------------------------------------
 # Re-authentication while a socket is open
@@ -398,6 +488,91 @@ class TestReauthentication:
             closed, _ = _read_until_closed(ws)
 
         assert closed.code == 4401
+
+    def test_rechecks_of_an_api_token_do_not_commit_its_last_use_again(self, client, ws_db, fast_recheck):
+        """The handshake stores the token's last use; the re-checks, every minute (here every
+        0.1 s), store it again only once it is an hour old (ADR-0252)."""
+        full_token, token_hash = generate_api_token()
+        with Session(ws_db.engine) as session:
+            user = session.query(User).filter_by(username="ws_user").one()
+            session.add(APIToken(name="t", token_hash=token_hash, token_prefix=full_token[:12], user_id=user.id))
+            session.commit()
+        commits = []
+        event.listen(ws_db.async_engine.sync_engine, "commit", lambda connection: commits.append(connection))
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, full_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            deadline = time.monotonic() + 5
+            while len(fast_recheck) < 4:
+                assert ws.receive_json()["type"] == "stats"
+                assert time.monotonic() < deadline, "credentials were not re-checked"
+
+        assert len(commits) == 1
+        with Session(ws_db.engine) as session:
+            assert session.query(APIToken).filter_by(token_hash=token_hash).one().last_used_at is not None
+
+    @staticmethod
+    def _token_used_at(ws_db, last_used_at) -> tuple[str, str]:
+        full_token, token_hash = generate_api_token()
+        with Session(ws_db.engine) as session:
+            user = session.query(User).filter_by(username="ws_user").one()
+            session.add(APIToken(name="t", token_hash=token_hash, token_prefix=full_token[:12], user_id=user.id,
+                                 last_used_at=last_used_at))
+            session.commit()
+        return full_token, token_hash
+
+    @staticmethod
+    def _last_use_warnings(caplog, error: str) -> list[str]:
+        warnings = [r.getMessage() for r in caplog.records
+                    if r.levelno == logging.WARNING and "last use of API token" in r.getMessage()]
+        assert all(error in message for message in warnings), warnings
+        return warnings
+
+    @FAILURES
+    def test_a_handshake_whose_last_use_cannot_be_stored_still_authenticates(
+            self, client, ws_db, monkeypatch, caplog, failure):
+        """A full /data refuses the commit of the token's first use (ADR-0251): the session is
+        rolled back before it reads the user, and the socket opens (ADR-0252)."""
+        full_token, token_hash = self._token_used_at(ws_db, None)
+        error = failure(ws_db.async_engine.sync_engine, monkeypatch)
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, full_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "stats"
+
+        with Session(ws_db.engine) as session:
+            assert session.query(APIToken).filter_by(token_hash=token_hash).one().last_used_at is None
+        assert len(self._last_use_warnings(caplog, error)) == 1
+
+    @FAILURES
+    def test_a_recheck_whose_last_use_cannot_be_stored_keeps_the_socket_open(
+            self, client, ws_db, fast_recheck, monkeypatch, caplog, failure):
+        """Once the stored last use is an hour old, a re-check commits it again and meets a full
+        /data (ADR-0251): it is rolled back, the token still passes, and the socket streams on
+        instead of closing with 1011 (ADR-0252)."""
+        clock = {"now": START}
+        monkeypatch.setattr(auth_utils, "_token_time", lambda: clock["now"])
+        # Stored already: the handshake commits nothing, and every check that commits fails.
+        full_token, token_hash = self._token_used_at(ws_db, START)
+        error = failure(ws_db.async_engine.sync_engine, monkeypatch)
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, full_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            clock["now"] = START + timedelta(hours=1)
+            checked = len(fast_recheck)
+            deadline = time.monotonic() + 5
+            while len(fast_recheck) < checked + 3:
+                assert ws.receive_json()["type"] == "stats"
+                assert time.monotonic() < deadline, "credentials were not re-checked"
+            assert ws.receive_json()["type"] == "stats"
+
+        with Session(ws_db.engine) as session:
+            assert session.query(APIToken).filter_by(token_hash=token_hash).one().last_used_at == START
+        # The first two of those re-checks are over: each one tried, and was rolled back.
+        assert len(self._last_use_warnings(caplog, error)) >= 2
 
     def test_expired_jwt_is_disconnected_from_events(self, client, fast_recheck):
         token = jwt.encode({"sub": "ws_user", "exp": int(time.time()) + 2},

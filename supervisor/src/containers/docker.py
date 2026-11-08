@@ -21,6 +21,11 @@ SYSTEM_IMAGES = [
 # Label of containers installed from the app catalog (see apps.router).
 UNOS_APP_LABEL = "unos.app"
 
+# Seconds each request to the Docker API may take before docker-py gives up; a
+# stop also waits for the container's stop timeout. Pulls are sent without a
+# timeout by docker-py: their length depends on the image (ADR-0254).
+DOCKER_TIMEOUT_SECONDS = 60
+
 
 def is_system_container(name: str) -> bool:
     """Check if container is a system container."""
@@ -37,8 +42,8 @@ def is_system_image(tags: list[str]) -> bool:
 
 
 def get_client() -> docker.DockerClient:
-    """Get Docker client."""
-    return docker.from_env()
+    """Get a Docker client. Its calls block: make them in a worker thread (ADR-0021)."""
+    return docker.from_env(timeout=DOCKER_TIMEOUT_SECONDS)
 
 
 def list_containers(all: bool = True) -> list[ContainerInfo]:
@@ -286,15 +291,43 @@ def pull_image(image: str) -> ImageInfo:
     )
 
 
+class ImageInUse(Exception):
+    """Containers use the image; the containers API answers 409 with the message (ADR-0255)."""
+
+
+def _in_use_message(image: str, containers: list[Container]) -> str:
+    names = sorted(c.name for c in containers)
+    if len(names) == 1:
+        return f"The image {image} is used by the container {names[0]}. Remove the container first."
+    return f"The image {image} is used by the containers {', '.join(names)}. Remove the containers first."
+
+
 def remove_image(image_id: str, force: bool = False) -> None:
-    """Remove an image."""
+    """Remove an image with all its tags.
+
+    Without force, an image that a container uses, running or stopped, is refused
+    (ImageInUse) before anything is removed. Docker deletes an image with more than
+    one tag by its ID only when forced ("image is referenced in multiple
+    repositories"), so each tag is removed on its own, without force: the last one
+    takes the image with it, and what is left of it is then removed by its ID
+    (ADR-0255). Docker's own refusals still reach the caller as docker-py errors.
+    """
     client = get_client()
     try:
-        # Get image to check if it is a system image
         img = client.images.get(image_id)
         if is_system_image(img.tags):
             raise ValueError("Cannot remove system image")
-        
-        client.images.remove(image_id, force=force)
+        if force:
+            client.images.remove(img.id, force=True)
+            return
+        users = client.containers.list(all=True, filters={"ancestor": img.id})
+        if users:
+            raise ImageInUse(_in_use_message(img.tags[0] if img.tags else img.short_id, users))
+        for tag in img.tags:
+            client.images.remove(tag, force=False)
     except NotFound:
         raise ValueError(f"Image {image_id} not found")
+    try:
+        client.images.remove(img.id, force=False)
+    except NotFound:
+        pass  # removing its last tag removed the image

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher, onDestroy } from 'svelte';
+	import { createEventDispatcher, onDestroy, tick } from 'svelte';
 	import {
 		X,
 		Play,
@@ -15,14 +15,15 @@
 		Check,
 		Tag
 	} from 'lucide-svelte';
-	import { Button, Badge, Select } from '$lib/components/ui';
+	import { Alert, Button, Badge, StatusDot } from '$lib/components/ui';
 	import {
 		type Container,
-		getContainerLogs,
+		type ContainerLogStream,
 		startContainer,
 		stopContainer,
 		restartContainer,
-		removeContainer
+		removeContainer,
+		streamContainerLogs
 	} from '$lib/api/containers';
 
 	export let container: Container | null = null;
@@ -30,68 +31,93 @@
 
 	const dispatch = createEventDispatcher();
 
+	// The log view keeps this much of the newest text, cut at a line break (ADR-0255).
+	const MAX_LOG_CHARS = 500_000;
+	// Closer to the end than this (pixels), the view follows new lines.
+	const FOLLOW_SLACK_PX = 24;
+
+	type LogState = 'idle' | 'connecting' | 'live' | 'ended' | 'lost' | 'forbidden';
+	const LOG_STATE_TEXT: Record<LogState, string> = {
+		idle: '',
+		connecting: 'Connecting to the log...',
+		live: 'Live: new lines appear as the container writes them',
+		ended: 'The log stream ended',
+		lost: 'The connection to the log was lost',
+		forbidden: 'Only administrators can read container logs'
+	};
+
 	let activeTab: 'overview' | 'logs' | 'network' = 'overview';
 	let logs = '';
-	let logsLoading = false;
 	let logsError = '';
-	let logTail = '200';
-	let logsAutoRefresh = false;
-	let logsRefreshInterval: ReturnType<typeof setInterval> | null = null;
+	let logState: LogState = 'idle';
+	let logStream: ContainerLogStream | null = null;
+	let streamedId: string | null = null;
+	let logView: HTMLPreElement | undefined;
 	let actionLoading = '';
 	let copiedId = false;
 
-	const logTailOptions = [
-		{ value: '100', label: 'Last 100 lines' },
-		{ value: '200', label: 'Last 200 lines' },
-		{ value: '500', label: 'Last 500 lines' },
-		{ value: '1000', label: 'Last 1000 lines' }
-	];
-
-	$: if (container && open && activeTab === 'logs') {
-		loadLogs();
-	}
-
-	$: if (!open) {
-		stopAutoRefresh();
-	}
+	// The log streams while the Logs tab of an open drawer shows it, and only then.
+	$: logsOf = open && activeTab === 'logs' && container ? container.id : null;
+	$: followLogs(logsOf);
 
 	onDestroy(() => {
-		stopAutoRefresh();
+		stopLogs();
 	});
 
 	function close() {
 		dispatch('close');
 	}
 
-	async function loadLogs() {
-		if (!container) return;
-		logsLoading = true;
+	function followLogs(id: string | null) {
+		if (id === streamedId) return;
+		stopLogs();
+		if (id !== null) startLogs(id);
+	}
+
+	function startLogs(id: string) {
+		streamedId = id;
+		logs = '';
 		logsError = '';
-		try {
-			const result = await getContainerLogs(container.id, parseInt(logTail));
-			logs = result.logs;
-		} catch (e: any) {
-			logsError = e.message;
-		} finally {
-			logsLoading = false;
-		}
+		logState = 'connecting';
+		logStream = streamContainerLogs(id, {
+			onLive: () => (logState = 'live'),
+			onLog: appendLog,
+			onError: (message) => (logsError = message),
+			onEnd: (reason) => {
+				logStream = null;
+				logState = reason;
+			}
+		});
 	}
 
-	function toggleAutoRefresh() {
-		logsAutoRefresh = !logsAutoRefresh;
-		if (logsAutoRefresh) {
-			logsRefreshInterval = setInterval(loadLogs, 3000);
-		} else {
-			stopAutoRefresh();
-		}
+	function stopLogs() {
+		logStream?.close();
+		logStream = null;
+		streamedId = null;
+		logState = 'idle';
 	}
 
-	function stopAutoRefresh() {
-		if (logsRefreshInterval) {
-			clearInterval(logsRefreshInterval);
-			logsRefreshInterval = null;
+	function reconnectLogs() {
+		const id = streamedId;
+		stopLogs();
+		if (id !== null) startLogs(id);
+	}
+
+	async function appendLog(data: string) {
+		const atEnd =
+			!logView || logView.scrollHeight - logView.scrollTop - logView.clientHeight < FOLLOW_SLACK_PX;
+		let next = logs + data;
+		if (next.length > MAX_LOG_CHARS) {
+			// Search from the last character that must go: the first line break from there
+			// ends the last dropped line, so what follows is the most whole lines that fit.
+			const cut = next.indexOf('\n', next.length - MAX_LOG_CHARS - 1);
+			next = cut === -1 ? next.slice(-MAX_LOG_CHARS) : next.slice(cut + 1);
 		}
-		logsAutoRefresh = false;
+		logs = next;
+		if (atEnd) {
+			await tick();
+			logView?.scrollTo({ top: logView.scrollHeight });
+		}
 	}
 
 	async function handleAction(action: 'start' | 'stop' | 'restart' | 'remove') {
@@ -178,6 +204,9 @@
 	<!-- Drawer -->
 	<div
 		class="fixed right-0 top-0 h-full w-full max-w-2xl bg-surface-elevated z-50 shadow-2xl flex flex-col"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="container-drawer-title"
 	>
 		<!-- Header -->
 		<div class="flex items-center justify-between p-5 border-b border-border">
@@ -188,7 +217,9 @@
 					<Box class="w-6 h-6 icon-container" />
 				</div>
 				<div class="min-w-0">
-					<h2 class="font-semibold text-xl truncate">{container.name}</h2>
+					<h2 id="container-drawer-title" class="font-semibold text-xl truncate">
+						{container.name}
+					</h2>
 					<p class="text-sm text-secondary truncate">{container.image}</p>
 				</div>
 			</div>
@@ -350,45 +381,40 @@
 					{/if}
 				</div>
 			{:else if activeTab === 'logs'}
-				<div class="flex flex-col h-full">
-					<!-- Logs Controls -->
-					<div class="flex items-center gap-3 mb-4">
-						<div class="w-44">
-							<Select
-								bind:value={logTail}
-								options={logTailOptions}
-								on:change={loadLogs}
+				<div class="flex flex-col h-full gap-4">
+					<div class="flex items-center gap-3">
+						<p class="flex items-center gap-2 text-sm text-content-secondary" aria-live="polite">
+							<StatusDot
+								status={logState === 'live'
+									? 'success'
+									: logState === 'connecting'
+										? 'warning'
+										: logState === 'idle'
+											? 'neutral'
+											: 'error'}
+								pulse={logState === 'live'}
 							/>
-						</div>
-						<Button variant="secondary" size="sm" on:click={loadLogs} disabled={logsLoading}>
-							Refresh
-						</Button>
-						<button
-							on:click={toggleAutoRefresh}
-							class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors {logsAutoRefresh
-								? 'bg-green-500/20 text-success'
-								: 'bg-surface-overlay text-secondary hover:text-content'}"
-						>
-							<div
-								class="w-2 h-2 rounded-full {logsAutoRefresh
-									? 'bg-green-500 animate-pulse'
-									: 'bg-slate-500'}"
-							></div>
-							Auto-refresh
-						</button>
+							{LOG_STATE_TEXT[logState]}
+						</p>
+						{#if logState === 'ended' || logState === 'lost'}
+							<Button variant="secondary" size="sm" icon={RotateCw} on:click={reconnectLogs}>
+								Reconnect
+							</Button>
+						{/if}
 					</div>
 
-					<!-- Logs Content -->
+					{#if logsError}
+						<Alert variant="error" title="The log could not be read">{logsError}</Alert>
+					{/if}
+
 					<div class="flex-1 min-h-0">
-						{#if logsLoading && !logs}
-							<div class="loading-text">Loading logs...</div>
-						{:else if logsError}
-							<div class="alert alert-error">{logsError}</div>
-						{:else if logs}
+						{#if logs}
 							<pre
-								class="bg-slate-900 rounded-lg p-4 text-xs font-mono text-slate-300 overflow-auto h-full max-h-[60vh] scrollbar-thin whitespace-pre-wrap">{logs}</pre>
-						{:else}
-							<div class="text-center text-muted py-8">No logs available</div>
+								bind:this={logView}
+								aria-label="Log of {container.name}"
+								class="bg-surface rounded-lg p-4 text-xs font-mono text-content-secondary overflow-auto h-full max-h-[60vh] scrollbar-thin whitespace-pre-wrap">{logs}</pre>
+						{:else if logState === 'live'}
+							<p class="text-center text-content-muted py-8">The container has written no log yet</p>
 						{/if}
 					</div>
 				</div>

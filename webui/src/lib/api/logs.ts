@@ -1,20 +1,21 @@
 import { api } from "./client";
 
 export interface LogEntry {
+  /** UTC with its offset, such as 2026-11-07T09:59:30+00:00; "" when the journal gives none. */
   timestamp: string;
   facility: string;
   priority: string;
   message: string;
   source: string;
-  unit?: string;
+  /** The program that logged it. */
+  unit?: string | null;
 }
 
+/** A part of the host's journal that GET /logs/entries reads (ADR-0257). */
 export interface LogSource {
   name: string;
   label: string;
   description: string;
-  path: string | null;
-  available: boolean;
 }
 
 export interface LogFile {
@@ -69,12 +70,15 @@ export async function getLogFiles(): Promise<{ files: LogFile[] }> {
 export interface LogQueryParams {
   source?: string;
   limit?: number;
+  /** This level and the more severe ones. */
   priority?: string;
+  /** Text of the message, in any case: the server finds the newest matches. */
   search?: string;
+  /** One of TIME_RANGES. */
   since?: string;
-  unit?: string;
 }
 
+/** The newest entries of a source, newest first. */
 export async function getLogEntries(params: LogQueryParams = {}): Promise<LogsResponse> {
   const urlParams = new URLSearchParams();
   urlParams.append("source", params.source || "journal");
@@ -82,7 +86,6 @@ export async function getLogEntries(params: LogQueryParams = {}): Promise<LogsRe
   if (params.priority) urlParams.append("priority", params.priority);
   if (params.search) urlParams.append("search", params.search);
   if (params.since) urlParams.append("since", params.since);
-  if (params.unit) urlParams.append("unit", params.unit);
 
   return api.get<LogsResponse>(`/logs/entries?${urlParams.toString()}`);
 }

@@ -1,5 +1,5 @@
 """Custom tasks: a shell command that runs at its schedule and is recorded with its output and
-exit status (ADR-0044, ADR-0250, ADR-0251).
+exit status (ADR-0044, ADR-0267, ADR-0268).
 
 The commands run for real, with /bin/sh as the user that runs the tests.
 """

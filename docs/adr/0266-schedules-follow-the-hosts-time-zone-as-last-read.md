@@ -3,14 +3,14 @@ status: accepted
 date: 2026-11-08
 area: system
 decided-by: agent
-supersedes: [ADR-0247]
+supersedes: [ADR-0264]
 ---
 
-# ADR-0249: Schedules follow the host's time zone as last read from its /etc/localtime link, with fixed rules for the changes of daylight saving time
+# ADR-0266: Schedules follow the host's time zone as last read from its /etc/localtime link, with fixed rules for the changes of daylight saving time
 
 ## Context
 
-ADR-0247 had the schedules follow the clock of the host's time zone, read on the host at each pass of the scheduler loop, and UTC whenever a read failed, with the reason logged once in the supervisor's life (`system.scheduler-time-zone`). One read that failed for a moment (a timeout during heavy I/O on the SD card, no new process under memory pressure, nsenter refused) checked that pass's minute on the clock of UTC: in Berlin, the pass at 03:00 missed the night's 03:00 backup and ran the task of 02:00 a second time, and a later failure with the same reason left no trace in the log.
+ADR-0264 had the schedules follow the clock of the host's time zone, read on the host at each pass of the scheduler loop, and UTC whenever a read failed, with the reason logged once in the supervisor's life (`system.scheduler-time-zone`). One read that failed for a moment (a timeout during heavy I/O on the SD card, no new process under memory pressure, nsenter refused) checked that pass's minute on the clock of UTC: in Berlin, the pass at 03:00 missed the night's 03:00 backup and ran the task of 02:00 a second time, and a later failure with the same reason left no trace in the log.
 
 ## Decision
 
@@ -34,7 +34,7 @@ ADR-0247 had the schedules follow the clock of the host's time zone, read on the
 
 ## Considered options
 
-- UTC for a pass whose read fails (ADR-0247): one failed read moves the runs of that minute by the zone's offset.
+- UTC for a pass whose read fails (ADR-0264): one failed read moves the runs of that minute by the zone's offset.
 - A pass that cannot read the zone is skipped and its minutes are checked by the next one: the tasks run a minute late, and a failure that lasts longer than `CATCH_UP` loses their runs.
 - croniter with zone-aware start times: with `zoneinfo`, croniter 6.0 gave a daily task for 01:00 an extra run at 00:00 on the day after the change of spring, and it returned times that do not exist, such as 02:00+01:00 for 03:00+02:00. Naive times avoid relying on how a croniter version handles zones.
 - The host's /etc/localtime mounted into the container: the bind mount keeps the old file after `timedatectl set-timezone` replaces the link, and naive local times keep the problems of the changes of daylight saving time.

@@ -3,14 +3,14 @@ status: accepted
 date: 2026-11-08
 area: system
 decided-by: agent
-supersedes: [ADR-0248]
+supersedes: [ADR-0265]
 ---
 
-# ADR-0250: A custom task's run records the command's output and exit status, and the command ends within 24 hours with every process of its session
+# ADR-0267: A custom task's run records the command's output and exit status, and the command ends within 24 hours with every process of its session
 
 ## Context
 
-ADR-0248 ran the command of a custom task in a process group of its own, which was killed when the shell exited and at the time limit (`system.custom-command-tasks`). `timeout` (without `--foreground`) and job control (`set -m`) move processes into a process group of their own in the same session, so `timeout 30h job`, or `timeout 2h job &`, went on running after its run had been recorded as stopped or finished, against what the Scheduler tab and the user guide say. The runs file, rewritten on the system disk at each run (ADR-0214), was also written with JSON's `\u` escapes: the 16 KiB of Cyrillic output that a run keeps took about three times as much there.
+ADR-0265 ran the command of a custom task in a process group of its own, which was killed when the shell exited and at the time limit (`system.custom-command-tasks`). `timeout` (without `--foreground`) and job control (`set -m`) move processes into a process group of their own in the same session, so `timeout 30h job`, or `timeout 2h job &`, went on running after its run had been recorded as stopped or finished, against what the Scheduler tab and the user guide say. The runs file, rewritten on the system disk at each run (ADR-0214), was also written with JSON's `\u` escapes: the 16 KiB of Cyrillic output that a run keeps took about three times as much there.
 
 ## Decision
 
@@ -34,5 +34,5 @@ ADR-0248 ran the command of a custom task in a process group of its own, which w
 
 ## Considered options
 
-- The process group of the shell (ADR-0248): `timeout` and job control leave it, and their processes outlived the run.
+- The process group of the shell (ADR-0265): `timeout` and job control leave it, and their processes outlived the run.
 - A cgroup of its own for each run: it would hold a process that called `setsid` too, but the supervisor does not manage the cgroups of its container, and the host's systemd (`systemd-run --scope`) would run the command outside the container that ADR-0044 runs it in.
