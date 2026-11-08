@@ -165,6 +165,9 @@ class FakeHost:
             "/etc/fstab": BASE_FSTAB,
             "/proc/cmdline": f"console=ttyS2,1500000 root=UUID={ROOT_UUID} rootwait",
         }
+        # Symbolic links and their targets. /etc/localtime names the time zone, as on
+        # a Debian host installed in UTC; timedatectl set-timezone writes a relative link.
+        self.links: dict[str, str] = {"/etc/localtime": "/usr/share/zoneinfo/Etc/UTC"}
         self.dirs: set[str] = {"/mnt", "/mnt/pools"}
         self.immutable: set[str] = set()
         self.nonempty: set[str] = set()
@@ -334,6 +337,11 @@ class FakeHost:
             if path in self.files:
                 return self._result(stdout=self.files[path])
             return self._result(1, stderr=f"cat: {path}: No such file or directory")
+        if prog == "readlink":
+            path = cmd[-1]
+            if path in self.links:
+                return self._result(stdout=f"{self.links[path]}\n")
+            return self._result(1)  # GNU readlink without -v: not a link, or no such file
         if prog == "/bin/sh" and "unos-write" in cmd:
             path = cmd[cmd.index("unos-write") + 1]
             self.files[path] = input
