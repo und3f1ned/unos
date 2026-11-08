@@ -145,14 +145,9 @@ For each pool, you can:
   keep their access, and mounting the pool serves them again
 - **Add Devices** - Expand the pool
 - **Scrub** - (mounted pools) Check data integrity. The scrub runs in the
-  background, the pool shows its progress, and **Cancel Scrub** stops it.
-  Starting, following and cancelling a scrub wait at most 60 seconds for
-  btrfs: when it does not answer in that time, for example because a disk of
-  the pool stopped responding, UNOS stops it and the page says that it did
-  not answer and that the pool may not be responding, while the rest of UNOS
-  keeps working. A btrfs stuck on a disk can take until a reboot to end; until
-  then, asking again answers the same at once. A **BTRFS Scrub** task in
-  **System** → **Scheduler** fails the same way, and its history shows why
+  background, the pool shows its progress, which the page asks for every 2
+  seconds, and **Cancel Scrub** stops it. For a pool that does not answer, see
+  below
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no
@@ -174,6 +169,25 @@ For each pool, you can:
   Like Unmount, it is refused while the pool is in use, and its SMB shares are
   no longer served; NFS exports of the pool are not checked: remove them
   first.
+
+UNOS waits 60 seconds for btrfs to start a scrub, report its progress or
+cancel it. When btrfs does not answer in that time, for example because a
+disk of the pool stopped responding, UNOS stops that btrfs command:
+
+- **Scrub** and **Cancel Scrub** show `btrfs scrub start did not answer within
+  60 seconds: pool <name> may not be responding` (`btrfs scrub cancel` for
+  Cancel Scrub).
+- A scrub in progress stops updating, without a message: the pool keeps
+  showing its last progress. Until UNOS stops btrfs, other requests to UNOS,
+  sign-ins among them, can be slow to answer as well.
+- Opening the page shows **Loading...** until each mounted pool has reported
+  its scrub, one pool after the other: up to 60 seconds for each pool that
+  does not answer, which then shows no scrub.
+
+A btrfs command stuck on a disk can take until a reboot to end. Until then,
+asking for the same again is answered at once: with the same message, or,
+for the progress, without one. A **BTRFS Scrub** task in **System** →
+**Scheduler** fails the same way, and its history shows why.
 
 ### SMART Monitoring
 
@@ -1085,11 +1099,13 @@ offered there. Its snapshots are named `auto_<date>_<time>`, in UTC.
 oldest snapshots of the pool whose names start with `auto_` are deleted
 beyond that number, ordered by the time btrfs made them. Snapshots with
 other names are never deleted. When btrfs does not answer within 60 seconds
-while the old snapshots are looked at, none is deleted, and the run's output
-says `Old snapshots were not cleaned up: btrfs did not answer within 60
-seconds. The pool may not be responding.` A run on a pool that is not mounted
-fails with `Pool <name> is not mounted at /mnt/pools/<name>`, which the
-task's history shows.
+while the old snapshots are looked at, none is deleted, the new snapshot
+stays, and the run fails with `Snapshot <name> created, but old snapshots were
+not cleaned up: btrfs did not answer within 60 seconds. The pool may not be
+responding.` Until the stuck btrfs ends, which can take until a reboot, the
+next runs fail the same way, and the snapshots pile up beyond the keep count.
+A run on a pool that is not mounted fails with `Pool <name> is not mounted at
+/mnt/pools/<name>`, which the task's history shows.
 
 ### System Backup
 

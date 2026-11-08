@@ -17,7 +17,7 @@ the supervisor runs natively on the host during development.
 btrfs scrubs, error stats resets and smartctl run in the container itself,
 on the pools and disks that the privileged container sees:
 :func:`run_in_container` runs them, and at their timeout it kills them
-without waiting for them (ADR-0261).
+without waiting for them (ADR-0262).
 """
 
 from __future__ import annotations
@@ -200,7 +200,7 @@ def run_in_container(
     """Run ``cmd`` in the supervisor's own container; at its timeout, kill it and return at once.
 
     For btrfs and smartctl, which reach the host's pools and disks through
-    the privileged container (ADR-0261). ``stdout`` and ``stderr`` are
+    the privileged container (ADR-0262). ``stdout`` and ``stderr`` are
     pipes, whose text is returned (bytes that are not valid in the
     locale's encoding become U+FFFD), or what Popen takes, such as
     ``subprocess.DEVNULL`` or a file. The command reads nothing.

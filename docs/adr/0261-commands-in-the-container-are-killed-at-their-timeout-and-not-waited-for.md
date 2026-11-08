@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-08
 area: storage
 decided-by: agent
+superseded-by: ADR-0262
 ---
 
 # ADR-0261: Commands of btrfs and smartctl in the container are killed at their timeout without a wait, and a command still stuck is not started again
 
 ## Context
+
+Superseded by ADR-0262: a scheduled snapshot task whose cleanup gets no answer from btrfs fails its run, instead of succeeding with the reason in its output.
 
 Scrubs, the error stats reset, SMART tests, the reads of SMART data and the snapshot commands run btrfs or smartctl in the supervisor's container, on the pools and disks that the privileged container sees. Their timeouts (ADR-0021, ADR-0071, ADR-0172) came from `subprocess.run`, which kills the process and then waits for it: a process stuck in the kernel, on a disk or a filesystem that stopped answering, dies of SIGKILL only when the kernel lets it go, so the worker thread that ran it stayed busy until then, often for good. The `btrfs subvolume show` of the scheduler's snapshot cleanup had no timeout at all. The hourly SMART monitor and the Storage page, which asks for the scrub status every 2 seconds without waiting for the answer before, could use up the threads that the whole API works with (storage.commands-time-out-cleanly).
 

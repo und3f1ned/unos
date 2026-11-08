@@ -2,7 +2,7 @@
 
 Scrubs, error stats resets, SMART tests, the reads of SMART data and the snapshot cleanup of
 scheduled snapshot tasks run btrfs or smartctl in the supervisor's container, through
-host.run_in_container (ADR-0261). A process that hangs in the
+host.run_in_container (ADR-0262). A process that hangs in the
 kernel, on a disk or a filesystem that stopped answering, dies of SIGKILL only when the kernel lets
 it go: the timeout of subprocess.run killed it and then waited for it, so the worker thread that
 ran it stayed busy until then, often for good (ADR-0021).
@@ -341,26 +341,68 @@ class TestCommandsThatDoNotReturn:
         # As the Storage page's scrub status requests, which come every 2 seconds and overlap
         # while btrfs does not answer: a hang leaves one stuck process, not one per request.
         cmd = ["btrfs", "scrub", "status", "/mnt/pools/data"]
-        timeouts: list[float] = []
+        timed_out: dict[str, float] = {}
 
-        def run():
-            started = time.monotonic()
+        def run(which: str) -> None:
             try:
                 host.run_in_container(cmd, timeout=TIMEOUT)
             except subprocess.TimeoutExpired:
-                timeouts.append(time.monotonic() - started)
+                timed_out[which] = time.monotonic()
 
-        first = threading.Thread(target=run)
+        started = time.monotonic()
+        first = threading.Thread(target=run, args=("first",))
         first.start()
         _wait_for(lambda: processes.runs_of(cmd) == 1)
-        second = threading.Thread(target=run)
+        second = threading.Thread(target=run, args=("second",))
         second.start()
         for thread in (first, second):
             thread.join(TIMEOUT + 5)
 
-        assert len(timeouts) == 2 and max(timeouts) < TIMEOUT + 1
+        assert set(timed_out) == {"first", "second"}
+        # The second waited for the first, which was killed at its timeout, and then gave up
+        # at once: it did not give up before the first was killed, nor wait a timeout of its own.
+        assert TIMEOUT - 0.1 <= timed_out["second"] - started < TIMEOUT + 1
         assert processes.runs_of(cmd) == 1
         assert "Not started: btrfs scrub status /mnt/pools/data" in caplog.text
+
+    def test_a_second_run_of_a_command_starts_as_soon_as_the_first_answered(self, processes):
+        # Two tabs of the Storage page that ask for the scrub status of a pool that answers, at
+        # the same moment: the second runs btrfs once the first answered, and both get the status.
+        cmd = ["btrfs", "scrub", "status", "/mnt/pools/data"]  # answers when the test releases it
+        timeout = 10  # longer than the test takes: neither run gives up
+        answers: dict[str, str] = {}
+
+        def run(which: str) -> None:
+            try:
+                answers[which] = host.run_in_container(cmd, timeout=timeout).stdout
+            except subprocess.TimeoutExpired:
+                answers[which] = "timed out"
+
+        first = threading.Thread(target=run, args=("first",))
+        second = threading.Thread(target=run, args=("second",))
+        try:
+            first.start()
+            _wait_for(lambda: processes.runs_of(cmd) == 1)
+            second.start()
+            time.sleep(0.3)
+            # The second waits for the first: it has neither given up nor started btrfs.
+            assert second.is_alive() and answers == {}
+            assert processes.runs_of(cmd) == 1
+
+            processes.stuck.clear()  # the second process answers at once
+            released = time.monotonic()
+            processes.release()
+            second.join(timeout / 2)
+
+            assert answers == {"first": SCRUB_STATUS, "second": SCRUB_STATUS}
+            assert processes.runs_of(cmd) == 2
+            # Woken when the first ended, not at the end of its own timeout.
+            assert time.monotonic() - released < 2
+        finally:
+            processes.release()
+            for thread in (first, second):
+                if thread.is_alive():
+                    thread.join(HANG_LIMIT)
 
     def test_a_command_is_left_alone_when_its_wait_cannot_be_handed_over(self, processes, monkeypatch):
         cmd = ["smartctl", "-j", "-a", "/dev/sda"]
@@ -561,10 +603,14 @@ async def test_a_scheduled_task_whose_command_does_not_return_fails_and_frees_it
     assert processes.runs_of(hanging.args) == 1
 
 
-async def test_a_snapshot_cleanup_whose_btrfs_does_not_return_stops_and_keeps_the_snapshots(
+async def test_a_snapshot_task_whose_cleanup_does_not_return_fails_and_keeps_the_snapshots(
     scheduled, processes, monkeypatch
 ):
-    """The keep count of a scheduled snapshot task: `btrfs subvolume show` had no timeout at all."""
+    """The keep count of a scheduled snapshot task: `btrfs subvolume show` had no timeout at all.
+
+    The new snapshot is made; the run fails, so that the task does not show success while its
+    keep count is not applied.
+    """
     snapshots = scheduled.base / "data" / ".snapshots"
     names = [f"auto_2025010{day}_000000" for day in (1, 2, 3)]
     for name in names:
@@ -572,14 +618,16 @@ async def test_a_snapshot_cleanup_whose_btrfs_does_not_return_stops_and_keeps_th
     processes.stuck = set(names)
     monkeypatch.setattr(scheduler, "SUBVOLUME_SHOW_TIMEOUT", TIMEOUT)
 
-    message, took = await _within(scheduler.cleanup_old_snapshots("data", 1), TIMEOUT + 5,
-                                  "the cleanup of old snapshots")
+    result, took = await scheduled.run(TIMEOUT + 5, task_type="snapshot", target_pool="data", keep_count=1)
 
-    assert message == (f"Old snapshots were not cleaned up: btrfs did not answer within {TIMEOUT} seconds. "
-                       "The pool may not be responding.")
+    snapshot, hanging = processes.started  # it stopped at the first snapshot that did not answer
+    assert snapshot.args[:3] == ["btrfs", "subvolume", "snapshot"]
+    assert result == (False, (
+        f"Snapshot {os.path.basename(snapshot.args[-1])} created, but old snapshots were not cleaned up: "
+        f"btrfs did not answer within {TIMEOUT} seconds. The pool may not be responding."
+    ))
     assert took < TIMEOUT + 1.5
-    assert sorted(os.listdir(snapshots)) == names
-    (hanging,) = processes.started  # it stopped at the first snapshot that did not answer
+    assert sorted(os.listdir(snapshots)) == names  # (the fake process made no folder for the new one)
     assert hanging.args[:3] == ["btrfs", "subvolume", "show"]
     assert processes.killed == [(hanging.pid, signal.SIGKILL)]
 

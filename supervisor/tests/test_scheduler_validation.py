@@ -1086,6 +1086,41 @@ def test_a_snapshot_task_with_keep_count_3_keeps_the_three_newest_auto_snapshots
     assert victim.is_dir()
 
 
+def test_a_snapshot_task_whose_cleanup_btrfs_does_not_answer_is_recorded_as_failed(env):
+    """Its keep count was not applied, as on a pool that stopped responding: the task does not show success.
+
+    The new snapshot stays, and no old one is deleted.
+    """
+    btrfs = _fake_btrfs(env)
+    snaps = env.pool / ".snapshots"
+    for day in (1, 2):
+        btrfs.snapshot(env.pool, f"auto_2025010{day}_000000")
+    existing = set(os.listdir(snaps))
+
+    def btrfs_without_show(cmd, *args, **kwargs):
+        if list(cmd[:3]) == ["btrfs", "subvolume", "show"]:
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        return btrfs.run(cmd, *args, **kwargs)
+
+    env.run.side_effect = btrfs_without_show
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task(keep_count=1)).json()
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    (new,) = set(os.listdir(snaps)) - existing
+    assert (run["status"], run["error"], run["output"]) == (
+        "failed",
+        f"Snapshot {new} created, but old snapshots were not cleaned up: btrfs did not answer within 60 "
+        "seconds. The pool may not be responding.",
+        None,
+    )
+    (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
+    assert stored["last_status"] == "failed"
+    assert btrfs.deleted == []
+    assert sorted(os.listdir(snaps)) == sorted([*existing, new])
+
+
 def test_scheduled_backup_passes_restore_validation(backup_env):
     """Scheduled backups copy the DB consistently and are accepted by the hardened restore."""
     env = backup_env

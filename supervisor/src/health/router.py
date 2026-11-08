@@ -884,7 +884,7 @@ def start_smart_test(
 
     400 for another device or test type; 500 when the host's disks cannot
     be listed or smartctl fails, and when it does not answer within
-    SMARTCTL_TIMEOUT: it is killed then (ADR-0261).
+    SMARTCTL_TIMEOUT: it is killed then (ADR-0262).
     """
     if test_type not in ["short", "long", "conveyance"]:
         raise HTTPException(400, "Invalid test type. Use: short, long, or conveyance")
@@ -983,7 +983,7 @@ async def reset_device_stats(pool_name: str, _: dict = Depends(verify_token)):
         raise HTTPException(404, f"Pool not found: {name}")
 
     # Off the event loop, with a timeout: btrfs can block on a hung pool. It is
-    # killed then and not waited for (ADR-0261).
+    # killed then and not waited for (ADR-0262).
     try:
         result = await asyncio.to_thread(
             host.run_in_container, ["btrfs", "device", "stats", "--reset", pool_path],

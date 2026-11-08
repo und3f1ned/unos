@@ -1901,7 +1901,7 @@ def delete_volume(pool_name: str, volume_name: str) -> None:
 # cancel return at once too, unless the filesystem hangs. A btrfs that does not
 # return is killed after this, and the request answers at once: one stuck in
 # the kernel on a hung filesystem ends in the background when the kernel lets
-# it go (host.run_in_container, ADR-0261).
+# it go (host.run_in_container, ADR-0262).
 SCRUB_COMMAND_TIMEOUT = 60
 
 

@@ -179,7 +179,7 @@ that the storage endpoints run after a pool change (`FakeHost.smb_applies`, ADR-
 `tests/test_smb_integration.py` runs with both fakes (`PoolsAndSambaHost`). btrfs scrubs and
 smartctl run in the container through `host.run_in_container`, which the fake hosts refuse as
 well: a test answers them by replacing that function, or `subprocess.Popen` to see a command that
-does not return, as `tests/test_command_timeouts.py` does (ADR-0261):
+does not return, as `tests/test_command_timeouts.py` does (ADR-0262):
 
 ```python
 import pytest
