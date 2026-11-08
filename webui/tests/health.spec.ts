@@ -38,6 +38,9 @@ function unmatchedAlert(page: Page): Locator {
   return page.locator('.alert', { has: page.getByText('Replace soon', { exact: true }) });
 }
 
+// Where this browser keeps the language chosen on the Account page (ADR-0287).
+const LOCALE_KEY = 'unos-locale';
+
 /** Reload the tab's data with its refresh button, and wait until it is loaded. */
 async function refresh(page: Page) {
   const button = page.getByRole('button', { name: 'Refresh disk health' });
@@ -121,10 +124,14 @@ test.describe('Disk Health', () => {
 
     // The NVMe disk and the disk without SMART data are listed too.
     await expect(page.getByRole('list', { name: 'Disks' }).getByRole('listitem')).toHaveCount(FAKE_SMART_DISKS.length);
+    // The capacity as the server writes it.
+    await expect(disk(page, '/dev/e2e-sda')).toContainText('/dev/e2e-sda · 3.64 TB');
+    await expect(disk(page, '/dev/e2e-nvme0n1')).toContainText('/dev/e2e-nvme0n1 · 931.51 GB');
 
     await disk(page, '/dev/e2e-sda').getByRole('button', { name: 'SMART data of /dev/e2e-sda' }).click();
     const sata = page.getByRole('dialog', { name: 'E2E HDD 4TB (/dev/e2e-sda)' });
     await expect(field(sata, 'Overall health')).toHaveText('PASSED');
+    await expect(field(sata, 'Capacity')).toHaveText('3.64 TB');
     await expect(field(sata, 'Temperature')).toHaveText('34 °C');
     await expect(field(sata, 'Power-on hours')).toHaveText('51775 (5 years, 332 days)');
     await expect(field(sata, 'Power cycles')).toHaveText('120');
@@ -276,5 +283,62 @@ test.describe('Disk Health', () => {
     await refresh(page);
     await expect(replaceSoonMark(disk(page, '/dev/e2e-sda'))).toBeVisible();
     await expect(page.getByText('Could not load the failure predictions')).toHaveCount(0);
+  });
+
+  // webui.translations: the overall health, the attributes' states and an NVMe disk's fields are
+  // the server's values, shown through the catalog; smartctl's names and the server's reasons
+  // stay as they come.
+  test('in Russian: the disks, a disk to replace soon and their SMART data', async ({ authenticatedPage: page }) => {
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
+    await page.goto('/system#health');
+
+    await expect(page.getByRole('heading', { name: 'Состояние дисков' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Обновить состояние дисков' })).toBeVisible();
+    const disks = page.getByRole('list', { name: 'Диски' }).getByRole('listitem');
+    await expect(disks).toHaveCount(FAKE_SMART_DISKS.length);
+    const failing = disks.filter({ hasText: '/dev/e2e-sda' });
+    // The capacity in the Russian number format and unit.
+    await expect(failing).toContainText('/dev/e2e-sda · 3,64 ТБ');
+    await expect(disks.filter({ hasText: '/dev/e2e-nvme0n1' })).toContainText('/dev/e2e-nvme0n1 · 931,51 ГБ');
+    await expect(failing.locator('.badge')).toHaveText('Пора заменить');
+    await expect(failing).toContainText('ИСПРАВЕН');
+    await expect(failing).not.toContainText('НЕИСПРАВЕН');
+    await expect(failing).toContainText('34 °C');
+    await expect(failing).toContainText('Reallocated_Sector_Ct increasing rapidly');
+    await expect(disks.filter({ hasText: '/dev/e2e-sdb' })).toContainText('НЕИЗВЕСТНО');
+
+    await failing.getByRole('button', { name: 'Данные SMART диска /dev/e2e-sda' }).click();
+    const sata = page.getByRole('dialog', { name: 'E2E HDD 4TB (/dev/e2e-sda)' });
+    await expect(field(sata, 'Общее состояние')).toHaveText('ИСПРАВЕН');
+    await expect(field(sata, 'Ёмкость')).toHaveText('3,64 ТБ');
+    await expect(field(sata, 'Часы работы')).toHaveText('51775 (5 лет, 332 дня)');
+    await expect(field(sata, 'Циклы включения')).toHaveText('120');
+    await expect(field(sata, 'Последняя самопроверка')).toHaveText('Short offline: Completed without error');
+    await expect(sata.getByRole('columnheader')).toHaveText([
+      'ID', 'Атрибут', 'Значение', 'Наихудшее', 'Порог', 'Raw-значение', 'Состояние',
+    ]);
+    await expect(row(sata, 'Reallocated_Sector_Ct').last()).toHaveText('Норма');
+    await expect(row(sata, 'Raw_Read_Error_Rate').last()).toHaveText('Внимание');
+    await expect(row(sata, 'Spin_Up_Time').last()).toHaveText('Сбой');
+    await page.keyboard.press('Escape');
+
+    await disks
+      .filter({ hasText: '/dev/e2e-nvme0n1' })
+      .getByRole('button', { name: 'Данные SMART диска /dev/e2e-nvme0n1' })
+      .click();
+    const nvme = page.getByRole('dialog', { name: 'E2E NVMe 1TB (/dev/e2e-nvme0n1)' });
+    await expect(nvme.getByRole('columnheader')).toHaveText(['Сведения о состоянии', 'Значение']);
+    await expect(row(nvme, 'Порог доступного резерва')).toHaveText(['Порог доступного резерва', '10']);
+    await expect(row(nvme, 'Ошибки носителя')).toHaveText(['Ошибки носителя', '0']);
+    await nvme.getByRole('button', { name: 'Закрыть окно' }).click();
+
+    await disks.filter({ hasText: '/dev/e2e-sdb' }).getByRole('button', { name: 'Данные SMART диска /dev/e2e-sdb' }).click();
+    const usb = page.getByRole('dialog', { name: 'E2E USB Disk (/dev/e2e-sdb)' });
+    await expect(field(usb, 'Общее состояние')).toHaveText('НЕИЗВЕСТНО');
+    await expect(field(usb, 'Температура')).toHaveText('Нет данных');
+    await expect(field(usb, 'Серийный номер')).toHaveText('Неизвестно');
+    await expect(field(usb, 'Последняя самопроверка')).toHaveText('Не проводилась');
+    await expect(usb.getByText('smartctl не сообщил атрибутов SMART для этого диска.')).toBeVisible();
   });
 });

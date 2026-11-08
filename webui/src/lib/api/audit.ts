@@ -69,12 +69,3 @@ export function exportAuditLog(
 ): Promise<void> {
   return downloadAs(`/audit/logs/export${query(filters, { format })}`, filename);
 }
-
-/**
- * login_failed -> "Login failed": the action with spaces for its underscores, which the
- * search of the API finds too.
- */
-export function actionLabel(action: string): string {
-  const label = action.replace(/_/g, ' ');
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}

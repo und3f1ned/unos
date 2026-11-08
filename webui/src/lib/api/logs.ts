@@ -36,28 +36,8 @@ export interface LogFileContent {
   lines: number;
 }
 
+/** The journal's levels; System > Logs names them through its catalog (ADR-0287). */
 export type LogPriority = "emerg" | "alert" | "crit" | "err" | "warning" | "notice" | "info" | "debug";
-
-export const PRIORITY_LEVELS: { value: LogPriority; label: string }[] = [
-  { value: "emerg", label: "Emergency" },
-  { value: "alert", label: "Alert" },
-  { value: "crit", label: "Critical" },
-  { value: "err", label: "Error" },
-  { value: "warning", label: "Warning" },
-  { value: "notice", label: "Notice" },
-  { value: "info", label: "Info" },
-  { value: "debug", label: "Debug" }
-];
-
-export const TIME_RANGES = [
-  { value: "", label: "All time" },
-  { value: "5 minutes ago", label: "Last 5 minutes" },
-  { value: "15 minutes ago", label: "Last 15 minutes" },
-  { value: "1 hour ago", label: "Last hour" },
-  { value: "6 hours ago", label: "Last 6 hours" },
-  { value: "24 hours ago", label: "Last 24 hours" },
-  { value: "7 days ago", label: "Last 7 days" }
-];
 
 export async function getLogSources(): Promise<{ sources: LogSource[] }> {
   return api.get<{ sources: LogSource[] }>("/logs/sources");
@@ -74,7 +54,7 @@ export interface LogQueryParams {
   priority?: string;
   /** Text of the message, in any case: the server finds the newest matches. */
   search?: string;
-  /** One of TIME_RANGES. */
+  /** journalctl's --since as the server takes it: <N> minutes ago, <N> hours ago or <N> days ago. */
   since?: string;
 }
 

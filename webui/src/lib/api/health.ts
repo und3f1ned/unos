@@ -122,13 +122,3 @@ export function getAttributeStatusColor(status: string): string {
       return "text-slate-400";
   }
 }
-
-export function formatPowerOnHours(hours: number | null): string {
-  if (hours === null) return "N/A";
-  const days = Math.floor(hours / 24);
-  const years = Math.floor(days / 365);
-  if (years > 0) {
-    return years + " years, " + (days % 365) + " days";
-  }
-  return days + " days, " + (hours % 24) + " hours";
-}

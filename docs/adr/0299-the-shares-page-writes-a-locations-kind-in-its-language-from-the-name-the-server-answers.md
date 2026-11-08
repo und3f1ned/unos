@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0298: The Shares page writes a location's kind in its language from the name that the server answers
+# ADR-0299: The Shares page writes a location's kind in its language from the name that the server answers
 
 ## Context
 

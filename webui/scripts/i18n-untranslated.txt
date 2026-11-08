@@ -25,10 +25,5 @@ src/routes/storage/+page.svelte
 # users
 
 # audit
-src/routes/audit/+page.svelte
 
 # system
-src/routes/system/tabs/HealthTab.svelte
-src/routes/system/tabs/LogsTab.svelte
-src/routes/system/tabs/MonitorTab.svelte
-src/routes/system/tabs/PowerTab.svelte

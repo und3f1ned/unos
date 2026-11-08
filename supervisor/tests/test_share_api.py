@@ -946,7 +946,7 @@ class TestPaths:
     """GET /shares/paths: the share form offers only folders of pools that UNOS manages (ADR-0148).
 
     Each location has its name, the pool's or pool/volume, and its type: the web UI writes the
-    kind in the page's language, "data (Pool)" in English (ADR-0298).
+    kind in the page's language, "data (Pool)" in English (ADR-0299).
     """
 
     @pytest.fixture

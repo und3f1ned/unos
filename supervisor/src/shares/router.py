@@ -44,7 +44,7 @@ router = APIRouter(prefix="/shares", tags=["shares"])
 
 class SharePath(BaseModel):
     path: str
-    # The pool's name, or pool/volume: the web UI adds the kind in the page's language (ADR-0298).
+    # The pool's name, or pool/volume: the web UI adds the kind in the page's language (ADR-0299).
     name: str
     type: str  # "pool" or "volume"
     # The pool is one that UNOS manages (its fstab marker): only such folders can be SMB

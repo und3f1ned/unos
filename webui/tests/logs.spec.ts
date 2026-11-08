@@ -19,6 +19,9 @@ const SOURCES = [
 
 const LEVELS = ['emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info', 'debug'];
 
+// Where this browser keeps the language chosen on the Account page (ADR-0287).
+const LOCALE_KEY = 'unos-locale';
+
 // The server's answer (500) when journalctl ran past its time on the host (ADR-0258).
 const DID_NOT_ANSWER = "Could not read the host's journal: journalctl did not answer within 30 seconds";
 
@@ -320,7 +323,7 @@ test.describe('System Logs with a fake journal', () => {
 
     // The source Samba: each failed sign-in is a notice of smbd with the account and the client.
     await page.getByRole('button', { name: 'Samba', exact: true }).click();
-    await expect(page.getByText('The SMB file server: smbd and nmbd')).toBeVisible();
+    await expect(page.getByText('The SMB file server: smbd, and nmbd where NetBIOS is on')).toBeVisible();
     await expect(cells(page, 4)).toHaveText([UNKNOWN_FAILED, ALICE_FAILED, BOB_FAILED, ALICE_FAILED, SMBD_STARTED]);
     await expect(cells(page, 2)).toHaveText(['notice', 'notice', 'notice', 'notice', 'notice']);
     await expect(cells(page, 3)).toHaveText(['smbd', 'smbd', 'smbd', 'smbd', 'smbd']);
@@ -417,5 +420,62 @@ test.describe('System Logs with a fake journal', () => {
     await search.click();
     await expect(cells(page, 4)).toHaveText([FAILED_PASSWORD, NO_EXIT]);
     expect(api.requests.map((query) => query.get('search'))).toEqual([null, 'failed']);
+  });
+
+  // webui.translations: the sources, the levels and the time ranges are the server's values,
+  // shown through the catalog; the count takes its Russian plural form, and the times the
+  // Russian format. The server's messages stay in English.
+  test('in Russian: the sources, the filters, the levels, the count and the times', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    const api = await fakeLogsApi(page);
+    await page.goto('/system#logs');
+
+    await expect(page.getByRole('heading', { name: 'Системные журналы' })).toBeVisible();
+    for (const label of ['Системный журнал', 'Ядро', 'Docker', 'Samba', 'Аутентификация', 'Задания cron']) {
+      await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible();
+    }
+    await expect(page.getByText('Весь журнал systemd хоста')).toBeVisible();
+    for (const name of ['Уровень важности', 'Период', 'Количество']) {
+      await expect(page.getByRole('combobox', { name, exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole('columnheader')).toHaveText(['Время', 'Уровень', 'Источник', 'Сообщение']);
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+    await expect(cells(page, 2)).toHaveText(['ошибка', 'информация', 'предупреждение']);
+    await expect(cells(page, 1)).toHaveText(['07.11.2026, 12:59:00', '07.11.2026, 12:55:00', '07.11.2026, 12:40:00']);
+    await expect(page.getByText('Показаны 3 записи, сначала новые')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Samba', exact: true }).click();
+    await expect(page.getByText('Файловый сервер SMB: smbd, а также nmbd, если включён NetBIOS')).toBeVisible();
+    await expect(cells(page, 2)).toHaveText(['уведомление', 'уведомление', 'уведомление', 'уведомление', 'уведомление']);
+    await expect(page.getByText('Показано 5 записей, сначала новые')).toBeVisible();
+
+    // A level that Samba's entries do not reach: nothing is listed, and the tab says so.
+    await choose(page, 'Уровень важности', 'Предупреждение');
+    await expect(page.getByText('Записей не найдено')).toBeVisible();
+    await expect(page.getByText('Измените фильтры или условия поиска')).toBeVisible();
+    await expect(page.getByText('Уровень: Предупреждение')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Ядро', exact: true }).click();
+    await expect(cells(page, 4)).toHaveText([OOM, EXT4, USB_ERROR]);
+    const box = page.getByPlaceholder('Поиск в журналах');
+    await box.fill('python3');
+    await page.getByRole('button', { name: 'Найти', exact: true }).click();
+    await expect(cells(page, 4)).toHaveText([OOM]);
+    await expect(page.getByText('Показана 1 запись, сначала новые')).toBeVisible();
+    await expect(page.getByText('Поиск: «python3»')).toBeVisible();
+
+    // A time range in Russian sends the server's value.
+    await choose(page, 'Период', 'За последний час');
+    await expect.poll(() => api.requests[api.requests.length - 1].get('since')).toBe('1 hour ago');
+    await expect(page.getByText('Период: За последний час')).toBeVisible();
+
+    // The server's message stays in English, under a Russian title.
+    api.fail(DID_NOT_ANSWER);
+    await page.getByRole('button', { name: 'Сбросить фильтры' }).click();
+    await expect(page.getByText('Ошибка загрузки журналов')).toBeVisible();
+    await expect(page.getByText(DID_NOT_ANSWER)).toBeVisible();
+    await expect(page.getByText('System Logs')).toHaveCount(0);
   });
 });

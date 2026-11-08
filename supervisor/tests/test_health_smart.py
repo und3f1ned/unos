@@ -23,6 +23,7 @@ from urllib.parse import quote
 import pytest
 
 from .test_pool_persistence import ROOT_UUID, admin_client, install_fake_host
+from .webui_catalogs import REPO, key_map, read_catalog
 
 health_router = importlib.import_module("src.health.router")
 
@@ -638,3 +639,23 @@ def test_a_label_that_is_not_utf8_hides_no_disk(board_api, board):
     assert health_router._smart_monitor_pass() == []
 
     assert board.smartctl == snapshots("/dev/sda", "/dev/nvme0n1", "/dev/sdb")
+
+
+HEALTH_TAB = REPO / "webui" / "src" / "routes" / "system" / "tabs" / "HealthTab.svelte"
+
+
+@pytest.mark.parametrize("size", [1, 512 * 1024**2, 1_000_204_886_016, 1024**4 - 1, 1024**4, 4_000_787_030_016,
+                                  5000 * 1024**4])
+def test_disk_health_shows_each_capacity_the_server_writes_in_the_page_s_units(size):
+    """Disk Health writes a disk's capacity, which the server answers as "3.64 TB" (_format_capacity),
+    in the language of the page: its CAPACITY_UNITS map the unit to a key of the health catalog, and
+    in English the text of that key with the number is the server's text word for word (ADR-0287)."""
+    capacity = health_router._format_capacity(size)
+    number, unit = capacity.split(" ")
+    assert number.replace(".", "", 1).isdigit()  # the number form that the tab reads
+    units = key_map(HEALTH_TAB, "CAPACITY_UNITS")
+    assert unit in units, capacity
+
+    catalog = read_catalog("health")  # skips without node
+    assert catalog["en"][units[unit]].replace("{size}", number) == capacity
+    assert "{size}" in catalog["ru"][units[unit]]
