@@ -1,7 +1,8 @@
 import type { Translation } from '../translate';
 
 // The frame of every signed-in page: src/routes/+layout.svelte. The page names of the
-// navigation are the names the pages go by.
+// navigation are the names the pages go by; the menu button opens the navigation on a narrow
+// screen (ADR-0301).
 
 export const en = {
 	'layout.nav.dashboard': 'Dashboard',
@@ -18,6 +19,7 @@ export const en = {
 	'layout.role.admin': 'Administrator',
 	'layout.role.user': 'User',
 	'layout.logout': 'Logout',
+	'layout.menu': 'Menu',
 	'layout.accountError': 'Could not load your account',
 	'layout.accountFailed': 'Failed to load your account'
 };
@@ -37,6 +39,7 @@ export const ru: Translation<typeof en> = {
 	'layout.role.admin': 'Администратор',
 	'layout.role.user': 'Пользователь',
 	'layout.logout': 'Выйти',
+	'layout.menu': 'Меню',
 	'layout.accountError': 'Не удалось загрузить вашу учётную запись',
 	'layout.accountFailed': 'Не удалось загрузить учётную запись'
 };

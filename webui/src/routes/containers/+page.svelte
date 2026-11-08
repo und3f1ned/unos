@@ -318,7 +318,7 @@
 				<p class="text-sm text-secondary">{$t('containers.subtitle')}</p>
 			</div>
 		</div>
-		<div class="flex items-center gap-2">
+		<div class="flex flex-wrap items-center gap-2">
 			<Button
 				variant="secondary"
 				size="icon"
@@ -498,7 +498,7 @@
 		{:else if viewMode === 'table'}
 			<!-- Table View -->
 			<Card>
-				<div class="overflow-x-auto">
+				<div class="table-frame">
 					<table class="table">
 						<thead class="table-header">
 							<tr>
@@ -728,7 +728,8 @@
 		<!-- Port Mappings -->
 		<div>
 			<label class="form-label">{$t('containers.create.ports')}</label>
-			<div class="flex gap-2 mb-2">
+			<!-- The fields and Add wrap on a narrow screen (ADR-0301). -->
+			<div class="flex flex-wrap gap-2 mb-2">
 				<input
 					type="number"
 					bind:value={portMapping.host}
@@ -773,19 +774,19 @@
 		<!-- Environment Variables -->
 		<div>
 			<label class="form-label">{$t('containers.create.environment')}</label>
-			<div class="flex gap-2 mb-2">
+			<div class="flex flex-wrap gap-2 mb-2">
 				<input
 					type="text"
 					bind:value={envVar.key}
 					placeholder={$t('containers.create.envKey')}
-					class="form-input flex-1"
+					class="form-input flex-1 min-w-[7rem]"
 				/>
 				<span class="text-secondary self-center">=</span>
 				<input
 					type="text"
 					bind:value={envVar.value}
 					placeholder={$t('containers.create.envValue')}
-					class="form-input flex-1"
+					class="form-input flex-1 min-w-[7rem]"
 				/>
 				<Button variant="secondary" size="sm" on:click={addEnvVar} type="button"
 					>{$t('containers.create.add')}</Button

@@ -377,9 +377,9 @@
 
 <div class="space-y-4">
   <!-- Header -->
-  <div class="flex items-center justify-between">
+  <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 class="text-xl font-bold">{$t("scheduler.title")}</h2>
-    <div class="flex gap-2">
+    <div class="flex flex-wrap gap-2">
       <button
         on:click={() => openHistoryModal()}
         class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm"
@@ -419,8 +419,9 @@
       <div class="space-y-2">
         {#each tasks as task}
           {@const TypeIcon = getTaskTypeIcon(task.task_type)}
-          <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
-            <div class="flex items-center gap-3 flex-1 min-w-0">
+          <!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0301). -->
+          <div class="flex flex-wrap gap-y-2 items-center justify-between p-3 bg-slate-700 rounded-lg">
+            <div class="flex items-center gap-3 flex-1 max-sm:basis-full min-w-0">
               <!-- Enable/Disable Toggle -->
               <button
                 on:click={() => handleToggleTask(task)}
@@ -475,7 +476,7 @@
             </div>
 
             <!-- Actions -->
-            <div class="flex items-center gap-1 ml-2">
+            <div class="flex items-center gap-1 ml-2 max-sm:ml-auto">
               <button
                 on:click={() => handleRunNow(task)}
                 disabled={runningTaskId === task.id}

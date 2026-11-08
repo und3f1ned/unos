@@ -448,17 +448,23 @@
 
   $: breadcrumbs = getBreadcrumbs(currentPath, rootPath, $t("files.pools"));
 
+  // The columns of the list and its header: the check box, the name, the size and, from sm up,
+  // the day of the last change. Fixed widths, so that the rows, each a grid, line up.
+  const columnsClass = "grid-cols-[auto_minmax(0,1fr)_5rem] sm:grid-cols-[auto_1fr_100px_150px]";
+
   // Sizes in the units of the page's language.
   $: units = [$t("files.unit.b"), $t("files.unit.kb"), $t("files.unit.mb"), $t("files.unit.gb"), $t("files.unit.tb")];
 </script>
 
-<div class="p-6 h-full flex flex-col">
-  <div class="flex items-center justify-between mb-4">
+<!-- On a narrow screen the page has no padding of its own beside main's, its buttons wrap, and
+     the list leaves out the Modified column (ADR-0301). -->
+<div class="md:p-6 h-full flex flex-col">
+  <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
     <h1 class="text-2xl font-bold flex items-center gap-2">
       <FolderOpen class="w-7 h-7" />
       {$t("files.title")}
     </h1>
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       <input bind:this={uploadInput} type="file" multiple class="hidden" on:change={handleUpload} />
       <!-- The span shows the tooltip: Button does not pass a title on. -->
       <span class="flex" title={$t("files.upload")}>
@@ -609,11 +615,11 @@
 
   <!-- File List -->
   <div class="flex-1 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-    <div class="grid grid-cols-[auto_1fr_100px_150px] gap-4 px-4 py-2 bg-slate-900/50 text-sm text-slate-400 border-b border-slate-700">
+    <div class="grid {columnsClass} gap-4 px-4 py-2 bg-slate-900/50 text-sm text-slate-400 border-b border-slate-700">
       <div class="w-6"></div>
       <div>{$t("files.column.name")}</div>
       <div>{$t("files.column.size")}</div>
-      <div>{$t("files.column.modified")}</div>
+      <div class="hidden sm:block">{$t("files.column.modified")}</div>
     </div>
 
     <div
@@ -627,13 +633,13 @@
         <button
           bind:this={upButton}
           on:click={goUp}
-          class="w-full grid grid-cols-[auto_1fr_100px_150px] gap-4 px-4 py-3 hover:bg-slate-700/50 items-center text-left border-b border-slate-700/50"
+          class="w-full grid {columnsClass} gap-4 px-4 py-3 hover:bg-slate-700/50 items-center text-left border-b border-slate-700/50"
           title={$t("files.up")}
         >
           <ArrowUp class="w-5 h-5 text-slate-400" />
           <span class="text-slate-400">..</span>
           <span></span>
-          <span></span>
+          <span class="hidden sm:block"></span>
         </button>
       {/if}
 
@@ -643,7 +649,7 @@
                opens it. From the keyboard, the checkbox selects and the name opens. -->
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
           <div
-            class="grid grid-cols-[auto_1fr_100px_150px] gap-4 px-4 py-3 hover:bg-slate-700/50 items-center border-b border-slate-700/50 cursor-pointer {selected.has(item.path) ? 'bg-blue-600/20' : ''}"
+            class="grid {columnsClass} gap-4 px-4 py-3 hover:bg-slate-700/50 items-center border-b border-slate-700/50 cursor-pointer {selected.has(item.path) ? 'bg-blue-600/20' : ''}"
             on:click={() => toggleSelect(item.path)}
             on:dblclick={() => handleOpen(item)}
           >
@@ -692,7 +698,7 @@
             <span class="text-sm text-slate-400">
               {item.type === "directory" ? "-" : formatSize(item.size, units)}
             </span>
-            <span class="text-sm text-slate-400">
+            <span class="hidden sm:block text-sm text-slate-400">
               {new Date(item.modified).toLocaleDateString($intlLocale)}
             </span>
           </div>

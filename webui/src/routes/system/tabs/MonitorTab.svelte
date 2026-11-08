@@ -162,26 +162,28 @@
         <Activity class="w-4 h-4" />
         {$t("monitor.processes")}
       </h3>
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="text-slate-400 text-xs">
-            <th class="text-left py-1">{$t("monitor.process.name")}</th>
-            <th class="text-right py-1">{$t("monitor.process.cpu")}</th>
-            <th class="text-right py-1">{$t("monitor.process.memory")}</th>
-            <th class="text-left py-1">{$t("monitor.process.user")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each currentStats.processes.slice(0, 8) as proc}
-            <tr class="border-t border-slate-700/50">
-              <td class="py-1.5 font-mono">{proc.name}</td>
-              <td class="py-1.5 text-right {getPercentColor(proc.cpu_percent)}">{percent(proc.cpu_percent)}</td>
-              <td class="py-1.5 text-right">{$t("monitor.size.mb", { value: proc.memory_mb.toFixed(0) })}</td>
-              <td class="py-1.5 text-slate-500">{proc.username}</td>
+      <div class="table-frame">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-slate-400 text-xs">
+              <th class="text-left py-1">{$t("monitor.process.name")}</th>
+              <th class="text-right py-1">{$t("monitor.process.cpu")}</th>
+              <th class="text-right py-1">{$t("monitor.process.memory")}</th>
+              <th class="text-left py-1">{$t("monitor.process.user")}</th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each currentStats.processes.slice(0, 8) as proc}
+              <tr class="border-t border-slate-700/50">
+                <td class="py-1.5 font-mono break-all">{proc.name}</td>
+                <td class="py-1.5 text-right {getPercentColor(proc.cpu_percent)}">{percent(proc.cpu_percent)}</td>
+                <td class="py-1.5 text-right">{$t("monitor.size.mb", { value: proc.memory_mb.toFixed(0) })}</td>
+                <td class="py-1.5 text-slate-500">{proc.username}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     </div>
   {/if}
 </div>

@@ -150,7 +150,7 @@
 		/>
 	{:else}
 		<Card>
-			<div class="overflow-x-auto">
+			<div class="table-frame">
 				<table class="table" aria-label={$t('containers.images.list')}>
 					<thead class="table-header">
 						<tr>

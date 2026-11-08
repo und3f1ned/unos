@@ -265,8 +265,8 @@
 
 <div class="space-y-4">
   <!-- Header -->
-  <div class="flex items-center justify-between">
-    <div class="flex items-center gap-3">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
       <h2 class="text-xl font-bold flex items-center gap-2">
         <FileText class="w-5 h-5 text-info" />
         {$t("logs.title")}
@@ -277,7 +277,7 @@
         </span>
       {/if}
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       <Button
         variant={autoRefresh ? "primary" : "secondary"}
         size="sm"
@@ -434,7 +434,7 @@
   {:else}
     <!-- Logs Display -->
     <Card>
-      <div class="flex items-center justify-between mb-3">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
         <span class="text-sm text-secondary">
           {#if loading}
             {$t("common.loading")}
@@ -464,8 +464,10 @@
               description={hasActiveFilters ? $t("logs.emptyFiltered") : $t("logs.emptySource")}
             />
           {:else}
-            <table class="w-full text-sm">
-              <thead class="sticky top-0 bg-surface-overlay border-b border-border">
+            <!-- Below sm each entry stacks: its time, level and program on a line, the message
+                 below them at the full width (ADR-0301). -->
+            <table class="w-full text-sm max-sm:block">
+              <thead class="sticky top-0 bg-surface-overlay border-b border-border max-sm:hidden">
                 <tr>
                   <th class="px-3 py-2 text-left text-secondary font-medium w-[160px]">{$t("logs.column.time")}</th>
                   <th class="px-3 py-2 text-left text-secondary font-medium w-[80px]">{$t("logs.column.level")}</th>
@@ -473,18 +475,20 @@
                   <th class="px-3 py-2 text-left text-secondary font-medium">{$t("logs.column.message")}</th>
                 </tr>
               </thead>
-              <tbody class="font-mono text-xs">
+              <tbody class="font-mono text-xs max-sm:block">
                 {#each entries as entry, i}
-                  <tr class="border-b border-border/50 hover:bg-surface-overlay/50 transition-colors">
-                    <td class="px-3 py-2 text-secondary whitespace-nowrap">
+                  <tr
+                    class="border-b border-border/50 hover:bg-surface-overlay/50 transition-colors max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-3 max-sm:py-2"
+                  >
+                    <td class="px-3 py-2 text-secondary whitespace-nowrap max-sm:p-0">
                       {formatTimestamp(entry.timestamp)}
                     </td>
-                    <td class="px-3 py-2">
+                    <td class="px-3 py-2 max-sm:p-0">
                       <Badge variant={getPriorityVariant(entry.priority)} class="text-xs">
                         {textOf(LEVELS, entry.priority)}
                       </Badge>
                     </td>
-                    <td class="px-3 py-2 text-secondary">
+                    <td class="px-3 py-2 text-secondary max-sm:p-0 max-sm:min-w-0">
                       {#if entry.unit}
                         <span class="truncate block max-w-[120px]" title={entry.unit}>
                           {entry.unit}
@@ -493,7 +497,7 @@
                         <span class="text-muted">-</span>
                       {/if}
                     </td>
-                    <td class="px-3 py-2 text-content">
+                    <td class="px-3 py-2 text-content max-sm:w-full max-sm:p-0 max-sm:pt-1">
                       <span class="break-all"
                         >{#each splitByMatch(entry.message ?? "", search) as part}{#if part.match}<mark
                               class="bg-status-warning/30 text-status-warning rounded-sm">{part.text}</mark

@@ -296,7 +296,9 @@ language chosen in it, the web UI starts in the browser's language, and the spec
 elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0287), and so
 do the tests of a translated area that check its pages in Russian, such as those of
 `tests/dashboard.spec.ts` and `tests/files.spec.ts` (the language kept in the browser's
-`localStorage` as `unos-locale`).
+`localStorage` as `unos-locale`). Its window is Playwright's Desktop Chrome, 1280 x 720;
+`tests/mobile-layout.spec.ts` sets a phone's 375 x 812 and checks that no page, tab or dialog
+scrolls sideways there, in both languages (ADR-0301).
 
 The stand-in is not a NAS host: it has no disks or pools that UNOS manages, no Docker, no Samba,
 and not the host's network, journal or `/proc`. With `E2E_STAND_IN=1`, the specs that need those

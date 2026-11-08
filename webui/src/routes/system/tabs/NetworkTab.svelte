@@ -465,7 +465,7 @@
   </div>
 
   <!-- Views -->
-  <div class="flex gap-2 border-b border-border pb-2">
+  <div class="flex flex-wrap gap-2 border-b border-border pb-2">
     {#each VIEWS as view (view.id)}
       <Button
         variant={activeTab === view.id ? "secondary" : "ghost"}
@@ -636,7 +636,7 @@
 
   <!-- Routes -->
   {#if activeTab === "routes"}
-    <div class="card overflow-x-auto">
+    <div class="card table-frame">
       <table class="table">
         <thead class="table-header">
           <tr>
@@ -671,7 +671,7 @@
         <span class="text-sm text-content-secondary">{$t("network.connections.count", { n: connections.length })}</span>
         <Button variant="ghost" size="sm" on:click={loadConnections}>{$t("network.connections.refresh")}</Button>
       </div>
-      <div class="max-h-96 overflow-y-auto px-3">
+      <div class="table-frame max-h-96 overflow-y-auto px-3">
         <table class="table">
           <thead class="table-header sticky top-0 bg-surface-elevated">
             <tr>

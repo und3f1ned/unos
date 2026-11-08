@@ -297,7 +297,7 @@
     </dl>
 
     {#if openDisk.attributes.length > 0}
-      <div class="overflow-x-auto mt-6">
+      <div class="table-frame mt-6">
         <table class="table">
           <caption class="sr-only">{$t("health.attributes")}</caption>
           <thead class="table-header">
@@ -328,7 +328,7 @@
         </table>
       </div>
     {:else if openDisk.nvme_health}
-      <div class="overflow-x-auto mt-6">
+      <div class="table-frame mt-6">
         <table class="table">
           <caption class="sr-only">{$t("health.nvmeLog")}</caption>
           <thead class="table-header">

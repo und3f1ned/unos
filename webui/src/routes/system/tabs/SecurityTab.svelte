@@ -513,14 +513,14 @@
       </div>
     {/if}
 
-    <div class="flex items-center justify-between">
+    <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <p class="font-medium">{$t("account.totp.app")}</p>
         <p class="text-sm text-slate-400">
           {$t("account.totp.appHint")}
         </p>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-3">
         {#if !totpStatusLoaded}
           {#if !totpStatusError}
             <span class="text-sm text-content-muted">{$t("common.loading")}</span>
@@ -699,12 +699,12 @@
   {#if isAdmin}
   <!-- Firewall -->
   <div class="bg-slate-800 rounded-lg p-4">
-    <div class="flex items-center justify-between mb-4">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <Flame class="w-5 h-5" />
         {$t("account.firewall.title")}
       </h3>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         {#if firewallStatus}
           {#if firewallStatus.enabled}
             <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
@@ -747,7 +747,7 @@
 
     {#if showFirewallModal && firewallStatus}
       <div class="mt-4 space-y-4">
-        <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
+        <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg">
           <div>
             <p class="font-medium">{$t("account.firewall.status")}</p>
             <p class="text-sm text-slate-400">
@@ -757,7 +757,7 @@
               })}
             </p>
           </div>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
             <button
               on:click={toggleFirewall}
               disabled={firewallLoading}
@@ -776,7 +776,7 @@
           </div>
         </div>
 
-        <div class="flex justify-between items-center">
+        <div class="flex flex-wrap justify-between items-center gap-2">
           <h4 class="font-medium">{$t("account.firewall.rules")}</h4>
           <button
             on:click={() => showAddRuleModal = true}
@@ -792,12 +792,12 @@
         {:else}
           <div class="space-y-2">
             {#each firewallStatus.rules as rule}
-              <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
-                <div class="flex items-center gap-3">
+              <div class="flex items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
                   <span class="px-2 py-1 rounded text-xs font-medium uppercase {rule.action === 'allow' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
                     {labelOf(RULE_ACTIONS, rule.action)}
                   </span>
-                  <div>
+                  <div class="min-w-0 break-words">
                     <p class="font-medium">{rule.name}</p>
                     <p class="text-sm text-slate-400">
                       {labelOf(RULE_DIRECTIONS, rule.direction)} | {labelOf(RULE_PROTOCOLS, rule.protocol)} |
@@ -822,12 +822,12 @@
 
   <!-- SSL/TLS Certificates -->
   <div class="bg-slate-800 rounded-lg p-4">
-    <div class="flex items-center justify-between mb-4">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <FileKey class="w-5 h-5" />
         {$t("account.certs.title")}
       </h3>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         {#if certStatus}
           {#if certStatus.has_certificate && certStatus.is_valid}
             <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
@@ -876,8 +876,8 @@
       <div class="mt-4 space-y-4">
         {#if certStatus?.has_certificate}
           <div class="p-3 bg-slate-700 rounded-lg">
-            <div class="flex items-center justify-between">
-              <div>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="min-w-0 break-words">
                 <p class="font-medium">{certStatus.domain || $t("account.certs.certificate")}</p>
                 <p class="text-sm text-slate-400">
                   {$t("account.certs.type", {
@@ -895,7 +895,7 @@
           </div>
         {/if}
 
-        <div class="flex justify-between items-center">
+        <div class="flex flex-wrap justify-between items-center gap-2">
           <h4 class="font-medium">{$t("account.certs.all")}</h4>
           <button
             on:click={() => showGenCertModal = true}
@@ -911,12 +911,12 @@
         {:else}
           <div class="space-y-2">
             {#each certificates as cert}
-              <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
-                <div class="flex items-center gap-3">
+              <div class="flex items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
                   <span class="px-2 py-1 rounded text-xs font-medium {cert.is_valid ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
                     {cert.is_valid ? $t("account.certs.validBadge") : $t("account.certs.expiredBadge")}
                   </span>
-                  <div>
+                  <div class="min-w-0 break-words">
                     <p class="font-medium">{cert.domain}</p>
                     <p class="text-sm text-slate-400">
                       {labelOf(CERTIFICATE_TYPES, cert.type)} |
@@ -945,7 +945,7 @@
 
   <!-- Login History -->
   <div class="bg-slate-800 rounded-lg p-4">
-    <div class="flex items-center justify-between mb-4">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <History class="w-5 h-5" />
         {$t("account.history.title")}

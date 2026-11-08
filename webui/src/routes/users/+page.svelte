@@ -413,7 +413,7 @@
 				{#if users.length === 0}
 					<p class="text-muted">{$t('users.empty')}</p>
 				{:else}
-					<div class="overflow-x-auto">
+					<div class="table-frame">
 						<table class="table">
 							<thead class="table-header">
 								<tr>

@@ -2837,10 +2837,15 @@
         "On a 375 px wide screen every page is usable without horizontal scrolling",
         "The navigation folds into a menu"
       ],
-      "passes": false,
+      "passes": true,
+      "verified_by": [
+        "webui/tests/mobile-layout.spec.ts"
+      ],
       "adr": [
-        "ADR-0023"
-      ]
+        "ADR-0023",
+        "ADR-0301"
+      ],
+      "notes": "webui/tests/mobile-layout.spec.ts proves both steps on the local stand-in at 375 x 812, in English and in Russian: every page of the navigation, every tab of System, the views behind the tabs of Shares, Containers, the App Store and System > Network, the main dialogs, a regular user's Account page, sign-in and first run fit the width of the screen (only a table scrolls, inside its table-frame), and the menu opens and closes with the mouse and the keyboard (ADR-0301). No step changes the host: no device check is needed."
     },
     {
       "id": "webui.translations",

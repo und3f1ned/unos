@@ -65,6 +65,16 @@ The UNOS interface consists of:
   [User Roles](#user-roles)).
 - **Main Content** - Current page content
 
+On a phone, or in a window narrower than 768 pixels, a bar at the top replaces
+the sidebar: its menu button (☰) opens the navigation, with your account and
+**Logout**, over the page. Choosing a page, pressing Escape or tapping beside
+the menu closes it. Every page fits a screen 375 pixels wide: buttons move to
+the next line where a row has no room, **System**'s tabs are listed above the
+open tab, and a wide table, such as the list of disks or of users, scrolls
+sideways on its own while the page stays put. Narrower than 640 pixels, the
+File Browser leaves out the **Modified** column, and each entry of **System
+Logs** shows its time, level and program above the message.
+
 ### Language
 
 The web interface is in English or Russian. Choose the language on the **Account**

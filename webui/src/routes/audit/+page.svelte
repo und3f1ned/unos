@@ -278,7 +278,7 @@
 <div class="page-container">
 	<div class="page-header">
 		<h1 class="page-title">{$t('audit.title')}</h1>
-		<div class="flex items-center gap-2">
+		<div class="flex flex-wrap items-center gap-2">
 			<Button
 				variant="secondary"
 				icon={Download}

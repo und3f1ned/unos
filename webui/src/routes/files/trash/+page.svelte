@@ -169,7 +169,7 @@
       <Trash class="w-7 h-7" />
       {$t("files.trash.title")}
     </h1>
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       <Button variant="secondary" icon={ArrowLeft} href="/files">{$t("files.trash.files")}</Button>
       <!-- The span shows the tooltip: Button does not pass a title on. -->
       <span class="flex" title={$t("common.refresh")}>
@@ -238,7 +238,7 @@
     {:else if items.length === 0}
       <EmptyState icon={Trash} title={$t("files.trash.emptyTitle")} description={$t("files.trash.emptyHint")} />
     {:else}
-      <div class="overflow-x-auto">
+      <div class="table-frame">
         <table class="table" aria-label={$t("files.trash.items")}>
           <thead class="table-header">
             <tr>

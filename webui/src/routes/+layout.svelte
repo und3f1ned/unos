@@ -1,7 +1,9 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { readable } from 'svelte/store';
+	import { browser } from '$app/environment';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { navigating, page } from '$app/stores';
 	import {
 		user,
@@ -33,7 +35,9 @@
 		Wrench,
 		Archive,
 		UserCog,
-		ScrollText
+		ScrollText,
+		Menu,
+		X
 	} from 'lucide-svelte';
 
 	// Reactive: the labels follow the language of the page.
@@ -152,72 +156,161 @@
 		if (target === '/') return currentPath === '/';
 		return currentPath === target || currentPath.startsWith(target + '/');
 	}
+
+	// Below Tailwind's md breakpoint the sidebar's logo row is the header bar, and the rest of the
+	// sidebar is a drawer under it that the menu button opens (ADR-0301). Escape and a click
+	// outside it close it and give the focus back to the button; a link closes it, and the
+	// navigation moves the focus to the new page.
+	// The button exists only below md, the same 768 px as the md: classes of the markup: from md
+	// up the sidebar is the one it was, its first button Logout.
+	const narrow = readable(false, (set) => {
+		if (!browser) return;
+		// i18n-ignore: a CSS media query, the same in every language
+		const query = window.matchMedia('(max-width: 767.98px)');
+		const update = () => set(query.matches);
+		update();
+		query.addEventListener('change', update);
+		return () => query.removeEventListener('change', update);
+	});
+	let menuOpen = false;
+	let menuButton: HTMLButtonElement | null = null;
+	let sidebar: HTMLElement;
+
+	// A window that grows past md leaves the drawer closed.
+	$: if (!$narrow) menuOpen = false;
+
+	function closeMenu(focusButton: boolean) {
+		menuOpen = false;
+		if (focusButton) menuButton?.focus();
+	}
+
+	function handleMenuKeydown(event: KeyboardEvent) {
+		// A key that an open dialog has used (Modal marks its Escape) is not the menu's.
+		if (!menuOpen || event.key !== 'Escape' || event.defaultPrevented) return;
+		event.preventDefault();
+		closeMenu(true);
+	}
+
+	function handleOutsideClick(event: MouseEvent) {
+		if (!menuOpen) return;
+		// The path as it was when the click happened: the button's icon that was clicked has been
+		// replaced by the time the click reaches the window.
+		const path = event.composedPath();
+		if (path.includes(sidebar) || (menuButton && path.includes(menuButton))) return;
+		closeMenu(true);
+	}
+
+	// Tabbing out of the drawer closes it, so that it never covers the element with the focus.
+	function handleSidebarFocusOut(event: FocusEvent) {
+		const next = event.relatedTarget;
+		if (!menuOpen || !(next instanceof Node)) return;
+		if (sidebar.contains(next) || menuButton?.contains(next)) return;
+		closeMenu(false);
+	}
+
+	// Also after Back and Forward, which change the page without a link of the menu.
+	afterNavigate(() => {
+		menuOpen = false;
+	});
 </script>
+
+<svelte:window on:keydown={handleMenuKeydown} on:click={handleOutsideClick} />
 
 {#if gate === 'public'}
 	{#if showSlot}
 		<slot />
 	{/if}
 {:else}
-	<div class="flex h-screen bg-surface">
-		<!-- Sidebar -->
-		<aside class="w-56 bg-surface-elevated flex flex-col border-r border-border">
+	<div class="flex flex-col md:flex-row h-dvh bg-surface">
+		<!-- Sidebar. Below md its logo row is the header bar, with the menu button, and the rest of
+		     it is the drawer that the button opens over the page (ADR-0301). -->
+		<aside class="shrink-0 md:w-56 bg-surface-elevated flex flex-col md:border-r border-border">
 			<!-- Logo -->
-			<div class="p-4 border-b border-border">
-				<div class="flex items-center gap-2">
-					<Server class="w-7 h-7 text-blue-500" />
-					<span class="text-lg font-bold text-content">{$t('common.product')}</span>
-				</div>
+			<div class="flex items-center gap-2 h-14 px-2 md:h-auto md:p-4 border-b border-border">
+				{#if $narrow}
+					<button
+						bind:this={menuButton}
+						type="button"
+						class="btn btn-ghost btn-icon"
+						aria-label={$t('layout.menu')}
+						aria-expanded={menuOpen}
+						aria-controls="layout-sidebar"
+						on:click={() => (menuOpen = !menuOpen)}
+					>
+						{#if menuOpen}
+							<X class="w-5 h-5" />
+						{:else}
+							<Menu class="w-5 h-5" />
+						{/if}
+					</button>
+				{/if}
+				<Server class="w-7 h-7 text-blue-500" />
+				<span class="text-lg font-bold text-content">{$t('common.product')}</span>
 			</div>
 
-			<!-- Navigation -->
-			<nav class="flex-1 p-3 overflow-y-auto scrollbar-thin">
-				<ul class="space-y-1">
-					{#each navItems as item (item.href)}
-						<li>
-							<a
-								href={item.href}
-								class="nav-item {isActive(item.href, pathname)
-									? 'nav-item-active'
-									: 'nav-item-inactive'}"
-							>
-								<svelte:component this={item.icon} class="w-5 h-5" />
-								{item.label}
-							</a>
-						</li>
-					{/each}
-				</ul>
-			</nav>
+			{#if menuOpen}
+				<!-- Covers the page beside the drawer: a click on it reaches handleOutsideClick only. -->
+				<div class="md:hidden fixed inset-x-0 top-14 bottom-0 z-30 bg-black/50" role="presentation"></div>
+			{/if}
 
-			<!-- User section -->
-			<div class="p-3 border-t border-border">
-				{#if $user}
-					<div class="flex items-center justify-between">
-						<div class="flex items-center gap-2 min-w-0">
-							<div
-								class="w-8 h-8 rounded-full bg-surface-overlay flex items-center justify-center text-sm font-medium text-content"
+			<div
+				id="layout-sidebar"
+				bind:this={sidebar}
+				on:focusout={handleSidebarFocusOut}
+				class="{menuOpen
+					? 'flex'
+					: 'hidden'} md:flex flex-1 min-h-0 flex-col fixed md:static top-14 bottom-0 left-0 z-40 w-64 md:w-auto bg-surface-elevated border-r md:border-r-0 border-border"
+			>
+				<!-- Navigation -->
+				<nav class="flex-1 p-3 overflow-y-auto scrollbar-thin">
+					<ul class="space-y-1">
+						{#each navItems as item (item.href)}
+							<li>
+								<a
+									href={item.href}
+									on:click={() => closeMenu(false)}
+									class="nav-item {isActive(item.href, pathname)
+										? 'nav-item-active'
+										: 'nav-item-inactive'}"
+								>
+									<svelte:component this={item.icon} class="w-5 h-5" />
+									{item.label}
+								</a>
+							</li>
+						{/each}
+					</ul>
+				</nav>
+
+				<!-- User section -->
+				<div class="p-3 border-t border-border">
+					{#if $user}
+						<div class="flex items-center justify-between">
+							<div class="flex items-center gap-2 min-w-0">
+								<div
+									class="w-8 h-8 rounded-full bg-surface-overlay flex items-center justify-center text-sm font-medium text-content"
+								>
+									{$user.username.charAt(0).toUpperCase()}
+								</div>
+								<div class="min-w-0">
+									<p class="text-sm text-content-secondary truncate">{$user.username}</p>
+									<p class="text-xs text-muted">{$user.is_admin ? $t('layout.role.admin') : $t('layout.role.user')}</p>
+								</div>
+							</div>
+							<button
+								on:click={handleLogout}
+								class="btn btn-ghost btn-icon-sm"
+								title={$t('layout.logout')}
 							>
-								{$user.username.charAt(0).toUpperCase()}
-							</div>
-							<div class="min-w-0">
-								<p class="text-sm text-content-secondary truncate">{$user.username}</p>
-								<p class="text-xs text-muted">{$user.is_admin ? $t('layout.role.admin') : $t('layout.role.user')}</p>
-							</div>
+								<LogOut class="w-4 h-4" />
+							</button>
 						</div>
-						<button
-							on:click={handleLogout}
-							class="btn btn-ghost btn-icon-sm"
-							title={$t('layout.logout')}
-						>
-							<LogOut class="w-4 h-4" />
-						</button>
-					</div>
-				{/if}
+					{/if}
+				</div>
 			</div>
 		</aside>
 
 		<!-- Main content -->
-		<main class="flex-1 overflow-auto bg-surface p-6 scrollbar-thin">
+		<main class="flex-1 overflow-auto bg-surface p-4 md:p-6 scrollbar-thin">
 			{#if gate === 'allowed' && showSlot}
 				<slot />
 			{:else if userLoadError}

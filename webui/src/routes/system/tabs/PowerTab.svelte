@@ -233,7 +233,7 @@
     {:else if interfaces.length === 0}
       <EmptyState icon={Network} title={$t("power.wol.none")} />
     {:else}
-      <div class="overflow-x-auto">
+      <div class="table-frame">
         <table class="table">
           <thead class="table-header">
             <tr>

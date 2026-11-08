@@ -16,7 +16,12 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `icon-temperature`.
 - Layout uses the classes of `src/app.css`: `page-container`, `page-header`, `page-title`,
   `section-title`, `card`, `card-header`, `card-title`, `card-nested`, `table`, `table-header`,
-  `table-row`.
+  `table-row`, `table-frame`.
+- Every page fits a 375 px phone (ADR-0301): below `md` the sidebar is the drawer of the header
+  bar's menu button. The page never scrolls sideways: a table that can be wider than the screen
+  sits in a `table-frame` and scrolls inside it, rows of buttons wrap (`flex-wrap`), long names
+  and paths break. `tests/mobile-layout.spec.ts` walks every page, tab and main dialog at 375 x 812
+  in both languages: a new page, tab or dialog joins its `VIEWS`.
 - Older pages still have raw `<button>` elements and `slate-*` colours: markup you write or
   change uses the components and the tokens.
 

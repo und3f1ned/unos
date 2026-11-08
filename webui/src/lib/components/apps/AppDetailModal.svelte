@@ -444,8 +444,8 @@
 			<AppStorageWarning app={installedApp} class="mb-4" />
 		{/if}
 
-		<!-- Tabs -->
-		<div class="flex border-b border-border -mx-6 px-6 mb-4">
+		<!-- Tabs: they wrap on a narrow screen (ADR-0301) -->
+		<div class="flex flex-wrap border-b border-border -mx-6 px-6 mb-4">
 			<button
 				class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
 				'overview'
