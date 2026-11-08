@@ -223,6 +223,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- The web interface works on a phone: below 768 px a menu button in the top
+  bar opens the navigation, and every page, tab and dialog fits a 375 px wide
+  screen without scrolling sideways. Wide tables scroll on their own, and a
+  dialog taller than the screen scrolls to its buttons.
 - NFS exports reach the host: UNOS writes its own file
   `/etc/exports.d/unos.exports`, runs `exportfs -ra` on the host, lists every
   export of every export file and changes only its own lines. An export is a
@@ -392,6 +396,9 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- On a narrow screen the System tabs are listed above the open tab, the file
+  manager leaves out the Modified column and scrolls as a whole page, and
+  System → Logs shows each entry's time, level and program above its message.
 - New folders and uploads of the file manager in a share folder get 2770 and
   0660 with the group unos-smb, so the share's SMB users can change them at
   once.
@@ -599,6 +606,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   which is restored.
 
 ### Fixed
+- The file manager no longer cuts off the last entries of a long folder: its
+  list ends at the bottom of the window.
+- The dialogs of System → Security for two-factor authentication, a firewall
+  rule and a certificate, and the restore dialog of System → Backup, scroll
+  when they are taller than the window, so that their title and buttons can be
+  reached.
+- On a narrow screen a long name no longer pushes an error message, an app's
+  image name in the App Store or the sign-in history of System → Security
+  beyond the screen, and the Add SMB share dialog no longer scrolls on past its
+  end.
 - A btrfs or smartctl command that hangs in the kernel no longer holds a
   worker thread after its timeout.
 - Unmounting or removing a pool works on hosts whose sandboxed systemd

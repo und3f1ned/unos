@@ -110,10 +110,10 @@ A denial by the guard or the permission system is an answer: ask the owner how t
   firmware and is never written (ADR-0214, ADR-0225). Reach the device only through `scripts/dev/`
   (ADR-0016), scratch files in its `/dev/shm`. `deploy.sh`, `linux-tests.sh` and `ipv6-filter.sh`
   (install, remove) hold the device lock (ADR-0210) and print `SD writes`; `sd.sh measure`
-  measures any command. Builds, `up` and
-  `rollback` go through `deploy.sh`, on the owner's request (ADR-0223). Container runs, image pulls,
-  prunes, package installs and reboots on the device are owner actions (ADR-0211). Enforced by the
-  guard, which also blocks disk-wiping tools everywhere (`supervisor/tests/test_agent_guard.py`).
+  measures any command. Builds, `up` and `rollback` go through `deploy.sh`, on the owner's request
+  (ADR-0223). Container runs, image pulls, prunes, package installs and reboots on the device are
+  owner actions (ADR-0211). Enforced by the guard, which also blocks disk-wiping tools everywhere
+  (`supervisor/tests/test_agent_guard.py`).
 - Secrets live in `dev.env`, read only by the scripts (ADR-0212), and `tmp/dev/backup` holds the
   device's JWT secret, password hashes and database, read only by `deploy.sh rollback` (ADR-0223).
   Neither is ever shown or extracted, the main checkout's copy from a worktree included. Passwords
