@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { HardDrive, Database } from 'lucide-svelte';
 	import { Card, Badge, ProgressBar } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 
 	export let pools: Array<{
 		name: string;
@@ -19,46 +20,56 @@
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'orange' | 'neutral';
 
-	const healthBadges: Record<string, { variant: BadgeVariant; label: string }> = {
-		healthy: { variant: 'success', label: 'Healthy' },
-		degraded: { variant: 'warning', label: 'Degraded' },
-		unmounted: { variant: 'orange', label: 'Not mounted' },
-		error: { variant: 'error', label: 'Error' },
-		unknown: { variant: 'neutral', label: 'Unknown' }
+	// The badge of each health that GET /storage/pools reports: its variant and its label, a key of
+	// the catalog.
+	const healthBadges: Record<string, { variant: BadgeVariant; key: string }> = {
+		healthy: { variant: 'success', key: 'dashboard.health.healthy' },
+		degraded: { variant: 'warning', key: 'dashboard.health.degraded' },
+		unmounted: { variant: 'orange', key: 'dashboard.health.unmounted' },
+		error: { variant: 'error', key: 'dashboard.health.error' },
+		unknown: { variant: 'neutral', key: 'common.unknown' }
 	};
 
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
+	// The units of a size, from bytes up: keys of the catalog (ADR-0297).
+	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
+
+	$: formatBytes = (bytes: number): string => {
+		if (bytes === 0) return `0 ${$t(UNITS[0])}`;
 		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
 		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-	}
+		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + $t(UNITS[i]);
+	};
 
 	function getUsagePercent(used: number, size: number): number {
 		return size > 0 ? (used / size) * 100 : 0;
 	}
 
-	function getHealthBadge(health: string): { variant: BadgeVariant; label: string } {
-		return healthBadges[health?.toLowerCase()] ?? { variant: 'error', label: health || 'Unknown' };
-	}
+	// A health without a badge of its own is an error, shown as the server reports it.
+	$: getHealthBadge = (health: string): { variant: BadgeVariant; label: string } => {
+		const value = health?.toLowerCase();
+		if (Object.prototype.hasOwnProperty.call(healthBadges, value)) {
+			const { variant, key } = healthBadges[value];
+			return { variant, label: $t(key) };
+		}
+		return { variant: 'error', label: health || $t('common.unknown') };
+	};
 
 	function isMounted(pool: (typeof pools)[number]): boolean {
 		return pool.mounted ?? pool.health !== 'unmounted';
 	}
 
-	function problems(pool: (typeof pools)[number]): string[] {
+	$: problems = (pool: (typeof pools)[number]): string[] => {
 		const list: string[] = [];
 		if (pool.missingDevices) {
-			list.push(`${pool.missingDevices} device${pool.missingDevices === 1 ? '' : 's'} missing`);
+			list.push($t('dashboard.storage.missing', { n: pool.missingDevices }));
 		}
 		if (pool.deviceErrors) {
-			list.push(`${pool.deviceErrors} device error${pool.deviceErrors === 1 ? '' : 's'}`);
+			list.push($t('dashboard.storage.errors', { n: pool.deviceErrors }));
 		}
-		if (pool.forcedReadOnly) list.push('forced read-only');
-		else if (pool.readOnly) list.push('read-only');
+		if (pool.forcedReadOnly) list.push($t('dashboard.storage.forcedReadOnly'));
+		else if (pool.readOnly) list.push($t('dashboard.storage.readOnly'));
 		return list;
-	}
+	};
 
 	// Only a healthy pool mounted read-only on purpose is a warning; the rest are errors.
 	function isWarning(pool: (typeof pools)[number]): boolean {
@@ -76,12 +87,12 @@
 {#if compact}
 	<div class="flex items-center gap-2 text-sm">
 		<Database class="w-4 h-4 icon-storage" />
-		<span>{pools.length} pool{pools.length !== 1 ? 's' : ''}</span>
+		<span>{$t('dashboard.storage.pools', { n: pools.length })}</span>
 		<span class="text-muted">•</span>
 		<span>{formatBytes(totalUsed)} / {formatBytes(totalSize)}</span>
 		{#if problemCount > 0}
 			<span class="text-muted">•</span>
-			<span class="text-warning">{problemCount} need{problemCount === 1 ? 's' : ''} attention</span>
+			<span class="text-warning">{$t('dashboard.storage.attention', { n: problemCount })}</span>
 		{/if}
 	</div>
 {:else}
@@ -89,15 +100,15 @@
 		<div class="card-header">
 			<h3 class="card-title">
 				<HardDrive class="w-5 h-5 icon-storage" />
-				Storage Pools
+				{$t('dashboard.storage.title')}
 			</h3>
 			<a href="/storage" class="text-sm text-info hover:text-blue-300 transition-colors"
-				>Manage →</a
+				>{$t('dashboard.manage')}</a
 			>
 		</div>
 
 		{#if pools.length === 0}
-			<p class="text-secondary text-sm">No storage pools configured</p>
+			<p class="text-secondary text-sm">{$t('dashboard.storage.none')}</p>
 		{:else}
 			<div class="space-y-3">
 				{#each pools as pool}
@@ -115,7 +126,7 @@
 									>{formatBytes(pool.used)} / {formatBytes(pool.size)}</span
 								>
 							{:else}
-								<span class="text-sm text-muted">Data not accessible</span>
+								<span class="text-sm text-muted">{$t('dashboard.storage.inaccessible')}</span>
 							{/if}
 						</div>
 						{#if mounted}
@@ -133,7 +144,7 @@
 			<!-- Total -->
 			<div class="mt-4 pt-3 border-t border-border">
 				<div class="flex items-center justify-between text-sm">
-					<span class="text-secondary">Total Storage</span>
+					<span class="text-secondary">{$t('dashboard.storage.total')}</span>
 					<span
 						>{formatBytes(totalUsed)} / {formatBytes(totalSize)} ({totalPercent.toFixed(
 							1

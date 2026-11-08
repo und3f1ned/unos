@@ -168,7 +168,7 @@ export interface FakeNfsUnreadable {
 
 export interface SharePathInfo {
   path: string;
-  /** The pool's name, or pool/volume: the page adds the kind, "tank (Pool)" (ADR-0295). */
+  /** The pool's name, or pool/volume: the page adds the kind, "tank (Pool)" (ADR-0298). */
   name: string;
   type: 'pool' | 'volume';
   /** Its pool is one that UNOS manages: only such locations can hold SMB shares. */

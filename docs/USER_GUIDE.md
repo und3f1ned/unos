@@ -76,12 +76,14 @@ Russian, and in English otherwise. Dates and times follow the language: in the
 browser's own format when the browser is set to that language, otherwise with the
 day first and a 24-hour clock.
 
-So far the navigation, the login and first-run setup pages, the **Account**
-page, the **Containers** page, the **App Store** and the **Shares** page (SMB
-shares and NFS exports, with their dialogs) are translated; the other pages are
-still in English. Messages from the server, such as the reason an action was
-refused, stay in English: on the **Shares** page also a share's import notes
-and the reason a share is not served.
+So far the navigation, the login and first-run setup pages, the **Dashboard**,
+the **File Browser** with its **Trash**, the **Account** page, the
+**Containers** page, the **App Store** and the **Shares** page (SMB shares and
+NFS exports, with their dialogs) are translated; the other pages are still in
+English. Messages from the server, such as the reason an action was refused or
+a disk's risk factors, stay in English, and so do the titles and messages of
+notifications and, on the **Shares** page, a share's import notes and the
+reason a share is not served.
 
 ---
 

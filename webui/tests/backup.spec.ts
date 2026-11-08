@@ -168,3 +168,126 @@ test.describe('Backup errors', () => {
     await expect(dialog.getByText(detail, { exact: true })).toBeVisible();
   });
 });
+
+// The tab in Russian (feature webui.translations, ADR-0287), with the backup API faked as above:
+// its texts, a backup's date and size, the server's words and the restore dialog follow the
+// language; the server's message stays as it comes.
+test.describe('Backup & Restore in Russian', () => {
+  const row = (page: Page, filename: string) =>
+    page.locator('div.justify-between').filter({ has: page.getByText(filename, { exact: true }) });
+
+  test('the tab, an error and the restore dialog are in Russian', async ({ authenticatedPage: page }) => {
+    const detail = 'Failed to create backup: [Errno 28] No space left on device';
+    // As the server lists an encrypted backup: the version of its format is not known before it
+    // is decrypted. 1.46 MiB, for the decimal separator of its size.
+    const encrypted = {
+      ...FAKE_BACKUP,
+      filename: 'e2e_fake_backup.tar.gz.enc',
+      size: 1536000,
+      version: 'unknown',
+      encrypted: true,
+    };
+    await failBackupApi(page, 'POST', '/create', detail, [FAKE_BACKUP, encrypted]);
+
+    // In English, the server's "unknown" is a text, not a version.
+    await openBackupTab(page);
+    await expect(row(page, FAKE_BACKUP.filename).getByText(/v1\.0/)).toBeVisible();
+    await expect(row(page, encrypted.filename).getByText(/version unknown/)).toBeVisible();
+    await expect(row(page, encrypted.filename).getByText('encrypted', { exact: true })).toBeVisible();
+    // The sizes, 2048 bytes and 1536000 bytes, as before the catalogs.
+    await expect(row(page, FAKE_BACKUP.filename).getByText(/(^|\s)2 KB(\s|$)/)).toBeVisible();
+    await expect(row(page, encrypted.filename).getByText(/(^|\s)1\.46 MB(\s|$)/)).toBeVisible();
+
+    // As the Language card of the Account page leaves it.
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.reload();
+    await expect(
+      page.getByRole('heading', { name: 'Резервное копирование и восстановление', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Backup and Restore' })).toHaveCount(0);
+    // A backup's date (made at 03:04:05 on 2 January, local time) in the Russian format, its size
+    // in Russian units with the Russian decimal separator, and the version of its format; an
+    // encrypted one is marked so.
+    await expect(row(page, FAKE_BACKUP.filename).getByText(/02\.01\.2026, 03:04:05/)).toBeVisible();
+    await expect(row(page, FAKE_BACKUP.filename).getByText(/(^|\s)2 КБ(\s|$)/)).toBeVisible();
+    await expect(row(page, encrypted.filename).getByText(/(^|\s)1,46 МБ(\s|$)/)).toBeVisible();
+    await expect(row(page, FAKE_BACKUP.filename).getByText(/версия 1\.0/)).toBeVisible();
+    await expect(row(page, encrypted.filename).getByText(/версия неизвестна/)).toBeVisible();
+    await expect(row(page, encrypted.filename).getByText('зашифрована', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Создать резервную копию', exact: true }).click();
+    const alert = page.locator('.alert-error');
+    await expect(alert.getByText('Не удалось создать резервную копию', { exact: true })).toBeVisible();
+    await expect(alert).toContainText(detail);
+    await alert.getByRole('button', { name: 'Закрыть' }).click();
+    await expect(alert).toHaveCount(0);
+
+    await page.getByRole('button', { name: `Восстановить ${encrypted.filename}`, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Восстановление из резервной копии' });
+    await expect(dialog.getByText('Внимание: текущие настройки будут перезаписаны, в том числе:')).toBeVisible();
+    await expect(dialog.getByLabel('Парольная фраза зашифрованной резервной копии')).toBeVisible();
+    await dialog.getByLabel('Для подтверждения введите имя файла резервной копии:').fill(encrypted.filename);
+    await expect(dialog.getByRole('button', { name: 'Восстановить', exact: true })).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test('a restore that succeeds names what it restored in the language of the page', async ({
+    authenticatedPage: page,
+  }) => {
+    // As the server answers a restore that replaced the database and rendered smb.conf from it
+    // (POST /backup/restore/<file>): the items by their names, and its message in English.
+    const message = 'Backup restored: database, smb_config.';
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/backup/'),
+      (route: Route) => {
+        const request = route.request();
+        const requested = new URL(request.url()).pathname.slice('/api/v1/backup'.length);
+        if (request.method() === 'GET' && requested === '/list') {
+          return route.fulfill({ json: { backups: [FAKE_BACKUP] } });
+        }
+        if (request.method() === 'POST' && requested === `/restore/${FAKE_BACKUP.filename}`) {
+          return route.fulfill({
+            json: {
+              status: 'success',
+              restored: ['database', 'smb_config'],
+              manifest: { version: FAKE_BACKUP.version, created: FAKE_BACKUP.created, hostname: 'e2e-nas', encrypted: false },
+              message,
+              warnings: [],
+              previous_database: '/data/unos.db.pre-restore-20260102_030500_000000',
+            },
+          });
+        }
+        return route.abort();
+      },
+    );
+
+    // In English, the items as the server names them.
+    await openBackupTab(page);
+    await page.getByRole('button', { name: `Restore ${FAKE_BACKUP.filename}` }).click();
+    let dialog = page.getByRole('dialog', { name: 'Restore backup' });
+    await dialog.getByLabel('Type the backup filename to confirm:').fill(FAKE_BACKUP.filename);
+    await dialog.getByRole('button', { name: 'Restore', exact: true }).click();
+    await expect(dialog.getByText('Restore Complete', { exact: true })).toBeVisible();
+    await expect(dialog.getByText(message, { exact: true })).toBeVisible();
+    await expect(dialog.getByText('Restored items:', { exact: true })).toBeVisible();
+    await expect(dialog.locator('li')).toHaveText(['- database', '- smb_config']);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // As the Language card of the Account page leaves it.
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.reload();
+    await page.getByRole('button', { name: `Восстановить ${FAKE_BACKUP.filename}`, exact: true }).click();
+    dialog = page.getByRole('dialog', { name: 'Восстановление из резервной копии' });
+    await dialog.getByLabel('Для подтверждения введите имя файла резервной копии:').fill(FAKE_BACKUP.filename);
+    await dialog.getByRole('button', { name: 'Восстановить', exact: true }).click();
+    await expect(dialog.getByText('Восстановление завершено', { exact: true })).toBeVisible();
+    // The server's message stays as it comes.
+    await expect(dialog.getByText(message, { exact: true })).toBeVisible();
+    await expect(dialog.getByText('Восстановлено:', { exact: true })).toBeVisible();
+    await expect(dialog.locator('li')).toHaveText(['- база данных', '- настройки SMB']);
+    await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+});

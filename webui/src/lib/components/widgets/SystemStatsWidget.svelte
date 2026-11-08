@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Cpu, MemoryStick, Network, Thermometer } from 'lucide-svelte';
 	import { Card, ProgressBar } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 
 	export let cpuPercent: number = 0;
 	export let memoryPercent: number = 0;
@@ -11,17 +12,17 @@
 	export let temperature: number | null = null;
 	export let compact: boolean = false;
 
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
-		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-	}
+	// The units of a size, from bytes up: keys of the catalog (ADR-0297).
+	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
 
-	function formatRate(bytes: number): string {
-		return formatBytes(bytes) + '/s';
-	}
+	$: formatBytes = (bytes: number): string => {
+		if (bytes === 0) return `0 ${$t(UNITS[0])}`;
+		const k = 1024;
+		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + $t(UNITS[i]);
+	};
+
+	$: formatRate = (bytes: number): string => $t('dashboard.rate', { size: formatBytes(bytes) });
 
 	function getPercentColor(percent: number): string {
 		if (percent < 70) return 'text-success';
@@ -49,7 +50,7 @@
 		{#if temperature !== null}
 			<div class="flex items-center gap-1">
 				<Thermometer class="w-4 h-4 icon-temperature" />
-				<span class={getTempColor(temperature)}>{temperature}°C</span>
+				<span class={getTempColor(temperature)}>{$t('dashboard.celsius', { value: temperature })}</span>
 			</div>
 		{/if}
 	</div>
@@ -59,7 +60,7 @@
 		<Card>
 			<div class="stat-card-header">
 				<Cpu class="w-5 h-5 icon-cpu" />
-				<span class="stat-card-label">CPU</span>
+				<span class="stat-card-label">{$t('dashboard.stats.cpu')}</span>
 			</div>
 			<p class="stat-card-value {getPercentColor(cpuPercent)}">{cpuPercent.toFixed(1)}%</p>
 			<ProgressBar value={cpuPercent} size="sm" class="mt-2" />
@@ -69,7 +70,7 @@
 		<Card>
 			<div class="stat-card-header">
 				<MemoryStick class="w-5 h-5 icon-memory" />
-				<span class="stat-card-label">Memory</span>
+				<span class="stat-card-label">{$t('dashboard.stats.memory')}</span>
 			</div>
 			<p class="stat-card-value {getPercentColor(memoryPercent)}">{memoryPercent.toFixed(1)}%</p>
 			<p class="stat-card-sublabel">{formatBytes(memoryUsed)} / {formatBytes(memoryTotal)}</p>
@@ -80,7 +81,7 @@
 		<Card>
 			<div class="stat-card-header">
 				<Network class="w-5 h-5 icon-network" />
-				<span class="stat-card-label">Network</span>
+				<span class="stat-card-label">{$t('dashboard.stats.network')}</span>
 			</div>
 			<div class="flex items-center gap-2">
 				<span class="text-success">↓</span>
@@ -96,12 +97,12 @@
 		<Card>
 			<div class="stat-card-header">
 				<Thermometer class="w-5 h-5 icon-temperature" />
-				<span class="stat-card-label">Temperature</span>
+				<span class="stat-card-label">{$t('dashboard.stats.temperature')}</span>
 			</div>
 			{#if temperature !== null}
-				<p class="stat-card-value {getTempColor(temperature)}">{temperature}°C</p>
+				<p class="stat-card-value {getTempColor(temperature)}">{$t('dashboard.celsius', { value: temperature })}</p>
 			{:else}
-				<p class="stat-card-value text-muted">N/A</p>
+				<p class="stat-card-value text-muted">{$t('dashboard.stats.none')}</p>
 			{/if}
 		</Card>
 	</div>
