@@ -277,7 +277,7 @@
 	});
 
 	/**
-	 * When the last scrub started (ADR-0299): as btrfs prints it on an English page, else the same
+	 * When the last scrub started (ADR-0300): as btrfs prints it on an English page, else the same
 	 * date and clock time in the date format of the page's language; a value of another form, or a
 	 * date that does not exist, as it comes.
 	 */
@@ -318,7 +318,7 @@
 		return (status.bytes_scrubbed / status.total_bytes) * 100;
 	}
 
-	// The units of the sizes the page writes, by powers of 1024 (ADR-0299).
+	// The units of the sizes the page writes, by powers of 1024 (ADR-0300).
 	const SIZE_UNITS = ['storage.size.bytes', 'storage.size.kb', 'storage.size.mb', 'storage.size.gb', 'storage.size.tb'];
 	// One decimal, without grouping, as the page has always written its sizes and percentages.
 	$: oneDecimal = new Intl.NumberFormat($intlLocale, {
@@ -409,7 +409,7 @@
 			: { variant: 'error', label: pool.health || $t('storage.health.unknown') };
 	};
 
-	// btrfs's data profiles, as the server answers a pool's raid_level (ADR-0299).
+	// btrfs's data profiles, as the server answers a pool's raid_level (ADR-0300).
 	const PROFILES: Record<string, string> = {
 		single: 'storage.profile.single',
 		dup: 'storage.profile.dup',

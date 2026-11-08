@@ -14,7 +14,7 @@ smbd listens on every address of the host. A NAS host can have global IPv6 addre
 ## Decision
 
 - The rendered `[global]` (ADR-0087) always has `hosts allow = 127.0.0.0/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 fc00::/7 fe80::/10` (`HOSTS_ALLOW` in `supervisor/src/shares/smbconf.py`): loopback, the RFC 1918 ranges, CGNAT and VPN addresses, IPv4 link-local, IPv6 ULA and link-local.
-- Public IPv4 and global IPv6 clients are refused by design. The Shares page says so (`NETWORK_NOTE` in `webui/src/lib/components/shares/texts.ts`), and `docs/USER_GUIDE.md` tells clients to use a LAN address (IPv4, ULA or link-local).
+- Public IPv4 and global IPv6 clients are refused by design. The Shares page says so (`shares.smb.networkNote` in `webui/src/lib/i18n/catalog/shares.ts`), and `docs/USER_GUIDE.md` tells clients to use a LAN address (IPv4, ULA or link-local).
 - Tests: `supervisor/tests/test_smbconf.py` (`TestGlobal`), `supervisor/tests/test_smbconf_testparm.py`.
 
 ## Consequences

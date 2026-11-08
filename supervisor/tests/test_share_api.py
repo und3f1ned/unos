@@ -943,7 +943,11 @@ class TestRead:
 
 
 class TestPaths:
-    """GET /shares/paths: the share form offers only folders of pools that UNOS manages (ADR-0148)."""
+    """GET /shares/paths: the share form offers only folders of pools that UNOS manages (ADR-0148).
+
+    Each location has its name, the pool's or pool/volume, and its type: the web UI writes the
+    kind in the page's language, "data (Pool)" in English (ADR-0299).
+    """
 
     @pytest.fixture
     def listed(self, api, monkeypatch):
@@ -961,10 +965,10 @@ class TestPaths:
         response = listed.client.get(f"{API}/paths")
         assert response.status_code == 200, response.text
         assert response.json() == [
-            {"path": "/mnt/pools/data", "label": "data (Pool)", "type": "pool", "managed": True},
-            {"path": "/mnt/pools/data/media", "label": "data/media (Volume)", "type": "volume", "managed": True},
-            {"path": "/mnt/pools/other", "label": "other (Pool)", "type": "pool", "managed": False},
-            {"path": "/mnt/pools/other/films", "label": "other/films (Volume)", "type": "volume", "managed": False},
+            {"path": "/mnt/pools/data", "name": "data", "type": "pool", "managed": True},
+            {"path": "/mnt/pools/data/media", "name": "data/media", "type": "volume", "managed": True},
+            {"path": "/mnt/pools/other", "name": "other", "type": "pool", "managed": False},
+            {"path": "/mnt/pools/other/films", "name": "other/films", "type": "volume", "managed": False},
         ]
 
     def test_none_is_managed_when_the_pool_list_cannot_be_read(self, listed, monkeypatch):

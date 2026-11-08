@@ -76,15 +76,14 @@ Russian, and in English otherwise. Dates and times follow the language: in the
 browser's own format when the browser is set to that language, otherwise with the
 day first and a 24-hour clock.
 
-All pages are translated except **Shares**, which is still in English. Messages
-from the server, such as the reason an action was refused or the reason a disk
-is in use, stay in English, and so do the titles and messages of notifications,
-the server's records (the log entries, the details of the audit log, smartctl's
-names, and the risk factors and the advice of a failure prediction), the values
-that ip and ss print in the tables of the **Network** tab, such as a
-connection's state (ESTAB) or an interface's link type (ether), and the names
-that btrfs and lsblk give on the **Storage** page, such as a RAID profile
-(raid1), a filesystem type (ext4) or a partition table (GPT).
+All pages are translated except **Storage**, which is still in English.
+Messages from the server, such as the reason an action was refused or the
+reason a share is not served, stay in English, and so do the titles and
+messages of notifications, the server's records (the log entries, the details
+of the audit log, a share's import notes, smartctl's names, and the risk
+factors and the advice of a failure prediction) and the values that ip and ss
+print in the tables of the **Network** tab, such as a connection's state
+(ESTAB) or an interface's link type (ether).
 
 ---
 

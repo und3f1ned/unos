@@ -170,7 +170,8 @@ export interface NfsServiceStatus {
 
 export interface SharePath {
   path: string;
-  label: string;
+  /** The pool's name, or pool/volume; the page writes the kind in its language (ADR-0299). */
+  name: string;
   type: "pool" | "volume";
   /** Its pool is one that UNOS manages (fstab marker): only such locations can hold SMB shares. */
   managed: boolean;

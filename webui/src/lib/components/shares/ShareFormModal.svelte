@@ -11,6 +11,7 @@
 		type SmbShareUpdate
 	} from '$lib/api/shares';
 	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 	import ShareAccessPicker from './ShareAccessPicker.svelte';
 	import {
 		accessEntries,
@@ -20,14 +21,6 @@
 		type AccessChoice
 	} from './access';
 	import { folderParts, folderProblem, joinSharePath, splitSharePath } from './paths';
-	import {
-		ACCESS_CHANGE_NOTE,
-		APPS_NOTE,
-		GUEST_WARNING,
-		NOT_SERVED_GRANTS_NOTE,
-		NOT_SERVED_HINT,
-		UNMANAGED_POOLS_NOTE
-	} from './texts';
 
 	/** The share to edit; null to create one. The dialog is open while mounted. */
 	export let share: SmbShare | null = null;
@@ -114,7 +107,11 @@
 	}
 
 	$: locations = smbLocations(paths);
-	$: locationOptions = locations.map((p) => ({ value: p.path, label: p.label }));
+	// A pool's or a volume's name, and its kind in the page's language.
+	$: locationOptions = locations.map((p) => ({
+		value: p.path,
+		label: $t(p.type === 'volume' ? 'shares.location.volume' : 'shares.location.pool', { name: p.name })
+	}));
 	$: location = locations.find((p) => p.path === base);
 	$: parts = folderParts(folder);
 	$: finalPath = base ? joinSharePath(base, parts) : '';
@@ -126,11 +123,16 @@
 	// a share was loaded with is the server's to judge: its comment, for
 	// example, can change without a new folder.
 	$: checkPath = !editing || pathChanged || (locationEditable && base === '' && parts.length > 0);
-	$: problem = !base ? 'Choose a pool or volume' : folderProblem(location, parts);
+	// The folders that are never shared, as the server words them (supervisor/src/shares/service.py).
+	$: folderMessages = {
+		poolRoot: $t('shares.form.poolRoot'),
+		apps: (pool: string) => $t('shares.form.appsFolder', { pool })
+	};
+	$: problem = !base ? $t('shares.location.choose') : folderProblem(location, parts, folderMessages);
 	// A missing folder is shown once the user tried to save; "apps" at once.
 	$: folderError =
 		locationEditable && checkPath && problem && (attempted || parts.length > 0) ? problem : '';
-	$: nameError = !editing && attempted && !name.trim() ? 'Enter a name for the share' : '';
+	$: nameError = !editing && attempted && !name.trim() ? $t('shares.form.nameRequired') : '';
 	// A share that is not served cannot be given access (the server answers 400)
 	// until its folder is changed to one that can be served. Access it still has
 	// can only be removed: the server saves such a share once it grants nothing.
@@ -216,11 +218,10 @@
 			if (fresh.version !== loaded.version) {
 				loaded = fresh;
 				fillForm(fresh);
-				reloadedNotice =
-					'The form now shows the current settings of the share: make your changes again.';
+				reloadedNotice = $t('shares.form.reloaded');
 			}
 		} catch (e) {
-			reloadedNotice = `The share could not be loaded again: ${messageOf(e)}`;
+			reloadedNotice = $t('shares.form.reloadFailed', { message: messageOf(e) });
 		}
 	}
 
@@ -231,7 +232,7 @@
 
 <Modal
 	open
-	title={editing ? `Edit share ${share?.name ?? ''}` : 'Add SMB share'}
+	title={editing ? $t('shares.form.editTitle', { name: share?.name ?? '' }) : $t('shares.form.addTitle')}
 	size="xl"
 	closable={!saving}
 	on:close={close}
@@ -242,9 +243,9 @@
 	>
 		<Input
 			id="share-name"
-			label="Name"
+			label={$t('shares.form.name')}
 			bind:value={name}
-			placeholder="documents"
+			placeholder={$t('shares.form.namePlaceholder')}
 			autocomplete="off"
 			maxlength={32}
 			disabled={editing}
@@ -254,67 +255,64 @@
 
 		<div class="space-y-3">
 			{#if loaded && !loaded.served}
-				<Alert variant="error" title="This share is not served">
-					<p>{loaded.path_problem ?? 'Its folder cannot be shared.'}</p>
+				<Alert variant="error" title={$t('shares.form.notServed')}>
+					<p>{loaded.path_problem ?? $t('shares.form.cannotBeShared')}</p>
+					<!-- In parts around the folder's path: ADR-0296. -->
 					<p class="mt-1">
-						Folder now: <span class="mono-xs break-all">{loaded.path}</span>. Choose a folder that
-						can be shared.
+						{$t('shares.form.currentFolderBefore')}
+						<span class="mono-xs break-all">{loaded.path}</span>{$t('shares.form.currentFolderAfter')}
 					</p>
 					{#if loadedGrants}
-						<p class="mt-1">{NOT_SERVED_GRANTS_NOTE}</p>
+						<p class="mt-1">{$t('shares.form.notServedGrants')}</p>
 					{/if}
 				</Alert>
 			{/if}
 
 			{#if locationEditable}
 				{#if paths.length === 0}
-					<Alert variant="warning">
-						No pool or volume is mounted. Mount a pool on the Storage page first.
-					</Alert>
+					<Alert variant="warning">{$t('shares.location.noneMounted')}</Alert>
 				{:else if locations.length === 0}
 					<Alert variant="warning">
-						<p>No pool that UNOS manages is mounted.</p>
-						<p class="mt-1">{UNMANAGED_POOLS_NOTE}</p>
+						<p>{$t('shares.location.noneManaged')}</p>
+						<p class="mt-1">{$t('shares.form.unmanagedPools')}</p>
 					</Alert>
 				{:else}
 					<Select
 						id="share-location"
-						label="Location"
+						label={$t('shares.location.label')}
 						bind:value={base}
 						options={locationOptions}
-						placeholder="Choose a pool or volume"
-						hint={locations.length < paths.length ? UNMANAGED_POOLS_NOTE : ''}
+						placeholder={$t('shares.location.choose')}
+						hint={locations.length < paths.length ? $t('shares.form.unmanagedPools') : ''}
 					/>
 				{/if}
 				<Input
 					id="share-folder"
-					label="Folder"
+					label={$t('shares.location.folder')}
 					bind:value={folder}
-					placeholder="documents"
+					placeholder={$t('shares.form.folderPlaceholder')}
 					autocomplete="off"
 					maxlength={4096}
 					error={folderError}
-					hint={location?.type === 'volume'
-						? 'A folder inside the pool or volume; created if missing. Leave empty to share the whole volume'
-						: 'A folder inside the pool or volume; created if missing.'}
+					hint={location?.type === 'volume' ? $t('shares.form.volumeHint') : $t('shares.form.poolHint')}
 				/>
 				{#if finalPath && !problem && (!editing || pathChanged)}
 					<p class="text-sm text-secondary">
-						Shared folder: <span class="mono break-all">{finalPath}</span>
+						{$t('shares.form.sharedFolder')} <span class="mono break-all">{finalPath}</span>
 					</p>
 				{/if}
 			{:else if loaded}
 				<div>
-					<p class="form-label">Folder</p>
+					<p class="form-label">{$t('shares.location.folder')}</p>
 					<p class="mono break-all">{loaded.path}</p>
 				</div>
 			{/if}
-			<p class="form-hint">{APPS_NOTE}</p>
+			<p class="form-hint">{$t('shares.form.appsNote')}</p>
 		</div>
 
 		<Input
 			id="share-comment"
-			label="Comment"
+			label={$t('shares.form.comment')}
 			bind:value={comment}
 			autocomplete="off"
 			maxlength={1024}
@@ -323,7 +321,7 @@
 		<div class="space-y-2">
 			<label class="flex items-center gap-2 cursor-pointer">
 				<input type="checkbox" class="form-checkbox" bind:checked={browseable} />
-				Show in network browsing
+				{$t('shares.form.browseable')}
 			</label>
 			<label class="flex items-center gap-2 {guestLocked ? 'opacity-60' : 'cursor-pointer'}">
 				<input
@@ -332,33 +330,33 @@
 					bind:checked={guestOk}
 					disabled={guestLocked}
 				/>
-				Guests can read this share without a password
+				{$t('shares.form.guest')}
 			</label>
 			{#if guestOk}
-				<Alert variant="warning">{GUEST_WARNING}</Alert>
+				<Alert variant="warning">{$t('shares.form.guestWarning')}</Alert>
 			{/if}
 		</div>
 
 		{#if usersLoading}
-			<p class="text-sm text-muted">Loading users...</p>
+			<p class="text-sm text-muted">{$t('shares.form.loadingUsers')}</p>
 		{:else if usersError}
-			<Alert variant="error" title="The users could not be loaded">{usersError}</Alert>
+			<Alert variant="error" title={$t('shares.form.usersError')}>{usersError}</Alert>
 		{:else}
 			<ShareAccessPicker
 				{users}
 				bind:levels
 				reduceOnly={accessLocked}
-				reduceOnlyHint={NOT_SERVED_HINT}
+				reduceOnlyHint={$t('shares.form.notServedHint')}
 				savedLevels={loadedLevels}
 			/>
 		{/if}
 
-		<p class="form-hint">{ACCESS_CHANGE_NOTE}</p>
+		<p class="form-hint">{$t('shares.form.accessChangeNote')}</p>
 	</form>
 
 	<!-- Below the scrolling form, so that it is seen after a save. -->
 	{#if error}
-		<Alert variant="error" title={editing ? 'Share was not saved' : 'Share was not created'}>
+		<Alert variant="error" title={editing ? $t('shares.form.notSaved') : $t('shares.form.notCreated')}>
 			<p>{error}</p>
 			{#if reloadedNotice}
 				<p class="mt-2">{reloadedNotice}</p>
@@ -367,9 +365,11 @@
 	{/if}
 
 	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={saving} on:click={close}>Cancel</Button>
+		<Button variant="secondary" class="flex-1" disabled={saving} on:click={close}>
+			{$t('common.cancel')}
+		</Button>
 		<Button class="flex-1" loading={saving} on:click={submit}>
-			{editing ? 'Save' : 'Create share'}
+			{editing ? $t('shares.form.save') : $t('shares.form.create')}
 		</Button>
 	</svelte:fragment>
 </Modal>

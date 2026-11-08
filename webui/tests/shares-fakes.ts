@@ -168,7 +168,8 @@ export interface FakeNfsUnreadable {
 
 export interface SharePathInfo {
   path: string;
-  label: string;
+  /** The pool's name, or pool/volume: the page adds the kind, "tank (Pool)" (ADR-0299). */
+  name: string;
   type: 'pool' | 'volume';
   /** Its pool is one that UNOS manages: only such locations can hold SMB shares. */
   managed: boolean;
@@ -374,8 +375,8 @@ function nfsClientProblem(client: string): string | null {
 }
 
 export const FAKE_PATHS: SharePathInfo[] = [
-  { path: `${POOLS}/tank`, label: 'tank (Pool)', type: 'pool', managed: true },
-  { path: `${POOLS}/tank/media`, label: 'tank/media (Volume)', type: 'volume', managed: true },
+  { path: `${POOLS}/tank`, name: 'tank', type: 'pool', managed: true },
+  { path: `${POOLS}/tank/media`, name: 'tank/media', type: 'volume', managed: true },
 ];
 
 export interface FakeSmbOptions {
