@@ -104,7 +104,7 @@ test.describe('Dashboard', () => {
     await expect(storageSection).toBeVisible();
   });
 
-  // ADR-0292: the stats cards take their units from the catalog, and English keeps the words that
+  // ADR-0297: the stats cards take their units from the catalog, and English keeps the words that
   // the code wrote before.
   test('the stats cards write sizes, rates and the temperature with their units', async ({
     authenticatedPage: page,
@@ -225,7 +225,7 @@ test.describe('Dashboard', () => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
     const main = page.locator('main');
 
-    // The live stats of the fake socket, with Russian units (ADR-0292): sizes, rates per second and
+    // The live stats of the fake socket, with Russian units (ADR-0297): sizes, rates per second and
     // degrees with a space before them. Then the time of their last update on a 24-hour clock, and
     // the uptime. A regular expression of getByText meets the text with the white space of the
     // markup around it.

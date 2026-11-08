@@ -6,6 +6,7 @@
     MessageSquare, Pencil, RefreshCw, Send, Settings, Slack, Trash2, Webhook, Zap
   } from "lucide-svelte";
   import { Alert, Badge, Button, Card, EmptyState, Input, Modal, Select } from "$lib/components/ui";
+  import { intlLocale, t } from "$lib/i18n";
   import {
     createConfig, deleteConfig, getConfigs, getEventTypes, getLogs, testNotification, updateConfig,
     type ChannelKind, type EventType, type NotificationConfig, type NotificationLog
@@ -14,31 +15,73 @@
   // Channels of five kinds (ADR-0260). A test reports next to its channel whether the server
   // delivered it, or why not, and the history lists every notification sent, newest first.
 
-  const KINDS: Record<ChannelKind, { label: string; icon: ComponentType }> = {
-    email: { label: "Email", icon: Mail },
-    telegram: { label: "Telegram", icon: MessageCircle },
-    webhook: { label: "Webhook", icon: Webhook },
-    discord: { label: "Discord", icon: MessageSquare },
-    slack: { label: "Slack", icon: Slack },
+  // Each kind's name and the text of the button that adds one: keys of the catalog.
+  const KINDS: Record<ChannelKind, { name: string; add: string; icon: ComponentType }> = {
+    email: { name: "notifications.kinds.email", add: "notifications.add.email", icon: Mail },
+    telegram: { name: "notifications.kinds.telegram", add: "notifications.add.telegram", icon: MessageCircle },
+    webhook: { name: "notifications.kinds.webhook", add: "notifications.add.webhook", icon: Webhook },
+    discord: { name: "notifications.kinds.discord", add: "notifications.add.discord", icon: MessageSquare },
+    slack: { name: "notifications.kinds.slack", add: "notifications.add.slack", icon: Slack },
   };
   const KIND_ORDER: ChannelKind[] = ["email", "telegram", "webhook", "discord", "slack"];
-  const HOOK_FIELDS: Record<"webhook" | "discord" | "slack", { label: string; placeholder: string; hint: string }> = {
+  // The URL field of the kinds that have one: its label and hint (keys of the catalog), and an example.
+  const HOOK_FIELDS: Record<"webhook" | "discord" | "slack", { labelKey: string; hintKey: string; example: string }> = {
     webhook: {
-      label: "URL",
-      placeholder: "https://example.com/hooks/unos",
-      hint: "UNOS sends JSON with title, message, type, timestamp and source.",
+      labelKey: "notifications.hook.url",
+      hintKey: "notifications.hook.webhookHint",
+      example: "https://example.com/hooks/unos",
     },
     discord: {
-      label: "Webhook URL",
-      placeholder: "https://discord.com/api/webhooks/...",
-      hint: "In Discord: the channel's settings, Integrations, Webhooks, Copy Webhook URL.",
+      labelKey: "notifications.hook.webhookUrl",
+      hintKey: "notifications.hook.discordHint",
+      example: "https://discord.com/api/webhooks/...",
     },
     slack: {
-      label: "Webhook URL",
-      placeholder: "https://hooks.slack.com/services/...",
-      hint: "An incoming webhook of a Slack app: it posts to the channel it was made for.",
+      labelKey: "notifications.hook.webhookUrl",
+      hintKey: "notifications.hook.slackHint",
+      example: "https://hooks.slack.com/services/...",
     },
   };
+  // i18n-ignore: examples of a mail server, addresses and a bot token, the same in every language
+  const EXAMPLES = {
+    host: "smtp.gmail.com",
+    user: "user@example.com",
+    from: "noreply@example.com",
+    to: "admin@example.com, user@example.com",
+    token: "123456:ABC-DEF...",
+    chat: "-1001234567890",
+  };
+  // i18n-ignore: HTTP methods, the same in every language
+  const METHODS = [{ value: "POST", label: "POST" }, { value: "PUT", label: "PUT" }];
+  // The types of notification (NotificationType of the server): keys of the catalog.
+  const TYPES: Record<string, string> = {
+    info: "notifications.types.info",
+    warning: "notifications.types.warning",
+    error: "notifications.types.error",
+    success: "notifications.types.success",
+  };
+  // The events of the server's list (GET /api/v1/notifications/events), by id: the keys of their
+  // names and descriptions, for the dialog and a channel's events in the list. An event without keys
+  // shows the server's texts, or its id in the list. supervisor/tests/test_notifications.py checks
+  // that the English half of the catalog copies the server's list.
+  const EVENTS: Record<string, { name: string; when: string }> = {
+    disk_warning: { name: "notifications.events.diskWarning.name", when: "notifications.events.diskWarning.when" },
+    smart_error: { name: "notifications.events.smartError.name", when: "notifications.events.smartError.when" },
+    pool_degraded: { name: "notifications.events.poolDegraded.name", when: "notifications.events.poolDegraded.when" },
+    backup_complete: {
+      name: "notifications.events.backupComplete.name",
+      when: "notifications.events.backupComplete.when",
+    },
+    backup_failed: { name: "notifications.events.backupFailed.name", when: "notifications.events.backupFailed.when" },
+    container_stopped: {
+      name: "notifications.events.containerStopped.name",
+      when: "notifications.events.containerStopped.when",
+    },
+    system_boot: { name: "notifications.events.systemBoot.name", when: "notifications.events.systemBoot.when" },
+    user_login: { name: "notifications.events.userLogin.name", when: "notifications.events.userLogin.when" },
+  };
+
+  const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 
   let logs: NotificationLog[] = [];
   let configs: NotificationConfig[] = [];
@@ -107,9 +150,64 @@
   });
   $: hookField = HOOK_FIELDS[formKind === "discord" || formKind === "slack" ? formKind : "webhook"];
   $: channelOptions = [
-    { value: "all", label: "All channels" },
-    ...KIND_ORDER.map((kind) => ({ value: kind, label: KINDS[kind].label })),
+    { value: "all", label: $t("notifications.history.allChannels") },
+    ...KIND_ORDER.map((kind) => ({ value: kind, label: kindName(kind) })),
   ];
+
+  // The texts that the markup gets from functions are reactive, so that they follow a change of the
+  // language.
+
+  /** The text of `value`'s key in `keys`, in the language of the page; a value without one as it comes. */
+  $: labelOf = (keys: Record<string, string>, value: string): string => (own(keys, value) ? $t(keys[value]) : value);
+
+  /** The name of a kind of channel in the language of the page; a kind without one as it comes. */
+  $: kindName = (kind: string): string => (own(KINDS, kind) ? $t(KINDS[kind as ChannelKind].name) : kind);
+
+  $: nameOf = (config: NotificationConfig): string => config.name || kindName(config.channel);
+
+  /** The name of an event of a channel in the language of the page; an id without one as it comes. */
+  $: eventName = (id: string): string => (own(EVENTS, id) ? $t(EVENTS[id].name) : id);
+
+  $: hostOf = (url: string): string => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return $t("notifications.summary.invalidUrl");
+    }
+  };
+
+  // What the list shows of a channel; webhook URLs carry their secret in the path, so only the host.
+  $: summaryOf = (config: NotificationConfig): string => {
+    const email = config.email_config;
+    if (config.channel === "email" && email) {
+      return $t("notifications.summary.email", {
+        recipients: email.to_addresses.join(", "),
+        host: email.smtp_host,
+        port: email.smtp_port,
+      });
+    }
+    if (config.channel === "telegram" && config.telegram_config) {
+      return $t("notifications.summary.telegram", { chat: config.telegram_config.chat_id });
+    }
+    if (config.channel === "webhook" && config.webhook_config) {
+      return $t("notifications.summary.webhook", {
+        method: config.webhook_config.method,
+        host: hostOf(config.webhook_config.url),
+      });
+    }
+    const hook = config.channel === "discord" ? config.discord_config : config.slack_config;
+    return hook ? $t("notifications.summary.hook", { host: hostOf(hook.webhook_url) }) : "";
+  };
+
+  // The time of a notification sent: how long ago, within a day; else its date in the language of the page.
+  $: formatDate = (sentAt: string): string => {
+    const date = new Date(sentAt);
+    const diff = Date.now() - date.getTime();
+    if (diff < 60000) return $t("notifications.history.justNow");
+    if (diff < 3600000) return $t("notifications.history.minutesAgo", { minutes: Math.floor(diff / 60000) });
+    if (diff < 86400000) return $t("notifications.history.hoursAgo", { hours: Math.floor(diff / 3600000) });
+    return date.toLocaleDateString($intlLocale);
+  };
 
   onMount(() => loadData());
 
@@ -137,36 +235,10 @@
     }
   }
 
-  function nameOf(config: NotificationConfig): string {
-    return config.name || KINDS[config.channel].label;
-  }
-
-  function hostOf(url: string): string {
-    try {
-      return new URL(url).host;
-    } catch {
-      return "an invalid URL";
-    }
-  }
-
-  // What the list shows of a channel; webhook URLs carry their secret in the path, so only the host.
-  function summaryOf(config: NotificationConfig): string {
-    const email = config.email_config;
-    if (config.channel === "email" && email) {
-      return `${email.to_addresses.join(", ")} via ${email.smtp_host}:${email.smtp_port}`;
-    }
-    if (config.channel === "telegram" && config.telegram_config) return `Chat ID ${config.telegram_config.chat_id}`;
-    if (config.channel === "webhook" && config.webhook_config) {
-      return `${config.webhook_config.method} to ${hostOf(config.webhook_config.url)}`;
-    }
-    const hook = config.channel === "discord" ? config.discord_config : config.slack_config;
-    return hook ? `Webhook at ${hostOf(hook.webhook_url)}` : "";
-  }
-
   function openCreate(kind: ChannelKind) {
     editing = null;
     formKind = kind;
-    formName = `${KINDS[kind].label} Notifications`;
+    formName = $t("notifications.form.defaultName", { kind: kindName(kind) });
     formEnabled = true;
     formEvents = [];
     emailHost = "";
@@ -281,7 +353,7 @@
     dismissResult(id);
     try {
       await testNotification(id);
-      results = { ...results, [id]: { success: true, message: "Test notification sent" } };
+      results = { ...results, [id]: { success: true, message: $t("notifications.test.sent") } };
     } catch (e) {
       results = { ...results, [id]: { success: false, message: messageOf(e) } };
     } finally {
@@ -349,15 +421,6 @@
     if (type === "success") return "text-success";
     return "text-info";
   }
-
-  function formatDate(sentAt: string): string {
-    const date = new Date(sentAt);
-    const diff = Date.now() - date.getTime();
-    if (diff < 60000) return "Just now";
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return date.toLocaleDateString();
-  }
 </script>
 
 <div class="space-y-6">
@@ -367,7 +430,7 @@
         <Bell class="w-5 h-5 text-info" />
         <div>
           <p class="text-2xl font-bold">{activeChannels}</p>
-          <p class="text-xs text-muted">Active Channels</p>
+          <p class="text-xs text-muted">{$t("notifications.stats.active")}</p>
         </div>
       </div>
     </Card>
@@ -376,7 +439,7 @@
         <Send class="w-5 h-5 text-info" />
         <div>
           <p class="text-2xl font-bold">{totalSent}</p>
-          <p class="text-xs text-muted">Total Sent</p>
+          <p class="text-xs text-muted">{$t("notifications.stats.sent")}</p>
         </div>
       </div>
     </Card>
@@ -385,7 +448,7 @@
         <CheckCircle class="w-5 h-5 text-success" />
         <div>
           <p class="text-2xl font-bold">{successCount}</p>
-          <p class="text-xs text-muted">Delivered</p>
+          <p class="text-xs text-muted">{$t("notifications.delivered")}</p>
         </div>
       </div>
     </Card>
@@ -394,7 +457,7 @@
         <AlertTriangle class="w-5 h-5 text-error" />
         <div>
           <p class="text-2xl font-bold">{failedCount}</p>
-          <p class="text-xs text-muted">Failed</p>
+          <p class="text-xs text-muted">{$t("notifications.failed")}</p>
         </div>
       </div>
     </Card>
@@ -408,7 +471,7 @@
         pressed={activeView === "channels"}
         on:click={() => (activeView = "channels")}
       >
-        Channels
+        {$t("notifications.views.channels")}
       </Button>
       <Button
         variant={activeView === "history" ? "primary" : "secondary"}
@@ -416,17 +479,17 @@
         pressed={activeView === "history"}
         on:click={() => (activeView = "history")}
       >
-        History
+        {$t("notifications.views.history")}
       </Button>
     </div>
     <Button variant="ghost" size="icon" icon={RefreshCw} loading={loading} on:click={loadData}>
-      <span class="sr-only">Refresh</span>
+      <span class="sr-only">{$t("common.refresh")}</span>
     </Button>
   </div>
 
   {#if loadError}
     <div role="alert">
-      <Alert variant="error" title="The notification settings could not be read">{loadError}</Alert>
+      <Alert variant="error" title={$t("notifications.loadError")}>{loadError}</Alert>
     </div>
   {/if}
   {#if actionError}
@@ -440,26 +503,27 @@
       <div class="flex flex-wrap gap-3">
         {#each KIND_ORDER as kind}
           <Button variant="secondary" icon={KINDS[kind].icon} on:click={() => openCreate(kind)}>
-            Add {KINDS[kind].label}
+            {$t(KINDS[kind].add)}
           </Button>
         {/each}
       </div>
 
       {#if loading && configs.length === 0}
-        <p class="loading-text">Loading...</p>
+        <p class="loading-text">{$t("common.loading")}</p>
       {:else if configs.length === 0}
         <Card>
           <EmptyState
             icon={Bell}
-            title="No notification channels"
-            description="Add an e-mail, Telegram, webhook, Discord or Slack channel to receive notifications"
+            title={$t("notifications.channels.none")}
+            description={$t("notifications.channels.noneHint")}
           />
         </Card>
       {:else}
-        <ul class="space-y-3" aria-label="Notification channels">
+        <ul class="space-y-3" aria-label={$t("notifications.channels.list")}>
           {#each configs as config (config.id)}
             {@const id = config.id ?? ""}
             {@const result = results[id]}
+            {@const name = nameOf(config)}
             <li>
               <Card>
                 <div class="flex flex-wrap items-center justify-between gap-3">
@@ -470,20 +534,20 @@
                     />
                     <div class="min-w-0">
                       <div class="flex flex-wrap items-center gap-2">
-                        <h3 class="font-medium">{nameOf(config)}</h3>
-                        <Badge variant="neutral">{KINDS[config.channel].label}</Badge>
+                        <h3 class="font-medium">{name}</h3>
+                        <Badge variant="neutral">{kindName(config.channel)}</Badge>
                         {#if !config.enabled}
-                          <Badge variant="warning">Disabled</Badge>
+                          <Badge variant="warning">{$t("notifications.channels.disabled")}</Badge>
                         {/if}
                       </div>
                       <p class="text-sm text-secondary break-all">{summaryOf(config)}</p>
                       {#if config.events && config.events.length > 0}
                         <div class="flex flex-wrap gap-1 mt-2">
                           {#each config.events.slice(0, 3) as event}
-                            <Badge variant="neutral">{event}</Badge>
+                            <Badge variant="neutral">{eventName(event)}</Badge>
                           {/each}
                           {#if config.events.length > 3}
-                            <Badge variant="neutral">+{config.events.length - 3} more</Badge>
+                            <Badge variant="neutral">{$t("notifications.channels.more", { n: config.events.length - 3 })}</Badge>
                           {/if}
                         </div>
                       {/if}
@@ -498,11 +562,11 @@
                       disabled={testing !== null && testing !== id}
                       on:click={() => handleTest(config)}
                     >
-                      Send test<span class="sr-only"> to {nameOf(config)}</span>
+                      {$t("notifications.channels.sendTest")}<span class="sr-only"> {$t("notifications.channels.sendTestTo", { name })}</span>
                     </Button>
                     <!-- Not while the channel's test runs: its outcome would show under the new settings. -->
                     <Button variant="ghost" size="sm" disabled={testing === id} on:click={() => toggleEnabled(config)}>
-                      {config.enabled ? "Disable" : "Enable"}<span class="sr-only"> {nameOf(config)}</span>
+                      {$t(config.enabled ? "notifications.channels.disable" : "notifications.channels.enable")}<span class="sr-only"> {$t("notifications.channels.named", { name })}</span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -511,10 +575,10 @@
                       disabled={testing === id}
                       on:click={() => openEdit(config)}
                     >
-                      <span class="sr-only">Edit {nameOf(config)}</span>
+                      <span class="sr-only">{$t("notifications.channels.edit", { name })}</span>
                     </Button>
                     <Button variant="ghost" size="icon-sm" icon={Trash2} on:click={() => askDelete(config)}>
-                      <span class="sr-only">Delete {nameOf(config)}</span>
+                      <span class="sr-only">{$t("notifications.channels.delete", { name })}</span>
                     </Button>
                   </div>
                 </div>
@@ -522,7 +586,7 @@
                   <div class="mt-3" role={result.success ? "status" : "alert"}>
                     <Alert
                       variant={result.success ? "success" : "error"}
-                      title={result.success ? "" : "Test notification not sent"}
+                      title={result.success ? "" : $t("notifications.test.notSent")}
                       dismissible
                       on:dismiss={() => dismissResult(id)}
                     >
@@ -541,15 +605,20 @@
   {#if activeView === "history"}
     <div class="space-y-4">
       <div class="flex flex-wrap items-end gap-3">
-        <Select class="w-48" label="Channel" bind:value={filterChannel} options={channelOptions} />
-        <div class="flex gap-2" role="group" aria-label="Status">
+        <Select
+          class="w-48"
+          label={$t("notifications.history.channel")}
+          bind:value={filterChannel}
+          options={channelOptions}
+        />
+        <div class="flex gap-2" role="group" aria-label={$t("notifications.history.status")}>
           <Button
             variant={filterStatus === "all" ? "primary" : "secondary"}
             size="sm"
             pressed={filterStatus === "all"}
             on:click={() => (filterStatus = "all")}
           >
-            All
+            {$t("notifications.history.all")}
           </Button>
           <Button
             variant={filterStatus === "success" ? "primary" : "secondary"}
@@ -557,7 +626,7 @@
             pressed={filterStatus === "success"}
             on:click={() => (filterStatus = "success")}
           >
-            Delivered
+            {$t("notifications.delivered")}
           </Button>
           <Button
             variant={filterStatus === "failed" ? "primary" : "secondary"}
@@ -565,24 +634,22 @@
             pressed={filterStatus === "failed"}
             on:click={() => (filterStatus = "failed")}
           >
-            Failed
+            {$t("notifications.failed")}
           </Button>
         </div>
       </div>
 
       <Card>
         {#if loading && logs.length === 0}
-          <p class="loading-text">Loading...</p>
+          <p class="loading-text">{$t("common.loading")}</p>
         {:else if filteredLogs.length === 0}
           <EmptyState
             icon={Bell}
-            title="No notifications yet"
-            description={logs.length > 0
-              ? "No notifications match your filters"
-              : "Tests, alerts and notifications sent through the API appear here"}
+            title={$t("notifications.history.none")}
+            description={$t(logs.length > 0 ? "notifications.history.noMatch" : "notifications.history.noneHint")}
           />
         {:else}
-          <ul class="divide-y divide-border" aria-label="Notifications sent">
+          <ul class="divide-y divide-border" aria-label={$t("notifications.history.list")}>
             {#each filteredLogs as log (log.id)}
               {@const expanded = expandedLog === log.id}
               <li class="py-3">
@@ -600,14 +667,14 @@
                     <span class="flex-1 min-w-0">
                       <span class="flex flex-wrap items-center gap-2">
                         <span class="font-medium">{log.event.title}</span>
-                        <Badge variant="neutral">{KINDS[log.channel]?.label ?? log.channel}</Badge>
+                        <Badge variant="neutral">{kindName(log.channel)}</Badge>
                         {#if log.channel_name}
                           <span class="text-sm text-secondary">{log.channel_name}</span>
                         {/if}
                         {#if log.success}
-                          <Badge variant="success">Delivered</Badge>
+                          <Badge variant="success">{$t("notifications.delivered")}</Badge>
                         {:else}
-                          <Badge variant="error">Failed</Badge>
+                          <Badge variant="error">{$t("notifications.failed")}</Badge>
                         {/if}
                       </span>
                       <span class="block text-sm text-muted truncate mt-1">{log.event.message}</span>
@@ -623,24 +690,26 @@
                 {#if expanded}
                   <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <dt class="text-muted">Sent at</dt>
-                      <dd>{new Date(log.sent_at).toLocaleString()}</dd>
+                      <dt class="text-muted">{$t("notifications.history.sentAt")}</dt>
+                      <dd>{new Date(log.sent_at).toLocaleString($intlLocale)}</dd>
                     </div>
                     <div>
-                      <dt class="text-muted">Status</dt>
-                      <dd class={log.success ? "text-success" : "text-error"}>{log.success ? "Delivered" : "Failed"}</dd>
+                      <dt class="text-muted">{$t("notifications.history.status")}</dt>
+                      <dd class={log.success ? "text-success" : "text-error"}>
+                        {$t(log.success ? "notifications.delivered" : "notifications.failed")}
+                      </dd>
                     </div>
                     <div>
-                      <dt class="text-muted">Type</dt>
-                      <dd class="capitalize">{log.event.type}</dd>
+                      <dt class="text-muted">{$t("notifications.history.type")}</dt>
+                      <dd>{labelOf(TYPES, log.event.type)}</dd>
                     </div>
                     <div>
-                      <dt class="text-muted">Channel</dt>
-                      <dd>{log.channel_name || KINDS[log.channel]?.label || log.channel}</dd>
+                      <dt class="text-muted">{$t("notifications.history.channel")}</dt>
+                      <dd>{log.channel_name || kindName(log.channel)}</dd>
                     </div>
                     {#if log.error}
                       <div class="col-span-2">
-                        <dt class="text-muted">Error</dt>
+                        <dt class="text-muted">{$t("notifications.history.error")}</dt>
                         <dd class="mono-xs text-error break-words">{log.error}</dd>
                       </div>
                     {/if}
@@ -657,38 +726,59 @@
 
 <Modal
   open={showModal}
-  title="{editing ? 'Edit' : 'Add'} {KINDS[formKind].label} channel"
+  title={$t(editing ? "notifications.form.editTitle" : "notifications.form.addTitle", { kind: kindName(formKind) })}
   size="lg"
   closable={!saving}
   on:close={closeModal}
 >
   <div class="space-y-4">
-    <Input label="Channel name" bind:value={formName} placeholder="e.g. Admin alerts" />
+    <Input
+      label={$t("notifications.form.name")}
+      bind:value={formName}
+      placeholder={$t("notifications.form.namePlaceholder")}
+    />
 
     {#if formKind === "email"}
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Input class="sm:col-span-2" label="SMTP host" bind:value={emailHost} placeholder="smtp.gmail.com" required />
-        <Input label="Port" type="number" bind:value={emailPort} placeholder="587" required />
+        <Input
+          class="sm:col-span-2"
+          label={$t("notifications.email.host")}
+          bind:value={emailHost}
+          placeholder={EXAMPLES.host}
+          required
+        />
+        <Input label={$t("notifications.email.port")} type="number" bind:value={emailPort} placeholder="587" required />
       </div>
       <div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Username" bind:value={emailUser} placeholder="user@example.com" autocomplete="off" />
-          <Input label="Password" type="password" bind:value={emailPassword} autocomplete="new-password" />
+          <Input label={$t("common.username")} bind:value={emailUser} placeholder={EXAMPLES.user} autocomplete="off" />
+          <Input
+            label={$t("common.password")}
+            type="password"
+            bind:value={emailPassword}
+            autocomplete="new-password"
+          />
         </div>
-        <p class="form-hint">Leave both empty for a mail server that takes mail without a login, such as a relay in your network.</p>
+        <p class="form-hint">{$t("notifications.email.loginHint")}</p>
       </div>
-      <Input label="From address" type="email" bind:value={emailFrom} placeholder="noreply@example.com" required />
       <Input
-        label="To addresses"
+        label={$t("notifications.email.from")}
+        type="email"
+        bind:value={emailFrom}
+        placeholder={EXAMPLES.from}
+        required
+      />
+      <Input
+        label={$t("notifications.email.to")}
         bind:value={emailTo}
-        placeholder="admin@example.com, user@example.com"
-        hint="Separate several addresses with commas."
+        placeholder={EXAMPLES.to}
+        hint={$t("notifications.email.toHint")}
         required
       />
       <div class="space-y-2">
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" class="form-checkbox" bind:checked={emailTls} />
-          Use TLS/STARTTLS
+          {$t("notifications.email.tls")}
         </label>
         <label class="flex items-center gap-2 {plainSmtp ? 'opacity-60' : 'cursor-pointer'}">
           <input
@@ -698,63 +788,51 @@
             disabled={plainSmtp}
             aria-describedby="verify-tls-hint"
           />
-          Verify the server's certificate
+          {$t("notifications.email.verify")}
         </label>
-        <p id="verify-tls-hint" class="form-hint">
-          Port 465 uses TLS from the start. Turn the certificate check off only for a mail server with a
-          self-signed certificate: without it, anyone on the network path can read the password.
-        </p>
+        <p id="verify-tls-hint" class="form-hint">{$t("notifications.email.verifyHint")}</p>
         {#if plainSmtp}
-          <Alert variant="warning">
-            Without TLS, the password and the messages cross the network unencrypted, and there is no
-            certificate to check.
-          </Alert>
+          <Alert variant="warning">{$t("notifications.email.plain")}</Alert>
         {/if}
       </div>
     {:else if formKind === "telegram"}
       <Input
-        label="Bot token"
+        label={$t("notifications.telegram.token")}
         type="password"
         bind:value={telegramToken}
-        placeholder="123456:ABC-DEF..."
-        hint="Get it from @BotFather on Telegram."
+        placeholder={EXAMPLES.token}
+        hint={$t("notifications.telegram.tokenHint")}
         autocomplete="off"
         required
       />
       <Input
-        label="Chat ID"
+        label={$t("notifications.telegram.chat")}
         bind:value={telegramChatId}
-        placeholder="-1001234567890"
-        hint="Your user ID or a group's chat ID."
+        placeholder={EXAMPLES.chat}
+        hint={$t("notifications.telegram.chatHint")}
         required
       />
     {:else}
       <Input
-        label={hookField.label}
+        label={$t(hookField.labelKey)}
         bind:value={hookUrl}
-        placeholder={hookField.placeholder}
-        hint={hookField.hint}
+        placeholder={hookField.example}
+        hint={$t(hookField.hintKey)}
         autocomplete="off"
         required
       />
       {#if formKind === "webhook"}
-        <Select
-          label="Method"
-          bind:value={hookMethod}
-          options={[{ value: "POST", label: "POST" }, { value: "PUT", label: "PUT" }]}
-        />
+        <Select label={$t("notifications.hook.method")} bind:value={hookMethod} options={METHODS} />
       {/if}
     {/if}
 
     {#if eventTypes.length > 0}
       <fieldset>
-        <legend class="form-label">Notify on events</legend>
-        <p class="form-hint mb-2">
-          Not used yet: the pool and disk health alerts go to every enabled e-mail and Telegram channel, and
-          to no other kind.
-        </p>
+        <legend class="form-label">{$t("notifications.form.events")}</legend>
+        <p class="form-hint mb-2">{$t("notifications.form.eventsHint")}</p>
         <div class="card-nested grid grid-cols-1 gap-2 max-h-48 overflow-y-auto">
           {#each eventTypes as event}
+            {@const keys = own(EVENTS, event.id) ? EVENTS[event.id] : null}
             <label class="flex items-start gap-3 cursor-pointer">
               <input
                 type="checkbox"
@@ -763,8 +841,8 @@
                 on:change={() => toggleEvent(event.id)}
               />
               <span>
-                <span class="block text-sm font-medium">{event.name}</span>
-                <span class="block text-xs text-muted">{event.description}</span>
+                <span class="block text-sm font-medium">{keys ? $t(keys.name) : event.name}</span>
+                <span class="block text-xs text-muted">{keys ? $t(keys.when) : event.description}</span>
               </span>
             </label>
           {/each}
@@ -775,45 +853,49 @@
     <div>
       <label class="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" class="form-checkbox" bind:checked={formEnabled} />
-        Enable channel
+        {$t("notifications.form.enabled")}
       </label>
-      <p class="form-hint">A disabled channel receives no notifications; Send test still reaches it.</p>
+      <p class="form-hint">{$t("notifications.form.enabledHint")}</p>
     </div>
 
     {#if saveError}
       <div role="alert">
-        <Alert variant="error" title="The channel was not saved">{saveError}</Alert>
+        <Alert variant="error" title={$t("notifications.form.saveError")}>{saveError}</Alert>
       </div>
     {/if}
   </div>
 
   <svelte:fragment slot="footer">
-    <Button variant="secondary" class="flex-1" disabled={saving} on:click={closeModal}>Cancel</Button>
+    <Button variant="secondary" class="flex-1" disabled={saving} on:click={closeModal}>{$t("common.cancel")}</Button>
     <Button class="flex-1" loading={saving} disabled={!formComplete} on:click={handleSave}>
-      {editing ? "Save Changes" : "Add Channel"}
+      {$t(editing ? "notifications.form.save" : "notifications.form.add")}
     </Button>
   </svelte:fragment>
 </Modal>
 
 <Modal
   open={deleting !== null}
-  title="Delete the channel?"
+  title={$t("notifications.delete.title")}
   size="sm"
   danger
   closable={!deleteBusy}
   on:close={closeDelete}
 >
   {#if deleting}
-    <p>{nameOf(deleting)} stops receiving notifications. Its entries in the history stay.</p>
+    <p>{$t("notifications.delete.text", { name: nameOf(deleting) })}</p>
   {/if}
   {#if deleteError}
     <div role="alert" class="mt-4">
-      <Alert variant="error" title="The channel was not deleted">{deleteError}</Alert>
+      <Alert variant="error" title={$t("notifications.delete.error")}>{deleteError}</Alert>
     </div>
   {/if}
 
   <svelte:fragment slot="footer">
-    <Button variant="secondary" class="flex-1" disabled={deleteBusy} on:click={closeDelete}>Cancel</Button>
-    <Button variant="danger" class="flex-1" loading={deleteBusy} on:click={confirmDelete}>Delete</Button>
+    <Button variant="secondary" class="flex-1" disabled={deleteBusy} on:click={closeDelete}>
+      {$t("common.cancel")}
+    </Button>
+    <Button variant="danger" class="flex-1" loading={deleteBusy} on:click={confirmDelete}>
+      {$t("notifications.delete.confirm")}
+    </Button>
   </svelte:fragment>
 </Modal>

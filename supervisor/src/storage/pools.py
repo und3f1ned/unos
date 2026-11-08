@@ -143,7 +143,9 @@ _DEVID_RE = re.compile(
 _STAT_RE = re.compile(r"^\[[^\]]+\]\.\w+\s+(?P<value>\d+)$")
 
 # Serialises every operation that changes pools, mounts or the host fstab.
-# The operations run in worker threads (asyncio.to_thread).
+# The operations run in worker threads (asyncio.to_thread). shares/nfs.py takes
+# it, after its own lock, for the check and the write of a new export: code that
+# holds this lock never waits for that one.
 _lock = threading.RLock()
 
 

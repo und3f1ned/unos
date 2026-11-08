@@ -13,10 +13,10 @@
 src/routes/storage/+page.svelte
 
 # snapshots
-src/routes/snapshots/+page.svelte
 
 # shares
 src/routes/shares/+page.svelte
+src/lib/components/shares/NfsExportFormModal.svelte
 src/lib/components/shares/RepairPermissionsModal.svelte
 src/lib/components/shares/ShareAccessPicker.svelte
 src/lib/components/shares/ShareCard.svelte
@@ -30,20 +30,12 @@ src/lib/components/shares/SmbStateBadge.svelte
 # apps
 
 # users
-src/routes/users/+page.svelte
 
 # audit
 src/routes/audit/+page.svelte
 
 # system
-src/routes/settings/+page.svelte
-src/routes/system/tabs/BackupTab.svelte
-src/routes/system/tabs/GeneralTab.svelte
 src/routes/system/tabs/HealthTab.svelte
 src/routes/system/tabs/LogsTab.svelte
 src/routes/system/tabs/MonitorTab.svelte
-src/routes/system/tabs/NetworkTab.svelte
-src/routes/system/tabs/NotificationsTab.svelte
 src/routes/system/tabs/PowerTab.svelte
-src/routes/system/tabs/SchedulerTab.svelte
-src/routes/system/tabs/UpdateTab.svelte

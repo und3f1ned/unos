@@ -32,7 +32,7 @@ export const en = {
 	'dashboard.stats.none': 'N/A',
 	'dashboard.celsius': '{value}°C',
 
-	// The units of a size, from bytes up, and of a rate (ADR-0292).
+	// The units of a size, from bytes up, and of a rate (ADR-0297).
 	'dashboard.unit.b': 'B',
 	'dashboard.unit.kb': 'KB',
 	'dashboard.unit.mb': 'MB',

@@ -12,7 +12,7 @@
 	export let temperature: number | null = null;
 	export let compact: boolean = false;
 
-	// The units of a size, from bytes up: keys of the catalog (ADR-0292).
+	// The units of a size, from bytes up: keys of the catalog (ADR-0297).
 	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
 
 	$: formatBytes = (bytes: number): string => {

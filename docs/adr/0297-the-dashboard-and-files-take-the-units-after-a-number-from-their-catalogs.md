@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0292: The dashboard and Files take the units they write after a number from their catalogs, and numbers keep their decimal point
+# ADR-0297: The dashboard and Files take the units they write after a number from their catalogs, and numbers keep their decimal point
 
 ## Context
 

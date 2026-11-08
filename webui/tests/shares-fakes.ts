@@ -1,11 +1,12 @@
 import type { Page } from '@playwright/test';
 
-// Canned answers of the SMB share, user and account APIs for UI tests that
-// must never change a real share, user or SMB account. fakeSmbApi() answers
-// every request of the page to /api/v1/shares/*, /api/v1/auth/users* and
-// /api/v1/auth/me/smb*: writes are recorded and applied to the fake state (so
-// the page shows their outcome), unknown requests are aborted, and nothing
-// reaches the supervisor. Sign-in (/auth/login, /auth/me) is not faked.
+// Canned answers of the SMB share, NFS export, user and account APIs for UI
+// tests that must never change a real share, export, user or SMB account.
+// fakeSmbApi() answers every request of the page to /api/v1/shares/*,
+// /api/v1/auth/users* and /api/v1/auth/me/smb*: writes are recorded and applied
+// to the fake state (so the page shows their outcome), unknown requests are
+// aborted, and nothing reaches the supervisor. Sign-in (/auth/login, /auth/me)
+// is not faked.
 
 /** Pools base of the stand-in the specs run against (the local one differs). */
 export const POOLS = process.env.E2E_POOLS_BASE || '/mnt/pools';
@@ -37,6 +38,31 @@ export const SMB_CONF_REPLACED =
 // constants.COMMON_PASSWORD_RULE); supervisor/tests/test_smb_accounts.py checks it against the server.
 export const COMMON_PASSWORD_RULE =
   'SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first';
+
+// The answers of supervisor/src/shares/nfs.py (ADR-0292, ADR-0293), word for word;
+// supervisor/tests/test_nfs.py checks them against the server.
+export const NFS_SERVER_MISSING =
+  'The host has no NFS server: exportfs was not found. Install the package nfs-kernel-server on the host; it applies the exports when it starts.';
+export const NFS_CLIENT_SYNTAX = 'The client must be an IP address or network, such as 192.168.1.0/24 or fd00::/64';
+export const NFS_POOL_ROOT =
+  'Export a folder inside the pool or a volume: the top level of a pool holds app data (apps/), volumes and snapshots';
+export const nfsClientNotLocal = (client: string) =>
+  `${client} is not on your local network: NFS asks for no password, so UNOS exports only to private, unique-local and link-local addresses`;
+export const nfsExportedAlready = (path: string) => `${path} is exported by UNOS already: delete that export first`;
+export const nfsNotExported = (path: string) => `UNOS does not export ${path}`;
+export const nfsForeignExport = (path: string, file: string, line: number) =>
+  `The export of ${path} is in ${file}, line ${line}, which UNOS does not change: edit that file on the NAS`;
+/** The refusal of an add or a delete while an export file has a line that exportfs cannot read. */
+export const nfsFileUnreadable = (file: string, line: number) =>
+  `${file}, line ${line} cannot be read by exportfs, which then reads no further in that file: after a change it would stop exporting what follows the line. Correct or remove the line on the NAS first`;
+/** How GET /shares/nfs-status names a line that exportfs cannot read. */
+export const nfsFileProblem = (file: string, line: number, message: string) =>
+  `${file}, line ${line}: ${message}; exportfs reads no further in this file, and UNOS adds and deletes no export until the line is corrected`;
+/** How GET /shares/nfs-status names an export of UNOS below a folder that other accounts can change. */
+export const nfsUnsafeExport = (path: string, folder: string, detail: string, commands: string) =>
+  `NFS export ${path}: ${folder} can be changed by other accounts (${detail}), so they can put a symbolic link in place of the exported folder or a folder above it, and exportfs would export the link's target. Run ${commands} on the NAS.`;
+/** The export file of UNOS, which it alone changes; its first two lines are a comment. */
+export const NFS_UNOS_FILE = '/etc/exports.d/unos.exports';
 
 export type SmbState = 'active' | 'password_needed' | 'off' | 'unavailable';
 export type Level = 'read' | 'write';
@@ -114,6 +140,32 @@ export interface FakeMySmb {
   shares: { name: string; comment: string; level: Level; guest_ok: boolean; usable: boolean }[];
 }
 
+export interface FakeNfsClient {
+  client: string;
+  options: string[];
+  access: Level | null;
+}
+
+export interface FakeNfsExport {
+  path: string;
+  clients: FakeNfsClient[];
+  managed: boolean;
+  file: string;
+  line: number;
+}
+
+export interface FakeNfsStatus {
+  server_missing: boolean | null;
+  problems: string[];
+}
+
+/** A line of an export file that exportfs cannot read. */
+export interface FakeNfsUnreadable {
+  file: string;
+  line: number;
+  message: string;
+}
+
 export interface SharePathInfo {
   path: string;
   label: string;
@@ -160,6 +212,14 @@ export interface FakeSmbApi {
    */
   userWarnings: string[];
   mySmb: FakeMySmb;
+  /** The entries of the host's export files, as GET /shares/nfs answers them. */
+  nfsExports: FakeNfsExport[];
+  /** The status; GET /shares/nfs-status lists the lines of nfsUnreadable before its problems. */
+  nfsStatus: FakeNfsStatus;
+  /** Lines that exportfs cannot read: while there is one, adds and deletes are refused. */
+  nfsUnreadable: FakeNfsUnreadable[];
+  /** Warnings of the answers to export changes: what exportfs reported. */
+  nfsWarnings: string[];
   /** The current password and the 2FA code POST /auth/me/smb/enable accepts. */
   myPassword: string;
   myTotpCode: string;
@@ -288,6 +348,31 @@ export function repairResult(share: string, extra: Partial<FakeRepairResult> = {
   };
 }
 
+/** An export that UNOS wrote, as GET /shares/nfs lists it: its line in the export file of UNOS. */
+export function fakeNfsExport(path: string, client: string, access: Level, line = 3): FakeNfsExport {
+  const pool = path.slice(POOLS.length + 1).split('/')[0];
+  const options = [access === 'write' ? 'rw' : 'ro', 'sync', 'no_subtree_check', 'root_squash', 'secure', `mp=${POOLS}/${pool}`];
+  return { path, clients: [{ client, options, access }], managed: true, file: NFS_UNOS_FILE, line };
+}
+
+/**
+ * As shares/nfs.py for the clients the specs send: an address or network of the local network
+ * (loopback, RFC 1918, CGNAT, link-local, IPv6 ULA). Prefix lengths are not checked.
+ */
+function nfsClientProblem(client: string): string | null {
+  if (!/^[0-9A-Fa-f.:/]{1,64}$/.test(client) || !/[.:]/.test(client)) return NFS_CLIENT_SYNTAX;
+  const address = client.split('/')[0].toLowerCase();
+  const local =
+    /^(10|127)\./.test(address) ||
+    /^192\.168\./.test(address) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(address) ||
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(address) ||
+    /^169\.254\./.test(address) ||
+    /^(f[cd]|fe[89ab])[0-9a-f]*:/.test(address) ||
+    address === '::1';
+  return local ? null : nfsClientNotLocal(client);
+}
+
 export const FAKE_PATHS: SharePathInfo[] = [
   { path: `${POOLS}/tank`, label: 'tank (Pool)', type: 'pool', managed: true },
   { path: `${POOLS}/tank/media`, label: 'tank/media (Volume)', type: 'volume', managed: true },
@@ -299,6 +384,9 @@ export interface FakeSmbOptions {
   status?: Partial<FakeServiceStatus>;
   paths?: SharePathInfo[];
   mySmb?: FakeMySmb;
+  nfsExports?: FakeNfsExport[];
+  nfsStatus?: Partial<FakeNfsStatus>;
+  nfsUnreadable?: FakeNfsUnreadable[];
 }
 
 const OK_STATUS: FakeServiceStatus = {
@@ -357,6 +445,10 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
     userWarnings: [],
     // The signed-in user of the specs is the administrator, who cannot use SMB.
     mySmb: options.mySmb ?? { account: smbStatus('unavailable', 'admin'), totp_required: false, shares: [] },
+    nfsExports: options.nfsExports ?? [],
+    nfsStatus: { server_missing: false, problems: [], ...options.nfsStatus },
+    nfsUnreadable: options.nfsUnreadable ?? [],
+    nfsWarnings: [],
     myPassword: 'e2e-Current-Password-1',
     myTotpCode: '123456',
     writes: [],
@@ -391,7 +483,45 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
 
     // ---- Shares ----
     if (path === '/shares/paths' && method === 'GET') return ok(fake.paths);
-    if (path === '/shares/nfs' && method === 'GET') return ok([]);
+    if (path === '/shares/nfs' && method === 'GET') return ok(fake.nfsExports);
+    if (path === '/shares/nfs-status' && method === 'GET') {
+      const unreadable = fake.nfsUnreadable.map((u) => nfsFileProblem(u.file, u.line, u.message));
+      return ok({ ...fake.nfsStatus, problems: [...unreadable, ...fake.nfsStatus.problems] });
+    }
+    if (path === '/shares/nfs' && method === 'POST') {
+      // As shares/nfs.py: the client first, then the folder, then the export files: no change while
+      // one has a line that exportfs cannot read, and one export per folder in the file of UNOS.
+      const exportPath = String(data.path);
+      const client = String(data.client);
+      const problem = nfsClientProblem(client);
+      if (problem) return detail(400, problem);
+      if (exportPath.slice(POOLS.length + 1).split('/').length < 2) return detail(400, NFS_POOL_ROOT);
+      const [unreadable] = fake.nfsUnreadable;
+      if (unreadable) return detail(409, nfsFileUnreadable(unreadable.file, unreadable.line));
+      if (fake.nfsExports.some((e) => e.managed && e.path === exportPath)) {
+        return detail(409, nfsExportedAlready(exportPath));
+      }
+      // The file of UNOS: two lines of comment, then one line per export.
+      const line = 3 + fake.nfsExports.filter((e) => e.file === NFS_UNOS_FILE).length;
+      const created = fakeNfsExport(exportPath, client, data.access === 'write' ? 'write' : 'read', line);
+      fake.nfsExports.push(created);
+      return ok({ ...created, warnings: [...fake.nfsWarnings] });
+    }
+    if (path === '/shares/nfs' && method === 'DELETE') {
+      const target = new URLSearchParams(search).get('path');
+      if (target === null) return missing('query', 'path');
+      const mine = fake.nfsExports.find((e) => e.managed && e.path === target);
+      if (!mine) {
+        const other = fake.nfsExports.find((e) => e.path === target);
+        return other
+          ? detail(409, nfsForeignExport(target, other.file, other.line))
+          : detail(404, nfsNotExported(target));
+      }
+      const [unreadable] = fake.nfsUnreadable;
+      if (unreadable) return detail(409, nfsFileUnreadable(unreadable.file, unreadable.line));
+      fake.nfsExports = fake.nfsExports.filter((e) => e !== mine);
+      return ok({ status: 'deleted', warnings: [...fake.nfsWarnings] });
+    }
     if (path === '/shares/smb-status' && method === 'GET') return ok(fake.status);
     if (path === '/shares/smb-status/import-report' && method === 'DELETE') {
       fake.status.import_report = [];

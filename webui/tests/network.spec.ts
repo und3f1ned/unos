@@ -1,6 +1,14 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { fakeNetworkApi, nothingToKeep, notEnabled, revertNotArmed, type FakeFailure } from './network-fakes';
+import {
+  FAKE_CONNECTIONS,
+  fakeLiveTraffic,
+  fakeNetworkApi,
+  nothingToKeep,
+  notEnabled,
+  revertNotArmed,
+  type FakeFailure,
+} from './network-fakes';
 
 // System > Network with canned answers of the network API (network-fakes.ts):
 // the stand-in has no host network, and no spec may disable a real interface.
@@ -8,6 +16,10 @@ import { fakeNetworkApi, nothingToKeep, notEnabled, revertNotArmed, type FakeFai
 // supervisor/tests/test_network.py and test_network_scripts.py. The tests of the
 // countdown move the page's clock (page.clock); the fake's revert() stands for
 // the host's timer.
+
+// The live traffic of eth0 on the stats stream: 1.23 GiB received and 512 MiB sent since boot,
+// 12.5 KiB/s coming in and 512 B/s going out.
+const TRAFFIC = { bytes_recv: 1_320_702_444, bytes_sent: 536_870_912, bytes_recv_rate: 12_800, bytes_sent_rate: 512 };
 
 async function openNetworkTab(page: Page) {
   await page.goto('/system#network');
@@ -35,6 +47,11 @@ async function disable(page: Page, name: string) {
 
 function countdown(page: Page, name: string) {
   return page.getByText(new RegExp(`Unless you keep this change, ${name} comes back on by itself in \\d+ s\\.`));
+}
+
+/** The value under ``label`` in the details of an interface. */
+function detail(scope: Locator, label: string): Locator {
+  return scope.getByText(label, { exact: true }).locator('xpath=following-sibling::p');
 }
 
 test.describe('System > Network', () => {
@@ -79,6 +96,36 @@ test.describe('System > Network', () => {
     await page.getByRole('button', { name: 'Connections' }).click();
     await expect(page.getByRole('row', { name: /tcp ESTAB 192\.168\.1\.10:443 192\.168\.1\.20:51515/ })).toBeVisible();
     await expect(page.getByRole('row', { name: /udp UNCONN 0\.0\.0\.0:137/ })).toBeVisible();
+  });
+
+  test('one connection is counted in the singular, in English and in Russian', async ({ authenticatedPage: page }) => {
+    await fakeNetworkApi(page, { connections: [FAKE_CONNECTIONS[0]] });
+    await openNetworkTab(page);
+
+    await page.getByRole('button', { name: 'Connections', exact: true }).click();
+    await expect(page.getByText('1 active connection', { exact: true })).toBeVisible();
+
+    // The language that the Account page keeps in this browser (ADR-0287).
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.reload();
+    await page.getByRole('button', { name: 'Подключения', exact: true }).click();
+    await expect(page.getByText('1 активное подключение', { exact: true })).toBeVisible();
+  });
+
+  test('an interface shows its live traffic from the stats stream', async ({ authenticatedPage: page }) => {
+    await fakeNetworkApi(page);
+    await fakeLiveTraffic(page, { eth0: TRAFFIC });
+    await openNetworkTab(page);
+    const eth0 = card(page, 'eth0');
+
+    // The rates coming in and going out, in the header of the interface.
+    await expect(eth0).toContainText('12.5 KB/s');
+    await expect(eth0).toContainText('512 B/s');
+    await expand(page, 'eth0');
+    const traffic = { 'RX Bytes': '1.23 GB', 'TX Bytes': '512 MB', 'RX Rate': '12.5 KB/s', 'TX Rate': '512 B/s' };
+    for (const [label, value] of Object.entries(traffic)) {
+      await expect(detail(eth0, label)).toHaveText(value);
+    }
   });
 
   test('Disable asks first, names the interface and warns that the connection may drop', async ({
@@ -420,6 +467,94 @@ test.describe('System > Network', () => {
           'within 60 seconds: reload the page then.',
       ),
     ).toBeVisible();
+  });
+
+  test('in Russian, the interfaces, a disable, the tables and what could not be loaded speak Russian', async ({
+    authenticatedPage: page,
+  }) => {
+    // The language that the Account page keeps in this browser (ADR-0287).
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    const gatewayFailed = 'Failed to get gateway: RTNETLINK answers: Permission denied';
+    const network = await fakeNetworkApi(page, {
+      failures: { 'GET /gateway': { status: 500, detail: gatewayFailed } },
+    });
+    await page.goto('/system#network');
+    await expect(page.getByRole('heading', { name: 'Сеть', exact: true })).toBeVisible();
+
+    // The part that could not be loaded by its name in Russian, the server's message as it comes.
+    const problems = page.getByText('Не удалось загрузить часть сведений о сети').locator('..');
+    await expect(problems).toContainText(`Шлюз: ${gatewayFailed}`);
+    await expect(page.getByText('Шлюз по умолчанию').locator('..')).toContainText('Не задан');
+    await expect(page.getByText('DNS-серверы').locator('..')).toContainText('ещё 1');
+
+    // An interface's state, its speed in the page's units and number format, and its details.
+    const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
+    await expect(eth0).toContainText('Работает');
+    await expect(eth0).toContainText('1 Гбит/с');
+    await expect(eth0).toContainText('ещё 2');
+    await expect(page.getByRole('region', { name: 'Интерфейс eth2' })).toContainText('Выключен');
+    const eth1 = page.getByRole('region', { name: 'Интерфейс eth1' });
+    await expect(eth1).toContainText('2,5 Гбит/с');
+    await eth1.getByRole('button', { expanded: false }).click();
+    await expect(eth1).toContainText('MAC-адрес');
+    await expect(eth1).toContainText('IP-адреса');
+
+    // Disable asks first, counts down and offers to keep the change.
+    await eth1.getByRole('button', { name: 'Выключить', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Выключение eth1' });
+    await expect(dialog).toContainText('Выключение eth1 может прервать ваше подключение к UNOS');
+    await expect(dialog).toContainText('Если вы не сохраните изменение в течение 60 секунд, eth1 сам включится снова');
+    await dialog.getByRole('button', { name: 'Выключить eth1' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('region', { name: 'Выключения, ожидающие подтверждения' })).toBeFocused();
+    await expect(page.getByText(/^Если вы не сохраните это изменение, eth1 сам включится снова через \d+ с\.$/))
+      .toBeVisible();
+    await page.getByRole('button', { name: 'Оставить eth1 выключенным' }).click();
+    await expect(page.getByText('eth1 остаётся выключенным.')).toBeVisible();
+    await expect(eth1).toContainText('Выключен');
+    expect(network.writes).toEqual([
+      { method: 'POST', path: '/interfaces/eth1/down' },
+      { method: 'POST', path: '/interfaces/eth1/down/confirm' },
+    ]);
+
+    // The routes and the connections; the values that ip and ss print stay as they come (ADR-0295).
+    await page.getByRole('button', { name: 'Маршруты' }).click();
+    await expect(page.getByRole('columnheader', { name: 'Назначение' })).toBeVisible();
+    await expect(page.getByRole('table').getByRole('row', { name: /по умолчанию 192\.168\.1\.1 eth0 dhcp/ }))
+      .toBeVisible();
+    await page.getByRole('button', { name: 'Подключения', exact: true }).click();
+    await expect(page.getByText('2 активных подключения', { exact: true })).toBeVisible();
+    await expect(page.getByRole('row', { name: /tcp ESTAB 192\.168\.1\.10:443 192\.168\.1\.20:51515/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Обновить подключения' })).toBeVisible();
+
+    // Nothing of the English tab is left.
+    for (const english of ['Default Gateway', 'DNS Servers', 'Active Connections', 'Refresh connections']) {
+      await expect(page.getByText(english)).toHaveCount(0);
+    }
+  });
+
+  test('in Russian, the live traffic takes the units and the number format of the page', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await fakeNetworkApi(page);
+    await fakeLiveTraffic(page, { eth0: TRAFFIC });
+    await page.goto('/system#network');
+    await expect(page.getByText('В реальном времени', { exact: true })).toBeVisible();
+    const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
+
+    // Beside the link speed, which is written the same way.
+    await expect(eth0).toContainText('1 Гбит/с');
+    await expect(eth0).toContainText('12,5 КБ/с');
+    await expect(eth0).toContainText('512 Б/с');
+    await eth0.getByRole('button', { expanded: false }).click();
+    const traffic = { Принято: '1,23 ГБ', Передано: '512 МБ', 'Скорость приёма': '12,5 КБ/с', 'Скорость передачи': '512 Б/с' };
+    for (const [label, value] of Object.entries(traffic)) {
+      await expect(detail(eth0, label)).toHaveText(value);
+    }
+    for (const english of ['KB', 'MB', 'GB', 'B/s']) {
+      await expect(eth0).not.toContainText(english);
+    }
   });
 
   test('what could not be loaded is shown with the server\'s message', async ({ authenticatedPage: page }) => {
