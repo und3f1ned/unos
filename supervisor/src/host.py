@@ -17,7 +17,7 @@ the supervisor runs natively on the host during development.
 btrfs scrubs, error stats resets and smartctl run in the container itself,
 on the pools and disks that the privileged container sees:
 :func:`run_in_container` runs them, and at their timeout it kills them
-without waiting for them (ADR-0262).
+without waiting for them (ADR-0290).
 """
 
 from __future__ import annotations
@@ -37,18 +37,21 @@ logger = logging.getLogger(__name__)
 
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
-# storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
+# storage/disks.py (lsns and findmnt --task: the mount namespaces of other
+# processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl, under
 # timeout: ADR-0257, ADR-0258). cat, test, mkdir, rmdir, rm, find, sync, sleep,
-# timeout, hostname and sh also run there but come from essential packages.
+# timeout, hostname, readlink (the time zone: scheduler/router.py, ADR-0266) and sh
+# also run there but come from essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
     "chattr": "e2fsprogs",
     "findmnt": "util-linux",
+    "lsns": "util-linux",
     "lsblk": "util-linux",
     "blkid": "util-linux",
     "wipefs": "util-linux",
@@ -200,7 +203,7 @@ def run_in_container(
     """Run ``cmd`` in the supervisor's own container; at its timeout, kill it and return at once.
 
     For btrfs and smartctl, which reach the host's pools and disks through
-    the privileged container (ADR-0262). ``stdout`` and ``stderr`` are
+    the privileged container (ADR-0290). ``stdout`` and ``stderr`` are
     pipes, whose text is returned (bytes that are not valid in the
     locale's encoding become U+FFFD), or what Popen takes, such as
     ``subprocess.DEVNULL`` or a file. The command reads nothing.
@@ -377,3 +380,28 @@ def missing_host_binaries(names: list[str], *, timeout: float = 10) -> list[str]
         return None
     reported = set(result.stdout.splitlines())
     return [name for name in names if name in reported]
+
+
+def time_zone_name(*, timeout: float = 10) -> str | None:
+    """The name of the host's time zone, such as ``Europe/Berlin``, or None.
+
+    Read where /etc/localtime links to below a ``zoneinfo`` folder, as timedatectl reads
+    it (``timedatectl set-timezone`` writes that link); a zone of its ``posix/`` or
+    ``right/`` folder (time with leap seconds) counts as the zone itself, whose civil
+    time it shows. None when the host has no such link: no /etc/localtime (the host's clock
+    then shows UTC), a copied file instead of a link, or a link elsewhere. When the host
+    cannot be asked, raises what run_on_host raises (OSError, subprocess.TimeoutExpired), and
+    HostCommandError when the command fails with a message: readlink without -v reports
+    nothing, so the message is nsenter's, which could not enter the host's namespaces.
+    """
+    cmd = ["readlink", "/etc/localtime"]
+    # "replace": a target that is not UTF-8 names no zone, which the caller then reports.
+    result = run_on_host(cmd, timeout=timeout, errors="replace")
+    if not result.ok:
+        if result.stderr.strip():
+            raise HostCommandError(cmd, result.returncode, result.stderr)
+        return None
+    _, found, name = result.stdout.strip().rpartition("zoneinfo/")
+    for folder in ("posix/", "right/"):
+        name = name.removeprefix(folder)
+    return name if found and name else None

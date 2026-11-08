@@ -104,7 +104,7 @@ def test_help_is_the_default_target():
               "--ignore=tests/mocks --ignore=tests/fixtures"]),
     ("test-fast", ["cd supervisor &&", "/opt/py/bin/python -m pytest " + " ".join(TEST_FAST)]),
     ("smoke", ["cd supervisor &&", "/opt/py/bin/python -m pytest " + " ".join(SMOKE)]),
-    ("frontend", ["cd webui && npm run check", "cd webui && npm run build"]),
+    ("frontend", ["cd webui && npm run check", "cd webui && npm run i18n", "cd webui && npm run build"]),
     ("e2e-local", ["scripts/standin/e2e.sh"]),
     ("audit", ["pip-audit -r supervisor/requirements.txt", "cd webui && npm audit --omit=dev --audit-level=high"]),
 ])

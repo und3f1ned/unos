@@ -17,8 +17,11 @@
   of webui/package.json starts Playwright (the specs run through e2e.sh and
   scripts/test-cycle.sh, which set the target and E2E_STAND_IN=1).
 * playwright.config.ts's default target (webui/tests/target.ts) is where
-  scripts/standin/e2e.sh serves the stand-in, and e2e.sh creates the
-  administrator the specs sign in as (E2E_ADMIN of webui/tests/fixtures.ts).
+  scripts/standin/e2e.sh serves the stand-in. Before the specs, e2e.sh creates
+  the administrator they sign in as (E2E_ADMIN of webui/tests/fixtures.ts)
+  through the /setup page: a run of webui/tests/first-run.spec.ts alone, with
+  E2E_FIRST_RUN=1, which is never retried (ADR-0261). A copy of e2e.sh whose
+  stand-in, curl and Playwright are fakes shows the order of the two runs.
 * The specs skip only on the conditions listed in SKIP_CONDITIONS, never on
   the version of the supervisor they run against (ADR-0207), and every skip
   gives its reason: a skip on E2E_STAND_IN says what the stand-in lacks, then
@@ -33,6 +36,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -74,6 +78,10 @@ SKIP_CONDITIONS = {
     "notes.length === 0",
     # No folder of the pools directory takes a new one: the test stack has none (files.spec.ts).
     "scratch === null",
+    # The supervisor's emergency command line runs against the stand-in's data on this machine
+    # (scripts/standin/emergency.py, E2E_STANDIN_STATE of e2e.sh); the test stack's supervisor is
+    # in a container (emergency-reset.spec.ts).
+    "!process.env.E2E_STANDIN_STATE",
 }
 
 # /data literals inside functions of supervisor/src, which no runner can
@@ -358,9 +366,15 @@ class TestFrontHeaders:
 # stub stands in for @playwright/test, and a relative import without an
 # extension gets ".ts", as Playwright's loader resolves it. node runs the
 # TypeScript of the configuration and of tests/target.ts as it is. Prints the
-# configuration's base URL, or the message of the error it throws (exit 3).
+# configuration's base URL, or the message of the error it throws (exit 3). With
+# the argument "projects" and file names under webui/ after it: each project's
+# name, its retries (null: the configuration's) and which of those files it
+# runs, by its testMatch and testIgnore (regular expressions, tested on the
+# absolute path as Playwright tests them; no testMatch: Playwright's default,
+# which every *.spec.ts matches).
 PROBE = r"""
 import { registerHooks } from 'node:module';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const STUB =
@@ -381,7 +395,20 @@ registerHooks({
 
 try {
   const { default: config } = await import(pathToFileURL(process.argv[2]).href);
-  process.stdout.write(JSON.stringify({ baseURL: config.use.baseURL }));
+  if (process.argv[3] === 'projects') {
+    const absolute = (file) => path.join(path.dirname(process.argv[2]), file);
+    const matches = (pattern, file) => pattern instanceof RegExp && pattern.test(absolute(file));
+    const runs = (project, file) =>
+      (project.testMatch === undefined || matches(project.testMatch, file)) && !matches(project.testIgnore, file);
+    const files = process.argv.slice(4);
+    process.stdout.write(JSON.stringify(config.projects.map((project) => ({
+      name: project.name,
+      retries: project.retries ?? null,
+      runs: files.filter((file) => runs(project, file)),
+    }))));
+  } else {
+    process.stdout.write(JSON.stringify({ baseURL: config.use.baseURL }));
+  }
 } catch (error) {
   process.stdout.write(JSON.stringify({ error: String(error?.message ?? error) }));
   process.exitCode = 3;
@@ -458,12 +485,16 @@ def load_config(tmp_path_factory):
     probe = tmp_path_factory.mktemp("config") / "probe.mjs"
     probe.write_text(PROBE, encoding="utf-8")
 
-    def load(base_url: str | None, http_url: str | None) -> tuple[int, dict]:
-        env = {"PATH": os.environ.get("PATH", os.defpath), "NODE_NO_WARNINGS": "1"}
+    def load(
+        base_url: str | None, http_url: str | None, *, env: dict[str, str] | None = None, args: tuple[str, ...] = ()
+    ) -> tuple[int, dict]:
+        env = {"PATH": os.environ.get("PATH", os.defpath), "NODE_NO_WARNINGS": "1", **(env or {})}
         for name, value in (("BASE_URL", base_url), ("HTTP_URL", http_url)):
             if value is not None:
                 env[name] = value
-        result = subprocess.run([node, str(probe), str(CONFIG)], env=env, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(
+            [node, str(probe), str(CONFIG), *args], env=env, capture_output=True, text=True, timeout=60
+        )
         assert result.stdout, result.stderr[-3000:]
         return result.returncode, json.loads(result.stdout)
 
@@ -665,6 +696,77 @@ def _string_value(expression: str | None, text: str, depth: int = 0) -> str:
     return "" if operand else value
 
 
+def _free_ports(count: int) -> list[int]:
+    """Ports on 127.0.0.1 that nothing listens on (each was free a moment ago)."""
+    sockets = [socket.socket() for _ in range(count)]
+    try:
+        for sock in sockets:
+            sock.bind(("127.0.0.1", 0))
+        return [sock.getsockname()[1] for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
+
+
+def _run_e2e_sh_with_fakes(
+    tmp_path: Path, *args: str, first_run: int = 0, specs: int = 0, env: dict[str, str] | None = None
+) -> tuple[subprocess.CompletedProcess, list[str]]:
+    """Run a copy of scripts/standin/e2e.sh with ``args`` in a checkout in tmp_path, with fakes.
+
+    The supervisor and front.mjs only wait to be stopped, curl answers that the stand-in is up
+    and has no account yet, and the build is the existing one (E2E_SKIP_BUILD=1). Playwright
+    writes each run as a line "E2E_FIRST_RUN=<value> <arguments>" and exits with ``first_run``
+    for the first-run setup (E2E_FIRST_RUN=1) and with ``specs`` otherwise. Returns the result
+    and those lines.
+    """
+    node = _node()
+    standin = tmp_path / "scripts" / "standin"
+    standin.mkdir(parents=True)
+    shutil.copy2(STANDIN / "e2e.sh", standin / "e2e.sh")
+    (standin / "front.mjs").write_text("setTimeout(() => {}, 600_000);\n", encoding="utf-8")
+    build = tmp_path / "webui" / "build"
+    build.mkdir(parents=True)
+    (build / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
+    tls = tmp_path / ".standin" / "tls"
+    tls.mkdir(parents=True)
+    for name in ("cert.pem", "key.pem"):
+        (tls / name).write_text("not checked: OPENSSL is true\n", encoding="utf-8")
+    runs = tmp_path / "playwright-runs.txt"
+    fakes = {
+        "bin/curl": """case "$*" in *"/api/v1/auth/status"*) echo '{"setup_required": true}' ;; esac\n""",
+        "bin/python": '[ "$1" = -c ] && exit 0\nexec sleep 600\n',
+        "webui/node_modules/.bin/playwright": (
+            f'echo "E2E_FIRST_RUN=${{E2E_FIRST_RUN:-}} $*" >> "{runs}"\n'
+            f'[ "${{E2E_FIRST_RUN:-}}" = 1 ] && exit {first_run}\nexit {specs}\n'
+        ),
+    }
+    for name, body in fakes.items():
+        fake = tmp_path / name
+        fake.parent.mkdir(parents=True, exist_ok=True)
+        fake.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+        fake.chmod(0o755)
+    https_port, http_port, backend_port = _free_ports(3)
+    environment = {
+        "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "NODE": node,
+        "NPM": "false",
+        "OPENSSL": "true",
+        "PYTHON": str(tmp_path / "bin" / "python"),
+        "E2E_SKIP_BUILD": "1",
+        "E2E_HTTPS_PORT": str(https_port),
+        "E2E_HTTP_PORT": str(http_port),
+        "E2E_BACKEND_PORT": str(backend_port),
+        **(env or {}),
+    }
+    bash = shutil.which("bash") or "/bin/bash"
+    result = subprocess.run(
+        [bash, str(standin / "e2e.sh"), *args], cwd=tmp_path, env=environment, capture_output=True, text=True,
+        timeout=60,
+    )
+    return result, runs.read_text(encoding="utf-8").splitlines() if runs.exists() else []
+
+
 class TestSpecsAndRunner:
     def test_default_target_is_where_e2e_sh_serves_the_stand_in(self):
         target = (REPO / "webui" / "tests" / "target.ts").read_text(encoding="utf-8")
@@ -713,15 +815,31 @@ class TestSpecsAndRunner:
                     )
         assert missing == []
 
-    def test_e2e_sh_creates_the_administrator_the_specs_sign_in_as(self):
+    def test_the_first_run_spec_creates_the_administrator_the_specs_sign_in_as(self):
         fixtures = (SPECS / "fixtures.ts").read_text(encoding="utf-8")
         admin = re.search(
             r"^export const E2E_ADMIN = \{ username: '([^'\\]+)', password: '([^'\\]+)' \} as const;$", fixtures, re.M
         )
         assert admin, "webui/tests/fixtures.ts: no E2E_ADMIN"
-        setup = re.search(r"printf '%s' '(\{[^'\n]*\})' \|", (STANDIN / "e2e.sh").read_text(encoding="utf-8"))
-        assert setup, "scripts/standin/e2e.sh: no body for /auth/setup"
-        assert json.loads(setup[1]) == {"username": admin[1], "password": admin[2]}
+        # Through the form of /setup, as the owner does after installing (ADR-0261).
+        first_run = (SPECS / "first-run.spec.ts").read_text(encoding="utf-8")
+        assert re.search(r"^import \{ test, expect, E2E_ADMIN \} from './fixtures';$", first_run, re.M)
+        for label, value in (("'Username'", "username"), ("'Password', { exact: true }", "password"),
+                             ("'Confirm Password'", "password")):
+            assert f"getByLabel({label}).fill(E2E_ADMIN.{value})" in first_run, label
+        # e2e.sh creates the account through that spec alone: it checks that the new stand-in has
+        # none, sends no setup request of its own, runs the spec with E2E_FIRST_RUN=1, stops when
+        # it fails, and only then runs the specs, without E2E_FIRST_RUN.
+        e2e = (STANDIN / "e2e.sh").read_text(encoding="utf-8")
+        assert "auth/setup" not in e2e
+        fresh = e2e.index("/api/v1/auth/status\" | grep -q '\"setup_required\": *true'")
+        first_run = re.search(r"^if ! E2E_FIRST_RUN=1 E2E_STAND_IN=1 .*\\\n.*playwright\" test --reporter=list .*; then$",
+                              e2e, re.M)
+        assert first_run, "scripts/standin/e2e.sh: no first-run setup before the specs"
+        specs = e2e.index('"$webui/node_modules/.bin/playwright" test "$@"')
+        assert fresh < first_run.start() < specs
+        assert 'die "creating the test administrator through the /setup page failed' in e2e[first_run.end():specs]
+        assert re.search(r"^unset E2E_FIRST_RUN$", e2e, re.M)
         # The specs take the password from E2E_ADMIN: one copy to change.
         copies = [
             spec.name
@@ -729,6 +847,43 @@ class TestSpecsAndRunner:
             if spec.name != "fixtures.ts" and admin[2] in spec.read_text(encoding="utf-8")
         ]
         assert copies == []
+
+    def test_e2e_sh_sets_up_the_new_stand_in_then_runs_the_specs(self, tmp_path):
+        # A caller's E2E_FIRST_RUN is dropped: only the first-run setup has it.
+        result, runs = _run_e2e_sh_with_fakes(tmp_path, "tests/auth.spec.ts", specs=3, env={"E2E_FIRST_RUN": "1"})
+
+        assert runs == ["E2E_FIRST_RUN=1 test --reporter=list", "E2E_FIRST_RUN= test tests/auth.spec.ts"]
+        assert result.returncode == 3, result.stderr
+        assert result.stdout.splitlines()[-1].startswith("== Playwright exit code 3 "), result.stdout
+
+    def test_e2e_sh_stops_when_the_first_run_setup_fails(self, tmp_path):
+        result, runs = _run_e2e_sh_with_fakes(tmp_path, first_run=1)
+
+        assert runs == ["E2E_FIRST_RUN=1 test --reporter=list"]
+        assert result.returncode == 1
+        assert "e2e.sh: creating the test administrator through the /setup page failed" in result.stderr
+
+    @pytest.mark.parametrize("spec", ["tests/first-run.spec.ts", "first-run.spec.ts"])
+    def test_the_first_run_spec_alone_is_the_first_run_setup(self, tmp_path, spec):
+        # The run of the specs ignores that file: there it would find no test, and fail.
+        result, runs = _run_e2e_sh_with_fakes(tmp_path, spec, specs=1)
+
+        assert runs == ["E2E_FIRST_RUN=1 test --reporter=list"]
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.splitlines()[-1] == (
+            "== Playwright exit code 0 (tests/first-run.spec.ts alone; logs: .standin/logs)"
+        )
+
+    def test_the_first_run_setup_is_a_run_of_its_own_and_never_retried(self, load_config):
+        files = ("tests/first-run.spec.ts", "tests/auth.spec.ts")
+
+        first_run = load_config(None, None, env={"E2E_FIRST_RUN": "1", "CI": "true"}, args=("projects", *files))
+        specs = load_config(None, None, args=("projects", *files))
+
+        # An installation is set up once: a retry would find the account and fail for that.
+        assert first_run == (0, [{"name": "first-run", "retries": 0, "runs": ["tests/first-run.spec.ts"]}])
+        # The specs, also on the compose test stack, which creates the account through the API.
+        assert specs == (0, [{"name": "chromium", "retries": None, "runs": ["tests/auth.spec.ts"]}])
 
     def test_no_spec_falls_back_to_the_device(self):
         offenders = [

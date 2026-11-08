@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0281
 ---
 
 # ADR-0087: UNOS renders a hardened [global] section with pinned values
 
 ## Context
+
+Superseded by ADR-0281: the same `[global]`, with Samba's logging lines of ADR-0277.
 
 The `[global]` section of 1.0.0 was not hardened: it forced `map to guest = Bad Password`, which maps a wrong password to the guest account, and had no host list. Many Samba settings depend on the distribution's defaults and on the Samba release, and a default that changes would change what UNOS serves without any change in UNOS.
 

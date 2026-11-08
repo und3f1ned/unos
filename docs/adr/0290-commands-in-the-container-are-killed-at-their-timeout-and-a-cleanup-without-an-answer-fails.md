@@ -3,14 +3,14 @@ status: accepted
 date: 2026-11-08
 area: storage
 decided-by: agent
-supersedes: [ADR-0261]
+supersedes: [ADR-0289]
 ---
 
-# ADR-0262: Commands of btrfs and smartctl in the container are killed at their timeout without a wait, a command still stuck is not started again, and a snapshot cleanup without an answer fails its run
+# ADR-0290: Commands of btrfs and smartctl in the container are killed at their timeout without a wait, a command still stuck is not started again, and a snapshot cleanup without an answer fails its run
 
 ## Context
 
-ADR-0261 had the btrfs and smartctl commands that run in the supervisor's container killed at their timeout without a wait, because `subprocess.run` waited for a killed process stuck in the kernel and so kept its worker thread busy, often for good (storage.commands-time-out-cleanly). Its review found that a scheduled snapshot task whose cleanup of old snapshots got no answer from btrfs was recorded as a success, with the reason in its output only, while a scrub or SMART test without an answer fails its run: the task's last status stayed green while its keep count was not applied, at every run while the killed btrfs stayed stuck. This restates ADR-0261 with that change.
+ADR-0289 had the btrfs and smartctl commands that run in the supervisor's container killed at their timeout without a wait, because `subprocess.run` waited for a killed process stuck in the kernel and so kept its worker thread busy, often for good (storage.commands-time-out-cleanly). Its review found that a scheduled snapshot task whose cleanup of old snapshots got no answer from btrfs was recorded as a success, with the reason in its output only, while a scrub or SMART test without an answer fails its run: the task's last status stayed green while its keep count was not applied, at every run while the killed btrfs stayed stuck. This restates ADR-0289 with that change.
 
 ## Decision
 
@@ -37,4 +37,4 @@ ADR-0261 had the btrfs and smartctl commands that run in the supervisor's contai
 - No limit on stuck runs: every scrub status request of the Storage page would leave one more process stuck in the kernel.
 - Failing at once while a run of the command is in progress, instead of waiting for it: two tabs that ask for a healthy pool's scrub status at the same moment would get an error, and the page stops following the scrub at an error.
 - One mark per pool or disk instead of per command: every caller would have to name its target; per command the bound is already the few commands of a pool or a disk.
-- A snapshot cleanup without an answer recorded as a success, with the reason in the run's output (ADR-0261): the task's last status would stay green while its keep count is not applied.
+- A snapshot cleanup without an answer recorded as a success, with the reason in the run's output (ADR-0289): the task's last status would stay green while its keep count is not applied.

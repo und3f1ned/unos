@@ -17,6 +17,10 @@ reads and changes the host for the web UI (ADR-0002). Avoid: backend server, dae
 API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend server, dashboard
 (the Dashboard is one page).
 
+**Text catalog**: The texts of one area of the web UI in English and Russian
+(`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
+Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
+
 **Dev device**: The ArmSoM Sige7 board that UNOS is developed and checked on. It holds no data to
 preserve (ADR-0220). Avoid: production NAS, the server.
 
@@ -34,6 +38,13 @@ Avoid: user (a UNOS user), admin.
 **Automatic revert**: What turns a network interface that UNOS disabled back on, with its saved
 addresses and routes: a timer on the host that runs unless the administrator keeps the disable
 within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` do), undo.
+
+**Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
+clock of the host's time zone: a snapshot, a scrub, a SMART test, a backup or a custom task. Each
+run is recorded with its status in the task's history (ADR-0044, ADR-0266, ADR-0268). Avoid: job, cron job.
+
+**Custom task**: A scheduled task that runs a shell command as root in the supervisor's container;
+its runs record the command's output and exit status (ADR-0044, ADR-0267). Avoid: script.
 
 **Notification channel**: Where UNOS sends notifications: e-mail through a mail server, a Telegram
 chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0260).
@@ -55,8 +66,21 @@ Avoid: array, volume, RAID.
 Only managed pools can hold shares (ADR-0034, ADR-0148). Avoid: mounted pool (a managed pool can
 be unmounted).
 
+**Pool import**: Making a btrfs filesystem found on the host's data disks a managed pool without
+formatting it: Mount for the pool its label names, Import, under a name that becomes its label,
+for any other (ADR-0283). Boot, virtual and system devices never hold a pool. Avoid: Import alone
+(the smb.conf import), adoption.
+
 **Pool root**: The top folder of a pool, which holds its apps, volumes and snapshots; it is never a
 share's folder (ADR-0145). Avoid: pools directory (that is `/mnt/pools`).
+
+**Mount copy**: A mount of a pool's filesystem at the pool's mountpoint, with the root of the
+host's mount, in the mount namespace of another process whose root is the host's, such as a
+systemd service with sandboxing. The host's umount does not reach it, so an unmount of the pool
+unmounts it there too. Any other mount of the pool in another namespace keeps the pool mounted
+(ADR-0288): a container's bind mount, and also the pool's mount at its mountpoint in a container,
+whose root is its own (`-v /mnt/pools:/mnt/pools`). Avoid: stale mount (the copy exists while the
+pool is mounted too).
 
 **Volume**: A btrfs subvolume at the top of a pool, with an optional quota (ADR-0069).
 Avoid: subvolume (snapshots are subvolumes too), dataset.
@@ -68,9 +92,14 @@ and overwrites nothing (ADR-0011). Avoid: backup.
 in Files deletes there, until it is restored, deleted for good, or deleted for good 30 days after
 its deletion (ADR-0259). Avoid: recycle bin, snapshot.
 
+**Recovery runbook**: `docs/RECOVERY.md`: how another Linux machine reads a pool's files without
+writing to its disks, also with a disk missing, and how root runs the emergency reset (ADR-0285).
+Avoid: disaster recovery plan, repair guide.
+
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
-hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0235). Avoid: SMART
-log (smartctl's own self-test and error logs).
+hour while the disk is awake, kept by serial in RAM and in `/data/smart_history.json`, which is
+written when they change (ADR-0235, ADR-0269). Avoid: SMART log (smartctl's own self-test and error
+logs).
 
 **Replace soon**: The mark of a connected disk whose failure prediction, a score of the rises in
 its SMART history, reaches 50; Disk Health and the dashboard show it with its reasons (ADR-0235).
@@ -120,6 +149,11 @@ passwords and smb.conf in line with the database (ADR-0138). Avoid: sync, repair
 the group unos-smb and removes other accounts' access (ADR-0155). Avoid: fix permissions, chmod,
 reconcile.
 
+**Network discovery**: How computers on the LAN find the NAS without its address: Windows through
+WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd registers with
+avahi-daemon), both over IPv4 only; NetBIOS is off (ADR-0275). Avoid: network browsing (a share's
+"Show in network browsing" lists the share among the NAS's shares), NetBIOS browsing.
+
 ## Users and access
 
 **UNOS user**: An account that people sign in to the web UI with: an administrator or a regular
@@ -145,10 +179,19 @@ session token, API key.
 Account page and keeps; each one signs in once in place of a code of the authenticator app
 (ADR-0238). Avoid: backup code.
 
+**Emergency reset**: Root on the host setting a new password for an administrator and turning its
+two-factor authentication off, with `deploy/reset-admin.sh`, when no administrator can sign in;
+the audit log records it by the user root (ADR-0284). Avoid: password recovery, factory reset.
+
 ## Apps and backups
 
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039).
 Avoid: container, service.
+
+**App in unos-smb**: An app installed with the option to run in the group unos-smb (PUID 80000,
+PGID 70000, UMASK 007), which only apps of linuxserver.io images with a folder besides their own
+data have: the only kind of app that is given a share's folder (ADR-0274). Avoid: SMB app, app
+in the SMB group.
 
 **Container**: Any Docker container on the host, as the Containers page lists it; an app runs as
 one or more containers. Avoid: app.

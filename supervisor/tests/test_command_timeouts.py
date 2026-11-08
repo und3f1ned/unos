@@ -2,7 +2,7 @@
 
 Scrubs, error stats resets, SMART tests, the reads of SMART data and the snapshot cleanup of
 scheduled snapshot tasks run btrfs or smartctl in the supervisor's container, through
-host.run_in_container (ADR-0262). A process that hangs in the
+host.run_in_container (ADR-0290). A process that hangs in the
 kernel, on a disk or a filesystem that stopped answering, dies of SIGKILL only when the kernel lets
 it go: the timeout of subprocess.run killed it and then waited for it, so the worker thread that
 ran it stayed busy until then, often for good (ADR-0021).
@@ -650,8 +650,11 @@ async def test_the_smart_monitor_records_the_other_disks_past_one_that_does_not_
                                              ["smartctl", "-n", "standby", "-j", "-a", "/dev/sdb"])
     assert processes.killed == [(hanging.pid, signal.SIGKILL)]
 
-    # The next round does not wait for sda again.
+    # The next round does not wait for sda again. It records WD-2 in the history in RAM; the file is
+    # written only when a round changes the history, which this one does not (ADR-0269).
     _, took = await _within(asyncio.to_thread(health_router._smart_monitor_pass), 5, "the next round")
     assert took < TIMEOUT
-    assert {serial: len(entries) for serial, entries in json.loads(history_file.read_text()).items()} == {"WD-2": 2}
+    assert {serial: len(entries) for serial, entries in health_router._smart_history.history.items()} == {
+        "WD-2": 2}
+    assert {serial: len(entries) for serial, entries in json.loads(history_file.read_text()).items()} == {"WD-2": 1}
     assert processes.runs_of(hanging.args) == 1

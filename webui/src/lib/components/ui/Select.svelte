@@ -2,6 +2,7 @@
 	import { ChevronDown, Check } from 'lucide-svelte';
 	import { createEventDispatcher, onMount, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
+	import { t } from '$lib/i18n';
 
 	export let id: string = '';
 	export let value: string = '';
@@ -10,7 +11,8 @@
 	export let error: string = '';
 	export let required: boolean = false;
 	export let disabled: boolean = false;
-	export let placeholder: string = 'Select an option';
+	// Without a placeholder: "Select an option" in the language of the page.
+	export let placeholder: string | undefined = undefined;
 	export let options: Array<{ value: string; label: string; disabled?: boolean }> = [];
 
 	const dispatch = createEventDispatcher();
@@ -22,7 +24,7 @@
 
 	$: inputId = id || `select-${Math.random().toString(36).slice(2, 9)}`;
 	$: selectedOption = options.find((opt) => opt.value === value);
-	$: displayValue = selectedOption?.label || placeholder;
+	$: displayValue = selectedOption?.label || (placeholder ?? $t('ui.select.placeholder'));
 
 	function toggle() {
 		if (disabled) return;

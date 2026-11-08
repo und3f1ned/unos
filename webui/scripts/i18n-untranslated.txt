@@ -1,0 +1,63 @@
+# The .svelte files whose texts are not in the catalogs yet (ADR-0287). scripts/i18n-check.mjs
+# (make frontend) does not report their texts, and fails for a listed file that has none left:
+# translating a file takes it off this list. The empty list is necessary, not sufficient: the
+# feature webui.translations passes once a walk through every page in Russian also finds no
+# English text.
+#
+# One area per group. Take off the lines of your area's files only, and keep the blank lines:
+# they keep the removals of branches that translate other areas apart, so that git merges them.
+
+# dashboard
+src/routes/+page.svelte
+src/lib/components/widgets/ContainersWidget.svelte
+src/lib/components/widgets/QuickActionsWidget.svelte
+src/lib/components/widgets/RecentActivityWidget.svelte
+src/lib/components/widgets/StorageWidget.svelte
+src/lib/components/widgets/SystemStatsWidget.svelte
+
+# storage
+src/routes/storage/+page.svelte
+
+# snapshots
+src/routes/snapshots/+page.svelte
+
+# shares
+src/routes/shares/+page.svelte
+src/lib/components/shares/RepairPermissionsModal.svelte
+src/lib/components/shares/ShareAccessPicker.svelte
+src/lib/components/shares/ShareCard.svelte
+src/lib/components/shares/ShareFormModal.svelte
+src/lib/components/shares/SmbStateBadge.svelte
+
+# files
+src/routes/files/+page.svelte
+src/routes/files/trash/+page.svelte
+
+# containers
+src/routes/containers/+page.svelte
+src/lib/components/containers/ContainerDetailDrawer.svelte
+src/lib/components/containers/ImageList.svelte
+
+# apps
+src/routes/apps/+page.svelte
+src/lib/components/apps/AppDetailModal.svelte
+src/lib/components/apps/AppStorageWarning.svelte
+
+# users
+src/routes/users/+page.svelte
+
+# audit
+src/routes/audit/+page.svelte
+
+# system
+src/routes/settings/+page.svelte
+src/routes/system/tabs/BackupTab.svelte
+src/routes/system/tabs/GeneralTab.svelte
+src/routes/system/tabs/HealthTab.svelte
+src/routes/system/tabs/LogsTab.svelte
+src/routes/system/tabs/MonitorTab.svelte
+src/routes/system/tabs/NetworkTab.svelte
+src/routes/system/tabs/NotificationsTab.svelte
+src/routes/system/tabs/PowerTab.svelte
+src/routes/system/tabs/SchedulerTab.svelte
+src/routes/system/tabs/UpdateTab.svelte

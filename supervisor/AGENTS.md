@@ -29,7 +29,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   go through `host.run_in_container`: at its timeout it kills the command's process group and
   leaves the wait to a daemon thread, so a command stuck in the kernel holds no worker thread;
   it runs one run of a command at a time, and none while a killed run of it is still stuck
-  (ADR-0262). The fake hosts refuse it as they refuse `subprocess.run`. The Snapshots page's
+  (ADR-0290). The fake hosts refuse it as they refuse `subprocess.run`. The Snapshots page's
   `run_cmd` does not use it yet.
 
 ## Routers and roles (ADR-0030)
@@ -86,5 +86,6 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
   skill).
 - After an edit of a file that tests read, run those tests: `test_deploy_scripts.py` (deploy/,
   `docs/INSTALL.md`, `docs/TESTING.md`, `scripts/test-cycle.sh`, the workflow, Dockerfiles, package
-  files), `test_authz.py`, `test_secret_bootstrap.py`, `test_request_limits.py`, `test_standin.py`,
+  files), `test_emergency.py` (`deploy/reset-admin.sh`, `docs/RECOVERY.md` and the links to it),
+  `test_authz.py`, `test_secret_bootstrap.py`, `test_request_limits.py`, `test_standin.py`,
   `test_smb_accounts.py`, `test_smb_models.py` and those of `make test-fast`.

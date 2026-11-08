@@ -74,6 +74,43 @@ export interface Pool {
   forced_read_only: boolean;
 }
 
+/**
+ * Why a btrfs filesystem is not the pool its label names: it has none, it is not a valid pool
+ * name, or another btrfs filesystem of the host has it too, and the pool of that name is the
+ * other one (mounted or managed under it) or neither (ADR-0283).
+ */
+export type LabelProblem = 'missing' | 'invalid' | 'duplicate';
+
+/** A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0283). */
+export interface ImportableFilesystem {
+  uuid: string;
+  /** As btrfs prints it; null without a label. */
+  label: string | null;
+  label_problem: LabelProblem;
+  /** The members that are present. */
+  devices: string[];
+  total_devices: number;
+  missing_devices: number;
+  /** Bytes, of the members that are present. */
+  size: number;
+  used: number;
+}
+
+/** Pool names the API accepts (POOL_NAME_PATTERN in supervisor/src/security/validators.py). */
+export const POOL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
+
+/**
+ * A pool name made from a filesystem's label, for the import dialog to start from: characters a
+ * pool name cannot have become "_", and what does not start with a letter or digit is dropped.
+ * "" without a label.
+ */
+export function suggestedPoolName(label: string | null): string {
+  return (label ?? '')
+    .replace(/[^A-Za-z0-9_-]/g, '_')
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .slice(0, 63);
+}
+
 export type RaidLevel = 'single' | 'raid0' | 'raid1' | 'raid1c3' | 'raid1c4' | 'raid10';
 
 /** A selected disk as GET /storage/disks listed it. */
@@ -152,14 +189,22 @@ export function quotaBytes(gib: string): number | null {
   return bytes >= 1 && bytes <= MAX_QUOTA_GIB * GIB ? bytes : null;
 }
 
+/** A pool's scrub as `btrfs scrub status` reports it (ADR-0272). */
 export interface ScrubStatus {
   pool: string;
-  status: 'running' | 'finished' | 'aborted' | 'idle';
+  /**
+   * idle: no scrub recorded (a restart of the supervisor forgets the last one, ADR-0171);
+   * aborted: cancelled; interrupted: ended neither by finishing nor by a cancel, for example
+   * because the btrfs process that ran it was killed.
+   */
+  status: 'running' | 'finished' | 'aborted' | 'interrupted' | 'idle';
   duration: number | null;
   bytes_scrubbed: number | null;
   total_bytes: number | null;
   rate: number | null;
+  /** Every error of btrfs's error summary (read, super, verify and csum). */
   errors: number;
+  /** When the scrub started, as btrfs prints it. */
   last_run: string | null;
 }
 
@@ -196,6 +241,22 @@ export async function mountPool(name: string): Promise<Pool> {
 /** Unmount on the host and remove the managed fstab entry; 409 while busy. */
 export async function unmountPool(name: string): Promise<Pool> {
   return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
+}
+
+/** The btrfs filesystems on the host's disks that can be imported as pools (ADR-0283). */
+export async function getImportableFilesystems(): Promise<ImportableFilesystem[]> {
+  return api.get<ImportableFilesystem[]>('/storage/filesystems/importable');
+}
+
+/**
+ * Import a filesystem of getImportableFilesystems() as the pool `name`, without formatting it: it
+ * is mounted by UUID at /mnt/pools/{name}, gets the name as its label and an fstab entry. HTTP 409,
+ * and nothing is changed, when it is in use, misses devices or is on a boot, virtual or system
+ * device, when the name is taken or SMB shares, NFS exports or apps of an earlier pool still use
+ * it, or when it mounts another subvolume than its top level by default.
+ */
+export async function importFilesystem(uuid: string, name: string): Promise<Pool> {
+  return api.post<Pool>(`/storage/filesystems/${encodeURIComponent(uuid)}/import`, { name });
 }
 
 /**
