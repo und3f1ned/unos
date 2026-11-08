@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0160]
 ---
 
-# ADR-0261: New folders and uploads of the file manager in a share folder get 2770 and 0660, and apps still get no group access to shares
+# ADR-0273: New folders and uploads of the file manager in a share folder get 2770 and 0660, and apps still get no group access to shares
 
 ## Context
 

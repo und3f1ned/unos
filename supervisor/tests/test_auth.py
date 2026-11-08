@@ -474,7 +474,10 @@ class TestFirstRunSetup:
 
     def test_setup_is_refused_once_a_user_exists(self, empty_db, slow_hash):
         from fastapi.testclient import TestClient
+        from sqlalchemy import select
+        from sqlalchemy.orm import Session
 
+        from src.auth.models import User
         from src.main import app
 
         client = TestClient(app)
@@ -483,3 +486,88 @@ class TestFirstRunSetup:
 
         assert first.status_code == 200 and first.json()["is_admin"] is True
         assert second.status_code == 400
+        assert second.json()["detail"] == "Admin user already exists. Use /login instead."
+        # The refused setup created nobody.
+        with Session(empty_db) as session:
+            assert [(u.username, u.is_admin) for u in session.scalars(select(User))] == [("owner", True)]
+        assert client.get("/api/v1/auth/status").json() == {"setup_required": False}
+
+    @pytest.mark.parametrize("dockerfile, compose_file", [
+        ("Dockerfile", "docker-compose.yml"),
+        ("Dockerfile.test", "docker-compose.test.yml"),
+    ])
+    def test_the_supervisor_runs_as_one_process(self, dockerfile, compose_file):
+        """_setup_lock makes "no users yet" and the insert one step only inside one process
+        (ADR-0029), and the used TOTP steps live in its memory (ADR-0067): the image runs one
+        uvicorn process, without workers (uvicorn takes their number from WEB_CONCURRENCY too)."""
+        from .test_authz import _compose, _environment, _uvicorn_args
+
+        args = _uvicorn_args(dockerfile)
+        assert args[:2] == ["uvicorn", "src.main:app"]
+        assert not [arg for arg in args if arg.split("=")[0] in ("--workers", "--reload")]
+        assert "WEB_CONCURRENCY" not in _environment(_compose(compose_file)["services"]["supervisor"])
+
+    def test_the_new_administrator_signs_in_and_nobody_else(self, empty_db, tmp_path, monkeypatch):
+        """What the /setup page does after the setup: sign in with the same name and password."""
+        import bcrypt
+        from fastapi.testclient import TestClient
+
+        from src.auth import router as auth_router
+        from src.main import app
+
+        monkeypatch.setattr(
+            auth_router, "hash_password", lambda pw: bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=4)).decode()
+        )
+        monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(tmp_path / "audit.jsonl"))
+        client = TestClient(app)
+        assert client.post("/api/v1/auth/setup", json={"username": "owner", "password": "Owner-pass-2026"}).status_code == 200
+        assert client.post("/api/v1/auth/setup", json={"username": "other", "password": "Other-pass-2026"}).status_code == 400
+
+        login = client.post("/api/v1/auth/login", json={"username": "owner", "password": "Owner-pass-2026"})
+        assert login.status_code == 200, login.text
+        me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {login.json()['access_token']}"})
+        assert (me.json()["username"], me.json()["is_admin"]) == ("owner", True)
+        refused = client.post("/api/v1/auth/login", json={"username": "other", "password": "Other-pass-2026"})
+        assert refused.status_code == 401
+
+    def test_a_new_installation_has_no_account(self, tmp_path, monkeypatch):
+        """No default account: the app started on a new database has no user, asks for the
+        setup, and the default credentials that older docs promised do not sign in (ADR-0029)."""
+        import asyncio
+
+        from fastapi.testclient import TestClient
+        from sqlalchemy import create_engine, func, select
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from sqlalchemy.orm import Session
+        from sqlalchemy.pool import NullPool
+
+        from src import database
+        from src.auth import router as auth_router
+        from src.auth.models import User
+        from src.main import app
+
+        path = tmp_path / "unos.db"  # no file yet: a new installation
+        engine = create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool)
+        monkeypatch.setattr(database, "engine", engine)
+        monkeypatch.setattr(database, "async_session", async_sessionmaker(engine, expire_on_commit=False))
+        monkeypatch.setenv("UNOS_DISABLE_BACKGROUND_TASKS", "1")
+        monkeypatch.setattr("src.audit.router.AUDIT_FILE", str(tmp_path / "audit.jsonl"))
+        auth_router.limiter.reset()
+        try:
+            # The lifespan creates the tables (init_db), as at the first start of an installation.
+            with TestClient(app) as client:
+                status = client.get("/api/v1/auth/status")
+                default = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"})
+        finally:
+            auth_router.limiter.reset()
+            asyncio.run(engine.dispose())
+
+        assert status.json() == {"setup_required": True}
+        assert default.status_code == 401
+        assert default.json()["detail"] == "Incorrect username or password"
+        check = create_engine(f"sqlite:///{path}")
+        try:
+            with Session(check) as session:
+                assert session.scalar(select(func.count()).select_from(User)) == 0
+        finally:
+            check.dispose()

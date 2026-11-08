@@ -311,7 +311,7 @@ def test_mkdir_in_base_or_outside_is_refused(env):
     assert _tree(env.outside) == ["secret.txt"]
 
 
-# --- new folders and uploads in share folders (ADR-0261) ------------------------------
+# --- new folders and uploads in share folders (ADR-0273) ------------------------------
 
 
 @pytest.fixture

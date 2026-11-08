@@ -943,7 +943,7 @@ test.describe('File Browser operations', () => {
   test('outside share folders, a new folder and an upload give the group no write access', async ({
     authenticatedPage: page,
   }) => {
-    // Only a share folder (setgid, the group unos-smb, mode 2770) gives them group write (ADR-0261).
+    // Only a share folder (setgid, the group unos-smb, mode 2770) gives them group write (ADR-0273).
     // The scratch folder is an ordinary one: its new entries keep what the umask leaves, and its group.
     const dir = (await openScratch(page)).path;
     await page.getByTitle('New Folder').click();

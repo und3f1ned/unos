@@ -1005,7 +1005,7 @@ def _mode_of(env, file: _Unfinished) -> int:
 async def test_in_a_share_folder_the_file_is_writable_for_the_smb_group_before_any_of_it_is_written(
     env, creation, monkeypatch
 ):
-    """In a folder set up as a share's (setgid, the SMB group, 2770), the file is 0660 from its creation (ADR-0261).
+    """In a folder set up as a share's (setgid, the SMB group, 2770), the file is 0660 from its creation (ADR-0273).
 
     Unnamed or hidden, it has that mode before any of its data is written and
     before it gets its name, and keeps it under its name, in the folder's

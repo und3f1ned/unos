@@ -33,7 +33,7 @@ after TRASH_RETENTION_DAYS (ADR-0259, "the trash" below).
 New folders and uploads in a share folder (_share_folder: a folder set up
 for the SMB group as UNOS makes a share's) get the modes that Samba gives
 the entries of SMB users, 2770 and 0660, so that the share's SMB users can
-change them at once (ADR-0261); elsewhere they get what the umask leaves.
+change them at once (ADR-0273); elsewhere they get what the umask leaves.
 """
 
 import asyncio
@@ -461,7 +461,7 @@ def _open_parent_or_none(parts: list[str]) -> int | None:
 
 
 def _share_folder(dir_fd: int) -> bool:
-    """Whether the open folder ``dir_fd`` is set up for the SMB group as a share's folder (ADR-0261).
+    """Whether the open folder ``dir_fd`` is set up for the SMB group as a share's folder (ADR-0273).
 
     It is setgid, the group unos-smb may read, write and search it, and
     others nothing (constants.share_root_mode_ok): as UNOS makes a share's
@@ -634,7 +634,7 @@ class _FileUpload(UploadSink):
     In a share folder (_share_folder) the file gets the mode of the files of
     SMB users, 0660, through its descriptor as soon as it exists: before any
     of it is written and before it has a name, also when it replaces a file
-    (ADR-0261). Elsewhere it has what the umask leaves of 0666.
+    (ADR-0273). Elsewhere it has what the umask leaves of 0666.
     """
 
     def __init__(self, path: str) -> None:
@@ -758,7 +758,7 @@ class _FileUpload(UploadSink):
 
 
 def _create_directory(path: str, name: str) -> FileInfo:
-    """Create the folder ``name`` in ``path``: in a share folder with the share's modes (ADR-0261)."""
+    """Create the folder ``name`` in ``path``: in a share folder with the share's modes (ADR-0273)."""
     parts = _split(path)
     name = _validate_name(name)
     _require_inside_pool(parts)
@@ -1883,7 +1883,7 @@ async def upload_file(path: str, request: Request, _: dict = Depends(verify_toke
     supervisor stops in the middle, nothing of it stays. Elsewhere, and on
     filesystems without unnamed files, it is a hidden temporary file, which
     a stop in the middle leaves behind. In a share folder the file gets the
-    mode 0660, which lets the share's SMB users change it (ADR-0261).
+    mode 0660, which lets the share's SMB users change it (ADR-0273).
     """
     try:
         return await receive_upload(request, _FileUpload(path))

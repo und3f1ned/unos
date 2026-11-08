@@ -30,10 +30,22 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
    certificate authority. Continue to the site, or make your devices trust that
    authority once (see
    [HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)).
-4. On the very first visit UNOS asks you to create the administrator account:
-   choose a user name and a password (at least 8 characters). There are no
-   default credentials.
-5. Afterwards you sign in on the login page.
+4. On the very first visit UNOS opens **Create your admin account to get
+   started** (`/setup`): choose a user name and a password (at least 8
+   characters), enter the password again and click **Create Admin Account**.
+   The dashboard opens, signed in as that administrator. There are no default
+   credentials: until this account exists, nobody can sign in. Whoever opens a
+   new installation first creates its administrator, so do it right after
+   installing.
+5. Afterwards you sign in on the login page. The setup page refuses a second
+   administrator with "Admin user already exists. Use /login instead." and
+   creates nobody; administrators add further users on the **Users** page.
+
+A session lasts 24 hours. When it has ended, the page you have open goes to
+the login page once, at its next request (also during an upload or a
+download) or when the server ends its live statistics. **Logout** in one
+browser tab signs out the other tabs too, and signing in as another account
+in one tab switches the other tabs to that account.
 
 Signing in works also while the disk that holds the UNOS data (`/data`, on the
 system disk) is full, so that an administrator can sign in and free space, for
@@ -97,10 +109,26 @@ UNOS uses BTRFS for storage management. A **storage pool** combines one or more 
 
 ### Viewing Disks
 
-Go to **Storage** to see:
-- All available disks
-- Disk model, size, and serial number
-- Current mount status
+**Storage** → **Physical Disks** lists every whole disk of the host, the
+system disk included, but not SD cards and eMMC (the boot medium of ARM
+boards), flash, RAM, loop, optical and floppy devices. For each disk it
+shows the device, the model and serial number, the size, HDD or SSD, what
+it holds (a filesystem with its label, a partition table and its
+partitions), where it is mounted, and its status:
+
+- **System**: it holds the host's root filesystem, `/boot` or active swap,
+  or the host boots from it;
+- **In use**: it is mounted, a member of a mounted pool, or used by an md
+  RAID array, LVM or LUKS;
+- **Pool "name"**: it belongs to a pool that is not mounted;
+- **Has data**: it holds a filesystem, a partition table or another
+  signature;
+- **Free**: it is empty.
+
+The reason, such as "Mounted at /srv/backup", is shown below the badge.
+When the disks cannot be listed, for example because `lsblk` fails on the
+host, the card says so with the reason instead of the list; the pools are
+still shown, and the other way round.
 
 ### Creating a Storage Pool
 
@@ -136,15 +164,33 @@ UNOS mounts the new pool at `/mnt/pools/<name>` and adds it to the host's
 For each pool, you can:
 - **View Details** - Space usage, devices, status
 - **Mount / Unmount** - Mount the pool (and mount it at every boot), or unmount
-  it; the data on the disks is not touched. Unmounting is refused while a
-  running app or container uses the pool, also through a Docker volume that
-  binds a folder in it, or while files on it are open, for example by a
-  computer that has one of its SMB shares open. Once the pool is unmounted,
-  its SMB shares are no longer served: their open connections are closed, and
-  the **Shares** page marks them **Not served** and **Pool not mounted**. They
-  keep their access, and mounting the pool serves them again
+  it after confirming; the data on the disks is not touched. An unmounted
+  pool shows **Not mounted**, its fstab entry is removed, and its empty
+  mountpoint is write-protected, so that nothing lands on the system disk
+  there. Unmounting is refused while a running app or container uses the
+  pool, also through a Docker volume that binds a folder in it, or while
+  files on it are open, for example by a computer that has one of its SMB
+  shares open; the dialog names the containers or the reason. Once the pool
+  is unmounted, its SMB shares are no longer served: their open connections
+  are closed, and the **Shares** page marks them **Not served** and **Pool
+  not mounted**. They keep their access, and mounting the pool serves them
+  again
 - **Add Devices** - Expand the pool
-- **Scrub** - Check data integrity
+- **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
+  the pool shows its progress (bytes, percent, rate and duration), updated
+  every 2 seconds, and **Cancel Scrub** stops it. At the end it shows the
+  result with the time the scrub started: **Last scrub: No errors**, the
+  number of errors btrfs counted (read, super, verify and checksum errors),
+  or that the scrub was cancelled or interrupted before it finished, with
+  the errors found until then; start a scrub again to check the whole pool.
+  Interrupted means that the scrub ended neither by finishing nor by a
+  cancel, for example because the btrfs process that ran it was killed.
+  When UNOS restarts, for example with the host, it forgets the result of
+  the last scrub: the pool then shows none, also when the restart stopped a
+  scrub. When btrfs cannot report the status, the pool says so with the
+  reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
+  scheduled scrub of a pool that is not mounted fails without scrubbing
+  anything
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no
@@ -161,11 +207,13 @@ For each pool, you can:
   snapshots or other subvolumes, which must be deleted first. A pool mounted
   read-only lists its volumes but cannot create or delete them.
 - **Balance** - Redistribute data across devices
-- **Delete** - Unmount the pool and remove it from `/etc/fstab`. The disks are
-  not wiped: the data stays on them and the pool can be mounted again later.
-  Like Unmount, it is refused while the pool is in use, and its SMB shares are
-  no longer served; NFS exports of the pool are not checked: remove them
-  first.
+- **Remove pool** (the trash button) - After **Continue**, type the pool's
+  name to enable **Remove Pool**. UNOS unmounts the pool, removes it from
+  `/etc/fstab` and deletes its empty mountpoint. The disks are not wiped: the
+  data stays on them, and the pool is listed again as **Not mounted**, ready
+  to be mounted later. Like Unmount, it is refused while the pool is in use,
+  and the dialog says why. As after an unmount, its SMB shares are no longer
+  served; NFS exports of the pool are not checked: remove them first.
 
 ### SMART Monitoring
 
@@ -186,8 +234,12 @@ dialog shows the values the tab loaded.
 
 Every hour UNOS records, for each disk that is awake, the SMART counters of
 failing sectors and errors, and keeps the last 720 records of each disk (30
-days for a disk that never sleeps). From 24 records on (a day), it scores how
-the counters rise:
+days for a disk that never sleeps). The records are kept in memory and saved
+to the system disk only when a disk's counters, path or serial number
+change, when a disk is recorded for the first time, and when UNOS stops: an
+hour in which nothing changed writes nothing. After a power cut, the records
+since the last change are lost; the counters themselves are not. From 24
+records on (a day), it scores how the counters rise:
 
 - each of the reallocated, current pending and offline uncorrectable sector
   counts that rose within the kept records adds 30 points, and 20 more if it
@@ -222,8 +274,18 @@ The score follows rises, not levels: a disk that arrives with many
 reallocated sectors gets no mark, so check the SMART data of a used disk
 yourself. NVMe disks get no score, as the hourly records hold no NVMe
 counters: **SMART data** shows their health log, and their health turns
-**FAILED** when the disk reports a critical warning. A rising counter also
-sends an alert (see [Notifications](#notifications)).
+**FAILED** when the disk reports a critical warning.
+
+A counter that rose since the disk's previous record sends an alert to every
+enabled e-mail and Telegram channel (see [Notifications](#notifications)):
+"Disk Health Warning: <path>" with the counter, its old and new value and a
+recommendation; a warning, or an error when a sector count rose by more than
+10 (other counters: by more than 100). The same rise is not alerted again an
+hour later, and a count that falls and rises again is alerted again. Disks
+without a serial number are told apart by their path.
+`GET /api/v1/health/smart/trends` lists every recorded disk, removed disks
+included, with its number of records and the counters that rose over its
+last 24 records.
 
 ---
 
@@ -264,7 +326,7 @@ A share is a folder inside a pool, or a volume. UNOS refuses:
 A share marked **Not served** breaks one of these rules, for example a share
 of a whole pool imported from the host's existing smb.conf. Nobody can open it
 until you give it a new folder with **Edit**; it cannot be given access until
-then. The shares of a pool that was unmounted or deleted on the **Storage**
+then. The shares of a pool that was unmounted or removed on the **Storage**
 page are marked **Not served** and **Pool not mounted** in the same way: they
 keep their access, and mounting the pool serves them again.
 
@@ -694,7 +756,15 @@ was made shows **Password needed** and must turn SMB on again.
 
 Users can change their own password:
 1. Go to **Account** (administrators: **System** → **Security**)
-2. Under **Change Password**, enter the current and the new password
+2. Under **Change Password**, enter the **Current Password**, the **New
+   Password** (at least 8 characters) and the new one again under **Confirm
+   New Password**; all three are required
+3. Click **Change Password**: the page confirms "Password changed
+   successfully"
+
+From then on the old password no longer signs in, and the new one does.
+Sessions that were open before stay signed in until they end (see
+[First Login](#first-login)).
 
 Admins can reset any user's password via **Users** page.
 
@@ -716,7 +786,15 @@ Protect your account with TOTP-based two-factor authentication:
 3. Scan the QR code with an authenticator app (Google Authenticator, Authy,
    etc.). The QR code is drawn in your browser; the secret is never sent to
    another service.
-4. Enter the verification code and click **Enable 2FA**
+4. Enter the verification code and click **Enable 2FA**: the section shows
+   **Enabled**
+
+When the page cannot load whether 2FA is on, the section says so with the
+reason and offers **Retry** instead of **Enable** or **Disable**.
+
+To sign in with 2FA, enter your username and password as before: UNOS then
+asks for the **Authentication Code**. Enter the 6-digit code that the app
+shows and click **Verify**; **← Back to login** returns to the password form.
 
 To disable 2FA:
 1. Go to **Account** (administrators: **System** → **Security**)
@@ -726,7 +804,8 @@ To disable 2FA:
 Each code works once: a code that was accepted (to sign in, to turn SMB on,
 or to turn 2FA on or off) is refused when it is used again, with "This
 two-factor code was already used; wait for the next one". The app shows a new
-code every 30 seconds.
+code every 30 seconds; at the sign-in the code form stays, so you enter the
+next code without your password again.
 
 2FA protects only the web interface, not SMB: SMB signs in with the password
 alone. Turning SMB on yourself needs your two-factor code as well.
@@ -765,6 +844,22 @@ Scripts send the code as `recovery_code` in place of `totp_code` to
 `POST /api/v1/auth/login`; `POST /api/v1/auth/recovery-codes/generate`
 answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
 left.
+
+### Login History
+
+Under **Login History** on the **Account** page (administrators: **System** →
+**Security**), **View History** lists the latest 50 sign-ins, newest first:
+those of your own account since it was created (an account created with the
+name of a deleted one does not see that account's), and for administrators
+those of every account, also of deleted accounts and the attempts with names
+that do not exist. Each entry shows **SUCCESS** or **FAILED** with the reason
+(such as "Incorrect username or password" or "Invalid 2FA code"), the
+account, the time in your browser's time zone, the address of the computer
+that signed in (not that of the web interface's proxy) and the browser. Above
+the list are the number of attempts and how many succeeded and failed;
+**Refresh** loads the list again. A sign-in with 2FA is listed once, when its
+code was checked. When the history cannot be loaded, the section says so with
+the reason, and **Retry** loads it again.
 
 ### API Tokens
 
@@ -1018,6 +1113,64 @@ The output of the UNOS containers themselves is not in the journal: run
 files that the journal does not hold, such as `/var/log/dpkg.log`, are not
 shown.
 
+### Scheduler
+
+**System** → **Scheduler** runs tasks on a schedule: snapshots and scrubs of a
+pool, SMART tests of a disk, system backups (see
+[Scheduled Snapshots](#scheduled-snapshots) and [System Backup](#system-backup))
+and custom commands. Only administrators see the tab, and only they can use
+its API.
+
+- **New Task** asks for the task's type, its target and when it runs: every
+  hour at a minute, every day, week or month at a time, or a cron expression
+  (minute, hour, day of the month, month, day of the week). **Run now** runs a
+  task at once. **History**, or a task's history button, lists the last 100
+  runs with their status, start and duration, and the output or error of each.
+- The schedules follow the clock of the NAS's time zone, which the tab names:
+  the time zone set on the host (`timedatectl set-timezone`), or UTC when the
+  host has none that UNOS can use; when the host cannot be asked for a moment,
+  they keep the zone it named last. A task for 03:00 runs at 03:00 on that
+  clock, also after a change of daylight saving time, and a change of the time
+  zone applies within a minute. On the night the clocks go back, a time in the
+  hour that repeats runs once, the first time, and an hourly task skips the
+  repeated hour; on the night they go forward, a time that the clock skips
+  runs when the clock passes it, once (a task for 02:30 runs at 03:00 in
+  central Europe). Next runs and the times in the history show in your
+  browser's time zone.
+- A task runs while UNOS runs: a time that passes while the NAS is off or
+  suspended is not made up for, and when the clock is set forward, only the
+  tasks of its last 5 minutes run. A run that a restart or shutdown of UNOS
+  cuts off (an update, a reboot) fails with "The supervisor stopped during
+  the run"; the task runs again at its next time.
+
+#### Custom Commands
+
+A task of the type **Custom Command** runs a shell command with `/bin/sh`, as
+root in the supervisor's container. The command sees the host's processes,
+the Docker socket, `/etc/samba` and the pools under `/mnt/pools`, but the
+container's own files and network: keep scripts on a pool, and reach the host
+itself with `nsenter --target 1 --mount --uts --ipc --net --pid -- <command>`.
+
+Each run records, in the history:
+
+- the command's exit status, as **Exit status**: 0 is a success, any other
+  value a failure ("The command exited with status 3");
+- its output, under **View output**: standard output and error together, in
+  the order they were written. A run keeps the last 16 KiB, after a line that
+  says so when the output was longer.
+
+A command still running after 24 hours is stopped, with the processes it
+started, and its run fails with "The command did not end within 24 hours and
+was stopped". Processes that a command leaves running in the background end
+when it returns, also those of `timeout` or of job control (`set -m`); only a
+process started in a session of its own (`setsid`) is not stopped. Run a
+server in a container or as a service of the host. A run starts at its time
+also while the task's run before has not ended: a command that must not run
+twice at once can guard itself, for example with
+`flock /tmp/my-task.lock my-script.sh`. The command is checked again before
+each run, as when it is saved: at most 4096 characters, without NUL
+characters.
+
 ---
 
 ## Backups & Snapshots
@@ -1129,8 +1282,11 @@ For automatic backups, add a task of the type **System Backup** in
 (AES-256-GCM) with the passphrase you enter twice, in **Passphrase** and
 **Confirm Passphrase**, at least 8 characters long. They are named `auto_backup_<date>_<time>.tar.gz.enc`
 (with `_1`, `_2`, ... before `.tar.gz.enc` when two are made in the same
-second) and appear in the list, marked encrypted; **Keep Count** sets how
-many of them are kept, counted over all backup tasks. Besides the database,
+second) and appear in the list, marked encrypted, once they are complete; **Keep
+Count** sets how many of them are kept, counted over all backup tasks: after
+each run, the oldest scheduled backups beyond that number are deleted, never a
+backup made with **Create Backup** or uploaded. Two runs at the same time, as
+**Run now** during a scheduled run, both succeed. Besides the database,
 they hold a copy of the scheduled tasks, without passphrases, which a
 restore does not restore.
 

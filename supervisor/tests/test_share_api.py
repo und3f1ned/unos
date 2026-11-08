@@ -1631,7 +1631,7 @@ class TestFolderCreationOnThePoolMount:
 
 
 class TestFileManagerInAShareFolder:
-    """Files' New Folder and Upload in the folder of a share that UNOS created (ADR-0261)."""
+    """Files' New Folder and Upload in the folder of a share that UNOS created (ADR-0273)."""
 
     def test_new_folders_and_uploads_get_the_modes_that_samba_gives_entries_of_smb_users(self, api, monkeypatch):
         monkeypatch.setattr(files_router, "BASE_PATH", str(api.base))

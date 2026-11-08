@@ -1524,6 +1524,32 @@ class TestPasswordChange:
         assert world.fake.calls == []
         assert world.change_password("bob", "wrong-password", BOB_PW).status_code == 400
 
+    @pytest.mark.parametrize("name", ["bob", "alice"])
+    def test_the_old_password_no_longer_signs_in_and_the_new_one_does(self, world, name):
+        # bob has no SMB; alice's account is active, so Samba's copy changes too.
+        old = {"bob": BOB_PW, "alice": ALICE_PW}[name]
+        if name == "alice":
+            world.make_active("alice", 70000, ALICE_PW)
+
+        assert world.change_password(name, old, NEW_PW).status_code == 200
+
+        refused = world.client.post(f"{API}/auth/login", json={"username": name, "password": old})
+        assert refused.status_code == 401
+        assert refused.json()["detail"] == "Incorrect username or password"
+        signed_in = world.client.post(f"{API}/auth/login", json={"username": name, "password": NEW_PW})
+        assert signed_in.status_code == 200, signed_in.text
+        me = world.client.get(f"{API}/auth/me",
+                              headers={"Authorization": f"Bearer {signed_in.json()['access_token']}"})
+        assert me.json()["username"] == name
+
+    @pytest.mark.parametrize("body", [{"current_password": BOB_PW}, {"new_password": NEW_PW}, {}],
+                             ids=["no-new-password", "no-current-password", "empty"])
+    def test_a_missing_field_is_refused(self, world, body):
+        response = world.client.post(f"{API}/auth/change-password", json=body, headers=world.headers("bob"))
+
+        assert response.status_code == 422
+        assert bcrypt.checkpw(BOB_PW.encode(), world.user("bob").hashed_password.encode())
+
 
 class TestCommitFailureAfterSmbpasswd:
     def test_activation(self, world, failing_commit):
