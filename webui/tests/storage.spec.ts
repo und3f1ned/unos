@@ -1431,6 +1431,10 @@ test.describe('The Storage page in Russian', () => {
   const MIB = 1024 ** 2;
   // As btrfs prints when a scrub started: in English, without a time zone.
   const STARTED = 'Fri Nov  6 10:00:00 2026';
+  // What the dialogs ask of a pool's or a volume's name (POOL_NAME_PATTERN and VOLUME_NAME_PATTERN
+  // of src/lib/api/storage.ts): Latin letters only, which a Russian reader would not assume.
+  const NAME_RULE =
+    'Используйте латинские буквы, цифры, «-» и «_» (до 63 символов), начиная с латинской буквы или цифры';
   const HALTED = {
     ...HEALTHY_POOL, name: 'e2e_halt', uuid: '00000000-0000-4000-8000-0000000000e9', mountpoint: '/mnt/pools/e2e_halt',
   };
@@ -1666,12 +1670,10 @@ test.describe('The Storage page in Russian', () => {
         '/mnt/pools/<имя> по UUID и добавит запись в /etc/fstab, чтобы пул снова монтировался после перезагрузки.',
     );
     const importName = importing.getByLabel('Имя пула');
-    await importName.fill('two words');
-    await expect(
-      importing.getByText('Используйте буквы, цифры, «-» и «_» (до 63 символов), начиная с буквы или цифры', {
-        exact: true,
-      }),
-    ).toBeVisible();
+    // A name in Cyrillic letters is refused, and the hint says that the letters are Latin.
+    await importName.fill('резерв');
+    await expect(importing.getByText(NAME_RULE, { exact: true })).toBeVisible();
+    await expect(importing.getByRole('button', { name: 'Импортировать', exact: true })).toBeDisabled();
     await importName.fill('e2e_media');
     await expect(importing.getByText('Пул «e2e_media» уже есть. Выберите другое имя.', { exact: true })).toBeVisible();
     await expect(importing.getByRole('button', { name: 'Импортировать', exact: true })).toBeDisabled();
@@ -1718,12 +1720,9 @@ test.describe('The Storage page in Russian', () => {
         exact: true,
       }),
     ).toBeVisible();
-    await volumes.getByLabel('Имя нового тома').fill('two words');
-    await expect(
-      volumes.getByText('Используйте буквы, цифры, «-» и «_» (до 63 символов), начиная с буквы или цифры', {
-        exact: true,
-      }),
-    ).toBeVisible();
+    await volumes.getByLabel('Имя нового тома').fill('документы');
+    await expect(volumes.getByText(NAME_RULE, { exact: true })).toBeVisible();
+    await expect(volumes.getByRole('button', { name: 'Создать том', exact: true })).toBeDisabled();
     await quota.fill('ten');
     await expect(
       volumes.getByText('Введите число ГиБ больше 0, например 10 или 0.5 (не больше 8388607)', { exact: true }),

@@ -18,7 +18,9 @@ export const en = {
 	'storage.size.tb': '{size} TB',
 	// A label or a name shown on its own, such as the label after a filesystem's type.
 	'storage.quoted': '"{name}"',
-	// What the page asks, and what UNOS refuses, of a new pool's or volume's name.
+	// What the page asks, and what UNOS refuses, of a new pool's or volume's name. The letters are
+	// Latin ones only (POOL_NAME_PATTERN and VOLUME_NAME_PATTERN of src/lib/api/storage.ts): a
+	// language with letters of its own says so.
 	'storage.nameRule': "Use letters, numbers, '-' and '_' (up to 63), starting with a letter or number",
 
 	'storage.disks.title': 'Physical Disks',
@@ -303,7 +305,8 @@ export const ru: Translation<typeof en> = {
 	'storage.size.gb': '{size} ГБ',
 	'storage.size.tb': '{size} ТБ',
 	'storage.quoted': '«{name}»',
-	'storage.nameRule': 'Используйте буквы, цифры, «-» и «_» (до 63 символов), начиная с буквы или цифры',
+	'storage.nameRule':
+		'Используйте латинские буквы, цифры, «-» и «_» (до 63 символов), начиная с латинской буквы или цифры',
 
 	'storage.disks.title': 'Физические диски',
 	'storage.disks.loadError': 'Не удалось загрузить диски',
