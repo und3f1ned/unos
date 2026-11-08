@@ -1850,11 +1850,17 @@
         "Install offers to run the app in the SMB group, which sets its PGID to 70000 (unos-smb)",
         "Such an app reads and writes the share folder it was given; an app installed without the option still cannot"
       ],
+      "verified_by": [
+        "supervisor/tests/test_apps.py",
+        "supervisor/tests/test_smb_models.py",
+        "webui/tests/apps.spec.ts"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0160"
+        "ADR-0160",
+        "ADR-0274"
       ],
-      "notes": "Apps run as PUID/PGID 1000 today, outside the group, which also keeps internet-facing apps out of the users' files (ADR-0160)."
+      "notes": "Built (ADR-0274): the install option run_in_unos_smb, the checkbox \"Run in the group unos-smb\" of the app's details, exists for the apps of linuxserver.io images with a pool folder outside {pool}/apps (can_run_in_unos_smb) and adds PUID 80000 (SMB_APP_UID, no other app's user), PGID 70000 and UMASK 007 to the container's environment; other images ignore PUID and PGID, and the option is refused for them and for apps with only their own data. PUID and PGID are no longer environment values (400), and the Environment tab shows them read-only. An install refuses a folder that is, lies inside or holds a share's folder without the option; with it, a share's folder is mounted, and a read-only folder may hold shares, but never a folder inside a share, a share's folder for the app's own data or a writable folder that holds a share. A snapshot folder (.snapshots), the trash (.unos-trash) and folders in them are refused for every app. GET /apps/installed says whether an app runs in the group (runs_in_unos_smb, from its container's PGID), and the Installed tab and the details show it. TestRunInUnosSmb, TestShareFolders, TestInstalledApps and TestConstants prove the environment, the refusals and the list against a fake Docker, and the unos-smb tests of webui/tests/apps.spec.ts the form and the installed view with route fakes (the stand-in has no Docker). Not covered: a share made later on the folder of an app outside the group is not refused (ADR-0274). Open, because Docker apps and share folders are host-level (GLOSSARY.md): the device check and the re-check after a reboot (ADR-0018). On the device: install a linuxserver.io app (for example syncthing) without the option, then uninstall it (its data stays). Install it again with the option and its data folder set to the folder of a share: it starts, its /config belongs to uid 80000 after the start, and docker inspect shows PUID=80000, PGID=70000 and UMASK=007. Inside the container its user (abc, uid 80000) lists and reads the share's files and creates a file and a folder there, which get the group unos-smb with 0660 and 2770, and an SMB user with write access changes that file. Record the owner, group and mode of the share's folder after the app's first start: root or uid 80000 with the group unos-smb and 2770 passes, any other owner (such as uid 1000) or mode fails. The same install without the option is refused with 400 before any image is pulled, and so is one that sets PUID through the API. The Installed tab shows Runs in the group unos-smb for the app. Uninstall the app afterwards; its data stays."
     },
     {
       "id": "apps.catalog-without-docker",

@@ -364,7 +364,8 @@ every served share below such a folder until the command has run.
 
 Folders that apps use (downloads, media) can be shared. SMB users with write
 access then change what the app sees: they can add, change, rename or delete
-its files there.
+its files there. Apps get a share's folder only when they run in the group
+`unos-smb` (see [Share Folders for Apps](#share-folders-for-apps)).
 
 #### Guest Shares
 
@@ -404,7 +405,8 @@ until you press **Repair permissions** on the share. A share marked
   owner may run);
 - **removes the access that the group and other permissions gave every
   other account**, including apps that run as their own user (for example
-  PUID 1000): they can no longer read the folder;
+  PUID 1000): they can no longer read the folder, unless they run in the
+  group `unos-smb` (see [Share Folders for Apps](#share-folders-for-apps));
 - does not change ACL entries (set with `setfacl`; `ls -l` shows a `+`): the
   users and groups named in them keep their access, and can get more (up to
   what their entry gives), because the group permissions that Repair sets
@@ -651,15 +653,59 @@ The App Store provides one-click installation of popular applications.
 4. Choose the **Storage pool** for the app's data (apps that keep data need a
    mounted pool; create or mount one on the **Storage** page first) and
    configure settings if prompted
-5. Wait for installation to complete
+5. To give the app a share's folder, tick **Run in the group unos-smb** and
+   enter the share's folder on the **Volumes** tab (see
+   [Share Folders for Apps](#share-folders-for-apps))
+6. Wait for installation to complete
 
 Starting or restarting an app from UNOS fails while its data folders are not
 on a mounted pool.
 
+### Share Folders for Apps
+
+An app can use a share's folder only if it runs in the group `unos-smb`. The
+apps of linuxserver.io images offer **Run in the group unos-smb** when they
+are installed, unless all their folders hold their own data (such as
+Prowlarr's `/config`): it sets the app's `PUID` to 80000, a user that no other
+app has, its `PGID` to 70000 (`unos-smb`) and its `UMASK` to 007, so what the
+app creates gets the same permissions as what SMB users create (folders 2770,
+files 660). Such an app reads and changes every file in the share folders you
+give it, and SMB users with write access to the share can change what the app
+writes there. If the app can be reached from the internet, whoever takes it
+over gets those files too. Apps of other images, such as Jellyfin, Plex and
+File Browser, cannot run in the group: UNOS sets the user and the group
+through `PUID` and `PGID`, which those images do not take. `PUID` and `PGID`
+cannot be changed on the **Environment** tab.
+
+An install is refused when it would give an app:
+
+- a share's folder, a folder inside one or a folder that holds one, while the
+  app does not run in the group;
+- a folder inside a share's folder, also in the group: give the app the
+  share's whole folder;
+- a share's folder for the app's own data, the folders under `apps/` such as
+  `/config`;
+- a writable folder that holds a share's folder, also in the group. A
+  read-only one may hold shares when the app runs in the group, as Duplicati's
+  view of the whole pool does;
+- a snapshot folder (`.snapshots`) or the trash (`.unos-trash`), or a folder
+  in one, also in the group: they keep the files of shares as they were, and
+  what was deleted from them.
+
+A linuxserver.io app may give the share's folder to its user (80000) when it
+starts; the folder keeps the group `unos-smb` and its permissions, and
+**Repair permissions** does not change its owner.
+
+A folder that an app already uses (downloads, media) can still be shared on
+the **Shares** page. After **Repair permissions**, an app that runs as its own
+user outside the group (PUID and PGID 1000) can no longer read it: uninstall
+the app (its data is kept) and install it again in the group.
+
 ### Managing Installed Apps
 
-Go to **App Store** → **Installed** to see the installed apps with their state
-and the pool that holds their data, and to act on them:
+Go to **App Store** → **Installed** to see the installed apps with their state,
+the pool that holds their data and, for the apps that run in the group
+`unos-smb`, **Runs in the group unos-smb**, and to act on them:
 
 - **Start**, **Stop** and **Restart** an app; its card shows the new state. A
   start or restart is refused while the app's data folders are not on a mounted

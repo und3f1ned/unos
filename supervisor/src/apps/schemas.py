@@ -7,11 +7,18 @@ from pydantic import BaseModel, computed_field
 # example /mnt/pools/data). Any other host path is a fixed host resource
 # (docker.sock, /dev/..., /proc, ...) that is mounted as-is and never created.
 POOL_PLACEHOLDER = "{pool}"
+# The folders of the apps' own data (configuration, databases): {pool}/apps/<app>/...
+APPS_DATA_PATH = f"{POOL_PLACEHOLDER}/apps"
 
 
 def is_pool_path(host: str) -> bool:
     """Return True if a catalog host path is relative to the selected pool."""
     return host == POOL_PLACEHOLDER or host.startswith(POOL_PLACEHOLDER + "/")
+
+
+def is_app_data_path(host: str) -> bool:
+    """Return True if a catalog host path holds the app's own data ({pool}/apps/...)."""
+    return host.startswith(APPS_DATA_PATH + "/")
 
 
 class AppCategory(str, Enum):
@@ -100,6 +107,25 @@ class AppTemplate(BaseModel):
     min_memory: str = "256m"  # Minimum recommended memory
     recommended_memory: str = "512m"
 
+    @computed_field  # type: ignore[misc]
+    @property
+    def can_run_in_unos_smb(self) -> bool:
+        """True if the app can be installed to run in the group unos-smb (ADR-0274).
+
+        linuxserver.io images take the user and group of their processes
+        from PUID and PGID and the umask of their services from UMASK. Other
+        images ignore them, also where their template declares PGID
+        (jellyfin's image runs as root, Plex's takes PLEX_GID), so they are
+        never given a share's folder. An app whose every pool folder holds
+        its own data ({pool}/apps), which is never a share's folder, would
+        gain nothing from the group either.
+        """
+        return (
+            self.source is AppSource.LINUXSERVER
+            and {"PUID", "PGID"} <= {var.name for var in self.environment}
+            and any(volume.on_pool and not is_app_data_path(volume.host) for volume in self.volumes)
+        )
+
 
 class AppVolume(BaseModel):
     """A bind mount with the host path that is actually used."""
@@ -126,6 +152,9 @@ class InstalledApp(BaseModel):
     # under /mnt/pools/default), or its pool is not mounted. UNOS does not
     # start such an app.
     data_outside_pools: list[str] = []
+    # The app runs in the group unos-smb: its container's PGID is 70000
+    # (ADR-0274). Only such an app is given a share's folder.
+    runs_in_unos_smb: bool = False
 
 
 class AppPool(BaseModel):
@@ -144,7 +173,13 @@ class AppInstallRequest(BaseModel):
     port_overrides: dict[int, int] = {}
     # Container path -> host path; host paths must be inside a mounted pool.
     volume_overrides: dict[str, str] = {}
+    # Values of the template's variables; PUID and PGID are not among them
+    # (ADR-0274).
     env_overrides: dict[str, str] = {}
+    # Run the app in the group unos-smb (PUID 80000, PGID 70000, UMASK 007),
+    # the only way to give it a share's folder; only for templates with
+    # can_run_in_unos_smb (ADR-0274).
+    run_in_unos_smb: bool = False
 
 
 class AppInstallResponse(BaseModel):

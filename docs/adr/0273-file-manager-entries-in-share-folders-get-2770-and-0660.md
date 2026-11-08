@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-08
 area: files
 decided-by: agent
 supersedes: [ADR-0160]
+superseded-by: ADR-0274
 ---
 
 # ADR-0273: New folders and uploads of the file manager in a share folder get 2770 and 0660
 
 ## Context
+
+Superseded by ADR-0274: apps of linuxserver.io images can also be installed to run in the group unos-smb; the file manager's modes stay.
 
 The file manager runs as root with the umask 022: a folder that New Folder made in a share's
 folder was 2755 and an uploaded file 0644, both of the group unos-smb from the setgid folder, so

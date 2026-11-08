@@ -240,6 +240,7 @@ and this index, and `make check-fast` runs it.
 | [0254](0254-docker-calls-run-in-worker-threads-and-conflicts-answer-409.md) | Docker calls of the containers and apps APIs run in worker threads within the Docker client's timeout, and the containers API answers Docker's conflicts with 409 | accepted | 2026-11-07 |
 | [0255](0255-container-logs-stream-in-the-drawer-and-images-get-a-tab.md) | The container drawer follows the log over the logs socket, and the Images tab pulls by name and removes only what no container uses | accepted | 2026-11-07 |
 | [0256](0256-the-apps-api-acts-only-on-apps-and-uninstall-keeps-their-data.md) | The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data | accepted | 2026-11-07 |
+| [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | Apps of linuxserver.io images can be installed to run in the group unos-smb, and only such an app is given a share's folder | accepted | 2026-11-08 |
 
 ## Backup
 
@@ -262,7 +263,7 @@ and this index, and `make check-fast` runs it.
 | [0170](0170-file-manager-protects-volumes-and-mounts.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts | accepted | 2026-11-06 |
 | [0232](0232-file-manager-renames-in-the-row-and-never-replaces.md) | The file manager renames one selected item in its row and never replaces an entry | accepted | 2026-11-07 |
 | [0259](0259-deleted-items-go-to-the-trash-of-their-pool-or-volume-for-30-days.md) | Deleted items go to the trash of their pool or volume for 30 days, unless they are restored or deleted for good | accepted | 2026-11-07 |
-| [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | New folders and uploads of the file manager in a share folder get 2770 and 0660 | accepted | 2026-11-08 |
+| [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | New folders and uploads of the file manager in a share folder get 2770 and 0660 | superseded by [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | 2026-11-08 |
 
 ## System
 
