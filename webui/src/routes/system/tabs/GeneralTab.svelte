@@ -37,6 +37,10 @@
     if (hours > 0) return $t("general.uptime.hours", { hours, minutes });
     return $t("general.uptime.minutes", { minutes });
   };
+
+  // A version in the language of the page: the server answers "unknown" when UNOS was built
+  // without one (get_current_version of supervisor/src/updates/updater.py).
+  $: versionLabel = (version: string): string => (version === "unknown" ? $t("general.version.unknown") : version);
 </script>
 
 <div class="space-y-6">
@@ -91,7 +95,7 @@
     {:else if currentVersion}
       <p class="text-sm flex flex-wrap items-center gap-2">
         <span class="text-secondary">{$t("general.version.label")}</span>
-        <span class="mono">{currentVersion.version}</span>
+        <span class="mono">{versionLabel(currentVersion.version)}</span>
         {#if currentVersion.is_development}
           <Badge variant="warning">{$t("general.version.dev")}</Badge>
         {/if}

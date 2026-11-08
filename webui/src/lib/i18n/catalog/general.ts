@@ -21,6 +21,8 @@ export const en = {
 
 	'general.version.title': 'UNOS Version',
 	'general.version.label': 'Version:',
+	// The version the server answers as "unknown": UNOS was built without one (ADR-0234).
+	'general.version.unknown': 'unknown',
 	// The badge of a version that is not a release (ADR-0234).
 	'general.version.dev': 'dev',
 	'general.version.check': 'Check for Updates',
@@ -52,6 +54,7 @@ export const ru: Translation<typeof en> = {
 
 	'general.version.title': 'Версия UNOS',
 	'general.version.label': 'Версия:',
+	'general.version.unknown': 'неизвестна',
 	'general.version.dev': 'разработка',
 	'general.version.check': 'Проверить обновления',
 	'general.version.unavailable': 'Сведения о версии недоступны',

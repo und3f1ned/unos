@@ -34,6 +34,14 @@
   $: itemLabel = (item: string): string =>
     Object.prototype.hasOwnProperty.call(RESTORED_ITEMS, item) ? $t(RESTORED_ITEMS[item]) : item;
 
+  // The units of a backup's size in the language of the page, from bytes to gigabytes (formatBytes).
+  $: sizeUnits = [
+    $t("backup.size.bytes"),
+    $t("backup.size.kilobytes"),
+    $t("backup.size.megabytes"),
+    $t("backup.size.gigabytes")
+  ];
+
   // A 401 has already ended the session and the sign-in page is on its way.
   function sessionEnded(e: unknown): boolean {
     return e instanceof ApiError && e.status === 401;
@@ -232,7 +240,7 @@
                   <Clock class="w-3 h-3" />
                   {new Date(backup.created).toLocaleString($intlLocale)}
                   <span class="text-slate-500">|</span>
-                  {formatBytes(backup.size)}
+                  {formatBytes(backup.size, $intlLocale, sizeUnits)}
                   <span class="text-slate-500">|</span>
                   {backup.version === "unknown"
                     ? $t("backup.versionUnknown")

@@ -54,6 +54,10 @@
   $: formatDate = (date: string): string => new Date(date).toLocaleDateString($intlLocale);
 
   $: release = check?.release_info ?? null;
+
+  // A version in the language of the page: the server answers "unknown" when UNOS was built
+  // without one (get_current_version of supervisor/src/updates/updater.py).
+  $: versionLabel = (version: string): string => (version === "unknown" ? $t("updates.current.unknown") : version);
 </script>
 
 <div class="space-y-6">
@@ -69,7 +73,7 @@
     {:else if current}
       <p class="text-sm flex flex-wrap items-center gap-2">
         <span class="text-secondary">{$t("updates.current.version")}</span>
-        <span class="mono">{current.version}</span>
+        <span class="mono">{versionLabel(current.version)}</span>
         {#if current.is_development}
           <Badge variant="warning">{$t("updates.current.dev")}</Badge>
         {/if}
@@ -96,7 +100,11 @@
       {:else if check && release}
         {#if check.update_available}
           <Alert variant="info" title={$t("updates.latest.available", { tag: release.tag_name })}>
-            <p>{$t("updates.latest.youRun", { version: check.current_version })}</p>
+            <p>
+              {check.current_version === "unknown"
+                ? $t("updates.latest.youRunUnknown")
+                : $t("updates.latest.youRun", { version: check.current_version })}
+            </p>
           </Alert>
         {:else}
           <p class="text-sm">{$t("updates.latest.upToDate", { tag: release.tag_name })}</p>

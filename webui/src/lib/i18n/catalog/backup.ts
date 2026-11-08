@@ -13,6 +13,12 @@ export const en = {
 	'backup.version': 'v{version}',
 	'backup.versionUnknown': 'version unknown',
 	'backup.encrypted': 'encrypted',
+	// The units of a backup's size, each 1024 times the one before (formatBytes of
+	// src/lib/api/backup.ts).
+	'backup.size.bytes': 'B',
+	'backup.size.kilobytes': 'KB',
+	'backup.size.megabytes': 'MB',
+	'backup.size.gigabytes': 'GB',
 	'backup.restore': 'Restore',
 	'backup.restoreOne': 'Restore {name}',
 	'backup.download': 'Download',
@@ -57,6 +63,10 @@ export const ru: Translation<typeof en> = {
 	'backup.version': 'версия {version}',
 	'backup.versionUnknown': 'версия неизвестна',
 	'backup.encrypted': 'зашифрована',
+	'backup.size.bytes': 'Б',
+	'backup.size.kilobytes': 'КБ',
+	'backup.size.megabytes': 'МБ',
+	'backup.size.gigabytes': 'ГБ',
 	'backup.restore': 'Восстановить',
 	'backup.restoreOne': 'Восстановить {name}',
 	'backup.download': 'Скачать',
