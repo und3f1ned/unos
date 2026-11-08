@@ -472,7 +472,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
   });
 
   test('the sentences around a name, a path or a link read whole', async ({ authenticatedPage: page }) => {
-    // Each is translated in parts around its element (ADR-0288): a part that loses its space or
+    // Each is translated in parts around its element (ADR-0295): a part that loses its space or
     // its place shows here.
     const requests = await fakeSnapshotsApi(page, {
       snapshots: [snapshot(DATA.path, 'nightly', '2026-11-07T02:00:00+00:00')],

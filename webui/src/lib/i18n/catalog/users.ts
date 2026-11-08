@@ -2,7 +2,7 @@ import type { Translation } from '../translate';
 
 // The Users page: src/routes/users/+page.svelte. The server's messages (a refusal, the reason SMB
 // is not available, the warnings of a change) stay in English (ADR-0287). A sentence with a
-// user's name in bold is translated in parts around the name (ADR-0288).
+// user's name in bold is translated in parts around the name (ADR-0295).
 
 export const en = {
 	'users.title': 'Users',

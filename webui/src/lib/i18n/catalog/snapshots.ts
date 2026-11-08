@@ -3,7 +3,7 @@ import type { Translation } from '../translate';
 // The Snapshots page: src/routes/snapshots/+page.svelte. The server's messages stay in English
 // (ADR-0287). A sentence with a name, a path or a link inside is translated in parts around them,
 // and names on the disk (.snapshots, snap_, restore_, auto_) are constants of the page, in no text
-// here; the <date>_<time> that follows a prefix in a name's pattern is words (ADR-0288).
+// here; the <date>_<time> that follows a prefix in a name's pattern is words (ADR-0295).
 
 export const en = {
 	'snapshots.title': 'Snapshots',

@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0288: A sentence around a name, a path or a link is translated in parts, and names on the disk stay as they are
+# ADR-0295: A sentence around a name, a path or a link is translated in parts, and names on the disk stay as they are
 
 ## Context
 

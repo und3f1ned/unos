@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-05
 area: shares
 decided-by: agent
+superseded-by: ADR-0293
 ---
 
 # ADR-0037: Share and export values are validated before they reach smb.conf or /etc/exports
 
 ## Context
+
+Superseded by ADR-0293: an NFS export from the web interface is an existing folder for one local network, read-only or read-write, with options that UNOS writes.
 
 In 1.0.0 share fields went into `smb.conf` unescaped, so a field could add directives such as `root preexec`, and the lines of `/etc/exports` were built the same way; share paths were checked by string prefix and could pass through symbolic links.
 

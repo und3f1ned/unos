@@ -567,7 +567,7 @@
 		on:close={cancelSmbOff}
 	>
 		{#if editing}
-			<!-- In parts around the name: ADR-0288. -->
+			<!-- In parts around the name: ADR-0295. -->
 			<p>
 				{$t('users.smbOff.before')}
 				<strong class="text-content">{editing.username}</strong>{$t('users.smbOff.after')}
@@ -720,7 +720,7 @@
 		on:close={closeDelete}
 	>
 		{#if userToDelete}
-			<!-- In parts around the name: ADR-0288. -->
+			<!-- In parts around the name: ADR-0295. -->
 			<p>
 				{$t('users.delete.before')}
 				<strong class="text-content">{userToDelete.username}</strong>{$t('users.delete.after')}

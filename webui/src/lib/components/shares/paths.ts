@@ -1,6 +1,14 @@
 import type { SharePath } from '$lib/api/shares';
 import { POOL_ROOT_MESSAGE, appsFolderMessage } from './texts';
 
+/** The server's answers for a folder that cannot be shared (or exported) at all. */
+export interface FolderMessages {
+	poolRoot: string;
+	apps: (pool: string) => string;
+}
+
+const SMB_FOLDER_MESSAGES: FolderMessages = { poolRoot: POOL_ROOT_MESSAGE, apps: appsFolderMessage };
+
 /**
  * The components of a folder typed below a pool or volume. Empty and "."
  * components are dropped, as the server normalizes paths ("a//b/" and
@@ -38,12 +46,16 @@ function lastComponent(path: string): string {
 }
 
 /**
- * Why the folder cannot be shared at this location, as far as the browser
- * can tell, or ''. The server checks every rule again.
+ * Why the folder cannot be shared (or exported) at this location, as far as
+ * the browser can tell, or ''. The server checks every rule again.
  */
-export function folderProblem(location: SharePath | undefined, parts: string[]): string {
+export function folderProblem(
+	location: SharePath | undefined,
+	parts: string[],
+	messages: FolderMessages = SMB_FOLDER_MESSAGES
+): string {
 	if (!location || location.type !== 'pool') return '';
-	if (parts.length === 0) return POOL_ROOT_MESSAGE;
-	if (parts[0] === 'apps') return appsFolderMessage(lastComponent(location.path));
+	if (parts.length === 0) return messages.poolRoot;
+	if (parts[0] === 'apps') return messages.apps(lastComponent(location.path));
 	return '';
 }

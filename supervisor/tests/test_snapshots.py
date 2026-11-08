@@ -1304,7 +1304,7 @@ def catalog_strings(path: Path) -> list[str]:
 
 class TestTheWebUI:
     def test_the_page_names_the_folder_and_the_copies_as_the_server_does_in_every_language(self):
-        # Names on the disk are the same in every language (ADR-0288): the Snapshots page has
+        # Names on the disk are the same in every language (ADR-0295): the Snapshots page has
         # them as constants, the server's, and no text of its catalog holds one, so that no
         # translation can change what the page says a folder or a copy is called.
         page = (REPO / "webui" / "src" / "routes" / "snapshots" / "+page.svelte").read_text(encoding="utf-8")
