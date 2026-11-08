@@ -3,7 +3,7 @@
 	import { Card, Select } from '$lib/components/ui';
 	import { LANGUAGES, isLocale, locale, t } from '$lib/i18n';
 
-	// The language of the web UI (ADR-0284). It applies at once, to every page of this browser,
+	// The language of the web UI (ADR-0287). It applies at once, to every page of this browser,
 	// and the sign-in page keeps it too: the choice belongs to the browser, not to the account.
 
 	const options = LANGUAGES.map((language) => ({ value: language.code, label: language.name }));

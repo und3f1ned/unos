@@ -19,7 +19,7 @@ API and WebSocket calls to the supervisor (ADR-0002, ADR-0025). Avoid: frontend 
 
 **Text catalog**: The texts of one area of the web UI in English and Russian
 (`webui/src/lib/i18n/catalog/<area>.ts`), which the pages show in the language chosen on the
-Account page; the server's messages stay English (ADR-0284). Avoid: dictionary, locale file.
+Account page; the server's messages stay English (ADR-0287). Avoid: dictionary, locale file.
 
 **Dev device**: The ArmSoM Sige7 board that UNOS is developed and checked on. It holds no data to
 preserve (ADR-0220). Avoid: production NAS, the server.
@@ -83,6 +83,10 @@ and overwrites nothing (ADR-0011). Avoid: backup.
 **Trash**: The hidden folder `.unos-trash` at the top of each pool and volume that takes what Delete
 in Files deletes there, until it is restored, deleted for good, or deleted for good 30 days after
 its deletion (ADR-0259). Avoid: recycle bin, snapshot.
+
+**Recovery runbook**: `docs/RECOVERY.md`: how another Linux machine reads a pool's files without
+writing to its disks, also with a disk missing, and how root runs the emergency reset (ADR-0285).
+Avoid: disaster recovery plan, repair guide.
 
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
 hour while the disk is awake, kept by serial in RAM and in `/data/smart_history.json`, which is
@@ -166,6 +170,10 @@ session token, API key.
 **Recovery code**: One of the ten codes that a user with two-factor authentication generates on the
 Account page and keeps; each one signs in once in place of a code of the authenticator app
 (ADR-0238). Avoid: backup code.
+
+**Emergency reset**: Root on the host setting a new password for an administrator and turning its
+two-factor authentication off, with `deploy/reset-admin.sh`, when no administrator can sign in;
+the audit log records it by the user root (ADR-0284). Avoid: password recovery, factory reset.
 
 ## Apps and backups
 

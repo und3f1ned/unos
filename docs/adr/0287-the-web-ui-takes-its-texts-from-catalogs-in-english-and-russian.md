@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0284: The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend
+# ADR-0287: The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend
 
 ## Context
 

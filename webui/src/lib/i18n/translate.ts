@@ -1,4 +1,4 @@
-// The lookup behind $t and the locale behind $intlLocale (ADR-0284), without Svelte or SvelteKit,
+// The lookup behind $t and the locale behind $intlLocale (ADR-0287), without Svelte or SvelteKit,
 // so that supervisor/tests/test_i18n.py runs them with node.
 
 /** The languages of the web UI. English is the fallback of every text. */

@@ -70,7 +70,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make test` | all backend tests (`supervisor/tests`); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options |
 | `make test-fast` | the convention tests: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
-| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0284) and `npm run build` in `webui/` |
+| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
 | `make audit` | `pip-audit -r supervisor/requirements.txt` and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
 | `make setup` | `scripts/setup.sh` (needs the network) |
@@ -269,7 +269,11 @@ fails, e2e.sh stops (log: `.standin/logs/first-run.log`, ADR-0261). The run of t
 that file, so arguments that name only it make this setup the whole run: e2e.sh prints its log
 and, when it passed, `== Playwright exit code 0`. Otherwise it then runs Playwright with
 `BASE_URL` and `HTTP_URL` on localhost and `E2E_STAND_IN=1`, stops everything and exits with
-Playwright's exit code. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
+Playwright's exit code. Playwright also gets the stand-in's pools folder (`E2E_POOLS_BASE`), and its state directory
+and Python (`E2E_STANDIN_STATE`, `E2E_STANDIN_PYTHON`), with which `tests/emergency-reset.spec.ts`
+runs the supervisor's emergency command line against the stand-in's data
+(`scripts/standin/emergency.py`, in place of `docker exec` into the supervisor's container); the
+compose test stack does not set them, and the spec skips there. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
 (`npx playwright show-report` in `webui/`). The ports default to 46443 (HTTPS), 46080 (HTTP) and
 46180 (the supervisor); `E2E_HTTPS_PORT`, `E2E_HTTP_PORT` and `E2E_BACKEND_PORT` change them. The
 standin-e2e skill explains how to find the cause of a failure.
@@ -286,7 +290,7 @@ is set, and throws for a `BASE_URL` or `HTTP_URL` whose host is not `localhost`,
 `tests/https.spec.ts`. `E2E_CHROMIUM_PATH` points Playwright at another Chromium binary on a
 machine that cannot download Playwright's own. The browser runs in en-US (`locale`): without a
 language chosen in it, the web UI starts in the browser's language, and the specs find its
-elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0284).
+elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0287).
 
 The stand-in is not a NAS host: it has no disks or pools that UNOS manages, no Docker, no Samba,
 and not the host's network, journal or `/proc`. With `E2E_STAND_IN=1`, the specs that need those
@@ -382,7 +386,7 @@ request against `main`; a new push to a pull request cancels the run for the pre
 3. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
-     error`), `npm run i18n` (the web UI's texts, ADR-0284) and `npm run build`, each also when
+     error`), `npm run i18n` (the web UI's texts, ADR-0287) and `npm run build`, each also when
      another one failed
    - `npm audit --omit=dev --audit-level=high`: high and critical
      vulnerabilities in the `dependencies` of `webui/package.json`

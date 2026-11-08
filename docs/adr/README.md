@@ -81,6 +81,7 @@ and this index, and `make check-fast` runs it.
 | [0224](0224-append-only-audit-log-in-json-lines.md) | The audit log is append-only JSON lines with size-based rotation | accepted | 2026-11-07 |
 | [0236](0236-audit-log-filtered-alike-and-shown-on-an-administrator-page.md) | The audit log is listed, counted and exported with one set of filters and shown on an administrator page | superseded by [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | 2026-11-07 |
 | [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page | accepted | 2026-11-07 |
+| [0286](0286-the-audit-logs-lock-holds-across-processes.md) | The audit log's lock holds across processes, through a file lock that the emergency command line takes too | accepted | 2026-11-08 |
 
 ## Auth
 
@@ -104,6 +105,7 @@ and this index, and `make check-fast` runs it.
 | [0253](0253-only-a-session-token-manages-api-tokens-and-their-number-and-names-are-bounded.md) | Only a session token manages API tokens, and their number, names and permissions are bounded | accepted | 2026-11-07 |
 | [0262](0262-login-history-times-in-utc-with-the-offset-newest-first.md) | The login history answers its times in UTC with the offset, newest first also within a second | accepted | 2026-11-07 |
 | [0263](0263-a-users-login-history-starts-with-their-account.md) | A regular user's login history starts with their account | accepted | 2026-11-08 |
+| [0284](0284-root-on-the-host-resets-an-administrators-password-and-two-factor-authentication.md) | Only root on the host resets an administrator's password and two-factor authentication, with the emergency command line | accepted | 2026-11-08 |
 
 ## Storage
 
@@ -127,6 +129,7 @@ and this index, and `make check-fast` runs it.
 | [0272](0272-scrub-results-name-cancelled-scrubs-and-count-every-error.md) | A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports | accepted | 2026-11-07 |
 | [0282](0282-a-filesystem-found-on-the-disks-is-imported-under-a-name-that-becomes-its-label.md) | A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label | superseded by [0283](0283-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | 2026-11-08 |
 | [0283](0283-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | A filesystem found on the disks becomes a pool only from data disks and under a name that no earlier pool still uses | accepted | 2026-11-08 |
+| [0285](0285-the-recovery-runbook-reads-a-pool-from-another-linux-machine-without-writing-to-it.md) | The recovery runbook reads a pool from another Linux machine without writing to it, degraded when a disk is missing | accepted | 2026-11-08 |
 
 ## Shares
 
@@ -310,7 +313,7 @@ and this index, and `make check-fast` runs it.
 | [0196](0196-windows-hint-uses-ipv6-literal-net.md) | The Windows connection hint uses the ipv6-literal.net form for IPv6 hosts | accepted | 2026-11-07 |
 | [0197](0197-accessible-dialogs-lists-and-hints.md) | Dialogs, lists and hints in the web UI work with keyboard and screen readers | accepted | 2026-11-07 |
 | [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
-| [0284](0284-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
+| [0287](0287-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
 
 ## Deploy
 
