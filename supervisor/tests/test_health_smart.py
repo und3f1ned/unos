@@ -76,7 +76,7 @@ def host(monkeypatch):
             fake.lsblk_on_loop.append(_on_event_loop())
         return host_run(cmd, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", smartctl)
+    monkeypatch.setattr("src.host.run_in_container", smartctl)
     monkeypatch.setattr("src.host.run_on_host", run_on_host)
     real_exists = Path.exists
     monkeypatch.setattr(Path, "exists", lambda self: str(self).startswith("/dev/") or real_exists(self))
@@ -320,6 +320,7 @@ def board(monkeypatch, tmp_path):
         return host_run(cmd, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("src.host.run_in_container", run)
     monkeypatch.setattr("src.host.run_on_host", run_on_host)
     return fake
 
