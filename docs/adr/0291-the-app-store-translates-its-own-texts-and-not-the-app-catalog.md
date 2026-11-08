@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0289: The App Store gives each category one label and shows the app catalog's texts as the server answers them
+# ADR-0291: The App Store gives each category one label and shows the app catalog's texts as the server answers them
 
 ## Context
 

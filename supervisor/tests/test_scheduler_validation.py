@@ -20,6 +20,7 @@ from cryptography.exceptions import InvalidTag
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src import host as host_module
 from src.auth.utils import verify_token
 from src.main import app
 from src.scheduler.schemas import ScheduledTask
@@ -63,8 +64,11 @@ def make_env(tmp_path, monkeypatch):
     host.add_disk("nvme0n1", rota=False, serial="NV-1")
     host.add_disk("loop0", size=1_000_000)["type"] = "loop"
     with patch("src.security.validators.settings", SimpleNamespace(pools_base_path=str(base))):
-        # smartctl, btrfs and custom commands run in the container (subprocess.run).
-        with patch("src.scheduler.router.subprocess.run") as run:
+        # smartctl and btrfs run in the container: SMART tests, scrub starts and the snapshot
+        # cleanup's btrfs subvolume show through host.run_in_container, the snapshot commands
+        # through subprocess.run. One mock records them all; custom commands use neither
+        # (run_command).
+        with patch("src.scheduler.router.subprocess.run") as run, patch("src.host.run_in_container", run):
             run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             yield SimpleNamespace(client=TestClient(app), base=base, pool=base / "data",
                                   outside=tmp_path / "outside", run=run, tmp=tmp_path, host=host)
@@ -957,8 +961,11 @@ async def test_hanging_scrub_start_is_recorded_as_timed_out(env):
     )
 
 
-# The env fixture replaces subprocess.run with a mock; the next test runs a fake btrfs.
+# The env fixture replaces subprocess.run and host.run_in_container with one mock; the next
+# test runs a fake btrfs through the real host.run_in_container, test_custom_tasks.py runs
+# commands through the real subprocess.run.
 _REAL_RUN = subprocess.run
+_REAL_RUN_IN_CONTAINER = host_module.run_in_container
 # What the fake btrfs does for "scrub start". Without -B, btrfs-progs forks the
 # process that runs the scrub and returns at once; that process keeps the
 # standard output and error of btrfs open (it closes none of them) until the
@@ -982,7 +989,7 @@ def test_a_scheduled_scrub_is_recorded_when_btrfs_returns(env, monkeypatch, btrf
     (bin_dir / "btrfs").write_text("#!/bin/sh\n" + FAKE_SCRUB_START[btrfs])
     (bin_dir / "btrfs").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    env.run.side_effect = _REAL_RUN
+    env.run.side_effect = _REAL_RUN_IN_CONTAINER
     task = env.client.post("/api/v1/scheduler/tasks", json=_task(name="Scrub", task_type="scrub")).json()
     scrub = bin_dir / "btrfs.pid"
     try:
@@ -1091,6 +1098,41 @@ def test_a_snapshot_task_with_keep_count_3_keeps_the_three_newest_auto_snapshots
     assert sorted(path.name for path in btrfs.deleted) == ["auto_20250101_000000", "auto_20250102_000000"]
     assert all(str(victim) not in " ".join(c) for c in btrfs.calls)
     assert victim.is_dir()
+
+
+def test_a_snapshot_task_whose_cleanup_btrfs_does_not_answer_is_recorded_as_failed(env):
+    """Its keep count was not applied, as on a pool that stopped responding: the task does not show success.
+
+    The new snapshot stays, and no old one is deleted.
+    """
+    btrfs = _fake_btrfs(env)
+    snaps = env.pool / ".snapshots"
+    for day in (1, 2):
+        btrfs.snapshot(env.pool, f"auto_2025010{day}_000000")
+    existing = set(os.listdir(snaps))
+
+    def btrfs_without_show(cmd, *args, **kwargs):
+        if list(cmd[:3]) == ["btrfs", "subvolume", "show"]:
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        return btrfs.run(cmd, *args, **kwargs)
+
+    env.run.side_effect = btrfs_without_show
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task(keep_count=1)).json()
+
+    env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+
+    (run,) = env.client.get(f"/api/v1/scheduler/runs/{task['id']}").json()
+    (new,) = set(os.listdir(snaps)) - existing
+    assert (run["status"], run["error"], run["output"]) == (
+        "failed",
+        f"Snapshot {new} created, but old snapshots were not cleaned up: btrfs did not answer within 60 "
+        "seconds. The pool may not be responding.",
+        None,
+    )
+    (stored,) = env.client.get("/api/v1/scheduler/tasks").json()
+    assert stored["last_status"] == "failed"
+    assert btrfs.deleted == []
+    assert sorted(os.listdir(snaps)) == sorted([*existing, new])
 
 
 def test_scheduled_backup_passes_restore_validation(backup_env):

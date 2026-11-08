@@ -445,7 +445,7 @@ test.describe('Installed apps in the group unos-smb', () => {
 // number format of the page's language, 1.5 GB in English and with a decimal comma in Russian.
 const SIZED_POOL = { name: 'e2e_data', path: '/mnt/pools/e2e_data', free_bytes: 1.5 * 2 ** 30, total_bytes: 2 ** 35 };
 
-// The source of an app's image and its category have one label each (ADR-0289): a linuxserver.io
+// The source of an app's image and its category have one label each (ADR-0291): a linuxserver.io
 // image is LinuxServer on its card and LinuxServer.io in the details, and a category has the label
 // of the category list on the cards and in the details. The catalog is the stand-in's own; the
 // installed list and the pools are answered here (the stand-in has no Docker).
@@ -481,7 +481,7 @@ test.describe('App details', () => {
 // The App Store in Russian (webui.translations, ADR-0287): the page, the details of an app and the
 // installed apps take their texts from the catalog apps.ts, with the categories, the sources of
 // the images, the states and the sizes of the pools; the names and the descriptions of the apps
-// stay as the server's catalog has them (ADR-0289). The installed list and the pools are answered
+// stay as the server's catalog has them (ADR-0291). The installed list and the pools are answered
 // here (the stand-in has no Docker and no mounted pool), and nothing is started, stopped,
 // uninstalled or installed; the catalog is the stand-in's own.
 test.describe('The App Store in Russian', () => {

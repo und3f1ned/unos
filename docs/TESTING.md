@@ -176,7 +176,10 @@ through `src/host.py`. Tests answer them with a fake host (ADR-0189): the in-mem
 `tests/test_pool_persistence.py`, or `FakeSambaHost` of `tests/samba_fake.py` for Samba;
 `install_fake_host` also blocks real subprocesses and Docker, and only counts the apply of smb.conf
 that the storage endpoints run after a pool change (`FakeHost.smb_applies`, ADR-0248), which
-`tests/test_smb_integration.py` runs with both fakes (`PoolsAndSambaHost`):
+`tests/test_smb_integration.py` runs with both fakes (`PoolsAndSambaHost`). btrfs scrubs and
+smartctl run in the container through `host.run_in_container`, which the fake hosts refuse as
+well: a test answers them by replacing that function, or `subprocess.Popen` to see a command that
+does not return, as `tests/test_command_timeouts.py` does (ADR-0290):
 
 ```python
 import pytest

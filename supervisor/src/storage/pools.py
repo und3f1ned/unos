@@ -2466,8 +2466,9 @@ def delete_volume(pool_name: str, volume_name: str) -> None:
 
 # btrfs scrub start returns once the scrub runs in the background; status and
 # cancel return at once too, unless the filesystem hangs. A btrfs that does not
-# return is killed after this; one stuck in the kernel on a hung filesystem is
-# still waited for until the kernel lets it go.
+# return is killed after this, and the request answers at once: one stuck in
+# the kernel on a hung filesystem ends in the background when the kernel lets
+# it go (host.run_in_container, ADR-0290).
 SCRUB_COMMAND_TIMEOUT = 60
 
 
@@ -2484,7 +2485,7 @@ def start_scrub(pool_name: str) -> ScrubStatus:
     mountpoint = os.path.join(settings.pools_base_path, pool_name)
 
     with tempfile.TemporaryFile() as stderr:
-        result = subprocess.run(
+        result = host.run_in_container(
             ["btrfs", "scrub", "start", mountpoint],
             stdout=subprocess.DEVNULL,
             stderr=stderr,
@@ -2510,11 +2511,8 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
     """
     mountpoint = os.path.join(settings.pools_base_path, pool_name)
 
-    result = subprocess.run(
-        ["btrfs", "scrub", "status", mountpoint],
-        capture_output=True,
-        text=True,
-        timeout=SCRUB_COMMAND_TIMEOUT,
+    result = host.run_in_container(
+        ["btrfs", "scrub", "status", mountpoint], timeout=SCRUB_COMMAND_TIMEOUT
     )
 
     status = "idle"
@@ -2601,11 +2599,8 @@ def cancel_scrub(pool_name: str) -> ScrubStatus:
     """Cancel a running btrfs scrub on a pool."""
     mountpoint = os.path.join(settings.pools_base_path, pool_name)
 
-    result = subprocess.run(
-        ["btrfs", "scrub", "cancel", mountpoint],
-        capture_output=True,
-        text=True,
-        timeout=SCRUB_COMMAND_TIMEOUT,
+    result = host.run_in_container(
+        ["btrfs", "scrub", "cancel", mountpoint], timeout=SCRUB_COMMAND_TIMEOUT
     )
     # Note: cancel returns non-zero if no scrub is running, which is fine
     if result.returncode != 0 and "not running" not in result.stderr.lower():

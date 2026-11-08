@@ -687,6 +687,8 @@ def install_fake_host(monkeypatch) -> FakeHost:
     fake = FakeHost()
     monkeypatch.setattr(host_module, "run_on_host", fake.run)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    # btrfs scrubs and smartctl, which run in the container (ADR-0290).
+    monkeypatch.setattr(host_module, "run_in_container", _forbidden_subprocess)
     monkeypatch.setattr(pools, "_docker_api", fake.docker.api)
     monkeypatch.setattr(pools.settings, "pools_base_path", "/mnt/pools")
     # The checks before an app starts (apps.router.prepare_app_start) would look
