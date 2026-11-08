@@ -43,12 +43,7 @@ src/routes/files/trash/+page.svelte
 src/routes/audit/+page.svelte
 
 # system
-src/routes/settings/+page.svelte
-src/routes/system/tabs/BackupTab.svelte
-src/routes/system/tabs/GeneralTab.svelte
 src/routes/system/tabs/HealthTab.svelte
 src/routes/system/tabs/LogsTab.svelte
 src/routes/system/tabs/MonitorTab.svelte
 src/routes/system/tabs/PowerTab.svelte
-src/routes/system/tabs/SchedulerTab.svelte
-src/routes/system/tabs/UpdateTab.svelte
