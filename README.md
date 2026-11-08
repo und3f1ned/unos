@@ -48,13 +48,14 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### File Sharing
 - **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux; Windows and macOS list the NAS in their network browsers (WS-Discovery and Bonjour, NetBIOS off)
+- **NFS Exports** - Export a folder of a pool, or a volume, read-only or read-write to one network of your local network; exports written by hand on the NAS are kept and listed. Needs the host's NFS server (`nfs-kernel-server`), which the installer does not install
 - **Web File Browser** - Upload, download, copy, move, rename, and manage files via browser, with a trash that keeps deleted items for 30 days
 
 ### Application Platform
 - **70+ Curated Apps** - One-click installation of popular self-hosted applications
 - **Docker Management** - Full container lifecycle management (create, start, stop, logs)
 - **Image Management** - Pull, list, and remove Docker images
-- **App Categories** - Media, Downloads, Productivity, Monitoring, Home Automation, Network, AI, Security, and more
+- **App Categories** - Media, Downloads, Productivity, Monitoring, Smart Home, Network, AI & LLMs, Security, and more
 
 ### System Monitoring
 - **Real-time Dashboard** - Live CPU, memory, network, and disk I/O statistics via WebSocket
@@ -104,7 +105,6 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 ### Planned
 
 Not working yet; each has an entry in [feature-list.json](feature-list.json), named in parentheses:
-- **NFS exports** (`shares.nfs-exports`) - Exports are written inside the supervisor container and do not reach the host
 - **UPS monitoring** (`system.ups-monitoring`) - The UPS state and the shutdown on low battery: the supervisor image has no NUT client, and the shutdown is skipped inside a container
 - **Scheduled power** (`system.scheduled-power`) - Shutdown and wake times are stored, and nothing acts on them
 - **Alerts for every event and channel** (`system.alert-events`) - Discord, Slack and webhook channels get no alerts, and the events chosen for a channel have no effect

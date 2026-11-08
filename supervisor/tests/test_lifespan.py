@@ -128,6 +128,24 @@ def test_missing_host_tools_are_named_in_one_warning(monkeypatch, caplog):
     assert "apt-get install btrfs-progs samba-common-bin" in message
 
 
+def test_optional_host_tools_are_left_out_of_the_startup_check(monkeypatch, caplog):
+    # deploy/install.sh does not install the NFS server, so a host without exportfs is a normal
+    # installation: the NFS tab says when it is missing, not a warning at every start (ADR-0292).
+    checked = []
+
+    def fake_missing(names, *, timeout):
+        checked.extend(names)
+        return [name for name in names if name in host.OPTIONAL_HOST_TOOLS]
+
+    monkeypatch.setattr(host, "missing_host_binaries", fake_missing)
+    with caplog.at_level(logging.WARNING, logger="src.main"):
+        asyncio.run(main.check_host_tools())
+
+    assert "exportfs" in host.OPTIONAL_HOST_TOOLS
+    assert not set(host.OPTIONAL_HOST_TOOLS) & set(checked)
+    assert [r for r in caplog.records if r.name == "src.main"] == []
+
+
 @pytest.mark.parametrize("result", [[], None])
 def test_no_warning_when_nothing_is_missing_or_the_check_could_not_run(monkeypatch, caplog, result):
     monkeypatch.setattr(host, "missing_host_binaries", lambda names, *, timeout: result)

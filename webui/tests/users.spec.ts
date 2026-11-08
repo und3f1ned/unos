@@ -611,6 +611,123 @@ test.describe('Users page SMB (fake data)', () => {
     await expect(dialog.getByText(ADMIN_REASON)).toBeVisible();
     await expect(dialog.getByLabel('Allow SMB access')).toHaveCount(0);
   });
+
+  test('the delete confirmation reads whole, with the name in its place', async ({ authenticatedPage: page }) => {
+    // Translated in parts around the name (ADR-0296), as is the Turn off SMB confirmation, which
+    // 'allowing SMB acts at once, and turning it off asks first' reads whole.
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    await page.goto('/users');
+
+    await userRow(page, 'carol').getByRole('button', { name: 'Delete user carol' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete user' });
+    await expect(dialog).toContainText('Are you sure you want to delete user carol? This action cannot be undone.');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes).toEqual([]);
+  });
+});
+
+// ---- The page in Russian (feature webui.translations, ADR-0287): the texts of the page and of its
+// dialogs come from the users catalog, and the server's messages stay in English ----
+
+const RU_PASSWORD_NEEDED_HINT =
+  'Пользователь включает SMB сам на странице «Учётная запись» своим паролем — или задайте ему новый пароль здесь';
+
+test.describe('Users page in Russian (fake data)', () => {
+  test('the page and its dialogs are in Russian once Russian is chosen', async ({ authenticatedPage: page }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    // The language as the Account page keeps it in this browser.
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.goto('/users');
+
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Пользователи');
+    await expect(page.getByRole('heading', { name: 'Пользователи (7)' })).toBeVisible();
+    await expect(page.getByRole('columnheader')).toHaveText([
+      'Имя пользователя',
+      'Роль',
+      '2FA',
+      'SMB',
+      'Создан',
+      'Действия',
+    ]);
+    const cells = (username: string) => userRow(page, username).locator('td');
+    await expect(cells('admin').nth(1)).toHaveText('Администратор');
+    await expect(cells('alice').nth(1)).toHaveText('Пользователь');
+    await expect(cells('alice').nth(2)).toHaveText('Выключена');
+    // A date in the language of the page: the day first, on a 24-hour clock.
+    await expect(cells('alice').nth(4)).toHaveText('01.10.2026, 09:00:00');
+    await expect(cells('bob').nth(3).locator('[title]')).toHaveAttribute('title', RU_PASSWORD_NEEDED_HINT);
+    // The server's reason as it comes.
+    await expect(cells('Erin.Old').nth(3).locator('[title]')).toHaveAttribute('title', ERIN_REASON);
+    await expect(page.getByRole('heading', { name: 'Об управлении пользователями' })).toBeVisible();
+    // The minimum length with the plural form of its count.
+    await expect(page.getByText('Пароль должен содержать не менее 8 символов.')).toBeVisible();
+    await expect(page.getByText('2FA защищает только веб-интерфейс.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Добавить пользователя' }).click();
+    const add = page.getByRole('dialog', { name: 'Новый пользователь' });
+    await expect(
+      add.getByText('1–32 символа: строчные латинские буквы, цифры, _ или -; первый символ — буква'),
+    ).toBeVisible();
+    await add.getByLabel('Имя пользователя').fill('Bad.Name');
+    await expect(
+      add.getByText('Используйте 1–32 символа: строчные латинские буквы, цифры, _ или -; первый символ — буква'),
+    ).toBeVisible();
+    await add.getByLabel('Пароль', { exact: true }).fill('short');
+    await expect(add.getByText('Используйте не менее 8 символов')).toBeVisible();
+    await add.getByLabel('Подтверждение пароля').fill('other');
+    await expect(add.getByText('Пароли не совпадают')).toBeVisible();
+    await expect(add.getByLabel('Разрешить доступ по SMB (сетевой доступ к файлам)')).not.toBeChecked();
+    await expect(add.getByRole('button', { name: 'Создать пользователя' })).toBeDisabled();
+    await add.getByRole('button', { name: 'Отмена' }).click();
+    await expect(add).toBeHidden();
+
+    await userRow(page, 'bob').getByRole('button', { name: 'Изменить пользователя bob' }).click();
+    const bob = page.getByRole('dialog', { name: 'Изменение пользователя bob' });
+    await expect(bob.getByRole('heading', { name: 'Роль', exact: true })).toBeVisible();
+    await expect(bob.getByText(RU_PASSWORD_NEEDED_HINT)).toBeVisible();
+    await expect(bob.getByLabel('Также включить SMB с этим паролем')).toBeChecked();
+    await expect(bob.getByText('Оставьте пустым, чтобы сохранить текущий пароль')).toBeVisible();
+    await bob.getByLabel('Администратор', { exact: true }).check();
+    await expect(
+      bob.getByText(
+        'Администраторы не могут пользоваться SMB: назначение bob администратором отключит доступ по SMB, ' +
+          'удалит права на общие папки и закроет открытые подключения по SMB',
+      ),
+    ).toBeVisible();
+    await bob.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await expect(bob).toBeHidden();
+
+    await userRow(page, 'alice').getByRole('button', { name: 'Изменить пользователя alice' }).click();
+    const alice = page.getByRole('dialog', { name: 'Изменение пользователя alice' });
+    await expect(alice.getByText('SMB включён: alice входит как alice со своим паролем UNOS.')).toBeVisible();
+    await expect(
+      alice.getByText('Также меняет пароль SMB и закрывает открытые подключения пользователя по SMB'),
+    ).toBeVisible();
+    await expect(alice.getByRole('button', { name: 'Сохранить' })).toBeDisabled();
+    await alice.getByLabel('Разрешить доступ по SMB').click();
+    const confirm = page.getByRole('dialog', { name: 'Выключение SMB' });
+    await expect(confirm).toContainText('Выключить SMB для alice? Открытые подключения пользователя по SMB будут закрыты.');
+    await expect(confirm.getByRole('button', { name: 'Выключить SMB' })).toBeVisible();
+    await confirm.getByRole('button', { name: 'Отмена' }).click();
+    await alice.getByRole('button', { name: 'Закрыть', exact: true }).click();
+
+    await userRow(page, 'carol').getByRole('button', { name: 'Изменить пользователя carol' }).click();
+    const carol = page.getByRole('dialog', { name: 'Изменение пользователя carol' });
+    await expect(carol.getByText('SMB выключен для carol.')).toBeVisible();
+    await carol.getByRole('button', { name: 'Закрыть', exact: true }).click();
+
+    await userRow(page, 'carol').getByRole('button', { name: 'Удалить пользователя carol' }).click();
+    const remove = page.getByRole('dialog', { name: 'Удаление пользователя' });
+    await expect(remove).toContainText('Удалить пользователя carol? Это действие нельзя отменить.');
+    await remove.getByRole('button', { name: 'Удалить пользователя', exact: true }).click();
+    await expect(remove).toBeHidden();
+    await expect(page.getByText('Пользователь «carol» удалён')).toBeVisible();
+    expect(fake.writes).toEqual([{ method: 'DELETE', path: '/auth/users/4?username=carol', body: null }]);
+    // Nothing of the English page is left.
+    await expect(page.getByRole('heading', { name: 'About user management' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add user' })).toHaveCount(0);
+  });
 });
 
 // ---- Turning SMB on where E2E_STAND_IN=1: the stand-in or the compose test stack, which have no Samba ----

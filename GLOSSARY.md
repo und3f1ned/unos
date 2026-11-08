@@ -63,7 +63,7 @@ Logs tab shows the journal and container output).
 Avoid: array, volume, RAID.
 
 **Managed pool**: A pool that UNOS mounts at every boot through its own entry in the host's fstab.
-Only managed pools can hold shares (ADR-0034, ADR-0148). Avoid: mounted pool (a managed pool can
+Only managed pools can hold shares and NFS exports (ADR-0034, ADR-0294). Avoid: mounted pool (a managed pool can
 be unmounted).
 
 **Pool import**: Making a btrfs filesystem found on the host's data disks a managed pool without
@@ -73,6 +73,14 @@ for any other (ADR-0283). Boot, virtual and system devices never hold a pool. Av
 
 **Pool root**: The top folder of a pool, which holds its apps, volumes and snapshots; it is never a
 share's folder (ADR-0145). Avoid: pools directory (that is `/mnt/pools`).
+
+**Mount copy**: A mount of a pool's filesystem at the pool's mountpoint, with the root of the
+host's mount, in the mount namespace of another process whose root is the host's, such as a
+systemd service with sandboxing. The host's umount does not reach it, so an unmount of the pool
+unmounts it there too. Any other mount of the pool in another namespace keeps the pool mounted
+(ADR-0288): a container's bind mount, and also the pool's mount at its mountpoint in a container,
+whose root is its own (`-v /mnt/pools:/mnt/pools`). Avoid: stale mount (the copy exists while the
+pool is mounted too).
 
 **Volume**: A btrfs subvolume at the top of a pool, with an optional quota (ADR-0069).
 Avoid: subvolume (snapshots are subvolumes too), dataset.
@@ -145,6 +153,14 @@ reconcile.
 WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd registers with
 avahi-daemon), both over IPv4 only; NetBIOS is off (ADR-0275). Avoid: network browsing (a share's
 "Show in network browsing" lists the share among the NAS's shares), NetBIOS browsing.
+
+**NFS export**: A folder that the host's NFS server offers to the computers of a network: one entry
+of an export file, read as exportfs reads it. UNOS adds lines to its own export file,
+`/etc/exports.d/unos.exports`, deletes only the lines it wrote there, exactly as it writes them,
+and keeps every other line (ADR-0292, ADR-0293). Avoid: share (an SMB share), NFS share.
+
+**Export file**: A file that exportfs reads: `/etc/exports`, then each `*.exports` file of
+`/etc/exports.d` (ADR-0292). Avoid: exports table (the kernel's), etab.
 
 ## Users and access
 

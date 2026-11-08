@@ -470,4 +470,160 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(picker(page)).toHaveCount(0);
     expect(requests.filter((r) => r.path === '/')).toEqual([]);
   });
+
+  test('the sentences around a name, a path or a link read whole', async ({ authenticatedPage: page }) => {
+    // Each is translated in parts around its element (ADR-0296): a part that loses its space or
+    // its place shows here.
+    const requests = await fakeSnapshotsApi(page, {
+      snapshots: [snapshot(DATA.path, 'nightly', '2026-11-07T02:00:00+00:00')],
+    });
+    await page.goto('/snapshots');
+
+    await expect(
+      page.getByText(
+        'A snapshot is a read-only copy of a pool or a volume at one point in time, kept in its .snapshots ' +
+          'folder. btrfs makes it at once and then stores only what changes.',
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        'Scheduled snapshots (System, Scheduler) are made of pools only and are named auto_<date>_<time>. The ' +
+          'date and time in the names that UNOS gives, snap_, restore_ and auto_, are in UTC; Created shows the ' +
+          "time in your browser's time zone.",
+      ),
+    ).toBeVisible();
+
+    await page.getByRole('button', { name: 'Create Snapshot' }).click();
+    const create = page.getByRole('dialog', { name: 'Create Snapshot' });
+    await expect(create).toContainText(
+      `A read-only snapshot of ${DATA.path}, kept in ${DATA.path}/.snapshots. It does not include the files`,
+    );
+    await create.getByRole('button', { name: 'Cancel' }).click();
+    await expect(create).toBeHidden();
+
+    await page.getByRole('button', { name: 'Restore snapshot nightly' }).click();
+    const restore = page.getByRole('dialog', { name: 'Restore Snapshot' });
+    await expect(restore).toContainText(
+      'Restore snapshot nightly? A writable copy of it, restore_<date>_<time> with the date and time in UTC, ' +
+        `is made in ${DATA.path}. Nothing is overwritten.`,
+    );
+    await restore.getByRole('button', { name: 'Restore', exact: true }).click();
+    await expect(restore).toBeHidden();
+    await expect(page.locator('.alert').filter({ hasText: 'Snapshot restored' })).toContainText(
+      `The copy is at ${DATA.path}/${RESTORE_NAME}.`,
+    );
+
+    await page.getByRole('button', { name: 'Delete snapshot nightly' }).click();
+    const remove = page.getByRole('dialog', { name: 'Delete Snapshot' });
+    await expect(remove).toContainText(
+      `Delete snapshot nightly (${DATA.path}/.snapshots/nightly)? This cannot be undone.`,
+    );
+    await remove.getByRole('button', { name: 'Cancel' }).click();
+    await expect(remove).toBeHidden();
+    expect(writes(requests).map((r) => `${r.method} ${r.path}`)).toEqual(['POST /restore']);
+  });
+
+  // The page in Russian (feature webui.translations, ADR-0287): its texts and those of its dialogs
+  // come from the snapshots catalog, and the server's messages stay in English. The language as
+  // the Account page keeps it in this browser.
+  const chooseRussian = (page: Page) => page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+
+  test('the page and its dialogs are in Russian once Russian is chosen', async ({ authenticatedPage: page }) => {
+    const detail =
+      "Listing the subvolumes of /mnt/pools/e2e_media failed: ERROR: can't perform the search: Input/output error";
+    const requests = await fakeSnapshotsApi(page, {
+      subvolumes: [DATA, DOCUMENTS, PHOTOS, { ...MEDIA, volumes_error: detail }],
+      snapshots: [snapshot(DATA.path, 'nightly', '2026-11-07T02:00:00+00:00')],
+    });
+    await chooseRussian(page);
+    await page.goto('/snapshots');
+
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Снимки');
+    await expect(page.getByRole('button', { name: 'Обновить' })).toBeVisible();
+    const russianPicker = page.getByRole('combobox', { name: 'Пул или том' });
+    await expect(russianPicker).toHaveText('e2e_data (пул)');
+    await expect(page.getByRole('heading', { name: 'Снимки e2e_data (пул)' })).toBeVisible();
+    const table = page.getByRole('table', { name: 'Снимки' });
+    await expect(table.getByRole('columnheader')).toHaveText(['Имя', 'Создан', 'Действия']);
+    // The time in the language of the page, in Moscow: the day first, on a 24-hour clock.
+    await expect(table.getByRole('row').filter({ hasText: 'nightly' })).toContainText('07.11.2026, 05:00:00');
+    // The title in Russian, the server's reason as it comes.
+    const warning = page.locator('.alert').filter({ hasText: 'Не удалось прочитать тома пула e2e_media' });
+    await expect(warning).toContainText(`${detail} Сам пул можно выбрать, но его томов нет в списке.`);
+    await expect(page.getByRole('heading', { name: 'О снимках' })).toBeVisible();
+    // Names on the disk stay as they are; the date and time of a name's pattern are words.
+    await expect(page.getByText('Он хранится в папке .snapshots этого пула или тома.')).toBeVisible();
+    await expect(
+      page.getByText(
+        'называются auto_<дата>_<время>. В именах, которые даёт UNOS, snap_, restore_ и auto_, ' +
+          'дата и время указаны в UTC; в столбце «Создан» время показано в часовом поясе вашего браузера.',
+      ),
+    ).toBeVisible();
+
+    await russianPicker.click();
+    await expect(page.getByRole('option')).toHaveText([
+      'e2e_data (пул)',
+      'e2e_data/documents (том)',
+      'e2e_data/photos (том)',
+      'e2e_media (пул)',
+    ]);
+    await page.getByRole('option', { name: 'e2e_data/photos (том)' }).click();
+    await expect(page.getByText('Снимков пока нет')).toBeVisible();
+    await russianPicker.click();
+    await page.getByRole('option', { name: 'e2e_data (пул)' }).click();
+
+    await page.getByRole('button', { name: 'Создать снимок' }).click();
+    const create = page.getByRole('dialog', { name: 'Создание снимка' });
+    await expect(create).toContainText(
+      `Снимок содержимого ${DATA.path}, доступный только для чтения, будет храниться в ${DATA.path}/.snapshots. ` +
+        'В него не войдут файлы томов пула: делайте снимки и каждого тома.',
+    );
+    await expect(create.getByLabel('Имя снимка (необязательно)')).toHaveAttribute(
+      'placeholder',
+      'Если пусто, имя — дата и время в UTC',
+    );
+    await expect(create.getByRole('button', { name: 'Создать', exact: true })).toBeVisible();
+    await create.getByRole('button', { name: 'Отмена' }).click();
+    await expect(create).toBeHidden();
+
+    await page.getByRole('button', { name: 'Восстановить снимок nightly' }).click();
+    const restore = page.getByRole('dialog', { name: 'Восстановление снимка' });
+    await expect(restore).toContainText(
+      'Восстановить снимок nightly? Копия, доступная для записи, будет создана с именем ' +
+        `restore_<дата>_<время> (дата и время в UTC) в папке ${DATA.path}. Ничего не перезаписывается.`,
+    );
+    await expect(
+      restore.getByText(
+        'Копия станет томом пула: когда она больше не нужна, удалите её в списке томов пула на странице «Хранилище».',
+      ),
+    ).toBeVisible();
+    await restore.getByRole('button', { name: 'Восстановить', exact: true }).click();
+    await expect(restore).toBeHidden();
+    await expect(page.locator('.alert').filter({ hasText: 'Снимок восстановлен' })).toContainText(
+      `Путь к копии: ${DATA.path}/${RESTORE_NAME}.`,
+    );
+
+    await page.getByRole('button', { name: 'Удалить снимок nightly' }).click();
+    const remove = page.getByRole('dialog', { name: 'Удаление снимка' });
+    await expect(remove).toContainText(
+      `Удалить снимок nightly (${DATA.path}/.snapshots/nightly)? Это действие нельзя отменить.`,
+    );
+    await expect(remove.getByRole('button', { name: 'Удалить снимок' })).toBeVisible();
+    await remove.getByRole('button', { name: 'Отмена' }).click();
+    await expect(remove).toBeHidden();
+    // Nothing of the English page is left.
+    await expect(page.getByRole('button', { name: 'Create Snapshot' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'About Snapshots' })).toHaveCount(0);
+    expect(writes(requests).map((r) => `${r.method} ${r.path}`)).toEqual(['POST /restore']);
+  });
+
+  test('without a mounted pool, the page says so in Russian', async ({ authenticatedPage: page }) => {
+    await fakeSnapshotsApi(page, { subvolumes: [] });
+    await chooseRussian(page);
+    await page.goto('/snapshots');
+
+    await expect(page.getByText('Нет смонтированных пулов. Смонтируйте пул на странице «Хранилище».')).toBeVisible();
+    await expect(page.getByRole('link', { name: '«Хранилище»' })).toHaveAttribute('href', '/storage');
+    await expect(page.getByRole('button', { name: 'Создать снимок' })).toBeDisabled();
+  });
 });

@@ -34,6 +34,23 @@ export function appsFolderMessage(pool: string): string {
 export const UNMANAGED_POOLS_NOTE =
 	'Pools marked "Not mounted at boot" on the Storage page are not listed: SMB shares need a pool that UNOS manages.';
 
+/** The server's answer for a pool's top level (it is never exported). */
+export const NFS_POOL_ROOT_MESSAGE =
+	'Export a folder inside the pool or a volume: the top level of a pool holds app data (apps/), volumes and snapshots';
+
+/** The server's answer for <pool>/apps and everything below it. */
+export function nfsAppsFolderMessage(pool: string): string {
+	return `App data (${pool}/apps) cannot be exported: apps keep their configuration there`;
+}
+
+/** Shown when the location list of an NFS export leaves out pools that UNOS does not manage. */
+export const NFS_UNMANAGED_POOLS_NOTE =
+	'Pools marked "Not mounted at boot" on the Storage page are not listed: NFS exports need a pool that UNOS manages.';
+
+/** What an NFS client may do: NFS checks no password (supervisor/src/shares/nfs.py, ADR-0293). */
+export const NFS_NOTE =
+	'NFS asks for no password: every computer in the client network can mount the export, and its users get the access that the user and group ids of their own accounts have in the folder (root on a client counts as nobody). UNOS exports only to addresses of your local network.';
+
 /**
  * The host part of a UNC path. Windows takes an IPv6 address there only in
  * the ipv6-literal.net form: "[fd00::103]" (as the browser gives it) becomes

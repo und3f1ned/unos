@@ -19,10 +19,10 @@ src/lib/components/widgets/SystemStatsWidget.svelte
 src/routes/storage/+page.svelte
 
 # snapshots
-src/routes/snapshots/+page.svelte
 
 # shares
 src/routes/shares/+page.svelte
+src/lib/components/shares/NfsExportFormModal.svelte
 src/lib/components/shares/RepairPermissionsModal.svelte
 src/lib/components/shares/ShareAccessPicker.svelte
 src/lib/components/shares/ShareCard.svelte
@@ -34,17 +34,10 @@ src/routes/files/+page.svelte
 src/routes/files/trash/+page.svelte
 
 # containers
-src/routes/containers/+page.svelte
-src/lib/components/containers/ContainerDetailDrawer.svelte
-src/lib/components/containers/ImageList.svelte
 
 # apps
-src/routes/apps/+page.svelte
-src/lib/components/apps/AppDetailModal.svelte
-src/lib/components/apps/AppStorageWarning.svelte
 
 # users
-src/routes/users/+page.svelte
 
 # audit
 src/routes/audit/+page.svelte
@@ -53,6 +46,4 @@ src/routes/audit/+page.svelte
 src/routes/system/tabs/HealthTab.svelte
 src/routes/system/tabs/LogsTab.svelte
 src/routes/system/tabs/MonitorTab.svelte
-src/routes/system/tabs/NetworkTab.svelte
-src/routes/system/tabs/NotificationsTab.svelte
 src/routes/system/tabs/PowerTab.svelte
