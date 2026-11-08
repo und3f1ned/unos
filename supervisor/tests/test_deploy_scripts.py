@@ -866,27 +866,194 @@ def _run_install_main(tmp_path, *scenario, docker_installed=True):
     return result, (stub_dir / "calls").read_text().splitlines()
 
 
+# The drop-in of wsdd2 that install.sh writes (ADR-0261), and where _run_configure_discovery
+# puts it.
+WSDD2_DROP_IN = "/etc/systemd/system/wsdd2.service.d/unos.conf"
+
+
+def _drop_in_sandbox_path(tmp_path):
+    return tmp_path / "etc-systemd-system" / "wsdd2.service.d" / "unos.conf"
+
+
+def _run_configure_discovery(tmp_path, *, wsdd2_missing=False):
+    """configure_discovery of install.sh with /etc/systemd/system moved into tmp_path, and
+    stub apt-get and systemctl that log their calls. apt-get adds to its line whether the
+    drop-in of wsdd2 existed when it ran; with wsdd2_missing it cannot install wsdd2, as on
+    Debian 11. Returns the result and the calls."""
+    bin_dir = tmp_path / "bin"
+    stub_dir = tmp_path / "stub"
+    for directory in (bin_dir, stub_dir):
+        directory.mkdir()
+    (stub_dir / "calls").write_text("")
+    apt_get = textwrap.dedent(
+        """\
+        #!/bin/bash
+        if [ -f "$DROP_IN" ]; then drop_in=written; else drop_in=missing; fi
+        echo "apt-get $* (drop-in $drop_in)" >> "$STUB_DIR/calls"
+        if [ "$WSDD2_MISSING" = yes ] && [[ " $* " == *" wsdd2 "* ]]; then
+          echo "E: Unable to locate package wsdd2" >&2; exit 100
+        fi
+        """
+    )
+    for name, body in {"apt-get": apt_get, "systemctl": _LOGGER}.items():
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    lib = _install_lib(tmp_path, ["/etc/systemd/system"])
+    result = subprocess.run(
+        ["bash", "-c", '. "$LIB"; configure_discovery'],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LIB": str(lib),
+            "STUB_DIR": str(stub_dir),
+            "DROP_IN": str(_drop_in_sandbox_path(tmp_path)),
+            "WSDD2_MISSING": "yes" if wsdd2_missing else "no",
+        },
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return result, (stub_dir / "calls").read_text().splitlines()
+
+
+def _install_packages(tmp_path):
+    """The packages that install_dependencies of install.sh installs, from the
+    `apt-get install` it runs with a stub apt-get."""
+    bin_dir = tmp_path / "bin"
+    stub_dir = tmp_path / "stub"
+    for directory in (bin_dir, stub_dir):
+        directory.mkdir()
+    (stub_dir / "calls").write_text("")
+    (bin_dir / "apt-get").write_text(_LOGGER)
+    (bin_dir / "apt-get").chmod(0o755)
+    subprocess.run(
+        ["bash", "-c", '. "$LIB"; install_dependencies'],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LIB": str(_install_lib(tmp_path, [])),
+            "STUB_DIR": str(stub_dir),
+        },
+        stdin=subprocess.DEVNULL,
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    calls = (stub_dir / "calls").read_text().splitlines()
+    installs = [call.split() for call in calls if call.startswith("apt-get install ")]
+    assert len(installs) == 1, installs
+    return [word for word in installs[0][2:] if not word.startswith("-")]
+
+
 class TestInstallScript:
     def _configure_samba(self, tmp_path, smb_conf):
+        """configure_samba of install.sh with /etc/samba moved, and a stub systemctl that
+        logs its calls (_systemctl_calls)."""
         etc = tmp_path / "samba"
         etc.mkdir()
         if smb_conf is not None:
             (etc / "smb.conf").write_text(smb_conf)
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
-        (bin_dir / "systemctl").write_text("#!/bin/sh\nexit 0\n")
+        (bin_dir / "systemctl").write_text('#!/bin/sh\necho "systemctl $*" >> "$CALLS"\n')
         (bin_dir / "systemctl").chmod(0o755)
+        (tmp_path / "systemctl-calls").write_text("")
         # install.sh without its last line (`main "$@"`), with /etc/samba moved.
         script = (REPO_ROOT / "deploy" / "install.sh").read_text().rstrip("\n").rsplit("\n", 1)[0]
         (tmp_path / "install-lib.sh").write_text(script.replace("/etc/samba", str(etc)) + "\n")
         subprocess.run(
             ["bash", "-c", '. "$LIB"; configure_samba'],
-            env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "LIB": str(tmp_path / "install-lib.sh")},
+            env={
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "LIB": str(tmp_path / "install-lib.sh"),
+                "CALLS": str(tmp_path / "systemctl-calls"),
+            },
             check=True,
             capture_output=True,
             timeout=30,
         )
         return etc
+
+    @staticmethod
+    def _systemctl_calls(tmp_path):
+        return (tmp_path / "systemctl-calls").read_text().splitlines()
+
+    @pytest.mark.parametrize(
+        "smb_conf",
+        [
+            None,
+            "[global]\n   server string = %h server (Samba, Ubuntu)\n",
+            "[global]\n   server string = UNOS NAS\n\n[media]\n   path = /mnt/pools/data/media\n",
+        ],
+        ids=["no-file", "distribution-file", "rerun"],
+    )
+    def test_smbd_runs_and_nmbd_is_turned_off(self, tmp_path, smb_conf):
+        # NetBIOS is off (disable netbios = yes): nmbd, its name server, is stopped and does
+        # not start at boot, and the restart gives smbd the new smb ports (ADR-0261).
+        self._configure_samba(tmp_path, smb_conf)
+
+        assert self._systemctl_calls(tmp_path) == [
+            "systemctl enable smbd",
+            "systemctl restart smbd",
+            "systemctl disable --now nmbd",
+        ]
+
+    def test_dependencies_include_avahi_daemon_but_not_wsdd2(self, tmp_path):
+        # smbd announces itself to macOS through avahi-daemon. wsdd2 comes later, after its
+        # drop-in, and a release without it (Debian 11) must not stop the installation.
+        packages = _install_packages(tmp_path)
+
+        assert "avahi-daemon" in packages
+        assert "samba" in packages
+        assert "wsdd2" not in packages
+
+    def test_wsdd2_answers_over_ipv4_only_from_its_first_start(self, tmp_path):
+        # Over IPv6, wsdd2 opens its TCP ports on tunnels too, whose global addresses
+        # nothing filters (ADR-0227). The drop-in is in place and loaded before the package
+        # is installed, whose installation starts wsdd2; the restart gives it to a wsdd2
+        # that ran before the drop-in existed (ADR-0261).
+        result, calls = _run_configure_discovery(tmp_path)
+        drop_in = _drop_in_sandbox_path(tmp_path)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        settings = [line for line in drop_in.read_text().splitlines() if line and not line.startswith("#")]
+        assert settings == ["[Service]", "ExecStart=", "ExecStart=/usr/sbin/wsdd2 -4"]
+        assert calls == [
+            "systemctl enable --now avahi-daemon",
+            "systemctl daemon-reload",
+            "apt-get install -y -qq wsdd2 (drop-in written)",
+            "systemctl enable wsdd2",
+            "systemctl restart wsdd2",
+        ]
+        assert "WARN" not in result.stdout
+
+    def test_without_a_wsdd2_package_the_installation_goes_on(self, tmp_path):
+        # Debian 11 has no wsdd2 package: macOS still lists the server, Windows reaches it
+        # only by its address (ADR-0261).
+        result, calls = _run_configure_discovery(tmp_path, wsdd2_missing=True)
+        text = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", result.stdout).split())
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [
+            "systemctl enable --now avahi-daemon",
+            "systemctl daemon-reload",
+            "apt-get install -y -qq wsdd2 (drop-in written)",
+        ]
+        assert (
+            "[WARN] Could not install the package wsdd2 (Debian 11 has none): Windows does not list this "
+            "server in its Network view; type its address into File Explorer instead. macOS lists it." in text
+        )
+        assert "Network discovery configured" not in text
+
+    def test_main_configures_discovery_once_samba_runs_without_netbios(self):
+        script = (REPO_ROOT / "deploy" / "install.sh").read_text()
+        body = re.search(r"^main\(\) \{\n(.*?)^\}", script, re.M | re.S).group(1)
+        steps = [line.strip() for line in body.splitlines() if line.strip() and not line.strip().startswith("#")]
+
+        assert steps.index("install_dependencies") < steps.index("configure_samba")
+        assert steps.index("configure_samba") < steps.index("configure_discovery") < steps.index("start_unos")
 
     def test_rerun_keeps_the_shares_in_smb_conf(self, tmp_path):
         # The shares exist only in smb.conf; replacing it deleted all of them.
@@ -1456,7 +1623,9 @@ class TestUninstallScript:
 
         assert result.returncode == 0, result.stdout + result.stderr
         if says == "original":
-            assert calls == ["systemctl restart smbd nmbd"]
+            # The file from before UNOS leaves NetBIOS on: nmbd, which install.sh turned off,
+            # runs again, also after a reboot (ADR-0261).
+            assert calls == ["systemctl enable nmbd", "systemctl restart smbd nmbd"]
             assert (folder / "smb.conf").read_text() == "smb.conf.original\n"
             assert f"Samba configuration: {folder}/smb.conf is the file from before UNOS again" in text
             assert "still serves" not in text
@@ -1497,8 +1666,9 @@ class TestUninstallScript:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert f"cp {folder}/smb.conf.original {folder}/smb.conf" in calls
-        # Samba is not restarted with a file that may be incomplete.
+        # Samba is not restarted with a file that may be incomplete, nor nmbd turned on.
         assert "systemctl restart smbd nmbd" not in calls
+        assert "systemctl enable nmbd" not in calls
         assert (
             f"Could not restore {folder}/smb.conf from smb.conf.original; copy it back by hand "
             "(see the end of the uninstallation)" in text
@@ -1516,10 +1686,30 @@ class TestUninstallScript:
             f"({folder}/smb.conf.original): it may still be the file UNOS wrote, or be incomplete. Copy it "
             "back, then restart Samba:" in text
         )
-        commands = [line.strip() for line in completion.splitlines() if line.startswith("  ")]
-        assert commands[-2:] == [f"cp {folder}/smb.conf.original {folder}/smb.conf", "systemctl restart smbd nmbd"]
+        block = completion[completion.index("Samba configuration:") : completion.index("Network discovery:")]
+        commands = [line.strip() for line in block.splitlines() if line.startswith("  ")]
+        assert commands == [
+            f"cp {folder}/smb.conf.original {folder}/smb.conf",
+            "systemctl enable nmbd",
+            "systemctl restart smbd nmbd",
+        ]
         assert "is the file from before UNOS again" not in text
         assert (folder / "smb.conf").read_text() == "smb.conf\n"
+
+    def test_the_completion_says_that_network_discovery_stays(self, tmp_path):
+        # avahi-daemon and wsdd2 are system packages, kept like samba, and wsdd2 keeps the
+        # drop-in that limits it to IPv4 (ADR-0261).
+        result, calls, _ = self._run(tmp_path, "print_completion")
+        text = self._text(result)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == []
+        assert "  - System packages (btrfs-progs, samba, avahi-daemon, wsdd2, etc.)\n" in result.stdout
+        assert (
+            "Network discovery: avahi-daemon and wsdd2 (where install.sh could install it) keep running, so "
+            "Windows and macOS still list this server while Samba runs. wsdd2 answers over IPv4 only, as "
+            f"{WSDD2_DROP_IN} says. To stop it: systemctl disable --now wsdd2" in text
+        )
 
 
 @pytest.mark.parametrize("script", ["update.sh", "install.sh"])
@@ -1749,15 +1939,51 @@ class TestTestCycle:
         assert _wait_timeouts(ups) == [_supervisor_decided_within("docker-compose.test.yml")] * len(ups)
 
 
+def _guide_heredoc(guide, path):
+    """The text that the manual installation of docs/INSTALL.md writes to `path` with
+    `sudo tee PATH > /dev/null << 'EOF'`."""
+    match = re.search(rf"^sudo tee {re.escape(path)} > /dev/null << 'EOF'\n(.*?)^EOF$", guide, re.M | re.S)
+    assert match, path
+    return match.group(1)
+
+
 class TestInstallGuide:
-    """docs/INSTALL.md: the systemd unit of a manual installation starts compose as
+    """docs/INSTALL.md: a manual installation installs the packages of install.sh, runs
+    Samba and network discovery as install.sh does, and its systemd unit starts compose as
     install.sh does."""
 
     def test_unit_starts_compose_as_install_sh_does(self, tmp_path):
         guide = (REPO_ROOT / "docs" / "INSTALL.md").read_text()
+        unit = _guide_heredoc(guide, "/etc/systemd/system/unos.service")
         _, _, exec_start = _start_install(tmp_path)
 
-        assert re.findall(r"^ExecStart=.*$", guide, re.M) == exec_start
+        assert re.findall(r"^ExecStart=.*$", unit, re.M) == exec_start
+
+    def test_installs_the_packages_of_install_sh(self, tmp_path):
+        guide = (REPO_ROOT / "docs" / "INSTALL.md").read_text()
+        step = guide[guide.index("### Step 1: Install System Dependencies") : guide.index("### Step 2:")]
+        command = re.search(r"^sudo apt install -y (.*?)\n```", step, re.M | re.S).group(1)
+
+        assert command.replace("\\", " ").split() == _install_packages(tmp_path)
+
+    def test_samba_runs_without_netbios_and_discovery_as_install_sh_sets_it_up(self, tmp_path):
+        # What configure_samba and configure_discovery run (ADR-0261), with the drop-in of
+        # wsdd2 written and loaded before its package is installed, as in install.sh.
+        guide = (REPO_ROOT / "docs" / "INSTALL.md").read_text()
+        step = guide[guide.index("### Step 5: ") : guide.index("### Step 6: ")]
+        commands = [line for line in step.splitlines() if line.startswith("sudo ")]
+        _run_configure_discovery(tmp_path)
+
+        assert commands == [
+            "sudo systemctl enable --now smbd",
+            "sudo systemctl disable --now nmbd",
+            "sudo mkdir -p /etc/systemd/system/wsdd2.service.d",
+            f"sudo tee {WSDD2_DROP_IN} > /dev/null << 'EOF'",
+            "sudo systemctl daemon-reload",
+            "sudo apt install -y wsdd2",
+            "sudo systemctl enable --now avahi-daemon wsdd2",
+        ]
+        assert _guide_heredoc(step, WSDD2_DROP_IN) == _drop_in_sandbox_path(tmp_path).read_text()
 
     def test_has_no_upgrade_path_from_older_versions(self):
         # UNOS keeps no backward compatibility (ADR-0207): the chapter for installations of

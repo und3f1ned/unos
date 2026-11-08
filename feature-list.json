@@ -1455,10 +1455,17 @@
         "The macOS Finder sidebar lists the NAS",
         "NetBIOS can then be turned off"
       ],
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_smbconf_testparm.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0158"
-      ]
+        "ADR-0158",
+        "ADR-0261"
+      ],
+      "notes": "Built (ADR-0261): the rendered [global] turns NetBIOS off (disable netbios = yes, smb ports = 445) and keeps smbd's Bonjour registration on (multicast dns register = yes). install.sh installs avahi-daemon with its packages; start_samba enables and restarts smbd and turns nmbd off (systemctl disable --now nmbd); configure_discovery enables avahi-daemon, writes the drop-in /etc/systemd/system/wsdd2.service.d/unos.conf (wsdd2 -4: WS-Discovery and LLMNR over IPv4 only, since over IPv6 wsdd2 opens its TCP ports on tunnels too, ADR-0227) and reloads systemd before it installs wsdd2, then enables and restarts wsdd2; without a wsdd2 package (Debian 11) it warns and the installation goes on. uninstall.sh enables nmbd again when it restores smb.conf.original and keeps avahi-daemon, wsdd2 and the drop-in. docs/INSTALL.md (Step 5, Network Discovery) and docs/USER_GUIDE.md (Finding the NAS) describe it. Tests: test_smbconf.py (TestGlobal: the three lines in both [global] variants), test_deploy_scripts.py (TestInstallScript: smbd without nmbd on a first installation and a rerun, avahi-daemon among the packages and wsdd2 not, the drop-in written and loaded before wsdd2 is installed, the installation going on without wsdd2, the order of main; TestUninstallScript: nmbd enabled again with the restored file, the completion; TestInstallGuide: the manual installation's packages, commands and drop-in are those of install.sh). Not built: scripts/dev/check.sh still expects nmbd to be active and checks neither wsdd2 nor avahi-daemon. Open: steps 1 to 3 need the dev device and a Windows and a macOS computer on its LAN. First the owner's actions (ADR-0211): install avahi-daemon, write the drop-in, then install wsdd2, run systemctl disable --now nmbd, and after the deploy restart smbd once (smb ports applies only at a restart). The device check, and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): test_smbconf_testparm.py passes with scripts/dev/bin/testparm; systemctl is-active smbd wsdd2 avahi-daemon answers active for each, and nmbd is inactive and disabled; ss -tulpn lists no socket on UDP 137 or 138 or TCP 139, smbd on TCP 445, wsdd2 on UDP and TCP 3702 (and on 5355 where systemd-resolved does not hold it) with IPv4 sockets only, avahi-daemon on UDP 5353; on a Windows computer of the LAN, File Explorer's Network view lists the NAS, and opening it there asks for a UNOS SMB account and then lists the shares it may use (steps 1 and 3); on a macOS computer of the LAN, the Finder sidebar lists the NAS under Locations, once, and connecting from there with a UNOS SMB account lists its shares (steps 2 and 3)."
     },
     {
       "id": "shares.smb-bind-interfaces",

@@ -260,6 +260,9 @@ restore_samba_config() {
         # Samba passwords that may be left. Samba is not restarted then: the
         # file may be incomplete.
         if cp "$SAMBA_DIR/smb.conf.original" "$SAMBA_DIR/smb.conf"; then
+            # The file from before UNOS leaves NetBIOS on: nmbd, which
+            # install.sh turned off (ADR-0261), runs again, also at boot.
+            systemctl enable nmbd 2>/dev/null || true
             systemctl restart smbd nmbd 2>/dev/null || true
             log_success "Original Samba configuration restored"
         else
@@ -307,6 +310,7 @@ print_smb_leftovers() {
         echo "from before UNOS ($SAMBA_DIR/smb.conf.original): it may still be the file"
         echo "UNOS wrote, or be incomplete. Copy it back, then restart Samba:"
         echo "  cp $SAMBA_DIR/smb.conf.original $SAMBA_DIR/smb.conf"
+        echo "  systemctl enable nmbd"
         echo "  systemctl restart smbd nmbd"
     elif [ -f "$SAMBA_DIR/smb.conf.original" ]; then
         echo "Samba configuration: $SAMBA_DIR/smb.conf is the file from before UNOS"
@@ -323,6 +327,13 @@ print_smb_leftovers() {
         echo "To change what Samba serves, edit or replace smb.conf, then run:"
         echo "  systemctl restart smbd"
     fi
+    echo ""
+    # install.sh set them up (ADR-0261); like samba, the packages stay.
+    echo "Network discovery: avahi-daemon and wsdd2 (where install.sh could install"
+    echo "it) keep running, so Windows and macOS still list this server while Samba"
+    echo "runs. wsdd2 answers over IPv4 only, as"
+    echo "/etc/systemd/system/wsdd2.service.d/unos.conf says. To stop it:"
+    echo "  systemctl disable --now wsdd2"
     echo ""
 }
 
@@ -342,7 +353,7 @@ print_completion() {
     echo "  - Docker (may be used by other applications)"
     echo "  - Storage pools and data in /mnt/pools"
     echo "  - The SMB accounts created by UNOS and the group unos-smb (see below)"
-    echo "  - System packages (btrfs-progs, samba, etc.)"
+    echo "  - System packages (btrfs-progs, samba, avahi-daemon, wsdd2, etc.)"
     echo ""
     echo "To completely remove Docker, run:"
     echo "  apt-get purge docker-ce docker-ce-cli containerd.io"
