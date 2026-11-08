@@ -161,6 +161,14 @@ export const en = {
 	'account.firewall.comment': 'Comment (optional)',
 	'account.firewall.commentPlaceholder': 'Description of this rule',
 	'account.firewall.adding': 'Adding...',
+	// A rule's direction and protocol in the list of rules; its action is the form's word.
+	'account.firewall.in': 'IN',
+	'account.firewall.out': 'OUT',
+	'account.firewall.anyProtocol': 'ANY',
+	// The default policies in account.firewall.defaults.
+	'account.firewall.policyAllow': 'allow',
+	'account.firewall.policyDeny': 'deny',
+	'account.firewall.policyReject': 'reject',
 
 	'account.certs.title': 'SSL/TLS Certificates',
 	'account.certs.valid': 'Valid',
@@ -196,6 +204,10 @@ export const en = {
 	'account.certs.countryPlaceholder': 'e.g., US',
 	'account.certs.generating': 'Generating...',
 	'account.certs.generate': 'Generate',
+	// The types of certificate.
+	'account.certs.selfSigned': 'Self-signed',
+	'account.certs.letsEncrypt': "Let's Encrypt",
+	'account.certs.custom': 'Custom',
 
 	'account.history.title': 'Login History',
 	'account.history.show': 'View History',
@@ -377,6 +389,12 @@ export const ru: Translation<typeof en> = {
 	'account.firewall.comment': 'Комментарий (необязательно)',
 	'account.firewall.commentPlaceholder': 'Описание правила',
 	'account.firewall.adding': 'Добавление...',
+	'account.firewall.in': 'Входящие',
+	'account.firewall.out': 'Исходящие',
+	'account.firewall.anyProtocol': 'Любой',
+	'account.firewall.policyAllow': 'разрешены',
+	'account.firewall.policyDeny': 'запрещены',
+	'account.firewall.policyReject': 'отклоняются',
 
 	'account.certs.title': 'Сертификаты SSL/TLS',
 	'account.certs.valid': 'Действителен',
@@ -412,6 +430,9 @@ export const ru: Translation<typeof en> = {
 	'account.certs.countryPlaceholder': 'например, RU',
 	'account.certs.generating': 'Создание...',
 	'account.certs.generate': 'Создать',
+	'account.certs.selfSigned': 'Самоподписанный',
+	'account.certs.letsEncrypt': "Let's Encrypt",
+	'account.certs.custom': 'Пользовательский',
 
 	'account.history.title': 'История входов',
 	'account.history.show': 'Показать историю',

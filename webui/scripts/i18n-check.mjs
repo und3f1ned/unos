@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Every text of the web UI comes from a catalog with English and Russian (ADR-0273). make frontend
+// The texts of the web UI come from catalogs with English and Russian (ADR-0273). make frontend
 // runs this check (npm run i18n); supervisor/tests/test_i18n.py tests it.
 //
 //   node scripts/i18n-check.mjs [webui directory]      (default: the webui/ of this script)
@@ -8,18 +8,30 @@
 //    every key starts with "<area>.", no text is empty, a text with plural forms has the forms
 //    that whole numbers take in its language (Intl.PluralRules: one and other in English; one,
 //    few and many in Russian), and both languages have the same {placeholders}.
-// 2. Every .svelte file under src/ shows no text with letters that does not come from $t(...):
-//    - in the markup, no text between tags, no such text in a user-facing attribute or prop
-//      (placeholder, title, alt, aria-label, label, hint, description, error, a prop named
-//      ...Label, ...Hint, ...Text and the like), and no string literal that an expression of the
-//      markup shows, as in {busy ? 'Saving...' : x} or {port || 'Any'};
-//    - in the <script>, no string literal that goes to a variable, prop or property whose name
-//      says that it holds a text (error = 'Failed', label: 'Storage', REFUSED_TITLE = '...',
-//      export let title = 'No data'), or to confirm(), alert() or prompt().
-//    A text that the script shows in another way (a function's return value) is out of its
-//    reach: it comes from $t as well, and review checks it.
+// 2. No .svelte file under src/ has a text with letters that does not come from $t(...):
+//    - no text between tags, and none in a user-facing attribute or prop (placeholder, title,
+//      alt, aria-label, label, hint, description, error, a prop named ...Label, ...Hint, ...Text
+//      and the like) or in any prop of a component whose value does not look like code;
+//    - no string literal in the <script> or in an expression of the markup (blocks, {@const},
+//      directives, props), wherever it goes: to a variable, a property, an argument, a return
+//      value, a thrown error or a placeholder of $t. A literal is not a text where it is compared
+//      or looked up (x === 'Escape', ua.includes('Chrome'), case 'tcp':), where it names a module,
+//      a type, a key of an object, an argument of console.* or the key of $t, where it goes to a
+//      class or a style, and where it looks like code: a name (primary, self_signed), an id or a
+//      class (task-time-zone-hint, bg-red-500/20 text-red-400), a path, a URL, a MIME type, a
+//      locale (en-GB) or a CSS length. Where a text goes (a variable, a property or a prop named
+//      like a text, confirm(), alert() and prompt(), a placeholder of $t) or where the markup
+//      shows it ({busy ? 'Saving...' : x}), even a name is a text.
+//    - A comment `i18n-ignore: <reason>` above a statement or a property of an object (or at the
+//      end of its line) exempts its literals: a command or a name that is the same in every
+//      language. Review reads the reasons; the summary counts the exempted literals.
+//    A text that the code puts together from data at run time, a single lower-case word in a
+//    script (taken for a name), and the texts of .ts modules are out of the check's reach: review
+//    and a walk through the pages in Russian check them.
 // 3. Every key that a $t('...') call names exists in English, and a text with plural forms gets
-//    its count: $t('area.key', { n }).
+//    its count: $t('area.key', { n }). A literal that starts with the name of a catalog and a dot
+//    is a key too, as in a map from values to keys ({ allow: 'account.firewall.allow' }): it
+//    exists.
 // 4. scripts/i18n-untranslated.txt lists the .svelte files not translated yet. Their texts are
 //    not reported, and a listed file without such texts fails until it leaves the list.
 
@@ -35,9 +47,8 @@ const PLACEHOLDER = /\{(\w+)\}/g;
 // Attributes and props whose value people read (or hear, from a screen reader).
 const TEXT_ATTRIBUTE =
 	/^(?:placeholder|title|alt|label|hint|description|error|message|text|tooltip|aria-(?:label|description|roledescription|valuetext|placeholder))$|(?:Label|Hint|Title|Text|Message|Description|Placeholder|Tooltip)$/;
-// Directives: code, not texts.
-const NOT_TEXT = new Set(['Comment', 'EventHandler', 'Binding', 'Action', 'Transition', 'Animation', 'Class',
-	'StyleDirective', 'Let', 'Spread']);
+// Attributes whose value is styling, never a text.
+const STYLE_ATTRIBUTE = /^(?:class|style)$/;
 // A variable of a script (or a property set by assignment) whose name says that it holds a text.
 const TEXT_VARIABLE =
 	/^(?:label|title|text|message|description|hint|placeholder|tooltip|caption|heading|error|notice|warning|success)$|[a-z](?:Label|Title|Text|Message|Description|Hint|Placeholder|Tooltip|Caption|Heading|Error|Notice|Warning|Success)$|^(?:[A-Z0-9]+_)*(?:LABEL|TITLE|TEXT|MESSAGE|DESCRIPTION|HINT|NOTE|WARNING|ERROR|NOTICE|CAPTION|HEADING)$/;
@@ -45,12 +56,50 @@ const TEXT_VARIABLE =
 // ({ error: 'alert-error', success: 'badge-success' }).
 const TEXT_PROPERTY =
 	/^(?:label|title|text|message|description|hint|placeholder|tooltip|caption|heading)$|[a-z](?:Label|Title|Text|Message|Description|Hint|Placeholder|Tooltip|Caption|Heading)$/;
+// A variable or a property that holds classes or styles (variantClasses, sizeClass, style).
+const STYLE_NAME = /(?:^|[a-z_])(?:class|classes|className|style|styles)$/i;
 // The browser's dialogs show their first argument.
 const DIALOGS = new Set(['confirm', 'alert', 'prompt']);
-// An element id or a class (task-time-zone-hint) is not a text.
+// Calls whose first argument is looked up, compared or named, not shown: ua.includes('Chrome'),
+// line.startsWith('Status:'), dispatch('close'), localStorage.getItem(KEY). Of LOOKED_IN, the
+// receiver too: ['Enter', 'Space'].includes(key).
+const LOOKED_IN = new Set(['includes', 'indexOf', 'lastIndexOf', 'has']);
+const LOOKUPS = new Set([...LOOKED_IN, 'startsWith', 'endsWith', 'split', 'replace', 'replaceAll', 'match',
+	'matchAll', 'search', 'get', 'getAll', 'getItem', 'setItem', 'removeItem', 'querySelector',
+	'querySelectorAll', 'getElementById', 'closest', 'matches', 'addEventListener', 'removeEventListener',
+	'getAttribute', 'setAttribute', 'removeAttribute', 'hasAttribute', 'toggleAttribute', 'createElement',
+	'dispatch']);
+// An element id or a class (task-time-zone-hint): not a text, even where a text goes.
 const IDENTIFIER = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+// A literal of code: a name (primary, self_signed, keydown, smbEnabled, _blank); an id, a class, a
+// file or a MIME type (task-time-zone-hint, hover:bg-blue-700, text/plain); a list of options
+// (rw,sync,no_subtree_check); a URL, a path, a fragment or a query; a locale (en-GB); a CSS length
+// or a duration; an HTTP method.
+const CODE = [
+	/^_?[a-z][a-zA-Z0-9_]*$/,
+	/^[a-z0-9]+(?:[-_.:/][a-z0-9]+)+$/,
+	/^[a-z0-9_=]+(?:,[a-z0-9_=]+)+$/,
+	/^(?:[a-z][a-z0-9+.-]*:\/\/|\/|\.\.?\/|#|\?)\S*$/i,
+	/^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-\d{3})?$/,
+	/^-?\d*\.?\d+(?:px|rem|em|ch|vh|vw|ms|s|deg|fr)$/,
+	/^(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/
+];
+// Classes, as in 'btn btn-primary' or 'flex items-center gap-2': every word a class with a
+// separator, or a one-word class of Tailwind or of src/app.css.
+const CLASS = /^!?-?[a-z0-9]+(?:[-:/.[\]%#()_]+[a-z0-9%#\])]*)+$/;
+const ONE_WORD_CLASSES = new Set(['flex', 'grid', 'block', 'inline', 'hidden', 'contents', 'table', 'relative',
+	'absolute', 'fixed', 'sticky', 'static', 'truncate', 'uppercase', 'lowercase', 'capitalize', 'italic',
+	'underline', 'border', 'rounded', 'shadow', 'transition', 'invisible', 'visible', 'grow', 'shrink', 'container',
+	'group', 'peer', 'outline', 'ring', 'isolate', 'antialiased', 'alert', 'badge', 'btn', 'card', 'modal', 'mono']);
+// The exemption of a statement's or a property's literals, with its reason.
+const EXEMPTION = /i18n-ignore:\s*\S/;
+const COMPARISONS = new Set([ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken,
+	ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken]);
+const ASSIGNMENTS = new Set([ts.SyntaxKind.EqualsToken, ts.SyntaxKind.BarBarEqualsToken,
+	ts.SyntaxKind.QuestionQuestionEqualsToken, ts.SyntaxKind.PlusEqualsToken]);
+// Operators whose result is one of their operands, or both joined: what the result shows.
 const SHOWN_OPERATORS = new Set([ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken,
-	ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.PlusToken]);
+	ts.SyntaxKind.PlusToken]);
 
 const webui = path.resolve(process.argv[2] ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
 const SRC = path.join(webui, 'src');
@@ -126,13 +175,14 @@ function checkHalf(where, area, locale, messages) {
 	}
 }
 
-/** Check every catalog; returns the English texts of all of them, by key. */
+/** Check every catalog; returns the areas and the English texts of all of them, by key. */
 async function checkCatalogs() {
 	const english = new Map();
 	const files = existsSync(CATALOG_DIR)
 		? readdirSync(CATALOG_DIR).filter((name) => name.endsWith('.ts')).sort()
 		: [];
 	if (files.length === 0) errors.push(`${relative(CATALOG_DIR)}: no catalogs`);
+	const areas = new Set(files.map((name) => name.slice(0, -'.ts'.length)));
 	for (const name of files) {
 		const file = path.join(CATALOG_DIR, name);
 		const where = relative(file);
@@ -174,7 +224,7 @@ async function checkCatalogs() {
 			if (!own(en, key)) errors.push(`${where}: ${key}: in ru but not in en`);
 		}
 	}
-	return english;
+	return { areas, english };
 }
 
 // --- 2. and 3. The .svelte files -----------------------------------------------------------------
@@ -189,7 +239,7 @@ function svelteFiles() {
 /**
  * The source with the content of every <script> and <style> blanked out (lines and offsets stay),
  * and the scripts' content with its offset. Svelte's parser reads the markup; TypeScript reads the
- * scripts.
+ * scripts and the expressions of the markup.
  */
 function split(source) {
 	const scripts = [];
@@ -203,40 +253,222 @@ function split(source) {
 	return { markup, scripts };
 }
 
-const isT = (callee) => callee?.type === 'Identifier' && callee.name === '$t';
+/** Whether `text` (a literal, or a template with x for each placeholder) looks like code. */
+function looksLikeCode(text) {
+	if (CODE.some((pattern) => pattern.test(text))) return true;
+	const words = text.trim().split(/\s+/);
+	return text.trim() !== '' && words.every((word) => CLASS.test(word) || ONE_WORD_CLASSES.has(word));
+}
 
-/** The string literals with letters that `node`, an expression of the markup, can show. */
-function shownLiterals(node) {
-	if (!node) return [];
-	switch (node.type) {
-		case 'Literal':
-			return typeof node.value === 'string' && LETTER.test(node.value) ? [{ start: node.start, text: node.value }] : [];
-		case 'TemplateLiteral':
-			return [
-				...node.quasis
-					.filter((quasi) => LETTER.test(quasi.value.cooked ?? quasi.value.raw))
-					.map((quasi) => ({ start: quasi.start, text: quasi.value.cooked ?? quasi.value.raw })),
-				...node.expressions.flatMap(shownLiterals)
-			];
-		case 'ConditionalExpression':
-			return [...shownLiterals(node.consequent), ...shownLiterals(node.alternate)];
-		case 'LogicalExpression':
-			return [...shownLiterals(node.left), ...shownLiterals(node.right)];
-		case 'BinaryExpression':
-			return node.operator === '+' ? [...shownLiterals(node.left), ...shownLiterals(node.right)] : [];
-		case 'SequenceExpression':
-			return shownLiterals(node.expressions[node.expressions.length - 1]);
-		case 'ArrayExpression':
-			return node.elements.flatMap(shownLiterals);
-		case 'ChainExpression':
-			return shownLiterals(node.expression);
-		case 'CallExpression':
-			if (isT(node.callee)) return [];
-			// A method of a text, as in ('None' || x).toUpperCase(), shows what it is called on.
-			return node.callee.type === 'MemberExpression' ? shownLiterals(node.callee.object) : [];
-		default:
-			return [];
+/** The name of an identifier, a string literal or a property access; undefined for anything else. */
+function nameOf(node) {
+	if (!node) return undefined;
+	if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isPrivateIdentifier(node)) return node.text;
+	if (ts.isPropertyAccessExpression(node)) return node.name.text;
+	return undefined;
+}
+
+/** Whether a comment `i18n-ignore: <reason>` above the statement or property of `node` exempts it. */
+function exempted(node, file) {
+	const text = file.getFullText();
+	for (let current = node; current.parent && !ts.isSourceFile(current); current = current.parent) {
+		const { parent } = current;
+		const member = ts.isSourceFile(parent) || ts.isBlock(parent) || ts.isCaseClause(parent) ||
+			ts.isDefaultClause(parent) || ts.isLabeledStatement(parent) || ts.isObjectLiteralExpression(parent);
+		if (!member) continue;
+		const comments = [...(ts.getLeadingCommentRanges(text, current.pos) ?? []),
+			...(ts.getTrailingCommentRanges(text, current.end) ?? [])];
+		if (comments.some((range) => EXEMPTION.test(text.slice(range.pos, range.end)))) return true;
 	}
+	return false;
+}
+
+/**
+ * Reads the literals of `root`, a node of `file` (TypeScript) whose offset in the .svelte file is
+ * `base` plus its own, in `context`:
+ * - 'shown': shown as it is (a text unless it is an id),
+ * - 'code': a text unless it looks like code (or names a key of a catalog),
+ * - 'skip': not a text (compared, looked up, a key, a type).
+ * Pushes the texts to found ({ start, text }) and the keys of a catalog to keys ({ start, key }).
+ */
+function readLiterals(root, context, file, base, { areas, found, keys, exemptions }) {
+	const at = (node) => base + node.getStart(file);
+	const lower = (context, to) => (context === 'skip' ? 'skip' : to);
+	// Where a value given to `name` (a variable, a property set by assignment, a parameter) goes.
+	const target = (name, context) =>
+		context === 'skip' || STYLE_NAME.test(name ?? '') ? 'skip' : TEXT_VARIABLE.test(name ?? '') ? 'shown' : 'code';
+
+	const literal = (node, parts, shape, context) => {
+		if (context === 'skip' || !parts.some((part) => LETTER.test(part.text))) return;
+		const area = parts.length === 1 ? /^([a-z][a-zA-Z0-9]*)\.[\w.]*\w$/.exec(shape)?.[1] : undefined;
+		if (context === 'code' && areas.has(area)) {
+			keys.push({ start: at(node), key: shape });
+			return;
+		}
+		if (context === 'shown' ? IDENTIFIER.test(shape) : looksLikeCode(shape)) return;
+		if (exempted(node, file)) {
+			exemptions.count += 1;
+			return;
+		}
+		for (const part of parts) {
+			if (LETTER.test(part.text)) found.push({ start: at(part), text: part.text });
+		}
+	};
+
+	const visit = (node, context) => {
+		if (!node) return;
+		if (ts.isTypeNode(node) || ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ||
+			ts.isImportEqualsDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) {
+			return;
+		}
+		if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+			literal(node, [node], node.text, context);
+			return;
+		}
+		if (ts.isTemplateExpression(node)) {
+			const parts = [node.head, ...node.templateSpans.map((span) => span.literal)];
+			literal(node, parts, parts.map((part) => part.text).join('x'), context);
+			for (const span of node.templateSpans) visit(span.expression, context);
+			return;
+		}
+		if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node) ||
+			ts.isSatisfiesExpression(node) || ts.isTypeAssertionExpression(node)) {
+			visit(node.expression, context);
+			return;
+		}
+		if (ts.isConditionalExpression(node)) {
+			visit(node.condition, lower(context, 'code'));
+			visit(node.whenTrue, context);
+			visit(node.whenFalse, context);
+			return;
+		}
+		if (ts.isBinaryExpression(node)) {
+			const operator = node.operatorToken.kind;
+			if (COMPARISONS.has(operator)) {
+				visit(node.left, 'skip');
+				visit(node.right, 'skip');
+			} else if (operator === ts.SyntaxKind.InKeyword) {
+				visit(node.left, 'skip');
+				visit(node.right, lower(context, 'code'));
+			} else if (ASSIGNMENTS.has(operator)) {
+				visit(node.left, lower(context, 'code'));
+				visit(node.right, target(nameOf(node.left), context));
+			} else if (operator === ts.SyntaxKind.AmpersandAmpersandToken) {
+				visit(node.left, lower(context, 'code'));
+				visit(node.right, context);
+			} else if (SHOWN_OPERATORS.has(operator)) {
+				visit(node.left, context);
+				visit(node.right, context);
+			} else {
+				visit(node.left, lower(context, 'code'));
+				visit(node.right, lower(context, 'code'));
+			}
+			return;
+		}
+		if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isPropertyDeclaration(node) ||
+			ts.isBindingElement(node)) {
+			// A destructuring pattern has defaults of its own: const { label = 'None' } = row.
+			if (ts.isObjectBindingPattern(node.name) || ts.isArrayBindingPattern(node.name)) {
+				visit(node.name, lower(context, 'code'));
+			}
+			visit(node.initializer, target(nameOf(node.name), context));
+			return;
+		}
+		if (ts.isArrayLiteralExpression(node)) {
+			for (const element of node.elements) visit(element, context);
+			return;
+		}
+		if (ts.isObjectLiteralExpression(node)) {
+			for (const property of node.properties) {
+				if (ts.isPropertyAssignment(property)) {
+					if (ts.isComputedPropertyName(property.name)) visit(property.name.expression, 'skip');
+					// Even in an object that is shown, a property not named like a text may hold
+					// code: notice = { variant: 'info', text }.
+					const name = nameOf(property.name);
+					visit(property.initializer, context === 'skip' || STYLE_NAME.test(name ?? '') ? 'skip'
+						: TEXT_PROPERTY.test(name ?? '') ? 'shown' : 'code');
+				} else if (ts.isShorthandPropertyAssignment(property)) {
+					visit(property.objectAssignmentInitializer, lower(context, 'code'));
+				} else {
+					visit(property, lower(context, 'code'));
+				}
+			}
+			return;
+		}
+		if (ts.isCallExpression(node)) {
+			const callee = node.expression;
+			const name = nameOf(callee);
+			const [first, ...rest] = node.arguments;
+			if (callee.kind === ts.SyntaxKind.ImportKeyword) return;
+			if (ts.isPropertyAccessExpression(callee) && nameOf(callee.expression) === 'console') return;
+			if (ts.isIdentifier(callee) && name === '$t') {
+				// A literal key (3. checks it), or an expression that picks one: $t(LABELS[value]).
+				if (first && !ts.isStringLiteral(first) && !ts.isNoSubstitutionTemplateLiteral(first)) {
+					visit(first, lower(context, 'code'));
+				}
+				// The values of the placeholders are shown, whatever their names.
+				for (const argument of rest) {
+					if (!ts.isObjectLiteralExpression(argument)) {
+						visit(argument, lower(context, 'code'));
+						continue;
+					}
+					for (const property of argument.properties) {
+						visit(ts.isPropertyAssignment(property) ? property.initializer : property,
+							lower(context, ts.isPropertyAssignment(property) ? 'shown' : 'code'));
+					}
+				}
+				return;
+			}
+			if (DIALOGS.has(name) && (ts.isIdentifier(callee) || nameOf(callee.expression) === 'window')) {
+				visit(first, lower(context, 'shown'));
+				for (const argument of rest) visit(argument, lower(context, 'code'));
+				return;
+			}
+			if (LOOKUPS.has(name)) {
+				if (ts.isPropertyAccessExpression(callee)) {
+					visit(callee.expression, LOOKED_IN.has(name) ? 'skip' : lower(context, 'code'));
+				}
+				visit(first, 'skip');
+				for (const argument of rest) visit(argument, lower(context, 'code'));
+				return;
+			}
+			// A method of a text shows what it is called on: ('None' || x).toUpperCase().
+			visit(ts.isPropertyAccessExpression(callee) ? callee.expression : callee,
+				ts.isPropertyAccessExpression(callee) ? context : lower(context, 'code'));
+			for (const argument of node.arguments) visit(argument, lower(context, 'code'));
+			return;
+		}
+		if (ts.isNewExpression(node)) {
+			visit(node.expression, lower(context, 'code'));
+			// A set is looked up: new Set(['ArrowDown', 'ArrowUp']).
+			const set = nameOf(node.expression) === 'Set';
+			for (const argument of node.arguments ?? []) visit(argument, set ? 'skip' : lower(context, 'code'));
+			return;
+		}
+		if (ts.isElementAccessExpression(node)) {
+			visit(node.expression, context);
+			visit(node.argumentExpression, 'skip');
+			return;
+		}
+		if (ts.isPropertyAccessExpression(node)) {
+			visit(node.expression, lower(context, 'code'));
+			return;
+		}
+		if (ts.isCaseClause(node)) {
+			visit(node.expression, 'skip');
+			for (const statement of node.statements) visit(statement, lower(context, 'code'));
+			return;
+		}
+		if (ts.isPropertyAssignment(node) || ts.isMethodDeclaration(node) || ts.isGetAccessor(node) ||
+			ts.isSetAccessor(node) || ts.isEnumMember(node)) {
+			if (node.name && ts.isComputedPropertyName(node.name)) visit(node.name.expression, 'skip');
+			ts.forEachChild(node, (child) => child !== node.name && visit(child, lower(context, 'code')));
+			return;
+		}
+		ts.forEachChild(node, (child) => visit(child, lower(context, 'code')));
+	};
+
+	visit(root, context);
 }
 
 /** Whether `attribute` of `owner` (an element or a component) is read by people. */
@@ -255,95 +487,78 @@ function textNode(node) {
 	return [{ start: node.start + raw.length - raw.trimStart().length, text: node.data }];
 }
 
-/** The untranslated texts of the markup: [{ start, text }]. */
-function markupTexts(html) {
-	const found = [];
-	const literals = (expression) => found.push(...shownLiterals(expression));
+/** The texts and the keys of the markup (2. and 3.), read into `into`. */
+function readMarkup(html, markup, into) {
+	const expression = (node, context) => {
+		if (!node || typeof node !== 'object' || typeof node.start !== 'number') return;
+		const file = ts.createSourceFile('expression.ts', `(${markup.slice(node.start, node.end)})`,
+			ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+		const [statement] = file.statements;
+		const root = statement && ts.isExpressionStatement(statement) ? statement.expression : file;
+		readLiterals(root, root === file ? 'code' : context, file, node.start - 1, into);
+	};
 	walk(html, {
 		enter(node, parent) {
-			if (NOT_TEXT.has(node.type)) {
-				this.skip();
-			} else if (node.type === 'Attribute') {
-				if (isTextAttribute(node, parent) && Array.isArray(node.value)) {
-					for (const part of node.value) {
-						if (part.type === 'Text') found.push(...textNode(part));
-						if (part.type === 'MustacheTag') literals(part.expression);
+			switch (node.type) {
+				case 'Comment':
+				case 'StyleDirective':
+					this.skip();
+					break;
+				case 'Text':
+					into.found.push(...textNode(node));
+					break;
+				case 'MustacheTag':
+				case 'RawMustacheTag':
+					expression(node.expression, 'shown');
+					this.skip();
+					break;
+				case 'Attribute': {
+					if (!STYLE_ATTRIBUTE.test(node.name) && Array.isArray(node.value)) {
+						const text = isTextAttribute(node, parent);
+						for (const part of node.value) {
+							// Any prop of a component can take a text: confirm="Delete".
+							if (part.type === 'Text' && (text || (parent?.type === 'InlineComponent' &&
+								LETTER.test(part.data) && !looksLikeCode(part.data.trim())))) {
+								into.found.push(...textNode(part));
+							}
+							if (part.type === 'MustacheTag') expression(part.expression, text ? 'shown' : 'code');
+						}
 					}
+					this.skip();
+					break;
 				}
-				this.skip();
-			} else if (node.type === 'Text') {
-				found.push(...textNode(node));
-			} else if (node.type === 'MustacheTag' || node.type === 'RawMustacheTag') {
-				literals(node.expression);
-				this.skip();
+				case 'Spread':
+				case 'EventHandler':
+				case 'Binding':
+				case 'Action':
+				case 'Transition':
+				case 'Animation':
+				case 'Class':
+				case 'Let':
+				case 'ConstTag':
+					expression(node.expression, 'code');
+					this.skip();
+					break;
+				case 'IfBlock':
+				case 'AwaitBlock':
+				case 'KeyBlock':
+				case 'InlineComponent':
+					expression(node.expression, 'code');
+					break;
+				case 'EachBlock':
+					expression(node.expression, 'code');
+					expression(node.context, 'code');
+					expression(node.key, 'code');
+					break;
+				case 'Element':
+					expression(node.tag, 'code');
+					break;
 			}
 		}
 	});
-	return found;
 }
 
-/** The string literals with letters that `node`, an expression of a script, can yield as a text. */
-function shownStrings(node) {
-	if (!node) return [];
-	if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-		return LETTER.test(node.text) && !IDENTIFIER.test(node.text) ? [node] : [];
-	}
-	if (ts.isTemplateExpression(node)) {
-		return [node.head, ...node.templateSpans.map((span) => span.literal)]
-			.filter((part) => LETTER.test(part.text))
-			.concat(node.templateSpans.flatMap((span) => shownStrings(span.expression)));
-	}
-	if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node) ||
-		ts.isSatisfiesExpression(node)) {
-		return shownStrings(node.expression);
-	}
-	if (ts.isConditionalExpression(node)) return [...shownStrings(node.whenTrue), ...shownStrings(node.whenFalse)];
-	if (ts.isBinaryExpression(node)) {
-		return SHOWN_OPERATORS.has(node.operatorToken.kind) ? [...shownStrings(node.left), ...shownStrings(node.right)] : [];
-	}
-	if (ts.isArrayLiteralExpression(node)) return node.elements.flatMap(shownStrings);
-	if (ts.isCallExpression(node)) {
-		if (ts.isIdentifier(node.expression) && node.expression.text === '$t') return [];
-		return ts.isPropertyAccessExpression(node.expression) ? shownStrings(node.expression.expression) : [];
-	}
-	return [];
-}
-
-/** The name of an identifier, a string literal or a property access; undefined for anything else. */
-function nameOf(node) {
-	if (!node) return undefined;
-	if (ts.isIdentifier(node) || ts.isStringLiteral(node)) return node.text;
-	if (ts.isPropertyAccessExpression(node)) return node.name.text;
-	return undefined;
-}
-
-/** The untranslated texts of a <script> (see 2. above), with offsets in the whole file. */
-function scriptTexts({ body, offset }, file) {
-	const found = [];
-	const visit = (node) => {
-		let value;
-		if (ts.isVariableDeclaration(node) && TEXT_VARIABLE.test(nameOf(node.name) ?? '')) {
-			value = node.initializer;
-		} else if (ts.isPropertyAssignment(node) && TEXT_PROPERTY.test(nameOf(node.name) ?? '')) {
-			value = node.initializer;
-		} else if (
-			ts.isBinaryExpression(node) &&
-			[ts.SyntaxKind.EqualsToken, ts.SyntaxKind.BarBarEqualsToken, ts.SyntaxKind.QuestionQuestionEqualsToken]
-				.includes(node.operatorToken.kind) &&
-			TEXT_VARIABLE.test(nameOf(node.left) ?? '')
-		) {
-			value = node.right;
-		} else if (ts.isCallExpression(node) && DIALOGS.has(nameOf(node.expression) ?? '')) {
-			value = node.arguments[0];
-		}
-		for (const literal of shownStrings(value)) {
-			found.push({ start: offset + literal.getStart(file), text: literal.text });
-		}
-		ts.forEachChild(node, visit);
-	};
-	visit(file);
-	return found;
-}
+const isT = (callee) => callee?.type === 'Identifier' && callee.name === '$t';
 
 /** Whether the object `node` (estree or TypeScript) has a property n: true, false, or null when unknown. */
 function hasCount(properties, nameOf) {
@@ -429,10 +644,11 @@ function readList() {
 
 // --- The check ---------------------------------------------------------------------------------
 
-const english = await checkCatalogs();
+const { areas, english } = await checkCatalogs();
 const listed = readList();
 const files = svelteFiles();
 let pending = 0;
+let exempt = 0;
 
 for (const file of files) {
 	const name = relative(file);
@@ -447,12 +663,14 @@ for (const file of files) {
 		continue;
 	}
 
+	const into = { areas, found: [], keys: [], exemptions: { count: 0 } };
+	readMarkup(ast.html, markup, into);
 	const parsed = scripts.map((script) => ({
 		script,
 		file: ts.createSourceFile('script.ts', script.body, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 	}));
-	const texts = [...markupTexts(ast.html), ...parsed.flatMap(({ script, file }) => scriptTexts(script, file))]
-		.sort((a, b) => a.start - b.start);
+	for (const { script, file } of parsed) readLiterals(file, 'code', file, script.offset, into);
+	const texts = into.found.sort((a, b) => a.start - b.start);
 	if (listed.has(name)) {
 		if (texts.length === 0) {
 			errors.push(`${relative(LIST)}:${listed.get(name)}: ${name} has no untranslated text: ` +
@@ -460,11 +678,15 @@ for (const file of files) {
 		}
 		pending += 1;
 	} else {
+		exempt += into.exemptions.count;
 		for (const { start, text } of texts) {
 			errors.push(`${name}:${position(source, start)}: untranslated text ${quote(text)}`);
 		}
 	}
 
+	for (const { start, key } of into.keys) {
+		if (!english.has(key)) errors.push(`${name}:${position(source, start)}: '${key}': no such key in the catalogs`);
+	}
 	const calls = [...markupCalls(ast.html), ...parsed.flatMap(({ script, file }) => scriptCalls(script, file))];
 	for (const { start, key, count } of calls) {
 		if (key === null) continue;
@@ -489,4 +711,4 @@ if (errors.length > 0) {
 	process.exit(1);
 }
 console.log(`i18n: ${english.size} keys in en and ru; ${files.length} .svelte files, ${pending} of them ` +
-	`not translated yet (${relative(LIST)})`);
+	`not translated yet (${relative(LIST)}); ${exempt} literal(s) exempted with i18n-ignore`);

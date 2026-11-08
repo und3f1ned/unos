@@ -1,5 +1,13 @@
 import { derived, writable } from 'svelte/store';
-import { isLocale, translate, type Catalogs, type Locale, type Messages, type Params } from './translate';
+import {
+	dateLocale,
+	isLocale,
+	translate,
+	type Catalogs,
+	type Locale,
+	type Messages,
+	type Params
+} from './translate';
 
 // The web UI in English or Russian (ADR-0273). Texts come from the catalogs, one file per area
 // of the web UI: catalog/<area>.ts exports `en` and `ru` with keys that start with "<area>.".
@@ -67,12 +75,12 @@ export const t = derived(
 
 /**
  * The locale for dates and numbers: the browser's own when it is of the current language (so an
- * English page in a British browser shows British dates), else the current language.
+ * English page in a British browser shows British dates), else the current language with the day
+ * first and a 24-hour clock (dateLocale of ./translate).
  */
-export const intlLocale = derived(current, ($locale): string => {
-	const own = typeof navigator === 'undefined' ? '' : (navigator.language ?? '');
-	return own.toLowerCase().split('-')[0] === $locale ? own : $locale;
-});
+export const intlLocale = derived(current, ($locale): string =>
+	dateLocale($locale, typeof navigator === 'undefined' ? '' : (navigator.language ?? ''))
+);
 
 // <html lang> follows the language: screen readers, hyphenation and the browser's translation
 // offer read it.

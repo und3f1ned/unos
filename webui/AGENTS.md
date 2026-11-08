@@ -44,15 +44,22 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `$t('area.key')`, `$t('area.key', { name })` for `{name}`, and `$t('area.key', { n })` for a
   text with plural forms (`{ one, other }` in English, `{ one, few, many }` in Russian).
   `$lib/i18n` collects every catalog file: an area adds its own file and edits no shared one;
-  `common.ts` has the words that many areas use. Dates take `$intlLocale`.
+  `common.ts` has the words that many areas use. Dates take `$intlLocale`. A value that the
+  server answers as a word (an action, a state, a type) is shown through a map from the value to
+  a key, `{ allow: 'account.firewall.allow' }`, never as it comes.
 - English stays word for word what the specs select: `playwright.config.ts` runs an en-US
   browser, and `tests/language.spec.ts` switches to Russian. The server's messages (the
   `ApiError` texts) stay English, like the fakes' copies of them (ADR-0189).
 - `npm run i18n` (`scripts/i18n-check.mjs`) fails for a text of a `.svelte` file that does not
-  come from `$t`, for a key that no catalog has and for a catalog whose halves differ. It cannot
-  see a text that a function returns or that a `.ts` module holds (`$lib/components/shares/texts.ts`):
-  translate those too. `scripts/i18n-untranslated.txt` lists the files not translated yet; a
-  translated file leaves it.
+  come from `$t`: text between tags, a user-facing attribute or prop, and every string literal of
+  a script or of a markup expression that is not code (compared or looked up, a key, a class, a
+  name, an id, a path); for a key that no catalog has, also in a map of keys; and for a catalog
+  whose halves differ. A literal that is the same in every language (a command, a browser's name)
+  gets `// i18n-ignore: <reason>` above its statement. The check cannot see a text that the code
+  puts together from data, a single lower-case word in a script, or a `.ts` module
+  (`$lib/components/shares/texts.ts`): translate those too. `scripts/i18n-untranslated.txt`
+  lists the files not translated yet; a translated file leaves it. The empty list is not enough:
+  the feature passes after a walk through every page in Russian (ADR-0273).
 
 ## Checks and build
 

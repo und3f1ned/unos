@@ -100,6 +100,48 @@
   // manage its own password, 2FA and see its own login history.
   $: isAdmin = $user?.is_admin === true;
 
+  // The labels of the values that the server answers as words (FirewallRule, FirewallStatus and
+  // Certificate of $lib/api/security): keys of the catalog, by value.
+  const RULE_ACTIONS: Record<string, string> = {
+    allow: "account.firewall.allow",
+    deny: "account.firewall.deny",
+    reject: "account.firewall.reject"
+  };
+  const RULE_DIRECTIONS: Record<string, string> = { in: "account.firewall.in", out: "account.firewall.out" };
+  const RULE_PROTOCOLS: Record<string, string> = {
+    tcp: "account.firewall.tcp",
+    udp: "account.firewall.udp",
+    any: "account.firewall.anyProtocol"
+  };
+  const POLICIES: Record<string, string> = {
+    allow: "account.firewall.policyAllow",
+    deny: "account.firewall.policyDeny",
+    reject: "account.firewall.policyReject"
+  };
+  const CERTIFICATE_TYPES: Record<string, string> = {
+    self_signed: "account.certs.selfSigned",
+    lets_encrypt: "account.certs.letsEncrypt",
+    custom: "account.certs.custom"
+  };
+
+  /** The label of `value` in the language of the page; a value without one as it comes. */
+  $: labelOf = (labels: Record<string, string>, value: string): string =>
+    Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
+
+  // A certificate's dates are openssl's, in UTC: "Nov  8 01:47:31 2027 GMT".
+  const OPENSSL_DATE = /^([A-Z][a-z]{2}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4}) GMT$/;
+  // i18n-ignore: openssl's names of the months, which the dates of the server hold
+  const OPENSSL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  /** A certificate's date in the language of the page and the browser's time zone; else as it comes. */
+  $: formatCertificateDate = (value: string): string => {
+    const match = OPENSSL_DATE.exec(value);
+    const month = match ? OPENSSL_MONTHS.indexOf(match[1]) : -1;
+    if (!match || month < 0) return value;
+    const [, , day, hours, minutes, seconds, year] = match.map(Number);
+    return new Date(Date.UTC(year, month, day, hours, minutes, seconds)).toLocaleString($intlLocale);
+  };
+
   onMount(async () => {
     await Promise.all([
       loadTOTPStatus(),
@@ -165,6 +207,7 @@
       totpSetupData = await setupTOTP();
       try {
         // Twice the displayed size so it stays sharp on high-DPI screens.
+        // i18n-ignore: the options of the QR code
         qrDataUrl = await toDataURL(totpSetupData.qr_uri, {
           width: 384,
           margin: 2,
@@ -288,13 +331,13 @@
     }
   };
 
+  // i18n-ignore: the names of browsers, the same in every language
+  const BROWSERS = ["Chrome", "Firefox", "Safari", "Edge"];
+
+  // The first of BROWSERS that the user agent names: Chrome's also names Safari.
   $: parseUserAgent = (ua: string | null): string => {
     if (!ua) return $t("common.unknown");
-    if (ua.includes("Chrome")) return "Chrome";
-    if (ua.includes("Firefox")) return "Firefox";
-    if (ua.includes("Safari")) return "Safari";
-    if (ua.includes("Edge")) return "Edge";
-    return $t("account.history.browser");
+    return BROWSERS.find((name) => ua.includes(name)) ?? $t("account.history.browser");
   };
 
   // Firewall functions
@@ -709,8 +752,8 @@
             <p class="font-medium">{$t("account.firewall.status")}</p>
             <p class="text-sm text-slate-400">
               {$t("account.firewall.defaults", {
-                incoming: firewallStatus.default_incoming,
-                outgoing: firewallStatus.default_outgoing
+                incoming: labelOf(POLICIES, firewallStatus.default_incoming),
+                outgoing: labelOf(POLICIES, firewallStatus.default_outgoing)
               })}
             </p>
           </div>
@@ -751,13 +794,13 @@
             {#each firewallStatus.rules as rule}
               <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
                 <div class="flex items-center gap-3">
-                  <span class="px-2 py-1 rounded text-xs font-medium {rule.action === 'allow' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
-                    {rule.action.toUpperCase()}
+                  <span class="px-2 py-1 rounded text-xs font-medium uppercase {rule.action === 'allow' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
+                    {labelOf(RULE_ACTIONS, rule.action)}
                   </span>
                   <div>
                     <p class="font-medium">{rule.name}</p>
                     <p class="text-sm text-slate-400">
-                      {rule.direction.toUpperCase()} | {rule.protocol.toUpperCase()} |
+                      {labelOf(RULE_DIRECTIONS, rule.direction)} | {labelOf(RULE_PROTOCOLS, rule.protocol)} |
                       {$t("account.firewall.port", { port: rule.port || $t("account.firewall.any") })}
                       {#if rule.source}| {$t("account.firewall.from", { source: rule.source })}{/if}
                     </p>
@@ -838,10 +881,10 @@
                 <p class="font-medium">{certStatus.domain || $t("account.certs.certificate")}</p>
                 <p class="text-sm text-slate-400">
                   {$t("account.certs.type", {
-                    type: certStatus.type?.replace('_', ' ').toUpperCase() || $t("common.unknown")
+                    type: certStatus.type ? labelOf(CERTIFICATE_TYPES, certStatus.type) : $t("common.unknown")
                   })}
                   {#if certStatus.valid_until}
-                    | {$t("account.certs.expires", { date: certStatus.valid_until })}
+                    | {$t("account.certs.expires", { date: formatCertificateDate(certStatus.valid_until) })}
                   {/if}
                 </p>
               </div>
@@ -876,9 +919,9 @@
                   <div>
                     <p class="font-medium">{cert.domain}</p>
                     <p class="text-sm text-slate-400">
-                      {cert.type.replace('_', ' ')} |
+                      {labelOf(CERTIFICATE_TYPES, cert.type)} |
                       {$t("account.certs.issuer", { issuer: cert.issuer || $t("account.certs.self") })}
-                      {#if cert.valid_until}| {$t("account.certs.until", { date: cert.valid_until })}{/if}
+                      {#if cert.valid_until}| {$t("account.certs.until", { date: formatCertificateDate(cert.valid_until) })}{/if}
                     </p>
                   </div>
                 </div>

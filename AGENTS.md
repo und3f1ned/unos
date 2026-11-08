@@ -19,6 +19,7 @@ Read the nested file before you change its area:
 
 All text written into the repository is English: code, comments, docs, ADRs, skills, hook and
 commit messages (ADR-0200); an ADR quotes the owner in translation. Answer the owner in Russian.
+The one exception is the web UI's Russian texts and the tests that check them (ADR-0273).
 
 ## Start of a session
 

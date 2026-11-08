@@ -59,22 +59,43 @@ export const ru: Translation<typeof en> = {
 };
 """
 
-# Everything here comes from the catalog, or holds no letters, or is code.
+# Everything here comes from the catalog, or holds no letters, or is code: a module, a type, a
+# compared or looked-up value, a key, a name, an id, a class, a path, a MIME type, a locale, a
+# key of the catalogs, a developer's message, or a literal exempted with its reason.
 TRANSLATED = """\
 <script lang="ts">
 	import { t } from '$lib/i18n';
+	import Widget from './Widget.svelte';
 	export let count: number = 2;
 	export let busy = false;
 	export let level = 'write';
+	export let mode: 'primary' | 'Read only' = 'primary';
+	export let user = '';
 	let error = '';
 	// Classes by variant: an error or a success here names a variant, not a text.
 	const classes = { error: 'text-red-400 bg-red-500/20', success: 'text-green-400 font-medium' };
+	const badgeClass = 'btn btn-primary';
 	const ZONE_HINT = 'task-time-zone-hint';
+	const KEYS = new Set(['ArrowDown', 'ArrowUp']);
+	const LABELS: Record<string, string> = { allow: 'demo.title', deny: 'demo.greeting' };
+	const headers = { 'Content-Type': 'application/json', Accept: 'text/plain' };
 	console.error('Logged for developers only');
-	$: label = busy ? $t('demo.title') : $t('demo.greeting', { name: 'Ann' });
+	$: label = busy ? $t('demo.title') : $t('demo.greeting', { name: user });
+	$: path = `/api/v1/shares/${count}#top`;
+	$: inputId = `select-${count}`;
 	function fail() {
 		error = $t('demo.title');
 	}
+	function onKey(e: KeyboardEvent, ua: string, row: Record<string, string>) {
+		if (e.key === 'Escape' || ['Enter', 'Space'].includes(e.key) || ua.includes('Chrome')) fail();
+		switch (row['Display Name']) {
+			case 'Tab':
+				break;
+		}
+		return new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(new Date());
+	}
+	// i18n-ignore: a command, the same in every language
+	$: command = `sudo mount -t cifs //nas/${level}`;
 </script>
 
 <!-- A comment in English. -->
@@ -84,6 +105,12 @@ TRANSLATED = """\
 <input aria-describedby={ZONE_HINT} placeholder="000000" aria-label={$t('demo.title')} />
 <Input label={$t('demo.title')} variant="secondary" on:click={() => fail()} />
 <a href="/storage">&rarr;</a>
+{#if mode === 'Read only'}
+	<p>{$t(LABELS[level])}</p>
+{/if}
+<Widget variant={busy ? 'success' : 'error'} size="sm" class="mt-3 flex" on:close={() => fail()} />
+<a href={`/shares/${count}`} class={busy ? 'nav-item nav-item-active' : 'nav-item'}>{$t('demo.title')}</a>
+<input type={busy ? 'text' : 'password'} autocomplete="one-time-code" />
 
 <style>
 	p { color: red; }
@@ -157,6 +184,31 @@ UNTRANSLATED = [
     ("<script lang=\"ts\">\n\t$: leftText = `${n} codes left`;\n</script>", "codes left"),
     ("<script lang=\"ts\">\n\tlet notice = '';\n\tnotice = ok ? $t('demo.title') : 'Failed';\n</script>", "Failed"),
     ("<script lang=\"ts\">\n\tif (!confirm('Delete this rule?')) {}\n</script>", "Delete this rule?"),
+    # A literal of a script is a text wherever it goes, unless it is code (TRANSLATED).
+    ("<script lang=\"ts\">\n\tconst LOG_STATE_TEXT = { connecting: 'Connecting to the log...' };\n</script>",
+     "Connecting to the log..."),
+    ("<script lang=\"ts\">\n\tconst ACTIONS = { reboot: { confirm: 'Reboot in 1 minute' } };\n</script>",
+     "Reboot in 1 minute"),
+    ("<script lang=\"ts\">\n\tfunction open() {\n\t\tshowError('Could not open the folder', e);\n\t}\n</script>",
+     "Could not open the folder"),
+    ("<script lang=\"ts\">\n\tconst blockers: string[] = [];\n\tblockers.push('forced read-only');\n</script>",
+     "forced read-only"),
+    ("<script lang=\"ts\">\n\tlet problem = '';\n\tproblem = 'The pool is degraded';\n</script>", "The pool is degraded"),
+    ("<script lang=\"ts\">\n\tfunction browser() {\n\t\treturn 'Chrome';\n\t}\n</script>", "Chrome"),
+    ("<script lang=\"ts\">\n\tthrow new Error('The share has no path');\n</script>", "The share has no path"),
+    # A placeholder's value is shown: even a single lower-case word.
+    ("<script lang=\"ts\">\n\tconst state = $t('demo.greeting', { name: 'guest' });\n</script>", "guest"),
+    # An exemption needs its reason.
+    ("<script lang=\"ts\">\n\t// i18n-ignore\n\tconst brand = 'Chrome Browser';\n</script>", "Chrome Browser"),
+    # The same in the expressions of the markup: blocks, tags, directives and props.
+    ("<p>{$t('demo.greeting', { name: 'Ann' })}</p>", "Ann"),
+    ("<p>{describe(e, 'Installation failed')}</p>", "Installation failed"),
+    ("<p>{{ allow: 'Allowed' }[action]}</p>", "Allowed"),
+    ("{#if ok}\n\t{@const note = 'Free space'}\n\t<p>{note}</p>\n{/if}", "Free space"),
+    ("{#each ['Disks'] as tab}\n\t<p>{tab}</p>\n{/each}", "Disks"),
+    ("<button on:click={() => (notice = 'Saved')}>{$t('demo.title')}</button>", "Saved"),
+    ("<Tabs items={[{ id: 'disks', name: 'Disks' }]} />", "Disks"),
+    ('<ConfirmDialog confirm="Delete the share" />', "Delete the share"),
 ]
 
 
@@ -221,6 +273,22 @@ class TestKeys:
 
         assert result.returncode == 1
         assert "$t('demo.missing'): no such key in the catalogs" in result.stderr
+
+    @pytest.mark.parametrize("markup", [
+        "<script lang=\"ts\">\n\tconst LABELS = { allow: 'demo.title', deny: 'demo.missing' };\n</script>",
+        "<p>{$t({ allow: 'demo.title', deny: 'demo.missing' }[action])}</p>",
+    ])
+    def test_a_key_of_a_map_of_keys_must_exist(self, node, tmp_path, markup):
+        # A literal that starts with the name of a catalog and a dot is a key, as in a map from
+        # the values of a field to the keys of their labels: $t(LABELS[value]).
+        webui = make_webui(tmp_path, files={"src/routes/new.svelte": markup + "\n"})
+
+        result = run_check(node, webui)
+
+        assert result.returncode == 1
+        reported = [line for line in result.stderr.splitlines() if line.startswith("src/routes/new.svelte:")]
+        assert len(reported) == 1, result.stderr
+        assert reported[0].endswith(": 'demo.missing': no such key in the catalogs"), reported
 
     @pytest.mark.parametrize(("markup", "reported"), [
         ("<p>{$t('demo.files')}</p>", True),
@@ -360,6 +428,16 @@ class TestLookup:
     def test_the_languages(self, lookup):
         assert lookup(["isLocale", "ru"], ["isLocale", "en"], ["isLocale", "de"], ["isLocale", None]) == [
             True, True, False, False]
+
+    def test_dates_take_the_browsers_format_when_it_is_of_the_language_else_day_first(self, lookup):
+        # (language of the page, navigator.language): the locale of $intlLocale. A browser of
+        # another language gets day first and a 24-hour clock in the page's language: en-GB, ru.
+        cases = [("en", "en-US"), ("en", "en-GB"), ("en", "en"), ("en", "ru-RU"), ("en", "de-DE"), ("en", ""),
+                 ("ru", "ru-RU"), ("ru", "ru"), ("ru", "en-US"), ("ru", "de-DE"), ("ru", "")]
+
+        locales = lookup(*[["dateLocale", page, browser] for page, browser in cases])
+
+        assert locales == ["en-US", "en-GB", "en", "en-GB", "en-GB", "en-GB", "ru-RU", "ru", "ru", "ru", "ru"]
 
 
 def test_the_check_reads_scripts_with_typescript(node, tmp_path):

@@ -118,8 +118,9 @@
 	$: usableShares = status?.shares.filter((share) => share.usable) ?? [];
 	$: showConnect = allowed || usableShares.length > 0;
 	$: example = (allowed ? status?.shares[0] : usableShares[0])?.name ?? 'share';
+	// i18n-ignore: an option of the command below, the same in every language
 	$: mountOption = allowed ? `username=${signInName}` : 'guest';
-	// A command, the same in every language.
+	// i18n-ignore: a command, the same in every language
 	$: mountCommand = `sudo mount -t cifs //${host}/${example} /mnt/${example} -o ${mountOption}`;
 </script>
 

@@ -5,8 +5,9 @@ import type { Page } from '@playwright/test';
 // The web UI in English or Russian (feature webui.translations, ADR-0273), against the real
 // supervisor: the Account page offers both languages, the choice applies at once and stays in
 // this browser, also on the sign-in page. Without a choice the browser's language decides:
-// playwright.config.ts runs the browser in en-US, so every other spec sees English. Messages
-// from the server stay in English.
+// playwright.config.ts runs the browser in en-US, so every other spec sees English. Values that
+// the server answers as words, and dates, follow the language; messages from the server stay in
+// English.
 
 const LOCALE_KEY = 'unos-locale';
 
@@ -111,6 +112,75 @@ test.describe('Language', () => {
     await expect(page.getByRole('combobox', { name: 'Interface language' })).toHaveText('English');
   });
 
+  test.describe('the values of the firewall and the certificates', () => {
+    // The dates below are in UTC.
+    test.use({ timezoneId: 'UTC' });
+
+    // As the server answers them (FirewallStatus, CertificateStatus and Certificate of
+    // supervisor/src/security/schemas.py): the stand-in has no ufw and no certificate. A
+    // certificate's dates are openssl's.
+    const FIREWALL = {
+      enabled: true,
+      default_incoming: 'deny',
+      default_outgoing: 'allow',
+      rules: [
+        { id: 'rule_1', name: 'SSH', action: 'deny', direction: 'in', protocol: 'tcp', port: '22',
+          source: '192.168.1.0/24', destination: null, enabled: true, comment: null },
+      ],
+    };
+    const VALID_UNTIL = 'Nov  8 01:47:31 2027 GMT';
+    const CERTIFICATE_STATUS = { has_certificate: true, type: 'self_signed', domain: 'nas.local',
+      valid_until: VALID_UNTIL, is_valid: true, auto_renew: false };
+    const CERTIFICATES = {
+      certificates: [
+        { id: 'custom_nas', type: 'self_signed', domain: 'nas.local', issuer: 'nas.local',
+          valid_from: 'Nov  8 01:47:31 2026 GMT', valid_until: VALID_UNTIL, is_valid: true, auto_renew: false,
+          fingerprint: null },
+      ],
+      active_certificate: 'custom_nas',
+    };
+
+    test('come in the language of the page', async ({ authenticatedPage: page }) => {
+      for (const [path, answer] of [
+        ['/api/v1/security/firewall', FIREWALL],
+        ['/api/v1/security/certificates/status', CERTIFICATE_STATUS],
+        ['/api/v1/security/certificates', CERTIFICATES],
+      ] as const) {
+        await page.route(
+          (url) => url.pathname === path,
+          (route) => (route.request().method() === 'GET' ? route.fulfill({ json: answer }) : route.abort()),
+        );
+      }
+      await page.goto('/system#security');
+      const main = page.locator('main');
+      await main.getByRole('button', { name: 'Configure', exact: true }).click();
+      await main.getByRole('button', { name: 'Manage', exact: true }).click();
+      const rule = main.locator('div.bg-slate-700').filter({ has: page.getByText('SSH', { exact: true }) });
+
+      // English: the firewall's words as before the catalogs; a certificate's type by its label
+      // and its dates in the browser's format, no longer as the server answers them.
+      await expect(main.getByText('Default: Incoming deny, Outgoing allow', { exact: true })).toBeVisible();
+      expect(await rule.locator('span').first().innerText()).toBe('DENY');
+      await expect(rule.getByText('IN | TCP | Port: 22 | From: 192.168.1.0/24', { exact: true })).toBeVisible();
+      // Text, not a regular expression: Playwright compares text with its white space collapsed,
+      // the space before AM included.
+      await expect(main.getByText('Type: Self-signed | Expires: 11/8/2027, 1:47:31 AM', { exact: true })).toBeVisible();
+      await expect(main.getByText('Self-signed | Issuer: nas.local | Until: 11/8/2027, 1:47:31 AM', { exact: true }))
+        .toBeVisible();
+
+      await chooseLanguage(page, 'Interface language', 'Русский');
+      await expect(main.getByText('По умолчанию: входящие — запрещены, исходящие — разрешены', { exact: true }))
+        .toBeVisible();
+      expect(await rule.locator('span').first().innerText()).toBe('ЗАПРЕТИТЬ');
+      await expect(rule.getByText('Входящие | TCP | Порт: 22 | Источник: 192.168.1.0/24', { exact: true }))
+        .toBeVisible();
+      await expect(main.getByText('Тип: Самоподписанный | Истекает: 08.11.2027, 01:47:31', { exact: true }))
+        .toBeVisible();
+      await expect(main.getByText('Самоподписанный | Издатель: nas.local | До: 08.11.2027, 01:47:31', { exact: true }))
+        .toBeVisible();
+    });
+  });
+
   test.describe('a regular user', () => {
     const USER = { username: `e2e_lang_${Date.now().toString(36)}`, password: 'e2e-Language-Password-1' };
     let account: Account | undefined;
@@ -160,6 +230,20 @@ test.describe('Language', () => {
       await page.reload();
       await expect(page.locator('html')).toHaveAttribute('lang', 'en');
       await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
+    });
+
+    test('an English page in it writes the times day first, on a 24-hour clock', async ({
+      authenticatedPage: page,
+    }) => {
+      await page.evaluate((key) => localStorage.setItem(key, 'en'), LOCALE_KEY);
+      await page.goto('/system#security');
+      await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+      await page.getByRole('button', { name: 'View History' }).click();
+
+      // The administrator's sign-in of this test, as en-GB writes it (08/11/2026, 02:47:31), not
+      // en-US (11/8/2026, 2:47:31 AM): this browser's own format is Russian, not English.
+      const time = page.getByRole('list', { name: 'Login history' }).locator('time').first();
+      await expect(time).toHaveText(/^\d{2}\/\d{2}\/\d{4}, \d{2}:\d{2}:\d{2}$/);
     });
   });
 });

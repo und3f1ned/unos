@@ -70,7 +70,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make test` | all backend tests (`supervisor/tests`); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options |
 | `make test-fast` | the convention tests: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
-| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run i18n` (`scripts/i18n-check.mjs`: every text of the web UI comes from a catalog in English and Russian, ADR-0273) and `npm run build` in `webui/` |
+| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0273) and `npm run build` in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
 | `make audit` | `pip-audit -r supervisor/requirements.txt` and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
 | `make setup` | `scripts/setup.sh` (needs the network) |

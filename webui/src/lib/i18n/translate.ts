@@ -1,5 +1,5 @@
-// The lookup behind $t (ADR-0273), without Svelte or SvelteKit, so that
-// supervisor/tests/test_i18n.py runs it with node.
+// The lookup behind $t and the locale behind $intlLocale (ADR-0273), without Svelte or SvelteKit,
+// so that supervisor/tests/test_i18n.py runs them with node.
 
 /** The languages of the web UI. English is the fallback of every text. */
 export const LOCALES = ['en', 'ru'] as const;
@@ -24,6 +24,20 @@ const own = (object: object, key: string) => Object.prototype.hasOwnProperty.cal
 
 export function isLocale(value: unknown): value is Locale {
 	return LOCALES.includes(value as Locale);
+}
+
+// Each language's dates for a browser of another language: the day first and a 24-hour clock,
+// as most of the world reads them.
+const DAY_FIRST: Record<Locale, string> = { en: 'en-GB', ru: 'ru' };
+
+/**
+ * The locale for the dates and numbers of a page in `locale`, in a browser whose language is
+ * `browserLanguage` (navigator.language): the browser's own when it is of the page's language
+ * (en-GB keeps British dates, en-US American ones), else DAY_FIRST's. An English page in a
+ * Russian or a German browser does not write 8 November as 11/8.
+ */
+export function dateLocale(locale: Locale, browserLanguage: string): string {
+	return browserLanguage.toLowerCase().split('-')[0] === locale ? browserLanguage : DAY_FIRST[locale];
 }
 
 const rules = new Map<Locale, Intl.PluralRules>();

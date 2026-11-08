@@ -1,7 +1,8 @@
 # The .svelte files whose texts are not in the catalogs yet (ADR-0273). scripts/i18n-check.mjs
 # (make frontend) does not report their texts, and fails for a listed file that has none left:
-# translating a file takes it off this list. The feature webui.translations passes once the list
-# is empty.
+# translating a file takes it off this list. The empty list is necessary, not sufficient: the
+# feature webui.translations passes once a walk through every page in Russian also finds no
+# English text.
 #
 # One area per group. Take off the lines of your area's files only, and keep the blank lines:
 # they keep the removals of branches that translate other areas apart, so that git merges them.
