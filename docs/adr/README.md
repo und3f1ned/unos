@@ -318,7 +318,7 @@ and this index, and `make check-fast` runs it.
 | [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
 | [0287](0287-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
 | [0291](0291-the-app-store-translates-its-own-texts-and-not-the-app-catalog.md) | The App Store gives each category one label and shows the app catalog's texts as the server answers them | proposed | 2026-11-08 |
-| [0292](0292-units-that-the-web-ui-writes-after-a-number-come-from-the-catalogs.md) | Units that the web UI writes after a number come from the catalogs, and numbers keep their decimal point | accepted | 2026-11-08 |
+| [0292](0292-the-dashboard-and-files-take-the-units-after-a-number-from-their-catalogs.md) | The dashboard and Files take the units they write after a number from their catalogs, and numbers keep their decimal point | accepted | 2026-11-08 |
 
 ## Deploy
 
