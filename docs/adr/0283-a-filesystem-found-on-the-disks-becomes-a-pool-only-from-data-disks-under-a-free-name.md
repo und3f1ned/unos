@@ -3,14 +3,14 @@ status: accepted
 date: 2026-11-08
 area: storage
 decided-by: agent
-supersedes: [ADR-0273]
+supersedes: [ADR-0282]
 ---
 
-# ADR-0274: A filesystem found on the disks becomes a pool only from data disks and under a name that no earlier pool still uses
+# ADR-0283: A filesystem found on the disks becomes a pool only from data disks and under a name that no earlier pool still uses
 
 ## Context
 
-ADR-0273 let Mount and Import make a pool of any btrfs filesystem found on the host's disks. A review found four gaps. Both mounted filesystems on the eMMC, the SD card, loop devices and the system disk, and Import relabelled them, although Create refuses these devices (ADR-0035) and the eMMC is never written (ADR-0225). A filesystem imported under the name of a removed pool served that pool's SMB shares, which Remove Pool keeps (ADR-0248), from its own folders. GET /pools listed every filesystem whose label is a pool name, so of two with one label each got a card that acted on the pool by its name, and the one under Found on the disks was a card too (ADR-0273's Context said such filesystems were not shown at all). And a refused import left its new mountpoint behind, write-protected, with no pool to remove it with.
+ADR-0282 let Mount and Import make a pool of any btrfs filesystem found on the host's disks. A review found four gaps. Both mounted filesystems on the eMMC, the SD card, loop devices and the system disk, and Import relabelled them, although Create refuses these devices (ADR-0035) and the eMMC is never written (ADR-0225). A filesystem imported under the name of a removed pool served that pool's SMB shares, which Remove Pool keeps (ADR-0248), from its own folders. GET /pools listed every filesystem whose label is a pool name, so of two with one label each got a card that acted on the pool by its name, and the one under Found on the disks was a card too (ADR-0282's Context said such filesystems were not shown at all). And a refused import left its new mountpoint behind, write-protected, with no pool to remove it with.
 
 ## Decision
 

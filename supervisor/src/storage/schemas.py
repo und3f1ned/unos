@@ -97,14 +97,14 @@ class PoolInfo(BaseModel):
     forced_read_only: bool = False
 
 
-# Why a btrfs filesystem is not the pool its label names (ADR-0274): it has none, it is
+# Why a btrfs filesystem is not the pool its label names (ADR-0283): it has none, it is
 # not a valid pool name, or another btrfs filesystem of the host has it too, and the pool
 # of that name is the other one (mounted or managed under it) or neither.
 LabelProblem = Literal["missing", "invalid", "duplicate"]
 
 
 class ImportableFilesystem(BaseModel):
-    """A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0274)."""
+    """A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0283)."""
 
     uuid: str
     label: str | None = None  # as btrfs prints it; None without a label

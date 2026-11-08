@@ -408,7 +408,8 @@ every served share below such a folder until the command has run.
 
 Folders that apps use (downloads, media) can be shared. SMB users with write
 access then change what the app sees: they can add, change, rename or delete
-its files there.
+its files there. Apps get a share's folder only when they run in the group
+`unos-smb` (see [Share Folders for Apps](#share-folders-for-apps)).
 
 #### Guest Shares
 
@@ -436,17 +437,20 @@ files everyone on your network may read, and keep them few.
 #### Repair Permissions
 
 UNOS creates share folders with the group `unos-smb` and the mode 2770, and
-files created over SMB get that group and the mode 660. Files that did not
-come in over SMB (from an app, from the File Browser, or already in the folder
-when the share was created) keep their permissions until you press **Repair
-permissions** on the share. A share marked **Permissions need repair** needs
-it. Repairing:
+files created over SMB get that group and the mode 660. In such a folder,
+folders made with **New Folder** in the File Browser get the mode 2770 and
+uploaded files 660 as well (see [File Browser](#file-browser)). Files that
+came in another way (from an app, copied or moved in the File Browser, or
+already in the folder when the share was created) keep their permissions
+until you press **Repair permissions** on the share. A share marked
+**Permissions need repair** needs it. Repairing:
 - gives every file and folder of the share the group `unos-smb` and group
   read and write access (folders 2770, files 660, or 770 for files their
   owner may run);
 - **removes the access that the group and other permissions gave every
   other account**, including apps that run as their own user (for example
-  PUID 1000): they can no longer read the folder;
+  PUID 1000): they can no longer read the folder, unless they run in the
+  group `unos-smb` (see [Share Folders for Apps](#share-folders-for-apps));
 - does not change ACL entries (set with `setfacl`; `ls -l` shows a `+`): the
   users and groups named in them keep their access, and can get more (up to
   what their entry gives), because the group permissions that Repair sets
@@ -466,6 +470,27 @@ it. Repairing:
 It changes the permissions of existing files and cannot be undone
 automatically. It is refused while a folder above the share's folder can be
 changed by other accounts (see [What Can Be Shared](#what-can-be-shared)).
+
+#### Finding the NAS
+
+Computers on your local network find the NAS without its address:
+
+- **Windows** lists it in File Explorer, under **Network**, on a network that
+  Windows treats as private (network discovery on). Opening it there asks for
+  your UNOS username and password and lists your shares.
+- **macOS** lists it in the Finder sidebar, under **Locations**. Click it,
+  then **Connect As** and sign in with your UNOS username and password.
+
+The NAS appears under its server name, and is announced with its IPv4
+address, which both connect to. NetBIOS, the old way of finding Windows
+servers, is off: computers that know only NetBIOS (some older TVs and media
+players) do not list the NAS; connect them by address as below. Computers
+that speak only SMB1, such as Windows XP, cannot use the NAS at all: it
+speaks SMB2 and later. On a NAS installed on Debian 11, Windows does not list
+it either ([Network Discovery](INSTALL.md#network-discovery)).
+
+**Show in network browsing** of a share is another matter: it decides whether
+the share appears in the NAS's list of shares.
 
 #### Accessing Shares
 
@@ -562,6 +587,19 @@ in your storage pools from the web interface. It starts in the pools directory
   the item. After a rename, or Escape in the name field, the focus is on the
   item's checkbox, unless Tab or a click took it to another control. Screen
   readers announce error messages.
+
+In a folder with the permissions of share folders, the group `unos-smb` and
+the mode 2770 (a share's folder that UNOS created or repaired, and the
+folders in it that SMB users, **Repair permissions** or the File Browser
+made; see [Repair Permissions](#repair-permissions)), **New Folder** gives the
+new folder the mode 2770 and **Upload** gives the file the mode 660, also a
+file that replaces one, both in the group `unos-smb`: the users with **Read &
+write** access to the share can change them, and add files to the new
+folder, over SMB at once. Elsewhere new folders get the mode 755 (2755 in a
+folder with the setgid bit) and uploaded files 644, which let other accounts
+read them but not change them. **Copy** and **Move** keep the permissions of
+the items, also into a share: run **Repair permissions** on the share
+afterwards.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
@@ -680,15 +718,59 @@ The App Store provides one-click installation of popular applications.
 4. Choose the **Storage pool** for the app's data (apps that keep data need a
    mounted pool; create or mount one on the **Storage** page first) and
    configure settings if prompted
-5. Wait for installation to complete
+5. To give the app a share's folder, tick **Run in the group unos-smb** and
+   enter the share's folder on the **Volumes** tab (see
+   [Share Folders for Apps](#share-folders-for-apps))
+6. Wait for installation to complete
 
 Starting or restarting an app from UNOS fails while its data folders are not
 on a mounted pool.
 
+### Share Folders for Apps
+
+An app can use a share's folder only if it runs in the group `unos-smb`. The
+apps of linuxserver.io images offer **Run in the group unos-smb** when they
+are installed, unless all their folders hold their own data (such as
+Prowlarr's `/config`): it sets the app's `PUID` to 80000, a user that no other
+app has, its `PGID` to 70000 (`unos-smb`) and its `UMASK` to 007, so what the
+app creates gets the same permissions as what SMB users create (folders 2770,
+files 660). Such an app reads and changes every file in the share folders you
+give it, and SMB users with write access to the share can change what the app
+writes there. If the app can be reached from the internet, whoever takes it
+over gets those files too. Apps of other images, such as Jellyfin, Plex and
+File Browser, cannot run in the group: UNOS sets the user and the group
+through `PUID` and `PGID`, which those images do not take. `PUID` and `PGID`
+cannot be changed on the **Environment** tab.
+
+An install is refused when it would give an app:
+
+- a share's folder, a folder inside one or a folder that holds one, while the
+  app does not run in the group;
+- a folder inside a share's folder, also in the group: give the app the
+  share's whole folder;
+- a share's folder for the app's own data, the folders under `apps/` such as
+  `/config`;
+- a writable folder that holds a share's folder, also in the group. A
+  read-only one may hold shares when the app runs in the group, as Duplicati's
+  view of the whole pool does;
+- a snapshot folder (`.snapshots`) or the trash (`.unos-trash`), or a folder
+  in one, also in the group: they keep the files of shares as they were, and
+  what was deleted from them.
+
+A linuxserver.io app may give the share's folder to its user (80000) when it
+starts; the folder keeps the group `unos-smb` and its permissions, and
+**Repair permissions** does not change its owner.
+
+A folder that an app already uses (downloads, media) can still be shared on
+the **Shares** page. After **Repair permissions**, an app that runs as its own
+user outside the group (PUID and PGID 1000) can no longer read it: uninstall
+the app (its data is kept) and install it again in the group.
+
 ### Managing Installed Apps
 
-Go to **App Store** → **Installed** to see the installed apps with their state
-and the pool that holds their data, and to act on them:
+Go to **App Store** → **Installed** to see the installed apps with their state,
+the pool that holds their data and, for the apps that run in the group
+`unos-smb`, **Runs in the group unos-smb**, and to act on them:
 
 - **Start**, **Stop** and **Restart** an app; its card shows the new state. A
   start or restart is refused while the app's data folders are not on a mounted
@@ -756,9 +838,17 @@ one of two ways:
 
 Then give the user access to shares on the **Shares** page.
 
-SMB passwords need at least 8 characters. A user whose UNOS password is
-shorter (scripts that use the API can set shorter ones) first changes it
-under **Change Password**, then turns SMB on. A two-factor code works only once:
+SMB passwords need at least 8 characters, and they must not be common
+passwords: UNOS refuses about 1450 passwords that attackers try first, such as
+`Password123`, `qwertyuiop` or `Summer2024!`, in any letter case, with "SMB
+passwords must not be common passwords: this one is on the list of passwords
+that attackers try first". This holds when SMB is turned on with a password
+(by the user or in the **Users** page, also when a user is created with SMB)
+and when a user with SMB on changes the password; users without SMB may
+keep a shorter or common UNOS password (the web UI asks only for 8
+characters, and scripts that use the API can set shorter ones). A user whose
+UNOS password breaks these rules first changes it under **Change Password**,
+then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 
@@ -800,12 +890,15 @@ Admins can reset any user's password via **Users** page.
 
 When SMB is on for the user, the SMB password changes too, and the user's open
 SMB connections are ended: the computers sign in again with the new password.
-Update the saved password on every computer and app that connects over SMB
-(mapped drives, media players, sync apps, `cifs` credential files): Samba
-writes each failed sign-in of an SMB account to the system disk, and SMB has
-no limit on sign-in attempts, so a device that keeps trying the old password
-keeps writing. If open SMB connections could not be ended, **Change
-Password** shows a warning that stays until you dismiss it.
+The new password must then follow the SMB rules (at least 8 characters, not a
+common password; see [SMB Access](#smb-access)). Update the saved password on
+every computer and app that connects over SMB (mapped drives, media players,
+sync apps, `cifs` credential files). Samba remembers each account's two
+previous passwords: a device that keeps trying one of them is refused without
+a write to the system disk, but every other wrong password of an SMB account
+is written to the system disk, and SMB has no limit on sign-in attempts. If
+open SMB connections could not be ended, **Change Password** shows a warning
+that stays until you dismiss it.
 
 ### Two-Factor Authentication (2FA)
 
@@ -1110,7 +1203,8 @@ first. The buttons above the filters choose what it lists:
 - **System Journal**: everything in the journal
 - **Kernel**: the kernel's messages since the host started
 - **Docker**: the Docker daemon
-- **Samba**: the SMB file server, smbd and nmbd
+- **Samba**: the SMB file server, smbd, and nmbd where NetBIOS is on (UNOS
+  turns NetBIOS off, so nmbd's entries are from before)
 - **Authentication**: sign-ins, sudo and the other messages of the syslog
   facilities auth and authpriv, which hosts with rsyslog also write to
   `/var/log/auth.log`
@@ -1137,6 +1231,16 @@ answer is still coming. When the journal cannot be read, the tab shows why
 instead of the list. A search through a large journal can take long: after
 30 seconds UNOS stops journalctl on the host and the tab reports that it did
 not answer; a shorter time range helps.
+
+**Failed SMB sign-ins**: Samba logs each failed SMB sign-in as a line of the
+level Notice, which the source **Samba** lists. Search for `Auth:` to list
+only these lines.
+Each one names the account the computer tried (`user [WORKGROUP]\[alice]`),
+the reason (`status [NT_STATUS_WRONG_PASSWORD]` for a wrong password,
+`[NT_STATUS_NO_SUCH_USER]` for a name without SMB) and the computer
+(`remote host [ipv4:192.168.1.50:50122]`, its address and port). To see what
+one computer keeps trying, search for its part, such as
+`remote host [ipv4:192.168.1.50:`. Successful sign-ins are not logged.
 
 The output of the UNOS containers themselves is not in the journal: run
 `docker logs unos-supervisor` or `docker logs unos-webui` on the host. Log
@@ -1417,11 +1521,13 @@ notification.
 2. ✅ Enable two-factor authentication (2FA), and keep its recovery codes
    somewhere safe
 3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
-   no limit on login attempts and no two-factor authentication, and UNOS does
-   not refuse common passwords
+   no limit on login attempts and no two-factor authentication. UNOS refuses
+   common passwords for SMB, but not every password that is easy to guess
 4. ✅ After a password change, update the saved password on every computer
    and app that connects over SMB: Samba writes each failed sign-in to the
-   system disk
+   system disk, unless the password is one of the account's two previous
+   ones. **System** → **Logs**, source **Samba**, shows the computers whose
+   sign-ins fail (see [Logs](#logs))
 5. ✅ Use a regular account, not an administrator, for your files
 6. ✅ Keep guest shares few (guests can only read)
 7. ✅ Keep UNOS updated

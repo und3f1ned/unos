@@ -10,7 +10,7 @@
 	// allows it; the user turns it on with the current password.
 
 	// After the server's "SMB passwords must ..." answer (e.g. a password made
-	// before the SMB rules, shorter than 8 characters).
+	// before the SMB rules, shorter than 8 characters, or a common password).
 	const PASSWORD_RULE_HINT =
 		'Change your password above (Change Password) so that it meets this rule, then turn SMB on.';
 

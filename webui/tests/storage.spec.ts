@@ -843,7 +843,7 @@ test.describe('Storage pools (fake data)', () => {
   });
 });
 
-// Pools found on the disks (ADR-0274): btrfs filesystems of other systems on the fake host's
+// Pools found on the disks (ADR-0283): btrfs filesystems of other systems on the fake host's
 // disks. The fakes answer as the server does; supervisor/tests/test_pool_import.py runs its side.
 test.describe('Pool import (fake data)', () => {
   const poolCard = (page: Page, name: string) =>

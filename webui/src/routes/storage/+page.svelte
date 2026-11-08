@@ -67,7 +67,7 @@
 	// that could not be loaded again is not offered either: it may no longer match the host.
 	let disksError = '';
 	let poolsError = '';
-	// btrfs filesystems on the host's disks that are not pools yet (ADR-0274), with the
+	// btrfs filesystems on the host's disks that are not pools yet (ADR-0283), with the
 	// reason when they could not be searched.
 	let importable: ImportableFilesystem[] = [];
 	let importableError = '';
@@ -486,7 +486,7 @@
 		}
 	}
 
-	// ---- Import a pool found on the disks (ADR-0274) ----
+	// ---- Import a pool found on the disks (ADR-0283) ----
 
 	// The filesystem the Import dialog is open for.
 	let importTarget: ImportableFilesystem | null = null;
@@ -807,7 +807,7 @@
 			{/if}
 		</Card>
 
-		<!-- btrfs filesystems on the host's disks that are not pools yet (ADR-0274): without a label,
+		<!-- btrfs filesystems on the host's disks that are not pools yet (ADR-0283): without a label,
 		     with one that is no pool name, or with one that another filesystem has too, when the
 		     pool of that name is the other one or neither. A pool found on the disks is a pool
 		     below, and its Mount imports it. -->
@@ -1256,7 +1256,7 @@
 				Mount <strong class="text-content">"{poolAction.pool.name}"</strong> at
 				<span class="mono">/mnt/pools/{poolAction.pool.name}</span>?
 			</p>
-			<!-- Also how a pool found on the disks is imported (ADR-0274). -->
+			<!-- Also how a pool found on the disks is imported (ADR-0283). -->
 			<p class="text-sm text-secondary">
 				The disks are not formatted: the data on them is kept. UNOS also adds an /etc/fstab entry
 				so the pool is mounted again after a reboot.
@@ -1297,7 +1297,7 @@
 	</svelte:fragment>
 </Modal>
 
-<!-- Import Pool Modal (ADR-0274) -->
+<!-- Import Pool Modal (ADR-0283) -->
 <Modal
 	open={importTarget !== null}
 	title="Import Pool"

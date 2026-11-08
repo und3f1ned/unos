@@ -454,7 +454,7 @@ class FakeHost:
         """``btrfs filesystem label <mountpoint> <label>``: the kernel sets it on the mounted filesystem.
 
         Only through a mount: given a device, btrfs-progs writes the superblocks
-        itself, which UNOS never has it do (ADR-0274).
+        itself, which UNOS never has it do (ADR-0283).
         """
         assert len(cmd) == 5, cmd
         target, label = cmd[3], cmd[4]
@@ -846,7 +846,7 @@ class TestMountPool:
 
     def test_refuses_a_filesystem_that_mounts_another_subvolume_by_default(self, data_pool):
         # Made elsewhere, with 'btrfs subvolume set-default': a mount without subvol=
-        # shows subvolume 256, and volumes and share folders need the top level (ADR-0274).
+        # shows subvolume 256, and volumes and share folders need the top level (ADR-0283).
         data_pool.fs_by_label("data")["default_subvolume"] = 256
         with pytest.raises(pools.PoolConflictError) as excinfo:
             pools.mount_pool("data")

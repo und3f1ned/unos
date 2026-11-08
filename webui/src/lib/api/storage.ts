@@ -77,11 +77,11 @@ export interface Pool {
 /**
  * Why a btrfs filesystem is not the pool its label names: it has none, it is not a valid pool
  * name, or another btrfs filesystem of the host has it too, and the pool of that name is the
- * other one (mounted or managed under it) or neither (ADR-0274).
+ * other one (mounted or managed under it) or neither (ADR-0283).
  */
 export type LabelProblem = 'missing' | 'invalid' | 'duplicate';
 
-/** A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0274). */
+/** A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0283). */
 export interface ImportableFilesystem {
   uuid: string;
   /** As btrfs prints it; null without a label. */
@@ -243,7 +243,7 @@ export async function unmountPool(name: string): Promise<Pool> {
   return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
 }
 
-/** The btrfs filesystems on the host's disks that can be imported as pools (ADR-0274). */
+/** The btrfs filesystems on the host's disks that can be imported as pools (ADR-0283). */
 export async function getImportableFilesystems(): Promise<ImportableFilesystem[]> {
   return api.get<ImportableFilesystem[]>('/storage/filesystems/importable');
 }

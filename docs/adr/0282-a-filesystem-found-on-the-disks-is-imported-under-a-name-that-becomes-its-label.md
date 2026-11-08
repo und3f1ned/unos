@@ -3,14 +3,14 @@ status: superseded
 date: 2026-11-08
 area: storage
 decided-by: agent
-superseded-by: ADR-0274
+superseded-by: ADR-0283
 ---
 
-# ADR-0273: A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label
+# ADR-0282: A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label
 
 ## Context
 
-Superseded by ADR-0274: no pool is made of boot, virtual or system devices, no import takes a name that shares or apps of an earlier pool still use, a label that two filesystems share names a pool only when one is mounted or managed under it, and a refused import leaves no mountpoint behind.
+Superseded by ADR-0283: no pool is made of boot, virtual or system devices, no import takes a name that shares or apps of an earlier pool still use, a label that two filesystems share names a pool only when one is mounted or managed under it, and a refused import leaves no mountpoint behind.
 
 `storage.import-existing-pool` asks that a btrfs filesystem already on the host's disks become a pool without formatting. UNOS names a pool by its filesystem's label (ADR-0034), so a filesystem without a label, with one that is not a pool name, or with one that another filesystem has too (two disks named `data` on two hosts) could not be mounted as a pool at all, and the Storage page did not show it. A filesystem made elsewhere may also mount a subvolume other than its top level by default, where volumes (ADR-0069) and share folders are refused.
 

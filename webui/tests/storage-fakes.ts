@@ -117,7 +117,7 @@ export interface FakeImportable {
 }
 
 // btrfs filesystems on the fake host's disks that are not the pool their label names, as
-// GET /storage/filesystems/importable reports them (ADR-0274). fakeStorageApi offers none
+// GET /storage/filesystems/importable reports them (ADR-0283). fakeStorageApi offers none
 // unless a test passes them.
 export const FAKE_IMPORTABLE: readonly FakeImportable[] = [
   {
@@ -227,7 +227,7 @@ export interface FakeStorageOptions {
   /**
    * The filesystems GET /filesystems/importable answers (default none), besides the pools that
    * share a label with one of them and are neither mounted nor managed: those are no pools, as
-   * GET /pools answers (ADR-0274). An import takes its filesystem off this list (a copy) or off
+   * GET /pools answers (ADR-0283). An import takes its filesystem off this list (a copy) or off
    * the pools, and adds the new pool to the fake's pools.
    */
   importable?: readonly FakeImportable[];
@@ -281,7 +281,7 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
   const deviceErrors = new Map(pools.map((pool) => [pool.name, pool.device_errors]));
   const scrubStatus = options.scrubStatus ?? ((pool: string) => noScrub(pool));
   const importable = [...(options.importable ?? [])];
-  // As storage/pools.py _pool_choices (ADR-0274): of filesystems with one label, the pool is the
+  // As storage/pools.py _pool_choices (ADR-0283): of filesystems with one label, the pool is the
   // one mounted at its mountpoint, or else the one UNOS manages; when neither tells them apart,
   // none is a pool, and each of them is found on the disks.
   const sharesItsLabel = (pool: FakePool) =>

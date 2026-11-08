@@ -96,7 +96,7 @@ async def get_disk_smart(name: str, _=Depends(verify_token)):
 
 @router.get("/pools", response_model=list[PoolInfo])
 async def list_pools_endpoint(_=Depends(verify_token)):
-    """List the storage pools (ADR-0274).
+    """List the storage pools (ADR-0283).
 
     Of several filesystems with one label, only the one mounted or managed
     under it is a pool. A pool found on the disks that is on a boot or
@@ -150,7 +150,7 @@ async def delete_pool_endpoint(request: Request, name: str, _=Depends(verify_tok
 
 @router.get("/filesystems/importable", response_model=list[ImportableFilesystem])
 async def list_importable_filesystems_endpoint(_=Depends(verify_token)):
-    """The btrfs filesystems on the host's disks that can be imported as pools (ADR-0274).
+    """The btrfs filesystems on the host's disks that can be imported as pools (ADR-0283).
 
     Those that are neither the host's system filesystem nor mounted on the
     host, that are not the pool their label names (``label_problem``): they
@@ -168,7 +168,7 @@ async def list_importable_filesystems_endpoint(_=Depends(verify_token)):
 async def import_filesystem_endpoint(
     request: Request, uuid: str, body: PoolImport, _=Depends(verify_token)
 ):
-    """Import a filesystem of GET /filesystems/importable as the pool ``name`` (ADR-0274).
+    """Import a filesystem of GET /filesystems/importable as the pool ``name`` (ADR-0283).
 
     Its disks are not formatted: it is mounted by UUID at /mnt/pools/<name>,
     gets the name as its label through the mount and keeps a managed fstab
@@ -194,7 +194,7 @@ async def import_filesystem_endpoint(
 async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
-    This imports a pool found on the host's disks, too (ADR-0274). 409 when
+    This imports a pool found on the host's disks, too (ADR-0283). 409 when
     the mountpoint directory holds files (they would be hidden), when the
     filesystem is on a boot or virtual device or on the system disk, and when
     it mounts another subvolume than its top level by default: it is

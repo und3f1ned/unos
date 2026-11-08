@@ -1,4 +1,4 @@
-"""Importing a btrfs filesystem found on the host's disks as a pool (ADR-0274).
+"""Importing a btrfs filesystem found on the host's disks as a pool (ADR-0283).
 
 ``GET /api/v1/storage/filesystems/importable`` lists the btrfs filesystems that
 are not the pool their label names, on data disks only; ``POST
@@ -373,7 +373,7 @@ class TestImport:
 class TestEarlierPool:
     """Remove Pool keeps a pool's SMB shares with their access (ADR-0248), and NFS exports and
     apps keep their folders: imported under that name, another filesystem would serve them
-    (ADR-0274). test_smb_integration.py runs this with the real share code."""
+    (ADR-0283). test_smb_integration.py runs this with the real share code."""
 
     @staticmethod
     def refused(api, host, name: str = "backup", status: int = 409) -> str:

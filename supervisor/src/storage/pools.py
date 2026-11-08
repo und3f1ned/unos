@@ -36,7 +36,7 @@ intact and can be mounted again.
 A pool is only mounted at its top level, where its volumes and share folders
 are: a mount that shows another subvolume (the filesystem's default one was
 changed) is undone. A btrfs filesystem found on the host's disks becomes a
-pool without being formatted (ADR-0274): Mount imports the pool its label
+pool without being formatted (ADR-0283): Mount imports the pool its label
 names (_pool_choices), :func:`import_pool` any other, under a name that
 becomes its label. Neither makes a pool of a boot or virtual device or of the
 system disk, as creation does not (ADR-0035).
@@ -533,7 +533,7 @@ def _pool_choices(
     mounts: list[disks.HostMount] | None,
     managed: dict[str, ManagedFstabEntry] | None,
 ) -> dict[str, BtrfsFilesystem]:
-    """The pool of each name: name -> the filesystem that is the pool (ADR-0274).
+    """The pool of each name: name -> the filesystem that is the pool (ADR-0283).
 
     A pool is a btrfs filesystem of the host, other than its system
     filesystem, whose label is a valid pool name. Of several with one label,
@@ -633,7 +633,7 @@ def list_pools() -> list[PoolInfo]:
     """List the pools: the btrfs filesystems labelled with a valid pool name (_pool_choices).
 
     A pool found on the disks, neither mounted at its mountpoint nor managed
-    by UNOS, which Mount would import (ADR-0274), is left out when a member
+    by UNOS, which Mount would import (ADR-0283), is left out when a member
     is on a boot or virtual device or on the system disk: Mount refuses it.
     When lsblk cannot tell, it is listed, and Mount checks again.
     """
@@ -1089,7 +1089,7 @@ def _check_top_level(name: str, target: str) -> None:
     subvolume: the top level, unless ``btrfs subvolume set-default`` changed
     it, as on some filesystems made elsewhere. A pool's volumes are the
     subvolumes below its top level, and share folders need the top level
-    too (_mounted_pool_target): PoolConflictError (HTTP 409, ADR-0274).
+    too (_mounted_pool_target): PoolConflictError (HTTP 409, ADR-0283).
     """
     subvolume = _mounted_subvolume_id(target)
     if subvolume != _TOP_LEVEL_SUBVOLUME:
@@ -1103,7 +1103,7 @@ def _check_top_level(name: str, target: str) -> None:
 
 
 def _set_label(target: str, label: str) -> None:
-    """Give the btrfs filesystem mounted at ``target`` the label ``label`` (an import, ADR-0274).
+    """Give the btrfs filesystem mounted at ``target`` the label ``label`` (an import, ADR-0283).
 
     Through the mount, so that the kernel changes it: given a device instead,
     btrfs-progs writes the superblocks itself, also those of a filesystem
@@ -1133,7 +1133,7 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
     pool's name as its label (_set_label). When either fails, the
     filesystem is unmounted again. When the mount, the check or the label
     fails, the fstab is as it was, and a mountpoint that this call made is
-    removed again (ADR-0274); only after a failed mount of a pool that
+    removed again (ADR-0283); only after a failed mount of a pool that
     exists (Create, Mount) does it stay, write-protected like that of every
     pool that is not mounted. An import that fails leaves nothing behind.
     """
@@ -1183,7 +1183,7 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
 def mount_pool(name: str) -> PoolInfo:
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
-    This imports a pool found on the disks, too (ADR-0274), so a pool with a
+    This imports a pool found on the disks, too (ADR-0283), so a pool with a
     member on a boot or virtual device or on the system disk is refused
     (PoolConflictError, HTTP 409), as Create refuses such devices
     (ADR-0035, ADR-0225). If this call mounted the pool, the pool's apps
@@ -1401,7 +1401,7 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
 
 
 # --------------------------------------------------------------------------
-# Importing a filesystem found on the host's disks (ADR-0274)
+# Importing a filesystem found on the host's disks (ADR-0283)
 # --------------------------------------------------------------------------
 
 
@@ -1421,7 +1421,7 @@ def _label_problem(fs: BtrfsFilesystem, chosen: dict[str, BtrfsFilesystem]) -> s
 
 
 def importable_filesystems() -> list[ImportableFilesystem]:
-    """The btrfs filesystems of the host that can be imported as pools (ADR-0274).
+    """The btrfs filesystems of the host that can be imported as pools (ADR-0283).
 
     Those that are neither the host's system filesystem nor mounted on the
     host, that are not the pool their label names (_label_problem; the
@@ -1483,7 +1483,7 @@ def _refuse_users_of_an_earlier_pool(name: str) -> None:
     exports keep their folders, and apps their pool label and bind mounts:
     a filesystem imported under that name would serve them at once, and
     Docker would start the apps on it at the next boot, from folders that
-    nobody decided to share (ADR-0274). Their data is on the earlier pool's
+    nobody decided to share (ADR-0283). Their data is on the earlier pool's
     disks. PoolConflictError (HTTP 409) that names them;
     DockerUnavailableError (HTTP 503) when Docker cannot be asked about the
     containers; RuntimeError (HTTP 500) when the shares or the exports
@@ -1610,7 +1610,7 @@ def _check_import(uuid: str, name: str) -> BtrfsFilesystem:
 def import_pool(uuid: str, name: str) -> PoolInfo:
     """Import the btrfs filesystem ``uuid`` found on the host's disks as the pool ``name``.
 
-    Nothing is formatted (ADR-0274). The filesystem is mounted by UUID at
+    Nothing is formatted (ADR-0283). The filesystem is mounted by UUID at
     the pool's mountpoint, must show its top level there, gets ``name`` as
     its label through the mount and is kept in the host's fstab like every
     managed pool (ADR-0034); then udev reads its devices again, so that

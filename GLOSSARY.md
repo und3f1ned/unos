@@ -64,7 +64,7 @@ be unmounted).
 
 **Pool import**: Making a btrfs filesystem found on the host's data disks a managed pool without
 formatting it: Mount for the pool its label names, Import, under a name that becomes its label,
-for any other (ADR-0274). Boot, virtual and system devices never hold a pool. Avoid: Import alone
+for any other (ADR-0283). Boot, virtual and system devices never hold a pool. Avoid: Import alone
 (the smb.conf import), adoption.
 
 **Pool root**: The top folder of a pool, which holds its apps, volumes and snapshots; it is never a
@@ -133,6 +133,11 @@ passwords and smb.conf in line with the database (ADR-0138). Avoid: sync, repair
 the group unos-smb and removes other accounts' access (ADR-0155). Avoid: fix permissions, chmod,
 reconcile.
 
+**Network discovery**: How computers on the LAN find the NAS without its address: Windows through
+WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd registers with
+avahi-daemon), both over IPv4 only; NetBIOS is off (ADR-0275). Avoid: network browsing (a share's
+"Show in network browsing" lists the share among the NAS's shares), NetBIOS browsing.
+
 ## Users and access
 
 **UNOS user**: An account that people sign in to the web UI with: an administrator or a regular
@@ -162,6 +167,11 @@ Account page and keeps; each one signs in once in place of a code of the authent
 
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039).
 Avoid: container, service.
+
+**App in unos-smb**: An app installed with the option to run in the group unos-smb (PUID 80000,
+PGID 70000, UMASK 007), which only apps of linuxserver.io images with a folder besides their own
+data have: the only kind of app that is given a share's folder (ADR-0274). Avoid: SMB app, app
+in the SMB group.
 
 **Container**: Any Docker container on the host, as the Containers page lists it; an app runs as
 one or more containers. Avoid: app.

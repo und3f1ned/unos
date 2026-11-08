@@ -635,7 +635,7 @@ def pool_device_problems(paths: list[str]) -> dict[str, str]:
     """Why devices of a btrfs filesystem found on the disks must not be part of a pool.
 
     Mount and Import mount such a filesystem and keep it in the host's fstab
-    (ADR-0274), so its members follow the rules of a pool's creation
+    (ADR-0283), so its members follow the rules of a pool's creation
     (ADR-0035, pools._check_pool_devices): nothing on a boot or virtual
     device (HIDDEN_DISK_PREFIXES: the SD card and the eMMC, which is never
     written, ADR-0225; loop and RAM disks), and nothing on the system disk,
