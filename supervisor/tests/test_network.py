@@ -434,6 +434,7 @@ def fake_host(monkeypatch):
     fake = FakeNetworkHost()
     monkeypatch.setattr(host_module, "run_on_host", fake.run)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    monkeypatch.setattr(host_module, "run_in_container", _forbidden_subprocess)
     return fake
 
 

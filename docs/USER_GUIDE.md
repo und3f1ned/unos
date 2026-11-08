@@ -254,7 +254,7 @@ For each pool, you can:
   scrub. When btrfs cannot report the status, the pool says so with the
   reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
   scheduled scrub of a pool that is not mounted fails without scrubbing
-  anything
+  anything. For a pool that does not answer, see below
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no
@@ -279,6 +279,27 @@ For each pool, you can:
   and the dialog says why. As after an unmount, its SMB shares are no longer
   served; NFS exports of the pool are not checked: remove them first.
 
+UNOS waits 60 seconds for btrfs to start a scrub, report its progress or
+cancel it. When btrfs does not answer in that time, for example because a
+disk of the pool stopped responding, UNOS stops that btrfs command:
+
+- **Scrub** and **Cancel Scrub** show `btrfs scrub start did not answer within
+  60 seconds: pool <name> may not be responding` (`btrfs scrub cancel` for
+  Cancel Scrub).
+- A scrub in progress stops updating: the pool shows **Could not read the
+  scrub status** with `btrfs scrub status did not answer within 60 seconds:
+  pool <name> may not be responding` instead of its progress. Until UNOS
+  stops btrfs, other requests to UNOS, sign-ins among them, can be slow to
+  answer as well.
+- Opening the page shows **Loading...** until each mounted pool has reported
+  its scrub, one pool after the other: up to 60 seconds for each pool that
+  does not answer, which then shows that message.
+
+A btrfs command stuck on a disk can take until a reboot to end. Until then,
+asking for the same again is answered at once with the same message. A
+**BTRFS Scrub** task in **System** → **Scheduler** fails the same way, and its
+history shows why.
+
 ### SMART Monitoring
 
 **System** → **Disk Health** shows the model, size, temperature and SMART
@@ -293,6 +314,14 @@ the attribute's failure threshold) or **Failing** (at or below it). NVMe disks
 have no SMART attributes; the dialog lists their SMART/Health Information log
 instead (available spare, percentage used, media errors and the rest). The
 dialog shows the values the tab loaded.
+
+UNOS waits at most 30 seconds for the SMART data of a disk in Disk Health,
+and 60 seconds for a SMART test of a **SMART Test** task in **System** →
+**Scheduler**. A disk that does not answer in that time, for example a disk
+or a USB bridge that stopped responding, is listed with the health status
+**UNKNOWN**, and the task's run fails with the reason; UNOS stops smartctl
+and the rest of UNOS keeps working. A smartctl stuck on such a disk can take
+until a reboot to end; until then, asking again answers the same at once.
 
 #### Replace Soon
 
@@ -1398,9 +1427,14 @@ offered there. Its snapshots are named `auto_<date>_<time>`, in UTC.
 **Keep Count** sets how many of them are kept: after each new snapshot, the
 oldest snapshots of the pool whose names start with `auto_` are deleted
 beyond that number, ordered by the time btrfs made them. Snapshots with
-other names are never deleted. A run on a pool that is not mounted fails
-with `Pool <name> is not mounted at /mnt/pools/<name>`, which the task's
-history shows.
+other names are never deleted. When btrfs does not answer within 60 seconds
+while the old snapshots are looked at, none is deleted, the new snapshot
+stays, and the run fails with `Snapshot <name> created, but old snapshots were
+not cleaned up: btrfs did not answer within 60 seconds. The pool may not be
+responding.` Until the stuck btrfs ends, which can take until a reboot, the
+next runs fail the same way, and the snapshots pile up beyond the keep count.
+A run on a pool that is not mounted fails with `Pool <name> is not mounted at
+/mnt/pools/<name>`, which the task's history shows.
 
 ### System Backup
 
