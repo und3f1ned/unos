@@ -181,12 +181,16 @@ For each pool, you can:
   every 2 seconds, and **Cancel Scrub** stops it. At the end it shows the
   result with the time the scrub started: **Last scrub: No errors**, the
   number of errors btrfs counted (read, super, verify and checksum errors),
-  or that the scrub was cancelled or interrupted before it finished (for
-  example by an unmount or a restart), with the errors found until then;
-  start a scrub again to check the whole pool. When btrfs cannot report the
-  status, the pool says so with the reason. Scheduled scrubs are set up in
-  **System** → **Scheduler**; a scheduled scrub of a pool that is not mounted
-  fails without scrubbing anything
+  or that the scrub was cancelled or interrupted before it finished, with
+  the errors found until then; start a scrub again to check the whole pool.
+  Interrupted means that the scrub ended neither by finishing nor by a
+  cancel, for example because the btrfs process that ran it was killed.
+  When UNOS restarts, for example with the host, it forgets the result of
+  the last scrub: the pool then shows none, also when the restart stopped a
+  scrub. When btrfs cannot report the status, the pool says so with the
+  reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
+  scheduled scrub of a pool that is not mounted fails without scrubbing
+  anything
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no

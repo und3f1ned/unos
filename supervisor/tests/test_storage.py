@@ -795,8 +795,9 @@ SCRUB_OUTPUT = {
         "  Uncorrectable:  0\n"
         "  Unverified:     0\n"
     ),
-    # Stopped neither by its end nor by a cancel: the filesystem was unmounted
-    # or the host restarted while it ran.
+    # Ended neither by finishing nor by a cancel, for example because the btrfs
+    # process that ran it was killed. A restart of the supervisor forgets the
+    # record instead (ADR-0171): "no stats available".
     "interrupted": SCRUB_HEADER + (
         "Status:           interrupted\n"
         "Duration:         0:00:32\n"
