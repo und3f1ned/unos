@@ -813,7 +813,7 @@ class TestScrubStatus:
     """What the Storage page shows of a scrub: btrfs's progress while it runs, its result after it.
 
     The endpoints answer btrfs's status as printed (idle when no scrub is
-    recorded) and count every error of its error summary (ADR-0250).
+    recorded) and count every error of its error summary (ADR-0272).
     """
 
     @pytest.fixture

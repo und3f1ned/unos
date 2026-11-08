@@ -12,10 +12,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   UI, the network interface's disable confirmation with its automatic revert, and power actions
   on the host with an Updates tab that works. Before them: the audit log, the device's security,
   the upload fix for ext4, Dependabot's Actions and pip updates (#23 to #30).
-- Waiting for the device check (`passes: false` until it passed): `files.rename`, `storage.smart`, `storage.snapshots`, `storage.volumes`, `system.network-disable-confirmation`, `system.network`, `system.power`, `system.updates-tab-without-dead-buttons`
-  (`files.rename` needs only `scripts/dev/linux-tests.sh tests/test_files_security.py -k rename`, its
-  exclusive rename on Linux). One supervisor and web UI deploy carries all of it, with
-  the pip updates of #25 (the pip layer is rebuilt once).
+- The batch passed on the dev device (2026-11-07). A magic packet from the workstation did not
+  start the device after a shutdown: its board cuts the network card's power (ADR-0247), so only
+  its power button starts it again; a reboot is the remote restart.
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
@@ -38,7 +37,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-07, 14:30 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-07, 20:45 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -46,10 +45,10 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs the audit log of #27 (commit 2825d8b): the supervisor image was rebuilt on 2026-11-07 at
-  14:20 UTC, the web UI is the one of the slice-2 deploy. The device checkout `/opt/unos` equals
-  2825d8b's tree; `main` has since added the pip updates of #25, the riscv64 study and the
-  documents. The deploy's backup and rollback copies are in the main checkout's `tmp/dev/`.
+- Runs main cce0def (the first feature batch, #32 to #40), deployed on 2026-11-07 at 20:29 UTC,
+  with the supervisor rebuilt once more by this branch's `deploy.sh` to carry its version. The
+  device checkout `/opt/unos` equals main's tree; the deploy's backup and rollback copies are in
+  the main checkout's `tmp/dev/`. Rebooted from the API at 20:36 UTC.
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest, deploy-webui:latest, lscr.io/linuxserver/transmission,
   alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base).
@@ -82,6 +81,17 @@ Open owner actions:
 5. Whether the services are used from outside over IPv6 (`device.ipv6-inbound-filter`).
 
 ## Log
+
+### 2026-11-07: the first feature batch on the dev device
+
+- Deployed main cce0def with `scripts/dev/deploy.sh all`: sync 3.9 MiB, the supervisor build
+  333.7 MiB (the pip layer of #25), the web UI 16.6 MiB, up 5.4 MiB; 359.7 MiB in all. Then
+  `deploy.sh` passed the tree's version to the build (5.4 MiB), so System > Updates names it.
+- Checked through the API, each check cleaning up after itself: volumes and snapshots on the
+  pool data, a snapshot task with keep count 3, the network revert on a VLAN added for the check,
+  Wake-on-LAN, a cancelled reboot, and a reboot from the API that served as the reboot re-check of
+  ADR-0018 (back after 114 s: pool, Samba, share, containers; the boot wrote 9.8 MiB). The
+  Linux-only backend tests of files and uploads passed in the device's RAM.
 
 ### 2026-11-07: the first feature batch
 

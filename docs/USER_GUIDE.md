@@ -30,10 +30,32 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
    certificate authority. Continue to the site, or make your devices trust that
    authority once (see
    [HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)).
-4. On the very first visit UNOS asks you to create the administrator account:
-   choose a user name and a password (at least 8 characters). There are no
-   default credentials.
-5. Afterwards you sign in on the login page.
+4. On the very first visit UNOS opens **Create your admin account to get
+   started** (`/setup`): choose a user name and a password (at least 8
+   characters), enter the password again and click **Create Admin Account**.
+   The dashboard opens, signed in as that administrator. There are no default
+   credentials: until this account exists, nobody can sign in. Whoever opens a
+   new installation first creates its administrator, so do it right after
+   installing.
+5. Afterwards you sign in on the login page. The setup page refuses a second
+   administrator with "Admin user already exists. Use /login instead." and
+   creates nobody; administrators add further users on the **Users** page.
+
+A session lasts 24 hours. When it has ended, the page you have open goes to
+the login page once, at its next request (also during an upload or a
+download) or when the server ends its live statistics. **Logout** in one
+browser tab signs out the other tabs too, and signing in as another account
+in one tab switches the other tabs to that account.
+
+Signing in works also while the disk that holds the UNOS data (`/data`, on the
+system disk) is full, so that an administrator can sign in and free space, for
+example by deleting old backups. The login history and the audit log then miss
+the sign-ins they cannot store: the supervisor's log
+(`docker logs unos-supervisor`) reports each record it could not write, with
+its time. On a disk that is full to the last block, Docker may not be able to
+keep those log lines either.
+A recovery code does not sign you in while the disk is full, because UNOS
+cannot mark it as used; a code of your authenticator app does.
 
 ### Interface Overview
 
@@ -147,7 +169,12 @@ For each pool, you can:
   mountpoint is write-protected, so that nothing lands on the system disk
   there. Unmounting is refused while a running app or container uses the
   pool, also through a Docker volume that binds a folder in it, or while
-  files on it are open; the dialog names the containers or the reason
+  files on it are open, for example by a computer that has one of its SMB
+  shares open; the dialog names the containers or the reason. Once the pool
+  is unmounted, its SMB shares are no longer served: their open connections
+  are closed, and the **Shares** page marks them **Not served** and **Pool
+  not mounted**. They keep their access, and mounting the pool serves them
+  again
 - **Add Devices** - Expand the pool
 - **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
   the pool shows its progress (bytes, percent, rate and duration), updated
@@ -181,8 +208,8 @@ For each pool, you can:
   `/etc/fstab` and deletes its empty mountpoint. The disks are not wiped: the
   data stays on them, and the pool is listed again as **Not mounted**, ready
   to be mounted later. Like Unmount, it is refused while the pool is in use,
-  and the dialog says why; SMB shares and NFS exports of the pool are not
-  checked: remove them first.
+  and the dialog says why. As after an unmount, its SMB shares are no longer
+  served; NFS exports of the pool are not checked: remove them first.
 
 ### SMART Monitoring
 
@@ -286,7 +313,8 @@ are overwritten.
 A share is a folder inside a pool, or a volume. UNOS refuses:
 - the top level of a pool, which holds app data (`apps/`), the volumes and
   the snapshots;
-- `apps` and everything below it, and `.snapshots`;
+- `apps` and everything below it, `.snapshots`, and the trash (`.unos-trash`,
+  see [Trash](#trash));
 - folders outside the pools that UNOS manages;
 - a folder inside another share's folder, or one that contains another
   share's folder: shares do not overlap.
@@ -294,7 +322,9 @@ A share is a folder inside a pool, or a volume. UNOS refuses:
 A share marked **Not served** breaks one of these rules, for example a share
 of a whole pool imported from the host's existing smb.conf. Nobody can open it
 until you give it a new folder with **Edit**; it cannot be given access until
-then.
+then. The shares of a pool that was unmounted or removed on the **Storage**
+page are marked **Not served** and **Pool not mounted** in the same way: they
+keep their access, and mounting the pool serves them again.
 
 A share's folder must also be inside folders that only root can change:
 whoever can change a folder above it can put another folder in its place.
@@ -461,8 +491,17 @@ in your storage pools from the web interface. It starts in the pools directory
   The item stays selected under its new name. Until the list shows the new
   name, the buttons for the selected items and **Copy here** or **Move here**
   wait.
-- **Delete** - Select the items, click **Delete** and confirm. Folders are
-  deleted with everything in them.
+- **Delete** - Select the items and click **Delete**. In the dialog, **Move
+  to trash** moves them into the trash of their pool or volume, from where
+  you can restore them (see [Trash](#trash)); it has the keyboard focus, so
+  Enter does it, and Escape keeps the items. Folders go with everything in
+  them. If the items cannot go to the trash, the dialog stays open with the
+  reason, about the items that are still in the folder: when some went to
+  the trash before the refusal, the message says how many. When the trash
+  refuses them (for example, they have no trash, or their pool has no space
+  left for them), the dialog then also offers **Delete for good**, which
+  deletes them at once and frees their space; that cannot be undone, so
+  Cancel has the keyboard focus.
 - **Upload** - Click the upload arrow at the top right and choose one or more
   files. They go to the folder that was open when you chose them, also if you
   open another folder while they upload. A file with the same name is
@@ -487,37 +526,88 @@ no longer exists: rename the folder back to restore them.
 A folder that contains a subvolume (such as a snapshot) or a mounted
 filesystem cannot be deleted here, or moved to another pool or volume.
 
+### Trash
+
+**Trash** at the top right of the File Browser opens the trash: the items
+deleted in the File Browser, in every pool and volume, newest first, with the
+folder each was deleted from, when it was deleted, the day it is kept until,
+and the size of files.
+
+- **Restore** puts the selected items back in the folder they were deleted
+  from, with their names, contents and permissions. Nothing is replaced: if an
+  item with the same name is there again, or the folder is gone (or is now on
+  another filesystem, such as a disk mounted there), nothing is restored and
+  the message says why. Restore the folder first, or create it again with
+  **New Folder**, then restore the item.
+- Deleted items stay in the trash for 30 days. When UNOS starts, and then once
+  a day, it deletes for good the items that were deleted 30 or more days ago.
+- Until then they still take up space in their pool. **Delete for good**
+  deletes the selected items at once, and **Empty trash** everything in the
+  trash of every pool and volume. Both ask first, and neither can be undone.
+- Each pool and each volume keeps its trash in a hidden folder,
+  `.unos-trash`, at its top (for example `/mnt/pools/data/.unos-trash` and
+  `/mnt/pools/data/photos/.unos-trash`), where only root can open it. The File
+  Browser does not show it, SMB clients do not see it, and it cannot be
+  shared; apps and NFS clients that use a volume can see it. If an app or an
+  NFS client made a folder of that name first, UNOS makes it root's, with
+  mode 0700, before it uses it, and ignores what they put in it. A copy of a
+  pool or a volume leaves its trash out; a snapshot keeps it.
+- Items inside a snapshot, inside the restored copy of a volume's snapshot, or
+  in another filesystem mounted in a folder of a pool or volume have no trash,
+  and neither have items on a filesystem that cannot keep the trash private
+  (vfat, for example): the Delete dialog says so, and they can only be
+  deleted for good.
+- Screen readers read each item's checkbox with the folder it was deleted
+  from and the time, so that items of the same name can be told apart.
+
 ---
 
 ## Docker Containers
 
-UNOS can manage Docker containers for running additional applications.
+UNOS can manage Docker containers for running additional applications. The
+**Containers** page has two tabs, **Containers** and **Images**. UNOS's own
+containers (`unos-supervisor`, `unos-webui`) and images are not listed.
 
 ### Viewing Containers
 
-Go to **Containers** to see:
-- Container name and image
-- Status (running, stopped, etc.)
-- Resource usage
-- Ports exposed
+The **Containers** tab lists every container with its name, image, state
+(running, exited, paused and so on) and the ports it publishes. The **Running**
+and **Stopped** cards and the state menu show only the containers in that
+state, and the search box finds containers by name or image.
 
 ### Container Actions
 
-- **Start/Stop** - Control container state
-- **Restart** - Restart the container
-- **Logs** - View container output
-- **Remove** - Delete the container
+- **Start**, **Stop** and **Restart** act on the container, and the list shows
+  its new state. An app from the App Store does not start while its data folders
+  are not on a mounted pool: the message names the pool to mount.
+- **Remove** deletes the container, also a running one, after a confirmation.
+- Click a container for its details: **Overview**, **Logs** and **Network**.
+  **Logs** shows the last 200 lines of its log and then each new line as the
+  container writes it, each line with the time Docker received it. When the log
+  ends, for example because the container stopped, or the connection is lost,
+  the tab says so; **Reconnect** starts again with the last lines.
+
+### Images
+
+The **Images** tab lists the Docker images with their tags, ID, size and
+creation time.
+
+- **Pull**: enter an image name such as `nginx:latest` (without a tag, Docker
+  pulls `latest`) and click **Pull**. A large image can take several minutes;
+  the image is listed once Docker has it.
+- **Remove**: click the bin of an image and confirm. The image goes with all
+  its tags, and only if no container uses it, running or stopped: otherwise the
+  dialog names the containers that use it, and the image keeps its tags. Remove
+  those containers first. When Docker refuses for another reason, the dialog
+  shows it.
 
 ### Creating Containers
 
 1. Click **Create Container**
-2. Enter the image name (e.g., `nginx:latest`)
-3. Configure:
-   - Container name
-   - Port mappings
-   - Environment variables
-   - Volume mounts
-4. Click **Create**
+2. Enter the container name and the image name (e.g., `nginx:latest`); Docker
+   pulls the image if it is missing
+3. Choose the restart policy and add port mappings and environment variables
+4. Click **Create Container**
 
 ---
 
@@ -549,11 +639,17 @@ on a mounted pool.
 
 ### Managing Installed Apps
 
-Go to **App Store** → **Installed** to:
-- View installed apps
-- Start/stop apps
-- Update apps
-- Remove apps
+Go to **App Store** → **Installed** to see the installed apps with their state
+and the pool that holds their data, and to act on them:
+
+- **Start**, **Stop** and **Restart** an app; its card shows the new state. A
+  start or restart is refused while the app's data folders are not on a mounted
+  pool, and the message names the pool to mount.
+- **Uninstall** removes the app's container after a confirmation and keeps its
+  data folders. Installing the app again on the same pool uses them again.
+
+These actions work only on apps installed from the App Store; other containers
+are started and stopped on the **Containers** page.
 
 ---
 
@@ -624,7 +720,11 @@ shares and writes its own at its first start. When importing the shares of
 the old file or writing the new one failed, the status panel of the
 **Shares** page says why: "Shares were not imported from smb.conf: ..."
 (UNOS writes its smb.conf only after that import) or "smb.conf was not
-updated: ...". Allowing SMB and turning it off are not affected.
+updated: ...". When smb.conf was replaced or removed after UNOS wrote it, the
+status panel says "smb.conf was replaced or removed after UNOS wrote it; ..."
+until UNOS writes its own again at the next change or restart; an edit that
+keeps the two comment lines at the top of UNOS's file is not noticed.
+Allowing SMB and turning it off are not affected.
 
 Turning **Allow SMB access** off (or the user's own **Turn off SMB**) ends the
 user's open SMB connections. When Samba could not apply a user's own change
@@ -638,7 +738,15 @@ was made shows **Password needed** and must turn SMB on again.
 
 Users can change their own password:
 1. Go to **Account** (administrators: **System** → **Security**)
-2. Under **Change Password**, enter the current and the new password
+2. Under **Change Password**, enter the **Current Password**, the **New
+   Password** (at least 8 characters) and the new one again under **Confirm
+   New Password**; all three are required
+3. Click **Change Password**: the page confirms "Password changed
+   successfully"
+
+From then on the old password no longer signs in, and the new one does.
+Sessions that were open before stay signed in until they end (see
+[First Login](#first-login)).
 
 Admins can reset any user's password via **Users** page.
 
@@ -660,7 +768,15 @@ Protect your account with TOTP-based two-factor authentication:
 3. Scan the QR code with an authenticator app (Google Authenticator, Authy,
    etc.). The QR code is drawn in your browser; the secret is never sent to
    another service.
-4. Enter the verification code and click **Enable 2FA**
+4. Enter the verification code and click **Enable 2FA**: the section shows
+   **Enabled**
+
+When the page cannot load whether 2FA is on, the section says so with the
+reason and offers **Retry** instead of **Enable** or **Disable**.
+
+To sign in with 2FA, enter your username and password as before: UNOS then
+asks for the **Authentication Code**. Enter the 6-digit code that the app
+shows and click **Verify**; **← Back to login** returns to the password form.
 
 To disable 2FA:
 1. Go to **Account** (administrators: **System** → **Security**)
@@ -670,7 +786,8 @@ To disable 2FA:
 Each code works once: a code that was accepted (to sign in, to turn SMB on,
 or to turn 2FA on or off) is refused when it is used again, with "This
 two-factor code was already used; wait for the next one". The app shows a new
-code every 30 seconds.
+code every 30 seconds; at the sign-in the code form stays, so you enter the
+next code without your password again.
 
 2FA protects only the web interface, not SMB: SMB signs in with the password
 alone. Turning SMB on yourself needs your two-factor code as well.
@@ -710,19 +827,39 @@ Scripts send the code as `recovery_code` in place of `totp_code` to
 answers new codes, and `GET /api/v1/auth/recovery-codes/status` how many are
 left.
 
+### Login History
+
+Under **Login History** on the **Account** page (administrators: **System** →
+**Security**), **View History** lists the latest 50 sign-ins, newest first:
+those of your own account since it was created (an account created with the
+name of a deleted one does not see that account's), and for administrators
+those of every account, also of deleted accounts and the attempts with names
+that do not exist. Each entry shows **SUCCESS** or **FAILED** with the reason
+(such as "Incorrect username or password" or "Invalid 2FA code"), the
+account, the time in your browser's time zone, the address of the computer
+that signed in (not that of the web interface's proxy) and the browser. Above
+the list are the number of attempts and how many succeeded and failed;
+**Refresh** loads the list again. A sign-in with 2FA is listed once, when its
+code was checked. When the history cannot be loaded, the section says so with
+the reason, and **Retry** loads it again.
+
 ### API Tokens
 
 Tokens give scripts access to the UNOS API with the rights of the account that
 created them: a regular user's token cannot use the administrator-only APIs.
 There is no page for them yet; create one with the API, using the
-`access_token` that `POST /api/v1/auth/login` returns (the full API token is
-shown only once):
+`access_token` that `POST /api/v1/auth/login` returns. `name` has 1 to 64
+characters. `expires_in_days` is the token's lifetime, from 1 to 3650 days;
+without it the token does not expire. A token acts with all the rights of its
+user, and `permissions` takes only `*`. A user has at most 100 tokens. The
+answer is the only place that shows the full token (`token`, which starts with
+`unos_`): UNOS keeps only a hash of it, so save it right away.
 
 ```bash
 curl --cacert unos-root-ca.crt -X POST https://unos/api/v1/auth/tokens \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Backup Script"}'
+  -d '{"name": "Backup Script", "expires_in_days": 365}'
 ```
 
 Use tokens in API requests:
@@ -732,8 +869,23 @@ curl --cacert unos-root-ca.crt -H "Authorization: Bearer YOUR_TOKEN" https://uno
 
 `unos-root-ca.crt` is the UNOS root certificate (see
 [Trust the UNOS Certificate Authority](INSTALL.md#trust-the-unos-certificate-authority)),
-and `unos` the name on the certificate. List your tokens with
-`GET /api/v1/auth/tokens` and revoke one with `DELETE /api/v1/auth/tokens/<id>`.
+and `unos` the name on the certificate.
+
+- `GET /api/v1/auth/tokens` lists your tokens with their first 12 characters
+  (`token_prefix`), whether they are active, their expiry and their last use,
+  never the full token. Other users, administrators too, neither see nor
+  change your tokens.
+- `POST /api/v1/auth/tokens/<id>/toggle` disables a token, and enables it
+  again the next time. A disabled token is refused with 401 "API token is
+  disabled", an expired one with 401 "API token has expired".
+- `DELETE /api/v1/auth/tokens/<id>` revokes a token for good.
+- Creating, disabling, enabling and deleting tokens needs the `access_token` of
+  a sign-in: a request made with an API token gets 403, so that a token cannot
+  make tokens that outlive its expiry or its revocation. A token can list
+  them.
+- The last use (`last_used_at`) is stored at most once an hour, so that
+  scripts do not write to the system disk with every request: it can be up to
+  an hour older than the token's latest request.
 
 ---
 
@@ -888,7 +1040,9 @@ wake the host through it. An interface that cannot wake the host by magic
 packet shows **Not supported**. UNOS sets your choice again each time it
 starts, because many network drivers forget it at a reboot. Send the magic
 packet from a computer on the same network, for example with
-`wakeonlan <MAC address>`.
+`wakeonlan <MAC address>`. A magic packet starts a host that is off only where
+the board keeps the network card powered then; many single-board computers
+cut its power, and then only the power button starts the host.
 
 There are no scheduled shutdown or wake times, and the UPS state has no page
 yet (feature-list entries `system.scheduled-power` and
@@ -902,9 +1056,102 @@ yet (feature-list entries `system.scheduled-power` and
 
 ### Logs
 
-- View system logs
-- Filter by type and date
-- Export logs for troubleshooting
+**System Logs** lists the entries of the host's systemd journal, the newest
+first. The buttons above the filters choose what it lists:
+
+- **System Journal**: everything in the journal
+- **Kernel**: the kernel's messages since the host started
+- **Docker**: the Docker daemon
+- **Samba**: the SMB file server, smbd and nmbd
+- **Authentication**: sign-ins, sudo and the other messages of the syslog
+  facilities auth and authpriv, which hosts with rsyslog also write to
+  `/var/log/auth.log`
+- **Cron Jobs**: the host's cron daemon
+
+Each entry shows its time in your browser's time zone, its level, the program
+that logged it and its message. The filters narrow the list:
+
+- **Priority Level**: the entries at that level or a more severe one; for
+  example, **Warning** lists warnings, errors and worse. An entry's level is
+  the one its program gave it: sshd logs a failed password as Info.
+- **Time Range**: the entries of the last 5 minutes, 15 minutes, hour,
+  6 hours, 24 hours or 7 days, or of all time.
+- **Limit**: at most 50, 100, 200 (at first), 500 or 1000 entries.
+- **Search**: type a text and press Enter or click **Search**: the tab lists
+  the newest entries whose message contains it, in the chosen source, level
+  and time range, also when they are older than the newest entries, and
+  says **No logs found** when none does. The case of the letters A to Z does
+  not matter. The matches are highlighted in the messages, also while you
+  type; log messages are always shown as text.
+
+**Auto** reloads the list every 5 seconds. Auto and **Search** wait while an
+answer is still coming. When the journal cannot be read, the tab shows why
+instead of the list. A search through a large journal can take long: after
+30 seconds UNOS stops journalctl on the host and the tab reports that it did
+not answer; a shorter time range helps.
+
+The output of the UNOS containers themselves is not in the journal: run
+`docker logs unos-supervisor` or `docker logs unos-webui` on the host. Log
+files that the journal does not hold, such as `/var/log/dpkg.log`, are not
+shown.
+
+### Scheduler
+
+**System** → **Scheduler** runs tasks on a schedule: snapshots and scrubs of a
+pool, SMART tests of a disk, system backups (see
+[Scheduled Snapshots](#scheduled-snapshots) and [System Backup](#system-backup))
+and custom commands. Only administrators see the tab, and only they can use
+its API.
+
+- **New Task** asks for the task's type, its target and when it runs: every
+  hour at a minute, every day, week or month at a time, or a cron expression
+  (minute, hour, day of the month, month, day of the week). **Run now** runs a
+  task at once. **History**, or a task's history button, lists the last 100
+  runs with their status, start and duration, and the output or error of each.
+- The schedules follow the clock of the NAS's time zone, which the tab names:
+  the time zone set on the host (`timedatectl set-timezone`), or UTC when the
+  host has none that UNOS can use; when the host cannot be asked for a moment,
+  they keep the zone it named last. A task for 03:00 runs at 03:00 on that
+  clock, also after a change of daylight saving time, and a change of the time
+  zone applies within a minute. On the night the clocks go back, a time in the
+  hour that repeats runs once, the first time, and an hourly task skips the
+  repeated hour; on the night they go forward, a time that the clock skips
+  runs when the clock passes it, once (a task for 02:30 runs at 03:00 in
+  central Europe). Next runs and the times in the history show in your
+  browser's time zone.
+- A task runs while UNOS runs: a time that passes while the NAS is off or
+  suspended is not made up for, and when the clock is set forward, only the
+  tasks of its last 5 minutes run. A run that a restart or shutdown of UNOS
+  cuts off (an update, a reboot) fails with "The supervisor stopped during
+  the run"; the task runs again at its next time.
+
+#### Custom Commands
+
+A task of the type **Custom Command** runs a shell command with `/bin/sh`, as
+root in the supervisor's container. The command sees the host's processes,
+the Docker socket, `/etc/samba` and the pools under `/mnt/pools`, but the
+container's own files and network: keep scripts on a pool, and reach the host
+itself with `nsenter --target 1 --mount --uts --ipc --net --pid -- <command>`.
+
+Each run records, in the history:
+
+- the command's exit status, as **Exit status**: 0 is a success, any other
+  value a failure ("The command exited with status 3");
+- its output, under **View output**: standard output and error together, in
+  the order they were written. A run keeps the last 16 KiB, after a line that
+  says so when the output was longer.
+
+A command still running after 24 hours is stopped, with the processes it
+started, and its run fails with "The command did not end within 24 hours and
+was stopped". Processes that a command leaves running in the background end
+when it returns, also those of `timeout` or of job control (`set -m`); only a
+process started in a session of its own (`setsid`) is not stopped. Run a
+server in a container or as a service of the host. A run starts at its time
+also while the task's run before has not ended: a command that must not run
+twice at once can guard itself, for example with
+`flock /tmp/my-task.lock my-script.sh`. The command is checked again before
+each run, as when it is saved: at most 4096 characters, without NUL
+characters.
 
 ---
 
@@ -1017,8 +1264,11 @@ For automatic backups, add a task of the type **System Backup** in
 (AES-256-GCM) with the passphrase you enter twice, in **Passphrase** and
 **Confirm Passphrase**, at least 8 characters long. They are named `auto_backup_<date>_<time>.tar.gz.enc`
 (with `_1`, `_2`, ... before `.tar.gz.enc` when two are made in the same
-second) and appear in the list, marked encrypted; **Keep Count** sets how
-many of them are kept, counted over all backup tasks. Besides the database,
+second) and appear in the list, marked encrypted, once they are complete; **Keep
+Count** sets how many of them are kept, counted over all backup tasks: after
+each run, the oldest scheduled backups beyond that number are deleted, never a
+backup made with **Create Backup** or uploaded. Two runs at the same time, as
+**Run now** during a scheduled run, both succeed. Besides the database,
 they hold a copy of the scheduled tasks, without passphrases, which a
 restore does not restore.
 
@@ -1050,25 +1300,61 @@ UNOS sends two kinds of alerts on its own: pool (RAID) errors and disk health
 ### Adding a Channel
 
 1. Go to **System** → **Notifications**
-2. Click **Add Email** or **Add Telegram**
+2. Click **Add Email**, **Add Telegram**, **Add Webhook**, **Add Discord** or
+   **Add Slack**
 3. Fill in the form: a channel name, and
-   - for Email the SMTP host, its port (usually 587), the username and
-     password, **Use TLS/STARTTLS**, the sender and the recipients;
-   - for Telegram the bot token and the chat ID.
-4. Leave **Enable Channel** on and click **Add Channel**
-5. Send a test with the channel's **Send test notification** button (the
-   lightning icon), which works while the channel is enabled
+   - for Email the SMTP host, its port (usually 587; 465 for SMTPS), the
+     username and password, the sender and the recipients (separated by
+     commas). Leave the username and password empty for a mail server that
+     takes mail without a login, such as a relay in your network: UNOS then
+     sends without logging in. **Use TLS/STARTTLS** switches the connection
+     to TLS on ports other than 465, which uses TLS from the start.
+     **Verify the server's certificate** is on: UNOS checks the mail server's
+     certificate and host name before it sends the password, and a server
+     that fails the check gets no password and no message. Turn it off only
+     for a mail server with a self-signed certificate: without the check,
+     anyone on the network path can read the password. With
+     **Use TLS/STARTTLS** off on another port than 465, the form warns that
+     the password and the messages cross the network unencrypted, with no
+     certificate to check;
+   - for Telegram the bot token and the chat ID;
+   - for Webhook the URL, and POST or PUT: UNOS sends JSON with `title`,
+     `message`, `type`, `timestamp` and `source`;
+   - for Discord and Slack the webhook URL of the channel.
+4. Leave **Enable channel** on and click **Add Channel**
+5. Click the channel's **Send test**; it works for a disabled channel too,
+   so you can check one before it receives notifications. Under the channel
+   appears **Test notification sent**, or **Test
+   notification not sent** with the reason, for example the mail server's
+   certificate error, Telegram's answer, or `HTTP 404: ...` from a webhook.
+   A webhook, Discord or Slack channel counts as sent only when the service
+   answers with success (2xx); a redirect is a failure, so give the final URL.
+   While a channel's test runs, its **Edit** and **Disable** (or **Enable**)
+   buttons wait, so that the outcome shown is that of the settings the test
+   was sent with.
 
-**History** lists the notifications sent, with their result.
+The list shows a webhook's URL by its host only, since the rest of the URL
+is its key. Editing a channel keeps the settings that only the API sets: a
+webhook's headers, body template and content type, and the names and icons
+of Discord and Slack channels.
 
-Discord, Slack and generic webhook channels can be added only through the
-API (`POST /api/v1/notifications/configs`). They receive test notifications
-and what `POST /api/v1/notifications/send` sends, but no alerts yet
-(feature-list entry `system.alert-events`).
+### History
+
+**History** lists the latest 100 notifications sent, newest first: the
+tests, the alerts and what `POST /api/v1/notifications/send` sends, each with
+the channel it went to, its time and **Delivered** or **Failed**; click an
+entry for the error. Filter it by the kind of channel and by the result. The
+summary above counts the active channels and the notifications sent,
+delivered and failed. An entry that UNOS cannot read, for example one
+damaged from outside, is left out, and the supervisor's log says so.
+
+Webhook, Discord and Slack channels receive test notifications and what
+`POST /api/v1/notifications/send` sends, but no alerts yet (feature-list
+entry `system.alert-events`).
 
 ### Notification Events
 
-The form's **Notify on Events** choices are stored, but they have no effect
+The form's **Notify on events** choices are stored, but they have no effect
 yet: every enabled e-mail and Telegram channel receives both kinds of alerts,
 and no other event (container status, temperatures, backups) sends a
 notification.

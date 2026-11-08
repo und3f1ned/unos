@@ -174,7 +174,9 @@ os.environ["UNOS_POOLS_BASE_PATH"] = "/tmp/test_pools"
 Commands that run on the host (lsblk, findmnt, mkfs.btrfs, mount, ...) go
 through `src/host.py`. Tests answer them with a fake host (ADR-0189): the in-memory `FakeHost` of
 `tests/test_pool_persistence.py`, or `FakeSambaHost` of `tests/samba_fake.py` for Samba;
-`install_fake_host` also blocks real subprocesses and Docker:
+`install_fake_host` also blocks real subprocesses and Docker, and only counts the apply of smb.conf
+that the storage endpoints run after a pool change (`FakeHost.smb_applies`, ADR-0248), which
+`tests/test_smb_integration.py` runs with both fakes (`PoolsAndSambaHost`):
 
 ```python
 import pytest
@@ -251,6 +253,7 @@ testparm's message about exactly these two), but this test fails on them.
 ```bash
 make e2e-local                                            # every spec
 scripts/standin/e2e.sh tests/shares.spec.ts --grep Seeded # a part (Playwright's arguments)
+scripts/standin/e2e.sh tests/first-run.spec.ts            # the first-run setup alone
 scripts/standin/e2e.sh --help                             # what it does, its settings
 ```
 
@@ -259,9 +262,14 @@ directory under `.standin/` (git-ignored): the real supervisor through
 `scripts/standin/run_supervisor.py`, with every data path inside `.standin/`, and
 `scripts/standin/front.mjs` in place of Caddy (HTTPS with a self-signed certificate and the
 security headers of `webui/Caddyfile`). It creates the test administrator `admin` /
-`unos-e2e-pass` (`E2E_ADMIN` in `webui/tests/fixtures.ts`), runs Playwright with `BASE_URL` and
-`HTTP_URL` on localhost and `E2E_STAND_IN=1`, stops everything and exits with Playwright's exit
-code. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
+`unos-e2e-pass` (`E2E_ADMIN` in `webui/tests/fixtures.ts`) as the owner creates theirs: on the new
+stand-in, which has no account yet, a first Playwright run with `E2E_FIRST_RUN=1` runs
+`tests/first-run.spec.ts` alone (never retried), which goes through the `/setup` page; when it
+fails, e2e.sh stops (log: `.standin/logs/first-run.log`, ADR-0261). The run of the specs ignores
+that file, so arguments that name only it make this setup the whole run: e2e.sh prints its log
+and, when it passed, `== Playwright exit code 0`. Otherwise it then runs Playwright with
+`BASE_URL` and `HTTP_URL` on localhost and `E2E_STAND_IN=1`, stops everything and exits with
+Playwright's exit code. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
 (`npx playwright show-report` in `webui/`). The ports default to 46443 (HTTPS), 46080 (HTTP) and
 46180 (the supervisor); `E2E_HTTPS_PORT`, `E2E_HTTP_PORT` and `E2E_BACKEND_PORT` change them. The
 standin-e2e skill explains how to find the cause of a failure.

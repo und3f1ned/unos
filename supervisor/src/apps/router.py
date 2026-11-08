@@ -714,19 +714,24 @@ async def install_app(
     return await asyncio.to_thread(_install_app, req)
 
 
+def _uninstall_app(container_id: str) -> dict[str, str]:
+    """Stop and remove the app's container; its data folders stay where they are."""
+    container = _get_app(container_id)
+    try:
+        container.stop()
+        # Without v=True: Docker keeps the container's volumes, and bind
+        # folders on the pools are never touched.
+        container.remove()
+    except _DOCKER_ERRORS as e:
+        raise HTTPException(500, f"Failed to remove: {e}")
+    return {"status": "removed", "id": container_id}
+
+
 @router.delete("/installed/{container_id}")
 async def uninstall_app(container_id: str, _: dict = Depends(verify_token)):
-    """Uninstall an app."""
-    client = get_client()
-    try:
-        container = client.containers.get(container_id)
-        if UNOS_APP_LABEL not in container.labels:
-            raise HTTPException(400, "Not a UNOS managed app")
-        container.stop()
-        container.remove()
-        return {"status": "removed", "id": container_id}
-    except Exception as e:
-        raise HTTPException(500, f"Failed to remove: {e}")
+    """Uninstall an app: remove its container and keep its data."""
+    # A stop waits up to 10 s for the app to exit: keep it off the event loop.
+    return await asyncio.to_thread(_uninstall_app, container_id)
 
 
 # ---------------------------------------------------------------------------
@@ -813,22 +818,27 @@ def prepare_app_start(container: Any, pools: list[AppPool] | None = None) -> Non
     _prepare_sources(planned, create=True, status=409)
 
 
-def _get_container(client: Any, container_id: str) -> Any:
+def _get_app(container_id: str) -> Any:
+    """The container of an installed app; 404 if Docker does not know it.
+
+    400 for a container that is no app of the catalog (no unos.app label), such
+    as UNOS's own unos-supervisor and unos-webui: the Apps API acts only on
+    apps (ADR-0256). Blocking: call it in a worker thread.
+    """
     try:
-        return client.containers.get(container_id)
+        container = get_client().containers.get(container_id)
     except NotFound:
         raise HTTPException(404, f"App {container_id} not found")
     except _DOCKER_ERRORS as e:
         raise HTTPException(500, f"Docker is not available: {e}")
+    if UNOS_APP_LABEL not in container.labels:
+        raise HTTPException(400, "Not a UNOS managed app")
+    return container
 
 
 def _start_installed_app(container_id: str, *, restart: bool) -> dict[str, str]:
     action = "restart" if restart else "start"
-    try:
-        client = get_client()
-    except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Docker is not available: {e}")
-    container = _get_container(client, container_id)
+    container = _get_app(container_id)
     prepare_app_start(container)
     try:
         if restart:
@@ -847,17 +857,21 @@ async def start_app(container_id: str, _: dict = Depends(verify_token)):
     return await asyncio.to_thread(_start_installed_app, container_id, restart=False)
 
 
+def _stop_installed_app(container_id: str) -> dict[str, str]:
+    container = _get_app(container_id)
+    try:
+        container.stop()
+        container.reload()
+    except _DOCKER_ERRORS as e:
+        raise HTTPException(500, f"Failed to stop: {e}")
+    return {"status": container.status, "id": container_id}
+
+
 @router.post("/installed/{container_id}/stop")
 async def stop_app(container_id: str, _: dict = Depends(verify_token)):
     """Stop an installed app."""
-    client = get_client()
-    try:
-        container = client.containers.get(container_id)
-        container.stop()
-        container.reload()
-        return {"status": container.status, "id": container_id}
-    except Exception as e:
-        raise HTTPException(500, f"Failed to stop: {e}")
+    # A stop waits up to 10 s for the app to exit: keep it off the event loop.
+    return await asyncio.to_thread(_stop_installed_app, container_id)
 
 
 @router.post("/installed/{container_id}/restart")

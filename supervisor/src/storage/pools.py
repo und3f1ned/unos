@@ -1937,7 +1937,7 @@ def start_scrub(pool_name: str) -> ScrubStatus:
 
 
 def get_scrub_status(pool_name: str) -> ScrubStatus:
-    """The pool's scrub as ``btrfs scrub status`` reports it (ADR-0250).
+    """The pool's scrub as ``btrfs scrub status`` reports it (ADR-0272).
 
     idle when no scrub is recorded; RuntimeError when btrfs cannot report it.
     """
@@ -1972,7 +1972,7 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
             pool=pool_name,
             status="idle",
         )
-    # Not "idle": btrfs could not report the status (ADR-0250).
+    # Not "idle": btrfs could not report the status (ADR-0272).
     if result.returncode != 0:
         raise RuntimeError(
             f"Scrub status failed: {result.stderr.strip() or f'exit status {result.returncode}'}"
@@ -2010,7 +2010,7 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
         unit = rate_match.group(2).lower()
         rate = _parse_size_to_bytes(value, unit)
 
-    # "Error summary:    read=1 csum=12", or "no errors found": every kind counts (ADR-0250).
+    # "Error summary:    read=1 csum=12", or "no errors found": every kind counts (ADR-0272).
     error_match = re.search(r"Error summary:\s*(.+?)(?:\n|$)", output)
     if error_match:
         error_text = error_match.group(1).strip()

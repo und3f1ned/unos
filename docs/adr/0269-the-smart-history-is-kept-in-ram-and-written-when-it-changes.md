@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0247: The SMART monitor keeps its history in RAM and writes it only when a pass changes it, and at shutdown
+# ADR-0269: The SMART monitor keeps its history in RAM and writes it only when a pass changes it, and at shutdown
 
 ## Context
 
@@ -14,7 +14,7 @@ Every hour the SMART monitor adds a snapshot of each awake disk to its history a
 ## Decision
 
 - The monitor (`_smart_monitor_pass` in `supervisor/src/health/router.py`) reads `SMART_HISTORY_FILE` at its first pass after a start and from then on keeps the history in RAM (`_SmartHistoryState`), at most `SMART_HISTORY_LIMIT` (720) snapshots of each disk. The SMART endpoints (`/health/smart/history/{serial}`, `/smart/trends`, `/smart/predictions`, `/smart-monitor/status`) read the history in RAM, and the file only before that first pass.
-- A pass writes the file, atomically as before (ADR-0235), only when one of its snapshots changes the history: the first snapshot of a disk, a counter of `CRITICAL_ATTRIBUTES` whose value differs from the disk's latest earlier snapshot that holds it, or another path or lsblk serial than the disk's previous snapshot (`_changes_the_history`). The time, the temperature and the power-on hours change at every pass and are no change; a snapshot without the counters tells nothing of them (ADR-0248). The disks without a serial, which share the history "unknown", are compared with the snapshots taken at their own path.
+- A pass writes the file, atomically as before (ADR-0235), only when one of its snapshots changes the history: the first snapshot of a disk, a counter of `CRITICAL_ATTRIBUTES` whose value differs from the disk's latest earlier snapshot that holds it, or another path or lsblk serial than the disk's previous snapshot (`_changes_the_history`). The time, the temperature and the power-on hours change at every pass and are no change; a snapshot without the counters tells nothing of them (ADR-0270). The disks without a serial, which share the history "unknown", are compared with the snapshots taken at their own path.
 - A write that fails is logged, and the next pass writes again; the pass's alerts are sent all the same.
 - At shutdown, `stop_health_monitors` (the lifespan, ADR-0043) writes the history when RAM holds snapshots that the file does not (`save_unsaved_smart_history`). A pass that ends after that write, one that was still waiting for smartctl, keeps nothing: its alerts could no longer be sent, and the next start compares with the history written at shutdown, so that a rise of that pass is alerted then.
 - Tests: `supervisor/tests/test_health_monitor.py` (`TestSmartHistoryWrites`), `supervisor/tests/test_smart_predictions.py`.

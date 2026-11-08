@@ -706,7 +706,7 @@ class TestDisksEndpoint:
 
         response = api.get("/api/v1/storage/disks")
 
-        # The Storage page shows the reason instead of "No disks found" (ADR-0249).
+        # The Storage page shows the reason instead of "No disks found" (ADR-0271).
         assert (response.status_code, response.json()) == (
             500, {"detail": "lsblk failed: lsblk: failed to access sysfs directory: /sys/dev/block"})
         assert not any(call[0] == "wipefs" for call in nas.calls)

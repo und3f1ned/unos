@@ -147,7 +147,7 @@ class TestSmartTrendAlerts:
     def test_a_snapshot_without_the_counters_is_neither_a_drop_nor_a_rise(self, smart_disk):
         alerts = []
         # smartctl could not read the attribute table at the first and the third pass
-        # (ADR-0248): the counters stayed at 8 until the last pass.
+        # (ADR-0270): the counters stayed at 8 until the last pass.
         for value in [None, 8, None, 8, 9]:
             smart_disk.reallocated = value
             alerts.append(health_router._smart_monitor_pass())
@@ -283,7 +283,7 @@ class TestSmartAlertChannels:
 
 
 class TestSmartHistoryWrites:
-    """The SMART history is written to the system disk only when a pass changes it (ADR-0247).
+    """The SMART history is written to the system disk only when a pass changes it (ADR-0269).
 
     Every pass records each awake disk's snapshot in RAM, where the SMART
     endpoints read it; the file is written when a snapshot changes the
@@ -480,7 +480,7 @@ class TestSmartHistoryWrites:
 
 
 class TestSmartTrendsEndpoint:
-    """GET /health/smart/trends reports the trend of every disk the history tracks (ADR-0248)."""
+    """GET /health/smart/trends reports the trend of every disk the history tracks (ADR-0270)."""
 
     @pytest.fixture
     def history(self, monkeypatch, tmp_path):

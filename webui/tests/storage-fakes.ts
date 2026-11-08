@@ -155,6 +155,13 @@ export interface FakeStorageOptions {
    */
   poolActionResponse?: (write: RecordedWrite) => FakeResponse | undefined;
   /**
+   * Called when a mount, an unmount or a delete of a pool is done, before it is answered: the
+   * server applies smb.conf before it answers, and the shares of a pool that is no longer
+   * mounted are not served (ADR-0248; setPoolMounted of shares-fakes.ts does that in the SMB
+   * fake). Not called for an answer of poolActionResponse.
+   */
+  onPoolChange?: (name: string, change: 'mount' | 'unmount' | 'delete') => void;
+  /**
    * What btrfs reports for a pool's scrub after a request with this method
    * (default: no scrub recorded). The server answers GET with the status, and
    * POST (start) and DELETE (cancel) with the status after its btrfs command.
@@ -261,6 +268,7 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         else if (!pool.mounted) {
           pools[index] = mountedPool(pool, profiles.get(pool.name) ?? 'single', deviceErrors.get(pool.name) ?? 0);
         }
+        options.onPoolChange?.(name, method === 'DELETE' ? 'delete' : (action[2] as 'mount' | 'unmount'));
         return route.fulfill({ json: method === 'DELETE' ? { status: 'deleted' } : pools[index] });
       }
       return route.abort();

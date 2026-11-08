@@ -9,6 +9,7 @@ Nothing here touches the real host: a temporary directory is the pools base,
 the Docker client is a MagicMock, and ``os.fchown`` only records its calls.
 """
 
+import asyncio
 import fcntl
 import importlib
 import os
@@ -874,6 +875,8 @@ class TestDockerFlow:
 
 START = "/api/v1/apps/installed/{}/start"
 RESTART = "/api/v1/apps/installed/{}/restart"
+STOP = "/api/v1/apps/installed/{}/stop"
+UNINSTALL = "/api/v1/apps/installed/{}"
 
 
 def _bind(source, target: str, *, rw: bool = True, propagation: str = "rprivate") -> dict:
@@ -1410,7 +1413,10 @@ class TestStartChecks:
         response = api.post(START.format("jellyfin"))
 
         assert response.status_code == 409
-        assert "not on a mounted storage pool" in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert "not on a mounted storage pool" in detail
+        # The answer says which pool to mount.
+        assert "Mount the pool ('alpha' holds the app's data)" in detail
         container.start.assert_not_called()
         assert _tree(pools.root) == before
 
@@ -1421,6 +1427,7 @@ class TestStartChecks:
         response = api.post(RESTART.format("jellyfin"))
 
         assert response.status_code == 409
+        assert "Mount the pool ('alpha' holds the app's data)" in response.json()["detail"]
         container.restart.assert_not_called()
 
     def test_old_app_with_data_on_the_system_disk_is_not_started(self, api, pools, installed):
@@ -1634,3 +1641,122 @@ class TestInstalledApps:
 
         assert app_info["pool"] == "alpha"
         assert len(app_info["data_outside_pools"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Stopping and uninstalling installed apps
+# ---------------------------------------------------------------------------
+
+
+def _on_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def _webui() -> MagicMock:
+    """The web UI's own container: no app of the catalog (no unos.app label)."""
+    return _container(
+        "unos-webui", status="running", mounts=[_bind("/opt/unos/deploy/Caddyfile", "/etc/caddy/Caddyfile")]
+    )
+
+
+def _stops(container: MagicMock) -> MagicMock:
+    """Let ``container.stop()`` change the state Docker reports after a reload."""
+    container.stop.side_effect = lambda *args, **kwargs: setattr(container, "status", "exited")
+    return container
+
+
+# Every action of the Apps API on an installed app: (action, method, path template).
+APP_ACTIONS = [
+    ("start", "POST", START),
+    ("restart", "POST", RESTART),
+    ("stop", "POST", STOP),
+    ("uninstall", "DELETE", UNINSTALL),
+]
+
+
+class TestStopAndUninstall:
+    def test_stop_stops_the_app_and_answers_its_new_state(self, api, pools, installed):
+        container = installed(_stops(_jellyfin(pools, status="running")))
+
+        response = api.post(STOP.format("jellyfin"))
+
+        assert (response.status_code, response.json()) == (200, {"status": "exited", "id": "jellyfin"})
+        container.stop.assert_called_once_with()
+        container.remove.assert_not_called()
+
+    def test_uninstall_removes_the_container_and_keeps_the_apps_data(self, api, pools, installed):
+        _make_jellyfin_folders(pools)
+        (pools.alpha / "apps/jellyfin/config/library.db").write_text("the app's database")
+        container = installed(_stops(_jellyfin(pools, status="running")))
+        before = _tree(pools.root)
+
+        response = api.delete(UNINSTALL.format("jellyfin"))
+
+        assert (response.status_code, response.json()) == (200, {"status": "removed", "id": "jellyfin"})
+        container.stop.assert_called_once_with()
+        # Without v=True: Docker keeps the container's volumes too.
+        container.remove.assert_called_once_with()
+        assert _tree(pools.root) == before
+        assert (pools.alpha / "apps/jellyfin/config/library.db").read_text() == "the app's database"
+
+    @pytest.mark.parametrize("action,method,path", APP_ACTIONS, ids=[a for a, _, _ in APP_ACTIONS])
+    def test_unknown_app_is_not_found(self, api, pools, installed, action, method, path):
+        response = api.request(method, path.format("nope"))
+
+        assert (response.status_code, response.json()) == (404, {"detail": "App nope not found"})
+
+    @pytest.mark.parametrize("action,method,path", APP_ACTIONS, ids=[a for a, _, _ in APP_ACTIONS])
+    def test_a_container_that_is_no_app_is_left_alone(self, api, pools, installed, action, method, path):
+        # The Apps page acts only on apps: stopping UNOS's own containers this way
+        # would lock the administrator out.
+        container = installed(_webui())
+
+        response = api.request(method, path.format("unos-webui"))
+
+        assert (response.status_code, response.json()) == (400, {"detail": "Not a UNOS managed app"})
+        for call in (container.start, container.restart, container.stop, container.remove, container.kill):
+            call.assert_not_called()
+
+    def test_a_docker_error_of_the_stop_is_reported(self, api, pools, installed):
+        container = installed(_jellyfin(pools, status="running"))
+        container.stop.side_effect = APIError("cannot stop container: permission denied")
+
+        response = api.post(STOP.format("jellyfin"))
+
+        assert response.status_code == 500
+        assert response.json()["detail"].startswith("Failed to stop: ")
+        assert "permission denied" in response.json()["detail"]
+
+    def test_a_docker_error_of_the_removal_is_reported(self, api, pools, installed):
+        container = installed(_stops(_jellyfin(pools, status="running")))
+        container.remove.side_effect = APIError(
+            'driver "overlay2" failed to remove root filesystem: device or resource busy'
+        )
+
+        response = api.delete(UNINSTALL.format("jellyfin"))
+
+        assert response.status_code == 500
+        assert response.json()["detail"].startswith("Failed to remove: ")
+        assert "device or resource busy" in response.json()["detail"]
+
+    @pytest.mark.parametrize("action,method,path", APP_ACTIONS, ids=[a for a, _, _ in APP_ACTIONS])
+    def test_docker_is_asked_in_a_worker_thread(self, api, pools, installed, docker_client, monkeypatch,
+                                                action, method, path):
+        _make_jellyfin_folders(pools)
+        installed(_stops(_jellyfin(pools, status="running")))
+        made: list[bool] = []
+
+        def get_client():
+            made.append(_on_event_loop())
+            return docker_client
+
+        monkeypatch.setattr(apps_router, "get_client", get_client)
+
+        response = api.request(method, path.format("jellyfin"))
+
+        assert response.status_code == 200, response.text
+        assert made == [False]

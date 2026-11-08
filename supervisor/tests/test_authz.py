@@ -6,6 +6,7 @@ in USER_ALLOWED (any signed-in user), or it must depend on ``require_admin``
 ``test_every_route_has_an_explicit_authorization_decision``.
 """
 import asyncio
+import hashlib
 import importlib
 import ipaddress
 import json
@@ -18,28 +19,32 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import bcrypt
 import docker
+import httpx
 import pytest
 import uvicorn
 import yaml
 from fastapi.routing import APIRoute, APIWebSocketRoute
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 from starlette.requests import Request
 
 import src.host
+from src.auth import utils as auth_utils
 from src.auth.models import APIToken, User
+from src.auth.router import MAX_API_TOKENS_PER_USER, TOO_MANY_API_TOKENS
 from src.auth.router import limiter as auth_limiter
-from src.auth.utils import create_access_token, require_admin, verify_token
+from src.auth.schemas import API_TOKEN_NAME_CHARS
+from src.auth.utils import SESSION_NEEDED, create_access_token, require_admin, verify_token
 from src.database import Base, get_db
 from src.main import app
 from src.main import limiter as app_limiter
@@ -231,6 +236,11 @@ class TestRouteMatrix:
             ("GET", f"{API}/audit/logs"),
             ("GET", f"{API}/security/firewall"),
             ("GET", f"{API}/health/full"),
+            # The trash of the file manager (ADR-0259): administrator-only with the files router.
+            ("GET", f"{API}/files/trash"),
+            ("POST", f"{API}/files/trash/restore"),
+            ("DELETE", f"{API}/files/trash"),
+            ("POST", f"{API}/files/trash/empty"),
         } <= operations
 
     def test_websocket_routes_are_known(self):
@@ -527,6 +537,230 @@ class TestApiTokenOwnership:
             assert session.get(APIToken, token_id) is not None
 
 
+class TestApiTokenUse:
+    """A token is answered once and acts with its owner's rights until it is disabled or expires
+    (feature auth.api-tokens; ADR-0239)."""
+
+    @staticmethod
+    def _create(client, headers, **body) -> dict:
+        response = client.post(f"{API}/auth/tokens", json={"name": "backup-script", **body}, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def test_the_token_is_answered_once_and_kept_as_its_hash(self, client, authz_db, alice_headers):
+        created = self._create(client, alice_headers, expires_in_days=30)
+        token = created["token"]
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        assert token.startswith("unos_") and created["token_prefix"] == token[:12]
+        listed = client.get(f"{API}/auth/tokens", headers=alice_headers)
+        [entry] = listed.json()
+        assert entry["id"] == created["id"] and "token" not in entry
+        assert token not in listed.text and token_hash not in listed.text
+        with Session(authz_db.engine) as session:
+            [stored] = session.scalars(select(APIToken)).all()
+            assert stored.token_hash == token_hash
+            assert token not in (stored.name, stored.token_prefix, stored.permissions)
+
+    def test_an_administrators_token_has_the_administrators_rights(self, client, admin_headers):
+        token_headers = _auth(self._create(client, admin_headers)["token"])
+
+        assert client.get(f"{API}/auth/me", headers=token_headers).json()["username"] == "admin"
+        assert client.get(f"{API}/auth/users", headers=token_headers).status_code == 200
+
+    def test_a_disabled_token_answers_401_until_it_is_enabled_again(self, client, alice_headers):
+        created = self._create(client, alice_headers)
+        token_headers = _auth(created["token"])
+        toggle = f"{API}/auth/tokens/{created['id']}/toggle"
+        assert client.get(f"{API}/auth/me", headers=token_headers).status_code == 200
+
+        disabled = client.post(toggle, headers=alice_headers)
+
+        assert (disabled.status_code, disabled.json()["is_active"]) == (200, False)
+        for method, path in (("GET", f"{API}/auth/me"), ("GET", f"{API}/auth/tokens"), ("POST", toggle)):
+            refused = client.request(method, path, headers=token_headers)
+            assert (refused.status_code, refused.json()["detail"]) == (401, "API token is disabled"), path
+        enabled = client.post(toggle, headers=alice_headers)
+        assert (enabled.status_code, enabled.json()["is_active"]) == (200, True)
+        assert client.get(f"{API}/auth/me", headers=token_headers).status_code == 200
+
+    def test_an_expired_token_answers_401(self, client, authz_db, alice_headers):
+        created = self._create(client, alice_headers, expires_in_days=1)
+        token_headers = _auth(created["token"])
+        assert client.get(f"{API}/auth/me", headers=token_headers).status_code == 200
+        with Session(authz_db.engine) as session:
+            session.get(APIToken, created["id"]).expires_at = datetime.utcnow() - timedelta(seconds=1)
+            session.commit()
+
+        refused = client.get(f"{API}/auth/me", headers=token_headers)
+
+        assert (refused.status_code, refused.json()["detail"]) == (401, "API token has expired")
+
+    def test_a_token_works_until_its_lifetime_is_over(self, client, alice_headers, monkeypatch):
+        created = self._create(client, alice_headers, expires_in_days=1)
+        expires_at = datetime.fromisoformat(created["expires_at"])
+        token_headers = _auth(created["token"])
+
+        monkeypatch.setattr(auth_utils, "_token_time", lambda: expires_at - timedelta(seconds=1))
+        assert client.get(f"{API}/auth/me", headers=token_headers).status_code == 200
+        monkeypatch.setattr(auth_utils, "_token_time", lambda: expires_at + timedelta(seconds=1))
+        refused = client.get(f"{API}/auth/me", headers=token_headers)
+
+        assert (refused.status_code, refused.json()["detail"]) == (401, "API token has expired")
+
+    def test_others_reach_only_their_own_tokens(self, client, authz_db, alice_headers, bob_headers, admin_headers):
+        alices = self._create(client, alice_headers)
+        bobs_token = _auth(self._create(client, bob_headers)["token"])
+
+        for others in (bob_headers, bobs_token, admin_headers):
+            listed = client.get(f"{API}/auth/tokens", headers=others)
+            assert listed.status_code == 200
+            assert alices["id"] not in [t["id"] for t in listed.json()]
+            # A session gets 404, as for a token that does not exist; an API token is refused
+            # before that (ADR-0253).
+            refused = 403 if others is bobs_token else 404
+            assert client.post(f"{API}/auth/tokens/{alices['id']}/toggle", headers=others).status_code == refused
+            assert client.delete(f"{API}/auth/tokens/{alices['id']}", headers=others).status_code == refused
+        with Session(authz_db.engine) as session:
+            assert session.get(APIToken, alices["id"]).is_active is True
+        assert client.get(f"{API}/auth/me", headers=_auth(alices["token"])).status_code == 200
+
+
+class TestApiTokensAreManagedWithASession:
+    """Only a session token creates, toggles and deletes API tokens: tokens made with a token
+    would outlast its lifetime and its revocation (ADR-0253)."""
+
+    def test_a_token_cannot_create_a_token(self, client, authz_db, alice_headers):
+        """A token of one day that leaked cannot make one that never expires."""
+        leaked = TestApiTokenUse._create(client, alice_headers, expires_in_days=1)
+
+        refused = client.post(f"{API}/auth/tokens", json={"name": "script"}, headers=_auth(leaked["token"]))
+
+        assert (refused.status_code, refused.json()["detail"]) == (403, SESSION_NEEDED)
+        assert "unos_" not in refused.text
+        with Session(authz_db.engine) as session:
+            assert [t.id for t in session.scalars(select(APIToken))] == [leaked["id"]]
+
+    def test_a_token_cannot_toggle_or_delete_a_token(self, client, authz_db, alice_headers):
+        own = TestApiTokenUse._create(client, alice_headers)
+        other = TestApiTokenUse._create(client, alice_headers)
+        token_headers = _auth(own["token"])
+
+        for target in (other, own):
+            for method, path in (("POST", f"{API}/auth/tokens/{target['id']}/toggle"),
+                                 ("DELETE", f"{API}/auth/tokens/{target['id']}")):
+                refused = client.request(method, path, headers=token_headers)
+                assert (refused.status_code, refused.json()["detail"]) == (403, SESSION_NEEDED), (method, path)
+
+        with Session(authz_db.engine) as session:
+            stored = session.scalars(select(APIToken).order_by(APIToken.id)).all()
+            assert [(t.id, t.is_active) for t in stored] == [(own["id"], True), (other["id"], True)]
+        # The token still lists them, and still acts with its owner's rights elsewhere.
+        listed = client.get(f"{API}/auth/tokens", headers=token_headers)
+        assert sorted(t["id"] for t in listed.json()) == [own["id"], other["id"]]
+        assert client.get(f"{API}/auth/me", headers=token_headers).json()["username"] == "alice"
+
+    def test_an_administrators_token_cannot_create_one_either(self, client, admin_headers):
+        token_headers = _auth(TestApiTokenUse._create(client, admin_headers)["token"])
+
+        refused = client.post(f"{API}/auth/tokens", json={"name": "script"}, headers=token_headers)
+
+        assert (refused.status_code, refused.json()["detail"]) == (403, SESSION_NEEDED)
+        assert client.get(f"{API}/auth/users", headers=token_headers).status_code == 200
+
+    def test_a_token_that_is_not_valid_keeps_its_401(self, client, authz_db, alice_headers):
+        created = TestApiTokenUse._create(client, alice_headers)
+        client.post(f"{API}/auth/tokens/{created['id']}/toggle", headers=alice_headers)
+
+        for headers, detail in ((_auth(created["token"]), "API token is disabled"),
+                                (_auth("unos_" + "x" * 43), "Invalid API token")):
+            refused = client.post(f"{API}/auth/tokens", json={"name": "script"}, headers=headers)
+            assert (refused.status_code, refused.json()["detail"]) == (401, detail)
+
+
+class TestApiTokenBounds:
+    """Each token is a row of the database on the system disk, which any signed-in user can add
+    to: a name has 1 to 64 characters, the permissions are "*", and a user has at most 100
+    tokens (ADR-0253)."""
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {},
+            {"name": ""},
+            {"name": "   "},
+            {"name": "x" * 65},
+            {"name": "x" * 900_000},  # under the request limit of 1 MiB (ADR-0062)
+            {"name": "t", "permissions": "read"},
+            {"name": "t", "permissions": "x" * 900_000},
+        ],
+        ids=["no-name", "empty", "blank", "65-characters", "900000-characters", "read", "huge-permissions"],
+    )
+    def test_a_name_or_permissions_out_of_bounds_answer_422(self, client, authz_db, alice_headers, body):
+        response = client.post(f"{API}/auth/tokens", json=body, headers=alice_headers)
+
+        assert response.status_code == 422
+        assert len(response.content) < 2048  # the 422 handler does not echo the values
+        with Session(authz_db.engine) as session:
+            assert session.scalars(select(APIToken)).all() == []
+
+    def test_a_name_is_kept_without_the_space_around_it(self, client, alice_headers):
+        name = "n" * API_TOKEN_NAME_CHARS
+
+        created = client.post(f"{API}/auth/tokens", json={"name": f"  {name} ", "permissions": "*"}, headers=alice_headers)
+
+        assert created.status_code == 200, created.text
+        assert (created.json()["name"], created.json()["permissions"]) == (name, "*")
+        assert [t["name"] for t in client.get(f"{API}/auth/tokens", headers=alice_headers).json()] == [name]
+
+    @staticmethod
+    def _tokens_of(authz_db, user_id: int) -> int:
+        with Session(authz_db.engine) as session:
+            return session.scalar(select(func.count()).select_from(APIToken).where(APIToken.user_id == user_id))
+
+    def test_a_user_has_at_most_100_tokens(self, client, authz_db, alice_headers, bob_headers):
+        with Session(authz_db.engine) as session:
+            session.add_all(
+                APIToken(name=f"t{i}", token_hash=f"hash-{i}", token_prefix="unos_t", user_id=authz_db.alice_id)
+                for i in range(MAX_API_TOKENS_PER_USER - 1)
+            )
+            session.commit()
+
+        last = client.post(f"{API}/auth/tokens", json={"name": "the 100th"}, headers=alice_headers)
+        refused = client.post(f"{API}/auth/tokens", json={"name": "the 101st"}, headers=alice_headers)
+
+        assert last.status_code == 200, last.text
+        assert (refused.status_code, refused.json()["detail"]) == (409, TOO_MANY_API_TOKENS)
+        assert self._tokens_of(authz_db, authz_db.alice_id) == MAX_API_TOKENS_PER_USER
+        # The limit is each user's own.
+        assert client.post(f"{API}/auth/tokens", json={"name": "bobs"}, headers=bob_headers).status_code == 200
+        # Deleting one makes room for one.
+        assert client.delete(f"{API}/auth/tokens/{last.json()['id']}", headers=alice_headers).status_code == 200
+        assert client.post(f"{API}/auth/tokens", json={"name": "again"}, headers=alice_headers).status_code == 200
+        assert self._tokens_of(authz_db, authz_db.alice_id) == MAX_API_TOKENS_PER_USER
+
+    def test_two_requests_at_the_same_moment_cannot_both_take_the_last_place(self, authz_db, alice_headers):
+        """The count follows the insert, which holds SQLite's write lock until the commit."""
+        with Session(authz_db.engine) as session:
+            session.add_all(
+                APIToken(name=f"t{i}", token_hash=f"hash-{i}", token_prefix="unos_t", user_id=authz_db.alice_id)
+                for i in range(MAX_API_TOKENS_PER_USER - 1)
+            )
+            session.commit()
+
+        async def both() -> list[int]:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as async_client:
+                answers = await asyncio.gather(*(
+                    async_client.post(f"{API}/auth/tokens", json={"name": name}, headers=alice_headers)
+                    for name in ("first", "second")
+                ))
+            return sorted(answer.status_code for answer in answers)
+
+        assert asyncio.run(both()) == [200, 409]
+        assert self._tokens_of(authz_db, authz_db.alice_id) == MAX_API_TOKENS_PER_USER
+
+
 class TestApiTokenExpiry:
     @pytest.mark.parametrize("days", [0, -1, 3651, 10**8])
     def test_out_of_range_expiry_is_rejected(self, client, authz_db, alice_headers, days):
@@ -587,6 +821,108 @@ class TestLoginHistory:
         assert client.delete(
             f"{API}/security/login-history?older_than_days=0", headers=admin_headers
         ).status_code == 200
+
+    def test_clearing_counts_the_days_in_utc(self, client, authz_db, admin_headers):
+        # The stored times are UTC; the server's own time zone must not move the cutoff (ADR-0262).
+        try:
+            with pytest.MonkeyPatch.context() as zone:
+                zone.setenv("TZ", "Asia/Kathmandu")  # UTC+05:45
+                time.tzset()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                with Session(authz_db.engine) as session:
+                    session.add(LoginAttempt(username="alice", success=True,
+                                             timestamp=now - timedelta(days=30, hours=-1)))
+                    session.add(LoginAttempt(username="bob", success=True, timestamp=now - timedelta(days=30, hours=1)))
+                    session.commit()
+
+                response = client.delete(f"{API}/security/login-history?older_than_days=30", headers=admin_headers)
+        finally:
+            time.tzset()  # the zone of the test run again
+
+        assert response.json() == {"status": "ok", "deleted_count": 1}
+        with Session(authz_db.engine) as session:
+            assert [a.username for a in session.scalars(select(LoginAttempt))] == ["alice"]
+
+    def test_times_are_answered_in_utc_with_their_offset(self, client, alice_headers):
+        # SQLite stores CURRENT_TIMESTAMP in UTC, to the second. Without an offset, a browser
+        # reads the time as its own local time (ADR-0262).
+        before = datetime.now(timezone.utc).replace(microsecond=0)
+        assert client.post(f"{API}/auth/login", json={"username": "alice", "password": PASSWORD}).status_code == 200
+        after = datetime.now(timezone.utc)
+
+        [attempt] = client.get(f"{API}/security/login-history", headers=alice_headers).json()["attempts"]
+
+        stamp = datetime.fromisoformat(attempt["timestamp"])
+        assert stamp.utcoffset() == timedelta(0), attempt["timestamp"]
+        assert before <= stamp <= after
+
+    def test_newest_first_also_within_one_second(self, client, authz_db, alice_headers):
+        # Times have whole seconds: a failed sign-in and the right one right after it share one.
+        second = datetime(2026, 11, 7, 12, 0, 0)
+        with Session(authz_db.engine) as session:
+            # Her account is older than these attempts: a user's history starts with the account (ADR-0263).
+            session.get(User, authz_db.alice_id).created_at = second - timedelta(days=1)
+            session.add(LoginAttempt(username="alice", success=False, failure_reason="Incorrect username or password",
+                                     timestamp=second))
+            session.add(LoginAttempt(username="alice", success=True, timestamp=second))
+            session.commit()
+
+        attempts = client.get(f"{API}/security/login-history", headers=alice_headers).json()["attempts"]
+
+        assert [(a["success"], a["timestamp"]) for a in attempts] == [
+            (True, "2026-11-07T12:00:00Z"),
+            (False, "2026-11-07T12:00:00Z"),
+        ]
+
+    def test_a_user_created_again_with_an_old_name_sees_only_their_own_attempts(
+        self, client, authz_db, admin_headers
+    ):
+        # The history is kept by name: attempts on "bob" before his new account, a sign-in of the bob
+        # deleted below two days ago and a failed attempt a second ago. The administrators still see
+        # them; the new bob's history starts with his account (ADR-0263).
+        now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+        with Session(authz_db.engine) as session:
+            session.add_all([
+                LoginAttempt(username="bob", ip_address="203.0.113.7", success=True, timestamp=now - timedelta(days=2)),
+                LoginAttempt(username="bob", ip_address="203.0.113.8", success=False,
+                             failure_reason="Incorrect username or password", timestamp=now - timedelta(seconds=1)),
+            ])
+            session.commit()
+        assert client.delete(
+            f"{API}/auth/users/{authz_db.bob_id}", params={"username": "bob"}, headers=admin_headers
+        ).status_code == 200
+        created = client.post(f"{API}/auth/users", json={"username": "bob", "password": PASSWORD}, headers=admin_headers)
+        assert created.status_code == 200, created.text
+        # His first sign-in, in the second of his account's creation or later.
+        login = client.post(f"{API}/auth/login", json={"username": "bob", "password": PASSWORD})
+        assert login.status_code == 200, login.text
+
+        own = client.get(f"{API}/security/login-history", headers=_auth(login.json()["access_token"])).json()
+        failed = client.get(
+            f"{API}/security/login-history?success=false", headers=_auth(login.json()["access_token"])
+        ).json()
+        everyone = client.get(f"{API}/security/login-history?username=bob", headers=admin_headers).json()
+
+        assert [(a["success"], a["ip_address"]) for a in own["attempts"]] == [(True, "testclient")]
+        assert (own["total"], own["success_count"], own["failed_count"]) == (1, 1, 0)
+        assert (failed["attempts"], failed["total"]) == ([], 1)
+        assert [a["ip_address"] for a in everyone["attempts"]] == ["testclient", "203.0.113.8", "203.0.113.7"]
+        assert (everyone["total"], everyone["failed_count"]) == (3, 1)
+
+    @pytest.mark.parametrize("days", [-1, 36501, 800000])
+    def test_clearing_refuses_a_period_out_of_range(self, client, authz_db, attempts, admin_headers, days):
+        # A negative period moved the cutoff into the future and deleted every row; 800000 days
+        # back is before the year 1 (a 500).
+        response = client.delete(f"{API}/security/login-history?older_than_days={days}", headers=admin_headers)
+
+        assert response.status_code == 422, response.text
+        with Session(authz_db.engine) as session:
+            assert len(session.scalars(select(LoginAttempt)).all()) == 3
+
+    def test_clearing_counts_back_up_to_100_years(self, client, attempts, admin_headers):
+        response = client.delete(f"{API}/security/login-history?older_than_days=36500", headers=admin_headers)
+
+        assert response.json() == {"status": "ok", "deleted_count": 0}
 
 
 def _compose(name):
@@ -671,6 +1007,23 @@ class TestRealClientAddress:
         assert ips == ["203.0.113.7", "198.51.100.4"]
         audit = audit_entries(tmp_path / "audit.jsonl")
         assert [entry["ip_address"] for entry in audit] == ["203.0.113.7", "198.51.100.4"]
+
+    def test_the_login_history_lists_the_browser_address_and_the_failed_attempts(
+        self, proxied_client, alice_headers
+    ):
+        assert self._login(proxied_client, "203.0.113.7").status_code == 401
+        assert self._login(proxied_client, "198.51.100.4", PASSWORD).status_code == 200
+
+        # What System > Security > Login History shows alice, newest first.
+        history = proxied_client.get(
+            f"{API}/security/login-history", headers={**alice_headers, "X-Forwarded-For": "192.0.2.1"}
+        ).json()
+
+        assert [(a["ip_address"], a["success"], a["failure_reason"]) for a in history["attempts"]] == [
+            ("198.51.100.4", True, None),
+            ("203.0.113.7", False, "Incorrect username or password"),
+        ]
+        assert (history["total"], history["success_count"], history["failed_count"]) == (2, 1, 1)
 
     def test_forwarded_header_is_not_trusted_without_the_proxy_layer(self, client, authz_db):
         """App code must not parse X-Forwarded-For itself: only uvicorn's trusted-proxy check may."""

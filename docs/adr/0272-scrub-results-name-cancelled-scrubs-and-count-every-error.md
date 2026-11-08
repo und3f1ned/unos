@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0250: A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports
+# ADR-0272: A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports
 
 ## Context
 

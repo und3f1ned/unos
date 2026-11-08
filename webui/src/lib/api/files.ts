@@ -70,8 +70,56 @@ export async function moveItems(sources: string[], destination: string): Promise
   return api.post(`/files/move?destination=${encodeURIComponent(destination)}`, sources);
 }
 
-export async function deleteItems(paths: string[]): Promise<{ deleted: string[] }> {
-  return api.delete("/files/delete", paths);
+/**
+ * Move items into the trash of their pool or volume (ADR-0259), or with
+ * `permanent` delete them for good at once.
+ */
+export async function deleteItems(paths: string[], permanent = false): Promise<{ deleted: string[] }> {
+  return api.delete(`/files/delete${permanent ? "?permanent=true" : ""}`, paths);
+}
+
+/** An item in the trash of a pool or a volume. */
+export interface TrashItem {
+  /** Its place in the trash: what restoreFromTrash and deleteFromTrash take. */
+  path: string;
+  /** The name it had (the entry's own name when its original path is not known). */
+  name: string;
+  type: "file" | "directory" | "symlink";
+  size: number;
+  /** Where it was deleted from; null when that is not known, and it cannot be restored. */
+  original_path: string | null;
+  /** When it was deleted, in UTC with its offset. */
+  deleted: string;
+  /** From then on it is deleted for good. */
+  expires: string;
+}
+
+export interface TrashListing {
+  /** Newest first. */
+  items: TrashItem[];
+  retention_days: number;
+  /** The trashes that could not be read, each with the reason. */
+  problems: string[];
+}
+
+/** The items in the trash of every pool and volume. */
+export async function listTrash(): Promise<TrashListing> {
+  return api.get<TrashListing>("/files/trash");
+}
+
+/** Put items of the trash back where they were; nothing is replaced. */
+export async function restoreFromTrash(paths: string[]): Promise<{ restored: string[] }> {
+  return api.post("/files/trash/restore", paths);
+}
+
+/** Delete items of the trash for good. */
+export async function deleteFromTrash(paths: string[]): Promise<{ deleted: string[] }> {
+  return api.delete("/files/trash", paths);
+}
+
+/** Delete everything in the trash of every pool and volume for good. */
+export async function emptyTrash(): Promise<{ deleted: number }> {
+  return api.post("/files/trash/empty");
 }
 
 export function formatSize(bytes: number): string {

@@ -12,7 +12,9 @@ const REGULAR = {
   username: `e2e_user_${Date.now().toString(36)}`,
   password: 'e2e-Regular-Password-1',
 };
-const ADMIN_ONLY_PAGES = ['/storage', '/snapshots', '/shares', '/files', '/containers', '/apps', '/users', '/audit'];
+const ADMIN_ONLY_PAGES = [
+  '/storage', '/snapshots', '/shares', '/files', '/files/trash', '/containers', '/apps', '/users', '/audit',
+];
 
 let adminToken = '';
 let userToken = '';
@@ -236,6 +238,29 @@ test.describe('Regular user account', () => {
     await expect(page.locator('h3:has-text("Firewall")')).toHaveCount(0);
     await expect(page.locator('h3:has-text("SSL/TLS Certificates")')).toHaveCount(0);
     expect(forbidden).toEqual([]);
+  });
+
+  test('a regular user can neither see nor create scheduled tasks', async ({ page, request }) => {
+    // A custom task runs a shell command as root (ADR-0044): the Scheduler is for administrators.
+    const forbidden = recordForbidden(page);
+    await openAs(page, userToken, '/system#scheduler');
+
+    await expect(page.locator('h2:has-text("Security Settings")')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scheduled Tasks' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'New Task' })).toHaveCount(0);
+    expect(forbidden).toEqual([]);
+
+    const asUser = { Authorization: `Bearer ${userToken}` };
+    const name = `E2E not allowed ${Date.now().toString(36)}`;
+    expect((await request.get('/api/v1/scheduler/tasks', { headers: asUser })).status()).toBe(403);
+    const created = await request.post('/api/v1/scheduler/tasks', {
+      headers: asUser,
+      data: { name, task_type: 'custom', enabled: true, frequency: 'daily', hour: 3, minute: 0, command: 'id' },
+    });
+    expect(created.status()).toBe(403);
+    const listed = await request.get('/api/v1/scheduler/tasks', { headers: { Authorization: `Bearer ${adminToken}` } });
+    expect(listed.ok()).toBeTruthy();
+    expect(((await listed.json()) as { name: string }[]).map((task) => task.name)).not.toContain(name);
   });
 
   test('two-factor setup draws the QR code in the browser', async ({ page, baseURL }) => {

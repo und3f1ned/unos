@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0248: GET /health/smart/trends reports every tracked disk, and trends read each counter from the snapshots that hold it
+# ADR-0270: GET /health/smart/trends reports every tracked disk, and trends read each counter from the snapshots that hold it
 
 ## Context
 

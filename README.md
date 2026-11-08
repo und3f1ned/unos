@@ -48,7 +48,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### File Sharing
 - **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux
-- **Web File Browser** - Upload, download, copy, move, rename, and manage files via browser
+- **Web File Browser** - Upload, download, copy, move, rename, and manage files via browser, with a trash that keeps deleted items for 30 days
 
 ### Application Platform
 - **70+ Curated Apps** - One-click installation of popular self-hosted applications
@@ -73,7 +73,8 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 
 ### Notifications
 - **Alerts** - Pool (RAID) errors and disk health (SMART) warnings go to every enabled e-mail and Telegram channel
-- **Channels** - E-mail and Telegram in System > Notifications; Discord, Slack and generic webhooks through the API, with test messages
+- **Channels** - E-mail (over STARTTLS or SMTPS with the mail server's certificate checked, or plain SMTP), Telegram, generic webhooks, Discord and Slack in System > Notifications, with test messages that name why one was not sent
+- **History** - The latest 100 notifications sent, tests and alerts included, newest first, with their result
 
 ### Task Scheduler
 - **Automated Snapshots** - Schedule periodic snapshot creation with retention

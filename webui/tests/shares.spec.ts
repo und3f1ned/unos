@@ -4,6 +4,7 @@ import {
   FAKE_PATHS,
   GUEST_WARNING,
   POOLS,
+  SMB_CONF_REPLACED,
   VERSION_CONFLICT,
   accessOf,
   fakeShare,
@@ -787,6 +788,21 @@ test.describe('SMB shares page (fake data)', () => {
     await report.getByRole('button', { name: 'Dismiss' }).click();
     await expect(report).toHaveCount(0);
     expect(fake.writes).toEqual([{ method: 'DELETE', path: '/shares/smb-status/import-report', body: null }]);
+  });
+
+  // ADR-0249: the status names an smb.conf that was replaced or removed after UNOS wrote it,
+  // which the server checks after every apply that left UNOS's file in place.
+  test('an smb.conf replaced after UNOS wrote it is named in the status', async ({ authenticatedPage: page }) => {
+    await fakeSmbApi(page, {
+      users: fakeUsers(),
+      shares: [fakeShare('docs', { available: true })],
+      status: { problems: [SMB_CONF_REPLACED] },
+    });
+    await page.goto('/shares');
+
+    const alert = page.locator('main .alert');
+    await expect(alert).toHaveCount(1);
+    await expect(alert).toHaveText(SMB_CONF_REPLACED);
   });
 
   test('a healthy status shows no alerts', async ({ authenticatedPage: page }) => {

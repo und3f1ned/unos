@@ -57,7 +57,7 @@
 	let pools: Pool[] = [];
 	let loading = true;
 	let error = '';
-	// Why the disk list or the pool list could not be loaded (ADR-0249). A disk list
+	// Why the disk list or the pool list could not be loaded (ADR-0271). A disk list
 	// that could not be loaded again is not offered either: it may no longer match the host.
 	let disksError = '';
 	let poolsError = '';
@@ -94,7 +94,7 @@
 
 	// Scrub state
 	let scrubStatuses: Record<string, ScrubStatus> = {};
-	// Why a pool's scrub status could not be read: shown instead of the last one (ADR-0250).
+	// Why a pool's scrub status could not be read: shown instead of the last one (ADR-0272).
 	let scrubErrors: Record<string, string> = {};
 	let scrubPollingIntervals: Record<string, ReturnType<typeof setInterval>> = {};
 	let startingScrub: Record<string, boolean> = {};
@@ -115,7 +115,7 @@
 		if (showSpinner) loading = true;
 		error = '';
 		// Each list on its own: one that cannot be loaded says why in its card instead
-		// of looking empty, and the other one is still shown (ADR-0249).
+		// of looking empty, and the other one is still shown (ADR-0271).
 		const [diskList, poolList] = await Promise.allSettled([getDisks(), getPools()]);
 		if (diskList.status === 'fulfilled') {
 			disks = diskList.value;
@@ -205,14 +205,14 @@
 	async function handleCancelScrub(poolName: string) {
 		try {
 			// btrfs can still report the scrub as running for a moment: then it is followed
-			// until it stopped (ADR-0250).
+			// until it stopped (ADR-0272).
 			showScrubStatus(poolName, await cancelScrub(poolName));
 		} catch (e) {
 			error = messageOf(e);
 		}
 	}
 
-	/** The result of a pool's last scrub, as btrfs reports it (ADR-0250). */
+	/** The result of a pool's last scrub, as btrfs reports it (ADR-0272). */
 	function scrubResult(status: ScrubStatus): { text: string; tone: 'success' | 'warning' | 'error' } {
 		const found = `${status.errors} error(s)`;
 		if (status.status === 'finished') {
@@ -879,7 +879,7 @@
 								</Alert>
 							{/if}
 
-							<!-- Scrub Status: progress while it runs, then the result (ADR-0250) -->
+							<!-- Scrub Status: progress while it runs, then the result (ADR-0272) -->
 							{#if pool.mounted && scrubErrors[pool.name]}
 								<Alert variant="warning" title="Could not read the scrub status" class="mt-3">
 									{scrubErrors[pool.name]}

@@ -497,7 +497,7 @@ def test_the_other_history_endpoints_say_so_too(api, disks, path):
 def test_a_read_during_a_write_gets_the_whole_old_history(api, disks, monkeypatch):
     disks.write({"WD-1": snapshots(FAILING)})
     old = disks.history_file.read_text()
-    # A rise: the pass writes the history (ADR-0247).
+    # A rise: the pass writes the history (ADR-0269).
     monkeypatch.setattr(subprocess, "run", smartctl_reports(4))
 
     with open(disks.history_file) as reader:

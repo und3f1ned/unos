@@ -37,11 +37,23 @@ def _test_pools_count_as_mounted(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _smart_history_not_read_yet(monkeypatch):
-    """The SMART monitor keeps its history in RAM from its first pass on (ADR-0247): every
+    """The SMART monitor keeps its history in RAM from its first pass on (ADR-0269): every
     test starts before that pass, so the SMART endpoints read the history file it writes."""
     health_router = sys.modules.get("src.health.router")
     if health_router is not None:
         monkeypatch.setattr(health_router, "_smart_history", health_router._SmartHistoryState())
+
+
+@pytest.fixture(autouse=True)
+def _notification_files_in_tmp_path(monkeypatch, tmp_path):
+    """The notification channels and their history are files under /data
+    (src/notifications/router.py), and every alert that a monitor sends is recorded in the
+    history: in the tests they live in the test's tmp_path, never in /data of this machine."""
+    import importlib
+
+    notifications = importlib.import_module("src.notifications.router")
+    monkeypatch.setattr(notifications, "CONFIG_FILE", str(tmp_path / "notifications.json"))
+    monkeypatch.setattr(notifications, "LOGS_FILE", str(tmp_path / "notification_logs.json"))
 
 
 @pytest.fixture

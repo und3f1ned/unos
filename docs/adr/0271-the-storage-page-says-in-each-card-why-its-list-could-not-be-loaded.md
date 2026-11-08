@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0249: The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded
+# ADR-0271: The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded
 
 ## Context
 
@@ -20,4 +20,4 @@ The Storage page loaded `GET /api/v1/storage/disks` and `GET /api/v1/storage/poo
 ## Consequences
 
 - As on Disk Health, a list that cannot be read is never taken for an empty one.
-- A pool whose scrub status cannot be read says so on its card (ADR-0250).
+- A pool whose scrub status cannot be read says so on its card (ADR-0272).

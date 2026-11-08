@@ -9,6 +9,8 @@
 	export let loading: boolean = false;
 	export let icon: ComponentType | null = null;
 	export let href: string | null = null;
+	// A toggle button (aria-pressed): true while what it shows or turns on is active.
+	export let pressed: boolean | undefined = undefined;
 
 	const variantClasses = {
 		primary: 'btn-primary',
@@ -43,6 +45,7 @@
 	<button
 		{type}
 		disabled={disabled || loading}
+		aria-pressed={pressed}
 		class={classes}
 		on:click
 	>

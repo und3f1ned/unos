@@ -51,7 +51,7 @@ GLOBAL_WITH_GUESTS = (
     .replace("server signing = mandatory", "server signing = default")
 )
 
-FIXED = """   veto files = /.snapshots/
+FIXED = """   veto files = /.snapshots/.unos-trash/
    force group = unos-smb
    create mask = 0660
    force create mode = 0660
@@ -177,7 +177,7 @@ class TestShareSections:
    valid users = root
    write list =
    available = no
-   veto files = /.snapshots/
+   veto files = /.snapshots/.unos-trash/
    force group = unos-smb
    create mask = 0660
    force create mode = 0660
@@ -192,7 +192,7 @@ class TestShareSections:
    valid users = alice, bob
    write list = alice
    available = yes
-   veto files = /.snapshots/
+   veto files = /.snapshots/.unos-trash/
    force group = unos-smb
    create mask = 0660
    force create mode = 0660

@@ -41,9 +41,10 @@ HOSTS_ALLOW = (
 )
 
 # The six fixed lines that end every share section (ADR-0147, ADR-0150); is_unos_section
-# looks for them.
+# looks for them. SMB clients neither see nor open the snapshots and the trash of a
+# shared volume (ADR-0259).
 _FIXED_SHARE_LINES: tuple[tuple[str, str], ...] = (
-    ("veto files", "/.snapshots/"),
+    ("veto files", "/.snapshots/.unos-trash/"),
     ("force group", constants.SMB_GROUP_NAME),
     ("create mask", f"{constants.SHARE_FILE_MODE:04o}"),
     ("force create mode", f"{constants.SHARE_FILE_MODE:04o}"),

@@ -14,7 +14,7 @@
     type FileInfo,
     type DirectoryListing,
   } from "$lib/api/files";
-  import { Alert, Button, Input } from "$lib/components/ui";
+  import { Alert, Button, Input, Modal } from "$lib/components/ui";
   import {
     Folder,
     File,
@@ -25,6 +25,7 @@
     ChevronRight,
     ArrowUp,
     Plus,
+    Trash,
     Trash2,
     Upload,
     Download,
@@ -190,20 +191,80 @@
     }
   }
 
-  async function handleDelete() {
+  // The Delete dialog (ADR-0259): the items it is about while it is open, which
+  // of its choices is on its way, and the server's refusal. Delete for good is
+  // on offer only once the server refused to move the items to the trash
+  // because they have none there, or it cannot be used (409), or their pool
+  // has no space left (507): Delete in Files is never one click away from
+  // deleting for good.
+  let deleting: string[] | null = null;
+  let deleteSending: "trash" | "permanent" | null = null;
+  let deleteError = "";
+  let deleteErrorTitle = "";
+  let offerForGood = false;
+  // The toolbar's Delete button and the dialog's Cancel and Move to trash, for the keyboard focus.
+  let deleteButtonSlot: HTMLSpanElement | null = null;
+  let deleteCancelSlot: HTMLSpanElement | null = null;
+  let moveToTrashSlot: HTMLSpanElement | null = null;
+
+  // Move to trash takes the keyboard focus, as the browser's own confirmation
+  // did: Enter moves the items to the trash, Escape keeps them.
+  async function askDelete() {
     if (selected.size === 0) return;
-    if (!confirm(`Delete ${selected.size} item(s)?`)) return;
+    deleting = Array.from(selected);
+    deleteError = "";
+    offerForGood = false;
+    await tick();
+    moveToTrashSlot?.querySelector("button")?.focus();
+  }
+
+  async function closeDelete() {
+    if (deleteSending) return;
+    deleting = null;
+    await tick();
+    deleteButtonSlot?.querySelector("button")?.focus();
+  }
+
+  // Into the trash, or with `permanent` deleted for good at once. A refusal
+  // keeps the dialog open with the server's reason, about the items that are
+  // still in the folder: the server may have moved or deleted some before it
+  // refused one, and says how many. The keyboard focus goes to Cancel.
+  async function handleDelete(permanent: boolean) {
+    if (!deleting || deleteSending || (permanent && !offerForGood)) return;
     error = "";
+    deleteError = "";
     busy = true;
+    deleteSending = permanent ? "permanent" : "trash";
+    let refusal: unknown = null;
     try {
-      await deleteItems(Array.from(selected));
+      await deleteItems(deleting, permanent);
+      deleting = null;
       selected = new Set();
     } catch (e) {
-      showError("Could not delete", e);
+      refusal = e;
     } finally {
       busy = false;
+      deleteSending = null;
     }
     await refresh();
+    if (refusal === null || deleting === null) return;
+    if (refusal instanceof ApiError && refusal.status === 401) return;
+    const title = permanent ? "Could not delete for good" : "Could not move to the trash";
+    const message = refusal instanceof Error ? refusal.message : String(refusal);
+    const listed = new Set(listing?.items.map((item) => item.path) ?? []);
+    const left = deleting.filter((path) => listed.has(path));
+    selected = new Set(left);
+    if (left.length === 0) {
+      deleting = null;
+      error = `${title}: ${message}`;
+      return;
+    }
+    deleting = left;
+    deleteErrorTitle = title;
+    deleteError = message;
+    if (refusal instanceof ApiError && (refusal.status === 409 || refusal.status === 507)) offerForGood = true;
+    await tick();
+    deleteCancelSlot?.querySelector("button")?.focus();
   }
 
   function startTransfer(mode: Transfer) {
@@ -413,6 +474,7 @@
       >
         <RefreshCw class="w-5 h-5 {loading ? 'animate-spin' : ''}" />
       </button>
+      <Button variant="secondary" icon={Trash} href="/files/trash">Trash</Button>
     </div>
   </div>
 
@@ -479,15 +541,17 @@
     >
       Rename
     </Button>
-    <Button
-      variant="danger"
-      size="sm"
-      icon={Trash2}
-      disabled={working || selected.size === 0}
-      on:click={handleDelete}
-    >
-      Delete
-    </Button>
+    <span bind:this={deleteButtonSlot} class="contents">
+      <Button
+        variant="danger"
+        size="sm"
+        icon={Trash2}
+        disabled={working || selected.size === 0}
+        on:click={askDelete}
+      >
+        Delete
+      </Button>
+    </span>
   </div>
 
   <!-- Copy or move in progress: the destination is the folder that is open -->
@@ -638,3 +702,73 @@
     </div>
   {/if}
 </div>
+
+<Modal
+  open={deleting !== null}
+  title={deleting?.length === 1 ? "Delete 1 item" : `Delete ${deleting?.length ?? 0} items`}
+  closable={deleteSending === null}
+  on:close={closeDelete}
+>
+  {#if deleting}
+    <div class="space-y-3">
+      {#if deleting.length === 1}
+        <p class="text-sm">
+          Move the selected item to the trash? You can restore it on the Trash page until it is deleted for
+          good; until then it still takes up space in its pool.
+        </p>
+      {:else}
+        <p class="text-sm">
+          Move the {deleting.length} selected items to the trash? You can restore them on the Trash page
+          until they are deleted for good; until then they still take up space in their pool.
+        </p>
+      {/if}
+      {#if deleteError}
+        <!-- role="alert": screen readers announce the server's refusal. -->
+        <div role="alert">
+          <Alert variant="error" title={deleteErrorTitle}>{deleteError}</Alert>
+        </div>
+      {/if}
+      {#if offerForGood}
+        <p class="text-sm text-secondary">
+          {#if deleting.length === 1}
+            Delete for good deletes it at once, without the trash, and frees its space. This cannot be undone.
+          {:else}
+            Delete for good deletes them at once, without the trash, and frees their space. This cannot be
+            undone.
+          {/if}
+        </p>
+      {/if}
+    </div>
+  {/if}
+
+  <svelte:fragment slot="footer">
+    <span bind:this={deleteCancelSlot} class="contents">
+      <Button variant="secondary" class="flex-1" disabled={deleteSending !== null} on:click={closeDelete}>
+        Cancel
+      </Button>
+    </span>
+    {#if offerForGood}
+      <Button
+        variant="danger"
+        class="flex-1"
+        icon={Trash2}
+        loading={deleteSending === "permanent"}
+        disabled={deleteSending !== null}
+        on:click={() => handleDelete(true)}
+      >
+        Delete for good
+      </Button>
+    {/if}
+    <span bind:this={moveToTrashSlot} class="contents">
+      <Button
+        class="flex-1"
+        icon={Trash}
+        loading={deleteSending === "trash"}
+        disabled={deleteSending !== null}
+        on:click={() => handleDelete(false)}
+      >
+        Move to trash
+      </Button>
+    </span>
+  </svelte:fragment>
+</Modal>
