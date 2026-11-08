@@ -364,8 +364,9 @@ and this index, and `make check-fast` runs it.
 | [0223](0223-device-deploys-keep-backups-and-rollback-copies-on-the-workstation.md) | Device deploys keep backups and rollback copies on the workstation | accepted | 2026-11-07 |
 | [0225](0225-the-device-runs-from-its-sd-card-and-never-writes-the-emmc.md) | The dev device runs from its SD card and never writes its eMMC | accepted | 2026-11-07 |
 | [0226](0226-dev-device-ssh-by-key-only-with-rotated-passwords.md) | The dev device takes SSH by key only, and the passwords once published are rotated | accepted | 2026-11-07 |
-| [0227](0227-no-ipv6-inbound-filter-on-the-dev-device-for-now.md) | No inbound IPv6 filter on the dev device for now; each service protects itself | accepted | 2026-11-07 |
+| [0227](0227-no-ipv6-inbound-filter-on-the-dev-device-for-now.md) | No inbound IPv6 filter on the dev device for now; each service protects itself | superseded by [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | 2026-11-07 |
 | [0228](0228-docker-data-root-stays-on-the-sd-card.md) | Docker's data root stays on the dev device's SD card | accepted | 2026-11-07 |
+| [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | The dev device admits inbound IPv6 to its services only from the LAN | accepted | 2026-11-08 |
 
 ## Testing
 

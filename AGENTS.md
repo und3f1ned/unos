@@ -46,7 +46,7 @@ The one exception is the web UI's Russian texts and the tests that check them (A
 | `make smoke` | In a few seconds, through existing backend tests: the app starts and serves health, first-run setup and login. The baseline of a session. |
 | `make e2e-local` | The Playwright specs pass against the local stand-in: the real supervisor and the built web UI on this machine. `scripts/standin/e2e.sh <spec> [args]` runs a part. |
 | `scripts/dev/linux-tests.sh [pytest args]` | The backend tests pass on Linux, in the dev device's RAM: the ones that skip on macOS. |
-| `scripts/dev/check.sh` | The dev device is healthy: containers, Samba, the API, SD writes since boot. Read-only. |
+| `scripts/dev/check.sh` | The dev device is healthy: containers, Samba, the API, the inbound IPv6 filter, SD writes since boot. Read-only. |
 | `scripts/dev/api.py METHOD PATH` | What the API on the dev device answers. Methods other than GET change the device. |
 | `scripts/dev/deploy.sh status` | Which runtime files differ between this tree and the device. `status`, `sync --dry-run` and `backup` only read the device (ADR-0223); `backup` copies its secrets into the git-ignored `tmp/dev/backup` and keeps the newest 3 copies. |
 | `scripts/dev/sd.sh measure <label> -- <command>` | How many MiB a command wrote to the device's SD card. |
@@ -108,8 +108,9 @@ A denial by the guard or the permission system is an answer: ask the owner how t
 
 - The dev device runs from an SD card that wears with every write; its eMMC keeps the vendor's
   firmware and is never written (ADR-0214, ADR-0225). Reach the device only through `scripts/dev/`
-  (ADR-0016), scratch files in its `/dev/shm`. `deploy.sh` and `linux-tests.sh` hold the device
-  lock (ADR-0210) and print `SD writes`; `sd.sh measure` measures any command. Builds, `up` and
+  (ADR-0016), scratch files in its `/dev/shm`. `deploy.sh`, `linux-tests.sh` and `ipv6-filter.sh`
+  (install, remove) hold the device lock (ADR-0210) and print `SD writes`; `sd.sh measure`
+  measures any command. Builds, `up` and
   `rollback` go through `deploy.sh`, on the owner's request (ADR-0223). Container runs, image pulls,
   prunes, package installs and reboots on the device are owner actions (ADR-0211). Enforced by the
   guard, which also blocks disk-wiping tools everywhere (`supervisor/tests/test_agent_guard.py`).
