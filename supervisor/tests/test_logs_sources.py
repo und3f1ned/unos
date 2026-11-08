@@ -35,10 +35,13 @@ from src.auth.utils import verify_token
 from src.host import HostCommandError, HostResult
 from src.main import app
 
+from .webui_catalogs import key_map, read_catalog
+
 logs = importlib.import_module("src.logs.router")
 
 REPO = Path(__file__).resolve().parents[2]
 API = "/api/v1/logs"
+LOGS_TAB = REPO / "webui" / "src" / "routes" / "system" / "tabs" / "LogsTab.svelte"
 
 LEVELS = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
 BOOT = "6f0c3c2b1a9e4d7f8e5b4a3c2d1e0f9a"
@@ -72,10 +75,9 @@ DID_NOT_ANSWER = CANNOT_READ + "journalctl did not answer within 30 seconds"
 
 
 def _web_ui_values(name: str) -> list[str]:
-    """The values of the options list ``name`` of webui/src/lib/api/logs.ts, which the tab sends."""
-    module = (REPO / "webui" / "src" / "lib" / "api" / "logs.ts").read_text(encoding="utf-8")
-    options = module[module.index(f"export const {name}"):]
-    return re.findall(r'value: "([^"]*)"', options[: options.index("];")])
+    """The values of the map ``name`` of System > Logs (LogsTab.svelte), in its order: the values
+    the tab sends, or shows, by the keys of their texts in the catalog (ADR-0287)."""
+    return list(key_map(LOGS_TAB, name))
 
 
 # The time ranges of the tab ("" is all time: no since).
@@ -415,7 +417,9 @@ class TestSeverity:
         ]
 
     def test_the_tabs_levels_are_the_apis(self):
-        assert _web_ui_values("PRIORITY_LEVELS") == LEVELS
+        # Those of the filter, and the names of an entry's level in the list.
+        assert _web_ui_values("PRIORITIES") == LEVELS
+        assert _web_ui_values("LEVELS") == LEVELS
 
     def test_an_entrys_level_is_the_one_its_program_logged_with(self, client, journal):
         # sshd logs a failed password at info: no level is guessed from words like "failed" or "accepted".
@@ -815,3 +819,18 @@ def test_the_e2e_fakes_answer_with_the_servers_texts():
         for text in (source["name"], source["label"], source["description"]):
             assert text in spec, text
     assert f"{logs.CANNOT_READ}: journalctl did not answer within {logs.JOURNAL_TIMEOUT} seconds" in spec
+
+
+def test_the_web_ui_names_each_source_in_english_as_the_server_does_and_in_russian():
+    """System > Logs shows a source of GET /sources by its name, with the label and the
+    description of the logs catalog (ADR-0287): in English the server's texts word for word, as
+    the E2E fakes copy them, and in Russian. A source without them shows the server's texts."""
+    labels = key_map(LOGS_TAB, "SOURCE_LABELS")
+    descriptions = key_map(LOGS_TAB, "SOURCE_DESCRIPTIONS")
+    assert list(labels) == list(descriptions) == list(logs.LOG_SOURCES)
+
+    catalog = read_catalog("logs")  # skips without node
+    for name, source in logs.LOG_SOURCES.items():
+        assert catalog["en"][labels[name]] == source.label
+        assert catalog["en"][descriptions[name]] == source.description
+        assert catalog["ru"][labels[name]] and catalog["ru"][descriptions[name]]

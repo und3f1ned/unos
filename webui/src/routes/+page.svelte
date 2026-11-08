@@ -15,6 +15,7 @@
   import { getDiskPredictions, replaceSoon, type DiskPrediction } from "$lib/api/health";
   import { stats, wsConnected, wsForbidden, type WebSocketStats } from "$lib/stores/stats";
   import { user } from "$lib/stores/auth";
+  import { intlLocale, t } from "$lib/i18n";
 
   let systemInfo: SystemInfo | null = null;
   let pools: Pool[] = [];
@@ -53,7 +54,7 @@
     } catch (e) {
       toReplace = [];
       predictionsError =
-        e instanceof Error && e.message ? e.message : "Could not load the failure predictions";
+        e instanceof Error && e.message ? e.message : $t("dashboard.replace.loadFailed");
     }
   }
 
@@ -84,21 +85,20 @@
     await loadData();
   }
 
-  function formatUptime(bootTime: number): string {
+  $: formatUptime = (bootTime: number): string => {
     // bootTime is Unix timestamp of boot
     const now = Date.now() / 1000;
     const seconds = Math.floor(now - bootTime);
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    if (days > 0) return days + "d " + hours + "h";
-    if (hours > 0) return hours + "h " + mins + "m";
-    return mins + "m";
-  }
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (days > 0) return $t("dashboard.uptime.days", { days, hours });
+    if (hours > 0) return $t("dashboard.uptime.hours", { hours, minutes });
+    return $t("dashboard.uptime.minutes", { minutes });
+  };
 
-  function formatTime(date: Date): string {
-    return date.toLocaleTimeString();
-  }
+  // In the language of the page.
+  $: formatTime = (date: Date): string => date.toLocaleTimeString($intlLocale);
 
   // Get first temperature value from temperatures object
   function getFirstTemperature(temps: Record<string, number> | undefined): number | null {
@@ -133,7 +133,7 @@
   $: notificationsForWidget = notificationLogs.map(log => ({
     id: log.id,
     type: log.event?.type || "info",
-    title: log.event?.title || "Notification",
+    title: log.event?.title || $t("dashboard.notification"),
     message: log.event?.message || "",
     created_at: log.sent_at,
     read: log.success
@@ -146,28 +146,28 @@
     <div class="flex items-center gap-3">
       <Server class="w-8 h-8 text-blue-500" />
       <div>
-        <h1 class="text-2xl font-bold">{systemInfo?.hostname || "UNOS"}</h1>
+        <h1 class="text-2xl font-bold">{systemInfo?.hostname || $t("common.product")}</h1>
         {#if systemInfo}
           <p class="text-sm text-slate-400">
-            {systemInfo.os} • Uptime: {formatUptime(systemInfo.uptime)}
+            {$t("dashboard.osUptime", { os: systemInfo.os, uptime: formatUptime(systemInfo.uptime) })}
           </p>
         {/if}
       </div>
     </div>
     <div class="flex items-center gap-4">
       {#if $wsForbidden}
-        <span class="text-xs text-warning">Live stats are not available for this account</span>
+        <span class="text-xs text-warning">{$t("dashboard.liveStatsForbidden")}</span>
       {:else if !$wsConnected}
-        <span class="text-xs text-warning">WebSocket disconnected</span>
+        <span class="text-xs text-warning">{$t("dashboard.disconnected")}</span>
       {:else if lastUpdate}
         <span class="text-xs text-slate-500 flex items-center gap-1">
           <Clock class="w-3 h-3" />
-          Updated {formatTime(lastUpdate)}
+          {$t("dashboard.updated", { time: formatTime(lastUpdate) })}
         </span>
       {/if}
       <Button variant="secondary" size="icon" on:click={handleRefresh} disabled={loading}>
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-        <span class="sr-only">Refresh</span>
+        <span class="sr-only">{$t("common.refresh")}</span>
       </Button>
     </div>
   </div>
@@ -192,18 +192,19 @@
 
     {#if isAdmin}
       {#if toReplace.length > 0}
-        <Alert variant="error" title="Replace soon">
+        <Alert variant="error" title={$t("dashboard.replace.title")}>
           <ul class="space-y-1 text-sm">
             {#each toReplace as prediction}
               <li>
-                <span class="mono">{prediction.device}</span> (serial {prediction.serial}): {prediction.risk_factors.join("; ")}
+                <span class="mono">{prediction.device}</span>
+                {$t("dashboard.replace.disk", { serial: prediction.serial, reasons: prediction.risk_factors.join("; ") })}
               </li>
             {/each}
           </ul>
-          <a href="/system#health" class="text-sm text-info hover:underline">Disk Health</a>
+          <a href="/system#health" class="text-sm text-info hover:underline">{$t("dashboard.replace.diskHealth")}</a>
         </Alert>
       {:else if predictionsError}
-        <Alert variant="warning" title="Could not check the disks for a predicted failure">
+        <Alert variant="warning" title={$t("dashboard.replace.checkFailed")}>
           {predictionsError}
         </Alert>
       {/if}
@@ -230,11 +231,11 @@
         <div class="flex items-start gap-3">
           <UserCog class="w-5 h-5 text-info mt-0.5" />
           <div>
-            <p class="font-medium">Signed in as {$user?.username}</p>
+            <p class="font-medium">{$t("dashboard.user.signedInAs", { name: $user?.username ?? "" })}</p>
             <p class="text-sm text-secondary">
-              Storage, shares, containers and apps are managed by an administrator.
-              You can change your password, two-factor authentication and review your
-              sign-ins under <a href="/system#security" class="text-info hover:underline">Account</a>.
+              {$t("dashboard.user.managed")}
+              {$t("dashboard.user.account")}
+              <a href="/system#security" class="text-info hover:underline">{$t("dashboard.user.accountLink")}</a>.
             </p>
           </div>
         </div>

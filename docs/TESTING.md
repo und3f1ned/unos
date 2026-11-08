@@ -293,7 +293,10 @@ is set, and throws for a `BASE_URL` or `HTTP_URL` whose host is not `localhost`,
 `tests/https.spec.ts`. `E2E_CHROMIUM_PATH` points Playwright at another Chromium binary on a
 machine that cannot download Playwright's own. The browser runs in en-US (`locale`): without a
 language chosen in it, the web UI starts in the browser's language, and the specs find its
-elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0287).
+elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0287), and so
+do the tests of a translated area that check its pages in Russian, such as those of
+`tests/dashboard.spec.ts` and `tests/files.spec.ts` (the language kept in the browser's
+`localStorage` as `unos-locale`).
 
 The stand-in is not a NAS host: it has no disks or pools that UNOS manages, no Docker, no Samba,
 and not the host's network, journal or `/proc`. With `E2E_STAND_IN=1`, the specs that need those

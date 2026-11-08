@@ -1,0 +1,151 @@
+import type { Translation } from '../translate';
+
+// System > Disk Health: src/routes/system/tabs/HealthTab.svelte. smartctl's names (models,
+// attributes, self-test results) and the reasons of a failure prediction stay as the server
+// answers them; a disk's capacity takes the number format and the unit of the page.
+
+export const en = {
+	'health.title': 'Disk Health',
+	'health.refresh': 'Refresh disk health',
+	'health.loadError': 'Could not load disk health',
+	'health.noDisks': 'No disks found',
+	'health.disks': 'Disks',
+	'health.predictionsError': 'Could not load the failure predictions',
+	'health.replaceSoon': 'Replace soon',
+	'health.unmatched':
+		'No disk in the list reports the serial number of these disks now: smartctl could not read the disk this time, or another disk took its place.',
+	'health.serialOf': 'serial {serial}',
+	'health.celsius': '{value} °C',
+	'health.smartData': 'SMART data',
+	// After SMART data, for screen readers: "SMART data of /dev/sda".
+	'health.smartDataOf': 'of {device}',
+
+	// A disk's overall health (SmartInfo.health_status), as the server answers it.
+	'health.status.passed': 'PASSED',
+	'health.status.failed': 'FAILED',
+	'health.status.unknown': 'UNKNOWN',
+
+	'health.overall': 'Overall health',
+	'health.temperature': 'Temperature',
+	'health.powerOnHours': 'Power-on hours',
+	'health.powerCycles': 'Power cycles',
+	'health.serial': 'Serial',
+	'health.firmware': 'Firmware',
+	'health.capacity': 'Capacity',
+	// A capacity by its unit, as the server writes it: {size} is the number.
+	'health.size.gb': '{size} GB',
+	'health.size.tb': '{size} TB',
+	'health.lastSelfTest': 'Last self-test',
+	'health.notReported': 'Not reported',
+	'health.noSelfTest': 'None recorded',
+	// The power-on hours as years and days, or days and hours. English as before the catalogs,
+	// also for one.
+	'health.years': { one: '{n} years', other: '{n} years' },
+	'health.days': { one: '{n} days', other: '{n} days' },
+	'health.hours': { one: '{n} hours', other: '{n} hours' },
+
+	'health.attributes': 'SMART attributes',
+	'health.attribute.id': 'ID',
+	'health.attribute.name': 'Attribute',
+	'health.attribute.value': 'Value',
+	'health.attribute.worst': 'Worst',
+	'health.attribute.threshold': 'Threshold',
+	'health.attribute.raw': 'Raw value',
+	'health.attribute.status': 'Status',
+	// An attribute's state (SmartAttribute.status).
+	'health.attribute.ok': 'OK',
+	'health.attribute.warning': 'Warning',
+	'health.attribute.critical': 'Failing',
+	'health.noAttributes': 'smartctl reported no SMART attributes for this disk.',
+
+	'health.nvmeLog': 'NVMe SMART/Health Information log',
+	'health.nvmeField': 'Health information',
+	// The numbers of an NVMe disk's SMART/Health Information log by smartctl's names; in English
+	// the name with spaces and a capital, as a number without a key is shown.
+	'health.nvme.criticalWarning': 'Critical warning',
+	'health.nvme.temperature': 'Temperature',
+	'health.nvme.availableSpare': 'Available spare',
+	'health.nvme.availableSpareThreshold': 'Available spare threshold',
+	'health.nvme.percentageUsed': 'Percentage used',
+	'health.nvme.dataUnitsRead': 'Data units read',
+	'health.nvme.dataUnitsWritten': 'Data units written',
+	'health.nvme.hostReads': 'Host reads',
+	'health.nvme.hostWrites': 'Host writes',
+	'health.nvme.controllerBusyTime': 'Controller busy time',
+	'health.nvme.powerCycles': 'Power cycles',
+	'health.nvme.powerOnHours': 'Power on hours',
+	'health.nvme.unsafeShutdowns': 'Unsafe shutdowns',
+	'health.nvme.mediaErrors': 'Media errors',
+	'health.nvme.errorLogEntries': 'Num err log entries',
+	'health.nvme.warningTempTime': 'Warning temp time',
+	'health.nvme.criticalCompTime': 'Critical comp time'
+};
+
+export const ru: Translation<typeof en> = {
+	'health.title': 'Состояние дисков',
+	'health.refresh': 'Обновить состояние дисков',
+	'health.loadError': 'Не удалось загрузить состояние дисков',
+	'health.noDisks': 'Диски не найдены',
+	'health.disks': 'Диски',
+	'health.predictionsError': 'Не удалось загрузить прогнозы отказов',
+	'health.replaceSoon': 'Пора заменить',
+	'health.unmatched':
+		'Ни один диск в списке сейчас не сообщает серийный номер этих дисков: smartctl не смог прочитать диск в этот раз, или на его месте теперь другой диск.',
+	'health.serialOf': 'серийный номер {serial}',
+	'health.celsius': '{value} °C',
+	'health.smartData': 'Данные SMART',
+	'health.smartDataOf': 'диска {device}',
+
+	'health.status.passed': 'ИСПРАВЕН',
+	'health.status.failed': 'НЕИСПРАВЕН',
+	'health.status.unknown': 'НЕИЗВЕСТНО',
+
+	'health.overall': 'Общее состояние',
+	'health.temperature': 'Температура',
+	'health.powerOnHours': 'Часы работы',
+	'health.powerCycles': 'Циклы включения',
+	'health.serial': 'Серийный номер',
+	'health.firmware': 'Прошивка',
+	'health.capacity': 'Ёмкость',
+	'health.size.gb': '{size} ГБ',
+	'health.size.tb': '{size} ТБ',
+	'health.lastSelfTest': 'Последняя самопроверка',
+	'health.notReported': 'Нет данных',
+	'health.noSelfTest': 'Не проводилась',
+	'health.years': { one: '{n} год', few: '{n} года', many: '{n} лет' },
+	'health.days': { one: '{n} день', few: '{n} дня', many: '{n} дней' },
+	'health.hours': { one: '{n} час', few: '{n} часа', many: '{n} часов' },
+
+	'health.attributes': 'Атрибуты SMART',
+	'health.attribute.id': 'ID',
+	'health.attribute.name': 'Атрибут',
+	'health.attribute.value': 'Значение',
+	'health.attribute.worst': 'Наихудшее',
+	'health.attribute.threshold': 'Порог',
+	'health.attribute.raw': 'Raw-значение',
+	'health.attribute.status': 'Состояние',
+	'health.attribute.ok': 'Норма',
+	'health.attribute.warning': 'Внимание',
+	'health.attribute.critical': 'Сбой',
+	'health.noAttributes': 'smartctl не сообщил атрибутов SMART для этого диска.',
+
+	'health.nvmeLog': 'Журнал NVMe SMART/Health Information',
+	'health.nvmeField': 'Сведения о состоянии',
+	'health.nvme.criticalWarning': 'Критическое предупреждение',
+	'health.nvme.temperature': 'Температура',
+	'health.nvme.availableSpare': 'Доступный резерв',
+	'health.nvme.availableSpareThreshold': 'Порог доступного резерва',
+	'health.nvme.percentageUsed': 'Израсходованный ресурс',
+	'health.nvme.dataUnitsRead': 'Прочитано единиц данных',
+	'health.nvme.dataUnitsWritten': 'Записано единиц данных',
+	'health.nvme.hostReads': 'Команды чтения от хоста',
+	'health.nvme.hostWrites': 'Команды записи от хоста',
+	'health.nvme.controllerBusyTime': 'Время занятости контроллера',
+	'health.nvme.powerCycles': 'Циклы включения',
+	'health.nvme.powerOnHours': 'Часы работы',
+	'health.nvme.unsafeShutdowns': 'Небезопасные выключения',
+	'health.nvme.mediaErrors': 'Ошибки носителя',
+	'health.nvme.errorLogEntries': 'Записи в журнале ошибок',
+	'health.nvme.warningTempTime': 'Время при повышенной температуре',
+	'health.nvme.criticalCompTime': 'Время при критической температуре'
+};

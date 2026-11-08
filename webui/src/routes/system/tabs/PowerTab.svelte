@@ -15,6 +15,7 @@
     type WolInterface,
   } from "$lib/api/power";
   import { Alert, Badge, Button, Card, EmptyState, Modal } from "$lib/components/ui";
+  import { intlLocale, t } from "$lib/i18n";
 
   // Reboot, shutdown, suspend and Wake-on-LAN act on the host (ADR-0233):
   // reboot and shutdown one minute after the confirmation, so that they can
@@ -22,31 +23,32 @@
 
   type Action = "reboot" | "shutdown" | "suspend";
 
+  // The confirmation of each action: the keys of its texts in the catalog.
   const ACTIONS: Record<
     Action,
-    { title: string; text: string; confirm: string; failed: string; variant: "warning" | "danger"; run: () => Promise<PowerAnswer> }
+    { titleKey: string; textKey: string; confirmKey: string; failedKey: string; variant: "warning" | "danger"; run: () => Promise<PowerAnswer> }
   > = {
     reboot: {
-      title: "Reboot the host?",
-      text: "The host reboots one minute after you confirm; until then you can cancel the reboot here. Shares, apps and this page are unavailable until the host is back.",
-      confirm: "Reboot in 1 minute",
-      failed: "The reboot was not scheduled",
+      titleKey: "power.reboot.title",
+      textKey: "power.reboot.text",
+      confirmKey: "power.reboot.confirm",
+      failedKey: "power.reboot.failed",
       variant: "warning",
       run: rebootSystem,
     },
     shutdown: {
-      title: "Shut down the host?",
-      text: "The host shuts down one minute after you confirm; until then you can cancel the shutdown here. It starts again with its power button, or with a Wake-on-LAN packet where the board supports that.",
-      confirm: "Shut down in 1 minute",
-      failed: "The shutdown was not scheduled",
+      titleKey: "power.shutdown.title",
+      textKey: "power.shutdown.text",
+      confirmKey: "power.shutdown.confirm",
+      failedKey: "power.shutdown.failed",
       variant: "danger",
       run: shutdownSystem,
     },
     suspend: {
-      title: "Suspend the host?",
-      text: "The host suspends at once and sleeps until its power button or a Wake-on-LAN packet wakes it. Shares, apps and this page are unavailable meanwhile.",
-      confirm: "Suspend now",
-      failed: "The host was not suspended",
+      titleKey: "power.suspend.title",
+      textKey: "power.suspend.text",
+      confirmKey: "power.suspend.confirm",
+      failedKey: "power.suspend.failed",
       variant: "danger",
       run: suspendSystem,
     },
@@ -152,7 +154,7 @@
     try {
       const updated = on ? await enableWol(iface.name) : await disableWol(iface.name);
       interfaces = interfaces.map((i) => (i.name === updated.name ? updated : i));
-      notice = `Wake-on-LAN is ${updated.enabled ? "on" : "off"} for ${updated.name}`;
+      notice = $t(updated.enabled ? "power.wol.turnedOn" : "power.wol.turnedOff", { name: updated.name });
       actionError = "";
     } catch (e) {
       notice = "";
@@ -164,15 +166,15 @@
     }
   }
 
-  function timeOf(at: string): string {
-    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  }
+  // In the language of the page; reactive, so that a pending action follows a change of the language.
+  $: timeOf = (at: string): string =>
+    new Date(at).toLocaleTimeString($intlLocale, { hour: "2-digit", minute: "2-digit" });
 
   $: confirmation = asking ? ACTIONS[asking] : null;
 </script>
 
 <div class="space-y-6">
-  <h2 class="text-xl font-bold">Power Management</h2>
+  <h2 class="text-xl font-bold">{$t("power.title")}</h2>
 
   {#if notice}
     <div role="status">
@@ -188,32 +190,33 @@
   <Card>
     <h3 class="section-title mb-4">
       <Power class="w-5 h-5" />
-      Reboot, shutdown and suspend
+      {$t("power.actions.title")}
     </h3>
     <div class="space-y-4">
       {#if pendingError}
-        <Alert variant="error" title="The pending reboot or shutdown could not be read">{pendingError}</Alert>
+        <Alert variant="error" title={$t("power.pending.readError")}>{pendingError}</Alert>
       {:else if pending?.action}
-        <Alert variant="warning" title={pending.action === "reboot" ? "A reboot is pending" : "A shutdown is pending"}>
+        {@const reboot = pending.action === "reboot"}
+        <Alert variant="warning" title={reboot ? $t("power.pending.reboot") : $t("power.pending.shutdown")}>
           <div class="flex flex-wrap items-center gap-3">
             <p>
-              The host {pending.action === "reboot" ? "reboots" : "shuts down"}
-              {pending.at ? `at ${timeOf(pending.at)}` : "within a minute"}.
+              {#if pending.at}
+                {$t(reboot ? "power.pending.rebootAt" : "power.pending.shutdownAt", { time: timeOf(pending.at) })}
+              {:else}
+                {reboot ? $t("power.pending.rebootSoon") : $t("power.pending.shutdownSoon")}
+              {/if}
             </p>
             <Button variant="secondary" size="sm" loading={cancelling} on:click={cancelPending}>
-              Cancel {pending.action}
+              {reboot ? $t("power.pending.cancelReboot") : $t("power.pending.cancelShutdown")}
             </Button>
           </div>
         </Alert>
       {/if}
-      <p class="text-sm text-secondary">
-        Reboot and Shutdown act on the host one minute after you confirm, and you can cancel them here
-        until then. Suspend acts at once.
-      </p>
+      <p class="text-sm text-secondary">{$t("power.actions.hint")}</p>
       <div class="flex flex-wrap gap-3">
-        <Button variant="warning" icon={RotateCcw} on:click={() => ask("reboot")}>Reboot</Button>
-        <Button variant="danger" icon={Power} on:click={() => ask("shutdown")}>Shutdown</Button>
-        <Button variant="secondary" icon={Moon} on:click={() => ask("suspend")}>Suspend</Button>
+        <Button variant="warning" icon={RotateCcw} on:click={() => ask("reboot")}>{$t("power.reboot.button")}</Button>
+        <Button variant="danger" icon={Power} on:click={() => ask("shutdown")}>{$t("power.shutdown.button")}</Button>
+        <Button variant="secondary" icon={Moon} on:click={() => ask("suspend")}>{$t("power.suspend.button")}</Button>
       </div>
     </div>
   </Card>
@@ -221,37 +224,37 @@
   <Card>
     <h3 class="section-title mb-4">
       <Network class="w-5 h-5" />
-      Wake-on-LAN
+      {$t("power.wol.title")}
     </h3>
     {#if wolLoading}
-      <p class="text-sm text-muted">Loading...</p>
+      <p class="text-sm text-muted">{$t("common.loading")}</p>
     {:else if wolError}
-      <Alert variant="error" title="The network interfaces could not be read">{wolError}</Alert>
+      <Alert variant="error" title={$t("power.wol.loadError")}>{wolError}</Alert>
     {:else if interfaces.length === 0}
-      <EmptyState icon={Network} title="The host has no Ethernet interface" />
+      <EmptyState icon={Network} title={$t("power.wol.none")} />
     {:else}
       <div class="overflow-x-auto">
         <table class="table">
           <thead class="table-header">
             <tr>
-              <th>Interface</th>
-              <th>MAC address</th>
-              <th>Wake-on-LAN</th>
-              <th><span class="sr-only">Change</span></th>
+              <th>{$t("power.wol.interface")}</th>
+              <th>{$t("power.wol.mac")}</th>
+              <th>{$t("power.wol.title")}</th>
+              <th><span class="sr-only">{$t("power.wol.change")}</span></th>
             </tr>
           </thead>
           <tbody>
             {#each interfaces as iface (iface.name)}
               <tr class="table-row">
                 <td class="mono">{iface.name}</td>
-                <td class="mono">{iface.mac_address ?? "unknown"}</td>
+                <td class="mono">{iface.mac_address ?? $t("power.wol.unknownMac")}</td>
                 <td>
                   {#if !iface.supported}
-                    <Badge variant="neutral">Not supported</Badge>
+                    <Badge variant="neutral">{$t("power.wol.notSupported")}</Badge>
                   {:else if iface.enabled}
-                    <Badge variant="success">On</Badge>
+                    <Badge variant="success">{$t("power.wol.on")}</Badge>
                   {:else}
-                    <Badge variant="neutral">Off</Badge>
+                    <Badge variant="neutral">{$t("power.wol.off")}</Badge>
                   {/if}
                 </td>
                 <td class="text-right">
@@ -263,7 +266,9 @@
                       disabled={wolBusy !== null && wolBusy !== iface.name}
                       on:click={() => setWol(iface, !iface.enabled)}
                     >
-                      {iface.enabled ? "Turn off" : "Turn on"}<span class="sr-only"> Wake-on-LAN for {iface.name}</span>
+                      {iface.enabled ? $t("power.wol.turnOff") : $t("power.wol.turnOn")}<span class="sr-only"
+                        >{$t("power.wol.forInterface", { name: iface.name })}</span
+                      >
                     </Button>
                   {/if}
                 </td>
@@ -273,11 +278,8 @@
         </table>
       </div>
       <p class="text-sm text-muted mt-3">
-        With Wake-on-LAN on, a magic packet to the interface's MAC address, sent from a computer on the
-        same network (for example <span class="mono">wakeonlan &lt;MAC address&gt;</span>), starts the host
-        after a shutdown and wakes it from suspend, but only where the board keeps the network card powered
-        while the host is off: many single-board computers do not. UNOS sets your choice again whenever it
-        starts.
+        {$t("power.wol.hintBefore")}
+        <span class="mono">{$t("power.wol.command")}</span>{$t("power.wol.hintAfter")}
       </p>
     {/if}
   </Card>
@@ -285,23 +287,23 @@
 
 <Modal
   open={confirmation !== null}
-  title={confirmation?.title ?? ""}
+  title={confirmation ? $t(confirmation.titleKey) : ""}
   size="md"
   danger
   closable={!busy}
   on:close={closeConfirm}
 >
-  <p>{confirmation?.text ?? ""}</p>
+  <p>{confirmation ? $t(confirmation.textKey) : ""}</p>
   {#if confirmError && confirmation}
     <div role="alert" class="mt-4">
-      <Alert variant="error" title={confirmation.failed}>{confirmError}</Alert>
+      <Alert variant="error" title={$t(confirmation.failedKey)}>{confirmError}</Alert>
     </div>
   {/if}
 
   <svelte:fragment slot="footer">
-    <Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>Cancel</Button>
+    <Button variant="secondary" class="flex-1" disabled={busy} on:click={closeConfirm}>{$t("common.cancel")}</Button>
     <Button variant={confirmation?.variant ?? "danger"} class="flex-1" loading={busy} on:click={confirmAction}>
-      {confirmation?.confirm ?? ""}
+      {confirmation ? $t(confirmation.confirmKey) : ""}
     </Button>
   </svelte:fragment>
 </Modal>

@@ -9,6 +9,7 @@
 		ExternalLink
 	} from 'lucide-svelte';
 	import { Card, StatusDot, Badge } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 
 	export let containers: Array<{
 		id: string;
@@ -19,6 +20,21 @@
 	}> = [];
 	export let compact: boolean = false;
 	export let limit: number = 5;
+
+	// Docker's states, as GET /containers reports them: keys of the catalog, by state.
+	const STATES: Record<string, string> = {
+		running: 'dashboard.containers.state.running',
+		exited: 'dashboard.containers.state.exited',
+		stopped: 'dashboard.containers.state.stopped',
+		paused: 'dashboard.containers.state.paused',
+		restarting: 'dashboard.containers.state.restarting',
+		created: 'dashboard.containers.state.created',
+		dead: 'dashboard.containers.state.dead'
+	};
+
+	/** The label of a state in the language of the page; a state without one as it comes. */
+	$: stateLabel = (state: string): string =>
+		Object.prototype.hasOwnProperty.call(STATES, state) ? $t(STATES[state]) : state;
 
 	$: running = containers.filter((c) => c.state === 'running').length;
 	$: stopped = containers.filter((c) => c.state !== 'running').length;
@@ -74,10 +90,10 @@
 {#if compact}
 	<div class="flex items-center gap-2 text-sm">
 		<Container class="w-4 h-4 icon-container" />
-		<span class="text-success">{running} running</span>
+		<span class="text-success">{$t('dashboard.containers.runningCount', { n: running })}</span>
 		{#if stopped > 0}
 			<span class="text-muted">•</span>
-			<span class="text-secondary">{stopped} stopped</span>
+			<span class="text-secondary">{$t('dashboard.containers.stoppedCount', { n: stopped })}</span>
 		{/if}
 	</div>
 {:else}
@@ -85,10 +101,10 @@
 		<div class="card-header">
 			<h3 class="card-title">
 				<Container class="w-5 h-5 icon-container" />
-				Containers
+				{$t('dashboard.containers.title')}
 			</h3>
 			<a href="/containers" class="text-sm text-info hover:text-blue-300 transition-colors"
-				>Manage →</a
+				>{$t('dashboard.manage')}</a
 			>
 		</div>
 
@@ -100,7 +116,7 @@
 				</div>
 				<div>
 					<p class="text-lg font-bold text-success">{running}</p>
-					<p class="text-xs text-secondary">Running</p>
+					<p class="text-xs text-secondary">{$t('dashboard.containers.running')}</p>
 				</div>
 			</div>
 			<div class="card-nested flex items-center gap-3">
@@ -109,7 +125,7 @@
 				</div>
 				<div>
 					<p class="text-lg font-bold">{stopped}</p>
-					<p class="text-xs text-secondary">Stopped</p>
+					<p class="text-xs text-secondary">{$t('dashboard.containers.stopped')}</p>
 				</div>
 			</div>
 		</div>
@@ -117,9 +133,9 @@
 		{#if containers.length === 0}
 			<div class="text-center py-4">
 				<Container class="w-8 h-8 mx-auto mb-2 text-muted opacity-50" />
-				<p class="text-secondary text-sm">No containers found</p>
+				<p class="text-secondary text-sm">{$t('dashboard.containers.none')}</p>
 				<a href="/containers" class="text-sm text-info hover:underline mt-1 inline-block">
-					Create your first container
+					{$t('dashboard.containers.create')}
 				</a>
 			</div>
 		{:else}
@@ -152,13 +168,13 @@
 									rel="noopener"
 									on:click|stopPropagation
 									class="p-1 rounded hover:bg-surface-elevated text-info opacity-0 group-hover:opacity-100 transition-opacity"
-									title="Open"
+									title={$t('dashboard.containers.open')}
 								>
 									<ExternalLink class="w-3.5 h-3.5" />
 								</a>
 							{/if}
 							<Badge variant={getStatusDotVariant(container.state)} class="text-xs">
-								{container.state}
+								{stateLabel(container.state)}
 							</Badge>
 						</div>
 					</a>
@@ -168,7 +184,7 @@
 						href="/containers"
 						class="block text-xs text-info text-center py-2 hover:underline"
 					>
-						View all {containers.length} containers →
+						{$t('dashboard.containers.viewAll', { n: containers.length })}
 					</a>
 				{/if}
 			</div>

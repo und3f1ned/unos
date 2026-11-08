@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0295: The Storage page writes its sizes and the start of a scrub in the page's language and keeps the server's reasons and btrfs's names
+# ADR-0299: The Storage page writes its sizes and the start of a scrub in the page's language and keeps the server's reasons and btrfs's names
 
 ## Context
 

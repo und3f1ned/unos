@@ -1423,7 +1423,7 @@ test.describe('Storage volumes (fake data)', () => {
 
 // The Storage page in Russian (webui.translations, ADR-0287): its texts come from the catalog
 // storage.ts, and the sizes and percentages the page writes take the number format and the units
-// of the page's language, and when the last scrub started its date format (ADR-0295). A disk's
+// of the page's language, and when the last scrub started its date format (ADR-0299). A disk's
 // in-use reason is the server's message and stays in English. The fakes answer every request, and
 // every dialog is cancelled: nothing is created, mounted, unmounted, imported or removed.
 test.describe('The Storage page in Russian', () => {
