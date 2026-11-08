@@ -125,7 +125,8 @@ and this index, and `make check-fast` runs it.
 | [0269](0269-the-smart-history-is-kept-in-ram-and-written-when-it-changes.md) | The SMART monitor keeps its history in RAM and writes it only when a pass changes it, and at shutdown | accepted | 2026-11-07 |
 | [0270](0270-smart-trends-report-every-tracked-disk.md) | GET /health/smart/trends reports every tracked disk, and trends read each counter from the snapshots that hold it | accepted | 2026-11-07 |
 | [0272](0272-scrub-results-name-cancelled-scrubs-and-count-every-error.md) | A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports | accepted | 2026-11-07 |
-| [0273](0273-a-filesystem-found-on-the-disks-is-imported-under-a-name-that-becomes-its-label.md) | A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label | accepted | 2026-11-08 |
+| [0273](0273-a-filesystem-found-on-the-disks-is-imported-under-a-name-that-becomes-its-label.md) | A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label | superseded by [0274](0274-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | 2026-11-08 |
+| [0274](0274-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | A filesystem found on the disks becomes a pool only from data disks and under a name that no earlier pool still uses | accepted | 2026-11-08 |
 
 ## Shares
 

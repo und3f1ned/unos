@@ -96,7 +96,12 @@ async def get_disk_smart(name: str, _=Depends(verify_token)):
 
 @router.get("/pools", response_model=list[PoolInfo])
 async def list_pools_endpoint(_=Depends(verify_token)):
-    """List all storage pools."""
+    """List the storage pools (ADR-0274).
+
+    Of several filesystems with one label, only the one mounted or managed
+    under it is a pool. A pool found on the disks that is on a boot or
+    virtual device or on the system disk is left out: Mount refuses it.
+    """
     return await _call(pools.list_pools)
 
 
@@ -145,14 +150,15 @@ async def delete_pool_endpoint(request: Request, name: str, _=Depends(verify_tok
 
 @router.get("/filesystems/importable", response_model=list[ImportableFilesystem])
 async def list_importable_filesystems_endpoint(_=Depends(verify_token)):
-    """The btrfs filesystems on the host's disks that can be imported as pools (ADR-0273).
+    """The btrfs filesystems on the host's disks that can be imported as pools (ADR-0274).
 
     Those that are neither the host's system filesystem nor mounted on the
-    host, and that cannot be mounted as a pool under their label
-    (``label_problem``): they have none, it is not a valid pool name, or
-    another btrfs filesystem has it too. A filesystem whose label is a pool
-    name is a pool of GET /pools, which its mount imports. 500 when btrfs or
-    the host's mount table cannot be read.
+    host, that are not the pool their label names (``label_problem``): they
+    have none, it is not a valid pool name, or another btrfs filesystem has
+    it too and the pool of that name is the other one or neither; and that
+    are on no boot or virtual device and not on the system disk. The pools
+    are listed by GET /pools, and Mount imports them. 500 when btrfs, the
+    host's mount table, its fstab or lsblk cannot be read.
     """
     return await _call(pools.importable_filesystems)
 
@@ -162,18 +168,20 @@ async def list_importable_filesystems_endpoint(_=Depends(verify_token)):
 async def import_filesystem_endpoint(
     request: Request, uuid: str, body: PoolImport, _=Depends(verify_token)
 ):
-    """Import a filesystem of GET /filesystems/importable as the pool ``name`` (ADR-0273).
+    """Import a filesystem of GET /filesystems/importable as the pool ``name`` (ADR-0274).
 
     Its disks are not formatted: it is mounted by UUID at /mnt/pools/<name>,
     gets the name as its label through the mount and keeps a managed fstab
     entry, like every managed pool. 400 for an invalid UUID or name; 404 when
     no btrfs filesystem has the UUID; 409, and nothing is changed, when the
-    filesystem holds the host's system, is mounted, misses devices, is a pool
-    under its label or is managed under another name, when another filesystem
-    of the host has the name as its label or UNOS manages a pool of that
-    name, when the mountpoint is in use or holds files, and when the
-    filesystem mounts another subvolume than its top level by default. Then
-    smb.conf is applied again (ADR-0248).
+    filesystem holds the host's system, is on a boot or virtual device or on
+    the system disk, is mounted, misses devices, is the pool its label names
+    or is managed under another name, when another filesystem of the host has
+    the name as its label or UNOS manages a pool of that name, when SMB
+    shares, NFS exports or containers of an earlier pool still use the name,
+    when the mountpoint is in use or holds files, and when the filesystem
+    mounts another subvolume than its top level by default; 503 when Docker
+    does not answer. Then smb.conf is applied again (ADR-0248).
     """
     validated_uuid = validate_filesystem_uuid(uuid)
     validated_name = validate_pool_name(body.name)
@@ -186,10 +194,11 @@ async def import_filesystem_endpoint(
 async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
-    This imports a pool found on the host's disks, too (ADR-0273). 409 when
-    the mountpoint directory holds files (they would be hidden), and when
-    the filesystem mounts another subvolume than its top level by default:
-    it is unmounted again. The pool's apps that could not start without it
+    This imports a pool found on the host's disks, too (ADR-0274). 409 when
+    the mountpoint directory holds files (they would be hidden), when the
+    filesystem is on a boot or virtual device or on the system disk, and when
+    it mounts another subvolume than its top level by default: it is
+    unmounted again. The pool's apps that could not start without it
     are started in the background; the response does not wait for them. Its
     SMB shares are served again before it answers (ADR-0248).
     """

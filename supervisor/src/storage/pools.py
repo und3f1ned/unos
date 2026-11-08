@@ -36,8 +36,10 @@ intact and can be mounted again.
 A pool is only mounted at its top level, where its volumes and share folders
 are: a mount that shows another subvolume (the filesystem's default one was
 changed) is undone. A btrfs filesystem found on the host's disks becomes a
-pool without being formatted (ADR-0273): Mount imports one whose label is a
-pool name, :func:`import_pool` any other, under a name that becomes its label.
+pool without being formatted (ADR-0274): Mount imports the pool its label
+names (_pool_choices), :func:`import_pool` any other, under a name that
+becomes its label. Neither makes a pool of a boot or virtual device or of the
+system disk, as creation does not (ADR-0035).
 """
 
 from __future__ import annotations
@@ -49,7 +51,6 @@ import re
 import subprocess
 import tempfile
 import threading
-from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -515,6 +516,66 @@ def _pool_filesystems(name: str, mounts: list[disks.HostMount] | None) -> list[B
     ]
 
 
+def _mounted_here(fs: BtrfsFilesystem, mounts: list[disks.HostMount] | None) -> bool:
+    """Whether ``fs`` is mounted at the mountpoint of the pool its label names."""
+    target = pool_mountpoint(fs.label or "")
+    return any(m.target == target and _mount_matches(m, fs) for m in mounts or [])
+
+
+def _managed_as_pool(fs: BtrfsFilesystem, managed: dict[str, ManagedFstabEntry] | None) -> bool:
+    """Whether UNOS manages ``fs`` as the pool its label names (its fstab entry has the UUID)."""
+    entry = (managed or {}).get(fs.label or "")
+    return entry is not None and entry.has_entry and entry.uuid == fs.uuid
+
+
+def _pool_choices(
+    filesystems: list[BtrfsFilesystem],
+    mounts: list[disks.HostMount] | None,
+    managed: dict[str, ManagedFstabEntry] | None,
+) -> dict[str, BtrfsFilesystem]:
+    """The pool of each name: name -> the filesystem that is the pool (ADR-0274).
+
+    A pool is a btrfs filesystem of the host, other than its system
+    filesystem, whose label is a valid pool name. Of several with one label,
+    the pool is the one mounted at the pool's mountpoint, or else the one
+    that UNOS manages under the name; when neither tells them apart, the
+    name has no pool, and each of them is found on the disks
+    (importable_filesystems), so that no card of the Storage page acts on
+    another filesystem by its name.
+    """
+    by_label: dict[str, list[BtrfsFilesystem]] = {}
+    for fs in filesystems:
+        if fs.label and POOL_NAME_PATTERN.fullmatch(fs.label) and not _is_system_filesystem(fs, mounts):
+            by_label.setdefault(fs.label, []).append(fs)
+    chosen: dict[str, BtrfsFilesystem] = {}
+    for name, candidates in by_label.items():
+        if len(candidates) == 1:
+            chosen[name] = candidates[0]
+            continue
+        pick = next((fs for fs in candidates if _mounted_here(fs, mounts)), None) or next(
+            (fs for fs in candidates if _managed_as_pool(fs, managed)), None
+        )
+        if pick is not None:
+            chosen[name] = pick
+    return chosen
+
+
+def _device_problems(filesystems: list[BtrfsFilesystem]) -> dict[str, str]:
+    """UUID -> why UNOS must not mount the filesystem as a pool, for those of ``filesystems``
+    that have a member on a boot or virtual device or on the system disk
+    (disks.pool_device_problems; ADR-0035, ADR-0225). RuntimeError when lsblk fails.
+    """
+    paths = sorted({device for fs in filesystems for device in fs.devices})
+    if not paths:
+        return {}
+    problems = disks.pool_device_problems(paths)
+    return {
+        fs.uuid: next(problems[device] for device in fs.devices if device in problems)
+        for fs in filesystems
+        if any(device in problems for device in fs.devices)
+    }
+
+
 def _mounts_or_none() -> list[disks.HostMount] | None:
     try:
         return disks.host_mounts()
@@ -569,16 +630,29 @@ def _pool_info(
 
 
 def list_pools() -> list[PoolInfo]:
-    """List all btrfs pools (filesystems labelled with a valid pool name)."""
+    """List the pools: the btrfs filesystems labelled with a valid pool name (_pool_choices).
+
+    A pool found on the disks, neither mounted at its mountpoint nor managed
+    by UNOS, which Mount would import (ADR-0274), is left out when a member
+    is on a boot or virtual device or on the system disk: Mount refuses it.
+    When lsblk cannot tell, it is listed, and Mount checks again.
+    """
     filesystems = btrfs_filesystems()
     mounts = _mounts_or_none()
     managed = _managed_entries_or_none()
+    chosen = _pool_choices(filesystems, mounts, managed)
+    found = [
+        fs for fs in chosen.values() if not _mounted_here(fs, mounts) and not _managed_as_pool(fs, managed)
+    ]
+    try:
+        refused = _device_problems(found)
+    except Exception as exc:
+        logger.warning("Could not check the devices of the pools found on the disks: %s", exc)
+        refused = {}
     return [
         _pool_info(fs, mounts, managed)
         for fs in filesystems
-        if fs.label
-        and POOL_NAME_PATTERN.fullmatch(fs.label)
-        and not _is_system_filesystem(fs, mounts)
+        if fs.label and chosen.get(fs.label) is fs and fs.uuid not in refused
     ]
 
 
@@ -1015,20 +1089,21 @@ def _check_top_level(name: str, target: str) -> None:
     subvolume: the top level, unless ``btrfs subvolume set-default`` changed
     it, as on some filesystems made elsewhere. A pool's volumes are the
     subvolumes below its top level, and share folders need the top level
-    too (_mounted_pool_target): PoolConflictError (HTTP 409, ADR-0273).
+    too (_mounted_pool_target): PoolConflictError (HTTP 409, ADR-0274).
     """
     subvolume = _mounted_subvolume_id(target)
     if subvolume != _TOP_LEVEL_SUBVOLUME:
         raise PoolConflictError(
             f"Pool '{name}' was not mounted: its filesystem mounts subvolume {subvolume} by "
-            "default, not its top level, where UNOS keeps volumes and share folders. Nothing "
-            "was changed. To use it, make the top level its default subvolume on the host "
-            "('btrfs subvolume set-default 5' on a mount of it), then try again."
+            "default, not its top level, where UNOS keeps volumes and share folders. It was "
+            "unmounted again, with its label and the host's /etc/fstab as they were. To use "
+            "it, make the top level its default subvolume on the host ('btrfs subvolume "
+            "set-default 5' on a mount of it), then try again."
         )
 
 
 def _set_label(target: str, label: str) -> None:
-    """Give the btrfs filesystem mounted at ``target`` the label ``label`` (an import, ADR-0273).
+    """Give the btrfs filesystem mounted at ``target`` the label ``label`` (an import, ADR-0274).
 
     Through the mount, so that the kernel changes it: given a device instead,
     btrfs-progs writes the superblocks itself, also those of a filesystem
@@ -1042,13 +1117,25 @@ def _set_label(target: str, label: str) -> None:
         )
 
 
+def _remove_made_mountpoint(target: str) -> None:
+    """Remove again the mountpoint that a refused or failed mount made; never raises."""
+    try:
+        _remove_mountpoint_dir(target)
+    except Exception as exc:
+        logger.warning("Could not remove %s again: %s", target, exc)
+
+
 def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: bool = False) -> None:
     """Mount ``uuid`` at the pool's mountpoint on the host and keep it in fstab.
 
     A filesystem that this call mounts must show its top level there
     (_check_top_level); with ``relabel`` (an import), it then gets the
     pool's name as its label (_set_label). When either fails, the
-    filesystem is unmounted again and the fstab is as it was.
+    filesystem is unmounted again. When the mount, the check or the label
+    fails, the fstab is as it was, and a mountpoint that this call made is
+    removed again (ADR-0274); only after a failed mount of a pool that
+    exists (Create, Mount) does it stay, write-protected like that of every
+    pool that is not mounted. An import that fails leaves nothing behind.
     """
     target = pool_mountpoint(name)
     original = text = _read_fstab()
@@ -1058,6 +1145,7 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
             f"The host /etc/fstab already mounts {target} through an entry UNOS does not "
             f"manage ({conflicts[0]}). Remove or comment out that line first."
         )
+    made = not already_mounted and not host.run_on_host(["test", "-d", target], timeout=15).ok
     desired = set_managed_fstab_entry(text, name, uuid)
     if desired != text and name in parse_managed_fstab(text):
         # Replace an outdated entry (e.g. of an older pool with the same name)
@@ -1065,9 +1153,15 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
         _write_fstab(desired, text)
         text = desired
     if not already_mounted:
-        _ensure_mountpoint_dir(target)
-        _prepare_btrfs_devices()
-        _mount_by_uuid(uuid, target)
+        try:
+            _ensure_mountpoint_dir(target)
+            _prepare_btrfs_devices()
+            _mount_by_uuid(uuid, target)
+        except Exception:
+            _write_fstab(original, text)  # an outdated entry replaced above comes back
+            if made and relabel:
+                _remove_made_mountpoint(target)
+            raise
         try:
             _check_top_level(name, target)
             if relabel:
@@ -1079,7 +1173,9 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
                 raise RuntimeError(
                     f"{exc} Unmounting {target} again failed as well: {umount_exc}"
                 ) from exc
-            _write_fstab(original, text)  # an outdated entry replaced above comes back
+            _write_fstab(original, text)
+            if made:
+                _remove_made_mountpoint(target)
             raise
     _write_fstab(desired, text)
 
@@ -1087,9 +1183,12 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
 def mount_pool(name: str) -> PoolInfo:
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
-    If this call mounted the pool, the pool's apps that Docker could not
-    start without it are started in the background; that part never fails
-    or delays the mount.
+    This imports a pool found on the disks, too (ADR-0274), so a pool with a
+    member on a boot or virtual device or on the system disk is refused
+    (PoolConflictError, HTTP 409), as Create refuses such devices
+    (ADR-0035, ADR-0225). If this call mounted the pool, the pool's apps
+    that Docker could not start without it are started in the background;
+    that part never fails or delays the mount.
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
@@ -1117,6 +1216,9 @@ def mount_pool(name: str) -> PoolInfo:
                     f"Pool '{name}' is missing {fs.missing_devices} device(s) and cannot be "
                     "mounted. Reconnect the missing disk(s) and try again."
                 )
+            problem = _device_problems([fs]).get(fs.uuid)
+            if problem:
+                raise PoolConflictError(f"Pool '{name}' cannot be mounted: {problem}.")
             _refuse_hidden_files(target)
         _mount_and_persist(name, _check_uuid(fs.uuid), already_mounted=bool(mounted_here))
     if not mounted_here:
@@ -1299,63 +1401,122 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
 
 
 # --------------------------------------------------------------------------
-# Importing a filesystem found on the host's disks (ADR-0273)
+# Importing a filesystem found on the host's disks (ADR-0274)
 # --------------------------------------------------------------------------
 
 
-def _label_problem(fs: BtrfsFilesystem, labels: Counter[str]) -> str | None:
-    """Why ``fs`` cannot be mounted as a pool under its label, or None when it can.
+def _label_problem(fs: BtrfsFilesystem, chosen: dict[str, BtrfsFilesystem]) -> str | None:
+    """Why ``fs`` is not the pool its label names, or None when it is.
 
-    ``labels`` counts the labels of the host's btrfs filesystems without its
-    system filesystem, which _pool_filesystems leaves out as well.
+    ``chosen`` is _pool_choices: of several filesystems with one label, at
+    most one is the pool.
     """
     if not fs.label:
         return "missing"
     if not POOL_NAME_PATTERN.fullmatch(fs.label):
         return "invalid"
-    if labels[fs.label] > 1:
+    if chosen.get(fs.label) is not fs:
         return "duplicate"
     return None
 
 
-def _pool_labels(filesystems: list[BtrfsFilesystem], mounts: list[disks.HostMount]) -> Counter[str]:
-    return Counter(
-        fs.label for fs in filesystems if fs.label and not _is_system_filesystem(fs, mounts)
-    )
-
-
 def importable_filesystems() -> list[ImportableFilesystem]:
-    """The btrfs filesystems of the host that can be imported as pools (ADR-0273).
+    """The btrfs filesystems of the host that can be imported as pools (ADR-0274).
 
     Those that are neither the host's system filesystem nor mounted on the
-    host, and that cannot be mounted as a pool under their label
-    (_label_problem): the others are pools, which Mount imports. RuntimeError
-    (HTTP 500) when btrfs or the host's mount table cannot be read: without
-    the mount table, the host's own filesystems could be offered.
+    host, that are not the pool their label names (_label_problem; the
+    pools are listed by list_pools, and Mount imports them), and that have
+    no member on a boot or virtual device or on the system disk
+    (_device_problems). RuntimeError (HTTP 500) when btrfs, the host's mount
+    table, its fstab or lsblk cannot be read: without them, the host's own
+    filesystems or a pool could be offered.
     """
     filesystems = btrfs_filesystems()
     mounts = disks.host_mounts()
-    labels = _pool_labels(filesystems, mounts)
-    result = []
+    chosen = _pool_choices(filesystems, mounts, parse_managed_fstab(_read_fstab()))
+    found: list[tuple[BtrfsFilesystem, str]] = []
     for fs in filesystems:
-        problem = _label_problem(fs, labels)
+        problem = _label_problem(fs, chosen)
         if problem is None or _is_system_filesystem(fs, mounts):
             continue
         if any(_mount_matches(mount, fs) for mount in mounts):
             continue
-        result.append(
-            ImportableFilesystem(
-                uuid=fs.uuid,
-                label=fs.label,
-                label_problem=problem,
-                devices=list(fs.devices),
-                total_devices=max(fs.total_devices, len(fs.devices) + fs.missing_devices),
-                missing_devices=fs.missing_devices,
-                size=fs.devices_size,
-                used=fs.bytes_used,
-            )
+        found.append((fs, problem))
+    refused = _device_problems([fs for fs, _ in found])
+    return [
+        ImportableFilesystem(
+            uuid=fs.uuid,
+            label=fs.label,
+            label_problem=problem,
+            devices=list(fs.devices),
+            total_devices=max(fs.total_devices, len(fs.devices) + fs.missing_devices),
+            missing_devices=fs.missing_devices,
+            size=fs.devices_size,
+            used=fs.bytes_used,
         )
-    return result
+        for fs, problem in found
+        if fs.uuid not in refused
+    ]
+
+
+def _containers_of_pool(name: str, target: str) -> list[str]:
+    """Every container, running or not, that keeps data on a pool named ``name``, by name.
+
+    The app installer labelled it with the pool (APP_POOL_LABEL), or one of
+    its mounts comes from the pool's mountpoint or below (_mount_uses).
+    Docker errors are raised.
+    """
+    with _docker_api() as api:
+        containers, bound = _running_containers(api, stopped=True)
+    return sorted(
+        _container_name(container)
+        for container in containers
+        if (container.get("Labels") or {}).get(APP_POOL_LABEL) == name
+        or any(_mount_uses(mount, bound, target) for mount in container.get("Mounts") or [])
+    )
+
+
+def _refuse_users_of_an_earlier_pool(name: str) -> None:
+    """Refuse an import under the name of an earlier pool that shares, exports or apps still use.
+
+    Remove Pool keeps a pool's SMB shares with their access (ADR-0248), NFS
+    exports keep their folders, and apps their pool label and bind mounts:
+    a filesystem imported under that name would serve them at once, and
+    Docker would start the apps on it at the next boot, from folders that
+    nobody decided to share (ADR-0274). Their data is on the earlier pool's
+    disks. PoolConflictError (HTTP 409) that names them;
+    DockerUnavailableError (HTTP 503) when Docker cannot be asked about the
+    containers; RuntimeError (HTTP 500) when the shares or the exports
+    cannot be read.
+    """
+    target = pool_mountpoint(name)
+    try:
+        shares = sorted({s.name for s in smb.list_shares() if _points_into(s.path, target)})
+        exports = sorted({e.path for e in nfs.list_exports() if _points_into(e.path, target)})
+    except Exception as exc:
+        raise RuntimeError(
+            f"Pool '{name}' was not imported: the SMB shares and NFS exports could not be read ({exc})"
+        ) from exc
+    try:
+        containers = _containers_of_pool(name, target)
+    except Exception as exc:
+        logger.warning("Could not list the containers or their volumes: %s", exc)
+        raise DockerUnavailableError(
+            f"Pool '{name}' was not imported: Docker did not answer, so it is not known whether "
+            f"apps keep data on a pool named '{name}'. Try again when Docker is running ({exc})."
+        ) from exc
+    users = [
+        f"{kind} ({', '.join(names)})"
+        for kind, names in (("SMB shares", shares), ("NFS exports", exports), ("containers", containers))
+        if names
+    ]
+    if users:
+        listed = users[-1] if len(users) == 1 else f"{', '.join(users[:-1])} and {users[-1]}"
+        raise PoolConflictError(
+            f"The name '{name}' still belongs to an earlier pool: {listed} use it, and their "
+            "data is on that pool's disks. Imported under this name, this filesystem would take "
+            "that pool's place for them. Choose another name, or remove them first."
+        )
 
 
 def _check_import(uuid: str, name: str) -> BtrfsFilesystem:
@@ -1363,13 +1524,15 @@ def _check_import(uuid: str, name: str) -> BtrfsFilesystem:
 
     PoolNotFoundError (HTTP 404) when no btrfs filesystem of the host has the
     UUID. PoolConflictError (HTTP 409) for a filesystem that holds the host's
-    system, is mounted on the host or in another mount namespace, misses
-    devices, is a pool under its label, or that UNOS manages under another
-    name; and for a name that another filesystem of the host has as its
-    label (with two, LABEL= in the host's fstab, or root= of its kernel,
-    could name either), that UNOS manages for another filesystem, or whose
-    mountpoint is in use, in an fstab line UNOS does not manage, or holds
-    files.
+    system, has a member on a boot or virtual device or on the system disk,
+    is mounted on the host or in another mount namespace, misses devices, is
+    the pool its label names, or that UNOS manages under another name; and
+    for a name that another filesystem of the host has as its label (with
+    two, LABEL= in the host's fstab, or root= of its kernel, could name
+    either), that UNOS manages for another filesystem, that SMB shares, NFS
+    exports or containers of an earlier pool still use
+    (_refuse_users_of_an_earlier_pool), or whose mountpoint is in use, in an
+    fstab line UNOS does not manage, or holds files.
     """
     mounts = disks.host_mounts()
     filesystems = btrfs_filesystems()
@@ -1381,6 +1544,9 @@ def _check_import(uuid: str, name: str) -> BtrfsFilesystem:
         )
     if _is_system_filesystem(fs, mounts):
         raise PoolConflictError(f"Filesystem {uuid} holds the host's system and cannot be a pool.")
+    problem = _device_problems([fs]).get(fs.uuid)
+    if problem:
+        raise PoolConflictError(f"Filesystem {uuid} cannot be a pool: {problem}.")
     mounted_at = sorted({mount.target for mount in mounts if _mount_matches(mount, fs)})
     if mounted_at:
         raise PoolConflictError(
@@ -1396,10 +1562,10 @@ def _check_import(uuid: str, name: str) -> BtrfsFilesystem:
             f"Filesystem {uuid} is missing {fs.missing_devices} device(s) and cannot be imported. "
             "Reconnect the missing disk(s) and try again."
         )
-    if _label_problem(fs, _pool_labels(filesystems, mounts)) is None:
-        raise PoolConflictError(f"Filesystem {uuid} is the pool '{fs.label}'. Mount it on the Storage page.")
     text = _read_fstab()
     entries = parse_managed_fstab(text)
+    if _label_problem(fs, _pool_choices(filesystems, mounts, entries)) is None:
+        raise PoolConflictError(f"Filesystem {uuid} is the pool '{fs.label}'. Mount it on the Storage page.")
     managed_as = next((e.name for e in entries.values() if e.uuid == uuid and e.name != name), None)
     if managed_as is not None:
         raise PoolConflictError(
@@ -1424,6 +1590,10 @@ def _check_import(uuid: str, name: str) -> BtrfsFilesystem:
             f"UNOS manages the pool '{name}' on another filesystem ({entry.uuid or 'unknown'}). "
             "Choose another name."
         )
+    if entry is None or entry.uuid != uuid:
+        # Not the pool that UNOS manages under this name: what the name's earlier pool
+        # left behind does not belong to this filesystem.
+        _refuse_users_of_an_earlier_pool(name)
     target = pool_mountpoint(name)
     if any(mount.target == target for mount in mounts):
         raise PoolConflictError(f"Something is already mounted at {target}")
@@ -1440,15 +1610,16 @@ def _check_import(uuid: str, name: str) -> BtrfsFilesystem:
 def import_pool(uuid: str, name: str) -> PoolInfo:
     """Import the btrfs filesystem ``uuid`` found on the host's disks as the pool ``name``.
 
-    Nothing is formatted (ADR-0273). The filesystem is mounted by UUID at
+    Nothing is formatted (ADR-0274). The filesystem is mounted by UUID at
     the pool's mountpoint, must show its top level there, gets ``name`` as
     its label through the mount and is kept in the host's fstab like every
     managed pool (ADR-0034); then udev reads its devices again, so that
     lsblk shows the label. PoolNotFoundError (HTTP 404) and
     PoolConflictError (HTTP 409), with nothing changed, as _check_import
-    and _check_top_level say. Unlike a mount, the import starts no apps: the
-    stopped apps of an earlier pool with this name keep their data on that
-    pool's filesystem.
+    and _check_top_level say. Unlike a mount, the import starts no apps:
+    under a name that apps of an earlier pool still use, it is refused, and
+    those of the pool that UNOS manages under the name start from the Apps
+    page or at the next boot.
     """
     uuid = validate_filesystem_uuid(uuid)
     name = validate_pool_name(name)
@@ -1826,13 +1997,14 @@ def _bound_folder(volume: dict[str, Any]) -> object:
     return None
 
 
-def _running_containers(api: Any) -> tuple[list[dict[str, Any]], dict[str, object]]:
-    """The running containers, and the host folder that each Docker volume of
-    the local driver they use binds (volume name -> folder or None).
+def _running_containers(api: Any, *, stopped: bool = False) -> tuple[list[dict[str, Any]], dict[str, object]]:
+    """The running containers (with ``stopped``, every container), and the host
+    folder that each Docker volume of the local driver they use binds (volume
+    name -> folder or None).
 
     Docker errors are raised.
     """
-    running = api.containers()
+    running = api.containers(all=stopped)
     bound: dict[str, object] = {}
     for container in running:
         for mount in container.get("Mounts") or []:

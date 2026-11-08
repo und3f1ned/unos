@@ -75,12 +75,13 @@ export interface Pool {
 }
 
 /**
- * Why a btrfs filesystem cannot be mounted as a pool under its label: it has none, it is not a
- * valid pool name, or another btrfs filesystem of the host has it too (ADR-0273).
+ * Why a btrfs filesystem is not the pool its label names: it has none, it is not a valid pool
+ * name, or another btrfs filesystem of the host has it too, and the pool of that name is the
+ * other one (mounted or managed under it) or neither (ADR-0274).
  */
 export type LabelProblem = 'missing' | 'invalid' | 'duplicate';
 
-/** A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0273). */
+/** A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0274). */
 export interface ImportableFilesystem {
   uuid: string;
   /** As btrfs prints it; null without a label. */
@@ -242,7 +243,7 @@ export async function unmountPool(name: string): Promise<Pool> {
   return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
 }
 
-/** The btrfs filesystems on the host's disks that can be imported as pools (ADR-0273). */
+/** The btrfs filesystems on the host's disks that can be imported as pools (ADR-0274). */
 export async function getImportableFilesystems(): Promise<ImportableFilesystem[]> {
   return api.get<ImportableFilesystem[]>('/storage/filesystems/importable');
 }
@@ -250,8 +251,9 @@ export async function getImportableFilesystems(): Promise<ImportableFilesystem[]
 /**
  * Import a filesystem of getImportableFilesystems() as the pool `name`, without formatting it: it
  * is mounted by UUID at /mnt/pools/{name}, gets the name as its label and an fstab entry. HTTP 409,
- * and nothing is changed, when it is in use, misses devices, the name is taken, or it mounts
- * another subvolume than its top level by default.
+ * and nothing is changed, when it is in use, misses devices or is on a boot, virtual or system
+ * device, when the name is taken or SMB shares, NFS exports or apps of an earlier pool still use
+ * it, or when it mounts another subvolume than its top level by default.
  */
 export async function importFilesystem(uuid: string, name: string): Promise<Pool> {
   return api.post<Pool>(`/storage/filesystems/${encodeURIComponent(uuid)}/import`, { name });

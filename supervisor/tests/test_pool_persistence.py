@@ -454,7 +454,7 @@ class FakeHost:
         """``btrfs filesystem label <mountpoint> <label>``: the kernel sets it on the mounted filesystem.
 
         Only through a mount: given a device, btrfs-progs writes the superblocks
-        itself, which UNOS never has it do (ADR-0273).
+        itself, which UNOS never has it do (ADR-0274).
         """
         assert len(cmd) == 5, cmd
         target, label = cmd[3], cmd[4]
@@ -846,7 +846,7 @@ class TestMountPool:
 
     def test_refuses_a_filesystem_that_mounts_another_subvolume_by_default(self, data_pool):
         # Made elsewhere, with 'btrfs subvolume set-default': a mount without subvol=
-        # shows subvolume 256, and volumes and share folders need the top level (ADR-0273).
+        # shows subvolume 256, and volumes and share folders need the top level (ADR-0274).
         data_pool.fs_by_label("data")["default_subvolume"] = 256
         with pytest.raises(pools.PoolConflictError) as excinfo:
             pools.mount_pool("data")
@@ -873,6 +873,26 @@ class TestMountPool:
         # Replaced before the mount (test_stale_entry_is_replaced_before_mounting), put back after it.
         assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
         assert not data_pool.mounted("/mnt/pools/data")
+
+    def test_a_mountpoint_made_for_a_mount_that_is_undone_is_removed_again(self, data_pool):
+        data_pool.dirs.discard("/mnt/pools/data")
+        data_pool.fs_by_label("data")["default_subvolume"] = 256
+        with pytest.raises(pools.PoolConflictError, match="It was unmounted again, with its label and "
+                           "the host's /etc/fstab as they were"):
+            pools.mount_pool("data")
+        assert data_pool.changes[-3:] == [
+            ["umount", "/mnt/pools/data"], ["chattr", "-i", "/mnt/pools/data"], ["rmdir", "/mnt/pools/data"]]
+        assert "/mnt/pools/data" not in data_pool.dirs
+        assert data_pool.fstab == BASE_FSTAB
+
+    def test_a_stale_entry_comes_back_when_the_mount_fails(self, data_pool):
+        data_pool.files["/etc/fstab"] = BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
+        data_pool.files["/etc/fstab.unos-backup"] = BASE_FSTAB
+        data_pool.fail[("mount",)] = (32, "mount: /mnt/pools/data: wrong fs type")
+        with pytest.raises(RuntimeError, match="wrong fs type"):
+            pools.mount_pool("data")
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
+        assert "/mnt/pools/data" in data_pool.immutable  # the pool's mountpoint, as before
 
     def test_failed_mount_leaves_fstab_alone_and_guard_in_place(self, data_pool):
         data_pool.fail[("mount",)] = (32, "mount: /mnt/pools/data: wrong fs type")

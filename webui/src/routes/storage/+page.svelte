@@ -67,7 +67,7 @@
 	// that could not be loaded again is not offered either: it may no longer match the host.
 	let disksError = '';
 	let poolsError = '';
-	// btrfs filesystems on the host's disks that are not pools yet (ADR-0273), with the
+	// btrfs filesystems on the host's disks that are not pools yet (ADR-0274), with the
 	// reason when they could not be searched.
 	let importable: ImportableFilesystem[] = [];
 	let importableError = '';
@@ -486,7 +486,7 @@
 		}
 	}
 
-	// ---- Import a pool found on the disks (ADR-0273) ----
+	// ---- Import a pool found on the disks (ADR-0274) ----
 
 	// The filesystem the Import dialog is open for.
 	let importTarget: ImportableFilesystem | null = null;
@@ -496,14 +496,20 @@
 
 	$: importNameValid = POOL_NAME_PATTERN.test(importName);
 	$: importNameTaken = pools.some((p) => p.name === importName);
+	// The label of another filesystem found on the disks: the server refuses a name that another
+	// filesystem has as its label (409), and of two with one label, neither is a pool.
+	$: importLabelTaken = importable.some((fs) => fs.uuid !== importTarget?.uuid && fs.label === importName);
 	$: importNameError = !importName
 		? ''
 		: !importNameValid
 			? "Use letters, numbers, '-' and '_' (up to 63), starting with a letter or number"
 			: importNameTaken
 				? `A pool named "${importName}" exists already. Choose another name.`
-				: '';
-	$: canImport = importTarget !== null && importNameValid && !importNameTaken && !importing;
+				: importLabelTaken
+					? `Another btrfs filesystem found on the disks is labelled "${importName}". Choose another name.`
+					: '';
+	$: canImport =
+		importTarget !== null && importNameValid && !importNameTaken && !importLabelTaken && !importing;
 
 	function describeFilesystem(fs: ImportableFilesystem): string {
 		return fs.label === null ? 'No label' : `Label "${fs.label}"`;
@@ -550,8 +556,9 @@
 			closeImport();
 			await loadData(false);
 		} catch (e) {
-			// 409, and nothing was changed: the filesystem is in use or misses devices, the name
-			// is taken, or the filesystem mounts another subvolume than its top level by default
+			// 409, and nothing was changed: the filesystem is in use, misses devices or is on a
+			// boot, virtual or system device, the name is taken or still used by shares or apps
+			// of an earlier pool, or the filesystem mounts another subvolume than its top level
 			importError = messageOf(e);
 		} finally {
 			importing = false;
@@ -800,8 +807,10 @@
 			{/if}
 		</Card>
 
-		<!-- btrfs filesystems on the host's disks that are not pools yet (ADR-0273). A filesystem
-		     whose label is a pool name is a pool below, and its Mount imports it. -->
+		<!-- btrfs filesystems on the host's disks that are not pools yet (ADR-0274): without a label,
+		     with one that is no pool name, or with one that another filesystem has too, when the
+		     pool of that name is the other one or neither. A pool found on the disks is a pool
+		     below, and its Mount imports it. -->
 		{#if importable.length > 0 || importableError}
 			<Card>
 				<section aria-labelledby="found-on-the-disks">
@@ -1247,7 +1256,7 @@
 				Mount <strong class="text-content">"{poolAction.pool.name}"</strong> at
 				<span class="mono">/mnt/pools/{poolAction.pool.name}</span>?
 			</p>
-			<!-- Also how a pool found on the disks is imported (ADR-0273). -->
+			<!-- Also how a pool found on the disks is imported (ADR-0274). -->
 			<p class="text-sm text-secondary">
 				The disks are not formatted: the data on them is kept. UNOS also adds an /etc/fstab entry
 				so the pool is mounted again after a reboot.
@@ -1288,7 +1297,7 @@
 	</svelte:fragment>
 </Modal>
 
-<!-- Import Pool Modal (ADR-0273) -->
+<!-- Import Pool Modal (ADR-0274) -->
 <Modal
 	open={importTarget !== null}
 	title="Import Pool"

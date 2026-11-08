@@ -104,13 +104,25 @@ export const HEALTHY_POOL: FakePool = {
   forced_read_only: false,
 };
 
-// btrfs filesystems on the fake host's disks that cannot be mounted as a pool under their label,
-// as GET /storage/filesystems/importable reports them (ADR-0273). fakeStorageApi offers none
+/** A filesystem as GET /storage/filesystems/importable reports it. */
+export interface FakeImportable {
+  uuid: string;
+  label: string | null;
+  label_problem: string;
+  devices: string[];
+  total_devices: number;
+  missing_devices: number;
+  size: number;
+  used: number;
+}
+
+// btrfs filesystems on the fake host's disks that are not the pool their label names, as
+// GET /storage/filesystems/importable reports them (ADR-0274). fakeStorageApi offers none
 // unless a test passes them.
-export const FAKE_IMPORTABLE = [
+export const FAKE_IMPORTABLE: readonly FakeImportable[] = [
   {
     // The disk of another system: a filesystem without a label.
-    uuid: '00000000-0000-4000-8000-0000000000f1', label: null as string | null, label_problem: 'missing',
+    uuid: '00000000-0000-4000-8000-0000000000f1', label: null, label_problem: 'missing',
     devices: ['/dev/e2e-hd10'], total_devices: 1, missing_devices: 0, size: 4e12, used: 7e11,
   },
   {
@@ -124,14 +136,12 @@ export const FAKE_IMPORTABLE = [
     devices: ['/dev/e2e-hd12'], total_devices: 2, missing_devices: 1, size: 1e12, used: 1e11,
   },
   {
-    // The pool e2e_tank of another host: FAKE_POOLS[0] has its label too.
+    // The pool e2e_tank of another host. FAKE_POOLS[0] has its label too and is neither mounted
+    // nor managed, so neither of them is the pool e2e_tank: both are found on the disks.
     uuid: '00000000-0000-4000-8000-0000000000f4', label: 'e2e_tank', label_problem: 'duplicate',
     devices: ['/dev/e2e-hd13'], total_devices: 1, missing_devices: 0, size: 4e12, used: 1e12,
   },
 ];
-
-/** A filesystem as GET /storage/filesystems/importable reports it. */
-export type FakeImportable = (typeof FAKE_IMPORTABLE)[number];
 
 /** The pool that POST /filesystems/<uuid>/import makes of a filesystem, as the server reports it. */
 function importedPool(fs: FakeImportable, name: string): FakePool {
@@ -139,6 +149,15 @@ function importedPool(fs: FakeImportable, name: string): FakePool {
     name, uuid: fs.uuid, devices: [...fs.devices], total_size: fs.size, used_size: fs.used,
     mountpoint: `/mnt/pools/${name}`, raid_level: 'single', mounted: true, persistent: true,
     health: 'healthy', missing_devices: 0, device_errors: 0, read_only: false, forced_read_only: false,
+  };
+}
+
+/** A filesystem of the fake's pools that is found on the disks as a duplicate (sharesItsLabel). */
+function foundDuplicate(pool: FakePool): FakeImportable {
+  return {
+    uuid: pool.uuid, label: pool.name, label_problem: 'duplicate', devices: [...pool.devices],
+    total_devices: pool.devices.length + pool.missing_devices, missing_devices: pool.missing_devices,
+    size: pool.total_size, used: pool.used_size,
   };
 }
 
@@ -206,8 +225,10 @@ export interface FakeStorageOptions {
    */
   scrubStatus?: (pool: string, method: string) => FakeScrubStatus;
   /**
-   * The filesystems GET /filesystems/importable answers (default none). An import takes its
-   * filesystem off this list (a copy) and adds the new pool to the fake's pools.
+   * The filesystems GET /filesystems/importable answers (default none), besides the pools that
+   * share a label with one of them and are neither mounted nor managed: those are no pools, as
+   * GET /pools answers (ADR-0274). An import takes its filesystem off this list (a copy) or off
+   * the pools, and adds the new pool to the fake's pools.
    */
   importable?: readonly FakeImportable[];
   /** Answer GET /filesystems/importable with this instead. */
@@ -260,6 +281,11 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
   const deviceErrors = new Map(pools.map((pool) => [pool.name, pool.device_errors]));
   const scrubStatus = options.scrubStatus ?? ((pool: string) => noScrub(pool));
   const importable = [...(options.importable ?? [])];
+  // As storage/pools.py _pool_choices (ADR-0274): of filesystems with one label, the pool is the
+  // one mounted at its mountpoint, or else the one UNOS manages; when neither tells them apart,
+  // none is a pool, and each of them is found on the disks.
+  const sharesItsLabel = (pool: FakePool) =>
+    !pool.mounted && !pool.persistent && importable.some((fs) => fs.label === pool.name);
   const writes: RecordedWrite[] = [];
   await page.route(
     (url) => url.pathname.startsWith('/api/v1/storage/'),
@@ -269,7 +295,9 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
       const path = new URL(request.url()).pathname.slice('/api/v1/storage'.length);
 
       if (method === 'GET' && path === '/disks') return route.fulfill({ json: disks() });
-      if (method === 'GET' && path === '/pools') return route.fulfill({ json: pools });
+      if (method === 'GET' && path === '/pools') {
+        return route.fulfill({ json: pools.filter((pool) => !sharesItsLabel(pool)) });
+      }
       const scrub = path.match(/^\/pools\/([^/]+)\/scrub$/);
       if (scrub && ['GET', 'POST', 'DELETE'].includes(method)) {
         const name = decodeURIComponent(scrub[1]);
@@ -279,7 +307,8 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         return route.fulfill({ json: scrubStatus(name, method) });
       }
       if (method === 'GET' && path === '/filesystems/importable') {
-        return route.fulfill(options.importableResponse ?? { json: importable });
+        const found = [...pools.filter(sharesItsLabel).map(foundDuplicate), ...importable];
+        return route.fulfill(options.importableResponse ?? { json: found });
       }
       const imported = path.match(/^\/filesystems\/([^/]+)\/import$/);
       if (method === 'POST' && imported) {
@@ -288,11 +317,12 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         if (options.importResponse) return route.fulfill(options.importResponse);
         const uuid = decodeURIComponent(imported[1]);
         const index = importable.findIndex((fs) => fs.uuid === uuid);
-        if (index < 0) {
+        const duplicate = pools.findIndex((pool) => pool.uuid === uuid && sharesItsLabel(pool));
+        if (index < 0 && duplicate < 0) {
           const detail = `No btrfs filesystem with UUID ${uuid} is on the host's disks. Attach them and reload the page.`;
           return route.fulfill({ status: 404, json: { detail } });
         }
-        const [fs] = importable.splice(index, 1);
+        const [fs] = index >= 0 ? importable.splice(index, 1) : pools.splice(duplicate, 1).map(foundDuplicate);
         const pool = importedPool(fs, body?.name);
         pools.push(pool);
         return route.fulfill({ json: pool });

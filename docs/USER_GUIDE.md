@@ -172,11 +172,21 @@ from another system, become a pool without being formatted:
   the pools of an earlier installation come back.
 - Any other btrfs filesystem, one without a label, with a label that is not a
   pool name, or with the label of another filesystem, is listed under **Found
-  on the disks** with its UUID, disks, size and why it is not a pool yet. Click
-  **Import**, enter a pool name and click **Import**: UNOS mounts it at
-  `/mnt/pools/<name>` by its UUID, makes the name the filesystem's label and
-  adds it to `/etc/fstab`. The name cannot be the name of a pool or the label
-  of another filesystem of the host.
+  on the disks** with its UUID, disks, size and why it is not a pool yet. Of
+  two filesystems with one label, the one mounted as that pool, or else the
+  one that UNOS mounts at every boot under that name, stays the pool; when
+  neither is, both are listed under **Found on the disks** and neither under
+  **Storage Pools**. Click **Import**, enter a pool name and click
+  **Import**: UNOS mounts it at `/mnt/pools/<name>` by its UUID, makes the
+  name the filesystem's label and adds it to `/etc/fstab`. The name cannot be
+  the name of a pool or the label of another filesystem of the host. Nor can
+  it be the name of a removed pool whose SMB shares, NFS exports or apps are
+  still there, because the imported disks would serve them: the message names
+  them, so choose another name or delete them first.
+
+A btrfs filesystem on the SD card or the eMMC, on a loop or RAM disk, or on
+the system disk is neither listed nor mounted: it never becomes a pool, as no
+pool is created on those devices.
 
 The data stays on the disks either way; an import changes only the label, so a
 system that mounted the filesystem by its old label needs the new one. Nothing

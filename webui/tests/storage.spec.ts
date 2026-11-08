@@ -843,7 +843,7 @@ test.describe('Storage pools (fake data)', () => {
   });
 });
 
-// Pools found on the disks (ADR-0273): btrfs filesystems of other systems on the fake host's
+// Pools found on the disks (ADR-0274): btrfs filesystems of other systems on the fake host's
 // disks. The fakes answer as the server does; supervisor/tests/test_pool_import.py runs its side.
 test.describe('Pool import (fake data)', () => {
   const poolCard = (page: Page, name: string) =>
@@ -856,8 +856,9 @@ test.describe('Pool import (fake data)', () => {
   // The supervisor's 409 (storage/pools.py) for a filesystem whose default subvolume is not its top level.
   const notTopLevel =
     "Pool 'e2e_backup' was not mounted: its filesystem mounts subvolume 256 by default, not its top level, " +
-    'where UNOS keeps volumes and share folders. Nothing was changed. To use it, make the top level its ' +
-    "default subvolume on the host ('btrfs subvolume set-default 5' on a mount of it), then try again.";
+    "where UNOS keeps volumes and share folders. It was unmounted again, with its label and the host's " +
+    "/etc/fstab as they were. To use it, make the top level its default subvolume on the host " +
+    "('btrfs subvolume set-default 5' on a mount of it), then try again.";
 
   test('a btrfs filesystem found on the disks is offered and imported under a name, without formatting', async ({
     authenticatedPage: page,
@@ -961,7 +962,8 @@ test.describe('Pool import (fake data)', () => {
     const writes = await fakeStorageApi(page, { importable: FAKE_IMPORTABLE });
     await page.goto('/storage');
 
-    await expect(found(page).getByRole('listitem')).toHaveCount(4);
+    // The four, and the pool e2e_tank of this host, which shares its label with one of them.
+    await expect(found(page).getByRole('listitem')).toHaveCount(5);
     await expect(foundItem(page, invalidLabel.uuid)).toContainText('Label "My Media"');
     await expect(foundItem(page, invalidLabel.uuid)).toContainText(
       'Its label is not a valid pool name: choose one for the pool.',
@@ -981,12 +983,53 @@ test.describe('Pool import (fake data)', () => {
     await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeEnabled();
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 
-    // A label that a pool has: another name is needed.
+    // A label that another filesystem found on the disks has: another name is needed.
     await foundItem(page, sharedLabel.uuid).getByRole('button', { name: /^Import/ }).click();
     await expect(dialog.getByLabel('Pool name')).toHaveValue('e2e_tank');
-    await expect(dialog.getByText('A pool named "e2e_tank" exists already. Choose another name.')).toBeVisible();
+    await expect(
+      dialog.getByText('Another btrfs filesystem found on the disks is labelled "e2e_tank". Choose another name.'),
+    ).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeDisabled();
+    await dialog.getByLabel('Pool name').fill('e2e_spare');
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeEnabled();
     expect(writes).toEqual([]);
+  });
+
+  test('of two filesystems with one label, only the one mounted or managed under it is a pool', async ({
+    authenticatedPage: page,
+  }) => {
+    // The pool e2e_media of another host, while this host's e2e_media is mounted.
+    const otherMedia = {
+      ...sharedLabel, uuid: '00000000-0000-4000-8000-0000000000f5', label: 'e2e_media', devices: ['/dev/e2e-hd14'],
+    };
+    const writes = await fakeStorageApi(page, { importable: [sharedLabel, otherMedia] });
+    await page.goto('/storage');
+
+    // e2e_media keeps its card, which acts on the mounted one; the other one is found on the disks.
+    await expect(poolCard(page, 'e2e_media')).toHaveCount(1);
+    await expect(field(poolCard(page, 'e2e_media'), 'Mount')).toHaveText('Mount: /mnt/pools/e2e_media');
+    await expect(foundItem(page, otherMedia.uuid)).toContainText(
+      'Another btrfs filesystem is labelled "e2e_media" too: import this one under another name.',
+    );
+    // Neither e2e_tank is mounted or managed: no card, which would act on either by the name, and
+    // both are found on the disks.
+    await expect(poolCard(page, 'e2e_tank')).toHaveCount(0);
+    const tanks = found(page).getByRole('listitem').filter({ hasText: 'Label "e2e_tank"' });
+    await expect(tanks).toHaveCount(2);
+    await expect(foundItem(page, FAKE_POOLS[0].uuid)).toContainText('/dev/e2e-hd1 · 3.6 TB');
+
+    // Imported under another name, one of them leaves the other the pool e2e_tank.
+    await foundItem(page, sharedLabel.uuid).getByRole('button', { name: /^Import/ }).click();
+    const dialog = page.getByRole('dialog', { name: 'Import Pool' });
+    await dialog.getByLabel('Pool name').fill('e2e_spare');
+    await dialog.getByRole('button', { name: 'Import', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(writes).toEqual([
+      { method: 'POST', path: `/filesystems/${sharedLabel.uuid}/import`, body: { name: 'e2e_spare' } },
+    ]);
+    await expect(poolCard(page, 'e2e_spare')).toHaveCount(1);
+    await expect(poolCard(page, 'e2e_tank').locator('.badge', { hasText: /^Not mounted$/ })).toBeVisible();
+    await expect(found(page).getByRole('listitem')).toHaveCount(1);
   });
 
   test('when the disks cannot be searched for filesystems, the page says why', async ({ authenticatedPage: page }) => {

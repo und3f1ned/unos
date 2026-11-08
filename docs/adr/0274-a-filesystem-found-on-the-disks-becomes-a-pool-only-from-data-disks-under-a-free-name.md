@@ -1,0 +1,44 @@
+---
+status: accepted
+date: 2026-11-08
+area: storage
+decided-by: agent
+supersedes: [ADR-0273]
+---
+
+# ADR-0274: A filesystem found on the disks becomes a pool only from data disks and under a name that no earlier pool still uses
+
+## Context
+
+ADR-0273 let Mount and Import make a pool of any btrfs filesystem found on the host's disks. A review found four gaps. Both mounted filesystems on the eMMC, the SD card, loop devices and the system disk, and Import relabelled them, although Create refuses these devices (ADR-0035) and the eMMC is never written (ADR-0225). A filesystem imported under the name of a removed pool served that pool's SMB shares, which Remove Pool keeps (ADR-0248), from its own folders. GET /pools listed every filesystem whose label is a pool name, so of two with one label each got a card that acted on the pool by its name, and the one under Found on the disks was a card too (ADR-0273's Context said such filesystems were not shown at all). And a refused import left its new mountpoint behind, write-protected, with no pool to remove it with.
+
+## Decision
+
+- The pool of a name is the btrfs filesystem of the host, other than its system filesystem, whose label is that name, a valid pool name: the only one, or of several, the one mounted at the pool's mountpoint, or else the one whose managed fstab entry names its UUID (`_pool_choices`). `GET /api/v1/storage/pools` lists these pools; when neither the mount nor the fstab tells several apart, the name has no pool. A pool that is neither mounted at its mountpoint nor managed is a pool found on the disks: Mount imports it by UUID with its managed fstab entry (ADR-0034), and the Mount dialog says that the disks are not formatted.
+- Every other btrfs filesystem that is neither the host's system filesystem nor mounted on the host is listed by `GET /api/v1/storage/filesystems/importable`, with why it is no pool (`label_problem`: `missing`, `invalid` or `duplicate`), and under Found on the disks on the Storage page. `POST /api/v1/storage/filesystems/{uuid}/import` with `{"name": ...}` imports it: it mounts the filesystem by UUID at `/mnt/pools/<name>`, sets the name as its label through the mount (`btrfs filesystem label <mountpoint> <name>`, which the kernel writes), has udev read its devices again so that lsblk shows the label, and writes the managed fstab entry. Both routes are administrator-only with the storage router (ADR-0030); the import applies smb.conf afterwards like the other pool changes (ADR-0248). The Import dialog refuses the name of a pool and the label of another filesystem found on the disks before it asks the server.
+- No pool is made of a boot or virtual device or of the system disk, as Create refuses them (ADR-0035): a filesystem with a member on a device of `HIDDEN_DISK_PREFIXES` (the SD card and the eMMC, loop and RAM disks), on the system disk (a partition of it, or a device built on one, such as an md array), or that lsblk does not list (`disks.pool_device_problems`) is neither offered for import nor listed as a pool found on the disks, and Mount and Import refuse it with 409. When lsblk fails, Found on the disks says why (500); a pool found on the disks is still listed, and its Mount answers 500.
+- The import is refused with 409, and nothing is changed, for a filesystem that holds the host's system, is mounted on the host or still in another mount namespace, misses a device, is the pool its label names (Mount imports it), or that UNOS manages under another name; for a name that another filesystem of the host has as its label (any type, from btrfs and lsblk: with two filesystems of one label, `LABEL=` in the host's fstab or `root=` of its kernel could name either), that UNOS manages for another filesystem, or whose mountpoint is in use, in an fstab line UNOS does not manage, or holds files.
+- The import is refused with 409, which names them, under a name that SMB shares, NFS exports or containers of an earlier pool still use: a share or an export of the pool's mountpoint or a folder below it (the share rows and smb.conf, `smb.list_shares`), or a container, running or not, labelled with the pool (`unos.app.pool`) or with a mount from the mountpoint (`_refuse_users_of_an_earlier_pool`). Under that name, the imported filesystem would serve them at once, and Docker would start the apps on it at the next boot, from folders that nobody decided to share; their data is on the earlier pool's disks. 503 when Docker does not answer, 500 when the shares or exports cannot be read. The filesystem that UNOS manages under the name (its fstab entry names the UUID) keeps them. Mount is unchanged: a filesystem labelled with a pool's name is that pool, whose shares are served again (ADR-0248).
+- A pool is mounted only at its top level: when a mount by Mount, Import or Create shows another subvolume (`btrfs inspect-internal rootid`; the default subvolume was changed with `btrfs subvolume set-default`), UNOS unmounts it again and answers 409, and an import has not changed the label yet. The message says how to make the top level the default subvolume on the host.
+- When the mount, the top-level check or the label of a Mount, Import or Create fails, the fstab is as it was (an outdated entry that was replaced before the mount comes back), and a mountpoint that the call made is removed again. Only after a failed mount of a pool that exists (Create, Mount) does it stay, write-protected like the mountpoint of every pool that is not mounted. A refused or failed import leaves no mountpoint, fstab line or label behind.
+- The import needs no typed confirmation (ADR-0035 is for irreversible operations): it formats nothing, and the label is the one thing it changes on the disks. It starts no apps.
+- Code: `_pool_choices`, `list_pools`, `mount_pool`, `importable_filesystems`, `_check_import`, `_refuse_users_of_an_earlier_pool`, `import_pool` and `_mount_and_persist` in `supervisor/src/storage/pools.py`, `pool_device_problems` in `supervisor/src/storage/disks.py`, the routes in `supervisor/src/storage/router.py`, Found on the disks and the Import dialog in `webui/src/routes/storage/+page.svelte`. Tests: `supervisor/tests/test_pool_import.py`, `supervisor/tests/test_pool_persistence.py` (TestMountPool), `supervisor/tests/test_smb_integration.py` (an import under the name of a removed pool), `webui/tests/storage.spec.ts` (Pool import).
+
+## Consequences
+
+- After a reinstall, the pools UNOS made come back with Mount; disks from another system become pools under a name the administrator chooses; of two filesystems with one label, one is imported under another name and the other is then a pool under its label.
+- Unmounting or removing a pool whose label another filesystem has too ends its card: both are found on the disks until one of them is imported under another name.
+- The flash devices of an ARM board, loop devices and the system disk never become a pool, also when another system made a btrfs filesystem there.
+- The name of a removed pool is free for another filesystem once its shares, exports and containers are removed; until then the filesystem is imported under another name. An import needs Docker to answer.
+- The import changes the label of a filesystem made elsewhere: a system that mounts it by `LABEL=` needs the new label.
+- A filesystem with a missing device is not imported (no degraded mount), nor one whose default subvolume is not its top level, until the administrator resets it on the host (`btrfs subvolume set-default 5` on a mount of it).
+- btrfs on md, LVM or LUKS is offered only once the host has assembled or opened it: `btrfs filesystem show` reads only the devices that exist.
+
+## Considered options
+
+- Keep the shares of an earlier pool unserved after an import under its name until the administrator confirms them: it needs a state per share that UNOS does not keep; refusing the name changes nothing and says what to remove.
+- Refuse Mount, too, for a filesystem labelled with the name of a removed pool whose shares remain: UNOS cannot tell a pool that comes back from another filesystem with its label, and ADR-0248 serves the shares of a pool that is mounted again.
+- List a pool found on a boot, virtual or system device with Mount disabled: no such device is offered for a pool anywhere, as in the disk list of Create.
+- Mount every pool's top level with `subvolid=5` in the mount and the fstab entry: it would import filesystems whose default subvolume was changed as they are, but it changes the entry of every pool (ADR-0034); not chosen for this feature.
+- Keep a pool's name apart from its label, in the database or the fstab marker: every part of UNOS finds pools by label; not chosen.
+- Set the label by device before mounting: btrfs-progs then writes the superblocks itself, also of a filesystem that another mount namespace still has mounted, and a refused mount would leave the new label behind.
