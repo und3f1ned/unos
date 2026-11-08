@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0160]
 ---
 
-# ADR-0273: New folders and uploads of the file manager in a share folder get 2770 and 0660, and apps still get no group access to shares
+# ADR-0273: New folders and uploads of the file manager in a share folder get 2770 and 0660
 
 ## Context
 
@@ -33,25 +33,37 @@ before, and group write must never reach a group other than unos-smb.
   (`_FileUpload.open`) gives its unnamed or hidden file `constants.SHARE_FILE_MODE` (0660)
   through its descriptor as soon as the file exists, before any of its data is written and
   before it has its name; an upload that replaces a file gives the new file 0660 as well. When
-  the mode cannot be given, the request answers the error: the new folder stays private, and the
-  upload leaves nothing, as every failed upload.
+  the mode cannot be given, the request answers the error, and the upload leaves nothing, as
+  every failed upload. Such a new folder is removed again (`_remove_new_folder`): private, the
+  share's SMB users could not use it, and Repair permissions skips private folders (ADR-0156).
+  It is removed through the share folder's descriptor, and only while its name still holds the
+  folder that was opened (`os.path.samestat`); rmdir removes only an empty folder, so one put
+  at the name in between loses nothing. A folder that cannot be removed, or not be opened at
+  all, stays private, and the answer names it and says to delete it (`_left_private`). A stop
+  of the supervisor between the mkdir and the chmod leaves the private folder as well, which an
+  administrator deletes in Files.
 - The group comes from the folder: the kernel gives a new entry in a setgid folder the folder's
   group. The file manager sets no group itself and so needs no check of the host's group
   database (ADR-0151): whoever has the folder's group can already replace every entry in it, and
   the modes give that group nothing that the folder does not.
-- Everywhere else, in the top folders of pools, in volumes, in app data, in the folders of
-  shares that were never repaired and in folders of other groups, New Folder and Upload create
-  entries as before, with what the umask leaves of 0777 and 0666. Copy and Move keep the modes
-  of their source (`_copy_entry`), in share folders too.
-- Apps still run with their own PUID and PGID (1000), outside the SMB group, and still have no
-  install option that runs them in it (PGID 70000): this part of ADR-0160 stays. They can no
-  more use the new entries than the share folder itself, which gives others nothing.
+- In every folder that is not set up so, New Folder and Upload create entries as before, with
+  what the umask leaves of 0777 and 0666: folders 755 (2755 in a setgid folder) and files 644.
+  Such folders are, for example, the top folder of a pool (never a share's folder, ADR-0145),
+  a volume that was never repaired as a share's folder, app data, the folders of shares that
+  were never repaired, and folders of other groups. A volume that is shared and was repaired is
+  a share folder like any other. Copy and Move keep the modes of their source (`_copy_entry`),
+  in share folders too.
+- ADR-0160's rule for apps is restated unchanged: apps run with their own PUID and PGID (1000),
+  outside the SMB group, and Install has no option that runs them in it (PGID 70000). They can
+  no more use the new entries than the share folder itself, which gives others nothing. The
+  ledger entry `apps.smb-group-option` plans such an option; the ADR that decides it supersedes
+  this one and restates its rules for the file manager.
 - Tests: `supervisor/tests/test_files_security.py` (new entries in share folders and outside
-  them, a folder put at the name of a new one, a mode that cannot be given),
-  `supervisor/tests/test_upload_streaming.py` (the file's mode from its creation, unnamed and
-  hidden, and a mode that cannot be given), `supervisor/tests/test_share_api.py`
-  (TestFileManagerInAShareFolder: the folder of a new share), `webui/tests/files.spec.ts`
-  (outside share folders the group gets no write access).
+  them, a folder put at the name of a new one, a mode that cannot be given, and a new folder
+  that is removed again or stays private), `supervisor/tests/test_upload_streaming.py` (the
+  file's mode from its creation, unnamed and hidden, and a mode that cannot be given),
+  `supervisor/tests/test_share_api.py` (TestFileManagerInAShareFolder: the folder of a new
+  share), `webui/tests/files.spec.ts` (outside share folders the group gets no write access).
 
 ## Consequences
 
@@ -61,7 +73,8 @@ before, and group write must never reach a group other than unos-smb.
   share, still gives new entries 2770 and 0660: only the SMB group can open it, and that group
   can already write it.
 - Copies and moves into a share, and new entries in a share whose folder was never repaired,
-  still need a Repair.
+  still need a Repair. The ledger entry `files.group-writable-copies-and-moves-in-shares` holds
+  copies and moves.
 - In a folder with a default ACL, the group bits of 2770 and 0660 become the new entry's ACL
   mask, as they do for what SMB users create.
 - The stand-in cannot give a folder the group unos-smb (only root can): the backend tests give

@@ -785,13 +785,18 @@ def _give_share_mode(dir_fd: int, name: str) -> None:
     before it is opened here. Only the folder this mkdir made is changed,
     through its descriptor: the supervisor's, still private (0700) and
     empty. Any other entry there keeps its modes.
+
+    If it cannot get the mode, the error is answered and the folder is
+    removed again (_remove_new_folder): private, the share's SMB users could
+    not use it, and Repair permissions skips private folders. A folder that
+    stays all the same is named in the answer (_left_private).
     """
     try:
         fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
     except OSError as exc:
         if exc.errno in _GONE:  # removed, or replaced by a file or a symlink
             return
-        raise
+        raise _left_private(exc, name) from exc
     try:
         st = os.fstat(fd)
         if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o777 != 0o700:
@@ -800,8 +805,40 @@ def _give_share_mode(dir_fd: int, name: str) -> None:
             if next(entries, None) is not None:
                 return
         os.fchmod(fd, smb_constants.SHARE_DIR_MODE)
+    except OSError as exc:
+        if not _remove_new_folder(dir_fd, name, fd):
+            raise _left_private(exc, name) from exc
+        raise
     finally:
         os.close(fd)
+
+
+def _remove_new_folder(dir_fd: int, name: str, fd: int) -> bool:
+    """Remove the folder ``fd`` from its name ``name`` in ``dir_fd``; whether the name no longer holds it.
+
+    Only while the name holds that folder (samestat): an entry that has
+    taken the name meanwhile stays. rmdir removes only an empty folder, so
+    one put there between the check and the rmdir loses nothing, and
+    whoever could put it there can remove it as well.
+    """
+    try:
+        if not os.path.samestat(os.stat(name, dir_fd=dir_fd, follow_symlinks=False), os.fstat(fd)):
+            return True
+        os.rmdir(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _left_private(exc: OSError, name: str) -> HTTPException:
+    """The answer to New Folder when its folder ``name`` did not get the modes of shares and stays private."""
+    error = _http_error(exc)
+    return HTTPException(
+        error.status_code,
+        f"{error.detail}. The new folder {name} stays private, and Repair permissions skips it: delete it",
+    )
 
 
 def _c_exclusive_rename() -> Callable[[int, str, int, str], None] | None:

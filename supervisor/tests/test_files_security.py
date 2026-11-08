@@ -371,27 +371,115 @@ def test_an_upload_that_replaces_a_file_in_a_share_folder_leaves_it_writable_for
     assert _tree(docs) == ["report.txt"]
 
 
-class _OsFailingFchmod:
-    """The files router's os module, in which fchmod fails with an I/O error."""
+class _OsFailing:
+    """The files router's os module, in which the functions ``names`` fail with the error ``code``."""
+
+    def __init__(self, *names, code=errno.EIO):
+        self._names = names
+        self._code = code
+
+    def __getattr__(self, name):
+        if name in self._names:
+            return self._fail
+        return getattr(os, name)
+
+    def _fail(self, *args, **kwargs):
+        raise OSError(self._code, os.strerror(self._code))
+
+
+# A step of New Folder in a share folder that fails after the mkdir: (the os function, its error, the answer).
+FAILED_AFTER_THE_MKDIR = {
+    "fchmod, an I/O error": ("fchmod", errno.EIO, (500, "File operation failed: Input/output error")),
+    "fchmod, no space left": ("fchmod", errno.ENOSPC, (507, "No space left on device")),
+    "the check that it is empty": ("scandir", errno.EIO, (500, "File operation failed: Input/output error")),
+}
+
+
+@pytest.mark.parametrize("function, code, answer", FAILED_AFTER_THE_MKDIR.values(), ids=FAILED_AFTER_THE_MKDIR.keys())
+def test_a_new_folder_that_cannot_get_the_modes_of_shares_is_answered_so_and_removed_again(
+    env, smb_group, monkeypatch, function, code, answer
+):
+    """The error is answered, and the folder that the mkdir made does not stay.
+
+    Private, SMB users could not use it, and Repair permissions skips
+    private folders: it would stay so until someone deleted it.
+    """
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    monkeypatch.setattr(files_router, "os", _OsFailing(function, code=code))
+
+    response = _mkdir(env, docs, "new")
+
+    assert (response.status_code, response.json()["detail"]) == answer
+    assert _tree(docs) == []
+
+
+# New Folder in a share folder, whose new folder neither gets the modes of shares nor can be
+# removed again: (the os functions that fail, their error, the answer).
+LEFT_PRIVATE = {
+    "neither fchmod nor rmdir": (
+        ("fchmod", "rmdir"),
+        errno.EIO,
+        (500, "File operation failed: Input/output error. "
+              "The new folder new stays private, and Repair permissions skips it: delete it"),
+    ),
+    "it cannot be opened": (
+        ("open",),
+        errno.EMFILE,
+        (500, "File operation failed: Too many open files. "
+              "The new folder new stays private, and Repair permissions skips it: delete it"),
+    ),
+}
+
+
+@pytest.mark.parametrize("functions, code, answer", LEFT_PRIVATE.values(), ids=LEFT_PRIVATE.keys())
+def test_a_new_folder_that_stays_private_is_answered_so(env, smb_group, monkeypatch, functions, code, answer):
+    """The answer says that the folder stays private and must be deleted, since Repair permissions skips it."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    monkeypatch.setattr(files_router, "os", _OsFailing(*functions, code=code))
+
+    response = _mkdir(env, docs, "new")
+
+    assert (response.status_code, response.json()["detail"]) == answer
+    mode, gid = _mode(docs / "new")
+    assert (mode & 0o077, gid) == (0, smb_group)  # neither the group nor others can use it
+    assert _tree(docs) == ["new"]
+
+
+class _OsSwappingAtTheModes:
+    """The files router's os module, in which another folder takes the name of a new folder, and then its fchmod fails.
+
+    As an SMB user who can write the share's folder could do it in between:
+    the new folder ``folder`` is renamed to ``<folder>.moved``, and
+    ``replacement`` gets its name.
+    """
+
+    def __init__(self, folder, replacement):
+        self._folder = folder
+        self._replacement = replacement
 
     def __getattr__(self, name):
         return getattr(os, name)
 
     def fchmod(self, fd, mode):
+        os.rename(self._folder, f"{self._folder}.moved")
+        os.rename(self._replacement, self._folder)
         raise OSError(errno.EIO, os.strerror(errno.EIO))
 
 
-def test_a_new_folder_that_cannot_get_the_modes_of_shares_is_answered_so_and_stays_private(
+def test_a_folder_put_at_the_name_of_a_new_folder_that_cannot_get_the_modes_of_shares_is_kept(
     env, smb_group, monkeypatch
 ):
+    """Only the folder that the mkdir made is removed again: an empty folder that took its name meanwhile stays."""
     docs = _folder(env.pool / "docs", 0o2770, smb_group)
-    monkeypatch.setattr(files_router, "os", _OsFailingFchmod())
+    other = _folder(docs / "other", 0o2770, smb_group)
+    before = _mode(other)
+    monkeypatch.setattr(files_router, "os", _OsSwappingAtTheModes(docs / "new", other))
 
     response = _mkdir(env, docs, "new")
 
     assert (response.status_code, response.json()["detail"]) == (500, "File operation failed: Input/output error")
-    mode, gid = _mode(docs / "new")
-    assert (mode & 0o077, gid) == (0, smb_group)  # neither the group nor others can use it
+    assert _mode(docs / "new") == before
+    assert _tree(docs) == ["new", "new.moved"]
 
 
 def test_an_existing_name_in_a_share_folder_is_refused_and_kept(env, smb_group):

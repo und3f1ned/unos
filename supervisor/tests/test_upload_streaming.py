@@ -1036,7 +1036,7 @@ async def test_in_a_share_folder_the_file_is_writable_for_the_smb_group_before_a
     assert (stat.S_IMODE(st.st_mode), st.st_gid) == (0o660, os.getgid())
 
 
-async def test_a_file_that_cannot_get_the_mode_of_shares_leaves_nothing_either_way(env, creation, monkeypatch):
+async def test_in_a_share_folder_a_file_that_cannot_get_0660_leaves_nothing_either_way(env, creation, monkeypatch):
     """An upload whose file cannot be given 0660 in a share folder is answered with the error; nothing of it stays."""
     monkeypatch.setattr(constants, "SMB_GROUP_GID", os.getgid())
     os.chown(env.pool, -1, os.getgid())

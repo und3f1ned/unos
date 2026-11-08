@@ -2150,7 +2150,7 @@
     {
       "id": "files.group-writable-entries-in-shares",
       "category": "files",
-      "description": "Folders and files that the File Manager creates inside a share are writable for the share's SMB users without a Repair",
+      "description": "Folders made with New Folder and files uploaded in Files inside a share are writable for the share's SMB users without a Repair",
       "steps": [
         "Create a folder and upload a file in a share's folder in Files: they get the group unos-smb with group write (2770 for the folder, 0660 for the file)",
         "An SMB user with write access to the share changes the file and creates entries in the folder at once",
@@ -2168,7 +2168,24 @@
         "ADR-0150",
         "ADR-0273"
       ],
-      "notes": "Built (ADR-0273): New Folder and Upload give the new entry 2770 or 0660 when the folder it is made in is setgid, of the group unos-smb with group rwx and nothing for others (_share_folder in supervisor/src/files/router.py); the group comes from the folder, and elsewhere new entries keep what the umask leaves. Steps 1 and 3 are asserted by test_files_security.py, test_upload_streaming.py and test_share_api.py (TestFileManagerInAShareFolder) with the runner's gid as the SMB group, and step 3 in the web UI by files.spec.ts ('outside share folders, a new folder and an upload give the group no write access'); the stand-in cannot give a folder gid 70000. The unnamed upload file (O_TMPFILE) is checked on Linux only: scripts/dev/linux-tests.sh tests/test_upload_streaming.py -k share_folder. Open: the device check, and again after a reboot (ADR-0018). In the folder of a share that UNOS created (2770 root:unos-smb) and that gives an active SMB user Read & write, create a folder and upload a file in Files: stat -c '%a %U:%G' shows 2770 root:unos-smb and 660 root:unos-smb. That user then, over SMB (smbclient), overwrites the file and puts a file into the new folder, without a Repair. A folder and an upload made in Files in a pool's top folder show 755 and 644 root:root."
+      "notes": "Built (ADR-0273): New Folder and Upload give the new entry 2770 or 0660 when the folder it is made in is setgid, of the group unos-smb with group rwx and nothing for others (_share_folder in supervisor/src/files/router.py); the group comes from the folder, and elsewhere new entries keep what the umask leaves. A new folder that cannot get 2770 is removed again, or the answer says that it stays private, since Repair permissions skips private folders. Copy and Move keep the modes of the items, also into a share (files.group-writable-copies-and-moves-in-shares). Steps 1 and 3 are asserted by test_files_security.py, test_upload_streaming.py and test_share_api.py (TestFileManagerInAShareFolder) with the runner's gid as the SMB group, and step 3 in the web UI by files.spec.ts ('outside share folders, a new folder and an upload give the group no write access'); the stand-in cannot give a folder gid 70000. The unnamed upload file (O_TMPFILE) is checked on Linux only: scripts/dev/linux-tests.sh tests/test_upload_streaming.py -k share_folder (both share-folder upload tests, each unnamed and hidden). Open: the device check, and again after a reboot (ADR-0018). In the folder of a share that UNOS created (2770 root:unos-smb) and that gives an active SMB user Read & write, create a folder and upload a file in Files: stat -c '%a %U:%G' shows 2770 root:unos-smb and 660 root:unos-smb. That user then, over SMB (smbclient), overwrites the file and puts a file into the new folder, without a Repair. A folder and an upload made in Files in a pool's top folder, which is never a share's folder, show 755 and 644 root:root (a volume that is shared and was repaired is a share folder: there they get 2770 and 660)."
+    },
+    {
+      "id": "files.group-writable-copies-and-moves-in-shares",
+      "category": "files",
+      "description": "Items that Copy, or Move from another pool or volume, put into a share in Files are writable for the share's SMB users without a Repair",
+      "steps": [
+        "Copy a file and a folder into a share's folder in Files: the copies get the group unos-smb with group write (folders 2770, files 0660, or 0770 for files their owner may run, as Repair permissions gives them)",
+        "Move a file and a folder from another pool or volume into a share's folder: they get the same modes",
+        "An SMB user with write access to the share changes the copied and moved items at once",
+        "Outside share folders Copy and Move keep the modes of the items, as before"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0273",
+        "ADR-0155"
+      ],
+      "notes": "Copies keep the modes of their source (_copy_entry in supervisor/src/files/router.py), and so do moves to another pool or volume, which copy: such items need Repair permissions (ADR-0155), while New Folder and Upload give share modes (ADR-0273, files.group-writable-entries-in-shares). A Move within a pool or volume is a rename and keeps the modes as well; whether it should change them is open."
     },
     {
       "id": "files.delete-to-trash",

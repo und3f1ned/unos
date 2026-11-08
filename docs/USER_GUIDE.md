@@ -528,10 +528,11 @@ made; see [Repair Permissions](#repair-permissions)), **New Folder** gives the
 new folder the mode 2770 and **Upload** gives the file the mode 660, also a
 file that replaces one, both in the group `unos-smb`: the users with **Read &
 write** access to the share can change them, and add files to the new
-folder, over SMB at once. Elsewhere new folders get the mode 755 and uploaded
-files 644, which let other accounts read them but not change them. **Copy**
-and **Move** keep the permissions of the items, also into a share: run
-**Repair permissions** on the share afterwards.
+folder, over SMB at once. Elsewhere new folders get the mode 755 (2755 in a
+folder with the setgid bit) and uploaded files 644, which let other accounts
+read them but not change them. **Copy** and **Move** keep the permissions of
+the items, also into a share: run **Repair permissions** on the share
+afterwards.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
