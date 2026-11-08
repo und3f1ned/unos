@@ -306,13 +306,18 @@ test.describe('Install in the group unos-smb', () => {
 
     const option = dialog.getByRole('checkbox', { name: 'Run in the group unos-smb' });
     await expect(option).not.toBeChecked();
-    await expect(option).toHaveAccessibleDescription(/^Sets PGID to 70000 \(unos-smb\) and UMASK to 002\./);
+    await expect(option).toHaveAccessibleDescription(
+      /^Sets PUID to 80000, PGID to 70000 \(unos-smb\) and UMASK to 007\./,
+    );
 
     await dialog.getByRole('button', { name: /^Environment/ }).click();
     await dialog.getByLabel('USER').fill('e2e');
     await dialog.getByLabel('PASS').fill('k7-Unique-pass');
-    // PGID is UNOS's to set: the option sets it, the Environment tab does not.
+    // PUID and PGID are UNOS's to set: the option sets them, the Environment tab does not.
+    const puid = dialog.getByLabel('PUID');
     const pgid = dialog.getByLabel('PGID');
+    await expect(puid).toBeDisabled();
+    await expect(puid).toHaveValue('1000');
     await expect(pgid).toBeDisabled();
     await expect(pgid).toHaveValue('1000');
 
@@ -326,6 +331,7 @@ test.describe('Install in the group unos-smb', () => {
     await option.check();
     await expect(dialog.getByText('Transmission can read and change the files of every share folder')).toBeVisible();
     await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await expect(puid).toHaveValue('80000');
     await expect(pgid).toHaveValue('70000');
 
     await dialog.getByRole('button', { name: 'Install Transmission' }).click();
@@ -351,7 +357,86 @@ test.describe('Install in the group unos-smb', () => {
     await expect(dialog.getByRole('button', { name: 'Install Jellyfin' })).toBeEnabled();
     await expect(dialog.getByRole('checkbox', { name: 'Run in the group unos-smb' })).toHaveCount(0);
     await dialog.getByRole('button', { name: /^Environment/ }).click();
-    await expect(dialog.getByLabel('PGID')).toBeDisabled();
+    for (const name of ['PUID', 'PGID']) {
+      await expect(dialog.getByLabel(name)).toBeDisabled();
+      await expect(dialog.getByLabel(name)).toHaveValue('1000');
+    }
+  });
+
+  test('an app with only its own data is not offered the group', async ({ authenticatedPage: page }) => {
+    // Prowlarr's image is a linuxserver.io one, but its only folder is /config
+    // under apps/, which is never a share's folder.
+    await fakeInstall(page);
+    const dialog = await openApp(page, 'Prowlarr');
+
+    await expect(dialog.getByRole('button', { name: 'Install Prowlarr' })).toBeEnabled();
+    await expect(dialog.getByRole('checkbox', { name: 'Run in the group unos-smb' })).toHaveCount(0);
+  });
+});
+
+// Installed > the group unos-smb (ADR-0261): the server says from the container's
+// environment whether an app runs in the group, and the page shows it instead of
+// the template's PUID and PGID. The installed list is faked: the stand-in has no Docker.
+test.describe('Installed apps in the group unos-smb', () => {
+  function installed(name: string, templateId: string, runsInUnosSmb: boolean) {
+    return {
+      id: `${name}-id`,
+      template_id: templateId,
+      name,
+      container_id: `${name}-id`,
+      status: 'running',
+      web_port: null,
+      created_at: '2026-11-08T10:00:00Z',
+      pool: 'e2e_data',
+      volumes: [{ host: `/mnt/pools/e2e_data/apps/${templateId}/config`, container: '/config', readonly: false }],
+      data_outside_pools: [],
+      runs_in_unos_smb: runsInUnosSmb,
+    };
+  }
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    const apps = [installed('e2e-transmission', 'transmission', true), installed('e2e-syncthing', 'syncthing', false)];
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/installed',
+      (route: Route) => route.fulfill({ json: apps }),
+    );
+    await page.route(
+      (url: URL) => url.pathname.startsWith('/api/v1/apps/installed/'),
+      (route: Route) => route.abort(),
+    );
+  });
+
+  test('the installed list names the apps that run in the group', async ({ authenticatedPage: page }) => {
+    await page.goto('/apps');
+    await page.getByRole('button', { name: /^Installed/ }).click();
+
+    const card = (name: string) => page.locator('.card', { has: page.locator('h3', { hasText: name }) });
+    await expect(card('e2e-transmission').getByText('Runs in the group unos-smb')).toBeVisible();
+    await expect(card('e2e-syncthing')).toBeVisible();
+    await expect(card('e2e-syncthing').getByText('Runs in the group unos-smb')).toHaveCount(0);
+  });
+
+  test('details show the PUID and PGID the installed app runs with', async ({ authenticatedPage: page }) => {
+    await page.goto('/apps');
+
+    await page.locator('h3', { hasText: 'Transmission' }).first().click();
+    let dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('Transmission runs in the group unos-smb (PUID 80000, PGID 70000)')).toBeVisible();
+    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await expect(dialog.getByLabel('PUID')).toHaveValue('80000');
+    await expect(dialog.getByLabel('PGID')).toHaveValue('70000');
+    // The hint of each of the two fields.
+    await expect(dialog.getByText('Set by UNOS: Transmission runs in the group unos-smb.')).toHaveCount(2);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toHaveCount(0);
+
+    await page.locator('h3', { hasText: 'Syncthing' }).first().click();
+    dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Syncthing', exact: true })).toBeVisible();
+    await expect(dialog.getByText('runs in the group unos-smb (PUID')).toHaveCount(0);
+    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await expect(dialog.getByLabel('PUID')).toHaveValue('1000');
     await expect(dialog.getByLabel('PGID')).toHaveValue('1000');
+    await expect(dialog.getByText('Set by UNOS: Syncthing runs outside the group unos-smb.')).toHaveCount(2);
   });
 });

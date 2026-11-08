@@ -588,14 +588,17 @@ on a mounted pool.
 
 An app can use a share's folder only if it runs in the group `unos-smb`. The
 apps of linuxserver.io images offer **Run in the group unos-smb** when they
-are installed: it sets the app's `PGID` to 70000 (`unos-smb`) and its `UMASK`
-to 002. Such an app reads and changes every file in the share folders you
+are installed, unless all their folders hold their own data (such as
+Prowlarr's `/config`): it sets the app's `PUID` to 80000, a user that no other
+app has, its `PGID` to 70000 (`unos-smb`) and its `UMASK` to 007, so what the
+app creates gets the same permissions as what SMB users create (folders 2770,
+files 660). Such an app reads and changes every file in the share folders you
 give it, and SMB users with write access to the share can change what the app
 writes there. If the app can be reached from the internet, whoever takes it
 over gets those files too. Apps of other images, such as Jellyfin, Plex and
-File Browser, cannot run in the group: UNOS sets the group through `PGID`,
-which those images do not take. `PGID` itself cannot be changed on the
-**Environment** tab.
+File Browser, cannot run in the group: UNOS sets the user and the group
+through `PUID` and `PGID`, which those images do not take. `PUID` and `PGID`
+cannot be changed on the **Environment** tab.
 
 An install is refused when it would give an app:
 
@@ -607,7 +610,14 @@ An install is refused when it would give an app:
   `/config`;
 - a writable folder that holds a share's folder, also in the group. A
   read-only one may hold shares when the app runs in the group, as Duplicati's
-  view of the whole pool does.
+  view of the whole pool does;
+- a snapshot folder (`.snapshots`) or the trash (`.unos-trash`), or a folder
+  in one, also in the group: they keep the files of shares as they were, and
+  what was deleted from them.
+
+A linuxserver.io app may give the share's folder to its user (80000) when it
+starts; the folder keeps the group `unos-smb` and its permissions, and
+**Repair permissions** does not change its owner.
 
 A folder that an app already uses (downloads, media) can still be shared on
 the **Shares** page. After **Repair permissions**, an app that runs as its own
@@ -616,8 +626,9 @@ the app (its data is kept) and install it again in the group.
 
 ### Managing Installed Apps
 
-Go to **App Store** → **Installed** to see the installed apps with their state
-and the pool that holds their data, and to act on them:
+Go to **App Store** → **Installed** to see the installed apps with their state,
+the pool that holds their data and, for the apps that run in the group
+`unos-smb`, **Runs in the group unos-smb**, and to act on them:
 
 - **Start**, **Stop** and **Restart** an app; its card shows the new state. A
   start or restart is refused while the app's data folders are not on a mounted

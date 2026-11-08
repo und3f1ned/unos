@@ -475,6 +475,12 @@
 										Data on pool: <span class="mono">{app.pool}</span>
 									</p>
 								{/if}
+								{#if app.runs_in_unos_smb}
+									<!-- Only such an app reads share folders, also after a Repair (ADR-0261). -->
+									<p class="text-xs text-muted mt-1">
+										Runs in the group <span class="mono">unos-smb</span>
+									</p>
+								{/if}
 							</div>
 							<div class="flex items-center gap-2">
 								{#if getWebUrl(app)}

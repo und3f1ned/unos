@@ -21,6 +21,12 @@ SMB_GROUP_GID = 70000
 SMB_UID_MIN = 70000
 SMB_UID_MAX = 79999
 
+# User id of the apps that run in the group unos-smb (ADR-0261): what they
+# write in share folders belongs to it, and so may a share's folder, which
+# their images give to their user when they start. No SMB account and no app
+# outside the group has it.
+SMB_APP_UID = 80000
+
 # A host account is UNOS's ("marked") only with this GECOS, a uid in the range
 # above and SMB_GROUP_GID as primary group. UNOS never touches other accounts.
 SMB_GECOS = "UNOS SMB user"

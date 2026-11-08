@@ -7,10 +7,16 @@ import { api } from "./client";
 export const POOL_PLACEHOLDER = "{pool}";
 
 /**
- * The group id of unos-smb (SMB_GROUP_GID of supervisor/src/shares/constants.py): the PGID
- * of an app installed to run in the group unos-smb (ADR-0261).
+ * PUID and PGID of an app installed to run in the group unos-smb (ADR-0261): the user of
+ * such apps, which no other app has (SMB_APP_UID of supervisor/src/shares/constants.py),
+ * and the group id of unos-smb (SMB_GROUP_GID). The server sets both; UMASK becomes 007.
  */
-export const UNOS_SMB_GID = 70000;
+export const UNOS_SMB_IDS: Readonly<Record<"PUID" | "PGID", number>> = { PUID: 80000, PGID: 70000 };
+
+/** The variables of the user and group of an app's processes, which only the server sets. */
+export function isSetByUnos(name: string): name is "PUID" | "PGID" {
+  return name === "PUID" || name === "PGID";
+}
 
 export interface PortMapping {
   host: number;
@@ -58,8 +64,9 @@ export interface AppTemplate {
   volumes: VolumeMapping[];
   environment: EnvVar[];
   /**
-   * The app can be installed to run in the group unos-smb: its image takes PGID and UMASK
-   * (linuxserver.io). Only such an app is given a share's folder.
+   * The app can be installed to run in the group unos-smb: its image takes PUID, PGID and
+   * UMASK (linuxserver.io), and it has a folder besides its own data. Only such an app is
+   * given a share's folder.
    */
   can_run_in_unos_smb: boolean;
 }
@@ -82,6 +89,8 @@ export interface InstalledApp {
    * The server refuses to start such an app.
    */
   data_outside_pools: string[];
+  /** The app runs in the group unos-smb (PUID 80000, PGID 70000): its container says so. */
+  runs_in_unos_smb: boolean;
 }
 
 /** A mounted storage pool that can hold app data. */
@@ -107,9 +116,12 @@ export interface AppInstallRequest {
   port_overrides?: Record<number, number>;
   /** Container path -> host path inside a mounted pool. */
   volume_overrides?: Record<string, string>;
-  /** Values of the template's variables; never PGID, which the server sets. */
+  /** Values of the template's variables; never PUID or PGID, which the server sets. */
   env_overrides?: Record<string, string>;
-  /** Run the app in the group unos-smb (PGID 70000, UMASK 002); only with can_run_in_unos_smb. */
+  /**
+   * Run the app in the group unos-smb (PUID 80000, PGID 70000, UMASK 007); only with
+   * can_run_in_unos_smb.
+   */
   run_in_unos_smb?: boolean;
 }
 

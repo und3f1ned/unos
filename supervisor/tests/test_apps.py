@@ -939,6 +939,7 @@ def _container(
     status: str = "exited",
     error: str = "",
     policy: str = "unless-stopped",
+    env: list[str] = (),
 ) -> MagicMock:
     labels = {}
     if template is not None:
@@ -959,6 +960,7 @@ def _container(
             "Restarting": False,
             "Error": error,
         },
+        "Config": {"Env": list(env)},
         "HostConfig": {"RestartPolicy": {"Name": policy}},
         "NetworkSettings": {"Ports": {}},
         "Mounts": list(mounts),
@@ -1369,10 +1371,18 @@ class TestNestedFolders:
 
 LOGIN = TRANSMISSION["env_overrides"]
 IN_UNOS_SMB = {**TRANSMISSION, "run_in_unos_smb": True}
-PGID_IS_SET = (
-    "PGID cannot be changed: an app runs with the PGID of its template, or with 70000 (unos-smb) "
-    "when it is installed to run in the group unos-smb"
+# linuxserver.io apps whose every pool folder is their own data under {pool}/apps,
+# which is never a share's folder: the group would give them nothing.
+ONLY_OWN_DATA = (
+    "prowlarr", "overseerr", "tautulli", "nextcloud", "bookstack", "wikijs", "heimdall", "wireguard", "code-server",
 )
+
+
+def _set_by_unos(names: str) -> str:
+    return (
+        f"{names} cannot be changed: an app runs with the PUID and PGID of its template, or with "
+        "PUID 80000 and PGID 70000 (unos-smb) when it is installed to run in the group unos-smb"
+    )
 
 
 def _environment(docker_client) -> dict[str, str]:
@@ -1381,12 +1391,21 @@ def _environment(docker_client) -> dict[str, str]:
 
 
 class TestRunInUnosSmb:
-    def test_linuxserver_images_and_no_others_can_run_in_the_group(self):
-        linuxserver = {t.id for t in APP_CATALOG if t.source is AppSource.LINUXSERVER}
-        assert {t.id for t in APP_CATALOG if t.can_run_in_unos_smb} == linuxserver
+    def test_linuxserver_apps_with_a_folder_besides_their_own_data_can_run_in_the_group(self):
+        offered = {t.id for t in APP_CATALOG if t.can_run_in_unos_smb}
         for template in APP_CATALOG:
-            if template.id in linuxserver:
+            if template.id in offered:
+                assert template.source is AppSource.LINUXSERVER, template.id
                 assert {"PUID", "PGID"} <= {var.name for var in template.environment}, template.id
+                assert any(
+                    volume.on_pool and not volume.host.startswith(f"{POOL_PLACEHOLDER}/apps/")
+                    for volume in template.volumes
+                ), template.id
+        assert {"transmission", "syncthing", "duplicati", "emby", "sonarr", "calibre-web"} <= offered
+        for app_id in ONLY_OWN_DATA:
+            template = get_app_by_id(app_id)
+            assert template.source is AppSource.LINUXSERVER, app_id
+            assert not template.can_run_in_unos_smb, app_id
         # Their templates declare PGID, but jellyfin's image runs as root and
         # Plex's takes PLEX_GID: PGID would change nothing.
         for app_id in ("jellyfin", "plex"):
@@ -1398,15 +1417,23 @@ class TestRunInUnosSmb:
         assert api.get("/api/v1/apps/catalog/transmission").json()["can_run_in_unos_smb"] is True
         assert api.get("/api/v1/apps/catalog/jellyfin").json()["can_run_in_unos_smb"] is False
         listed = {t["id"]: t["can_run_in_unos_smb"] for t in api.get("/api/v1/apps/catalog").json()}
-        assert listed["syncthing"] is True and listed["filebrowser"] is False
+        assert listed["syncthing"] is True and listed["filebrowser"] is False and listed["prowlarr"] is False
 
-    def test_the_option_sets_pgid_70000_and_a_group_writable_umask(self, api, pools, docker_client):
+    def test_the_option_runs_the_app_as_user_80000_in_the_group_with_umask_007(self, api, pools, docker_client):
         response = api.post(INSTALL, json=IN_UNOS_SMB)
 
         assert response.status_code == 200, response.text
         environment = _environment(docker_client)
-        assert (environment["PUID"], environment["PGID"], environment["UMASK"]) == ("1000", "70000", "002")
+        # 80000 is no other app's user: apps outside the group run as 1000,
+        # and a share's folder that the image gives to its user (chown) must
+        # not become theirs. 007 gives new entries 2770 and 0660, as Samba does.
+        assert (environment["PUID"], environment["PGID"], environment["UMASK"]) == ("80000", "70000", "007")
         assert (environment["USER"], environment["PASS"]) == ("e2e", "k7-Unique-pass")
+
+    def test_no_catalog_app_runs_as_the_user_of_the_group(self):
+        for template in APP_CATALOG:
+            assert all(volume.uid != 80000 for volume in template.volumes), template.id
+            assert all(var.value.strip() != "80000" for var in template.environment), template.id
 
     def test_without_the_option_the_app_stays_outside_the_group(self, api, pools, docker_client):
         response = api.post(INSTALL, json=TRANSMISSION)
@@ -1417,21 +1444,37 @@ class TestRunInUnosSmb:
         assert "UMASK" not in environment
 
     @pytest.mark.parametrize("run_in_unos_smb", [False, True])
-    @pytest.mark.parametrize("pgid", ["70000", " 70000", "1000", "0"])
-    def test_pgid_is_not_an_environment_setting(self, api, pools, docker_client, run_in_unos_smb, pgid):
-        # Typing 70000 into the Environment tab would put the app into the
-        # group without the option.
+    @pytest.mark.parametrize(
+        "overrides,names",
+        [
+            # 70000 would put the app into the group without the option.
+            ({"PGID": "70000"}, "PGID"),
+            ({"PGID": " 70000"}, "PGID"),
+            ({"PGID": "1000"}, "PGID"),
+            ({"PGID": "0"}, "PGID"),
+            # 0 runs the image's user as root, 7xxxx as an SMB account, 80000
+            # as the apps in the group.
+            ({"PUID": "0"}, "PUID"),
+            ({"PUID": "70001"}, "PUID"),
+            ({"PUID": "80000"}, "PUID"),
+            ({"PUID": "1000"}, "PUID"),
+            ({"PUID": "0", "PGID": "70000"}, "PUID and PGID"),
+        ],
+    )
+    def test_puid_and_pgid_are_not_environment_settings(
+        self, api, pools, docker_client, run_in_unos_smb, overrides, names
+    ):
         response = api.post(
             INSTALL,
             json={
                 **TRANSMISSION,
                 "run_in_unos_smb": run_in_unos_smb,
-                "env_overrides": {**LOGIN, "PGID": pgid},
+                "env_overrides": {**LOGIN, **overrides},
             },
         )
 
         assert response.status_code == 400
-        assert response.json()["detail"] == PGID_IS_SET
+        assert response.json()["detail"] == _set_by_unos(names)
         docker_client.images.pull.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -1444,8 +1487,23 @@ class TestRunInUnosSmb:
 
         assert response.status_code == 400
         assert response.json()["detail"] == (
-            f"{name} cannot run in the group unos-smb: only linuxserver.io images take the group "
-            "of their user from PGID"
+            f"{name} cannot run in the group unos-smb: only linuxserver.io images take the user and "
+            "group of their processes from PUID and PGID"
+        )
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    @pytest.mark.parametrize("app_id", ONLY_OWN_DATA)
+    def test_apps_with_only_their_own_data_cannot_run_in_the_group(self, api, pools, docker_client, app_id):
+        template = get_app_by_id(app_id)
+        before = _tree(pools.root)
+
+        response = api.post(INSTALL, json={"template_id": app_id, "run_in_unos_smb": True})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            f"{template.name} cannot run in the group unos-smb: its folders on the pool hold only its "
+            "own data (apps/), and none of them can be a share's folder"
         )
         docker_client.images.pull.assert_not_called()
         assert _tree(pools.root) == before
@@ -1615,16 +1673,80 @@ class TestShareFolders:
         )
         docker_client.images.pull.assert_not_called()
 
-    def test_a_share_path_stored_in_another_form_still_counts(self, api, pools, docker_client, shares):
+    @pytest.mark.parametrize(
+        "stored",
+        [
+            # A leading "//" stays in os.path.normpath and in pathlib; ".."
+            # stays in pathlib. Neither names another folder.
+            "/{alpha}/x/../downloads",
+            "{alpha}//downloads/",
+        ],
+    )
+    def test_a_share_path_stored_in_another_form_still_counts(self, api, pools, docker_client, shares, stored):
         # Restored databases are untrusted (ADR-0144): the path may not be in normal form.
         downloads = pools.alpha / "downloads"
         downloads.mkdir()
-        shares("Downloads", f"{pools.alpha}//downloads/")
+        shares("Downloads", stored.format(alpha=pools.alpha))
 
         response = api.post(INSTALL, json=TRANSMISSION)
 
         assert response.status_code == 400
-        assert "is the folder of the share Downloads" in response.json()["detail"]
+        assert response.json()["detail"] == (
+            f"The folder for /downloads ({downloads}) is the folder of the share Downloads ({downloads}). "
+            + _needs_the_group("Transmission")
+        )
+        docker_client.images.pull.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "folder,name",
+        [
+            # Read-only snapshots of the pool and of a volume keep the files
+            # of their shares as they were.
+            (".snapshots/daily/family", ".snapshots"),
+            (".snapshots", ".snapshots"),
+            ("volume/.snapshots/daily", ".snapshots"),
+            # The trash keeps what was deleted, from shares too (ADR-0259).
+            (".unos-trash", ".unos-trash"),
+            ("volume/.unos-trash/20261108T000000Z-0123456789abcdef/item", ".unos-trash"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "request_body,target",
+        [
+            # Jellyfin's image runs as root: it reads every copy whatever its mode.
+            ({"template_id": "jellyfin"}, "/media"),
+            (IN_UNOS_SMB, "/downloads"),
+        ],
+    )
+    def test_snapshots_and_the_trash_are_refused(
+        self, api, pools, docker_client, family, folder, name, request_body, target
+    ):
+        source = pools.alpha / folder
+        source.mkdir(parents=True)
+        before = _tree(pools.root)
+
+        response = api.post(INSTALL, json={**request_body, "volume_overrides": {target: str(source)}})
+
+        assert response.status_code == 400
+        what = "a snapshot folder (.snapshots)" if name == ".snapshots" else "the trash (.unos-trash)"
+        assert response.json()["detail"] == (
+            f"The folder for {target} ({source}) is in {what}, which keeps files of shares outside "
+            f"their folders: no app gets a snapshot or the trash. Choose a folder outside {name}."
+        )
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_snapshots_are_refused_also_where_no_share_is(self, api, pools, docker_client):
+        # A snapshot can hold the files of a share that was deleted or moved since.
+        snapshot = pools.beta / ".snapshots/daily"
+        snapshot.mkdir(parents=True)
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin", "volume_overrides": {"/media": str(snapshot)}})
+
+        assert response.status_code == 400
+        assert response.json()["detail"].startswith(
+            f"The folder for /media ({snapshot}) is in a snapshot folder (.snapshots)"
+        )
         docker_client.images.pull.assert_not_called()
 
     def test_a_share_of_a_whole_pool_counts_for_nothing(self, api, pools, docker_client, shares):
@@ -1970,6 +2092,34 @@ class TestInstalledApps:
 
         assert app_info["pool"] == "alpha"
         assert len(app_info["data_outside_pools"]) == 3
+
+    def test_the_list_says_which_apps_run_in_the_group(self, api, pools, installed):
+        # The page cannot show the template's PGID as the one an app runs with
+        # (ADR-0261): the container's environment says it.
+        installed(
+            _container(
+                "transmission",
+                template="transmission",
+                pool="alpha",
+                env=["PUID=80000", "PGID=70000", "UMASK=007", *(f"{name}={LOGIN[name]}" for name in LOGIN)],
+            )
+        )
+        installed(_container("syncthing", template="syncthing", pool="alpha", env=["PUID=1000", "PGID=1000"]))
+        installed(_container("dozzle", template="dozzle"))
+        no_environment = installed(_container("jellyfin", template="jellyfin", pool="alpha"))
+        no_environment.attrs["Config"] = {"Env": None}
+
+        response = api.get(INSTALLED)
+
+        assert response.status_code == 200, response.text
+        assert {app_info["name"]: app_info["runs_in_unos_smb"] for app_info in response.json()} == {
+            "transmission": True,
+            "syncthing": False,
+            "dozzle": False,
+            "jellyfin": False,
+        }
+        # Only that: the list shows no value of the environment.
+        assert LOGIN["PASS"] not in response.text
 
 
 # ---------------------------------------------------------------------------

@@ -21,20 +21,24 @@ from ..auth.utils import require_admin, verify_token
 from ..config import get_settings
 from ..containers.docker import get_client
 from ..database import get_db
+from ..files.router import TRASH
 from ..security.validators import open_dir_nofollow, pools_base, validate_pools_path
-from ..shares.constants import SMB_GROUP_GID, SMB_GROUP_NAME
+from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
-from .catalog import APP_CATALOG, APPS_DATA_PATH, get_app_by_id, get_apps_by_category, search_apps
+from ..snapshots.router import SNAPSHOT_DIR_NAME
+from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
 from .schemas import (
     POOL_PLACEHOLDER,
     AppCategory,
     AppInstallRequest,
     AppInstallResponse,
     AppPool,
+    AppSource,
     AppTemplate,
     AppVolume,
     InstalledApp,
     VolumeMapping,
+    is_app_data_path,
 )
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -57,9 +61,20 @@ PLACEHOLDER_SECRETS = frozenset(
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
 
 # Added to the environment of an app that runs in the group unos-smb (ADR-0261):
-# the group of the image's user, and a umask that gives that group write access
-# to what the app creates, so that SMB users can change it.
-UNOS_SMB_ENVIRONMENT = {"PGID": str(SMB_GROUP_GID), "UMASK": "002"}
+# a user that no other app has, the group unos-smb, and the umask that gives
+# new entries the modes Samba gives them in a share (2770 and 0660), so that
+# SMB users can change what the app creates and nobody else can read it.
+UNOS_SMB_ENVIRONMENT = {"PUID": str(SMB_APP_UID), "PGID": str(SMB_GROUP_GID), "UMASK": "007"}
+# The user and group of an app's processes: UNOS's to set, never an
+# env_overrides value (ADR-0261).
+_SET_BY_UNOS = ("PUID", "PGID")
+# Folders below the pools base that keep files of shares outside their
+# folders: snapshots (copies as they were) and the trash (what was deleted,
+# ADR-0259). No app gets them, as no share is made of them (ADR-0145).
+_COPIES_OF_SHARES = {
+    SNAPSHOT_DIR_NAME: f"a snapshot folder ({SNAPSHOT_DIR_NAME})",
+    TRASH: f"the trash ({TRASH})",
+}
 
 
 @router.get("/catalog", response_model=list[AppTemplate])
@@ -135,9 +150,23 @@ def _list_installed() -> list[InstalledApp]:
                 if _is_data(b, volumes.get(b.target), base)
                 and _pool_containing(b.source, pools) is None
             ],
+            runs_in_unos_smb=_runs_in_unos_smb(c),
         ))
 
     return result
+
+
+def _runs_in_unos_smb(container: Any) -> bool:
+    """True if the container runs with the PGID that the install option sets (ADR-0261).
+
+    Read from the environment Docker keeps for the container; only this
+    answer leaves it, never a value.
+    """
+    for item in (container.attrs.get("Config") or {}).get("Env") or []:
+        name, _, value = str(item).partition("=")
+        if name == "PGID":
+            return value == UNOS_SMB_ENVIRONMENT["PGID"]
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +493,9 @@ def _check_share_folders(
     strictly inside a pool (a pool root, imported from an old smb.conf) is
     never served (ADR-0145) and counts for nothing here. Never, with or
     without it:
+    - a folder in a snapshot folder or in the trash, or such a folder itself:
+      they keep files of shares outside the shares' folders, also of shares
+      deleted or moved since (_COPIES_OF_SHARES);
     - a folder inside a share's folder: whoever can write to the share, such
       as an app given its folder, can put a symbolic link in its place, which
       Docker follows at the next start (see _check_no_nested_sources);
@@ -482,6 +514,15 @@ def _check_share_folders(
     for m in planned:
         if m.pool is None:
             continue
+        parts = m.source.relative_to(base).parts if m.source.is_relative_to(base) else m.source.parts
+        for name, what in _COPIES_OF_SHARES.items():
+            if name in parts:
+                raise HTTPException(
+                    400,
+                    f"The folder for {m.target} ({m.source}) is in {what}, which keeps files of "
+                    "shares outside their folders: no app gets a snapshot or the trash. Choose a "
+                    f"folder outside {name}.",
+                )
         for share in folders:
             problem = _share_folder_problem(
                 template, m, volumes[m.target], share, run_in_unos_smb=run_in_unos_smb
@@ -509,7 +550,7 @@ def _share_folder_problem(
             "that link at the next start."
         )
     if m.source == share.path:
-        if volume.host.startswith(APPS_DATA_PATH + "/"):
+        if is_app_data_path(volume.host):
             return (
                 f"{m.target} holds {template.name}'s own data, which must not go into the folder "
                 f"of {the_share}: SMB users would read and change the app's settings. Choose a "
@@ -528,6 +569,20 @@ def _share_folder_problem(
                 "folder itself."
             )
     return None
+
+
+def _cannot_run_in_the_group(template: AppTemplate) -> str:
+    """Why the install option is refused for a template without can_run_in_unos_smb."""
+    if template.source is not AppSource.LINUXSERVER or not {"PUID", "PGID"} <= {
+        var.name for var in template.environment
+    }:
+        reason = "only linuxserver.io images take the user and group of their processes from PUID and PGID"
+    else:
+        reason = (
+            "its folders on the pool hold only its own data (apps/), and none of them can be a "
+            "share's folder"
+        )
+    return f"{template.name} cannot run in the group {SMB_GROUP_NAME}: {reason}"
 
 
 def _outside_the_group(template: AppTemplate) -> str:
@@ -710,14 +765,16 @@ def _prepare_sources(
 def _build_environment(
     template: AppTemplate, overrides: dict[str, str], *, run_in_unos_smb: bool
 ) -> dict[str, str]:
-    # PGID decides whether the app's user is in the group unos-smb: only the
-    # install option sets it (ADR-0261).
-    if "PGID" in overrides:
+    # PGID decides whether the app's processes are in the group unos-smb, and
+    # PUID whose they are: root (0), an SMB account or the apps in the group.
+    # Only the install option changes them (ADR-0261).
+    set_by_unos = [name for name in _SET_BY_UNOS if name in overrides]
+    if set_by_unos:
         raise HTTPException(
             400,
-            "PGID cannot be changed: an app runs with the PGID of its template, or with "
-            f"{SMB_GROUP_GID} ({SMB_GROUP_NAME}) when it is installed to run in the group "
-            f"{SMB_GROUP_NAME}",
+            f"{' and '.join(set_by_unos)} cannot be changed: an app runs with the PUID and PGID of "
+            f"its template, or with PUID {SMB_APP_UID} and PGID {SMB_GROUP_GID} ({SMB_GROUP_NAME}) "
+            f"when it is installed to run in the group {SMB_GROUP_NAME}",
         )
     environment: dict[str, str] = {}
     problems: list[str] = []
@@ -756,11 +813,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
         )
 
     if req.run_in_unos_smb and not template.can_run_in_unos_smb:
-        raise HTTPException(
-            400,
-            f"{template.name} cannot run in the group {SMB_GROUP_NAME}: only linuxserver.io "
-            "images take the group of their user from PGID",
-        )
+        raise HTTPException(400, _cannot_run_in_the_group(template))
     environment = _build_environment(
         template, req.env_overrides, run_in_unos_smb=req.run_in_unos_smb
     )

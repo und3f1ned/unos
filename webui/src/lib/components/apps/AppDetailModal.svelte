@@ -23,12 +23,14 @@
 		type AppInstallResponse,
 		type InstalledApp,
 		type VolumeMapping,
+		type EnvVar,
 		getAppPools,
 		installApp,
 		poolHostPath,
 		isInsidePools,
 		describeApiError,
-		UNOS_SMB_GID
+		isSetByUnos,
+		UNOS_SMB_IDS
 	} from '$lib/api/apps';
 	import { formatBytes } from '$lib/stores/stats';
 
@@ -65,6 +67,8 @@
 	$: sourceBadge = getSourceBadge(app?.source);
 	$: if (app) resetForm(app);
 	$: handleOpenChange(open);
+	// Whether the app runs (installed) or is to run (the form) in the group unos-smb.
+	$: inUnosSmb = isInstalled ? (installedApp?.runs_in_unos_smb ?? false) : runInUnosSmb;
 
 	$: selectedPool = pools.find((pool) => pool.name === selectedPoolName) ?? null;
 	$: poolOptions = pools.map((pool) => ({
@@ -200,12 +204,31 @@
 	function changedEnv(template: AppTemplate): Record<string, string> {
 		const result: Record<string, string> = {};
 		for (const env of template.environment) {
-			// The server sets PGID: the template's value, or unos-smb's with the option.
-			if (env.name === 'PGID') continue;
+			// The server sets PUID and PGID: the template's values, or the group's with the option.
+			if (isSetByUnos(env.name)) continue;
 			const value = envValues[env.name] ?? env.value;
 			if (value !== env.value) result[env.name] = value;
 		}
 		return result;
+	}
+
+	/** PUID or PGID as UNOS sets it: the group's in unos-smb, otherwise the template's. */
+	function setByUnosValue(env: EnvVar, inGroup: boolean): string {
+		return inGroup && isSetByUnos(env.name) ? String(UNOS_SMB_IDS[env.name]) : env.value;
+	}
+
+	function setByUnosHint(
+		template: AppTemplate,
+		env: EnvVar,
+		installed: boolean,
+		inGroup: boolean
+	): string {
+		if (installed) {
+			return `Set by UNOS: ${template.name} runs ${inGroup ? 'in' : 'outside'} the group unos-smb.`;
+		}
+		if (!template.can_run_in_unos_smb || !isSetByUnos(env.name)) return 'Set by UNOS.';
+		const group = env.name === 'PGID' ? ' (unos-smb)' : '';
+		return `Set by UNOS: ${UNOS_SMB_IDS[env.name]}${group} with "Run in the group unos-smb", otherwise ${env.value}.`;
 	}
 
 	function close() {
@@ -385,9 +408,9 @@
 					Run in the group unos-smb
 				</label>
 				<p id="app-unos-smb-hint" class="form-hint">
-					Sets PGID to {UNOS_SMB_GID} (unos-smb) and UMASK to 002. Only an app in this group can be
-					given a share's folder on the Volumes tab: it reads and changes every file there, and SMB
-					users can change what it writes.
+					Sets PUID to {UNOS_SMB_IDS.PUID}, PGID to {UNOS_SMB_IDS.PGID} (unos-smb) and UMASK to 007.
+					Only an app in this group can be given a share's folder on the Volumes tab: it reads and
+					changes every file there, and SMB users can change what it writes.
 				</p>
 				{#if runInUnosSmb}
 					<Alert variant="warning" class="mt-2">
@@ -396,6 +419,12 @@
 					</Alert>
 				{/if}
 			</div>
+		{/if}
+		{#if isInstalled && installedApp?.runs_in_unos_smb}
+			<Alert variant="info" class="mb-4">
+				{app.name} runs in the group unos-smb (PUID {UNOS_SMB_IDS.PUID}, PGID {UNOS_SMB_IDS.PGID}): it
+				reads and changes the files of the share folders it was given.
+			</Alert>
 		{/if}
 		{#if isInstalled && installedApp}
 			<AppStorageWarning app={installedApp} class="mb-4" />
@@ -595,8 +624,8 @@
 					<p class="text-sm text-secondary mb-4">
 						{#if needsPool}
 							Data folders are created on the selected storage pool. A data folder can point to
-							another folder inside a mounted pool, and to a share's folder only for an app that runs
-							in the group unos-smb.
+							another folder inside a mounted pool, never into a snapshot or the trash, and to a
+							share's folder only for an app that runs in the group unos-smb.
 						{/if}
 						System paths marked "System" are mounted from the host as they are.
 					</p>
@@ -650,16 +679,14 @@
 					</p>
 					{#each app.environment as env}
 						<div class="card-nested">
-							{#if env.name === 'PGID'}
-								<!-- The server sets PGID; the option decides it (ADR-0261). -->
+							{#if isSetByUnos(env.name)}
+								<!-- The server sets PUID and PGID; the install option decides them (ADR-0261). -->
 								<Input
 									class="font-mono text-sm"
 									label={env.name}
-									value={runInUnosSmb ? String(UNOS_SMB_GID) : env.value}
+									value={setByUnosValue(env, inUnosSmb)}
 									disabled
-									hint={app.can_run_in_unos_smb
-										? `Set by UNOS: ${UNOS_SMB_GID} (unos-smb) with "Run in the group unos-smb", otherwise ${env.value}.`
-										: 'Set by UNOS.'}
+									hint={setByUnosHint(app, env, isInstalled, inUnosSmb)}
 								/>
 							{:else}
 								<Input
