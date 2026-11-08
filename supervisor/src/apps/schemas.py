@@ -100,6 +100,18 @@ class AppTemplate(BaseModel):
     min_memory: str = "256m"  # Minimum recommended memory
     recommended_memory: str = "512m"
 
+    @computed_field  # type: ignore[misc]
+    @property
+    def can_run_in_unos_smb(self) -> bool:
+        """True if the app can be installed to run in the group unos-smb (ADR-0261).
+
+        linuxserver.io images take the group of their user from PGID and the
+        umask of their services from UMASK. Other images ignore both, also
+        where their template declares PGID (jellyfin's image runs as root,
+        Plex's takes PLEX_GID), so they are never given a share's folder.
+        """
+        return self.source is AppSource.LINUXSERVER and any(var.name == "PGID" for var in self.environment)
+
 
 class AppVolume(BaseModel):
     """A bind mount with the host path that is actually used."""
@@ -144,7 +156,12 @@ class AppInstallRequest(BaseModel):
     port_overrides: dict[int, int] = {}
     # Container path -> host path; host paths must be inside a mounted pool.
     volume_overrides: dict[str, str] = {}
+    # Values of the template's variables; PGID is not one of them (ADR-0261).
     env_overrides: dict[str, str] = {}
+    # Run the app in the group unos-smb (PGID 70000, UMASK 002), the only way
+    # to give it a share's folder; only for templates with can_run_in_unos_smb
+    # (ADR-0261).
+    run_in_unos_smb: bool = False
 
 
 class AppInstallResponse(BaseModel):

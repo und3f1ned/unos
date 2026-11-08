@@ -13,13 +13,18 @@ from docker.errors import DockerException, NotFound
 from docker.types import Mount
 from fastapi import APIRouter, Depends, HTTPException
 from requests.exceptions import RequestException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.utils import require_admin, verify_token
 from ..config import get_settings
 from ..containers.docker import get_client
-from ..security.validators import open_dir_nofollow, validate_pools_path
-from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
+from ..database import get_db
+from ..security.validators import open_dir_nofollow, pools_base, validate_pools_path
+from ..shares.constants import SMB_GROUP_GID, SMB_GROUP_NAME
+from ..shares.models import SmbShare
+from .catalog import APP_CATALOG, APPS_DATA_PATH, get_app_by_id, get_apps_by_category, search_apps
 from .schemas import (
     POOL_PLACEHOLDER,
     AppCategory,
@@ -50,6 +55,11 @@ PLACEHOLDER_SECRETS = frozenset(
 
 # Docker's own rule for container names.
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
+
+# Added to the environment of an app that runs in the group unos-smb (ADR-0261):
+# the group of the image's user, and a umask that gives that group write access
+# to what the app creates, so that SMB users can change it.
+UNOS_SMB_ENVIRONMENT = {"PGID": str(SMB_GROUP_GID), "UMASK": "002"}
 
 
 @router.get("/catalog", response_model=list[AppTemplate])
@@ -414,6 +424,124 @@ def _check_no_nested_sources(
                 )
 
 
+@dataclass(frozen=True)
+class _ShareFolder:
+    """The folder of a share, as the database names it."""
+    name: str
+    path: Path  # normalised lexically
+
+
+async def _share_folders(db: AsyncSession) -> list[_ShareFolder]:
+    """The folders of all shares, served or not, sorted by path.
+
+    The rows may come from a restored database (ADR-0144): a path is
+    normalised lexically, and one that is not absolute names no folder.
+    """
+    rows = (await db.execute(select(SmbShare.name, SmbShare.path))).all()
+    folders = [
+        _ShareFolder(name=str(row.name), path=Path(os.path.normpath("/" + row.path.lstrip("/"))))
+        for row in rows
+        if isinstance(row.path, str) and row.path.startswith("/")
+    ]
+    return sorted(folders, key=lambda folder: folder.path)
+
+
+def _check_share_folders(
+    template: AppTemplate,
+    planned: list[_PlannedMount],
+    shares: list[_ShareFolder],
+    *,
+    run_in_unos_smb: bool,
+) -> None:
+    """Refuse a pool folder that would give the app the files of a share (ADR-0261).
+
+    A share's folder belongs to root and the group unos-smb with mode 2770
+    (ADR-0150), but an image that runs as root inside its container reads and
+    writes every folder it is given, whatever its mode. Without
+    run_in_unos_smb no folder of the app may be a share's folder, lie inside
+    one or hold one. With it, a folder may be a share's folder, and a
+    read-only one may hold share folders. A share whose folder is not
+    strictly inside a pool (a pool root, imported from an old smb.conf) is
+    never served (ADR-0145) and counts for nothing here. Never, with or
+    without it:
+    - a folder inside a share's folder: whoever can write to the share, such
+      as an app given its folder, can put a symbolic link in its place, which
+      Docker follows at the next start (see _check_no_nested_sources);
+    - a share's folder for the app's own data (a catalog folder under
+      {pool}/apps, which ADR-0145 keeps out of shares too);
+    - a writable folder that holds a share's folder: the app could put
+      another folder in the share's place.
+    """
+    base = pools_base()
+    folders = [
+        share
+        for share in shares
+        if share.path.is_relative_to(base) and len(share.path.relative_to(base).parts) >= 2
+    ]
+    volumes = {volume.container: volume for volume in template.volumes}
+    for m in planned:
+        if m.pool is None:
+            continue
+        for share in folders:
+            problem = _share_folder_problem(
+                template, m, volumes[m.target], share, run_in_unos_smb=run_in_unos_smb
+            )
+            if problem is not None:
+                raise HTTPException(400, problem)
+
+
+def _share_folder_problem(
+    template: AppTemplate,
+    m: _PlannedMount,
+    volume: VolumeMapping,
+    share: _ShareFolder,
+    *,
+    run_in_unos_smb: bool,
+) -> str | None:
+    """Why the folder of ``m`` cannot be given to the app beside ``share``, or None."""
+    folder = f"The folder for {m.target} ({m.source})"
+    the_share = f"the share {share.name} ({share.path})"
+    if m.source != share.path and m.source.is_relative_to(share.path):
+        return (
+            f"{folder} is inside the folder of {the_share}. An app gets a share's whole folder "
+            "or none of it: whoever can write to the share, such as an app given its folder, "
+            "can put a symbolic link in the place of a folder inside it, and Docker would follow "
+            "that link at the next start."
+        )
+    if m.source == share.path:
+        if volume.host.startswith(APPS_DATA_PATH + "/"):
+            return (
+                f"{m.target} holds {template.name}'s own data, which must not go into the folder "
+                f"of {the_share}: SMB users would read and change the app's settings. Choose a "
+                "folder that is not shared."
+            )
+        if not run_in_unos_smb:
+            return f"{folder} is the folder of {the_share}. {_outside_the_group(template)}"
+        return None
+    if share.path.is_relative_to(m.source):
+        if not run_in_unos_smb:
+            return f"{folder} holds the folder of {the_share}. {_outside_the_group(template)}"
+        if not m.readonly:
+            return (
+                f"{folder} holds the folder of {the_share}, and {template.name} can write to it: "
+                "the app could put another folder in the share's place. Give the app the share's "
+                "folder itself."
+            )
+    return None
+
+
+def _outside_the_group(template: AppTemplate) -> str:
+    if template.can_run_in_unos_smb:
+        return (
+            f"Only an app that runs in the group {SMB_GROUP_NAME} gets a share's files: install "
+            f"{template.name} to run in it, or choose a folder that holds no share."
+        )
+    return (
+        f"{template.name} cannot run in the group {SMB_GROUP_NAME}, so it gets no share's "
+        "files: choose a folder that holds no share."
+    )
+
+
 def _pool_root_of(m: _PlannedMount) -> str:
     """The root of the pool that contains the source, in the source's form."""
     source = str(m.source)
@@ -579,7 +707,18 @@ def _prepare_sources(
             raise HTTPException(500, f"Could not create {path}")
 
 
-def _build_environment(template: AppTemplate, overrides: dict[str, str]) -> dict[str, str]:
+def _build_environment(
+    template: AppTemplate, overrides: dict[str, str], *, run_in_unos_smb: bool
+) -> dict[str, str]:
+    # PGID decides whether the app's user is in the group unos-smb: only the
+    # install option sets it (ADR-0261).
+    if "PGID" in overrides:
+        raise HTTPException(
+            400,
+            "PGID cannot be changed: an app runs with the PGID of its template, or with "
+            f"{SMB_GROUP_GID} ({SMB_GROUP_NAME}) when it is installed to run in the group "
+            f"{SMB_GROUP_NAME}",
+        )
     environment: dict[str, str] = {}
     problems: list[str] = []
     for var in template.environment:
@@ -594,14 +733,17 @@ def _build_environment(template: AppTemplate, overrides: dict[str, str]) -> dict
         environment[var.name] = value
     if problems:
         raise HTTPException(400, "; ".join(problems))
+    if run_in_unos_smb:
+        environment.update(UNOS_SMB_ENVIRONMENT)
     return environment
 
 
-def _install_app(req: AppInstallRequest) -> AppInstallResponse:
+def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInstallResponse:
     """Validate the request, then pull the image and create the container.
 
     Everything that can be rejected is checked before the (slow) image pull.
-    Runs in a worker thread: Docker and filesystem calls block.
+    ``shares``: the folders of the shares when the request came in. Runs in
+    a worker thread: Docker and filesystem calls block.
     """
     template = get_app_by_id(req.template_id)
     if not template:
@@ -613,7 +755,15 @@ def _install_app(req: AppInstallRequest) -> AppInstallResponse:
             400, "Invalid app name: use letters, digits, '_', '.' or '-'"
         )
 
-    environment = _build_environment(template, req.env_overrides)
+    if req.run_in_unos_smb and not template.can_run_in_unos_smb:
+        raise HTTPException(
+            400,
+            f"{template.name} cannot run in the group {SMB_GROUP_NAME}: only linuxserver.io "
+            "images take the group of their user from PGID",
+        )
+    environment = _build_environment(
+        template, req.env_overrides, run_in_unos_smb=req.run_in_unos_smb
+    )
 
     pools = list_mounted_pools()
     needs_pool = any(volume.on_pool for volume in template.volumes)
@@ -622,6 +772,7 @@ def _install_app(req: AppInstallRequest) -> AppInstallResponse:
     selected = _select_pool(req.pool, pools) if needs_pool or req.pool is not None else None
     pool = selected if needs_pool else None
     planned = _plan_volumes(template, req.volume_overrides, pool, pools)
+    _check_share_folders(template, planned, shares, run_in_unos_smb=req.run_in_unos_smb)
     _prepare_sources(planned, create=False)
 
     try:
@@ -707,11 +858,14 @@ def _install_app(req: AppInstallRequest) -> AppInstallResponse:
 
 @router.post("/install", response_model=AppInstallResponse)
 async def install_app(
-    req: AppInstallRequest, _: User = Depends(require_admin)
+    req: AppInstallRequest,
+    _: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ) -> AppInstallResponse:
     """Install an app from the catalog with its data on a mounted pool."""
+    shares = await _share_folders(db)
     # Pulling an image can take minutes; keep the event loop responsive.
-    return await asyncio.to_thread(_install_app, req)
+    return await asyncio.to_thread(_install_app, req, shares)
 
 
 def _uninstall_app(container_id: str) -> dict[str, str]:

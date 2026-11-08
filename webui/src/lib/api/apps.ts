@@ -6,6 +6,12 @@ import { api } from "./client";
  */
 export const POOL_PLACEHOLDER = "{pool}";
 
+/**
+ * The group id of unos-smb (SMB_GROUP_GID of supervisor/src/shares/constants.py): the PGID
+ * of an app installed to run in the group unos-smb (ADR-0261).
+ */
+export const UNOS_SMB_GID = 70000;
+
 export interface PortMapping {
   host: number;
   container: number;
@@ -51,6 +57,11 @@ export interface AppTemplate {
   ports: PortMapping[];
   volumes: VolumeMapping[];
   environment: EnvVar[];
+  /**
+   * The app can be installed to run in the group unos-smb: its image takes PGID and UMASK
+   * (linuxserver.io). Only such an app is given a share's folder.
+   */
+  can_run_in_unos_smb: boolean;
 }
 
 export interface InstalledApp {
@@ -96,7 +107,10 @@ export interface AppInstallRequest {
   port_overrides?: Record<number, number>;
   /** Container path -> host path inside a mounted pool. */
   volume_overrides?: Record<string, string>;
+  /** Values of the template's variables; never PGID, which the server sets. */
   env_overrides?: Record<string, string>;
+  /** Run the app in the group unos-smb (PGID 70000, UMASK 002); only with can_run_in_unos_smb. */
+  run_in_unos_smb?: boolean;
 }
 
 export interface AppInstallResponse {

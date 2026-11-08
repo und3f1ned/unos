@@ -27,7 +27,8 @@
 		installApp,
 		poolHostPath,
 		isInsidePools,
-		describeApiError
+		describeApiError,
+		UNOS_SMB_GID
 	} from '$lib/api/apps';
 	import { formatBytes } from '$lib/stores/stats';
 
@@ -50,6 +51,8 @@
 	let portValues: Record<number, string> = {};
 	let volumeOverrides: Record<string, string> = {};
 	let envValues: Record<string, string> = {};
+	// Run the app in the group unos-smb, the only way to give it a share's folder (ADR-0261).
+	let runInUnosSmb = false;
 
 	// Storage pools, reloaded every time the modal opens
 	let pools: AppPool[] = [];
@@ -111,6 +114,7 @@
 		);
 		volumeOverrides = {};
 		envValues = Object.fromEntries(template.environment.map((env) => [env.name, env.value]));
+		runInUnosSmb = false;
 		error = '';
 		activeTab = 'overview';
 	}
@@ -196,6 +200,8 @@
 	function changedEnv(template: AppTemplate): Record<string, string> {
 		const result: Record<string, string> = {};
 		for (const env of template.environment) {
+			// The server sets PGID: the template's value, or unos-smb's with the option.
+			if (env.name === 'PGID') continue;
 			const value = envValues[env.name] ?? env.value;
 			if (value !== env.value) result[env.name] = value;
 		}
@@ -224,6 +230,7 @@
 			if (Object.keys(volumes).length > 0) req.volume_overrides = volumes;
 			const env = changedEnv(template);
 			if (Object.keys(env).length > 0) req.env_overrides = env;
+			if (template.can_run_in_unos_smb && runInUnosSmb) req.run_in_unos_smb = true;
 
 			const result = await installApp(req);
 			dispatch('installed', { app: template, result });
@@ -363,6 +370,30 @@
 						bind:value={selectedPoolName}
 						hint="The app's data is stored on this pool."
 					/>
+				{/if}
+			</div>
+		{/if}
+		{#if app.can_run_in_unos_smb && !isInstalled}
+			<div class="mb-4">
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						class="form-checkbox"
+						bind:checked={runInUnosSmb}
+						aria-describedby="app-unos-smb-hint"
+					/>
+					Run in the group unos-smb
+				</label>
+				<p id="app-unos-smb-hint" class="form-hint">
+					Sets PGID to {UNOS_SMB_GID} (unos-smb) and UMASK to 002. Only an app in this group can be
+					given a share's folder on the Volumes tab: it reads and changes every file there, and SMB
+					users can change what it writes.
+				</p>
+				{#if runInUnosSmb}
+					<Alert variant="warning" class="mt-2">
+						{app.name} can read and change the files of every share folder you give it. If it can be
+						reached from the internet, whoever takes it over gets those files too.
+					</Alert>
 				{/if}
 			</div>
 		{/if}
@@ -564,7 +595,8 @@
 					<p class="text-sm text-secondary mb-4">
 						{#if needsPool}
 							Data folders are created on the selected storage pool. A data folder can point to
-							another folder inside a mounted pool.
+							another folder inside a mounted pool, and to a share's folder only for an app that runs
+							in the group unos-smb.
 						{/if}
 						System paths marked "System" are mounted from the host as they are.
 					</p>
@@ -618,18 +650,31 @@
 					</p>
 					{#each app.environment as env}
 						<div class="card-nested">
-							<Input
-								class="font-mono text-sm"
-								label={env.name}
-								type={env.secret ? 'password' : 'text'}
-								bind:value={envValues[env.name]}
-								required={env.required}
-								disabled={isInstalled}
-								hint={env.description}
-								placeholder={env.secret ? (env.required ? 'Choose a unique value' : 'Optional') : `Enter ${env.name}`}
-								autocomplete={env.secret ? 'new-password' : 'off'}
-								error={missingRequired.includes(env.name) ? 'Required' : ''}
-							/>
+							{#if env.name === 'PGID'}
+								<!-- The server sets PGID; the option decides it (ADR-0261). -->
+								<Input
+									class="font-mono text-sm"
+									label={env.name}
+									value={runInUnosSmb ? String(UNOS_SMB_GID) : env.value}
+									disabled
+									hint={app.can_run_in_unos_smb
+										? `Set by UNOS: ${UNOS_SMB_GID} (unos-smb) with "Run in the group unos-smb", otherwise ${env.value}.`
+										: 'Set by UNOS.'}
+								/>
+							{:else}
+								<Input
+									class="font-mono text-sm"
+									label={env.name}
+									type={env.secret ? 'password' : 'text'}
+									bind:value={envValues[env.name]}
+									required={env.required}
+									disabled={isInstalled}
+									hint={env.description}
+									placeholder={env.secret ? (env.required ? 'Choose a unique value' : 'Optional') : `Enter ${env.name}`}
+									autocomplete={env.secret ? 'new-password' : 'off'}
+									error={missingRequired.includes(env.name) ? 'Required' : ''}
+								/>
+							{/if}
 						</div>
 					{/each}
 				</div>

@@ -150,6 +150,10 @@ Account page and keeps; each one signs in once in place of a code of the authent
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039).
 Avoid: container, service.
 
+**App in unos-smb**: An app installed with the option to run in the group unos-smb (PGID 70000,
+UMASK 002), which only apps of linuxserver.io images have: the only kind of app that is given a
+share's folder (ADR-0261). Avoid: SMB app, app in the SMB group.
+
 **Container**: Any Docker container on the host, as the Containers page lists it; an app runs as
 one or more containers. Avoid: app.
 

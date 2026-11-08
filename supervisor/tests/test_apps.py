@@ -23,18 +23,25 @@ from docker.errors import APIError, NotFound
 from docker.models.containers import Container
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from src.apps.catalog import APP_CATALOG, get_app_by_id
 from src.apps.schemas import (
     POOL_PLACEHOLDER,
     AppCategory,
     AppPool,
+    AppSource,
     AppTemplate,
     VolumeMapping,
 )
 from src.auth.utils import verify_token
 from src.config import get_settings
+from src.database import Base, get_db
 from src.main import app
+from src.shares.models import SmbShare
 
 # The package re-exports its APIRouter as ``router``; import the module.
 apps_router = importlib.import_module("src.apps.router")
@@ -117,6 +124,38 @@ def anon_api():
     finally:
         if previous is not None:
             app.dependency_overrides[verify_token] = previous
+
+
+@pytest.fixture(autouse=True)
+def shares(tmp_path_factory):
+    """The database of the install route, with the shares a test adds: none by default.
+
+    An install reads the folders of every share from it (ADR-0261). It lives
+    outside tmp_path, whose tree some tests compare before and after.
+    ``shares(name, folder)`` adds a share row as it is stored, folder as given.
+    """
+    path = tmp_path_factory.mktemp("apps-db") / "apps.db"
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    maker = async_sessionmaker(
+        create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool), expire_on_commit=False
+    )
+
+    async def override_get_db():
+        async with maker() as session:
+            yield session
+
+    def add(name: str, folder) -> None:
+        with Session(engine) as session:
+            session.add(SmbShare(name=name, path=str(folder)))
+            session.commit()
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        yield add
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
 
 
 @pytest.fixture
@@ -1322,6 +1361,296 @@ class TestNestedFolders:
         assert "symbolic link" in response.json()["detail"]
         assert list(pools.outside.iterdir()) == []
         docker_client.images.pull.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Running in the group unos-smb, and the folders of shares (ADR-0261)
+# ---------------------------------------------------------------------------
+
+LOGIN = TRANSMISSION["env_overrides"]
+IN_UNOS_SMB = {**TRANSMISSION, "run_in_unos_smb": True}
+PGID_IS_SET = (
+    "PGID cannot be changed: an app runs with the PGID of its template, or with 70000 (unos-smb) "
+    "when it is installed to run in the group unos-smb"
+)
+
+
+def _environment(docker_client) -> dict[str, str]:
+    """The environment Docker was given for the new container."""
+    return docker_client.containers.create.call_args.kwargs["environment"]
+
+
+class TestRunInUnosSmb:
+    def test_linuxserver_images_and_no_others_can_run_in_the_group(self):
+        linuxserver = {t.id for t in APP_CATALOG if t.source is AppSource.LINUXSERVER}
+        assert {t.id for t in APP_CATALOG if t.can_run_in_unos_smb} == linuxserver
+        for template in APP_CATALOG:
+            if template.id in linuxserver:
+                assert {"PUID", "PGID"} <= {var.name for var in template.environment}, template.id
+        # Their templates declare PGID, but jellyfin's image runs as root and
+        # Plex's takes PLEX_GID: PGID would change nothing.
+        for app_id in ("jellyfin", "plex"):
+            template = get_app_by_id(app_id)
+            assert "PGID" in {var.name for var in template.environment}
+            assert not template.can_run_in_unos_smb
+
+    def test_the_catalog_says_which_apps_can_run_in_the_group(self, api):
+        assert api.get("/api/v1/apps/catalog/transmission").json()["can_run_in_unos_smb"] is True
+        assert api.get("/api/v1/apps/catalog/jellyfin").json()["can_run_in_unos_smb"] is False
+        listed = {t["id"]: t["can_run_in_unos_smb"] for t in api.get("/api/v1/apps/catalog").json()}
+        assert listed["syncthing"] is True and listed["filebrowser"] is False
+
+    def test_the_option_sets_pgid_70000_and_a_group_writable_umask(self, api, pools, docker_client):
+        response = api.post(INSTALL, json=IN_UNOS_SMB)
+
+        assert response.status_code == 200, response.text
+        environment = _environment(docker_client)
+        assert (environment["PUID"], environment["PGID"], environment["UMASK"]) == ("1000", "70000", "002")
+        assert (environment["USER"], environment["PASS"]) == ("e2e", "k7-Unique-pass")
+
+    def test_without_the_option_the_app_stays_outside_the_group(self, api, pools, docker_client):
+        response = api.post(INSTALL, json=TRANSMISSION)
+
+        assert response.status_code == 200, response.text
+        environment = _environment(docker_client)
+        assert (environment["PUID"], environment["PGID"]) == ("1000", "1000")
+        assert "UMASK" not in environment
+
+    @pytest.mark.parametrize("run_in_unos_smb", [False, True])
+    @pytest.mark.parametrize("pgid", ["70000", " 70000", "1000", "0"])
+    def test_pgid_is_not_an_environment_setting(self, api, pools, docker_client, run_in_unos_smb, pgid):
+        # Typing 70000 into the Environment tab would put the app into the
+        # group without the option.
+        response = api.post(
+            INSTALL,
+            json={
+                **TRANSMISSION,
+                "run_in_unos_smb": run_in_unos_smb,
+                "env_overrides": {**LOGIN, "PGID": pgid},
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == PGID_IS_SET
+        docker_client.images.pull.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "app_id,name", [("jellyfin", "Jellyfin"), ("plex", "Plex Media Server"), ("filebrowser", "File Browser")]
+    )
+    def test_other_images_cannot_run_in_the_group(self, api, pools, docker_client, app_id, name):
+        before = _tree(pools.root)
+
+        response = api.post(INSTALL, json={"template_id": app_id, "run_in_unos_smb": True})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            f"{name} cannot run in the group unos-smb: only linuxserver.io images take the group "
+            "of their user from PGID"
+        )
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+
+def _needs_the_group(name: str) -> str:
+    return (
+        "Only an app that runs in the group unos-smb gets a share's files: install "
+        f"{name} to run in it, or choose a folder that holds no share."
+    )
+
+
+class TestShareFolders:
+    @pytest.fixture
+    def family(self, pools, shares) -> Path:
+        """The folder of the share family, on the pool alpha."""
+        folder = pools.alpha / "family"
+        folder.mkdir()
+        shares("family", folder)
+        return folder
+
+    @pytest.mark.parametrize(
+        "app_id,target,env,needs",
+        [
+            ("transmission", "/downloads", LOGIN, _needs_the_group("Transmission")),
+            # Jellyfin's image runs as root: it would read the folder whatever its mode.
+            (
+                "jellyfin",
+                "/media",
+                {},
+                "Jellyfin cannot run in the group unos-smb, so it gets no share's files: choose a "
+                "folder that holds no share.",
+            ),
+        ],
+    )
+    def test_a_share_folder_is_refused_without_the_option(
+        self, api, pools, docker_client, family, app_id, target, env, needs
+    ):
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={"template_id": app_id, "env_overrides": env, "volume_overrides": {target: str(family)}},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            f"The folder for {target} ({family}) is the folder of the share family ({family}). {needs}"
+        )
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    def test_an_app_in_the_group_gets_the_share_folder(self, api, pools, docker_client, family):
+        response = api.post(INSTALL, json={**IN_UNOS_SMB, "volume_overrides": {"/downloads": str(family)}})
+
+        assert response.status_code == 200, response.text
+        assert _mounts(docker_client)["/downloads"] == {
+            "Target": "/downloads", "Source": str(family), "Type": "bind", "ReadOnly": False,
+        }
+        assert _environment(docker_client)["PGID"] == "70000"
+        assert {"host": str(family), "container": "/downloads", "readonly": False} in response.json()["volumes"]
+
+    def test_a_shared_default_folder_needs_the_option(self, api, pools, docker_client, shares):
+        # Folders that apps use can be shared; an app installed on one afterwards needs the group.
+        downloads = pools.alpha / "downloads"
+        downloads.mkdir()
+        shares("Downloads", downloads)
+
+        refused = api.post(INSTALL, json=TRANSMISSION)
+
+        assert refused.status_code == 400
+        assert refused.json()["detail"] == (
+            f"The folder for /downloads ({downloads}) is the folder of the share Downloads ({downloads}). "
+            + _needs_the_group("Transmission")
+        )
+        docker_client.images.pull.assert_not_called()
+
+        allowed = api.post(INSTALL, json=IN_UNOS_SMB)
+
+        assert allowed.status_code == 200, allowed.text
+        assert _mounts(docker_client)["/downloads"]["Source"] == str(downloads)
+
+    @pytest.mark.parametrize("run_in_unos_smb", [False, True])
+    def test_a_folder_inside_a_share_is_refused(self, api, pools, docker_client, family, run_in_unos_smb):
+        torrents = family / "torrents"
+        torrents.mkdir()
+        before = _tree(pools.root)
+
+        response = api.post(
+            INSTALL,
+            json={**TRANSMISSION, "run_in_unos_smb": run_in_unos_smb,
+                  "volume_overrides": {"/downloads": str(torrents)}},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            f"The folder for /downloads ({torrents}) is inside the folder of the share family ({family}). "
+            "An app gets a share's whole folder or none of it: whoever can write to the share, such as an "
+            "app given its folder, can put a symbolic link in the place of a folder inside it, and Docker "
+            "would follow that link at the next start."
+        )
+        docker_client.images.pull.assert_not_called()
+        assert _tree(pools.root) == before
+
+    @pytest.mark.parametrize("run_in_unos_smb", [False, True])
+    def test_a_writable_folder_that_holds_a_share_is_refused(
+        self, api, pools, docker_client, shares, run_in_unos_smb
+    ):
+        media = pools.alpha / "media"
+        movies = media / "movies"
+        movies.mkdir(parents=True)
+        shares("movies", movies)
+
+        response = api.post(
+            INSTALL,
+            json={**TRANSMISSION, "run_in_unos_smb": run_in_unos_smb,
+                  "volume_overrides": {"/downloads": str(media)}},
+        )
+
+        assert response.status_code == 400
+        where = f"The folder for /downloads ({media}) holds the folder of the share movies ({movies})"
+        assert response.json()["detail"] == (
+            f"{where}, and Transmission can write to it: the app could put another folder in the "
+            "share's place. Give the app the share's folder itself."
+            if run_in_unos_smb
+            else f"{where}. " + _needs_the_group("Transmission")
+        )
+        docker_client.images.pull.assert_not_called()
+
+    def test_a_read_only_folder_that_holds_shares_needs_the_option(self, api, pools, docker_client, family):
+        # Duplicati backs up the whole pool, mounted read-only at /source.
+        refused = api.post(INSTALL, json={"template_id": "duplicati"})
+
+        assert refused.status_code == 400
+        assert refused.json()["detail"] == (
+            f"The folder for /source ({pools.alpha}) holds the folder of the share family ({family}). "
+            + _needs_the_group("Duplicati")
+        )
+        docker_client.images.pull.assert_not_called()
+
+        allowed = api.post(INSTALL, json={"template_id": "duplicati", "run_in_unos_smb": True})
+
+        assert allowed.status_code == 200, allowed.text
+        assert _mounts(docker_client)["/source"] == {
+            "Target": "/source", "Source": str(pools.alpha), "Type": "bind", "ReadOnly": True,
+        }
+
+    def test_an_app_outside_the_group_gets_no_pool_that_holds_shares(self, api, pools, docker_client, family):
+        response = api.post(INSTALL, json={"template_id": "filebrowser"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            f"The folder for /srv ({pools.alpha}) holds the folder of the share family ({family}). "
+            "File Browser cannot run in the group unos-smb, so it gets no share's files: choose a "
+            "folder that holds no share."
+        )
+        docker_client.images.pull.assert_not_called()
+
+    def test_the_apps_own_data_never_goes_into_a_share_folder(self, api, pools, docker_client, family):
+        response = api.post(INSTALL, json={**IN_UNOS_SMB, "volume_overrides": {"/config": str(family)}})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            f"/config holds Transmission's own data, which must not go into the folder of the share "
+            f"family ({family}): SMB users would read and change the app's settings. Choose a folder "
+            "that is not shared."
+        )
+        docker_client.images.pull.assert_not_called()
+
+    def test_a_share_path_stored_in_another_form_still_counts(self, api, pools, docker_client, shares):
+        # Restored databases are untrusted (ADR-0144): the path may not be in normal form.
+        downloads = pools.alpha / "downloads"
+        downloads.mkdir()
+        shares("Downloads", f"{pools.alpha}//downloads/")
+
+        response = api.post(INSTALL, json=TRANSMISSION)
+
+        assert response.status_code == 400
+        assert "is the folder of the share Downloads" in response.json()["detail"]
+        docker_client.images.pull.assert_not_called()
+
+    def test_a_share_of_a_whole_pool_counts_for_nothing(self, api, pools, docker_client, shares):
+        # Imported from an old smb.conf: never served (ADR-0145), and no app would install on the pool.
+        shares("data", pools.alpha)
+        shares("everything", pools.base)
+
+        response = api.post(INSTALL, json=TRANSMISSION)
+
+        assert response.status_code == 200, response.text
+        assert _mounts(docker_client)["/downloads"]["Source"] == str(pools.alpha / "downloads")
+
+    def test_folders_beside_shares_and_shares_of_other_pools_change_nothing(
+        self, api, pools, docker_client, shares
+    ):
+        (pools.alpha / "downloads2").mkdir()
+        shares("downloads2", pools.alpha / "downloads2")
+        (pools.beta / "downloads").mkdir()
+        shares("beta", pools.beta / "downloads")
+        shares("broken", "not/a/folder")
+
+        response = api.post(INSTALL, json=TRANSMISSION)
+
+        assert response.status_code == 200, response.text
+        assert _mounts(docker_client)["/downloads"]["Source"] == str(pools.alpha / "downloads")
+        assert _environment(docker_client)["PGID"] == "1000"
 
 
 # ---------------------------------------------------------------------------

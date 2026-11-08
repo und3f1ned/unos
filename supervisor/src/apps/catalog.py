@@ -33,6 +33,10 @@ Volume host paths:
   root init that fixes permissions) need uid/gid on their writable pool
   folders; otherwise they cannot write to the root-owned folders the
   supervisor creates.
+- linuxserver.io templates declare PUID and PGID (1000): such an app can be
+  installed to run in the group unos-smb, which sets PGID and UMASK
+  (AppTemplate.can_run_in_unos_smb, ADR-0261). Only those apps are given a
+  share's folder.
 
 Mark passwords, tokens and keys with secret=True and never ship a default
 value for them; required secrets must be set by the administrator.

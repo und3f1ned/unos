@@ -213,7 +213,7 @@ and this index, and `make check-fast` runs it.
 | [0157](0157-smb-audits-only-real-changes.md) | The SMB code audits only real changes, and problems go to the status | accepted | 2026-11-06 |
 | [0158](0158-netbios-stays-until-discovery.md) | NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour | accepted | 2026-11-06 |
 | [0159](0159-passdb-stays-on-the-system-disk.md) | Samba's passdb stays on the system disk until its writes are measured | accepted | 2026-11-06 |
-| [0160](0160-no-file-manager-or-app-group-access-to-shares.md) | The File Manager and apps get no group access to share folders yet | accepted | 2026-11-06 |
+| [0160](0160-no-file-manager-or-app-group-access-to-shares.md) | The File Manager and apps get no group access to share folders yet | superseded by [0261](0261-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | 2026-11-06 |
 | [0161](0161-no-per-share-protocol-options-yet.md) | Per-share protocol options wait for a later slice | accepted | 2026-11-06 |
 | [0162](0162-apparmor-profile-for-new-share-paths.md) | UNOS does not manage smbd's AppArmor profile while smbd runs unconfined | accepted | 2026-11-07 |
 | [0163](0163-nfs-unchanged-in-slice-2.md) | NFS exports stay unchanged in slice 2 | accepted | 2026-11-06 |
@@ -235,6 +235,7 @@ and this index, and `make check-fast` runs it.
 | [0254](0254-docker-calls-run-in-worker-threads-and-conflicts-answer-409.md) | Docker calls of the containers and apps APIs run in worker threads within the Docker client's timeout, and the containers API answers Docker's conflicts with 409 | accepted | 2026-11-07 |
 | [0255](0255-container-logs-stream-in-the-drawer-and-images-get-a-tab.md) | The container drawer follows the log over the logs socket, and the Images tab pulls by name and removes only what no container uses | accepted | 2026-11-07 |
 | [0256](0256-the-apps-api-acts-only-on-apps-and-uninstall-keeps-their-data.md) | The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data | accepted | 2026-11-07 |
+| [0261](0261-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | Apps of linuxserver.io images can be installed to run in the group unos-smb, and only such an app is given a share's folder | accepted | 2026-11-08 |
 
 ## Backup
 

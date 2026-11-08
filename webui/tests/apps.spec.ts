@@ -241,3 +241,117 @@ test.describe('Installed apps', () => {
     expect(requests).toContain('DELETE /api/v1/apps/installed/e2e-jellyfin-id');
   });
 });
+
+// Install > Run in the group unos-smb (ADR-0261). The stand-in has no Docker
+// and no mounted pool, so the pools, the installed list and the install are
+// answered here; the catalog is the stand-in's own. The refusal is the
+// supervisor's text (supervisor/src/apps/router.py), word for word.
+test.describe('Install in the group unos-smb', () => {
+  const POOL = { name: 'e2e_data', path: '/mnt/pools/e2e_data', free_bytes: 2 ** 34, total_bytes: 2 ** 35 };
+  const FAMILY = '/mnt/pools/e2e_data/family';
+  const SHARE_REFUSED =
+    `The folder for /downloads (${FAMILY}) is the folder of the share family (${FAMILY}). ` +
+    "Only an app that runs in the group unos-smb gets a share's files: install Transmission to run in it, " +
+    'or choose a folder that holds no share.';
+
+  async function fakeInstall(page: Page): Promise<Record<string, unknown>[]> {
+    const installs: Record<string, unknown>[] = [];
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/installed',
+      (route: Route) => route.fulfill({ json: [] }),
+    );
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/pools',
+      (route: Route) => route.fulfill({ json: [POOL] }),
+    );
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/install',
+      (route: Route) => {
+        const body = route.request().postDataJSON() as Record<string, unknown>;
+        installs.push(body);
+        const volumes = (body.volume_overrides ?? {}) as Record<string, string>;
+        if (volumes['/downloads'] === FAMILY && body.run_in_unos_smb !== true) {
+          return route.fulfill({ status: 400, json: { detail: SHARE_REFUSED } });
+        }
+        return route.fulfill({
+          json: {
+            id: 'e2e-id',
+            name: 'transmission',
+            container_id: 'e2e-id',
+            status: 'running',
+            web_url: 'http://localhost:9091',
+            pool: POOL.name,
+            volumes: [],
+          },
+        });
+      },
+    );
+    return installs;
+  }
+
+  /** The details dialog of the catalog app ``name``, opened from its card. */
+  async function openApp(page: Page, name: string) {
+    await page.goto('/apps');
+    await page.locator('h3', { hasText: name }).first().click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name, exact: true })).toBeVisible();
+    return dialog;
+  }
+
+  test('install offers to run the app in unos-smb, which sets its PGID to 70000', async ({
+    authenticatedPage: page,
+  }) => {
+    const installs = await fakeInstall(page);
+    const dialog = await openApp(page, 'Transmission');
+
+    const option = dialog.getByRole('checkbox', { name: 'Run in the group unos-smb' });
+    await expect(option).not.toBeChecked();
+    await expect(option).toHaveAccessibleDescription(/^Sets PGID to 70000 \(unos-smb\) and UMASK to 002\./);
+
+    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await dialog.getByLabel('USER').fill('e2e');
+    await dialog.getByLabel('PASS').fill('k7-Unique-pass');
+    // PGID is UNOS's to set: the option sets it, the Environment tab does not.
+    const pgid = dialog.getByLabel('PGID');
+    await expect(pgid).toBeDisabled();
+    await expect(pgid).toHaveValue('1000');
+
+    await dialog.getByRole('button', { name: /^Volumes/ }).click();
+    await dialog.locator('.card-nested', { hasText: '/downloads' }).getByLabel('Host Path').fill(FAMILY);
+
+    // Without the option the server refuses the share's folder.
+    await dialog.getByRole('button', { name: 'Install Transmission' }).click();
+    await expect(dialog.getByText(SHARE_REFUSED)).toBeVisible();
+
+    await option.check();
+    await expect(dialog.getByText('Transmission can read and change the files of every share folder')).toBeVisible();
+    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await expect(pgid).toHaveValue('70000');
+
+    await dialog.getByRole('button', { name: 'Install Transmission' }).click();
+    await expect(page.getByText('Transmission was installed. Its data is stored on the "e2e_data" pool.')).toBeVisible();
+
+    const login = { USER: 'e2e', PASS: 'k7-Unique-pass' };
+    expect(installs).toEqual([
+      { template_id: 'transmission', pool: 'e2e_data', volume_overrides: { '/downloads': FAMILY }, env_overrides: login },
+      {
+        template_id: 'transmission',
+        pool: 'e2e_data',
+        volume_overrides: { '/downloads': FAMILY },
+        env_overrides: login,
+        run_in_unos_smb: true,
+      },
+    ]);
+  });
+
+  test('an app whose image takes no PGID is not offered the group', async ({ authenticatedPage: page }) => {
+    await fakeInstall(page);
+    const dialog = await openApp(page, 'Jellyfin');
+
+    await expect(dialog.getByRole('button', { name: 'Install Jellyfin' })).toBeEnabled();
+    await expect(dialog.getByRole('checkbox', { name: 'Run in the group unos-smb' })).toHaveCount(0);
+    await dialog.getByRole('button', { name: /^Environment/ }).click();
+    await expect(dialog.getByLabel('PGID')).toBeDisabled();
+    await expect(dialog.getByLabel('PGID')).toHaveValue('1000');
+  });
+});

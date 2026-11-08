@@ -1833,11 +1833,16 @@
         "Install offers to run the app in the SMB group, which sets its PGID to 70000 (unos-smb)",
         "Such an app reads and writes the share folder it was given; an app installed without the option still cannot"
       ],
+      "verified_by": [
+        "supervisor/tests/test_apps.py",
+        "webui/tests/apps.spec.ts"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0160"
+        "ADR-0160",
+        "ADR-0261"
       ],
-      "notes": "Apps run as PUID/PGID 1000 today, outside the group, which also keeps internet-facing apps out of the users' files (ADR-0160)."
+      "notes": "Built (ADR-0261): the install option run_in_unos_smb, the checkbox \"Run in the group unos-smb\" of the app's details, exists for the apps of linuxserver.io images (can_run_in_unos_smb) and adds PGID 70000 and UMASK 002 to the container's environment; other images ignore PGID, and the option is refused for them. PGID is no longer an environment value (400), and the Environment tab shows it read-only. An install refuses a folder that is, lies inside or holds a share's folder without the option; with it, a share's folder is mounted, and a read-only folder may hold shares, but never a folder inside a share, a share's folder for the app's own data or a writable folder that holds a share. TestRunInUnosSmb and TestShareFolders prove the environment and the refusals against a fake Docker, and the Install in the group unos-smb tests of webui/tests/apps.spec.ts the form with route fakes (the stand-in has no Docker). Not covered: a share made later on the folder of an app outside the group is not refused (ADR-0261). Open, because Docker apps and share folders are host-level (GLOSSARY.md): the device check and the re-check after a reboot (ADR-0018). On the device: install a linuxserver.io app (for example syncthing) with the option and its data folder set to the folder of a share; docker inspect shows PGID=70000 and UMASK=002; inside the container its user (abc) lists and reads the share's files and creates a file and a folder there, which get the group unos-smb and group write (for example 0664 and 2775), and an SMB user with write access changes that file; record the owner, group and mode of the share's folder after the app's first start (a chown to uid 1000 by the image is reported, not repaired). The same install without the option is refused with 400 before any image is pulled. Uninstall the app afterwards; its data stays."
     },
     {
       "id": "apps.catalog-without-docker",
