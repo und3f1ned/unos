@@ -13,18 +13,19 @@ significant step. Features and their state live in `feature-list.json`, decision
   prove the first-run setup, two-factor sign-in, the disk list, mounts, forget and scrub.
 - Done in the night of 2026-11-08 (#32 to #73): three feature batches, the fix of unmounting, NFS
   exports, the command timeouts and the whole web UI in Russian (Language on the Account page).
-  That morning: the dev device's inbound IPv6 filter (#75, ADR-0301) and the web UI on a phone
-  (#76, ADR-0302). The dev device runs main 36a6c1b.
-- On the device, nfs-kernel-server is installed, and nfs-server and rpcbind are stopped and
-  disabled. Since 2026-11-08 inbound IPv6 reaches the services only from LAN sources (ADR-0301):
-  `systemctl enable --now nfs-server` would turn NFS on for the LAN only, save for datagrams
-  that forge a LAN source, which only the router's ingress filtering stops. avahi-daemon and
-  wsdd2 run (network discovery).
+  That morning: the dev device's inbound IPv6 filter (#75, ADR-0301), the web UI on a phone
+  (#76, ADR-0302), and the device's NFS server with the device check of `shares.nfs-exports`
+  (ADR-0303). The dev device runs main 36a6c1b.
+- On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
+  2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
+  (ADR-0301). avahi-daemon and wsdd2 run (network discovery).
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
   network). The device has not had them yet either: the next supervisor deploy rebuilds the pip
   layer.
+- The main checkout's working tree is at #22 (9a28743), far behind `main`: its `scripts/dev/` are
+  old (its check.sh, for one, wants nmbd), so device work runs from a worktree of `origin/main`.
 - The main checkout is set up: `supervisor/.venv`, `.venv-lint` and `webui/node_modules` were
   copied from environments verified against the pins (with `setup.sh`'s stamps), and the git
   hooks are on. Only Playwright's Chromium 1200 is missing: the workstation's network filter
@@ -70,7 +71,7 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   BitTorrent port 51413 everyone: the table `ip6 unos_ipv6_inbound`, loaded at boot by
   `unos-ipv6-inbound.service` (ADR-0301, `scripts/dev/ipv6-filter.sh status`). IPv4 is not
   filtered on the device. Samba admits only private, unique-local and link-local addresses.
-  smbd runs unconfined by AppArmor (ADR-0162).
+  smbd runs unconfined by AppArmor (ADR-0162). The NFS server runs (ADR-0303), with no export.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -90,6 +91,20 @@ Open owner actions:
 4. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-08: the NFS server on the dev device, and `shares.nfs-exports` on it
+
+- At the owner's request ("Enable NFS") nfs-server, rpcbind.socket and rpcbind are enabled and
+  run on the device (ADR-0303), 0.348 MiB. Over IPv6, 111 and 2049 answer the workstation on the
+  LAN and are closed to the network outside (the namespace probe of the IPv6 filter); over IPv4
+  the workstation's showmount answers.
+- `shares.nfs-exports` passes: through the API, a read-write export for 10.1.1.0/24 went into
+  UNOS's file and exportfs; a line written by hand into /etc/exports was listed as not managed
+  and kept its bytes; a client (the device itself, through its LAN address: an NFS mount on the
+  workstation needs root) wrote with root squashed to nobody, and could not write once the export
+  was read-only; after a reboot the export was back with the pool mounted; Delete removed it.
+  An add or a delete writes 0.30 to 0.32 MiB, a client mount 0.21 to 0.24 MiB. The probe folders
+  and the hand line were removed afterwards.
 
 ### 2026-11-08: the web UI on a phone, on the dev device
 
