@@ -26,6 +26,9 @@ SMB_PASSWORDS_LEFT=()
 # "failed" when smb.conf.original could not be copied back (print_completion
 # says so).
 SAMBA_CONF_RESTORE=""
+# The export file of UNOS (Shares > NFS); /etc/exports and the other files of
+# /etc/exports.d are not UNOS's and stay.
+NFS_EXPORTS_FILE="/etc/exports.d/unos.exports"
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -55,6 +58,7 @@ confirm_uninstall() {
     echo "  - UNOS installation files ($UNOS_INSTALL_DIR)"
     echo "  - UNOS configuration (/etc/unos)"
     echo "  - The Samba passwords of the SMB accounts created by UNOS"
+    echo "  - The NFS exports added in UNOS ($NFS_EXPORTS_FILE)"
     echo ""
     echo -e "${YELLOW}Your storage pools and data on them will NOT be affected.${NC}"
     echo "The SMB accounts themselves and the group unos-smb are kept: the end of"
@@ -274,6 +278,25 @@ restore_samba_config() {
     fi
 }
 
+# The folders exported in UNOS are no longer exported: its export file goes, and
+# exportfs applies the host's other export files without it. A failure of
+# exportfs (a host without the NFS server has none) does not stop the
+# uninstallation: the NFS server reads the files again when it starts.
+remove_nfs_exports() {
+    if [ ! -e "$NFS_EXPORTS_FILE" ]; then
+        return
+    fi
+    log_info "Removing the NFS exports of UNOS..."
+    if ! rm -f "$NFS_EXPORTS_FILE"; then
+        log_warn "Could not remove $NFS_EXPORTS_FILE: remove it, then run exportfs -ra"
+        return
+    fi
+    if command -v exportfs >/dev/null 2>&1 && ! exportfs -ra; then
+        log_warn "exportfs -ra failed: the host may keep exporting the folders of UNOS until its NFS server restarts"
+    fi
+    log_success "NFS exports of UNOS removed"
+}
+
 # What stays of UNOS's SMB setup, and how to remove it.
 print_smb_leftovers() {
     local name
@@ -383,6 +406,7 @@ main() {
     remove_files
     remove_samba_passwords
     restore_samba_config
+    remove_nfs_exports
     print_completion
 }
 

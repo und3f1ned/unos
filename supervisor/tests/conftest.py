@@ -72,16 +72,6 @@ def temp_smb_conf():
 
 
 @pytest.fixture
-def temp_exports():
-    """Create temporary exports file for testing."""
-    with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-        f.write("")
-        path = f.name
-    yield path
-    os.unlink(path)
-
-
-@pytest.fixture
 def mock_subprocess():
     """Mock subprocess.run for testing."""
     with patch("subprocess.run") as mock_run:

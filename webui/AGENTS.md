@@ -48,7 +48,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `common.ts` has the words that many areas use. Dates take `$intlLocale`. A value that the
   server answers as a word (an action, a state, a type) is shown through a map from the value to
   a key, `{ allow: 'account.firewall.allow' }`, never as it comes. System > Network keeps what
-  ip and ss print in its tables (link types, protocols, socket states) as it comes (ADR-0288).
+  ip and ss print in its tables (link types, protocols, socket states) as it comes (ADR-0295).
 - English stays word for word what the specs select: `playwright.config.ts` runs an en-US
   browser, and `tests/language.spec.ts` switches to Russian. The server's messages (the
   `ApiError` texts) stay English, like the fakes' copies of them (ADR-0189).

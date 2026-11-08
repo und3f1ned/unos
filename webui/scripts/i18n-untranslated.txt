@@ -23,6 +23,7 @@ src/routes/snapshots/+page.svelte
 
 # shares
 src/routes/shares/+page.svelte
+src/lib/components/shares/NfsExportFormModal.svelte
 src/lib/components/shares/RepairPermissionsModal.svelte
 src/lib/components/shares/ShareAccessPicker.svelte
 src/lib/components/shares/ShareCard.svelte
@@ -34,14 +35,8 @@ src/routes/files/+page.svelte
 src/routes/files/trash/+page.svelte
 
 # containers
-src/routes/containers/+page.svelte
-src/lib/components/containers/ContainerDetailDrawer.svelte
-src/lib/components/containers/ImageList.svelte
 
 # apps
-src/routes/apps/+page.svelte
-src/lib/components/apps/AppDetailModal.svelte
-src/lib/components/apps/AppStorageWarning.svelte
 
 # users
 src/routes/users/+page.svelte

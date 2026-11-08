@@ -15,6 +15,8 @@
 		Database
 	} from 'lucide-svelte';
 	import { Button, Badge, Modal, Alert, Input, Select } from '$lib/components/ui';
+	import { intlLocale, t } from '$lib/i18n';
+	import AppCategory from './AppCategory.svelte';
 	import AppStorageWarning from './AppStorageWarning.svelte';
 	import {
 		type AppTemplate,
@@ -32,7 +34,6 @@
 		isSetByUnos,
 		UNOS_SMB_IDS
 	} from '$lib/api/apps';
-	import { formatBytes } from '$lib/stores/stats';
 
 	export let app: AppTemplate | null = null;
 	export let open = false;
@@ -73,7 +74,11 @@
 	$: selectedPool = pools.find((pool) => pool.name === selectedPoolName) ?? null;
 	$: poolOptions = pools.map((pool) => ({
 		value: pool.name,
-		label: `${pool.name} — ${formatBytes(pool.free_bytes)} free of ${formatBytes(pool.total_bytes)}`
+		label: $t('apps.detail.poolOption', {
+			name: pool.name,
+			free: formatSize(pool.free_bytes),
+			total: formatSize(pool.total_bytes)
+		})
 	}));
 	$: poolVolumes = app ? app.volumes.filter((volume) => volume.on_pool) : [];
 	$: needsPool = poolVolumes.length > 0;
@@ -97,11 +102,15 @@
 		.map(([container]) => container);
 	$: blockers = [
 		...(missingRequired.length > 0
-			? [`Set the required variable${missingRequired.length > 1 ? 's' : ''} ${missingRequired.join(', ')}.`]
+			? [
+					$t(missingRequired.length > 1 ? 'apps.detail.missingVariables' : 'apps.detail.missingVariable', {
+						names: missingRequired.join(', ')
+					})
+				]
 			: []),
-		...(invalidPorts.length > 0 ? ['Host ports must be numbers between 1 and 65535.'] : []),
+		...(invalidPorts.length > 0 ? [$t('apps.detail.invalidPorts')] : []),
 		...(invalidVolumes.length > 0
-			? [`Paths for ${invalidVolumes.join(', ')} must be inside a mounted storage pool.`]
+			? [$t('apps.detail.invalidVolumes', { paths: invalidVolumes.join(', ') })]
 			: [])
 	];
 	$: canInstall =
@@ -111,6 +120,18 @@
 		!poolsLoading &&
 		(!needsPool || selectedPool !== null) &&
 		blockers.length === 0;
+
+	// The units of a size, by powers of 1024, as formatBytes of $lib/stores/stats writes them.
+	const SIZE_UNITS = ['apps.size.bytes', 'apps.size.kb', 'apps.size.mb', 'apps.size.gb', 'apps.size.tb'];
+
+	/** A size in the language of the page: the number in its format with the unit of the catalog. */
+	$: formatSize = (bytes: number): string => {
+		const power = Math.max(0, Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), SIZE_UNITS.length - 1));
+		const size = new Intl.NumberFormat($intlLocale, { maximumFractionDigits: 2, useGrouping: false }).format(
+			bytes / 1024 ** power
+		);
+		return $t(SIZE_UNITS[power], { size });
+	};
 
 	function resetForm(template: AppTemplate) {
 		portValues = Object.fromEntries(
@@ -154,7 +175,7 @@
 		} catch (e) {
 			if (request !== poolsRequest) return;
 			pools = [];
-			poolsError = describeApiError(e, 'Could not load storage pools');
+			poolsError = describeApiError(e, $t('apps.detail.poolsError'));
 		} finally {
 			if (request === poolsRequest) poolsLoading = false;
 		}
@@ -217,19 +238,17 @@
 		return inGroup && isSetByUnos(env.name) ? String(UNOS_SMB_IDS[env.name]) : env.value;
 	}
 
-	function setByUnosHint(
-		template: AppTemplate,
-		env: EnvVar,
-		installed: boolean,
-		inGroup: boolean
-	): string {
+	// Reactive: the hint follows the language of the page.
+	$: setByUnosHint = (template: AppTemplate, env: EnvVar, installed: boolean, inGroup: boolean): string => {
 		if (installed) {
-			return `Set by UNOS: ${template.name} runs ${inGroup ? 'in' : 'outside'} the group unos-smb.`;
+			return $t(inGroup ? 'apps.detail.setByUnosIn' : 'apps.detail.setByUnosOutside', { name: template.name });
 		}
-		if (!template.can_run_in_unos_smb || !isSetByUnos(env.name)) return 'Set by UNOS.';
-		const group = env.name === 'PGID' ? ' (unos-smb)' : '';
-		return `Set by UNOS: ${UNOS_SMB_IDS[env.name]}${group} with "Run in the group unos-smb", otherwise ${env.value}.`;
-	}
+		if (!template.can_run_in_unos_smb || !isSetByUnos(env.name)) return $t('apps.detail.setByUnos');
+		return $t(env.name === 'PGID' ? 'apps.detail.setByUnosOptionGroup' : 'apps.detail.setByUnosOption', {
+			id: UNOS_SMB_IDS[env.name],
+			value: env.value
+		});
+	};
 
 	function close() {
 		dispatch('close');
@@ -259,24 +278,26 @@
 			dispatch('installed', { app: template, result });
 			close();
 		} catch (e) {
-			error = describeApiError(e, 'Installation failed');
+			error = describeApiError(e, $t('apps.detail.installFailed'));
 		} finally {
 			installing = false;
 		}
 	}
 
+	/** The badge of the source of an app's image (AppSource), with the key of its label. */
 	function getSourceBadge(
 		source: string | undefined
-	): { variant: 'success' | 'info' | 'purple' | 'warning'; label: string } {
+	): { variant: 'success' | 'info' | 'purple' | 'warning'; key: string } {
 		switch (source?.toUpperCase()) {
 			case 'OFFICIAL':
-				return { variant: 'success', label: 'Official' };
+				return { variant: 'success', key: 'apps.source.official' };
 			case 'LINUXSERVER':
-				return { variant: 'purple', label: 'LinuxServer.io' };
+			case 'LINUXSERVER.IO':
+				return { variant: 'purple', key: 'apps.source.linuxserverIo' };
 			case 'VERIFIED':
-				return { variant: 'info', label: 'Verified' };
+				return { variant: 'info', key: 'apps.source.verified' };
 			default:
-				return { variant: 'warning', label: 'Community' };
+				return { variant: 'warning', key: 'apps.source.community' };
 		}
 	}
 
@@ -309,12 +330,12 @@
 					<div class="flex items-center gap-2 mb-1">
 						<h2 class="text-2xl font-bold truncate">{app.name}</h2>
 						{#if isInstalled}
-							<Badge variant="success">Installed</Badge>
+							<Badge variant="success">{$t('apps.detail.installed')}</Badge>
 						{/if}
 					</div>
 					<p class="text-secondary mb-2">{app.description}</p>
 					<div class="flex flex-wrap items-center gap-2">
-						<Badge variant="neutral">{getCategoryIcon(app.category)} {app.category}</Badge>
+						<Badge variant="neutral">{getCategoryIcon(app.category)} <AppCategory category={app.category} /></Badge>
 						{#if app.version}
 							<Badge variant="info">
 								<Tag class="w-3 h-3 mr-1" />
@@ -323,7 +344,7 @@
 						{/if}
 						<Badge variant={sourceBadge.variant}>
 							<Shield class="w-3 h-3 mr-1" />
-							{sourceBadge.label}
+							{$t(sourceBadge.key)}
 						</Badge>
 					</div>
 				</div>
@@ -340,7 +361,7 @@
 							class="flex items-center gap-1.5 text-sm text-info hover:text-blue-300 transition-colors"
 						>
 							<Globe class="w-4 h-4" />
-							Website
+							{$t('apps.detail.website')}
 						</a>
 					{/if}
 					{#if app.github}
@@ -351,7 +372,7 @@
 							class="flex items-center gap-1.5 text-sm text-secondary hover:text-content transition-colors"
 						>
 							<Github class="w-4 h-4" />
-							GitHub
+							{$t('apps.detail.github')}
 						</a>
 					{/if}
 					{#if app.documentation}
@@ -362,7 +383,7 @@
 							class="flex items-center gap-1.5 text-sm text-secondary hover:text-content transition-colors"
 						>
 							<BookOpen class="w-4 h-4" />
-							Docs
+							{$t('apps.detail.docs')}
 						</a>
 					{/if}
 				</div>
@@ -373,25 +394,22 @@
 		{#if needsPool && !isInstalled}
 			<div class="mb-4">
 				{#if poolsLoading}
-					<p class="text-sm text-muted">Loading storage pools...</p>
+					<p class="text-sm text-muted">{$t('apps.detail.loadingPools')}</p>
 				{:else if poolsError}
-					<Alert variant="error" title="Could not load storage pools">{poolsError}</Alert>
+					<Alert variant="error" title={$t('apps.detail.poolsError')}>{poolsError}</Alert>
 				{:else if pools.length === 0}
-					<Alert variant="warning" title="No mounted storage pool">
-						<p>
-							{app.name} keeps its data on a storage pool, and no pool is mounted. Create or mount
-							a pool on the Storage page, then install the app.
-						</p>
+					<Alert variant="warning" title={$t('apps.detail.noPoolTitle')}>
+						<p>{$t('apps.detail.noPool', { name: app.name })}</p>
 						<Button variant="secondary" size="sm" href="/storage" icon={HardDrive} class="mt-3">
-							Go to Storage
+							{$t('apps.detail.goToStorage')}
 						</Button>
 					</Alert>
 				{:else}
 					<Select
-						label="Storage pool"
+						label={$t('apps.detail.pool')}
 						options={poolOptions}
 						bind:value={selectedPoolName}
-						hint="The app's data is stored on this pool."
+						hint={$t('apps.detail.poolHint')}
 					/>
 				{/if}
 			</div>
@@ -405,25 +423,21 @@
 						bind:checked={runInUnosSmb}
 						aria-describedby="app-unos-smb-hint"
 					/>
-					Run in the group unos-smb
+					{$t('apps.detail.unosSmb')}
 				</label>
 				<p id="app-unos-smb-hint" class="form-hint">
-					Sets PUID to {UNOS_SMB_IDS.PUID}, PGID to {UNOS_SMB_IDS.PGID} (unos-smb) and UMASK to 007.
-					Only an app in this group can be given a share's folder on the Volumes tab: it reads and
-					changes every file there, and SMB users can change what it writes.
+					{$t('apps.detail.unosSmbHint', { puid: UNOS_SMB_IDS.PUID, pgid: UNOS_SMB_IDS.PGID })}
 				</p>
 				{#if runInUnosSmb}
 					<Alert variant="warning" class="mt-2">
-						{app.name} can read and change the files of every share folder you give it. If it can be
-						reached from the internet, whoever takes it over gets those files too.
+						{$t('apps.detail.unosSmbWarning', { name: app.name })}
 					</Alert>
 				{/if}
 			</div>
 		{/if}
 		{#if isInstalled && installedApp?.runs_in_unos_smb}
 			<Alert variant="info" class="mb-4">
-				{app.name} runs in the group unos-smb (PUID {UNOS_SMB_IDS.PUID}, PGID {UNOS_SMB_IDS.PGID}): it
-				reads and changes the files of the share folders it was given.
+				{$t('apps.detail.runsInUnosSmb', { name: app.name, puid: UNOS_SMB_IDS.PUID, pgid: UNOS_SMB_IDS.PGID })}
 			</Alert>
 		{/if}
 		{#if isInstalled && installedApp}
@@ -440,7 +454,7 @@
 				on:click={() => (activeTab = 'overview')}
 			>
 				<Package class="w-4 h-4" />
-				Overview
+				{$t('apps.detail.tabs.overview')}
 			</button>
 			{#if app.ports?.length > 0}
 				<button
@@ -451,7 +465,7 @@
 					on:click={() => (activeTab = 'ports')}
 				>
 					<Network class="w-4 h-4" />
-					Ports ({app.ports.length})
+					{$t('apps.detail.tabs.ports', { count: app.ports.length })}
 				</button>
 			{/if}
 			{#if volumeCount > 0}
@@ -463,7 +477,7 @@
 					on:click={() => (activeTab = 'volumes')}
 				>
 					<HardDrive class="w-4 h-4" />
-					Volumes ({volumeCount})
+					{$t('apps.detail.tabs.volumes', { count: volumeCount })}
 				</button>
 			{/if}
 			{#if app.environment?.length > 0}
@@ -475,7 +489,7 @@
 					on:click={() => (activeTab = 'environment')}
 				>
 					<Settings class="w-4 h-4" />
-					Environment ({app.environment.length})
+					{$t('apps.detail.tabs.environment', { count: app.environment.length })}
 				</button>
 			{/if}
 		</div>
@@ -487,7 +501,7 @@
 					<!-- Docker Image -->
 					<div class="card-nested">
 						<div class="flex items-center justify-between">
-							<span class="text-secondary text-sm">Docker Image</span>
+							<span class="text-secondary text-sm">{$t('apps.detail.image')}</span>
 							<code class="mono text-sm">{app.image}</code>
 						</div>
 					</div>
@@ -497,7 +511,9 @@
 						<div class="card-nested">
 							<div class="flex items-center gap-2 mb-3">
 								<Database class="w-4 h-4 icon-storage" />
-								<h4 class="text-sm font-medium">Data locations on {selectedPool.name}</h4>
+								<h4 class="text-sm font-medium">
+									{$t('apps.detail.dataLocations', { pool: selectedPool.name })}
+								</h4>
 							</div>
 							<ul class="space-y-2">
 								{#each poolVolumes as volume}
@@ -506,7 +522,9 @@
 											{effectiveHostPath(volume, selectedPool, volumeOverrides)}
 										</p>
 										<p class="text-xs text-muted">
-											mounted at {volume.container}{volume.readonly ? ' (read-only)' : ''}
+											{$t(volume.readonly ? 'apps.detail.mountedAtReadOnly' : 'apps.detail.mountedAt', {
+												path: volume.container
+											})}
 										</p>
 									</li>
 								{/each}
@@ -517,17 +535,17 @@
 					<!-- Resource Recommendations -->
 					{#if app.min_memory || app.recommended_memory}
 						<div class="card-nested">
-							<h4 class="text-sm font-medium mb-3">Resource Recommendations</h4>
+							<h4 class="text-sm font-medium mb-3">{$t('apps.detail.resources')}</h4>
 							<div class="grid grid-cols-2 gap-4">
 								{#if app.min_memory}
 									<div>
-										<span class="text-secondary text-sm">Minimum Memory</span>
+										<span class="text-secondary text-sm">{$t('apps.detail.minMemory')}</span>
 										<p class="font-medium">{app.min_memory}</p>
 									</div>
 								{/if}
 								{#if app.recommended_memory}
 									<div>
-										<span class="text-secondary text-sm">Recommended Memory</span>
+										<span class="text-secondary text-sm">{$t('apps.detail.recommendedMemory')}</span>
 										<p class="font-medium">{app.recommended_memory}</p>
 									</div>
 								{/if}
@@ -540,41 +558,39 @@
 						<div class="card-nested text-center">
 							<Network class="w-5 h-5 mx-auto mb-1 text-info" />
 							<p class="text-2xl font-bold">{app.ports?.length || 0}</p>
-							<p class="text-xs text-secondary">Ports</p>
+							<p class="text-xs text-secondary">{$t('apps.detail.ports')}</p>
 						</div>
 						<div class="card-nested text-center">
 							<HardDrive class="w-5 h-5 mx-auto mb-1 text-purple-400" />
 							<p class="text-2xl font-bold">{volumeCount}</p>
-							<p class="text-xs text-secondary">Volumes</p>
+							<p class="text-xs text-secondary">{$t('apps.detail.volumes')}</p>
 						</div>
 						<div class="card-nested text-center">
 							<Settings class="w-5 h-5 mx-auto mb-1 text-orange-400" />
 							<p class="text-2xl font-bold">{app.environment?.length || 0}</p>
-							<p class="text-xs text-secondary">Variables</p>
+							<p class="text-xs text-secondary">{$t('apps.detail.variables')}</p>
 						</div>
 					</div>
 				</div>
 			{:else if activeTab === 'ports'}
 				<div class="space-y-3">
-					<p class="text-sm text-secondary mb-4">
-						Configure port mappings. Modify host ports if they conflict with existing services.
-					</p>
+					<p class="text-sm text-secondary mb-4">{$t('apps.detail.portsHint')}</p>
 					{#each app.ports as port}
 						<div class="card-nested">
 							<div class="flex items-start gap-4">
 								<Input
 									class="flex-1"
 									type="number"
-									label="Host Port"
+									label={$t('apps.detail.hostPort')}
 									bind:value={portValues[port.container]}
 									disabled={isInstalled}
-									error={invalidPorts.includes(port.container) ? 'Use a port from 1 to 65535' : ''}
+									error={invalidPorts.includes(port.container) ? $t('apps.detail.portRange') : ''}
 								/>
 								<span class="text-secondary pt-8">→</span>
 								<Input
 									class="flex-1"
 									type="number"
-									label="Container Port"
+									label={$t('apps.detail.containerPort')}
 									value={String(port.container)}
 									disabled
 								/>
@@ -588,46 +604,44 @@
 			{:else if activeTab === 'volumes' && isInstalled}
 				<!-- The folders the installed container really uses, not paths on a pool -->
 				<div class="space-y-3">
-					<p class="text-sm text-secondary mb-4">Host folders this installed app uses.</p>
+					<p class="text-sm text-secondary mb-4">{$t('apps.detail.installedVolumesHint')}</p>
 					{#if installedApp && installedApp.volumes.length > 0}
 						{#each installedApp.volumes as volume}
 							<div class="card-nested">
 								<div class="flex items-start gap-4">
 									<div class="flex-1 min-w-0">
-										<p class="form-label">Host Path</p>
+										<p class="form-label">{$t('apps.detail.hostPath')}</p>
 										<p class="mono text-sm break-all py-2">{volume.host}</p>
 									</div>
 									<span class="text-secondary pt-8">→</span>
 									<div class="flex-1 min-w-0">
-										<p class="form-label">Container Path</p>
+										<p class="form-label">{$t('apps.detail.containerPath')}</p>
 										<p class="mono text-sm break-all py-2">{volume.container}</p>
 									</div>
 									<div class="pt-8 flex flex-col items-end gap-1">
 										{#if volume.readonly}
-											<Badge variant="warning">RO</Badge>
+											<Badge variant="warning">{$t('apps.detail.readOnly')}</Badge>
 										{:else}
-											<Badge variant="neutral">RW</Badge>
+											<Badge variant="neutral">{$t('apps.detail.readWrite')}</Badge>
 										{/if}
 										{#if installedApp.data_outside_pools.includes(volume.host)}
-											<Badge variant="error">Not on a pool</Badge>
+											<Badge variant="error">{$t('apps.detail.notOnPool')}</Badge>
 										{/if}
 									</div>
 								</div>
 							</div>
 						{/each}
 					{:else}
-						<p class="text-sm text-muted">No host folders are mounted into this app.</p>
+						<p class="text-sm text-muted">{$t('apps.detail.noVolumes')}</p>
 					{/if}
 				</div>
 			{:else if activeTab === 'volumes'}
 				<div class="space-y-3">
 					<p class="text-sm text-secondary mb-4">
 						{#if needsPool}
-							Data folders are created on the selected storage pool. A data folder can point to
-							another folder inside a mounted pool, never into a snapshot or the trash, and to a
-							share's folder only for an app that runs in the group unos-smb.
+							{$t('apps.detail.volumesPoolHint')}
 						{/if}
-						System paths marked "System" are mounted from the host as they are.
+						{$t('apps.detail.volumesSystemHint')}
 					</p>
 					{#each app.volumes as volume}
 						<div class="card-nested">
@@ -636,36 +650,36 @@
 									{#if volume.on_pool}
 										<Input
 											class="font-mono text-sm"
-											label="Host Path"
+											label={$t('apps.detail.hostPath')}
 											value={effectiveHostPath(volume, selectedPool, volumeOverrides)}
 											on:input={(e) => setVolumePath(volume, inputValue(e))}
 											disabled={isInstalled || selectedPool === null}
 											autocomplete="off"
 											error={invalidVolumes.includes(volume.container)
-												? 'Must be inside a mounted storage pool'
+												? $t('apps.detail.insidePool')
 												: ''}
 										/>
 									{:else}
-										<p class="form-label">Host Path</p>
+										<p class="form-label">{$t('apps.detail.hostPath')}</p>
 										<p class="mono text-sm break-all py-2">{volume.host}</p>
 									{/if}
 								</div>
 								<span class="text-secondary pt-8">→</span>
 								<div class="flex-1 min-w-0">
-									<p class="form-label">Container Path</p>
+									<p class="form-label">{$t('apps.detail.containerPath')}</p>
 									<p class="mono text-sm break-all py-2">{volume.container}</p>
 								</div>
 								<div class="pt-8 flex flex-col items-end gap-1">
 									{#if volume.readonly}
-										<Badge variant="warning">RO</Badge>
+										<Badge variant="warning">{$t('apps.detail.readOnly')}</Badge>
 									{:else}
-										<Badge variant="neutral">RW</Badge>
+										<Badge variant="neutral">{$t('apps.detail.readWrite')}</Badge>
 									{/if}
 									{#if !volume.on_pool}
-										<Badge variant="info">System</Badge>
+										<Badge variant="info">{$t('apps.detail.system')}</Badge>
 									{/if}
 									{#if volume.is_file}
-										<Badge variant="neutral">File</Badge>
+										<Badge variant="neutral">{$t('apps.detail.file')}</Badge>
 									{/if}
 								</div>
 							</div>
@@ -674,9 +688,7 @@
 				</div>
 			{:else if activeTab === 'environment'}
 				<div class="space-y-3">
-					<p class="text-sm text-secondary mb-4">
-						Configure environment variables. Required variables must be set before installation.
-					</p>
+					<p class="text-sm text-secondary mb-4">{$t('apps.detail.environmentHint')}</p>
 					{#each app.environment as env}
 						<div class="card-nested">
 							{#if isSetByUnos(env.name)}
@@ -697,9 +709,11 @@
 									required={env.required}
 									disabled={isInstalled}
 									hint={env.description}
-									placeholder={env.secret ? (env.required ? 'Choose a unique value' : 'Optional') : `Enter ${env.name}`}
+									placeholder={env.secret
+										? $t(env.required ? 'apps.detail.secretPlaceholder' : 'apps.detail.optional')
+										: $t('apps.detail.enter', { name: env.name })}
 									autocomplete={env.secret ? 'new-password' : 'off'}
-									error={missingRequired.includes(env.name) ? 'Required' : ''}
+									error={missingRequired.includes(env.name) ? $t('apps.detail.required') : ''}
 								/>
 							{/if}
 						</div>
@@ -717,16 +731,16 @@
 		{/if}
 
 		{#if error}
-			<Alert variant="error" title="Installation failed" class="mt-4">{error}</Alert>
+			<Alert variant="error" title={$t('apps.detail.installFailed')} class="mt-4">{error}</Alert>
 		{/if}
 	{/if}
 
 	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" on:click={close}>Cancel</Button>
+		<Button variant="secondary" class="flex-1" on:click={close}>{$t('common.cancel')}</Button>
 		{#if isInstalled}
 			<Button variant="success" class="flex-1" disabled>
 				<Check class="w-4 h-4" />
-				Already Installed
+				{$t('apps.detail.alreadyInstalled')}
 			</Button>
 		{:else}
 			<Button
@@ -737,7 +751,7 @@
 				on:click={handleInstall}
 				icon={Download}
 			>
-				Install {app?.name ?? ''}
+				{$t('apps.detail.install', { name: app?.name ?? '' })}
 			</Button>
 		{/if}
 	</svelte:fragment>

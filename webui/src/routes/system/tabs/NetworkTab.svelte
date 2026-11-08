@@ -58,7 +58,7 @@
   };
   // The operational states that the kernel reports for an interface (operstate), which its badge
   // shows: keys of the catalog. The values that ip and ss print in the tables (link types, route
-  // and socket protocols, socket states) are shown as they come (ADR-0288).
+  // and socket protocols, socket states) are shown as they come (ADR-0295).
   const STATES: Record<string, string> = {
     UP: "network.state.up",
     DOWN: "network.state.down",

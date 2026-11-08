@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0288: The Network tab keeps the values that ip and ss print in its tables as they come in every language
+# ADR-0295: The Network tab keeps the values that ip and ss print in its tables as they come in every language
 
 ## Context
 

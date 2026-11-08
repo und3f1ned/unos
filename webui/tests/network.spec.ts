@@ -517,7 +517,7 @@ test.describe('System > Network', () => {
       { method: 'POST', path: '/interfaces/eth1/down/confirm' },
     ]);
 
-    // The routes and the connections; the values that ip and ss print stay as they come (ADR-0288).
+    // The routes and the connections; the values that ip and ss print stay as they come (ADR-0295).
     await page.getByRole('button', { name: 'Маршруты' }).click();
     await expect(page.getByRole('columnheader', { name: 'Назначение' })).toBeVisible();
     await expect(page.getByRole('table').getByRole('row', { name: /по умолчанию 192\.168\.1\.1 eth0 dhcp/ }))
