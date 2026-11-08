@@ -76,7 +76,7 @@ Russian, and in English otherwise. Dates and times follow the language: in the
 browser's own format when the browser is set to that language, otherwise with the
 day first and a 24-hour clock.
 
-All pages are translated except **Storage**, which is still in English.
+Every page is translated.
 Messages from the server, such as the reason an action was refused or the
 reason a share is not served, stay in English, and so do the titles and
 messages of notifications, the server's records (the log entries, the details
