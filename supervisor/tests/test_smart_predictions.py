@@ -230,7 +230,7 @@ def test_the_mark_goes_a_day_after_the_last_rise(api, disks, monkeypatch):
 
 
 def test_a_rise_counts_until_it_leaves_the_kept_history(api, disks, monkeypatch):
-    # save_smart_history keeps the last 720 snapshots, 30 days of hourly passes.
+    # The monitor keeps the last 720 snapshots, 30 days of hourly passes.
     disks.write({"WD-1": snapshots({REALLOCATED: [0] + [3] * 719})})
     assert predictions(api)[0]["status"] == "monitor_closely"
 
@@ -494,15 +494,17 @@ def test_the_other_history_endpoints_say_so_too(api, disks, path):
         f"Could not read the SMART history {disks.history_file}: "), response.text
 
 
-def test_a_read_during_the_hourly_write_gets_the_whole_old_history(api, disks, monkeypatch):
+def test_a_read_during_a_write_gets_the_whole_old_history(api, disks, monkeypatch):
     disks.write({"WD-1": snapshots(FAILING)})
     old = disks.history_file.read_text()
-    monkeypatch.setattr(subprocess, "run", smartctl_reports(3))
+    # A rise: the pass writes the history (ADR-0269).
+    monkeypatch.setattr(subprocess, "run", smartctl_reports(4))
 
     with open(disks.history_file) as reader:
-        assert health_router._smart_monitor_pass() == []
+        assert len(health_router._smart_monitor_pass()) == 1
         # The new history replaced the file: the old one was never cut short.
         assert reader.read() == old
+    assert len(health_router.load_smart_history()["WD-1"]) == 25
 
     assert predictions(api)[0]["data_points"] == 25
     assert sorted(path.name for path in disks.history_file.parent.iterdir()) == ["smart_history.json"]

@@ -439,6 +439,15 @@ class TestConstants:
         assert (constants.SHARE_DIR_MODE, constants.SHARE_FILE_MODE) == (0o2770, 0o660)
         assert share_root_mode_ok(stat.S_IFDIR | constants.SHARE_DIR_MODE, constants.SMB_GROUP_GID)
 
+    def test_the_user_of_apps_in_the_group_is_no_one_elses(self):
+        """The user of the apps that run in unos-smb (ADR-0274) owns what they write in share folders."""
+        assert constants.SMB_APP_UID == 80000
+        # No SMB account, and no account made with useradd (UID_MAX 60000 in
+        # login.defs), below SUB_UID_MIN (100000), and in the block that
+        # systemd never allocates (65536-524287), as the SMB ids (ADR-0107).
+        assert not constants.SMB_UID_MIN <= constants.SMB_APP_UID <= constants.SMB_UID_MAX
+        assert 65536 <= constants.SMB_APP_UID < 100000
+
     @pytest.mark.parametrize("name", ["alice", "a", "a" * 32, "e2e_user_abc", "bob-smith", "x9", "admin"])
     def test_valid_linux_names(self, name):
         assert linux_name_problem(name) is None
@@ -456,7 +465,7 @@ class TestConstants:
         "root", "nobody", "www-data", "docker", "sambashare", "unos", "unos-smb", "systemd-network", "systemd-x",
         # wsdd2.service runs as the dynamic user named after it (DynamicUser=true). A static
         # account of that name takes its place: an SMB host account wsdd2 would give the
-        # network-facing daemon the group unos-smb and with it the share folders (ADR-0261).
+        # network-facing daemon the group unos-smb and with it the share folders (ADR-0275).
         "wsdd2",
     ])
     def test_reserved_names(self, name):

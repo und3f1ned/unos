@@ -33,12 +33,18 @@ Volume host paths:
   root init that fixes permissions) need uid/gid on their writable pool
   folders; otherwise they cannot write to the root-owned folders the
   supervisor creates.
+- linuxserver.io templates declare PUID and PGID (1000), which UNOS alone
+  sets. Such an app with a pool folder outside {pool}/apps can be installed
+  to run in the group unos-smb, which sets PUID, PGID and UMASK
+  (AppTemplate.can_run_in_unos_smb, ADR-0274). Only those apps are given a
+  share's folder.
 
 Mark passwords, tokens and keys with secret=True and never ship a default
 value for them; required secrets must be set by the administrator.
 """
 
 from .schemas import (
+    APPS_DATA_PATH,
     POOL_PLACEHOLDER,
     AppCategory,
     AppSource,
@@ -49,7 +55,6 @@ from .schemas import (
 )
 
 POOL = POOL_PLACEHOLDER
-APPS_DATA_PATH = f"{POOL}/apps"
 
 APP_CATALOG: list[AppTemplate] = [
     # ═══════════════════════════════════════════════════════════════════════════

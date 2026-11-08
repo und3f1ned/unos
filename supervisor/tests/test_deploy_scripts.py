@@ -866,7 +866,7 @@ def _run_install_main(tmp_path, *scenario, docker_installed=True):
     return result, (stub_dir / "calls").read_text().splitlines()
 
 
-# The files of network discovery that install.sh writes (ADR-0261): avahi-daemon's settings,
+# The files of network discovery that install.sh writes (ADR-0275): avahi-daemon's settings,
 # the drop-in that makes avahi-daemon read them, and the drop-in of wsdd2.
 AVAHI_CONF = "/etc/avahi/avahi-daemon.unos.conf"
 AVAHI_DROP_IN = "/etc/systemd/system/avahi-daemon.service.d/unos.conf"
@@ -1030,7 +1030,7 @@ class TestInstallScript:
     )
     def test_smbd_runs_and_nmbd_is_turned_off(self, tmp_path, smb_conf):
         # NetBIOS is off (disable netbios = yes): nmbd, its name server, is stopped and does
-        # not start at boot, and the restart gives smbd the new smb ports (ADR-0261).
+        # not start at boot, and the restart gives smbd the new smb ports (ADR-0275).
         self._configure_samba(tmp_path, smb_conf)
 
         assert self._systemctl_calls(tmp_path) == [
@@ -1039,7 +1039,7 @@ class TestInstallScript:
             "systemctl disable --now nmbd",
         ]
 
-    # What configure_discovery runs when both packages install (ADR-0261).
+    # What configure_discovery runs when both packages install (ADR-0275).
     DISCOVERY_CALLS = [
         "systemctl daemon-reload",
         "apt-get install -y -qq --no-install-recommends avahi-daemon (settings written)",
@@ -1061,7 +1061,7 @@ class TestInstallScript:
         # /etc/nsswitch.conf: the host would no longer resolve the names of a DNS zone that
         # ends in .local, as many Active Directory domains do. install_dependencies installs
         # what its packages recommend, so avahi-daemon is installed on its own line, and wsdd2
-        # after its drop-in, where a release without it (Debian 11) stops nothing (ADR-0261).
+        # after its drop-in, where a release without it (Debian 11) stops nothing (ADR-0275).
         (tmp_path / "dependencies").mkdir()
         packages = _install_packages(tmp_path / "dependencies")
         result, calls = _run_configure_discovery(tmp_path)
@@ -1081,7 +1081,7 @@ class TestInstallScript:
         # ADR-0095): Finder would list the NAS and fail to connect. avahi-daemon reads UNOS's
         # file instead, Debian's settings without IPv6, through a drop-in that is in place and
         # loaded before the package is installed, whose installation starts avahi-daemon; the
-        # restart gives it to an avahi-daemon that ran before (ADR-0261).
+        # restart gives it to an avahi-daemon that ran before (ADR-0275).
         result, calls = _run_configure_discovery(tmp_path)
         conf = _sandbox_path(tmp_path, AVAHI_CONF)
 
@@ -1110,7 +1110,7 @@ class TestInstallScript:
         # Over IPv6, wsdd2 opens its TCP ports on tunnels too, whose global addresses
         # nothing filters (ADR-0227). The drop-in is in place and loaded before the package
         # is installed, whose installation starts wsdd2; the restart gives it to a wsdd2
-        # that ran before the drop-in existed (ADR-0261).
+        # that ran before the drop-in existed (ADR-0275).
         result, calls = _run_configure_discovery(tmp_path)
 
         assert result.returncode == 0, result.stdout + result.stderr
@@ -1125,7 +1125,7 @@ class TestInstallScript:
 
     def test_without_a_wsdd2_package_the_installation_goes_on(self, tmp_path):
         # Debian 11 has no wsdd2 package, and Ubuntu has it in universe: macOS still lists
-        # the server, Windows reaches it only by its address (ADR-0261).
+        # the server, Windows reaches it only by its address (ADR-0275).
         result, calls = _run_configure_discovery(tmp_path, wsdd2_missing=True)
         text = self._text(result)
 
@@ -1143,7 +1143,7 @@ class TestInstallScript:
     def test_a_package_that_fails_to_install_stops_the_installation_with_apts_error(self, tmp_path, package):
         # A package that exists but does not install (a held dpkg lock, a mirror that fails)
         # is not a release without it: apt-get's error shows, and the installation stops as
-        # it does for the other packages; running install.sh again finishes it (ADR-0261).
+        # it does for the other packages; running install.sh again finishes it (ADR-0275).
         result, calls = _run_configure_discovery(tmp_path, failing=package)
         text = self._text(result)
 
@@ -1738,7 +1738,7 @@ class TestUninstallScript:
         assert result.returncode == 0, result.stdout + result.stderr
         if says == "original":
             # The file from before UNOS leaves NetBIOS on: nmbd, which install.sh turned off,
-            # runs again, also after a reboot (ADR-0261).
+            # runs again, also after a reboot (ADR-0275).
             assert calls == ["systemctl enable nmbd", "systemctl restart smbd nmbd"]
             assert (folder / "smb.conf").read_text() == "smb.conf.original\n"
             assert f"Samba configuration: {folder}/smb.conf is the file from before UNOS again" in text
@@ -1813,7 +1813,7 @@ class TestUninstallScript:
     def test_the_completion_says_that_network_discovery_stays(self, tmp_path):
         # avahi-daemon and wsdd2 are system packages, kept like samba, with the files that
         # keep them to IPv4. /etc/unos goes, so avahi-daemon's settings are not there: without
-        # them it would not start (ADR-0261).
+        # them it would not start (ADR-0275).
         result, calls, _ = self._run(tmp_path, "print_completion")
         text = self._text(result)
 
@@ -2086,7 +2086,7 @@ class TestInstallGuide:
         assert command.replace("\\", " ").split() == _install_packages(tmp_path)
 
     def test_samba_runs_without_netbios_and_discovery_as_install_sh_sets_it_up(self, tmp_path):
-        # What configure_samba and configure_discovery run (ADR-0261): the files that keep
+        # What configure_samba and configure_discovery run (ADR-0275): the files that keep
         # avahi-daemon and wsdd2 to IPv4 written and loaded before their packages are
         # installed, avahi-daemon without what it recommends, as in install.sh. The guide
         # leaves out install.sh's look for a wsdd2 package (apt-cache show): it says what

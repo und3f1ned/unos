@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0158]
 ---
 
-# ADR-0261: Windows finds the NAS through wsdd2, macOS through Samba's Bonjour announcement, and NetBIOS is off
+# ADR-0275: Windows finds the NAS through wsdd2, macOS through Samba's Bonjour announcement, and NetBIOS is off
 
 ## Context
 

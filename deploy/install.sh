@@ -275,7 +275,7 @@ EOF
 
 # smbd serves SMB. NetBIOS is off (disable netbios in smb.conf), so nmbd, the
 # NetBIOS name server, is stopped and does not start at boot; the restart
-# gives smbd the file's settings, its ports among them (ADR-0261).
+# gives smbd the file's settings, its ports among them (ADR-0275).
 start_samba() {
     systemctl enable smbd
     systemctl restart smbd
@@ -351,7 +351,7 @@ EOF
     log_success "Samba configured"
 }
 
-# Network discovery (ADR-0261). With NetBIOS off, macOS finds this server
+# Network discovery (ADR-0275). With NetBIOS off, macOS finds this server
 # through the Bonjour service (_smb._tcp) that smbd announces through
 # avahi-daemon, and Windows through wsdd2, which answers WS-Discovery, and
 # LLMNR for the server's name. Both answer over IPv4 only: clients would use

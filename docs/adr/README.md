@@ -102,6 +102,8 @@ and this index, and `make check-fast` runs it.
 | [0251](0251-a-sign-in-answers-while-data-is-full-and-its-lost-records-go-to-the-log.md) | A sign-in answers while /data is full, and the records it cannot write go to the supervisor's log | accepted | 2026-11-07 |
 | [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | An API token's last use is committed at most once an hour | accepted | 2026-11-07 |
 | [0253](0253-only-a-session-token-manages-api-tokens-and-their-number-and-names-are-bounded.md) | Only a session token manages API tokens, and their number, names and permissions are bounded | accepted | 2026-11-07 |
+| [0262](0262-login-history-times-in-utc-with-the-offset-newest-first.md) | The login history answers its times in UTC with the offset, newest first also within a second | accepted | 2026-11-07 |
+| [0263](0263-a-users-login-history-starts-with-their-account.md) | A regular user's login history starts with their account | accepted | 2026-11-08 |
 
 ## Storage
 
@@ -120,6 +122,9 @@ and this index, and `make check-fast` runs it.
 | [0241](0241-snapshots-of-volumes-and-volume-quotas-in-the-web-ui.md) | The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB | superseded by [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | 2026-11-07 |
 | [0242](0242-snapshot-commands-act-on-the-folders-that-were-opened.md) | Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id | accepted | 2026-11-07 |
 | [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | The Snapshots page offers mounted pools and their volumes, also a pool whose volumes cannot be read, and the Volumes dialog takes a quota in GiB | accepted | 2026-11-07 |
+| [0269](0269-the-smart-history-is-kept-in-ram-and-written-when-it-changes.md) | The SMART monitor keeps its history in RAM and writes it only when a pass changes it, and at shutdown | accepted | 2026-11-07 |
+| [0270](0270-smart-trends-report-every-tracked-disk.md) | GET /health/smart/trends reports every tracked disk, and trends read each counter from the snapshots that hold it | accepted | 2026-11-07 |
+| [0272](0272-scrub-results-name-cancelled-scrubs-and-count-every-error.md) | A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports | accepted | 2026-11-07 |
 
 ## Shares
 
@@ -211,9 +216,9 @@ and this index, and `make check-fast` runs it.
 | [0155](0155-repair-permissions-only-on-request.md) | Guest-era permissions are fixed only by an explicit per-share Repair | accepted | 2026-11-06 |
 | [0156](0156-repair-walks-with-descriptors.md) | Repair walks the folder tree with descriptors and opens nothing it must not | accepted | 2026-11-06 |
 | [0157](0157-smb-audits-only-real-changes.md) | The SMB code audits only real changes, and problems go to the status | accepted | 2026-11-06 |
-| [0158](0158-netbios-stays-until-discovery.md) | NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour | superseded by [0261](0261-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | 2026-11-06 |
+| [0158](0158-netbios-stays-until-discovery.md) | NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour | superseded by [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | 2026-11-06 |
 | [0159](0159-passdb-stays-on-the-system-disk.md) | Samba's passdb stays on the system disk until its writes are measured | accepted | 2026-11-06 |
-| [0160](0160-no-file-manager-or-app-group-access-to-shares.md) | The File Manager and apps get no group access to share folders yet | accepted | 2026-11-06 |
+| [0160](0160-no-file-manager-or-app-group-access-to-shares.md) | The File Manager and apps get no group access to share folders yet | superseded by [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | 2026-11-06 |
 | [0161](0161-no-per-share-protocol-options-yet.md) | Per-share protocol options wait for a later slice | accepted | 2026-11-06 |
 | [0162](0162-apparmor-profile-for-new-share-paths.md) | UNOS does not manage smbd's AppArmor profile while smbd runs unconfined | accepted | 2026-11-07 |
 | [0163](0163-nfs-unchanged-in-slice-2.md) | NFS exports stay unchanged in slice 2 | accepted | 2026-11-06 |
@@ -224,9 +229,9 @@ and this index, and `make check-fast` runs it.
 | [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | superseded by [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | 2026-11-07 |
 | [0248](0248-pool-changes-apply-smb-conf.md) | The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once | accepted | 2026-11-07 |
 | [0249](0249-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
-| [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | superseded by [0262](0262-smb-follow-ups-still-open-after-network-discovery.md) | 2026-11-07 |
-| [0261](0261-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | Windows finds the NAS through wsdd2, macOS through Samba's Bonjour announcement, and NetBIOS is off | accepted | 2026-11-08 |
-| [0262](0262-smb-follow-ups-still-open-after-network-discovery.md) | Handle the SMB follow-ups still open after network discovery | proposed | 2026-11-08 |
+| [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | superseded by [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | 2026-11-07 |
+| [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | Windows finds the NAS through wsdd2, macOS through Samba's Bonjour announcement, and NetBIOS is off | accepted | 2026-11-08 |
+| [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | Handle the SMB follow-ups still open after network discovery | proposed | 2026-11-08 |
 
 ## Apps
 
@@ -237,6 +242,7 @@ and this index, and `make check-fast` runs it.
 | [0254](0254-docker-calls-run-in-worker-threads-and-conflicts-answer-409.md) | Docker calls of the containers and apps APIs run in worker threads within the Docker client's timeout, and the containers API answers Docker's conflicts with 409 | accepted | 2026-11-07 |
 | [0255](0255-container-logs-stream-in-the-drawer-and-images-get-a-tab.md) | The container drawer follows the log over the logs socket, and the Images tab pulls by name and removes only what no container uses | accepted | 2026-11-07 |
 | [0256](0256-the-apps-api-acts-only-on-apps-and-uninstall-keeps-their-data.md) | The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data | accepted | 2026-11-07 |
+| [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | Apps of linuxserver.io images can be installed to run in the group unos-smb, and only such an app is given a share's folder | accepted | 2026-11-08 |
 
 ## Backup
 
@@ -259,6 +265,7 @@ and this index, and `make check-fast` runs it.
 | [0170](0170-file-manager-protects-volumes-and-mounts.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts | accepted | 2026-11-06 |
 | [0232](0232-file-manager-renames-in-the-row-and-never-replaces.md) | The file manager renames one selected item in its row and never replaces an entry | accepted | 2026-11-07 |
 | [0259](0259-deleted-items-go-to-the-trash-of-their-pool-or-volume-for-30-days.md) | Deleted items go to the trash of their pool or volume for 30 days, unless they are restored or deleted for good | accepted | 2026-11-07 |
+| [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | New folders and uploads of the file manager in a share folder get 2770 and 0660 | superseded by [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | 2026-11-08 |
 
 ## System
 
@@ -281,6 +288,11 @@ and this index, and `make check-fast` runs it.
 | [0257](0257-system-logs-reads-every-source-from-the-hosts-journal-newest-first.md) | System > Logs reads every source from the host's journal, newest first, with one set of filters | accepted | 2026-11-07 |
 | [0258](0258-a-journal-read-ends-on-the-host-and-two-run-at-a-time.md) | A journal read of System > Logs ends on the host after 30 seconds, two run at a time, and a search without a match lists nothing | accepted | 2026-11-07 |
 | [0260](0260-notification-channels-of-every-kind-name-failed-deliveries-and-keep-a-full-history.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, and the history lists every notification sent | accepted | 2026-11-07 |
+| [0264](0264-schedules-follow-the-clock-of-the-hosts-time-zone.md) | Schedules follow the clock of the host's time zone, read from its /etc/localtime link, with fixed rules for the changes of daylight saving time | superseded by [0266](0266-schedules-follow-the-hosts-time-zone-as-last-read.md) | 2026-11-07 |
+| [0265](0265-custom-task-runs-record-output-and-exit-status-and-end-within-a-day.md) | A custom task's run records the command's output and exit status, and the command ends within 24 hours with what it started | superseded by [0267](0267-custom-task-commands-end-with-every-process-of-their-session.md) | 2026-11-07 |
+| [0266](0266-schedules-follow-the-hosts-time-zone-as-last-read.md) | Schedules follow the host's time zone as last read from its /etc/localtime link, with fixed rules for the changes of daylight saving time | accepted | 2026-11-08 |
+| [0267](0267-custom-task-commands-end-with-every-process-of-their-session.md) | A custom task's run records the command's output and exit status, and the command ends within 24 hours with every process of its session | accepted | 2026-11-08 |
+| [0268](0268-a-run-that-a-stop-of-the-supervisor-interrupts-is-recorded-as-failed.md) | A task run that a stop of the supervisor interrupts is recorded as failed | accepted | 2026-11-08 |
 
 ## Web UI
 
@@ -290,6 +302,7 @@ and this index, and `make check-fast` runs it.
 | [0175](0175-deferred-ui-scheduler-and-tooling-items.md) | Fix the deferred UI, scheduler, container and tooling items | proposed | 2026-11-06 |
 | [0196](0196-windows-hint-uses-ipv6-literal-net.md) | The Windows connection hint uses the ipv6-literal.net form for IPv6 hosts | accepted | 2026-11-07 |
 | [0197](0197-accessible-dialogs-lists-and-hints.md) | Dialogs, lists and hints in the web UI work with keyboard and screen readers | accepted | 2026-11-07 |
+| [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
 
 ## Deploy
 
@@ -339,6 +352,7 @@ and this index, and `make check-fast` runs it.
 | [0188](0188-test-environments-with-known-failure-baselines.md) | Tests run in fixed environments against lists of known failures | superseded by [0215](0215-e2e-only-against-a-local-stand-in.md) | 2026-11-06 |
 | [0189](0189-smb-code-tested-against-a-fake-host.md) | SMB code is tested against a fake host layer, real testparm and the local stand-in | accepted | 2026-11-06 |
 | [0215](0215-e2e-only-against-a-local-stand-in.md) | E2E tests run only against local targets, never against the device | accepted | 2026-11-07 |
+| [0261](0261-the-stand-ins-test-administrator-is-created-through-the-setup-page.md) | The stand-in's test administrator is created through the setup page, by a first Playwright run | accepted | 2026-11-07 |
 
 ## CI
 

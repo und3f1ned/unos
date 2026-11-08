@@ -6,13 +6,13 @@ decided-by: agent
 supersedes: [ADR-0250]
 ---
 
-# ADR-0262: Handle the SMB follow-ups still open after network discovery
+# ADR-0276: Handle the SMB follow-ups still open after network discovery
 
 ## Context
 
 ADR-0250 restated the known gaps, smaller design items and unchecked points that phase 1 slice 2
 (ADR-0059) left open, so that later slices pick them up instead of finding them again. One of its
-later product items, discovery with WS-Discovery and Bonjour, is decided since by ADR-0261, and
+later product items, discovery with WS-Discovery and Bonjour, is decided since by ADR-0275, and
 this ADR restates the others. Two of them, the SAMR password change and the single copy of
 `smb.conf.unos-replaced`, are also among the follow-ups of ADR-0164.
 
@@ -41,7 +41,7 @@ Proposed, not implemented:
 Decided since ADR-0250, and no longer open:
 
 - Windows finds the NAS through wsdd2 and macOS through the Bonjour service that smbd registers
-  with avahi-daemon, and NetBIOS is off (ADR-0261, `shares.smb-discovery`).
+  with avahi-daemon, and NetBIOS is off (ADR-0275, `shares.smb-discovery`).
 
 ## Consequences
 

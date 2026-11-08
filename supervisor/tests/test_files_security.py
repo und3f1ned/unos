@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from src.auth.utils import verify_token
 from src.main import app
+from src.shares import constants
 
 # The package re-exports its APIRouter as ``router``; import the module itself.
 files_router = importlib.import_module("src.files.router")
@@ -308,6 +309,265 @@ def test_mkdir_in_base_or_outside_is_refused(env):
     assert response.status_code == 403
     assert not (env.base / "fake").exists()
     assert _tree(env.outside) == ["secret.txt"]
+
+
+# --- new folders and uploads in share folders (ADR-0273) ------------------------------
+
+
+@pytest.fixture
+def smb_group(monkeypatch):
+    """The SMB group (constants.SMB_GROUP_GID) is the runner's own group: a test's folders can have it without root."""
+    monkeypatch.setattr(constants, "SMB_GROUP_GID", os.getgid())
+    return os.getgid()
+
+
+def _folder(path, mode, gid):
+    """``path`` made a folder of the group ``gid`` with exactly ``mode``, setgid included."""
+    path.mkdir()
+    os.chown(path, -1, gid)
+    os.chmod(path, mode)
+    return path
+
+
+def _mode(path):
+    """The mode bits of ``path`` (setgid included) and its group."""
+    st = os.lstat(path)
+    return stat.S_IMODE(st.st_mode), st.st_gid
+
+
+def _mkdir(env, folder, name):
+    return env.client.post("/api/v1/files/mkdir", json={"path": str(folder), "name": name})
+
+
+def test_a_new_folder_and_an_upload_in_a_share_folder_are_writable_for_the_smb_group(env, smb_group):
+    """In a folder as UNOS makes a share's (setgid, the SMB group, 2770): a folder 2770 and a file 0660 of that group."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+
+    made = _mkdir(env, docs, "projects")
+    uploaded = _upload(env.client, docs, "report.txt")
+
+    assert (made.status_code, uploaded.status_code) == (200, 200), (made.text, uploaded.text)
+    assert (made.json()["permissions"], uploaded.json()["permissions"]) == ("drwxrws---", "-rw-rw----")
+    assert _mode(docs / "projects") == (0o2770, smb_group)
+    assert _mode(docs / "report.txt") == (0o660, smb_group)
+    assert (docs / "report.txt").read_bytes() == b"payload"
+    # The new folder takes its own new entries alike.
+    assert _mkdir(env, docs / "projects", "2026").status_code == 200
+    assert _upload(env.client, docs / "projects", "plan.txt").status_code == 200
+    assert _mode(docs / "projects" / "2026") == (0o2770, smb_group)
+    assert _mode(docs / "projects" / "plan.txt") == (0o660, smb_group)
+
+
+def test_an_upload_that_replaces_a_file_in_a_share_folder_leaves_it_writable_for_the_smb_group(env, smb_group):
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    (docs / "report.txt").write_bytes(b"old")
+    os.chmod(docs / "report.txt", 0o660)
+
+    response = _upload(env.client, docs, "report.txt", b"new")
+
+    assert response.status_code == 200, response.text
+    assert (docs / "report.txt").read_bytes() == b"new"
+    assert _mode(docs / "report.txt") == (0o660, smb_group)
+    assert _tree(docs) == ["report.txt"]
+
+
+class _OsFailing:
+    """The files router's os module, in which the functions ``names`` fail with the error ``code``."""
+
+    def __init__(self, *names, code=errno.EIO):
+        self._names = names
+        self._code = code
+
+    def __getattr__(self, name):
+        if name in self._names:
+            return self._fail
+        return getattr(os, name)
+
+    def _fail(self, *args, **kwargs):
+        raise OSError(self._code, os.strerror(self._code))
+
+
+# A step of New Folder in a share folder that fails after the mkdir: (the os function, its error, the answer).
+FAILED_AFTER_THE_MKDIR = {
+    "fchmod, an I/O error": ("fchmod", errno.EIO, (500, "File operation failed: Input/output error")),
+    "fchmod, no space left": ("fchmod", errno.ENOSPC, (507, "No space left on device")),
+    "the check that it is empty": ("scandir", errno.EIO, (500, "File operation failed: Input/output error")),
+}
+
+
+@pytest.mark.parametrize("function, code, answer", FAILED_AFTER_THE_MKDIR.values(), ids=FAILED_AFTER_THE_MKDIR.keys())
+def test_a_new_folder_that_cannot_get_the_modes_of_shares_is_answered_so_and_removed_again(
+    env, smb_group, monkeypatch, function, code, answer
+):
+    """The error is answered, and the folder that the mkdir made does not stay.
+
+    Private, SMB users could not use it, and Repair permissions skips
+    private folders: it would stay so until someone deleted it.
+    """
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    monkeypatch.setattr(files_router, "os", _OsFailing(function, code=code))
+
+    response = _mkdir(env, docs, "new")
+
+    assert (response.status_code, response.json()["detail"]) == answer
+    assert _tree(docs) == []
+
+
+# New Folder in a share folder, whose new folder neither gets the modes of shares nor can be
+# removed again: (the os functions that fail, their error, the answer).
+LEFT_PRIVATE = {
+    "neither fchmod nor rmdir": (
+        ("fchmod", "rmdir"),
+        errno.EIO,
+        (500, "File operation failed: Input/output error. "
+              "The new folder new stays private, and Repair permissions skips it: delete it"),
+    ),
+    "it cannot be opened": (
+        ("open",),
+        errno.EMFILE,
+        (500, "File operation failed: Too many open files. "
+              "The new folder new stays private, and Repair permissions skips it: delete it"),
+    ),
+}
+
+
+@pytest.mark.parametrize("functions, code, answer", LEFT_PRIVATE.values(), ids=LEFT_PRIVATE.keys())
+def test_a_new_folder_that_stays_private_is_answered_so(env, smb_group, monkeypatch, functions, code, answer):
+    """The answer says that the folder stays private and must be deleted, since Repair permissions skips it."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    monkeypatch.setattr(files_router, "os", _OsFailing(*functions, code=code))
+
+    response = _mkdir(env, docs, "new")
+
+    assert (response.status_code, response.json()["detail"]) == answer
+    mode, gid = _mode(docs / "new")
+    assert (mode & 0o077, gid) == (0, smb_group)  # neither the group nor others can use it
+    assert _tree(docs) == ["new"]
+
+
+class _OsSwappingAtTheModes:
+    """The files router's os module, in which another folder takes the name of a new folder, and then its fchmod fails.
+
+    As an SMB user who can write the share's folder could do it in between:
+    the new folder ``folder`` is renamed to ``<folder>.moved``, and
+    ``replacement`` gets its name.
+    """
+
+    def __init__(self, folder, replacement):
+        self._folder = folder
+        self._replacement = replacement
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def fchmod(self, fd, mode):
+        os.rename(self._folder, f"{self._folder}.moved")
+        os.rename(self._replacement, self._folder)
+        raise OSError(errno.EIO, os.strerror(errno.EIO))
+
+
+def test_a_folder_put_at_the_name_of_a_new_folder_that_cannot_get_the_modes_of_shares_is_kept(
+    env, smb_group, monkeypatch
+):
+    """Only the folder that the mkdir made is removed again: an empty folder that took its name meanwhile stays."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    other = _folder(docs / "other", 0o2770, smb_group)
+    before = _mode(other)
+    monkeypatch.setattr(files_router, "os", _OsSwappingAtTheModes(docs / "new", other))
+
+    response = _mkdir(env, docs, "new")
+
+    assert (response.status_code, response.json()["detail"]) == (500, "File operation failed: Input/output error")
+    assert _mode(docs / "new") == before
+    assert _tree(docs) == ["new", "new.moved"]
+
+
+def test_an_existing_name_in_a_share_folder_is_refused_and_kept(env, smb_group):
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    _folder(docs / "archive", 0o2750, smb_group)
+
+    response = _mkdir(env, docs, "archive")
+
+    assert (response.status_code, response.json()["detail"]) == (400, "Already exists: archive")
+    assert _mode(docs / "archive") == (0o2750, smb_group)
+
+
+# Folders that are not set up as a share's: (mode, whether their group is the SMB group).
+NOT_A_SHARE_FOLDER = {
+    "an ordinary folder": (0o755, False),
+    "of the SMB group without setgid": (0o770, True),
+    "of the SMB group, which may only read": (0o2750, True),
+    "of the SMB group, open to others too": (0o2775, True),
+    "of another group": (0o2770, False),
+}
+
+
+@pytest.mark.parametrize("mode, smb", NOT_A_SHARE_FOLDER.values(), ids=NOT_A_SHARE_FOLDER.keys())
+def test_outside_share_folders_new_folders_and_uploads_are_made_as_before(env, monkeypatch, mode, smb):
+    """What the umask leaves of 0777 and 0666, as an mkdir and a new file get in the same folder."""
+    monkeypatch.setattr(constants, "SMB_GROUP_GID", os.getgid() if smb else os.getgid() + 1)
+    folder = _folder(env.pool / "folder", mode, os.getgid())
+    os.mkdir(folder / "reference", 0o777)
+    os.close(os.open(folder / "reference.txt", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666))
+    (folder / "old.txt").write_bytes(b"old")
+
+    made = _mkdir(env, folder, "new")
+    uploaded = _upload(env.client, folder, "new.txt")
+    replaced = _upload(env.client, folder, "old.txt", b"new")
+
+    assert (made.status_code, uploaded.status_code, replaced.status_code) == (200, 200, 200)
+    assert _mode(folder / "new") == _mode(folder / "reference")
+    assert _mode(folder / "new.txt") == _mode(folder / "reference.txt")
+    assert _mode(folder / "old.txt") == _mode(folder / "reference.txt")
+
+
+class _OsSwappingNewFolders:
+    """The files router's os module, in which another folder takes the place of a new folder right after its mkdir.
+
+    As an SMB user who can write the share's folder could do it: the new
+    folder is renamed to ``<name>.moved``, and ``replacement`` gets its name.
+    Everything else is ``base``: the real os module, or another of these
+    fakes.
+    """
+
+    def __init__(self, replacement, base=os):
+        self._os = base
+        self._replacement = replacement
+
+    def __getattr__(self, name):
+        return getattr(self._os, name)
+
+    def mkdir(self, path, mode=0o777, *, dir_fd=None):
+        self._os.mkdir(path, mode, dir_fd=dir_fd)
+        os.rename(path, f"{path}.moved", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        os.rename(self._replacement, path, dst_dir_fd=dir_fd)
+
+
+@pytest.mark.parametrize("replacement", ["a private folder with files", "a folder the group may only read",
+                                         "another user's empty private folder"])
+def test_a_folder_put_at_the_name_of_a_new_folder_keeps_its_modes(env, smb_group, monkeypatch, replacement):
+    """Only the folder that the mkdir made gets the modes of shares: the supervisor's, private and empty."""
+    docs = _folder(env.pool / "docs", 0o2770, smb_group)
+    other = docs / "other"
+    if replacement == "a private folder with files":
+        _folder(other, 0o700, smb_group)
+        (other / "key").write_bytes(b"secret")
+        base = os
+    elif replacement == "a folder the group may only read":
+        _folder(other, 0o2750, smb_group)
+        base = os
+    else:
+        _folder(other, 0o700, smb_group)
+        base = _OsWithOwners([other])
+    before = _mode(other)
+    monkeypatch.setattr(files_router, "os", _OsSwappingNewFolders(other, base))
+
+    response = _mkdir(env, docs, "new")
+
+    assert response.status_code == 200, response.text
+    assert _mode(docs / "new") == before
+    inside = ["new/key"] if replacement == "a private folder with files" else []
+    assert _tree(docs) == sorted(["new", "new.moved", *inside])
 
 
 def test_rename_refuses_base_and_pool_root(env):

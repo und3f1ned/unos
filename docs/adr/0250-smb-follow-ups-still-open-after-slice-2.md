@@ -4,14 +4,14 @@ date: 2026-11-07
 area: shares
 decided-by: agent
 supersedes: [ADR-0195]
-superseded-by: ADR-0262
+superseded-by: ADR-0276
 ---
 
 # ADR-0250: Handle the SMB follow-ups still open after slice 2
 
 ## Context
 
-Superseded by ADR-0262: the follow-ups still open, without network discovery, which ADR-0261 decided.
+Superseded by ADR-0276: the follow-ups still open, without network discovery, which ADR-0275 decided.
 
 ADR-0195 recorded the known gaps, smaller design items and unchecked points that phase 1 slice 2
 (ADR-0059) left open, so that later slices pick them up instead of finding them again. Two of them

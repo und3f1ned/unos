@@ -10,7 +10,7 @@ The file is replaced atomically: the new text is written to a temporary file
 in the same directory (``/etc/samba`` is a bind mount of the host's
 ``/etc/samba``), fsynced, validated with the host's ``testparm`` and renamed
 over smb.conf; the directory is fsynced after the rename. Then smbd on the
-host is told to reload it (nmbd does not run: NetBIOS is off, ADR-0261).
+host is told to reload it (nmbd does not run: NetBIOS is off, ADR-0275).
 
 smb.conf has no quoting: a newline in any value starts a new directive and a
 trailing backslash continues the line. Values are validated before they are
@@ -326,7 +326,7 @@ def _reload_samba() -> tuple[bool, str | None]:
     * (True, None): ``smbcontrol all reload-config`` worked (ADR-0090); the
       main smbd passes the message on to the smbd processes that serve the
       open connections. (``all`` also reached nmbd, which no longer runs:
-      NetBIOS is off, ADR-0261.)
+      NetBIOS is off, ADR-0275.)
     * (True, note): only the fallback ``systemctl reload smbd`` worked. It
       sends SIGHUP to the main smbd alone (Debian's ExecReload): new
       connections get the new smb.conf, and closing a share makes the

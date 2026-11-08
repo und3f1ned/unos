@@ -105,7 +105,7 @@ class TestGlobal:
     @pytest.mark.parametrize("guest", [False, True])
     def test_netbios_is_off_and_smbd_announces_itself_over_bonjour(self, guest):
         # Windows finds the NAS through wsdd2 and macOS through the _smb._tcp service that
-        # smbd registers with avahi-daemon (ADR-0261): nmbd answers nothing, and smbd
+        # smbd registers with avahi-daemon (ADR-0275): nmbd answers nothing, and smbd
         # listens on 445 only, not on the NetBIOS session port 139.
         text = smbconf.render_global(guest)
         assert "   disable netbios = yes\n" in text

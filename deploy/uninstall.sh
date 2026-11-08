@@ -261,7 +261,7 @@ restore_samba_config() {
         # file may be incomplete.
         if cp "$SAMBA_DIR/smb.conf.original" "$SAMBA_DIR/smb.conf"; then
             # The file from before UNOS leaves NetBIOS on: nmbd, which
-            # install.sh turned off (ADR-0261), runs again, also at boot.
+            # install.sh turned off (ADR-0275), runs again, also at boot.
             systemctl enable nmbd 2>/dev/null || true
             systemctl restart smbd nmbd 2>/dev/null || true
             log_success "Original Samba configuration restored"
@@ -328,7 +328,7 @@ print_smb_leftovers() {
         echo "  systemctl restart smbd"
     fi
     echo ""
-    # install.sh set them up (ADR-0261); like samba, the packages stay, and so
+    # install.sh set them up (ADR-0275); like samba, the packages stay, and so
     # do the files that keep them to IPv4 (none of them in /etc/unos, which
     # remove_files removes: avahi-daemon would not start without its file).
     echo "Network discovery: avahi-daemon and wsdd2 (where install.sh could install"

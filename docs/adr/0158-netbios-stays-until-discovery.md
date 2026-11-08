@@ -3,14 +3,14 @@ status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
-superseded-by: ADR-0261
+superseded-by: ADR-0275
 ---
 
 # ADR-0158: NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour
 
 ## Context
 
-Superseded by ADR-0261: wsdd2 and avahi-daemon announce the NAS, and NetBIOS is off.
+Superseded by ADR-0275: wsdd2 and avahi-daemon announce the NAS, and NetBIOS is off.
 
 Clients find the NAS by name through a discovery protocol. Slice 2 (ADR-0059) installs no
 WS-Discovery (wsdd) or Bonjour (avahi) service, so NetBIOS, served by nmbd, is the only one
