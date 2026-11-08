@@ -14,7 +14,7 @@ import {
   type FakeNfsExport,
 } from './shares-fakes';
 
-// Shares > NFS (ADR-0291, ADR-0292) with canned API answers (shares-fakes.ts): nothing reaches
+// Shares > NFS (ADR-0292, ADR-0293) with canned API answers (shares-fakes.ts): nothing reaches
 // the supervisor, so no export file of this machine changes. The host's export files, exportfs
 // and an NFS client mounting the folder are the device check of shares.nfs-exports.
 

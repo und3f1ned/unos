@@ -1663,7 +1663,7 @@ class TestUninstallScript:
         assert removed == set(names) - expected
 
     def test_the_nfs_exports_of_unos_are_removed_and_no_longer_exported(self, tmp_path):
-        # UNOS's own export file (ADR-0291); /etc/exports and the other files are not UNOS's.
+        # UNOS's own export file (ADR-0292); /etc/exports and the other files are not UNOS's.
         own = tmp_path / "unos.exports"
         own.write_text("/mnt/pools/data/media 192.168.1.0/24(rw,sync)\n")
         other = tmp_path / "other.exports"

@@ -3,7 +3,7 @@
 SMB shares are rows of the UNOS database; shares/service.py changes them
 under smb_lock() and renders smb.conf from them. NFS exports are the lines
 of the host's export files; shares/nfs.py changes only the lines that UNOS
-wrote into its own file (ADR-0291). Every mutation is audited (ADR-0157).
+wrote into its own file (ADR-0292). Every mutation is audited (ADR-0157).
 PUT /shares/smb/{name} is gone (405): PATCH changes only the fields it sends.
 """
 
@@ -47,7 +47,7 @@ class SharePath(BaseModel):
     label: str
     type: str  # "pool" or "volume"
     # The pool is one that UNOS manages (its fstab marker): only such folders can be SMB
-    # shares and NFS exports (ADR-0293). A volume has its pool's value; false for every path when
+    # shares and NFS exports (ADR-0294). A volume has its pool's value; false for every path when
     # the pool list cannot be read.
     managed: bool
 
@@ -227,7 +227,7 @@ async def get_nfs_status(_=Depends(verify_token)):
 
 @router.post("/nfs", response_model=NfsExportInfo)
 async def create_nfs_export(request: Request, export: NfsExportCreate, user=Depends(verify_token)):
-    """Export an existing folder to one local address or network (ADR-0292); exportfs applies it.
+    """Export an existing folder to one local address or network (ADR-0293); exportfs applies it.
 
     What exportfs reports comes back as warnings: the export is written either way.
     """

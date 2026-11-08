@@ -37,9 +37,6 @@ src/routes/files/trash/+page.svelte
 # containers
 
 # apps
-src/routes/apps/+page.svelte
-src/lib/components/apps/AppDetailModal.svelte
-src/lib/components/apps/AppStorageWarning.svelte
 
 # users
 src/routes/users/+page.svelte

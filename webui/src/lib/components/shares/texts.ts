@@ -47,7 +47,7 @@ export function nfsAppsFolderMessage(pool: string): string {
 export const NFS_UNMANAGED_POOLS_NOTE =
 	'Pools marked "Not mounted at boot" on the Storage page are not listed: NFS exports need a pool that UNOS manages.';
 
-/** What an NFS client may do: NFS checks no password (supervisor/src/shares/nfs.py, ADR-0292). */
+/** What an NFS client may do: NFS checks no password (supervisor/src/shares/nfs.py, ADR-0293). */
 export const NFS_NOTE =
 	'NFS asks for no password: every computer in the client network can mount the export, and its users get the access that the user and group ids of their own accounts have in the folder (root on a client counts as nobody). UNOS exports only to addresses of your local network.';
 

@@ -85,7 +85,7 @@ HOST_TOOLS: dict[str, str] = {
 # packages: a host without them is a normal installation, so the startup check
 # leaves them out, and the feature that runs one says when the host lacks it.
 # shares/nfs.py runs exportfs (under timeout), and the NFS tab names a missing
-# NFS server (ADR-0291).
+# NFS server (ADR-0292).
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
 }

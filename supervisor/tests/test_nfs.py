@@ -1,4 +1,4 @@
-"""NFS exports (ADR-0291, ADR-0292): the reader of exports(5), UNOS's own file on the host, exportfs
+"""NFS exports (ADR-0292, ADR-0293): the reader of exports(5), UNOS's own file on the host, exportfs
 and the API.
 
 shares/exports.py reads the export files as nfs-utils' exportfs reads them (its tokenizer, its
@@ -455,7 +455,7 @@ class TestList:
     def test_the_status_names_exports_of_unos_below_folders_that_other_accounts_can_change(self, nfs_api):
         # exportfs follows symbolic links at every run and at every start of the NFS server: whoever
         # can change a folder above an export can put a link in its place, and exportfs would export
-        # the link's target (ADR-0292). The rule is checked when the export is added, and again here.
+        # the link's target (ADR-0293). The rule is checked when the export is added, and again here.
         docs, shared = nfs_api.data / "shared" / "docs", nfs_api.data / "shared"
         assert nfs_api.create(docs).status_code == 200
         # Exports that UNOS did not write are the owner's, as are their folders.
@@ -1024,7 +1024,7 @@ def test_the_e2e_fakes_answer_with_the_servers_texts():
 
 
 def test_exportfs_is_an_optional_host_tool_of_its_package():
-    # deploy/install.sh does not install the NFS server (ADR-0291): the startup check of the host's
+    # deploy/install.sh does not install the NFS server (ADR-0292): the startup check of the host's
     # programs leaves exportfs out, and the NFS tab says when the host lacks it.
     from src import host
 

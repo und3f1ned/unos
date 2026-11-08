@@ -984,7 +984,7 @@ test.describe('SMB shares page (fake data)', () => {
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
 
-    // NFS exports too need a pool that UNOS manages (ADR-0292).
+    // NFS exports too need a pool that UNOS manages (ADR-0293).
     await page.getByRole('tab', { name: 'NFS' }).click();
     await page.getByRole('button', { name: 'Add NFS export' }).click();
     const nfs = page.getByRole('dialog', { name: 'Add NFS export' });

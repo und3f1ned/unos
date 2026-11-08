@@ -39,7 +39,7 @@ export const SMB_CONF_REPLACED =
 export const COMMON_PASSWORD_RULE =
   'SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first';
 
-// The answers of supervisor/src/shares/nfs.py (ADR-0291, ADR-0292), word for word;
+// The answers of supervisor/src/shares/nfs.py (ADR-0292, ADR-0293), word for word;
 // supervisor/tests/test_nfs.py checks them against the server.
 export const NFS_SERVER_MISSING =
   'The host has no NFS server: exportfs was not found. Install the package nfs-kernel-server on the host; it applies the exports when it starts.';

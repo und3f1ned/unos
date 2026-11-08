@@ -6,11 +6,11 @@ decided-by: agent
 supersedes: [ADR-0148]
 ---
 
-# ADR-0293: Only pools that UNOS manages can hold SMB shares and NFS exports, and the UI offers only those
+# ADR-0294: Only pools that UNOS manages can hold SMB shares and NFS exports, and the UI offers only those
 
 ## Context
 
-ADR-0148 limited SMB shares to the pools that UNOS manages and kept every location for NFS exports (ADR-0163). A pool that UNOS does not manage has no managed fstab entry and may be missing after a reboot, so an export of it would point at the system disk as a share would. NFS exports now reach the host (ADR-0291).
+ADR-0148 limited SMB shares to the pools that UNOS manages and kept every location for NFS exports (ADR-0163). A pool that UNOS does not manage has no managed fstab entry and may be missing after a reboot, so an export of it would point at the system disk as a share would. NFS exports now reach the host (ADR-0292).
 
 ## Decision
 
