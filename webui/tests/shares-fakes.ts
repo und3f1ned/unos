@@ -33,6 +33,10 @@ export const unmanagedPoolProblem = (pool: string) =>
 export const notServedProblem = (share: string, problem: string) => `Share ${share} is not served: ${problem}`;
 export const SMB_CONF_REPLACED =
   'smb.conf was replaced or removed after UNOS wrote it; it is written again at the next change or restart, and SMB cannot be turned on until then';
+// Why a password on the list of common passwords cannot be an SMB password (ADR-0263,
+// constants.COMMON_PASSWORD_RULE); supervisor/tests/test_smb_accounts.py checks it against the server.
+export const COMMON_PASSWORD_RULE =
+  'SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first';
 
 export type SmbState = 'active' | 'password_needed' | 'off' | 'unavailable';
 export type Level = 'read' | 'write';

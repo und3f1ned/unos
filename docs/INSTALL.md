@@ -501,7 +501,12 @@ Check Samba status:
 sudo systemctl status smbd
 sudo mkdir -p /run/samba   # Samba's cache directory, which testparm needs; smbd creates it when it starts
 sudo testparm
+sudo journalctl -u smbd -u nmbd -n 50   # Samba's messages; a failed SMB sign-in is a line that starts with "Auth:"
 ```
+
+Samba logs to the host's journal (**System** → **Logs**, source **Samba**).
+What smbd and nmbd write to a log file of their own goes to
+`/run/samba/log.samba`, in RAM, and is gone after a reboot.
 
 UNOS writes `/etc/samba/smb.conf`; **Shares** lists the problems it found
 (for example a share that is not served, Samba missing on the host, "Shares

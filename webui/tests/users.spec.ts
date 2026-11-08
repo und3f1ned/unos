@@ -1,6 +1,14 @@
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { E2E_ADMIN, test, expect } from './fixtures';
-import { ADMIN_REASON, accessOf, fakeShare, fakeSmbApi, fakeUser, type FakeUser } from './shares-fakes';
+import {
+  ADMIN_REASON,
+  COMMON_PASSWORD_RULE,
+  accessOf,
+  fakeShare,
+  fakeSmbApi,
+  fakeUser,
+  type FakeUser,
+} from './shares-fakes';
 
 test.describe('User Management', () => {
   test('should navigate to users page', async ({ authenticatedPage: page }) => {
@@ -488,6 +496,44 @@ test.describe('Users page SMB (fake data)', () => {
     await expect(smbBadge(page, 'bob')).toHaveText('Password needed');
   });
 
+  test('a common password is refused for SMB, and the dialog shows why', async ({ authenticatedPage: page }) => {
+    // The server refuses a password of its list of common passwords for an account with SMB, and
+    // for turning SMB on with it (ADR-0263); the password itself is never in the answer.
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    fake.intercept = ({ method, path }) =>
+      (method === 'PUT' && path === '/auth/users/2') || (method === 'POST' && path === '/auth/users/3/smb/enable')
+        ? { status: 400, json: { detail: COMMON_PASSWORD_RULE } }
+        : undefined;
+    await page.goto('/users');
+
+    // alice has SMB on: her new password would become her SMB password too.
+    await userRow(page, 'alice').getByRole('button', { name: 'Edit user alice' }).click();
+    const alice = page.getByRole('dialog', { name: 'Edit user alice' });
+    await alice.getByLabel('New password', { exact: true }).fill('Password123');
+    await alice.getByLabel('Confirm new password').fill('Password123');
+    await alice.getByRole('button', { name: 'Save' }).click();
+    await expect(alice.locator('.alert', { hasText: 'The change was not made' })).toContainText(COMMON_PASSWORD_RULE);
+    await expect(pageAlert(page, 'error')).toHaveCount(0);
+    await alice.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(smbBadge(page, 'alice')).toHaveText('Active');
+
+    // bob needs a password: SMB is not turned on with a common one.
+    await userRow(page, 'bob').getByRole('button', { name: 'Edit user bob' }).click();
+    const bob = page.getByRole('dialog', { name: 'Edit user bob' });
+    await expect(bob.getByLabel('Also turn SMB on with this password')).toBeChecked();
+    await bob.getByLabel('New password', { exact: true }).fill('Qwerty123');
+    await bob.getByLabel('Confirm new password').fill('Qwerty123');
+    await bob.getByRole('button', { name: 'Save' }).click();
+    await expect(bob.locator('.alert', { hasText: 'The change was not made' })).toContainText(COMMON_PASSWORD_RULE);
+    await expect(bob.getByText(PASSWORD_NEEDED_HINT)).toBeVisible();
+    expect(fake.writes).toEqual([
+      { method: 'PUT', path: '/auth/users/2', body: { username: 'alice', password: 'Password123' } },
+      { method: 'POST', path: '/auth/users/3/smb/enable', body: { username: 'bob', password: 'Qwerty123' } },
+    ]);
+    await bob.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(smbBadge(page, 'bob')).toHaveText('Password needed');
+  });
+
   test('Escape in the Turn off SMB confirmation returns to the edit dialog', async ({ authenticatedPage: page }) => {
     const fake = await fakeSmbApi(page, { users: fakeUsers() });
     await page.goto('/users');
@@ -638,5 +684,26 @@ test.describe('SMB activation (stand-in)', () => {
       page.getByText(/^User created, but SMB access could not be turned on: SMB accounts are not available/),
     ).toBeVisible();
     await expect(smbBadge(page, username)).toHaveText('Off');
+  });
+
+  test('creating a user with SMB and a common password is refused with the reason, and creates nobody', async ({
+    authenticatedPage: page,
+  }) => {
+    // The server checks the SMB password rules before it creates the user (ADR-0263).
+    const username = `e2e_common_${Date.now().toString(36)}`;
+    created.push(username);
+    await page.goto('/users');
+    await page.getByRole('button', { name: 'Add user' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add user' });
+    await dialog.getByLabel('Username').fill(username);
+    await dialog.getByLabel('Password', { exact: true }).fill('Password123');
+    await dialog.getByLabel('Confirm password').fill('Password123');
+    await dialog.getByLabel('Allow SMB (network file) access').check();
+    await dialog.getByRole('button', { name: 'Create user' }).click();
+
+    await expect(dialog.locator('.alert', { hasText: 'User was not created' })).toContainText(COMMON_PASSWORD_RULE);
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(userRow(page, username)).toHaveCount(0);
   });
 });

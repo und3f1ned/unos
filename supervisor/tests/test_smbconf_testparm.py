@@ -26,7 +26,7 @@ def share(name, *, guest_ok=False, readers=(), writers=(), comment="", browseabl
 
 
 def testparm(tmp_path, text: str) -> str:
-    # The cache directory of [global]: testparm exits 1 without it (ADR-0094).
+    # The cache directory of [global]: testparm exits 1 without it (ADR-0261).
     subprocess.run(["mkdir", "-p", "/run/samba"], capture_output=True, check=False)
     conf = tmp_path / "smb.conf"
     conf.write_text(text)
@@ -88,3 +88,17 @@ def test_every_rendered_share_is_a_section_of_its_own(tmp_path):
     ]
     output = testparm(tmp_path, smbconf.render_config(shares))
     assert sections(output) == ["global", "Alpha", "global_files", "Globalsx", "noprincipal", "zeta"]
+
+
+def test_samba_takes_the_logging_lines(tmp_path):
+    """Samba takes the logging lines of [global] as UNOS writes them (ADR-0261): its log file in
+    /run/samba with a size limit, the class auth_audit at level 2 and the syslog backend at level 2,
+    and no header line before each message."""
+    output = testparm(tmp_path, smbconf.render_config([]))
+    lines = {" ".join(line.split()).lower() for line in output.splitlines()}
+
+    assert "log file = /run/samba/log.samba" in lines
+    assert "max log size = 100" in lines
+    assert any(line.startswith("log level = ") and "auth_audit:2" in line for line in lines), output
+    assert "logging = syslog@2" in lines
+    assert "debug timestamp = no" in lines

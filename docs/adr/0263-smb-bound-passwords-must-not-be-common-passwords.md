@@ -1,0 +1,27 @@
+---
+status: accepted
+date: 2026-11-08
+area: shares
+decided-by: agent
+supersedes: [ADR-0122]
+---
+
+# ADR-0263: SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters, and must not be common passwords
+
+## Context
+
+ADR-0122 set the rules of SMB-bound passwords and still allowed common ones, an accepted risk of ADR-0102. SMB has no second factor and no login limit (ADR-0264), so a common password is the first that anyone on the LAN tries (`shares.smb-login-protection`).
+
+## Decision
+
+- Every password that is given to Samba must pass `constants.smb_password_problem` (`supervisor/src/shares/constants.py`), whose rules come in this order: at least 8 characters, at most 72 bytes in UTF-8, valid Unicode text, no control characters such as tabs or line breaks, and not a common password. Otherwise the answer is 400 with the rule, for example "SMB passwords must have at least 8 characters" or `COMMON_PASSWORD_RULE`, "SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first". No answer carries the password (ADR-0125).
+- A password is common when its casefolded form is a line of `supervisor/src/shares/common_passwords.txt`: about 1450 passwords compiled for UNOS, from the passwords that public lists of the most used passwords rank high, keyboard and number patterns, and words with the digits, years and signs that people add to them; only those with at least 8 characters, in lower case and sorted, under UNOS's licence (ADR-0007), and none that the repository's scan for published passwords rejects (ADR-0212). The file ships with the code in the supervisor's image.
+- The rules are checked by every activation (with an administrator's password, and the user's own with the UNOS password), by the creation of a user with `smb_enabled` before anything is created, by the password change of an active account (the user's own and an administrator's), and by `accounts.set_samba_password` itself.
+- The UNOS-wide policy is unchanged: the API takes shorter and common passwords for users without SMB, whose web sign-in has its rate limit and two-factor authentication (ADR-0010), and the 8-character minimum for UNOS passwords exists only in the web UI. A user whose UNOS password breaks a rule changes it before turning SMB on; the Account page says so after every answer that starts with "SMB passwords must".
+- Tests: `supervisor/tests/test_smb_models.py` (the rules and the list), `supervisor/tests/test_smb_accounts.py` (TestCommonPasswords: the flows), `webui/tests/users.spec.ts` and `webui/tests/account-smb.spec.ts` (the reason in the Users and Account pages).
+
+## Consequences
+
+- A password of the list, in any letter case, cannot turn SMB on and cannot become the password of an active account; a password that only contains one, such as `password-for-the-nas`, is taken.
+- The list stops the most common choices, not every guess: attempts at other passwords stay unlimited until the other step of `shares.smb-login-protection` limits them (ADR-0264).
+- Adding or removing a password is a change of the file; its test keeps it sorted, in lower case and without entries shorter than 8 characters.

@@ -601,6 +601,67 @@ class TestSearch:
 
 
 # ---------------------------------------------------------------------------
+# Failed SMB sign-ins (shares.smb-auth-audit-logging, step 2)
+# ---------------------------------------------------------------------------
+
+
+def failed_sign_in(account: str, address: str, status: str = "NT_STATUS_WRONG_PASSWORD") -> str:
+    """The line smbd logs for a failed SMB sign-in through its class auth_audit (Samba's
+    auth/auth_log.c), at level 2: a syslog notice, one journal entry without Samba's header line
+    (ADR-0261). It names the account the client gave and the client's address and port."""
+    return (
+        f"Auth: [SMB2,(null)] user [WORKGROUP]\\[{account}] at [Sun, 08 Nov 2026 09:58:02.123456 UTC] "
+        f"with [NTLMv2] status [{status}] workstation [LAPTOP-7] remote host [ipv4:{address}:50122] "
+        f"mapped to [WORKGROUP]\\[{account}]. local host [ipv4:192.168.1.10:445] "
+    )
+
+
+class TestFailedSmbSignIns:
+    """An administrator finds the lines of failed SMB sign-ins in System > Logs, source Samba, and
+    sees which client keeps failing (ADR-0261, ADR-0257)."""
+
+    LINES = [
+        failed_sign_in("alice", "192.168.1.50"),
+        failed_sign_in("bob", "192.168.1.77"),
+        failed_sign_in("alice", "192.168.1.50"),
+        failed_sign_in("mallory", "192.168.1.50", "NT_STATUS_NO_SUCH_USER"),
+    ]
+
+    @pytest.fixture(autouse=True)
+    def sign_ins(self, journal):
+        for minutes_ago, line in zip((3, 2.5, 2, 0.5), self.LINES):
+            journal.add(line, minutes_ago=minutes_ago, priority=5, identifier="smbd", comm="smbd",
+                        unit="smbd.service", facility=3)
+
+    def test_the_samba_source_lists_them_newest_first_with_the_account_and_the_client(self, client, journal):
+        listed = entries(client, source="samba", search="Auth:")
+
+        assert [entry["message"] for entry in listed] == self.LINES[::-1]
+        assert {(entry["priority"], entry["unit"], entry["source"]) for entry in listed} == {
+            ("notice", "smbd", "samba")
+        }
+        clients = [re.search(r"remote host \[ipv4:([0-9.]+):[0-9]+\]", e["message"]).group(1) for e in listed]
+        names = [re.search(r"user \[[^]]*\]\\\[([^]]+)\]", e["message"]).group(1) for e in listed]
+        assert clients == ["192.168.1.50", "192.168.1.50", "192.168.1.77", "192.168.1.50"]
+        assert names == ["mallory", "alice", "bob", "alice"]
+        assert journal.calls == [journalctl("samba", filters=("--grep=Auth:", "--case-sensitive=false"))]
+
+    def test_a_search_for_a_client_lists_its_failures(self, client, journal):
+        found = messages(client, source="samba", search="remote host [ipv4:192.168.1.50:")
+
+        assert found == [self.LINES[3], self.LINES[2], self.LINES[0]]
+
+    def test_they_are_notices(self, client, journal):
+        assert messages(client, source="samba", priority="notice", search="Auth:") == self.LINES[::-1]
+        assert messages(client, source="samba", priority="warning", search="Auth:") == []
+
+    def test_they_are_in_samba_and_the_whole_journal_only(self, client, journal):
+        assert messages(client, source="journal", search="Auth:") == self.LINES[::-1]
+        for source in ("dmesg", "docker", "auth", "cron"):
+            assert messages(client, source=source, search="Auth:") == []
+
+
+# ---------------------------------------------------------------------------
 # Errors, values and roles
 # ---------------------------------------------------------------------------
 

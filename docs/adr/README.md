@@ -147,7 +147,7 @@ and this index, and `make check-fast` runs it.
 | [0091](0091-testparm-tolerates-two-unknown-parameters.md) | The testparm check tolerates only two parameters that older Samba lacks | accepted | 2026-11-06 |
 | [0092](0092-copy-foreign-sections-before-overwriting.md) | Foreign share sections are saved to smb.conf.unos-replaced before an apply | accepted | 2026-11-06 |
 | [0093](0093-globals-is-a-reserved-share-name.md) | The share name 'globals' is reserved like 'global' | accepted | 2026-11-06 |
-| [0094](0094-samba-cache-in-ram-and-syslog-logging.md) | Samba keeps its cache in /run/samba and logs to syslog | accepted | 2026-11-06 |
+| [0094](0094-samba-cache-in-ram-and-syslog-logging.md) | Samba keeps its cache in /run/samba and logs to syslog | superseded by [0261](0261-samba-logs-failed-sign-ins-to-syslog-and-keeps-its-log-file-in-ram.md) | 2026-11-06 |
 | [0095](0095-smb-answers-lan-addresses-only.md) | SMB answers only LAN addresses, through hosts allow in [global] | accepted | 2026-11-06 |
 | [0096](0096-guest-access-off-and-guest-shares-read-only.md) | Guest access is off by default, and guest shares are read-only | accepted | 2026-11-06 |
 | [0097](0097-restrict-anonymous-0-with-guest-shares.md) | A guest share sets restrict anonymous = 0 and map to guest = Bad User | superseded by [0098](0098-guest-globals-follow-guest-shares.md) | 2026-11-06 |
@@ -155,7 +155,7 @@ and this index, and `make check-fast` runs it.
 | [0099](0099-server-signing-at-samba-default.md) | Server signing stays at Samba's default | superseded by [0100](0100-signing-mandatory-unless-a-guest-share-exists.md) | 2026-11-06 |
 | [0100](0100-signing-mandatory-unless-a-guest-share-exists.md) | Server signing is mandatory unless a guest share exists | accepted | 2026-11-06 |
 | [0101](0101-smb3-unix-extensions-off.md) | SMB3 Unix extensions stay off, so app folders may be shared | accepted | 2026-11-06 |
-| [0102](0102-accepted-risk-unthrottled-smb-logins.md) | SMB logins have no rate limit and no common-password check, as an accepted risk | accepted | 2026-11-06 |
+| [0102](0102-accepted-risk-unthrottled-smb-logins.md) | SMB logins have no rate limit and no common-password check, as an accepted risk | superseded by [0264](0264-smb-logins-stay-unthrottled-until-the-owner-chooses-a-limit.md) | 2026-11-06 |
 | [0103](0103-close-share-after-every-shrink.md) | Open connections to a share are closed after every shrink of its access | accepted | 2026-11-06 |
 | [0104](0104-end-smb-sessions-on-password-change-and-revocation.md) | An account's SMB sessions end at every password change and revocation | accepted | 2026-11-06 |
 | [0105](0105-smb-accounts-are-host-accounts-plus-tdbsam.md) | SMB accounts are real Linux host accounts plus a tdbsam entry | accepted | 2026-11-06 |
@@ -175,7 +175,7 @@ and this index, and `make check-fast` runs it.
 | [0119](0119-smb-password-is-the-unos-password.md) | The SMB password is the UNOS password, captured only where the plaintext is given | accepted | 2026-11-06 |
 | [0120](0120-smb-password-set-wherever-the-plaintext-is-given.md) | The SMB password is set wherever the plaintext is available | superseded by [0121](0121-password-changes-update-only-active-accounts.md) | 2026-11-06 |
 | [0121](0121-password-changes-update-only-active-accounts.md) | A password change updates Samba only for active accounts, and activation is explicit | accepted | 2026-11-06 |
-| [0122](0122-smb-bound-password-rule.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters | accepted | 2026-11-06 |
+| [0122](0122-smb-bound-password-rule.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters | superseded by [0263](0263-smb-bound-passwords-must-not-be-common-passwords.md) | 2026-11-06 |
 | [0123](0123-samba-gets-the-password-before-the-hash.md) | Samba's copy of a password is written before the bcrypt hash | accepted | 2026-11-06 |
 | [0124](0124-compensate-a-failed-commit-after-smbpasswd.md) | A failed commit after a successful smbpasswd is compensated | accepted | 2026-11-06 |
 | [0125](0125-no-smb-password-in-argv-logs-or-answers.md) | No SMB password appears in argv, logs, errors, HTTP answers or the database | accepted | 2026-11-06 |
@@ -220,11 +220,15 @@ and this index, and `make check-fast` runs it.
 | [0164](0164-smb-and-audit-follow-ups-left-for-later.md) | Six SMB and audit follow-ups wait for later slices | accepted | 2026-11-06 |
 | [0192](0192-reread-host-facts-before-destructive-commands.md) | Host facts are read again right before destructive commands, and doubt fails closed | accepted | 2026-11-07 |
 | [0193](0193-acl-entries-and-sticky-folders-in-the-parent-chain.md) | ACL entries and sticky folders count in the parent-chain rule | proposed | 2026-11-07 |
-| [0194](0194-reduce-samba-runtime-writes.md) | Reduce Samba's remaining writes to the system disk | proposed | 2026-11-07 |
+| [0194](0194-reduce-samba-runtime-writes.md) | Reduce Samba's remaining writes to the system disk | superseded by [0262](0262-samba-keeps-a-password-history-of-three.md) | 2026-11-07 |
 | [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | superseded by [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | 2026-11-07 |
 | [0248](0248-pool-changes-apply-smb-conf.md) | The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once | accepted | 2026-11-07 |
 | [0249](0249-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
 | [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | proposed | 2026-11-07 |
+| [0261](0261-samba-logs-failed-sign-ins-to-syslog-and-keeps-its-log-file-in-ram.md) | Samba logs failed sign-ins through auth_audit to syslog and keeps its own log file in /run/samba | accepted | 2026-11-08 |
+| [0262](0262-samba-keeps-a-password-history-of-three.md) | Samba keeps a password history of 3, so that retries with an account's previous passwords write nothing to passdb | accepted | 2026-11-08 |
+| [0263](0263-smb-bound-passwords-must-not-be-common-passwords.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters, and must not be common passwords | accepted | 2026-11-08 |
+| [0264](0264-smb-logins-stay-unthrottled-until-the-owner-chooses-a-limit.md) | SMB logins have no rate limit and no lockout, as an accepted risk until the owner chooses how to limit them | accepted | 2026-11-08 |
 
 ## Apps
 

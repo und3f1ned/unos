@@ -650,9 +650,16 @@ one of two ways:
 
 Then give the user access to shares on the **Shares** page.
 
-SMB passwords need at least 8 characters. A user whose UNOS password is
-shorter (scripts that use the API can set shorter ones) first changes it
-under **Change Password**, then turns SMB on. A two-factor code works only once:
+SMB passwords need at least 8 characters, and they must not be common
+passwords: UNOS refuses about 1450 passwords that attackers try first, such as
+`Password123`, `qwertyuiop` or `Summer2024!`, in any letter case, with "SMB
+passwords must not be common passwords: this one is on the list of passwords
+that attackers try first". This holds when SMB is turned on with a password
+(by the user or in the **Users** page, also when a user is created with SMB)
+and when a user with SMB on changes the password; users without SMB may
+keep a shorter or common UNOS password. A user whose UNOS password breaks
+these rules (scripts that use the API can set such passwords) first changes
+it under **Change Password**, then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 
@@ -686,12 +693,15 @@ Admins can reset any user's password via **Users** page.
 
 When SMB is on for the user, the SMB password changes too, and the user's open
 SMB connections are ended: the computers sign in again with the new password.
-Update the saved password on every computer and app that connects over SMB
-(mapped drives, media players, sync apps, `cifs` credential files): Samba
-writes each failed sign-in of an SMB account to the system disk, and SMB has
-no limit on sign-in attempts, so a device that keeps trying the old password
-keeps writing. If open SMB connections could not be ended, **Change
-Password** shows a warning that stays until you dismiss it.
+The new password must then follow the SMB rules (at least 8 characters, not a
+common password; see [SMB Access](#smb-access)). Update the saved password on
+every computer and app that connects over SMB (mapped drives, media players,
+sync apps, `cifs` credential files). Samba remembers each account's two
+previous passwords: a device that keeps trying one of them is refused without
+a write to the system disk, but every other wrong password of an SMB account
+is written to the system disk, and SMB has no limit on sign-in attempts. If
+open SMB connections could not be ended, **Change Password** shows a warning
+that stays until you dismiss it.
 
 ### Two-Factor Authentication (2FA)
 
@@ -999,6 +1009,16 @@ instead of the list. A search through a large journal can take long: after
 30 seconds UNOS stops journalctl on the host and the tab reports that it did
 not answer; a shorter time range helps.
 
+**Failed SMB sign-ins**: Samba logs each failed SMB sign-in as a line of the
+level Notice, which the source **Samba** lists. Search for `Auth:` to list
+only these lines.
+Each one names the account the computer tried (`user [WORKGROUP]\[alice]`),
+the reason (`status [NT_STATUS_WRONG_PASSWORD]` for a wrong password,
+`[NT_STATUS_NO_SUCH_USER]` for a name without SMB) and the computer
+(`remote host [ipv4:192.168.1.50:50122]`, its address and port). To see what
+one computer keeps trying, search for its part, such as
+`remote host [ipv4:192.168.1.50:`. Successful sign-ins are not logged.
+
 The output of the UNOS containers themselves is not in the journal: run
 `docker logs unos-supervisor` or `docker logs unos-webui` on the host. Log
 files that the journal does not hold, such as `/var/log/dpkg.log`, are not
@@ -1217,11 +1237,13 @@ notification.
 2. ✅ Enable two-factor authentication (2FA), and keep its recovery codes
    somewhere safe
 3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
-   no limit on login attempts and no two-factor authentication, and UNOS does
-   not refuse common passwords
+   no limit on login attempts and no two-factor authentication. UNOS refuses
+   common passwords for SMB, but not every password that is easy to guess
 4. ✅ After a password change, update the saved password on every computer
    and app that connects over SMB: Samba writes each failed sign-in to the
-   system disk
+   system disk, unless the password is one of the account's two previous
+   ones. **System** → **Logs**, source **Samba**, shows the computers whose
+   sign-ins fail (see [Logs](#logs))
 5. ✅ Use a regular account, not an administrator, for your files
 6. ✅ Keep guest shares few (guests can only read)
 7. ✅ Keep UNOS updated

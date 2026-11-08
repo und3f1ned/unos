@@ -139,9 +139,16 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
         ("unix password sync", "no"),
         ("pam password change", "no"),
         ("obey pam restrictions", "no"),
+        # Samba's cache and its own log file in RAM (a tmpfs), the log file one for every
+        # process, so that clients cannot add files of their own; its messages go to syslog,
+        # with a failed sign-in at level 2 of the class auth_audit and no header line
+        # before each message (ADR-0261).
         ("cache directory", "/run/samba"),
-        ("log level", "1"),
-        ("logging", "syslog@1"),
+        ("log file", "/run/samba/log.samba"),
+        ("max log size", "100"),
+        ("log level", "1 auth_audit:2"),
+        ("logging", "syslog@2"),
+        ("debug timestamp", "no"),
         ("dns proxy", "no"),
     ]
 

@@ -36,7 +36,7 @@ from src.auth.utils import create_access_token
 from src.database import Base, get_db
 from src.host import HostResult
 from src.main import app
-from src.shares import accounts, interfaces, service, smb, smbconf
+from src.shares import accounts, constants, interfaces, service, smb, smbconf
 from src.shares.account_state import ADMIN_REASON
 from src.shares.models import SmbAccount, SmbShare, SmbShareAccess, SmbState
 
@@ -52,8 +52,12 @@ BOB_PW = "Bob-pass-2026!"
 NEW_PW = "Alice-new-pass-77"
 SET_PW = "Set-by-admin-99"
 SHORT_PW = "short7"  # a UNOS password that SMB refuses (7 characters)
+COMMON_PW = "Password123"  # on the list of common passwords that SMB refuses (ADR-0263)
+COMMON_RULE = (
+    "SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first"
+)
 MALLORY_PW = "Mallory-pass-2026"
-SECRETS = (ADMIN_PW, ALICE_PW, BOB_PW, NEW_PW, SET_PW, MALLORY_PW, "Carol-pass-2026", "Dave-pass-2026x")
+SECRETS = (ADMIN_PW, ALICE_PW, BOB_PW, NEW_PW, SET_PW, MALLORY_PW, COMMON_PW, "Carol-pass-2026", "Dave-pass-2026x")
 
 NOTHING_CHANGED = "Nothing was changed: the database was busy; try again"
 DATABASE_BUSY = "The database was busy; try again"
@@ -1525,6 +1529,97 @@ class TestPasswordChange:
         assert world.change_password("bob", "wrong-password", BOB_PW).status_code == 400
 
 
+class TestCommonPasswords:
+    """shares.smb-login-protection, step 2: a password on the list of common passwords is refused with
+    the reason when SMB is turned on with it, and when a user with SMB changes to it (ADR-0263). The
+    answer never carries the password (ADR-0125)."""
+
+    def _refused(self, world, response) -> None:
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == COMMON_RULE
+        assert COMMON_PW not in response.text and COMMON_PW.lower() not in response.text
+        assert world.fake.calls == []
+
+    def test_creating_a_user_with_smb_creates_nothing(self, world):
+        response = world.client.post(
+            f"{API}/auth/users", json={"username": "carol", "password": COMMON_PW, "smb_enabled": True},
+            headers=world.headers("admin"),
+        )
+
+        self._refused(world, response)
+        with Session(world.engine) as session:
+            assert session.scalars(select(User).where(User.username == "carol")).first() is None
+        assert world.audit() == []
+
+    def test_an_administrator_turning_smb_on_with_it(self, world):
+        world.make_allowed("alice")
+
+        response = world.admin_enable("alice", COMMON_PW)
+
+        self._refused(world, response)
+        assert world.row("alice").password_state == "needed"
+        assert bcrypt.checkpw(ALICE_PW.encode(), world.user("alice").hashed_password.encode())
+        assert world.smb_audit() == []
+
+    def test_a_user_turning_smb_on_with_a_unos_password_that_is_common(self, world):
+        # The API takes common UNOS passwords for users without SMB (ADR-0263).
+        world.add_user("carol", COMMON_PW)
+        world.make_allowed("carol")
+
+        response = world.self_enable("carol", COMMON_PW)
+
+        self._refused(world, response)
+        assert world.row("carol").password_state == "needed"
+        assert "carol" not in world.fake.passdb
+
+    @pytest.mark.parametrize("via", ["self", "admin"])
+    def test_an_active_account_changing_to_it(self, world, via):
+        world.make_active("alice", 70000, ALICE_PW)
+
+        if via == "self":
+            response = world.change_password("alice", ALICE_PW, COMMON_PW)
+        else:
+            response = world.put_user("alice", password=COMMON_PW)
+
+        self._refused(world, response)
+        assert world.fake.passdb["alice"]["password"] == ALICE_PW
+        assert bcrypt.checkpw(ALICE_PW.encode(), world.user("alice").hashed_password.encode())
+
+    @pytest.mark.parametrize("password", ["password123", "PASSWORD123", "pAsSwOrD123"])
+    def test_the_list_is_compared_ignoring_case(self, world, password):
+        world.make_active("alice", 70000, ALICE_PW)
+
+        response = world.change_password("alice", ALICE_PW, password)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == COMMON_RULE
+        assert world.fake.calls == []
+
+    def test_users_without_smb_may_have_one(self, world):
+        """Only SMB-bound passwords are checked: the web sign-in has its rate limit and 2FA."""
+        world.make_allowed("alice")
+
+        created = world.client.post(
+            f"{API}/auth/users", json={"username": "carol", "password": COMMON_PW}, headers=world.headers("admin")
+        )
+        changed = world.change_password("bob", BOB_PW, COMMON_PW)
+        reset = world.put_user("alice", password=COMMON_PW)
+
+        assert [created.status_code, changed.status_code, reset.status_code] == [200, 200, 200]
+        assert world.fake.calls == []
+        assert bcrypt.checkpw(COMMON_PW.encode(), world.user("bob").hashed_password.encode())
+        # Allowed but not active: the password reaches Samba only when SMB is turned on with it.
+        assert world.row("alice").password_state == "needed"
+        assert world.self_enable("alice", COMMON_PW).json()["detail"] == COMMON_RULE
+
+    def test_the_e2e_fakes_answer_with_the_servers_text(self):
+        """webui/tests/shares-fakes.ts answers with the server's text word for word (ADR-0189)."""
+        fakes = (SRC.parents[1] / "webui" / "tests" / "shares-fakes.ts").read_text(encoding="utf-8")
+
+        assert constants.COMMON_PASSWORD_RULE == COMMON_RULE
+        assert f"'{COMMON_RULE}'" in fakes
+
+
 class TestCommitFailureAfterSmbpasswd:
     def test_activation(self, world, failing_commit):
         world.make_allowed("alice")
@@ -2143,7 +2238,8 @@ class TestSelfFlowErrors:
         source = (SRC / "shares" / "accounts.py").read_text()
         built = re.findall(r"\b(\w+)\(\d{3}, f\"[^\"\n]*\{(?:_last_line\(|_clean\(str\(exc\)\))", source)
 
-        assert built.count("SmbHostCommandFailed") == 9
+        # The two of Samba's password history (ADR-0262) reach only the reconcile's problems.
+        assert built.count("SmbHostCommandFailed") == 11
         assert set(built) == {"SmbHostCommandFailed", "SmbConfNotUnos"}
 
 

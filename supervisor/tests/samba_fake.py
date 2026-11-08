@@ -7,7 +7,8 @@ the FakeHost pattern of test_pool_persistence.py: every command is recorded in
 and a command it does not know fails the test.
 
 It emulates the account commands of shares/accounts.py (getent, groupadd, useradd,
-userdel, smbpasswd, pdbedit, smbstatus, smbcontrol <pid> shutdown, sync), the
+userdel, smbpasswd, pdbedit -L, -x and the account policy of -P, smbstatus,
+smbcontrol <pid> shutdown, sync), the
 smb.conf commands of an apply (mkdir /run/samba, testparm, smbcontrol
 reload-config and close-share, systemctl reload smbd), ``cat -- /etc/fstab``
 and the tool check of ``host.missing_host_binaries``. ``findmnt`` and
@@ -42,7 +43,7 @@ SMB_CONF_KEYS = frozenset({
     "ntlm auth", "server signing", "server smb encrypt", "smb3 unix extensions",
     "access based share enum", "load printers", "printing", "printcap name", "disable spoolss",
     "usershare max shares", "unix password sync", "pam password change", "obey pam restrictions",
-    "cache directory", "log level", "logging", "dns proxy",
+    "cache directory", "log file", "max log size", "log level", "logging", "debug timestamp", "dns proxy",
     "path", "comment", "browseable", "read only", "guest ok", "valid users", "write list",
     "available", "veto files", "force group", "create mask", "force create mode",
     "directory mask", "force directory mode",
@@ -81,6 +82,9 @@ class FakeSambaHost:
         }
         # lower-cased name -> {"name": stored name, "password": str, "uid": int}
         self.passdb: dict[str, dict] = {}
+        # Samba's account policies (pdbedit -P), with Samba's defaults: a fresh host keeps no
+        # password history.
+        self.policies: dict[str, int] = {"password history": 0}
         self.sessions: list[dict] = []
         self.fstab = DEFAULT_FSTAB
         self.busy: dict[str, int] = {}
@@ -146,10 +150,16 @@ class FakeSambaHost:
         return [argv for argv, _ in self.calls if tuple(argv[: len(prefix)]) == prefix]
 
     def mutating_calls(self) -> list[list[str]]:
-        """Every call except getent, ``pdbedit -L``, testparm, smbstatus, cat and the tool check."""
+        """Every call except getent, ``pdbedit -L``, ``pdbedit -P <policy>`` without ``-C``, testparm,
+        smbstatus, cat and the tool check."""
         result = []
         for argv, _ in self.calls:
-            if argv[0] in self.READS or argv[:2] == ["pdbedit", "-L"] or self._is_tool_check(argv):
+            if (
+                argv[0] in self.READS
+                or argv[:2] == ["pdbedit", "-L"]
+                or (argv[:2] == ["pdbedit", "-P"] and len(argv) == 3)
+                or self._is_tool_check(argv)
+            ):
                 continue
             result.append(argv)
         return result
@@ -322,11 +332,33 @@ class FakeSambaHost:
         self.passdb[name.lower()] = {"name": name, "password": lines[0], "uid": account.uid}
         return self._result(stdout=f"Added user {name}.\n")
 
+    # What pdbedit says about an account policy (source3/utils/pdbedit.c).
+    _POLICY_DESCRIPTIONS = {"password history": "Length of Password History Entries (0 = off)"}
+
+    def _policy(self, argv):
+        """``pdbedit -P <policy>`` prints the value; with ``-C <value>`` it sets it, writing even an
+        unchanged value."""
+        name = argv[2]
+        if name not in self.policies:
+            return self._result(1, stderr="No account policy by that name!\n")
+        lines = [f'account policy "{name}" description: {self._POLICY_DESCRIPTIONS[name]}']
+        if len(argv) == 3:
+            lines.append(f'account policy "{name}" value is: {self.policies[name]}')
+            return self._result(stdout="\n".join(lines) + "\n")
+        assert len(argv) == 5 and argv[3] == "-C" and argv[4].isdigit(), argv
+        self._mutation(argv)
+        lines.append(f'account policy "{name}" value was: {self.policies[name]}')
+        self.policies[name] = int(argv[4])
+        lines.append(f'account policy "{name}" value is now: {self.policies[name]}')
+        return self._result(stdout="\n".join(lines) + "\n")
+
     def _pdbedit(self, argv):
         if argv == ["pdbedit", "-L"]:
             return self._result(stdout="".join(
                 f"{e['name']}:{e['uid']}:UNOS SMB user\n" for e in self.passdb.values()
             ))
+        if argv[:2] == ["pdbedit", "-P"] and len(argv) >= 3:
+            return self._policy(argv)
         assert argv[:3] == ["pdbedit", "-x", "-u"] and len(argv) == 4, argv
         self._mutation(argv)
         if self.passdb.pop(argv[3].lower(), None) is None:

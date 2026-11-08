@@ -69,7 +69,7 @@ LOG_SOURCES: dict[str, Source] = {
     # implies this boot only.
     "dmesg": Source("Kernel", "The kernel's messages since the host started", ("--dmesg",)),
     "docker": Source("Docker", "The Docker daemon", ("--unit=docker.service",)),
-    # Samba logs to syslog (ADR-0094).
+    # Samba logs to syslog, failed SMB sign-ins among its messages (ADR-0261).
     "samba": Source("Samba", "The SMB file server: smbd and nmbd", ("--unit=smbd.service", "--unit=nmbd.service")),
     # The syslog facilities auth (4) and authpriv (10): what syslog writes to /var/log/auth.log.
     "auth": Source(
