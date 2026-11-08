@@ -19,7 +19,6 @@ src/lib/components/widgets/SystemStatsWidget.svelte
 src/routes/storage/+page.svelte
 
 # snapshots
-src/routes/snapshots/+page.svelte
 
 # shares
 src/routes/shares/+page.svelte
@@ -39,7 +38,6 @@ src/routes/files/trash/+page.svelte
 # apps
 
 # users
-src/routes/users/+page.svelte
 
 # audit
 src/routes/audit/+page.svelte
