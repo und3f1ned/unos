@@ -23,6 +23,7 @@ src/routes/snapshots/+page.svelte
 
 # shares
 src/routes/shares/+page.svelte
+src/lib/components/shares/NfsExportFormModal.svelte
 src/lib/components/shares/RepairPermissionsModal.svelte
 src/lib/components/shares/ShareAccessPicker.svelte
 src/lib/components/shares/ShareCard.svelte

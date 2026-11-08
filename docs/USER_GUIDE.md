@@ -580,6 +580,105 @@ the saved sign-in first, or it keeps using it: on macOS in **Keychain
 Access** (the entry with the NAS's address), on Windows in **Credential
 Manager** → **Windows Credentials**.
 
+### NFS Exports (Linux and macOS)
+
+An NFS export gives the computers of one network of yours a folder of a pool,
+or a volume. NFS asks for no password: it trusts each computer for the user
+and group ids of its own accounts. UNOS adds its exports to its own export
+file on the NAS, `/etc/exports.d/unos.exports`, and the NAS's NFS server
+applies them at once and at every start. Exports written by hand into
+`/etc/exports` or into another file of `/etc/exports.d` are kept as they are,
+and the **NFS** tab lists them too, with their file and line.
+
+UNOS does not install the NFS server. Without it, the **NFS** tab says "The
+NFS server is not installed on the host": exports can still be added, and
+they apply once the server runs. To install it, run on the NAS:
+
+```bash
+sudo apt-get install nfs-kernel-server
+```
+
+#### Adding an Export
+
+1. Go to **Shares**, open the **NFS** tab and click **Add NFS export**
+2. Configure:
+   - **Location** - A pool or a volume, and a **Folder** inside it: required
+     for a pool; for a volume, leave it empty to export the whole volume. Only
+     pools that UNOS manages are listed, as for SMB shares (see
+     [Creating a Share](#creating-a-share)). The folder must exist already
+     (create it in the [File Browser](#file-browser)), and its path may only
+     contain letters, digits, `.`, `_`, `-` and `/`. The top level of a pool,
+     `apps` and everything below it, snapshot folders and the trash cannot be
+     exported, and every folder above the exported one must be changeable by
+     root only (see [What Can Be Shared](#what-can-be-shared)): otherwise the
+     message names the folder and the command to run on the NAS. `exportfs`
+     follows symbolic links each time it runs, so if one of those folders
+     later becomes changeable by other accounts, the **NFS** tab names it and
+     the command too: those accounts could make the NAS export another folder.
+   - **Client network** - One address or network of your local network, such
+     as `192.168.1.0/24`, `192.168.1.20` or `fd00::/64`: private IPv4
+     addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`),
+     `100.64.0.0/10`, link-local addresses and IPv6 unique-local addresses
+     (`fc00::/7`). Every computer with an address in it can mount the export.
+     `*`, host names and public addresses are refused.
+   - **Access** - **Read only** (the default) or **Read & write**
+3. Click **Create export**
+
+UNOS writes the export with `ro` or `rw` and the options
+`sync,no_subtree_check,root_squash,secure,mp=` followed by the pool's folder
+(for example `mp=/mnt/pools/data`): the folder is exported only while its
+pool is mounted. The pool must be mounted when the export is added. A folder
+that UNOS exports already cannot be added again; delete its export first. Nor
+can a folder that another export exports, to whatever computers, in another
+export file or in a line written by hand into UNOS's own: the NFS server
+answers each computer from one export of a folder, so change that line on
+the NAS instead. UNOS also refuses to add an export while its own file ends
+inside an entry, with a backslash at the end of its last line or a quote left
+open.
+
+A change applies every export file (`exportfs -ra`), as the NFS server does
+when it starts: an export made with `exportfs` on the command line, which no
+file holds, ends. After a change a message names anything that `exportfs`
+reported, such as a missing NFS server or a folder of another export file
+that does not exist: the change is saved either way.
+
+#### What Clients Can Do
+
+- Every computer of the client network reads and writes as the user and group
+  ids of its own accounts: the folder's owner and mode decide what each of
+  them can do (`ls -ln` on the NAS shows the ids). Root on a client counts as
+  the user `nobody`.
+- With **Read only**, nobody can change the folder's files over NFS.
+- Exports with other options, such as for a backup computer whose root must
+  keep file owners, are written by hand into another export file on the NAS,
+  for example `/etc/exports.d/backup.exports`, followed by `sudo exportfs -ra`.
+
+#### Deleting an Export
+
+The trash icon of an export added in UNOS deletes it: UNOS removes its line
+from its export file, and the computers lose access to the folder. The folder
+and its files are kept. Exports that UNOS did not add have no trash icon:
+those of other files, and lines of UNOS's own file that were written there by
+hand or changed by hand from the form UNOS writes. Change them on the NAS.
+
+If `exportfs` cannot read a line of an export file, the **NFS** tab names the
+file and the line: `exportfs` ignores that line and every line after it in
+the same file. Correct or remove the line on the NAS. Until then UNOS adds
+and deletes no export: the `exportfs` run that applies a change would stop
+exporting what follows the line, also exports written by hand.
+
+#### Mounting an Export
+
+Use the NAS's address on your local network and the folder's full path:
+
+```bash
+# Linux
+sudo mount -t nfs YOUR_NAS_IP:/mnt/pools/data/media /mnt/media
+
+# macOS: the NAS accepts connections from reserved ports only (resvport)
+sudo mount -t nfs -o resvport YOUR_NAS_IP:/mnt/pools/data/media ~/media
+```
+
 ---
 
 ## File Browser
@@ -1647,6 +1746,7 @@ If you encounter issues:
 | Term | Definition |
 |------|------------|
 | **BTRFS** | B-tree File System, a modern copy-on-write filesystem |
+| **NFS** | Network File System, the file sharing protocol of Linux and other Unix systems |
 | **Pool** | A collection of disks managed as a single storage unit |
 | **RAID** | Redundant Array of Independent Disks |
 | **SMB** | Server Message Block, Windows file sharing protocol |

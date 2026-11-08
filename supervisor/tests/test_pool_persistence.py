@@ -213,6 +213,8 @@ class FakeHost:
         self.calls: list[list[str]] = []
         self.changes: list[list[str]] = []
         self.mkfs_uuid = NEW_UUID
+        # Programs the host lacks (host.missing_host_binaries; timeout(1) cannot run them).
+        self.missing_programs: set[str] = set()
         self.docker = FakeDocker()
         # How often the storage endpoints applied smb.conf after a pool change (install_fake_host).
         self.smb_applies = 0
@@ -368,6 +370,10 @@ class FakeHost:
 
     def run(self, cmd, *, timeout=60, check=False, input=None, errors=None):
         cmd = list(cmd)
+        if input is not None:
+            # As subprocess.run(text=True, errors=errors) encodes stdin (UTF-8 locale): strict
+            # by default, so text with surrogate escapes needs errors="surrogateescape".
+            input.encode("utf-8", errors or "strict")
         self.calls.append(cmd)
         result = None
         for prefix, (code, stderr) in self.fail.items():
@@ -410,6 +416,24 @@ class FakeHost:
             path = cmd[cmd.index("unos-write") + 1]
             self.files[path] = input
             self.changes.append(["write", path])
+            return self._result()
+        if prog == "/bin/sh" and "unos-nfs-files" in cmd:
+            return self._result(stdout=self._export_files(*cmd[-2:]))
+        if prog == "/bin/sh" and cmd[3:4] == ["sh"] and "command -v" in cmd[2]:
+            # host.missing_host_binaries: the names the host cannot find, one per line.
+            return self._result(stdout="".join(f"{name}\n" for name in cmd[4:] if name in self.missing_programs))
+        if prog == "timeout":
+            # timeout [--kill-after=N] DURATION COMMAND...: the command, or 127 when it is missing.
+            args = cmd[1:]
+            while args[0].startswith("-"):
+                args = args[1:]
+            program = args[1]
+            if program in self.missing_programs:
+                return self._result(127, stderr=f"timeout: failed to run command '{program}': No such file or directory")
+            return self._dispatch(args[1:], input)
+        if prog == "exportfs":
+            assert cmd == ["exportfs", "-ra"], cmd
+            self.changes.append(cmd)
             return self._result()
         if prog == "test":
             flag, path = cmd[1], cmd[2]
@@ -467,6 +491,22 @@ class FakeHost:
             self.changes.append(cmd)
             return getattr(self, "_" + prog.replace(".", "_"))(cmd)
         raise AssertionError(f"unexpected host command: {cmd}")
+
+    def _export_files(self, main, directory):
+        """What shares/nfs.py's listing script prints: for the main export file, then the
+        *.exports files of its directory that do not start with a dot, the name and the bytes
+        as `od -An -v -tx1` prints them, each followed by a NUL."""
+        names = [main] if main in self.files else []
+        for path in sorted(self.files):
+            folder, _, name = path.rpartition("/")
+            if folder == directory and name.endswith(".exports") and not name.startswith("."):
+                names.append(path)
+        out = []
+        for name in names:
+            data = self.files[name].encode("utf-8", "surrogateescape")
+            rows = [" ".join(f"{b:02x}" for b in data[i:i + 16]) for i in range(0, len(data), 16)]
+            out.append(f"{name}\0" + "".join(f" {row}\n" for row in rows) + "\0")
+        return "".join(out)
 
     def _lsblk(self):
         def render(node):
