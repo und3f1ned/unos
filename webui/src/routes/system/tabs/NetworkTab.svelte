@@ -19,13 +19,7 @@
   import { ApiError } from "$lib/api/client";
   import { Alert, Badge, Button, EmptyState, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
-  import {
-    stats,
-    wsConnected,
-    formatBytes,
-    formatBytesPerSecond,
-    type NetworkInterface as WSNetworkInterface
-  } from "$lib/stores/stats";
+  import { stats, wsConnected, type NetworkInterface as WSNetworkInterface } from "$lib/stores/stats";
   import {
     Network,
     Cable,
@@ -62,9 +56,9 @@
     routes: "network.routes",
     connections: "network.connections",
   };
-  // The operational states that the kernel reports for an interface (operstate): keys of the
-  // catalog. The names that ip and ss give (link types, route protocols, socket states) are shown
-  // as they come (ADR-0288).
+  // The operational states that the kernel reports for an interface (operstate), which its badge
+  // shows: keys of the catalog. The values that ip and ss print in the tables (link types, route
+  // and socket protocols, socket states) are shown as they come (ADR-0288).
   const STATES: Record<string, string> = {
     UP: "network.state.up",
     DOWN: "network.state.down",
@@ -74,6 +68,8 @@
     NOTPRESENT: "network.state.notPresent",
     UNKNOWN: "network.state.unknown",
   };
+  // The units of a count of bytes, one for each power of 1024: keys of the catalog.
+  const BYTE_UNITS = ["network.bytes.b", "network.bytes.kb", "network.bytes.mb", "network.bytes.gb", "network.bytes.tb"];
 
   let interfaces: NetworkInterface[] = [];
   let dnsConfig: DNSConfig | null = null;
@@ -124,6 +120,21 @@
     mbps >= 1000
       ? $t("network.speed.gbps", { speed: (mbps / 1000).toLocaleString($intlLocale) })
       : $t("network.speed.mbps", { speed: mbps.toLocaleString($intlLocale) });
+
+  // The traffic of the stats stream in the units and the number format of the page: a count of
+  // bytes in the largest unit that keeps it at 1 or more, with up to two decimals, as formatBytes
+  // of $lib/stores/stats writes it in English.
+  $: formatSize = (bytes: number): string => {
+    const power =
+      bytes >= 1 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1) : 0;
+    const value = Number((bytes / 1024 ** power).toFixed(2));
+    return $t("network.bytes.size", {
+      value: value.toLocaleString($intlLocale, { maximumFractionDigits: 2, useGrouping: false }),
+      unit: $t(BYTE_UNITS[power]),
+    });
+  };
+  $: formatRate = (bytesPerSecond: number): string =>
+    $t("network.bytes.perSecond", { size: formatSize(bytesPerSecond) });
 
   onMount(() => {
     loadAll();
@@ -515,11 +526,11 @@
                 <div class="flex items-center gap-4 text-sm">
                   <span class="flex items-center gap-1 text-status-success">
                     <ArrowDown class="w-3 h-3" />
-                    {formatBytesPerSecond(wsIface.bytes_recv_rate)}
+                    {formatRate(wsIface.bytes_recv_rate)}
                   </span>
                   <span class="flex items-center gap-1 text-status-info">
                     <ArrowUp class="w-3 h-3" />
-                    {formatBytesPerSecond(wsIface.bytes_sent_rate)}
+                    {formatRate(wsIface.bytes_sent_rate)}
                   </span>
                 </div>
               {/if}
@@ -569,19 +580,19 @@
                   <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <p class="text-xs text-content-muted">{$t("network.interface.rxBytes")}</p>
-                      <p class="text-sm text-status-success">{formatBytes(wsIface.bytes_recv)}</p>
+                      <p class="text-sm text-status-success">{formatSize(wsIface.bytes_recv)}</p>
                     </div>
                     <div>
                       <p class="text-xs text-content-muted">{$t("network.interface.txBytes")}</p>
-                      <p class="text-sm text-status-info">{formatBytes(wsIface.bytes_sent)}</p>
+                      <p class="text-sm text-status-info">{formatSize(wsIface.bytes_sent)}</p>
                     </div>
                     <div>
                       <p class="text-xs text-content-muted">{$t("network.interface.rxRate")}</p>
-                      <p class="text-sm text-status-success">{formatBytesPerSecond(wsIface.bytes_recv_rate)}</p>
+                      <p class="text-sm text-status-success">{formatRate(wsIface.bytes_recv_rate)}</p>
                     </div>
                     <div>
                       <p class="text-xs text-content-muted">{$t("network.interface.txRate")}</p>
-                      <p class="text-sm text-status-info">{formatBytesPerSecond(wsIface.bytes_sent_rate)}</p>
+                      <p class="text-sm text-status-info">{formatRate(wsIface.bytes_sent_rate)}</p>
                     </div>
                   </div>
                 </div>

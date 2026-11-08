@@ -1,8 +1,8 @@
 import type { Translation } from '../translate';
 
-// System > Network: src/routes/system/tabs/NetworkTab.svelte (ADR-0244, ADR-0246). The names that
-// the host's tools give (ip's link types and route protocols, ss's protocols and socket states)
-// stay as they come (ADR-0288).
+// System > Network: src/routes/system/tabs/NetworkTab.svelte (ADR-0244, ADR-0246). The values that
+// ip and ss print in the tab's tables (link types, route and socket protocols, socket states) stay
+// as they come and have no key here (ADR-0288).
 
 export const en = {
 	'network.title': 'Network',
@@ -76,6 +76,14 @@ export const en = {
 	'network.interface.none': 'No network interfaces found',
 	'network.speed.gbps': '{speed} Gb/s',
 	'network.speed.mbps': '{speed} Mb/s',
+	// The live traffic: a count of bytes in a unit of powers of 1024, and the same per second.
+	'network.bytes.b': 'B',
+	'network.bytes.kb': 'KB',
+	'network.bytes.mb': 'MB',
+	'network.bytes.gb': 'GB',
+	'network.bytes.tb': 'TB',
+	'network.bytes.size': '{value} {unit}',
+	'network.bytes.perSecond': '{size}/s',
 
 	'network.routes.destination': 'Destination',
 	'network.routes.interface': 'Interface',
@@ -176,6 +184,13 @@ export const ru: Translation<typeof en> = {
 	'network.interface.none': 'Сетевые интерфейсы не найдены',
 	'network.speed.gbps': '{speed} Гбит/с',
 	'network.speed.mbps': '{speed} Мбит/с',
+	'network.bytes.b': 'Б',
+	'network.bytes.kb': 'КБ',
+	'network.bytes.mb': 'МБ',
+	'network.bytes.gb': 'ГБ',
+	'network.bytes.tb': 'ТБ',
+	'network.bytes.size': '{value} {unit}',
+	'network.bytes.perSecond': '{size}/с',
 
 	'network.routes.destination': 'Назначение',
 	'network.routes.interface': 'Интерфейс',

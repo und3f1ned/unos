@@ -107,7 +107,7 @@ export const en = {
 	'notifications.form.save': 'Save Changes',
 	'notifications.form.add': 'Add Channel',
 	// The events of the server's list (GET /api/v1/notifications/events), by id: as the server
-	// names and describes them.
+	// names and describes them, word for word (supervisor/tests/test_notifications.py checks them).
 	'notifications.events.diskWarning.name': 'Disk Space Warning',
 	'notifications.events.diskWarning.when': 'When disk space is low',
 	'notifications.events.smartError.name': 'SMART Error',

@@ -265,6 +265,32 @@ test.describe('Notifications', () => {
     expect(fake.tests).toEqual([ADMIN_MAIL.id]);
   });
 
+  test('a channel lists the events it is for by their names, in English and in Russian', async ({
+    authenticatedPage: page,
+  }) => {
+    // Three events of the server's list and one that the server does not know: up to three show, and
+    // a count of the rest.
+    const events = ['disk_warning', 'smart_error', 'ups_on_battery', 'backup_failed'];
+    await fakeNotificationsApi(page, [{ ...HOOK_WITH_HEADERS, events }]);
+    await openTab(page);
+    const channel = channelItem(page, 'Home hook');
+
+    for (const text of ['Disk Space Warning', 'SMART Error', 'ups_on_battery', '+1 more']) {
+      await expect(channel.getByText(text, { exact: true })).toBeVisible();
+    }
+    await expect(channel).not.toContainText('disk_warning');
+
+    // The language that the Account page keeps in this browser (ADR-0287).
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.reload();
+    const russian = page.getByRole('list', { name: 'Каналы уведомлений' }).getByRole('listitem')
+      .filter({ hasText: 'Home hook' });
+    for (const text of ['Мало места на диске', 'Ошибка SMART', 'ups_on_battery', 'ещё 1']) {
+      await expect(russian.getByText(text, { exact: true })).toBeVisible();
+    }
+    await expect(russian).not.toContainText('smart_error');
+  });
+
   test('a disabled channel can be tested before it receives notifications', async ({ authenticatedPage: page }) => {
     const fake = await fakeNotificationsApi(page, [{ ...ADMIN_MAIL, enabled: false }]);
     await openTab(page);

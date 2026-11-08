@@ -61,7 +61,9 @@
     success: "notifications.types.success",
   };
   // The events of the server's list (GET /api/v1/notifications/events), by id: the keys of their
-  // names and descriptions. An event without keys shows the server's texts.
+  // names and descriptions, for the dialog and a channel's events in the list. An event without keys
+  // shows the server's texts, or its id in the list. supervisor/tests/test_notifications.py checks
+  // that the English half of the catalog copies the server's list.
   const EVENTS: Record<string, { name: string; when: string }> = {
     disk_warning: { name: "notifications.events.diskWarning.name", when: "notifications.events.diskWarning.when" },
     smart_error: { name: "notifications.events.smartError.name", when: "notifications.events.smartError.when" },
@@ -162,6 +164,9 @@
   $: kindName = (kind: string): string => (own(KINDS, kind) ? $t(KINDS[kind as ChannelKind].name) : kind);
 
   $: nameOf = (config: NotificationConfig): string => config.name || kindName(config.channel);
+
+  /** The name of an event of a channel in the language of the page; an id without one as it comes. */
+  $: eventName = (id: string): string => (own(EVENTS, id) ? $t(EVENTS[id].name) : id);
 
   $: hostOf = (url: string): string => {
     try {
@@ -539,7 +544,7 @@
                       {#if config.events && config.events.length > 0}
                         <div class="flex flex-wrap gap-1 mt-2">
                           {#each config.events.slice(0, 3) as event}
-                            <Badge variant="neutral">{event}</Badge>
+                            <Badge variant="neutral">{eventName(event)}</Badge>
                           {/each}
                           {#if config.events.length > 3}
                             <Badge variant="neutral">{$t("notifications.channels.more", { n: config.events.length - 3 })}</Badge>

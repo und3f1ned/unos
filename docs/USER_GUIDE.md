@@ -80,8 +80,8 @@ So far the navigation, the login and first-run setup pages, the **Account** page
 and the **Notifications** and **Network** tabs of **System** are translated; the
 other pages are still in English. Messages from the server, such as the reason an
 action was refused or the title and text of a notification in the history, stay in
-English, and so do the names that the host's tools give, such as a connection's
-state (ESTAB) or an interface's link type (ether).
+English, and so do the values that ip and ss print in the tables of the **Network**
+tab, such as a connection's state (ESTAB) or an interface's link type (ether).
 
 ---
 
