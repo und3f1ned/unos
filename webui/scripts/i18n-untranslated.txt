@@ -34,9 +34,6 @@ src/routes/files/+page.svelte
 src/routes/files/trash/+page.svelte
 
 # containers
-src/routes/containers/+page.svelte
-src/lib/components/containers/ContainerDetailDrawer.svelte
-src/lib/components/containers/ImageList.svelte
 
 # apps
 src/routes/apps/+page.svelte

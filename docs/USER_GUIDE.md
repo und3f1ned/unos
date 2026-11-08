@@ -76,9 +76,10 @@ Russian, and in English otherwise. Dates and times follow the language: in the
 browser's own format when the browser is set to that language, otherwise with the
 day first and a 24-hour clock.
 
-So far the navigation, the login and first-run setup pages and the **Account**
-page are translated; the other pages are still in English. Messages from the
-server, such as the reason an action was refused, stay in English.
+So far the navigation, the login and first-run setup pages, the **Account**
+page and the **Containers** page are translated; the other pages are still in
+English. Messages from the server, such as the reason an action was refused, stay
+in English.
 
 ---
 
