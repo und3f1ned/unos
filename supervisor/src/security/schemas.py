@@ -75,7 +75,7 @@ CertificateDomain = Annotated[str, AfterValidator(validate_common_name)]
 
 
 def _as_utc(value: datetime) -> datetime:
-    """A time without a zone is UTC: SQLite's CURRENT_TIMESTAMP is (ADR-0248)."""
+    """A time without a zone is UTC: SQLite's CURRENT_TIMESTAMP is (ADR-0262)."""
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)

@@ -35,6 +35,17 @@ Avoid: user (a UNOS user), admin.
 addresses and routes: a timer on the host that runs unless the administrator keeps the disable
 within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` do), undo.
 
+**Notification channel**: Where UNOS sends notifications: e-mail through a mail server, a Telegram
+chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0260).
+Avoid: notifier, integration.
+
+**Alert**: A notification that a monitor sends on its own, for a pool's RAID errors or a disk's
+rising SMART counters, to every enabled e-mail and Telegram channel (ADR-0047). Avoid: alarm.
+
+**Notification history**: The latest 100 notifications sent, tests and alerts included, with the
+channel and the result of each: History in System > Notifications (ADR-0260). Avoid: log (the
+Logs tab shows the journal and container output).
+
 ## Storage
 
 **Pool**: A btrfs filesystem on one or more disks that UNOS mounts under `/mnt/pools` (ADR-0034).
@@ -52,6 +63,10 @@ Avoid: subvolume (snapshots are subvolumes too), dataset.
 
 **Snapshot**: A read-only btrfs snapshot of a pool or a volume. Restoring one makes a writable copy
 and overwrites nothing (ADR-0011). Avoid: backup.
+
+**Trash**: The hidden folder `.unos-trash` at the top of each pool and volume that takes what Delete
+in Files deletes there, until it is restored, deleted for good, or deleted for good 30 days after
+its deletion (ADR-0259). Avoid: recycle bin, snapshot.
 
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
 hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0235). Avoid: SMART
@@ -123,7 +138,8 @@ accounts; UNOS leaves every other one alone (ADR-0108). Avoid: user.
 it expires (ADR-0009, ADR-0028). Avoid: cookie, API token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
-once (ADR-0239). Avoid: session token, API key.
+once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). Avoid:
+session token, API key.
 
 **Recovery code**: One of the ten codes that a user with two-factor authentication generates on the
 Account page and keeps; each one signs in once in place of a code of the authenticator app

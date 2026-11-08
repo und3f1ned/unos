@@ -36,7 +36,7 @@ import { checkedLocalUrl, targetUrl } from './tests/target';
  * one project first-run (tests/first-run.spec.ts), which creates the
  * administrator that the specs sign in as, E2E_ADMIN of tests/fixtures.ts,
  * through the /setup page. scripts/standin/e2e.sh runs it on the new stand-in
- * before it runs the specs (ADR-0247). An installation is set up once, so that
+ * before it runs the specs (ADR-0261). An installation is set up once, so that
  * test is never retried. Without E2E_FIRST_RUN no project runs that file: the
  * compose test stack creates the account through the API.
  */

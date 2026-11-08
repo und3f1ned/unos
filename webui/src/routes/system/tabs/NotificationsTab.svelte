@@ -1,792 +1,819 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import type { ComponentType } from "svelte";
   import {
-    getLogs, getConfigs, createConfig, updateConfig, deleteConfig,
-    testNotification, getEventTypes,
-    type NotificationLog, type NotificationConfig, type EventType
-  } from "$lib/api/notifications";
-  import {
-    Bell, AlertTriangle, Info, CheckCircle, RefreshCw, Clock, Settings,
-    Plus, Mail, Send, Trash2, Edit, ToggleLeft, ToggleRight, Zap,
-    MessageCircle, ChevronDown, ChevronUp, Filter, X, Check
+    AlertTriangle, Bell, CheckCircle, ChevronDown, ChevronUp, Clock, Info, Mail, MessageCircle,
+    MessageSquare, Pencil, RefreshCw, Send, Settings, Slack, Trash2, Webhook, Zap
   } from "lucide-svelte";
+  import { Alert, Badge, Button, Card, EmptyState, Input, Modal, Select } from "$lib/components/ui";
+  import {
+    createConfig, deleteConfig, getConfigs, getEventTypes, getLogs, testNotification, updateConfig,
+    type ChannelKind, type EventType, type NotificationConfig, type NotificationLog
+  } from "$lib/api/notifications";
 
-  // State
+  // Channels of five kinds (ADR-0260). A test reports next to its channel whether the server
+  // delivered it, or why not, and the history lists every notification sent, newest first.
+
+  const KINDS: Record<ChannelKind, { label: string; icon: ComponentType }> = {
+    email: { label: "Email", icon: Mail },
+    telegram: { label: "Telegram", icon: MessageCircle },
+    webhook: { label: "Webhook", icon: Webhook },
+    discord: { label: "Discord", icon: MessageSquare },
+    slack: { label: "Slack", icon: Slack },
+  };
+  const KIND_ORDER: ChannelKind[] = ["email", "telegram", "webhook", "discord", "slack"];
+  const HOOK_FIELDS: Record<"webhook" | "discord" | "slack", { label: string; placeholder: string; hint: string }> = {
+    webhook: {
+      label: "URL",
+      placeholder: "https://example.com/hooks/unos",
+      hint: "UNOS sends JSON with title, message, type, timestamp and source.",
+    },
+    discord: {
+      label: "Webhook URL",
+      placeholder: "https://discord.com/api/webhooks/...",
+      hint: "In Discord: the channel's settings, Integrations, Webhooks, Copy Webhook URL.",
+    },
+    slack: {
+      label: "Webhook URL",
+      placeholder: "https://hooks.slack.com/services/...",
+      hint: "An incoming webhook of a Slack app: it posts to the channel it was made for.",
+    },
+  };
+
   let logs: NotificationLog[] = [];
   let configs: NotificationConfig[] = [];
   let eventTypes: EventType[] = [];
   let loading = true;
+  let loadError = "";
   let activeView: "channels" | "history" = "channels";
 
-  // Stats
-  $: totalSent = logs.length;
-  $: successCount = logs.filter(l => l.success).length;
-  $: failedCount = logs.filter(l => !l.success).length;
-  $: activeChannels = configs.filter(c => c.enabled).length;
-
-  // Modal state
-  let showModal = false;
-  let modalMode: "create" | "edit" = "create";
-  let editingConfig: NotificationConfig | null = null;
-  let saving = false;
+  // The outcome of each channel's last test, by channel id: shown under the channel.
+  let results: Record<string, { success: boolean; message: string }> = {};
   let testing: string | null = null;
-  let testResult: { success: boolean; message: string } | null = null;
-  let deleteConfirm: string | null = null;
+  let actionError = "";
 
-  // Form state
-  let formChannel: "email" | "telegram" = "email";
+  // The dialog that adds or edits a channel.
+  let showModal = false;
+  let editing: NotificationConfig | null = null;
+  let formKind: ChannelKind = "email";
   let formName = "";
   let formEnabled = true;
   let formEvents: string[] = [];
+  let saving = false;
+  let saveError = "";
 
-  // Email config
   let emailHost = "";
-  let emailPort = 587;
+  let emailPort = "587";
   let emailUser = "";
   let emailPassword = "";
   let emailTls = true;
+  let emailVerifyTls = true;
   let emailFrom = "";
   let emailTo = "";
-
-  // Telegram config
   let telegramToken = "";
   let telegramChatId = "";
+  // The URL of a webhook, Discord or Slack channel, and a webhook's method.
+  let hookUrl = "";
+  let hookMethod = "POST";
 
-  // History filters
-  let filterChannel: "all" | "email" | "telegram" = "all";
+  let deleting: NotificationConfig | null = null;
+  let deleteBusy = false;
+  let deleteError = "";
+
+  let filterChannel = "all";
   let filterStatus: "all" | "success" | "failed" = "all";
   let expandedLog: string | null = null;
 
-  onMount(() => loadData());
-
-  async function loadData() {
-    loading = true;
-    try {
-      const [logsData, configsData, eventsData] = await Promise.all([
-        getLogs().catch(() => []),
-        getConfigs().catch(() => []),
-        getEventTypes().catch(() => [])
-      ]);
-      logs = Array.isArray(logsData) ? logsData : [];
-      configs = Array.isArray(configsData) ? configsData : [];
-      eventTypes = Array.isArray(eventsData) ? eventsData : [];
-    } catch (e) {
-      console.error(e);
-    }
-    loading = false;
-  }
-
-  function openCreateModal(channel: "email" | "telegram") {
-    modalMode = "create";
-    editingConfig = null;
-    formChannel = channel;
-    formName = channel === "email" ? "Email Notifications" : "Telegram Notifications";
-    formEnabled = true;
-    formEvents = [];
-
-    // Reset email fields
-    emailHost = "";
-    emailPort = 587;
-    emailUser = "";
-    emailPassword = "";
-    emailTls = true;
-    emailFrom = "";
-    emailTo = "";
-
-    // Reset telegram fields
-    telegramToken = "";
-    telegramChatId = "";
-
-    testResult = null;
-    showModal = true;
-  }
-
-  function openEditModal(config: NotificationConfig) {
-    modalMode = "edit";
-    editingConfig = config;
-    formChannel = config.channel;
-    formName = config.name || "";
-    formEnabled = config.enabled;
-    formEvents = [...(config.events || [])];
-
-    if (config.email_config) {
-      emailHost = config.email_config.smtp_host;
-      emailPort = config.email_config.smtp_port;
-      emailUser = config.email_config.smtp_user;
-      emailPassword = config.email_config.smtp_password;
-      emailTls = config.email_config.smtp_tls;
-      emailFrom = config.email_config.from_address;
-      emailTo = config.email_config.to_addresses.join(", ");
-    }
-
-    if (config.telegram_config) {
-      telegramToken = config.telegram_config.bot_token;
-      telegramChatId = config.telegram_config.chat_id;
-    }
-
-    testResult = null;
-    showModal = true;
-  }
-
-  function closeModal() {
-    showModal = false;
-    editingConfig = null;
-    testResult = null;
-  }
-
-  async function handleSave() {
-    saving = true;
-    try {
-      const config: NotificationConfig = {
-        name: formName,
-        channel: formChannel,
-        enabled: formEnabled,
-        events: formEvents,
-        email_config: formChannel === "email" ? {
-          smtp_host: emailHost,
-          smtp_port: emailPort,
-          smtp_user: emailUser,
-          smtp_password: emailPassword,
-          smtp_tls: emailTls,
-          from_address: emailFrom,
-          to_addresses: emailTo.split(",").map(e => e.trim()).filter(e => e)
-        } : undefined,
-        telegram_config: formChannel === "telegram" ? {
-          bot_token: telegramToken,
-          chat_id: telegramChatId
-        } : undefined
-      };
-
-      if (modalMode === "edit" && editingConfig?.id) {
-        await updateConfig(editingConfig.id, config);
-      } else {
-        await createConfig(config);
-      }
-
-      await loadData();
-      closeModal();
-    } catch (e: any) {
-      console.error(e);
-      testResult = { success: false, message: e.message || "Failed to save" };
-    }
-    saving = false;
-  }
-
-  async function handleTest(configId: string) {
-    testing = configId;
-    testResult = null;
-    try {
-      await testNotification(configId);
-      testResult = { success: true, message: "Test notification sent successfully!" };
-    } catch (e: any) {
-      testResult = { success: false, message: e.message || "Test failed" };
-    }
-    testing = null;
-  }
-
-  async function handleDelete(configId: string) {
-    try {
-      await deleteConfig(configId);
-      deleteConfirm = null;
-      await loadData();
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  async function toggleEnabled(config: NotificationConfig) {
-    try {
-      await updateConfig(config.id!, { ...config, enabled: !config.enabled });
-      await loadData();
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-  function toggleEvent(eventId: string) {
-    if (formEvents.includes(eventId)) {
-      formEvents = formEvents.filter(e => e !== eventId);
-    } else {
-      formEvents = [...formEvents, eventId];
-    }
-  }
-
-  function getIcon(type: string) {
-    if (type === "error" || type === "warning") return AlertTriangle;
-    if (type === "success") return CheckCircle;
-    return Info;
-  }
-
-  function getColor(type: string): string {
-    if (type === "error") return "text-red-400";
-    if (type === "warning") return "text-yellow-400";
-    if (type === "success") return "text-green-400";
-    return "text-blue-400";
-  }
-
-  function getChannelIcon(channel: string) {
-    return channel === "email" ? Mail : MessageCircle;
-  }
-
-  function formatDate(dateStr: string): string {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-
-    if (diff < 60000) return "Just now";
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return date.toLocaleDateString();
-  }
-
-  $: filteredLogs = logs.filter(log => {
+  $: totalSent = logs.length;
+  $: successCount = logs.filter((l) => l.success).length;
+  $: failedCount = logs.filter((l) => !l.success).length;
+  $: activeChannels = configs.filter((c) => c.enabled).length;
+  $: recipients = emailTo.split(",").map((e) => e.trim()).filter((e) => e);
+  $: port = Number(emailPort);
+  // Plain SMTP: no TLS, so no certificate to check, and the password crosses the network as it is.
+  $: plainSmtp = !emailTls && port !== 465;
+  $: formComplete =
+    formKind === "email"
+      ? emailHost.trim() !== "" && Number.isInteger(port) && port > 0 && port < 65536 &&
+        emailFrom.trim() !== "" && recipients.length > 0
+      : formKind === "telegram"
+        ? telegramToken.trim() !== "" && telegramChatId.trim() !== ""
+        : hookUrl.trim() !== "";
+  $: filteredLogs = logs.filter((log) => {
     if (filterChannel !== "all" && log.channel !== filterChannel) return false;
     if (filterStatus === "success" && !log.success) return false;
     if (filterStatus === "failed" && log.success) return false;
     return true;
   });
+  $: hookField = HOOK_FIELDS[formKind === "discord" || formKind === "slack" ? formKind : "webhook"];
+  $: channelOptions = [
+    { value: "all", label: "All channels" },
+    ...KIND_ORDER.map((kind) => ({ value: kind, label: KINDS[kind].label })),
+  ];
+
+  onMount(() => loadData());
+
+  function messageOf(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
+
+  async function loadData() {
+    loading = true;
+    try {
+      [logs, configs, eventTypes] = await Promise.all([getLogs(), getConfigs(), getEventTypes()]);
+      loadError = "";
+    } catch (e) {
+      loadError = messageOf(e);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function refreshLogs() {
+    try {
+      logs = await getLogs();
+    } catch (e) {
+      loadError = messageOf(e);
+    }
+  }
+
+  function nameOf(config: NotificationConfig): string {
+    return config.name || KINDS[config.channel].label;
+  }
+
+  function hostOf(url: string): string {
+    try {
+      return new URL(url).host;
+    } catch {
+      return "an invalid URL";
+    }
+  }
+
+  // What the list shows of a channel; webhook URLs carry their secret in the path, so only the host.
+  function summaryOf(config: NotificationConfig): string {
+    const email = config.email_config;
+    if (config.channel === "email" && email) {
+      return `${email.to_addresses.join(", ")} via ${email.smtp_host}:${email.smtp_port}`;
+    }
+    if (config.channel === "telegram" && config.telegram_config) return `Chat ID ${config.telegram_config.chat_id}`;
+    if (config.channel === "webhook" && config.webhook_config) {
+      return `${config.webhook_config.method} to ${hostOf(config.webhook_config.url)}`;
+    }
+    const hook = config.channel === "discord" ? config.discord_config : config.slack_config;
+    return hook ? `Webhook at ${hostOf(hook.webhook_url)}` : "";
+  }
+
+  function openCreate(kind: ChannelKind) {
+    editing = null;
+    formKind = kind;
+    formName = `${KINDS[kind].label} Notifications`;
+    formEnabled = true;
+    formEvents = [];
+    emailHost = "";
+    emailPort = "587";
+    emailUser = "";
+    emailPassword = "";
+    emailTls = true;
+    emailVerifyTls = true;
+    emailFrom = "";
+    emailTo = "";
+    telegramToken = "";
+    telegramChatId = "";
+    hookUrl = "";
+    hookMethod = "POST";
+    saveError = "";
+    showModal = true;
+  }
+
+  function openEdit(config: NotificationConfig) {
+    openCreate(config.channel);
+    editing = config;
+    formName = config.name;
+    formEnabled = config.enabled;
+    formEvents = [...(config.events || [])];
+    // Only the settings of the channel's own kind.
+    const email = config.channel === "email" ? config.email_config : undefined;
+    if (email) {
+      emailHost = email.smtp_host;
+      emailPort = String(email.smtp_port);
+      emailUser = email.smtp_user;
+      emailPassword = email.smtp_password;
+      emailTls = email.smtp_tls;
+      emailVerifyTls = email.smtp_verify_tls;
+      emailFrom = email.from_address;
+      emailTo = email.to_addresses.join(", ");
+    }
+    if (config.channel === "telegram" && config.telegram_config) {
+      telegramToken = config.telegram_config.bot_token;
+      telegramChatId = config.telegram_config.chat_id;
+    }
+    if (config.channel === "webhook" && config.webhook_config) {
+      hookUrl = config.webhook_config.url;
+      // The API stores the method as it was given, and the sender reads it in any case.
+      hookMethod = config.webhook_config.method.toUpperCase() === "PUT" ? "PUT" : "POST";
+    }
+    if (config.channel === "discord" && config.discord_config) hookUrl = config.discord_config.webhook_url;
+    if (config.channel === "slack" && config.slack_config) hookUrl = config.slack_config.webhook_url;
+  }
+
+  function closeModal() {
+    if (saving) return;
+    showModal = false;
+    editing = null;
+  }
+
+  // The channel as the form describes it. Settings that only the API sets (a webhook's headers and
+  // body, Discord's and Slack's names and icons) stay as they were.
+  function formConfig(): NotificationConfig {
+    const kept = editing?.channel === formKind ? editing : null;
+    return {
+      name: formName.trim(),
+      channel: formKind,
+      enabled: formEnabled,
+      events: formEvents,
+      email_config: formKind === "email" ? {
+        smtp_host: emailHost.trim(),
+        smtp_port: port,
+        smtp_user: emailUser,
+        smtp_password: emailPassword,
+        smtp_tls: emailTls,
+        smtp_verify_tls: emailVerifyTls,
+        from_address: emailFrom.trim(),
+        to_addresses: recipients,
+      } : undefined,
+      telegram_config: formKind === "telegram"
+        ? { bot_token: telegramToken.trim(), chat_id: telegramChatId.trim() }
+        : undefined,
+      webhook_config: formKind === "webhook"
+        ? { ...kept?.webhook_config, url: hookUrl.trim(), method: hookMethod === "PUT" ? "PUT" : "POST" }
+        : undefined,
+      discord_config: formKind === "discord" ? { ...kept?.discord_config, webhook_url: hookUrl.trim() } : undefined,
+      slack_config: formKind === "slack" ? { ...kept?.slack_config, webhook_url: hookUrl.trim() } : undefined,
+    };
+  }
+
+  async function handleSave() {
+    if (saving || !formComplete) return;
+    saving = true;
+    saveError = "";
+    try {
+      if (editing?.id) {
+        await updateConfig(editing.id, formConfig());
+        // A test of the old settings says nothing about the new ones.
+        dismissResult(editing.id);
+      } else {
+        await createConfig(formConfig());
+      }
+      saving = false;
+      closeModal();
+      await loadData();
+    } catch (e) {
+      saveError = messageOf(e);
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function handleTest(config: NotificationConfig) {
+    const id = config.id;
+    if (!id || testing) return;
+    testing = id;
+    dismissResult(id);
+    try {
+      await testNotification(id);
+      results = { ...results, [id]: { success: true, message: "Test notification sent" } };
+    } catch (e) {
+      results = { ...results, [id]: { success: false, message: messageOf(e) } };
+    } finally {
+      testing = null;
+    }
+    // The test is the newest entry of the history now.
+    await refreshLogs();
+  }
+
+  function dismissResult(id: string) {
+    const { [id]: _, ...others } = results;
+    results = others;
+  }
+
+  async function toggleEnabled(config: NotificationConfig) {
+    if (!config.id) return;
+    try {
+      await updateConfig(config.id, { ...config, enabled: !config.enabled });
+      actionError = "";
+    } catch (e) {
+      actionError = messageOf(e);
+    }
+    await loadData();
+  }
+
+  function askDelete(config: NotificationConfig) {
+    deleting = config;
+    deleteError = "";
+  }
+
+  function closeDelete() {
+    if (!deleteBusy) deleting = null;
+  }
+
+  async function confirmDelete() {
+    const id = deleting?.id;
+    if (!id || deleteBusy) return;
+    deleteBusy = true;
+    try {
+      await deleteConfig(id);
+      dismissResult(id);
+      deleteBusy = false;
+      deleting = null;
+      await loadData();
+    } catch (e) {
+      deleteError = messageOf(e);
+    } finally {
+      deleteBusy = false;
+    }
+  }
+
+  function toggleEvent(eventId: string) {
+    formEvents = formEvents.includes(eventId) ? formEvents.filter((e) => e !== eventId) : [...formEvents, eventId];
+  }
+
+  function iconOf(type: string): ComponentType {
+    if (type === "error" || type === "warning") return AlertTriangle;
+    if (type === "success") return CheckCircle;
+    return Info;
+  }
+
+  function colorOf(type: string): string {
+    if (type === "error") return "text-error";
+    if (type === "warning") return "text-warning";
+    if (type === "success") return "text-success";
+    return "text-info";
+  }
+
+  function formatDate(sentAt: string): string {
+    const date = new Date(sentAt);
+    const diff = Date.now() - date.getTime();
+    if (diff < 60000) return "Just now";
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return date.toLocaleDateString();
+  }
 </script>
 
 <div class="space-y-6">
-  <!-- Stats Cards -->
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-    <div class="bg-slate-800 rounded-lg p-4">
+    <Card>
       <div class="flex items-center gap-3">
-        <div class="p-2 bg-blue-500/20 rounded-lg">
-          <Bell class="w-5 h-5 text-blue-400" />
-        </div>
+        <Bell class="w-5 h-5 text-info" />
         <div>
           <p class="text-2xl font-bold">{activeChannels}</p>
-          <p class="text-xs text-slate-400">Active Channels</p>
+          <p class="text-xs text-muted">Active Channels</p>
         </div>
       </div>
-    </div>
-    <div class="bg-slate-800 rounded-lg p-4">
+    </Card>
+    <Card>
       <div class="flex items-center gap-3">
-        <div class="p-2 bg-purple-500/20 rounded-lg">
-          <Send class="w-5 h-5 text-purple-400" />
-        </div>
+        <Send class="w-5 h-5 text-info" />
         <div>
           <p class="text-2xl font-bold">{totalSent}</p>
-          <p class="text-xs text-slate-400">Total Sent</p>
+          <p class="text-xs text-muted">Total Sent</p>
         </div>
       </div>
-    </div>
-    <div class="bg-slate-800 rounded-lg p-4">
+    </Card>
+    <Card>
       <div class="flex items-center gap-3">
-        <div class="p-2 bg-green-500/20 rounded-lg">
-          <CheckCircle class="w-5 h-5 text-green-400" />
-        </div>
+        <CheckCircle class="w-5 h-5 text-success" />
         <div>
           <p class="text-2xl font-bold">{successCount}</p>
-          <p class="text-xs text-slate-400">Delivered</p>
+          <p class="text-xs text-muted">Delivered</p>
         </div>
       </div>
-    </div>
-    <div class="bg-slate-800 rounded-lg p-4">
+    </Card>
+    <Card>
       <div class="flex items-center gap-3">
-        <div class="p-2 bg-red-500/20 rounded-lg">
-          <AlertTriangle class="w-5 h-5 text-red-400" />
-        </div>
+        <AlertTriangle class="w-5 h-5 text-error" />
         <div>
           <p class="text-2xl font-bold">{failedCount}</p>
-          <p class="text-xs text-slate-400">Failed</p>
+          <p class="text-xs text-muted">Failed</p>
         </div>
       </div>
-    </div>
+    </Card>
   </div>
 
-  <!-- Header with tabs -->
-  <div class="flex items-center justify-between">
-    <div class="flex bg-slate-800 rounded-lg p-1">
-      <button
-        on:click={() => activeView = "channels"}
-        class="px-4 py-2 text-sm rounded-lg transition-colors {activeView === 'channels' ? 'bg-blue-600' : 'hover:bg-slate-700'}"
+  <div class="flex items-center justify-between gap-3">
+    <div class="flex gap-2">
+      <Button
+        variant={activeView === "channels" ? "primary" : "secondary"}
+        icon={Settings}
+        pressed={activeView === "channels"}
+        on:click={() => (activeView = "channels")}
       >
-        <Settings class="w-4 h-4 inline mr-2" />
         Channels
-      </button>
-      <button
-        on:click={() => activeView = "history"}
-        class="px-4 py-2 text-sm rounded-lg transition-colors {activeView === 'history' ? 'bg-blue-600' : 'hover:bg-slate-700'}"
+      </Button>
+      <Button
+        variant={activeView === "history" ? "primary" : "secondary"}
+        icon={Clock}
+        pressed={activeView === "history"}
+        on:click={() => (activeView = "history")}
       >
-        <Clock class="w-4 h-4 inline mr-2" />
         History
-      </button>
+      </Button>
     </div>
-    <button on:click={loadData} class="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors">
-      <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
-    </button>
+    <Button variant="ghost" size="icon" icon={RefreshCw} loading={loading} on:click={loadData}>
+      <span class="sr-only">Refresh</span>
+    </Button>
   </div>
 
-  <!-- Channels View -->
+  {#if loadError}
+    <div role="alert">
+      <Alert variant="error" title="The notification settings could not be read">{loadError}</Alert>
+    </div>
+  {/if}
+  {#if actionError}
+    <div role="alert">
+      <Alert variant="error" dismissible on:dismiss={() => (actionError = "")}>{actionError}</Alert>
+    </div>
+  {/if}
+
   {#if activeView === "channels"}
     <div class="space-y-4">
-      <!-- Add Channel Buttons -->
-      <div class="flex gap-3">
-        <button
-          on:click={() => openCreateModal("email")}
-          class="flex items-center gap-2 px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-lg border-2 border-dashed border-slate-600 hover:border-blue-500 transition-colors flex-1"
-        >
-          <Mail class="w-5 h-5 text-blue-400" />
-          <div class="text-left">
-            <p class="font-medium">Add Email</p>
-            <p class="text-xs text-slate-400">SMTP notifications</p>
-          </div>
-        </button>
-        <button
-          on:click={() => openCreateModal("telegram")}
-          class="flex items-center gap-2 px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-lg border-2 border-dashed border-slate-600 hover:border-blue-500 transition-colors flex-1"
-        >
-          <MessageCircle class="w-5 h-5 text-blue-400" />
-          <div class="text-left">
-            <p class="font-medium">Add Telegram</p>
-            <p class="text-xs text-slate-400">Bot notifications</p>
-          </div>
-        </button>
+      <div class="flex flex-wrap gap-3">
+        {#each KIND_ORDER as kind}
+          <Button variant="secondary" icon={KINDS[kind].icon} on:click={() => openCreate(kind)}>
+            Add {KINDS[kind].label}
+          </Button>
+        {/each}
       </div>
 
-      <!-- Configured Channels -->
-      {#if loading}
-        <div class="flex justify-center py-12">
-          <RefreshCw class="w-8 h-8 animate-spin text-blue-500" />
-        </div>
+      {#if loading && configs.length === 0}
+        <p class="loading-text">Loading...</p>
       {:else if configs.length === 0}
-        <div class="bg-slate-800 rounded-lg p-8 text-center">
-          <Bell class="w-12 h-12 mx-auto mb-4 text-slate-600" />
-          <h3 class="text-lg font-medium mb-2">No notification channels</h3>
-          <p class="text-slate-400 text-sm">Add an email or Telegram channel to start receiving notifications</p>
-        </div>
+        <Card>
+          <EmptyState
+            icon={Bell}
+            title="No notification channels"
+            description="Add an e-mail, Telegram, webhook, Discord or Slack channel to receive notifications"
+          />
+        </Card>
       {:else}
-        <div class="space-y-3">
-          {#each configs as config}
-            <div class="bg-slate-800 rounded-lg p-4">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-4">
-                  <div class="p-3 rounded-lg {config.enabled ? 'bg-blue-500/20' : 'bg-slate-700'}">
+        <ul class="space-y-3" aria-label="Notification channels">
+          {#each configs as config (config.id)}
+            {@const id = config.id ?? ""}
+            {@const result = results[id]}
+            <li>
+              <Card>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div class="flex items-center gap-4 min-w-0">
                     <svelte:component
-                      this={getChannelIcon(config.channel)}
-                      class="w-6 h-6 {config.enabled ? 'text-blue-400' : 'text-slate-500'}"
+                      this={KINDS[config.channel].icon}
+                      class="w-6 h-6 flex-shrink-0 {config.enabled ? 'text-info' : 'text-muted'}"
                     />
-                  </div>
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <h3 class="font-medium">{config.name || config.channel}</h3>
-                      <span class="px-2 py-0.5 text-xs rounded bg-slate-700 uppercase">{config.channel}</span>
-                    </div>
-                    <p class="text-sm text-slate-400">
-                      {#if config.email_config}
-                        {config.email_config.to_addresses.join(", ")}
-                      {:else if config.telegram_config}
-                        Chat ID: {config.telegram_config.chat_id}
-                      {/if}
-                    </p>
-                    {#if config.events && config.events.length > 0}
-                      <div class="flex flex-wrap gap-1 mt-2">
-                        {#each config.events.slice(0, 3) as event}
-                          <span class="px-2 py-0.5 text-xs bg-slate-700 rounded">{event}</span>
-                        {/each}
-                        {#if config.events.length > 3}
-                          <span class="px-2 py-0.5 text-xs bg-slate-700 rounded">+{config.events.length - 3} more</span>
+                    <div class="min-w-0">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <h3 class="font-medium">{nameOf(config)}</h3>
+                        <Badge variant="neutral">{KINDS[config.channel].label}</Badge>
+                        {#if !config.enabled}
+                          <Badge variant="warning">Disabled</Badge>
                         {/if}
                       </div>
-                    {/if}
+                      <p class="text-sm text-secondary break-all">{summaryOf(config)}</p>
+                      {#if config.events && config.events.length > 0}
+                        <div class="flex flex-wrap gap-1 mt-2">
+                          {#each config.events.slice(0, 3) as event}
+                            <Badge variant="neutral">{event}</Badge>
+                          {/each}
+                          {#if config.events.length > 3}
+                            <Badge variant="neutral">+{config.events.length - 3} more</Badge>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={Zap}
+                      loading={testing === id}
+                      disabled={testing !== null && testing !== id}
+                      on:click={() => handleTest(config)}
+                    >
+                      Send test<span class="sr-only"> to {nameOf(config)}</span>
+                    </Button>
+                    <!-- Not while the channel's test runs: its outcome would show under the new settings. -->
+                    <Button variant="ghost" size="sm" disabled={testing === id} on:click={() => toggleEnabled(config)}>
+                      {config.enabled ? "Disable" : "Enable"}<span class="sr-only"> {nameOf(config)}</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      icon={Pencil}
+                      disabled={testing === id}
+                      on:click={() => openEdit(config)}
+                    >
+                      <span class="sr-only">Edit {nameOf(config)}</span>
+                    </Button>
+                    <Button variant="ghost" size="icon-sm" icon={Trash2} on:click={() => askDelete(config)}>
+                      <span class="sr-only">Delete {nameOf(config)}</span>
+                    </Button>
                   </div>
                 </div>
-                <div class="flex items-center gap-2">
-                  <button
-                    on:click={() => toggleEnabled(config)}
-                    class="p-2 rounded-lg hover:bg-slate-700 transition-colors"
-                    title={config.enabled ? "Disable" : "Enable"}
-                  >
-                    {#if config.enabled}
-                      <ToggleRight class="w-6 h-6 text-green-400" />
-                    {:else}
-                      <ToggleLeft class="w-6 h-6 text-slate-500" />
-                    {/if}
-                  </button>
-                  <button
-                    on:click={() => handleTest(config.id || "")}
-                    disabled={testing === config.id || !config.enabled}
-                    class="p-2 rounded-lg hover:bg-slate-700 transition-colors disabled:opacity-50"
-                    title="Send test notification"
-                  >
-                    {#if testing === config.id}
-                      <RefreshCw class="w-5 h-5 animate-spin text-blue-400" />
-                    {:else}
-                      <Zap class="w-5 h-5 text-yellow-400" />
-                    {/if}
-                  </button>
-                  <button
-                    on:click={() => openEditModal(config)}
-                    class="p-2 rounded-lg hover:bg-slate-700 transition-colors"
-                    title="Edit"
-                  >
-                    <Edit class="w-5 h-5 text-slate-400" />
-                  </button>
-                  {#if deleteConfirm === config.id}
-                    <div class="flex items-center gap-1 bg-red-500/20 rounded-lg px-2">
-                      <button
-                        on:click={() => handleDelete(config.id || "")}
-                        class="p-2 text-red-400 hover:text-red-300"
-                        title="Confirm delete"
-                      >
-                        <Check class="w-5 h-5" />
-                      </button>
-                      <button
-                        on:click={() => deleteConfirm = null}
-                        class="p-2 text-slate-400 hover:text-slate-300"
-                        title="Cancel"
-                      >
-                        <X class="w-5 h-5" />
-                      </button>
-                    </div>
-                  {:else}
-                    <button
-                      on:click={() => deleteConfirm = config.id || null}
-                      class="p-2 rounded-lg hover:bg-slate-700 transition-colors"
-                      title="Delete"
+                {#if result}
+                  <div class="mt-3" role={result.success ? "status" : "alert"}>
+                    <Alert
+                      variant={result.success ? "success" : "error"}
+                      title={result.success ? "" : "Test notification not sent"}
+                      dismissible
+                      on:dismiss={() => dismissResult(id)}
                     >
-                      <Trash2 class="w-5 h-5 text-red-400" />
-                    </button>
-                  {/if}
-                </div>
-              </div>
-            </div>
+                      <span class="break-words">{result.message}</span>
+                    </Alert>
+                  </div>
+                {/if}
+              </Card>
+            </li>
           {/each}
-        </div>
+        </ul>
       {/if}
     </div>
   {/if}
 
-  <!-- History View -->
   {#if activeView === "history"}
     <div class="space-y-4">
-      <!-- Filters -->
-      <div class="flex gap-3 flex-wrap">
-        <div class="flex items-center gap-2 bg-slate-800 rounded-lg p-1">
-          <Filter class="w-4 h-4 text-slate-400 ml-2" />
-          <select
-            bind:value={filterChannel}
-            class="bg-transparent text-sm py-1 pr-2 focus:outline-none"
-          >
-            <option value="all">All Channels</option>
-            <option value="email">Email</option>
-            <option value="telegram">Telegram</option>
-          </select>
-        </div>
-        <div class="flex bg-slate-800 rounded-lg p-1">
-          <button
-            on:click={() => filterStatus = "all"}
-            class="px-3 py-1 text-sm rounded {filterStatus === 'all' ? 'bg-slate-700' : ''}"
+      <div class="flex flex-wrap items-end gap-3">
+        <Select class="w-48" label="Channel" bind:value={filterChannel} options={channelOptions} />
+        <div class="flex gap-2" role="group" aria-label="Status">
+          <Button
+            variant={filterStatus === "all" ? "primary" : "secondary"}
+            size="sm"
+            pressed={filterStatus === "all"}
+            on:click={() => (filterStatus = "all")}
           >
             All
-          </button>
-          <button
-            on:click={() => filterStatus = "success"}
-            class="px-3 py-1 text-sm rounded {filterStatus === 'success' ? 'bg-green-600' : ''}"
+          </Button>
+          <Button
+            variant={filterStatus === "success" ? "primary" : "secondary"}
+            size="sm"
+            pressed={filterStatus === "success"}
+            on:click={() => (filterStatus = "success")}
           >
             Delivered
-          </button>
-          <button
-            on:click={() => filterStatus = "failed"}
-            class="px-3 py-1 text-sm rounded {filterStatus === 'failed' ? 'bg-red-600' : ''}"
+          </Button>
+          <Button
+            variant={filterStatus === "failed" ? "primary" : "secondary"}
+            size="sm"
+            pressed={filterStatus === "failed"}
+            on:click={() => (filterStatus = "failed")}
           >
             Failed
-          </button>
+          </Button>
         </div>
       </div>
 
-      <!-- Logs List -->
-      <div class="bg-slate-800 rounded-lg divide-y divide-slate-700">
-        {#if loading}
-          <div class="flex justify-center py-12">
-            <RefreshCw class="w-8 h-8 animate-spin text-blue-500" />
-          </div>
+      <Card>
+        {#if loading && logs.length === 0}
+          <p class="loading-text">Loading...</p>
         {:else if filteredLogs.length === 0}
-          <div class="p-8 text-center">
-            <Bell class="w-12 h-12 mx-auto mb-4 text-slate-600" />
-            <h3 class="text-lg font-medium mb-2">No notifications yet</h3>
-            <p class="text-slate-400 text-sm">
-              {#if logs.length > 0}
-                No notifications match your filters
-              {:else}
-                Notifications will appear here when sent
-              {/if}
-            </p>
-          </div>
+          <EmptyState
+            icon={Bell}
+            title="No notifications yet"
+            description={logs.length > 0
+              ? "No notifications match your filters"
+              : "Tests, alerts and notifications sent through the API appear here"}
+          />
         {:else}
-          {#each filteredLogs as log}
-            <div class="p-4 hover:bg-slate-750 transition-colors">
-              <button
-                class="w-full text-left"
-                on:click={() => expandedLog = expandedLog === log.id ? null : log.id}
-              >
-                <div class="flex items-start gap-3">
-                  <div class="p-2 rounded-lg {log.success ? 'bg-slate-700' : 'bg-red-500/20'}">
+          <ul class="divide-y divide-border" aria-label="Notifications sent">
+            {#each filteredLogs as log (log.id)}
+              {@const expanded = expandedLog === log.id}
+              <li class="py-3">
+                <button
+                  type="button"
+                  class="w-full text-left"
+                  aria-expanded={expanded}
+                  on:click={() => (expandedLog = expanded ? null : log.id)}
+                >
+                  <span class="flex items-start gap-3">
                     <svelte:component
-                      this={getIcon(log.event?.type || 'info')}
-                      class="w-5 h-5 {getColor(log.event?.type || 'info')}"
+                      this={iconOf(log.event.type)}
+                      class="w-5 h-5 mt-0.5 flex-shrink-0 {colorOf(log.event.type)}"
                     />
-                  </div>
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
-                      <p class="font-medium truncate">{log.event?.title || 'Notification'}</p>
-                      <span class="px-2 py-0.5 text-xs rounded bg-slate-700 uppercase flex-shrink-0">
-                        {log.channel}
+                    <span class="flex-1 min-w-0">
+                      <span class="flex flex-wrap items-center gap-2">
+                        <span class="font-medium">{log.event.title}</span>
+                        <Badge variant="neutral">{KINDS[log.channel]?.label ?? log.channel}</Badge>
+                        {#if log.channel_name}
+                          <span class="text-sm text-secondary">{log.channel_name}</span>
+                        {/if}
+                        {#if log.success}
+                          <Badge variant="success">Delivered</Badge>
+                        {:else}
+                          <Badge variant="error">Failed</Badge>
+                        {/if}
                       </span>
-                      {#if !log.success}
-                        <span class="px-2 py-0.5 text-xs rounded bg-red-500/20 text-red-400 flex-shrink-0">
-                          Failed
-                        </span>
-                      {/if}
-                    </div>
-                    <p class="text-sm text-slate-400 truncate mt-1">{log.event?.message || ''}</p>
-                  </div>
-                  <div class="text-right flex-shrink-0">
-                    <p class="text-sm text-slate-400">{formatDate(log.sent_at)}</p>
-                    {#if expandedLog === log.id}
-                      <ChevronUp class="w-4 h-4 text-slate-500 ml-auto mt-1" />
+                      <span class="block text-sm text-muted truncate mt-1">{log.event.message}</span>
+                    </span>
+                    <span class="text-sm text-muted flex-shrink-0">{formatDate(log.sent_at)}</span>
+                    {#if expanded}
+                      <ChevronUp class="w-4 h-4 mt-0.5 text-muted flex-shrink-0" />
                     {:else}
-                      <ChevronDown class="w-4 h-4 text-slate-500 ml-auto mt-1" />
+                      <ChevronDown class="w-4 h-4 mt-0.5 text-muted flex-shrink-0" />
                     {/if}
-                  </div>
-                </div>
-              </button>
-
-              {#if expandedLog === log.id}
-                <div class="mt-3 pt-3 border-t border-slate-700 text-sm">
-                  <div class="grid grid-cols-2 gap-4">
+                  </span>
+                </button>
+                {#if expanded}
+                  <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <p class="text-slate-500">Sent at</p>
-                      <p>{new Date(log.sent_at).toLocaleString()}</p>
+                      <dt class="text-muted">Sent at</dt>
+                      <dd>{new Date(log.sent_at).toLocaleString()}</dd>
                     </div>
                     <div>
-                      <p class="text-slate-500">Status</p>
-                      <p class="{log.success ? 'text-green-400' : 'text-red-400'}">
-                        {log.success ? 'Delivered' : 'Failed'}
-                      </p>
+                      <dt class="text-muted">Status</dt>
+                      <dd class={log.success ? "text-success" : "text-error"}>{log.success ? "Delivered" : "Failed"}</dd>
                     </div>
                     <div>
-                      <p class="text-slate-500">Type</p>
-                      <p class="capitalize">{log.event?.type || 'info'}</p>
+                      <dt class="text-muted">Type</dt>
+                      <dd class="capitalize">{log.event.type}</dd>
                     </div>
                     <div>
-                      <p class="text-slate-500">Channel</p>
-                      <p class="capitalize">{log.channel}</p>
+                      <dt class="text-muted">Channel</dt>
+                      <dd>{log.channel_name || KINDS[log.channel]?.label || log.channel}</dd>
                     </div>
-                  </div>
-                  {#if log.error}
-                    <div class="mt-3 p-3 bg-red-500/10 rounded-lg">
-                      <p class="text-slate-500 mb-1">Error</p>
-                      <p class="text-red-400 text-xs font-mono">{log.error}</p>
-                    </div>
-                  {/if}
-                </div>
-              {/if}
-            </div>
-          {/each}
+                    {#if log.error}
+                      <div class="col-span-2">
+                        <dt class="text-muted">Error</dt>
+                        <dd class="mono-xs text-error break-words">{log.error}</dd>
+                      </div>
+                    {/if}
+                  </dl>
+                {/if}
+              </li>
+            {/each}
+          </ul>
         {/if}
-      </div>
+      </Card>
     </div>
   {/if}
 </div>
 
-<!-- Channel Configuration Modal -->
-{#if showModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-    <div class="bg-slate-800 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
-      <div class="sticky top-0 bg-slate-800 p-4 border-b border-slate-700">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-semibold flex items-center gap-2">
-            <svelte:component this={getChannelIcon(formChannel)} class="w-5 h-5 text-blue-400" />
-            {modalMode === "create" ? "Add" : "Edit"} {formChannel === "email" ? "Email" : "Telegram"} Channel
-          </h3>
-          <button on:click={closeModal} class="p-2 hover:bg-slate-700 rounded-lg">
-            <X class="w-5 h-5" />
-          </button>
-        </div>
+<Modal
+  open={showModal}
+  title="{editing ? 'Edit' : 'Add'} {KINDS[formKind].label} channel"
+  size="lg"
+  closable={!saving}
+  on:close={closeModal}
+>
+  <div class="space-y-4">
+    <Input label="Channel name" bind:value={formName} placeholder="e.g. Admin alerts" />
+
+    {#if formKind === "email"}
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Input class="sm:col-span-2" label="SMTP host" bind:value={emailHost} placeholder="smtp.gmail.com" required />
+        <Input label="Port" type="number" bind:value={emailPort} placeholder="587" required />
       </div>
-
-      <div class="p-4 space-y-4">
-        <!-- Name -->
-        <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">Channel Name</label>
-          <input
-            type="text"
-            bind:value={formName}
-            placeholder="e.g., Admin Alerts"
-            class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-          />
+      <div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Input label="Username" bind:value={emailUser} placeholder="user@example.com" autocomplete="off" />
+          <Input label="Password" type="password" bind:value={emailPassword} autocomplete="new-password" />
         </div>
+        <p class="form-hint">Leave both empty for a mail server that takes mail without a login, such as a relay in your network.</p>
+      </div>
+      <Input label="From address" type="email" bind:value={emailFrom} placeholder="noreply@example.com" required />
+      <Input
+        label="To addresses"
+        bind:value={emailTo}
+        placeholder="admin@example.com, user@example.com"
+        hint="Separate several addresses with commas."
+        required
+      />
+      <div class="space-y-2">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" class="form-checkbox" bind:checked={emailTls} />
+          Use TLS/STARTTLS
+        </label>
+        <label class="flex items-center gap-2 {plainSmtp ? 'opacity-60' : 'cursor-pointer'}">
+          <input
+            type="checkbox"
+            class="form-checkbox"
+            bind:checked={emailVerifyTls}
+            disabled={plainSmtp}
+            aria-describedby="verify-tls-hint"
+          />
+          Verify the server's certificate
+        </label>
+        <p id="verify-tls-hint" class="form-hint">
+          Port 465 uses TLS from the start. Turn the certificate check off only for a mail server with a
+          self-signed certificate: without it, anyone on the network path can read the password.
+        </p>
+        {#if plainSmtp}
+          <Alert variant="warning">
+            Without TLS, the password and the messages cross the network unencrypted, and there is no
+            certificate to check.
+          </Alert>
+        {/if}
+      </div>
+    {:else if formKind === "telegram"}
+      <Input
+        label="Bot token"
+        type="password"
+        bind:value={telegramToken}
+        placeholder="123456:ABC-DEF..."
+        hint="Get it from @BotFather on Telegram."
+        autocomplete="off"
+        required
+      />
+      <Input
+        label="Chat ID"
+        bind:value={telegramChatId}
+        placeholder="-1001234567890"
+        hint="Your user ID or a group's chat ID."
+        required
+      />
+    {:else}
+      <Input
+        label={hookField.label}
+        bind:value={hookUrl}
+        placeholder={hookField.placeholder}
+        hint={hookField.hint}
+        autocomplete="off"
+        required
+      />
+      {#if formKind === "webhook"}
+        <Select
+          label="Method"
+          bind:value={hookMethod}
+          options={[{ value: "POST", label: "POST" }, { value: "PUT", label: "PUT" }]}
+        />
+      {/if}
+    {/if}
 
-        <!-- Email Config -->
-        {#if formChannel === "email"}
-          <div class="space-y-4 pt-2">
-            <div class="grid grid-cols-2 gap-4">
-              <div class="col-span-2 sm:col-span-1">
-                <label class="block text-sm font-medium text-slate-400 mb-1">SMTP Host</label>
-                <input
-                  type="text"
-                  bind:value={emailHost}
-                  placeholder="smtp.gmail.com"
-                  class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div class="col-span-2 sm:col-span-1">
-                <label class="block text-sm font-medium text-slate-400 mb-1">Port</label>
-                <input
-                  type="number"
-                  bind:value={emailPort}
-                  placeholder="587"
-                  class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-sm font-medium text-slate-400 mb-1">Username</label>
-                <input
-                  type="text"
-                  bind:value={emailUser}
-                  placeholder="user@example.com"
-                  class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-slate-400 mb-1">Password</label>
-                <input
-                  type="password"
-                  bind:value={emailPassword}
-                  placeholder="••••••••"
-                  class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-                />
-              </div>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-400 mb-1">From Address</label>
-              <input
-                type="email"
-                bind:value={emailFrom}
-                placeholder="noreply@example.com"
-                class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-400 mb-1">To Addresses (comma-separated)</label>
-              <input
-                type="text"
-                bind:value={emailTo}
-                placeholder="admin@example.com, user@example.com"
-                class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-              />
-            </div>
-            <label class="flex items-center gap-2 cursor-pointer">
+    {#if eventTypes.length > 0}
+      <fieldset>
+        <legend class="form-label">Notify on events</legend>
+        <p class="form-hint mb-2">
+          Not used yet: the pool and disk health alerts go to every enabled e-mail and Telegram channel, and
+          to no other kind.
+        </p>
+        <div class="card-nested grid grid-cols-1 gap-2 max-h-48 overflow-y-auto">
+          {#each eventTypes as event}
+            <label class="flex items-start gap-3 cursor-pointer">
               <input
                 type="checkbox"
-                bind:checked={emailTls}
-                class="w-4 h-4 rounded border-slate-600 text-blue-600 focus:ring-blue-500"
+                class="form-checkbox mt-1"
+                checked={formEvents.includes(event.id)}
+                on:change={() => toggleEvent(event.id)}
               />
-              <span class="text-sm">Use TLS/STARTTLS</span>
+              <span>
+                <span class="block text-sm font-medium">{event.name}</span>
+                <span class="block text-xs text-muted">{event.description}</span>
+              </span>
             </label>
-          </div>
-        {/if}
-
-        <!-- Telegram Config -->
-        {#if formChannel === "telegram"}
-          <div class="space-y-4 pt-2">
-            <div>
-              <label class="block text-sm font-medium text-slate-400 mb-1">Bot Token</label>
-              <input
-                type="text"
-                bind:value={telegramToken}
-                placeholder="123456:ABC-DEF..."
-                class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500 font-mono text-sm"
-              />
-              <p class="text-xs text-slate-500 mt-1">Get this from @BotFather on Telegram</p>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-400 mb-1">Chat ID</label>
-              <input
-                type="text"
-                bind:value={telegramChatId}
-                placeholder="-1001234567890"
-                class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500 font-mono text-sm"
-              />
-              <p class="text-xs text-slate-500 mt-1">Your user ID or group chat ID</p>
-            </div>
-          </div>
-        {/if}
-
-        <!-- Event Types -->
-        <div class="pt-2">
-          <label class="block text-sm font-medium text-slate-400 mb-2">Notify on Events</label>
-          <div class="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto bg-slate-700/50 rounded-lg p-3">
-            {#each eventTypes as event}
-              <label class="flex items-start gap-3 cursor-pointer p-2 rounded hover:bg-slate-700">
-                <input
-                  type="checkbox"
-                  checked={formEvents.includes(event.id)}
-                  on:change={() => toggleEvent(event.id)}
-                  class="w-4 h-4 mt-0.5 rounded border-slate-600 text-blue-600 focus:ring-blue-500"
-                />
-                <div>
-                  <p class="text-sm font-medium">{event.name}</p>
-                  <p class="text-xs text-slate-400">{event.description}</p>
-                </div>
-              </label>
-            {/each}
-          </div>
+          {/each}
         </div>
+      </fieldset>
+    {/if}
 
-        <!-- Enabled toggle -->
-        <label class="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg cursor-pointer">
-          <div>
-            <p class="font-medium">Enable Channel</p>
-            <p class="text-xs text-slate-400">Receive notifications through this channel</p>
-          </div>
-          <button
-            type="button"
-            on:click={() => formEnabled = !formEnabled}
-            class="relative"
-          >
-            {#if formEnabled}
-              <ToggleRight class="w-8 h-8 text-green-400" />
-            {:else}
-              <ToggleLeft class="w-8 h-8 text-slate-500" />
-            {/if}
-          </button>
-        </label>
-
-        <!-- Test Result -->
-        {#if testResult}
-          <div class="p-3 rounded-lg {testResult.success ? 'bg-green-500/20 border border-green-500' : 'bg-red-500/20 border border-red-500'}">
-            <p class="{testResult.success ? 'text-green-400' : 'text-red-400'} text-sm">
-              {testResult.message}
-            </p>
-          </div>
-        {/if}
-      </div>
-
-      <!-- Actions -->
-      <div class="sticky bottom-0 bg-slate-800 p-4 border-t border-slate-700 flex gap-3">
-        <button
-          on:click={closeModal}
-          class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          on:click={handleSave}
-          disabled={saving}
-          class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors flex items-center justify-center gap-2"
-        >
-          {#if saving}
-            <RefreshCw class="w-4 h-4 animate-spin" />
-          {/if}
-          {modalMode === "create" ? "Add Channel" : "Save Changes"}
-        </button>
-      </div>
+    <div>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" class="form-checkbox" bind:checked={formEnabled} />
+        Enable channel
+      </label>
+      <p class="form-hint">A disabled channel receives no notifications; Send test still reaches it.</p>
     </div>
+
+    {#if saveError}
+      <div role="alert">
+        <Alert variant="error" title="The channel was not saved">{saveError}</Alert>
+      </div>
+    {/if}
   </div>
-{/if}
+
+  <svelte:fragment slot="footer">
+    <Button variant="secondary" class="flex-1" disabled={saving} on:click={closeModal}>Cancel</Button>
+    <Button class="flex-1" loading={saving} disabled={!formComplete} on:click={handleSave}>
+      {editing ? "Save Changes" : "Add Channel"}
+    </Button>
+  </svelte:fragment>
+</Modal>
+
+<Modal
+  open={deleting !== null}
+  title="Delete the channel?"
+  size="sm"
+  danger
+  closable={!deleteBusy}
+  on:close={closeDelete}
+>
+  {#if deleting}
+    <p>{nameOf(deleting)} stops receiving notifications. Its entries in the history stay.</p>
+  {/if}
+  {#if deleteError}
+    <div role="alert" class="mt-4">
+      <Alert variant="error" title="The channel was not deleted">{deleteError}</Alert>
+    </div>
+  {/if}
+
+  <svelte:fragment slot="footer">
+    <Button variant="secondary" class="flex-1" disabled={deleteBusy} on:click={closeDelete}>Cancel</Button>
+    <Button variant="danger" class="flex-1" loading={deleteBusy} on:click={confirmDelete}>Delete</Button>
+  </svelte:fragment>
+</Modal>

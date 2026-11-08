@@ -5,7 +5,7 @@ area: testing
 decided-by: agent
 ---
 
-# ADR-0247: The stand-in's test administrator is created through the setup page, by a first Playwright run
+# ADR-0261: The stand-in's test administrator is created through the setup page, by a first Playwright run
 
 ## Context
 

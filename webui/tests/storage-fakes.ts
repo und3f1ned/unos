@@ -79,6 +79,38 @@ export const FAKE_POOLS = [
   },
 ];
 
+/** A pool as GET /storage/pools reports it. */
+export type FakePool = (typeof FAKE_POOLS)[number];
+
+/** A pool after POST /pools/<name>/mount, as the server reports it (the profile only once mounted). */
+function mountedPool(pool: FakePool): FakePool {
+  return {
+    ...pool,
+    mountpoint: `/mnt/pools/${pool.name}`,
+    raid_level: pool.raid_level ?? 'single',
+    mounted: true,
+    persistent: true,
+    health: pool.missing_devices > 0 ? 'degraded' : 'healthy',
+    read_only: false,
+    forced_read_only: false,
+  };
+}
+
+/** A pool after POST /pools/<name>/unmount, as the server reports it. */
+function unmountedPool(pool: FakePool): FakePool {
+  return {
+    ...pool,
+    mountpoint: null,
+    raid_level: null,
+    mounted: false,
+    persistent: false,
+    health: 'unmounted',
+    device_errors: 0,
+    read_only: false,
+    forced_read_only: false,
+  };
+}
+
 export interface RecordedWrite {
   method: string;
   path: string;
@@ -97,6 +129,13 @@ export interface FakeStorageOptions {
   disks?: () => readonly DiskIdentity[];
   /** Answer POST /pools with this instead of creating the pool. */
   createPoolResponse?: { status: number; json: unknown };
+  /**
+   * The pools GET /pools answers (default FAKE_POOLS, which nothing changes). A mount or an
+   * unmount changes its pool in this list as the server does.
+   */
+  pools?: FakePool[];
+  /** Called after a mount or an unmount of a pool of `pools` was answered. */
+  onPoolChange?: (name: string, change: 'mount' | 'unmount') => void;
 }
 
 /** The 409 the supervisor sends when a path no longer holds the selected disk (pools.py). */
@@ -116,6 +155,7 @@ function changedDiskDetail(selected: DiskIdentity, now: DiskIdentity | undefined
 /** Serve FAKE_DISKS / FAKE_POOLS; returns the list of write requests made. */
 export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {}): Promise<RecordedWrite[]> {
   const disks = options.disks ?? (() => FAKE_DISKS);
+  const pools = options.pools ?? FAKE_POOLS;
   const writes: RecordedWrite[] = [];
   await page.route(
     (url) => url.pathname.startsWith('/api/v1/storage/'),
@@ -125,7 +165,7 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
       const path = new URL(request.url()).pathname.slice('/api/v1/storage'.length);
 
       if (method === 'GET' && path === '/disks') return route.fulfill({ json: disks() });
-      if (method === 'GET' && path === '/pools') return route.fulfill({ json: FAKE_POOLS });
+      if (method === 'GET' && path === '/pools') return route.fulfill({ json: pools });
       const scrub = path.match(/^\/pools\/([^/]+)\/scrub$/);
       if (method === 'GET' && scrub) {
         return route.fulfill({
@@ -153,8 +193,14 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         const body = request.postDataJSON();
         writes.push({ method, path, body });
         const action = path.match(/^\/pools\/([^/]+)\/(mount|unmount)$/);
-        const pool = action ? FAKE_POOLS.find((p) => p.name === decodeURIComponent(action[1])) : undefined;
-        return route.fulfill({ json: pool ?? {} });
+        const index = action ? pools.findIndex((p) => p.name === decodeURIComponent(action[1])) : -1;
+        if (!action || index < 0) return route.fulfill({ json: {} });
+        if (options.pools) {
+          const change = action[2] as 'mount' | 'unmount';
+          options.pools[index] = change === 'mount' ? mountedPool(pools[index]) : unmountedPool(pools[index]);
+          options.onPoolChange?.(options.pools[index].name, change);
+        }
+        return route.fulfill({ json: pools[index] });
       }
       return route.abort();
     },

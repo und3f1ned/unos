@@ -5,7 +5,7 @@ area: auth
 decided-by: agent
 ---
 
-# ADR-0249: A regular user's login history starts with their account
+# ADR-0263: A regular user's login history starts with their account
 
 ## Context
 

@@ -5,7 +5,9 @@ startup sweep, asserting the smb.conf that UNOS writes.
 Host commands go to the FakeSambaHost (its fstab has the pool 'data'). It does
 not emulate findmnt or btrfs, so pools._mounted_pool_target and
 disks.host_mounts are patched; os.fchown is recorded, so that the test runs as
-a regular user.
+a regular user. The tests of a pool change (ADR-0248) run the real pool code
+as well: PoolsAndSambaHost sends the pool commands to the FakeHost of
+test_pool_persistence.py.
 """
 from __future__ import annotations
 
@@ -15,18 +17,23 @@ import stat
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import database
+from src import host as host_module
 from src.config import get_settings
+from src.main import app
 from src.security import validators
-from src.shares import service, smb
+from src.shares import service, smb, smbconf
 from src.storage import disks, pools
+from src.storage import router as storage_router
 from src.storage.disks import HostMount
 
-from .samba_fake import DATA_UUID
-from .test_smb_accounts import World
+from .samba_fake import DATA_UUID, FakeSambaHost
+from .test_pool_persistence import BASE_FSTAB, install_fake_host, wait_for_app_starts
+from .test_smb_accounts import World, _wait_for_lock_waiter
 
 API = "/api/v1"
 TEST_PW = "Test-pass-2026"
@@ -51,9 +58,11 @@ DEVICE_SMB_CONF = """[global]
 ALL_SAMBA_TOOLS = {"getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus",
                    "smbcontrol", "testparm"}
 
-# The real functions of shares/service.py, recorded at import (before any fixture replaces them).
+# The real functions, recorded at import (before any fixture replaces them).
 REAL_APPLY = service.apply_smb_config
 REAL_DELETE_ACCESS = service.delete_access_of_user
+REAL_APPLY_AFTER_POOL_CHANGE = service.apply_after_pool_change
+REAL_HOST_MOUNTS = disks.host_mounts
 
 
 def section(text: str, name: str) -> list[str]:
@@ -403,3 +412,250 @@ def test_a_regular_users_answers_name_no_other_share_and_no_host_output(cycle):
     # The administrator still sees what is pending.
     status = c.client.get(f"{API}/shares/smb-status", headers=admin).json()
     assert any("alice_private" in problem for problem in status["problems"])
+
+
+# --- smb.conf replaced after UNOS wrote it: the status (ADR-0249) ----------------------------------
+
+REPLACED = (
+    "smb.conf was replaced or removed after UNOS wrote it; it is written again at the next change or "
+    "restart, and SMB cannot be turned on until then"
+)
+
+
+def test_the_status_names_an_smb_conf_replaced_after_unos_wrote_it(cycle, monkeypatch):
+    """ADR-0249: after UNOS wrote smb.conf, the device's old file is copied back by hand, and then
+    removed. GET /shares/smb-status names it as a problem until the next start writes UNOS's file
+    again; before the first apply there is no such problem."""
+    c = cycle
+    monkeypatch.setattr(service, "_last_apply", service.LastApply())
+    monkeypatch.setattr(service, "_last_import_problem", None)
+    admin = c.world.headers("admin")
+
+    def problems() -> list[str]:
+        response = c.client.get(f"{API}/shares/smb-status", headers=admin)
+        assert response.status_code == 200, response.text
+        return response.json()["problems"]
+
+    assert not c.conf.read_text().startswith(smbconf.HEADER)
+    assert REPLACED not in problems()  # UNOS has not written it yet: the import runs first
+    startup()  # the import and the first apply: UNOS's smb.conf is installed
+    assert REPLACED not in problems()
+
+    c.conf.write_text(DEVICE_SMB_CONF.format(base=c.base))
+    assert REPLACED in problems()
+    c.conf.unlink()
+    assert REPLACED in problems()
+
+    # As the problem says: the next start writes UNOS's smb.conf again.
+    startup()
+    assert c.conf.read_text().startswith(smbconf.HEADER)
+    assert REPLACED not in problems()
+
+
+# --- a pool change applies smb.conf again (ADR-0248) -------------------------------------------------
+
+UNMANAGED = "Share path must be on a storage pool that UNOS manages: 'data' is not one"
+
+
+class PoolsAndSambaHost:
+    """One host for the real pool and SMB code (ADR-0189): Samba's commands go to the FakeSambaHost
+    of the cycle, every other one to a FakeHost of test_pool_persistence.py, which keeps the fstab,
+    the mount table and the btrfs filesystems that the storage endpoints change."""
+
+    SAMBA = frozenset({"getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus",
+                       "smbcontrol", "testparm"})
+    SAMBA_ARGVS = (["mkdir", "-p", "-m", "0755", smb.CACHE_DIRECTORY], ["systemctl", "reload", "smbd"],
+                   ["sync", "/etc"])
+
+    def __init__(self, samba: FakeSambaHost, pool_host) -> None:
+        self.samba, self.pool_host = samba, pool_host
+
+    def run(self, cmd, **kwargs):
+        argv = list(cmd)
+        if argv[0] in self.SAMBA or argv in self.SAMBA_ARGVS or FakeSambaHost._is_tool_check(argv):
+            return self.samba.run(cmd, **kwargs)
+        return self.pool_host.run(cmd, **kwargs)
+
+
+@pytest.fixture
+def pool_cycle(cycle, monkeypatch):
+    """The cycle with the real pool code: the managed pool 'data' is mounted at the cycle's pools
+    base on a FakeHost, whose fstab and mount table the storage endpoints change. alice has an
+    active SMB account, write access to the share docs of the pool, and a session with a tree
+    connect to it."""
+    pool_host = install_fake_host(monkeypatch)
+    # install_fake_host only counts the applies after a pool change, and puts the pools at
+    # /mnt/pools: here the apply runs, and the cycle's folders are in tmp_path.
+    monkeypatch.setattr(service, "apply_after_pool_change", REAL_APPLY_AFTER_POOL_CHANGE)
+    for settings in {id(s): s for s in (get_settings(), smb.settings, validators.settings, pools.settings)}.values():
+        monkeypatch.setattr(settings, "pools_base_path", str(cycle.base))
+    monkeypatch.setattr(disks, "host_mounts", REAL_HOST_MOUNTS)
+    target = pools.pool_mountpoint("data")
+    pool_host.add_disk("sda", model="WDC WD40EFRX", serial="WD-1")
+    pool_host.add_btrfs("data", DATA_UUID, ["/dev/sda"])
+    pool_host.dirs.update({str(cycle.base), target})
+    pool_host.files["/etc/fstab"] = f"{BASE_FSTAB}{pools.fstab_marker('data')}\n{pools.fstab_entry('data', DATA_UUID)}\n"
+    pool_host.mount_pool("data", target=target)
+    monkeypatch.setattr(host_module, "run_on_host", PoolsAndSambaHost(cycle.fake, pool_host).run)
+    monkeypatch.setattr(service, "_last_apply", service.LastApply())
+    monkeypatch.setattr(service, "_last_import_problem", None)
+    monkeypatch.setattr(service, "_last_reconcile", service.LastReconcile())
+    storage_router.limiter.reset()
+
+    startup()
+    world = cycle.world
+    admin = world.headers("admin")
+    world.make_active("alice", 70005, "Alice-pass-2026")
+    body = {"name": "docs", "path": f"{cycle.base}/data/docs",
+            "access": [{"user_id": world.ids["alice"], "username": "alice", "level": "write"}]}
+    created = cycle.client.post(f"{API}/shares/smb", json=body, headers=admin)
+    assert created.status_code == 200, created.text
+    cycle.fake.add_session("alice", ["IPC$", "docs"])
+    try:
+        yield SimpleNamespace(**vars(cycle), pool_host=pool_host, admin=admin)
+    finally:
+        wait_for_app_starts()  # a mount starts the pool's apps in the background
+        storage_router.limiter.reset()
+
+
+def docs_info(c) -> dict:
+    """The share docs as GET /shares/smb lists it (the Shares page)."""
+    listed = c.client.get(f"{API}/shares/smb", headers=c.admin)
+    assert listed.status_code == 200, listed.text
+    return next(share for share in listed.json() if share["name"] == "docs")
+
+
+def served_state(info: dict) -> tuple:
+    return (info["served"], info["path_problem"], info["pool_mounted"], info["available"],
+            [entry["effective"] for entry in info["access"]])
+
+
+def status_problems(c) -> list[str]:
+    """The problems of GET /shares/smb-status (the alert of the Shares page)."""
+    response = c.client.get(f"{API}/shares/smb-status", headers=c.admin)
+    assert response.status_code == 200, response.text
+    return response.json()["problems"]
+
+
+def test_unmounting_a_pool_stops_serving_its_shares_and_mounting_serves_them_again(pool_cycle):
+    """ADR-0248: the managed pools decide which shares are served, so a pool change applies
+    smb.conf again: the shares of an unmounted pool leave smb.conf at once, and their open
+    connections are closed after the reload; mounting the pool serves them again."""
+    c, fake = pool_cycle, pool_cycle.fake
+    served = section(c.conf.read_text(), "docs")
+    assert "   valid users = alice" in served and "   available = yes" in served
+    assert served_state(docs_info(c)) == (True, None, True, True, [True])
+    problems = status_problems(c)  # the imported DATA, the pool's root, is not served either
+    assert not [problem for problem in problems if "docs" in problem]
+
+    mark = len(fake.calls)
+    unmounted = c.client.post(f"{API}/storage/pools/data/unmount", headers=c.admin)
+    assert unmounted.status_code == 200, unmounted.text
+    assert unmounted.json()["mounted"] is False
+    text = c.conf.read_text()
+    assert text.startswith(smbconf.HEADER) and "[docs]" not in text
+    calls = since(fake, mark)
+    assert calls.index(["smbcontrol", "all", "reload-config"]) < calls.index(
+        ["smbcontrol", "smbd", "close-share", "docs"])
+    assert [session["shares"] for session in fake.sessions] == [["IPC$"]]
+    assert served_state(docs_info(c)) == (False, UNMANAGED, False, False, [False])
+    assert status_problems(c) == [*problems, f"Share docs is not served: {UNMANAGED}"]
+
+    mark = len(fake.calls)
+    mounted = c.client.post(f"{API}/storage/pools/data/mount", headers=c.admin)
+    assert mounted.status_code == 200, mounted.text
+    assert mounted.json()["mounted"] is True
+    assert section(c.conf.read_text(), "docs") == served
+    calls = since(fake, mark)
+    assert ["smbcontrol", "all", "reload-config"] in calls
+    assert not [argv for argv in calls if argv[:3] == ["smbcontrol", "smbd", "close-share"]]
+    assert served_state(docs_info(c)) == (True, None, True, True, [True])
+    assert status_problems(c) == problems
+
+
+def test_forgetting_a_pool_stops_serving_its_shares(pool_cycle):
+    """ADR-0248: Remove Pool (DELETE /storage/pools/data) forgets the pool as Unmount does; the
+    share keeps its folder and access, and is served again once the pool is mounted again."""
+    c, fake = pool_cycle, pool_cycle.fake
+    mark = len(fake.calls)
+    response = c.client.delete(f"{API}/storage/pools/data", headers=c.admin)
+    assert (response.status_code, response.json()) == (200, {"status": "deleted"})
+    assert "[docs]" not in c.conf.read_text()
+    assert ["smbcontrol", "smbd", "close-share", "docs"] in since(fake, mark)
+    assert served_state(docs_info(c)) == (False, UNMANAGED, False, False, [False])
+
+    assert c.client.post(f"{API}/storage/pools/data/mount", headers=c.admin).status_code == 200
+    assert "   valid users = alice" in section(c.conf.read_text(), "docs")
+    assert served_state(docs_info(c)) == (True, None, True, True, [True])
+
+
+def test_a_pool_change_that_changes_no_share_writes_nothing(pool_cycle):
+    """ADR-0082: an unmount refused as busy (an SMB client keeps a share folder open) and the
+    mount of a mounted pool leave smb.conf as it is; testparm does not even run."""
+    c, fake = pool_cycle, pool_cycle.fake
+    before = (c.conf.read_bytes(), c.conf.stat().st_mtime_ns)
+    c.pool_host.busy.add(pools.pool_mountpoint("data"))
+    mark = len(fake.calls)
+
+    refused = c.client.post(f"{API}/storage/pools/data/unmount", headers=c.admin)
+    assert refused.status_code == 409 and "busy" in refused.json()["detail"]
+    assert c.client.post(f"{API}/storage/pools/data/mount", headers=c.admin).status_code == 200
+
+    assert (c.conf.read_bytes(), c.conf.stat().st_mtime_ns) == before
+    assert [argv for argv in since(fake, mark) if argv[0] in ("testparm", "smbcontrol")] == []
+    assert served_state(docs_info(c)) == (True, None, True, True, [True])
+
+
+def test_an_apply_that_fails_after_an_unmount_is_shown_in_the_status(pool_cycle):
+    """ADR-0248: the apply after the unmount fails (testparm refuses the file). The unmount is done
+    and answered as done; smb.conf keeps the section of docs, whose folder is not there (the empty
+    mountpoint is write-protected), the status says why, and the next start writes the file."""
+    c, fake = pool_cycle, pool_cycle.fake
+    fake.testparm_result = (1, "Error loading services.")
+
+    response = c.client.post(f"{API}/storage/pools/data/unmount", headers=c.admin)
+    assert response.status_code == 200, response.text
+    assert response.json()["mounted"] is False
+    assert "[docs]" in c.conf.read_text()
+    problems = c.client.get(f"{API}/shares/smb-status", headers=c.admin).json()["problems"]
+    assert "smb.conf was not updated: testparm rejected the new smb.conf: Error loading services." in problems
+    assert docs_info(c)["served"] is False
+
+    fake.testparm_result = (0, "")
+    startup()
+    assert "[docs]" not in c.conf.read_text()
+    problems = c.client.get(f"{API}/shares/smb-status", headers=c.admin).json()["problems"]
+    assert not [problem for problem in problems if problem.startswith("smb.conf was not updated")]
+
+
+async def test_the_apply_after_a_pool_change_waits_for_smb_lock(pool_cycle, monkeypatch):
+    """ADR-0248, ADR-0080: the apply after a pool change is a change of SMB state. While another one
+    (a share change, an account flow, a restore, the startup reconcile) holds smb_lock, the unmount
+    is answered only after it: smb.conf is not rendered, checked or installed meanwhile, and then
+    the apply runs with the lock held. Without the lock, it could render the shares before a share
+    change commits and install that text over the share change's own."""
+    c, fake = pool_cycle, pool_cycle.fake
+    lock = service.smb_lock()  # the lock of this test's event loop, in which the request runs too
+    applies: list[bool] = []
+
+    async def apply(db):
+        applies.append(lock.locked())
+        return await REAL_APPLY(db)
+
+    monkeypatch.setattr(service, "apply_smb_config", apply)
+    before, mark = c.conf.read_bytes(), len(fake.calls)
+    await lock.acquire()  # dies with this test's event loop if the test fails
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://unos") as client:
+        request = asyncio.create_task(client.post(f"{API}/storage/pools/data/unmount", headers=c.admin))
+        try:
+            await _wait_for_lock_waiter()
+            held = (list(applies), c.conf.read_bytes() == before, since(fake, mark), request.done())
+        finally:
+            lock.release()
+        response = await asyncio.wait_for(request, timeout=30)
+
+    assert held == ([], True, [], False), "the apply after the unmount ran while smb_lock was held"
+    assert response.status_code == 200, response.text
+    assert response.json()["mounted"] is False
+    assert applies == [True]
+    assert "[docs]" not in c.conf.read_text()

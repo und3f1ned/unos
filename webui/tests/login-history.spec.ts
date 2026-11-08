@@ -5,7 +5,7 @@ import { createAccount, deleteAccount, type Account } from './accounts';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
 // A user sees the recent sign-ins of their account under System > Security > Login History
-// (feature auth.login-history, ADR-0048, ADR-0248), against the real supervisor: no route
+// (feature auth.login-history, ADR-0048, ADR-0262), against the real supervisor: no route
 // fakes. A regular account is created for this file through the API and deleted afterwards.
 // The browser runs in a time zone far from UTC, where a time read without its offset is hours
 // off. The browser runs on the machine of this test process, so the list shows the address

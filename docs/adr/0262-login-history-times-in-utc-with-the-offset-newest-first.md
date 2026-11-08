@@ -5,7 +5,7 @@ area: auth
 decided-by: agent
 ---
 
-# ADR-0248: The login history answers its times in UTC with the offset, newest first also within a second
+# ADR-0262: The login history answers its times in UTC with the offset, newest first also within a second
 
 ## Context
 

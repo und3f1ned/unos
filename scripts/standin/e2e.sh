@@ -18,7 +18,7 @@
 # 3. Creates the administrator the specs sign in as (E2E_ADMIN of
 #    webui/tests/fixtures.ts) as the owner creates theirs: on the new stand-in,
 #    which has no account yet, a first Playwright run with E2E_FIRST_RUN=1 goes
-#    through the /setup page (webui/tests/first-run.spec.ts, ADR-0247). The run
+#    through the /setup page (webui/tests/first-run.spec.ts, ADR-0261). The run
 #    of the specs ignores that file: when the arguments name only it, its run
 #    here is the whole run, and step 4 is left out.
 # 4. Runs Playwright in webui/ with BASE_URL and HTTP_URL on localhost,
@@ -226,7 +226,7 @@ done
 
 # The fresh data directory has no account yet. The test administrator is
 # created as the owner creates theirs after installing: through the /setup page
-# (E2E_FIRST_RUN=1 runs webui/tests/first-run.spec.ts alone, ADR-0247).
+# (E2E_FIRST_RUN=1 runs webui/tests/first-run.spec.ts alone, ADR-0261).
 if ! curl -fsk -m 10 "$base_url/api/v1/auth/status" | grep -q '"setup_required": *true'; then
   die "the stand-in has an account already: its data directory is not fresh"
 fi

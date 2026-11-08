@@ -3,7 +3,7 @@ import { test as base, expect, type Page } from '@playwright/test';
 /**
  * The administrator the specs sign in as. scripts/standin/e2e.sh creates it on
  * the stand-in's fresh data directory through the /setup page, with a run of
- * tests/first-run.spec.ts before the specs (ADR-0247); the test stack
+ * tests/first-run.spec.ts before the specs (ADR-0261); the test stack
  * (deploy/docker-compose.test.yml) and scripts/test-cycle.sh create it through
  * the first-run setup API. It exists only on those local targets (ADR-0215).
  * supervisor/tests/test_standin.py checks that first-run.spec.ts creates this

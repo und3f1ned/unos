@@ -129,7 +129,7 @@
 	}
 
 	async function handleUninstall(app: InstalledApp) {
-		if (!confirm(`Uninstall ${app.name}? This will remove the container but keep data volumes.`))
+		if (!confirm(`Uninstall ${app.name}? This removes its container and keeps its data folders.`))
 			return;
 		try {
 			await uninstallApp(app.container_id);

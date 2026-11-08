@@ -936,7 +936,7 @@
           {#if loginHistory.length === 0}
             <p class="text-sm text-slate-400 text-center py-4">No login history found</p>
           {:else}
-            <!-- Newest first; the times are the browser's local time (ADR-0248). -->
+            <!-- Newest first; the times are the browser's local time (ADR-0262). -->
             <ul class="space-y-2 max-h-80 overflow-y-auto" aria-label="Login history">
               {#each loginHistory as attempt (attempt.id)}
                 <li class="flex items-center gap-3 p-3 bg-surface-overlay rounded-lg">

@@ -20,7 +20,7 @@
   scripts/standin/e2e.sh serves the stand-in. Before the specs, e2e.sh creates
   the administrator they sign in as (E2E_ADMIN of webui/tests/fixtures.ts)
   through the /setup page: a run of webui/tests/first-run.spec.ts alone, with
-  E2E_FIRST_RUN=1, which is never retried (ADR-0247). A copy of e2e.sh whose
+  E2E_FIRST_RUN=1, which is never retried (ADR-0261). A copy of e2e.sh whose
   stand-in, curl and Playwright are fakes shows the order of the two runs.
 * The specs skip only on the conditions listed in SKIP_CONDITIONS, never on
   the version of the supervisor they run against (ADR-0207), and every skip
@@ -817,7 +817,7 @@ class TestSpecsAndRunner:
             r"^export const E2E_ADMIN = \{ username: '([^'\\]+)', password: '([^'\\]+)' \} as const;$", fixtures, re.M
         )
         assert admin, "webui/tests/fixtures.ts: no E2E_ADMIN"
-        # Through the form of /setup, as the owner does after installing (ADR-0247).
+        # Through the form of /setup, as the owner does after installing (ADR-0261).
         first_run = (SPECS / "first-run.spec.ts").read_text(encoding="utf-8")
         assert re.search(r"^import \{ test, expect, E2E_ADMIN \} from './fixtures';$", first_run, re.M)
         for label, value in (("'Username'", "username"), ("'Password', { exact: true }", "password"),

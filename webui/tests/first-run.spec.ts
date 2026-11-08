@@ -3,7 +3,7 @@ import { test, expect, E2E_ADMIN } from './fixtures';
 // The first-run setup of a new installation (feature auth.first-run-setup, ADR-0029), against
 // the real supervisor. scripts/standin/e2e.sh starts the stand-in from a new data directory,
 // without any account, and runs this file alone with E2E_FIRST_RUN=1 (the project first-run of
-// playwright.config.ts, never retried) before it runs the specs (ADR-0247). It creates the
+// playwright.config.ts, never retried) before it runs the specs (ADR-0261). It creates the
 // administrator that they sign in as, E2E_ADMIN, through the /setup page, as the owner does
 // after installing. Without E2E_FIRST_RUN no project runs this file: the compose test stack
 // creates that account through the API.
