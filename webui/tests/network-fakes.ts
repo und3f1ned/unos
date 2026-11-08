@@ -7,6 +7,7 @@ import type { Page } from '@playwright/test';
 // unknown requests are aborted, and nothing reaches the supervisor. The fake
 // has no clock: a disable waits to be kept until the spec calls revert() or
 // revertFails(), which do what the host's timer does (ADR-0244).
+// fakeLiveTraffic() stands in for the stats stream with the live traffic of the fake interfaces.
 
 // The texts and values of supervisor/src/network/links.py, word for word
 // (supervisor/tests/test_network_scripts.py checks them).
@@ -54,7 +55,14 @@ export const FAKE_ROUTES = [
   { dst: '2001:db8:1::/64', dev: 'eth0', protocol: 'ra', metric: 100, flags: [], pref: 'medium' },
   { dst: 'default', gateway: 'fe80::1', dev: 'eth0', protocol: 'ra', metric: 100, flags: [], pref: 'medium' },
 ];
-export const FAKE_CONNECTIONS = [
+export interface FakeConnection {
+  protocol: string;
+  state: string;
+  local: string;
+  remote: string;
+}
+
+export const FAKE_CONNECTIONS: readonly FakeConnection[] = [
   { protocol: 'tcp', state: 'ESTAB', local: '192.168.1.10:443', remote: '192.168.1.20:51515' },
   { protocol: 'udp', state: 'UNCONN', local: '0.0.0.0:137', remote: '0.0.0.0:*' },
 ];
@@ -78,6 +86,8 @@ export interface FakeNetworkOptions {
    * reads the object at each request: a spec may change it while the page runs.
    */
   failures?: Record<string, FakeFailure>;
+  /** The host's sockets, in place of FAKE_CONNECTIONS. */
+  connections?: readonly FakeConnection[];
 }
 
 export interface FakeNetwork {
@@ -136,7 +146,7 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
         if (path === '/dns') return answer({ json: FAKE_DNS });
         if (path === '/gateway') return answer({ json: FAKE_GATEWAY });
         if (path === '/routes') return answer({ json: { routes: FAKE_ROUTES } });
-        if (path === '/connections') return answer({ json: { connections: FAKE_CONNECTIONS } });
+        if (path === '/connections') return answer({ json: { connections: options.connections ?? FAKE_CONNECTIONS } });
         return route.abort();
       }
 
@@ -185,4 +195,37 @@ export async function fakeNetworkApi(page: Page, options: FakeNetworkOptions = {
       pending.set(name, seconds);
     },
   };
+}
+
+/** An interface's traffic as the stats stream reports it: bytes since boot, and bytes per second. */
+export interface FakeTraffic {
+  bytes_recv: number;
+  bytes_sent: number;
+  bytes_recv_rate: number;
+  bytes_sent_rate: number;
+}
+
+/**
+ * Stand in for the stats stream /ws/v1/events (supervisor/src/websocket/events.py) with the
+ * traffic of the fake interfaces: the stand-in's own stream reports the interfaces of this
+ * machine, which the fake host does not have. The page's first message authenticates the
+ * socket; the fake answers auth_ok and one stats message whose network.interfaces carry
+ * ``traffic`` by the name of the interface.
+ */
+export async function fakeLiveTraffic(page: Page, traffic: Record<string, FakeTraffic>): Promise<void> {
+  await page.routeWebSocket('**/ws/v1/events', (ws) => {
+    let authenticated = false;
+    ws.onMessage((message) => {
+      if (authenticated || JSON.parse(String(message)).type !== 'auth') return;
+      authenticated = true;
+      ws.send(JSON.stringify({ type: 'auth_ok' }));
+      const interfaces = Object.entries(traffic).map(([name, counts]) => {
+        const iface = FAKE_INTERFACES.find((i) => i.name === name);
+        if (!iface) throw new Error(`the fake host has no ${name}`);
+        const ipv4 = iface.ip_addresses.find((address) => address.includes('.'))?.split('/')[0] ?? null;
+        return { name, ipv4, speed: iface.speed ?? 0, is_up: iface.enabled, ...counts };
+      });
+      ws.send(JSON.stringify({ type: 'stats', data: { network: { interfaces } } }));
+    });
+  });
 }

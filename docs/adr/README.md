@@ -321,6 +321,7 @@ and this index, and `make check-fast` runs it.
 | [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
 | [0287](0287-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
 | [0291](0291-the-app-store-translates-its-own-texts-and-not-the-app-catalog.md) | The App Store gives each category one label and shows the app catalog's texts as the server answers them | proposed | 2026-11-08 |
+| [0295](0295-the-network-tab-keeps-the-values-that-ip-and-ss-print-in-its-tables-as-they-come.md) | The Network tab keeps the values that ip and ss print in its tables as they come in every language | accepted | 2026-11-08 |
 
 ## Deploy
 
