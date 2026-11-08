@@ -441,19 +441,25 @@ test.describe('Installed apps in the group unos-smb', () => {
   });
 });
 
+// A pool whose free space is no whole number of GB: the install form writes a pool's sizes in the
+// number format of the page's language, 1.5 GB in English and with a decimal comma in Russian.
+const SIZED_POOL = { name: 'e2e_data', path: '/mnt/pools/e2e_data', free_bytes: 1.5 * 2 ** 30, total_bytes: 2 ** 35 };
+
 // The source of an app's image and its category have one label each (ADR-0289): a linuxserver.io
 // image is LinuxServer on its card and LinuxServer.io in the details, and a category has the label
 // of the category list on the cards and in the details. The catalog is the stand-in's own; the
 // installed list and the pools are answered here (the stand-in has no Docker).
 test.describe('App details', () => {
-  test('name the source of the image and the category of the app', async ({ authenticatedPage: page }) => {
+  test('name the source of the image and the category of the app, and the sizes of a pool', async ({
+    authenticatedPage: page,
+  }) => {
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/installed',
       (route: Route) => route.fulfill({ json: [] }),
     );
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/pools',
-      (route: Route) => route.fulfill({ json: [] }),
+      (route: Route) => route.fulfill({ json: [SIZED_POOL] }),
     );
     await page.goto('/apps');
 
@@ -468,6 +474,7 @@ test.describe('App details', () => {
     await expect(dialog.getByText('LinuxServer.io', { exact: true })).toBeVisible();
     await expect(dialog.getByText('Community', { exact: true })).toHaveCount(0);
     await expect(dialog.getByText('📥 Downloads', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Storage pool' })).toHaveText('e2e_data — 1.5 GB free of 32 GB');
   });
 });
 
@@ -478,7 +485,7 @@ test.describe('App details', () => {
 // here (the stand-in has no Docker and no mounted pool), and nothing is started, stopped,
 // uninstalled or installed; the catalog is the stand-in's own.
 test.describe('The App Store in Russian', () => {
-  const POOL = { name: 'e2e_data', path: '/mnt/pools/e2e_data', free_bytes: 2 ** 34, total_bytes: 2 ** 35 };
+  const POOL = SIZED_POOL;
 
   function installed(name: string, templateId: string, status: string, pool: string | null) {
     const config = `/mnt/pools/${pool ?? 'default'}/apps/${templateId}/config`;
@@ -548,7 +555,7 @@ test.describe('The App Store in Russian', () => {
     await expect(dialog.getByText('📥 Загрузки', { exact: true })).toBeVisible();
     await expect(dialog.getByText('Документация', { exact: true })).toBeVisible();
     await expect(dialog.getByRole('combobox', { name: 'Пул хранения' })).toHaveText(
-      'e2e_data — свободно 16 ГБ из 32 ГБ',
+      'e2e_data — свободно 1,5 ГБ из 32 ГБ',
     );
     await expect(dialog.getByText('Данные приложения хранятся в этом пуле.')).toBeVisible();
     await expect(dialog.getByRole('checkbox', { name: 'Запускать в группе unos-smb' })).not.toBeChecked();

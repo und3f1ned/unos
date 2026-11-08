@@ -16,9 +16,9 @@ The second phase of `webui.translations` (ADR-0287) moves the texts of the App S
 - The App Store's texts come from `webui/src/lib/i18n/catalog/apps.ts`.
 - A category (`AppCategory` of `supervisor/src/apps/schemas.py`) has one label, the category list's, in the list, on the cards and in the details: `webui/src/lib/components/apps/AppCategory.svelte` maps each value to a key and shows a value without one as it comes. In English the cards say "Smart Home", "AI & LLMs" and "Downloads" where they said "Home Automation", "Ai" and "Download", and the details "Media" where they said "media".
 - The source of an image and the state of an app are shown through keys, with the labels they had: Official, LinuxServer on a card and LinuxServer.io in the details, Verified, Community; Running, Stopped. The details take the server's value `linuxserver.io` as LinuxServer.io, which they showed as Community.
-- A size that the page writes itself, a pool's free and total space in the install form, takes the number format of `$intlLocale` (`webui/src/lib/i18n/index.ts`) and the unit of the catalog, by powers of 1024 as `formatBytes` of `webui/src/lib/stores/stats.ts`: 16 GB in English, with the Russian units in Russian.
+- A size that the page writes itself, a pool's free and total space in the install form, takes the number format of `$intlLocale` (`webui/src/lib/i18n/index.ts`) and the unit of the catalog, by powers of 1024 as `formatBytes` of `webui/src/lib/stores/stats.ts`: 1.5 GB in English, with a decimal comma and the Russian unit in Russian.
 - What the app catalog holds is shown as the server answers it, in English, like the server's messages: the names and the descriptions of the apps, the names, values and descriptions of their variables, the images, the versions and the memory recommendations (such as 512m). The walk through the pages in Russian that `webui.translations` needs counts them with the server's messages.
-- `webui/tests/apps.spec.ts` shows the catalog, the details of an app and the installed apps in Russian, and the labels of the source and the category in English.
+- `webui/tests/apps.spec.ts` shows the catalog, the details of an app and the installed apps in Russian, the labels of the source and the category in English, and a pool with 1.5 GB free in the number format of each language.
 
 ## Consequences
 
