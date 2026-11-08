@@ -1,0 +1,48 @@
+# The dev device's inbound IPv6 filter (ADR-0301). scripts/dev/ipv6-filter.sh installs this file
+# as /etc/unos-dev/ipv6-inbound.nft and adds the LAN's global prefixes, read on the device, to the
+# set lan at its end, so they stay out of the repository; unos-ipv6-inbound.service loads it at
+# every boot, before the network. It decides by source address: a forged unique-local or LAN
+# source from outside is stopped only by the router (link-local sources are never routed).
+#
+# Over IPv6 the device's services answer only the LAN: link-local and unique-local addresses
+# and the LAN's global prefixes. From anywhere else only ICMPv6, the BitTorrent port 51413 and
+# the answers to the device's own connections come in. IPv4 is not touched.
+#
+# The file replaces only its own table, in one transaction: Docker's iptables-nft tables stay
+# as they are (no "flush ruleset").
+table ip6 unos_ipv6_inbound
+delete table ip6 unos_ipv6_inbound
+
+table ip6 unos_ipv6_inbound {
+	set lan {
+		type ipv6_addr
+		flags interval
+		elements = { fe80::/10, fc00::/7 }
+	}
+
+	chain admit {
+		# Router and neighbor solicitations and advertisements and multicast listener messages
+		# are untracked, not invalid. ICMPv6 errors (packet too big for path MTU discovery,
+		# unreachable, time exceeded) about a known connection are related, about none invalid;
+		# redirects and answers to a multicast ping are invalid too.
+		ct state vmap { established : accept, related : accept, invalid : drop }
+		# Neighbor discovery, router advertisements, multicast listener messages and ping.
+		meta l4proto ipv6-icmp accept
+		ip6 saddr @lan accept
+		meta l4proto { tcp, udp } th dport 51413 accept
+	}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+		iif "lo" accept
+		jump admit
+	}
+
+	# Docker publishes its ports on IPv6 through docker-proxy, a local socket that the input
+	# chain covers. A Docker network with IPv6 would forward them to the container instead
+	# (ADR-0046): the same rules apply there.
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+		jump admit
+	}
+}

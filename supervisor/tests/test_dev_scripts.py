@@ -257,7 +257,7 @@ def device(tmp_path):
 def test_the_scripts_are_found():
     names = {p.relative_to(DEV).as_posix() for p in SHELL_SCRIPTS + PYTHON_SCRIPTS}
     assert {"env.sh", "ssh.sh", "askpass.sh", "sd.sh", "deploy.sh", "check.sh", "linux-tests.sh",
-            "bin/testparm", "api.py", "tree.py"} <= names
+            "ipv6-filter.sh", "bin/testparm", "api.py", "tree.py"} <= names
 
 
 @pytest.mark.parametrize("bash", bashes())
@@ -286,7 +286,7 @@ def test_scripts_are_executable_except_env_sh(script):
 @pytest.mark.parametrize(
     "argv",
     [["deploy.sh", "--help"], ["sd.sh", "--help"], ["check.sh", "--help"], ["linux-tests.sh", "--help"],
-     ["ssh.sh", "--help"], ["api.py", "--help"], ["tree.py", "--help"]],
+     ["ssh.sh", "--help"], ["api.py", "--help"], ["tree.py", "--help"], ["ipv6-filter.sh", "--help"]],
     ids=lambda a: a[0],
 )
 def test_help_needs_no_dev_env(device, argv):
@@ -304,7 +304,8 @@ def test_deploy_sh_refuses_unknown_steps_without_contacting_anything(device):
 
 
 # The scripts that run on the device are strings in these files, defined before "# --- main".
-REMOTE_SCRIPTS = {"deploy.sh": ["status"], "check.sh": [], "linux-tests.sh": [], "bin/testparm": ["-s", "--suppress-prompt", "FILE"]}
+REMOTE_SCRIPTS = {"deploy.sh": ["status"], "check.sh": [], "linux-tests.sh": [], "ipv6-filter.sh": ["status"],
+                  "bin/testparm": ["-s", "--suppress-prompt", "FILE"]}
 
 
 @pytest.mark.parametrize("bash", bashes())
@@ -719,6 +720,7 @@ def test_check_sh_shows_every_containers_log_configuration(local_device):
     device = local_device
     device.stub("docker", STUB_DOCKER)
     device.stub("systemctl", "#!/usr/bin/env bash\necho active\n")
+    device.stub("nft", STUB_NFT_LIST)
     device.stub("python3", "#!/usr/bin/env bash\necho 200\n")  # the API's health check
     device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
     host_name = "box-" + secrets.token_hex(4)
@@ -735,9 +737,52 @@ def test_check_sh_shows_every_containers_log_configuration(local_device):
         "unos-webui: json-file {}",
     ], out + result.stderr
     assert "unos-supervisor: running healthy restarts=0" in out and "unos-webui: running healthy restarts=0" in out
+    assert "== inbound IPv6 filter\nunos-ipv6-inbound.service: active, table ip6 unos_ipv6_inbound: loaded\n" in out
+    # The writes since boot (ADR-0214), whatever the machine's uptime and disk: linux-tests.sh
+    # runs this test on the device too.
+    assert re.search(r"^mmcblk1 \([^)]*\): \d+\.\d MiB written since boot, \d+\.\d hours ago: \d+\.\d\d MiB per hour$",
+                     out, re.M), out + result.stderr
+    assert "check: OK" in out and result.returncode == 0, out + result.stderr
     # The output passes through api.py's redaction.
     assert "ERROR login as admin with <redacted> failed" in out and device.admin_password not in out
     assert "SD writes check.sh: " in result.stderr
+
+
+# nft list table: FAKE_NFT_TABLE=missing answers as nft does for a table that is not loaded.
+STUB_NFT_LIST = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    [ "$*" = "list table ip6 unos_ipv6_inbound" ] || { echo "the nft stub does not know: $*" >&2; exit 2; }
+    [ "${FAKE_NFT_TABLE:-loaded}" = loaded ] || { echo "Error: No such file or directory" >&2; exit 1; }
+    echo "table ip6 unos_ipv6_inbound {"
+    echo "}"
+    """
+)
+
+
+@pytest.mark.parametrize("unit, table", [("inactive", "loaded"), ("active", "missing"), ("failed", "missing")])
+def test_check_sh_reports_a_missing_ipv6_filter_as_a_problem(local_device, unit, table):
+    """The inbound IPv6 filter fails open (ADR-0301): a unit that failed at boot, or a table
+    deleted by hand, leaves every service open over IPv6. check.sh says so and exits 1."""
+    device = local_device
+    device.stub("docker", STUB_DOCKER)
+    device.stub("systemctl", textwrap.dedent(
+        """\
+        #!/usr/bin/env bash
+        case $* in
+            "is-active unos-ipv6-inbound.service") echo "$FAKE_UNIT"; [ "$FAKE_UNIT" = active ] ;;
+            *) echo active ;;
+        esac
+        """))
+    device.stub("nft", STUB_NFT_LIST)
+    device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
+    device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    result = device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable,
+                        FAKE_UNIT=unit, FAKE_NFT_TABLE=table)
+    out = result.stdout
+    assert f"unos-ipv6-inbound.service: {unit}, table ip6 unos_ipv6_inbound: {table}" in out, out + result.stderr
+    assert "- the inbound IPv6 filter is not loaded (scripts/dev/ipv6-filter.sh status)" in out, out
+    assert "check: problems" in out and result.returncode == 1
 
 
 # --- deploy's tree comparison end to end ---------------------------------------------------
@@ -1602,8 +1647,8 @@ def test_the_device_checks_skill_says_which_scripts_lock_and_report_sd_writes():
     until the skill says so too."""
     locking = scripts_calling(r"^\s*dev_lock\b")
     reporting = scripts_calling(r"\bdev_sd_report(_from)?\b")
-    assert locking == ["deploy.sh", "linux-tests.sh"]
-    assert reporting == ["check.sh", "deploy.sh", "linux-tests.sh", "sd.sh"]
+    assert locking == ["deploy.sh", "ipv6-filter.sh", "linux-tests.sh"]
+    assert reporting == ["check.sh", "deploy.sh", "ipv6-filter.sh", "linux-tests.sh", "sd.sh"]
     text = (SKILLS / "device-checks" / "SKILL.md").read_text()
     assert scripts_named(text, "take the device lock") == locking
     assert scripts_named(text, "print `SD writes") == reporting
@@ -1634,3 +1679,281 @@ def test_the_supervisor_build_gets_the_version_of_the_workstations_tree():
     assert "UNOS_VERSION=${2:-unknown} env -u JWT_SECRET docker compose build supervisor" in text
     # Only a plain version reaches the device's shell.
     assert "*[!A-Za-z0-9._+-]*) version=unknown" in text
+
+
+# --- the inbound IPv6 filter of the device (ADR-0301) ---------------------------------------
+
+FILTER_RULES = DEV / "device" / "ipv6-inbound.nft"
+FILTER_UNIT = DEV / "device" / "unos-ipv6-inbound.service"
+
+
+def nft_statements(path: Path) -> list[str]:
+    lines = (line.split("#", 1)[0].strip() for line in path.read_text().splitlines())
+    return [line for line in lines if line]
+
+
+def test_the_ipv6_filter_admits_only_the_lan_and_the_bittorrent_port():
+    # IPv6 only, in a table of its own that the file replaces in one transaction (IPv4 and
+    # Docker's iptables-nft tables stay as they are). Input and forward drop what the chain admit
+    # does not accept; the one port open to every source is BitTorrent's. The whole list, in
+    # order: an added accept or set element fails here.
+    assert nft_statements(FILTER_RULES) == [
+        "table ip6 unos_ipv6_inbound", "delete table ip6 unos_ipv6_inbound", "table ip6 unos_ipv6_inbound {",
+        "set lan {", "type ipv6_addr", "flags interval", "elements = { fe80::/10, fc00::/7 }", "}",
+        "chain admit {",
+        "ct state vmap { established : accept, related : accept, invalid : drop }",
+        "meta l4proto ipv6-icmp accept",
+        "ip6 saddr @lan accept",
+        "meta l4proto { tcp, udp } th dport 51413 accept",
+        "}",
+        "chain input {", "type filter hook input priority filter; policy drop;", 'iif "lo" accept', "jump admit", "}",
+        "chain forward {", "type filter hook forward priority filter; policy drop;", "jump admit", "}",
+        "}",
+    ]
+
+
+def test_the_ipv6_filter_unit_loads_before_the_network_and_removes_only_its_table():
+    unit = FILTER_UNIT.read_text()
+    # network-pre.target is passive: without Wants=, Before= would order against nothing.
+    for line in ("DefaultDependencies=no", "Wants=network-pre.target", "Before=network-pre.target shutdown.target",
+                 "Conflicts=shutdown.target", "Type=oneshot", "RemainAfterExit=yes",
+                 "ExecStart=/usr/sbin/nft -f /etc/unos-dev/ipv6-inbound.nft",
+                 "ExecReload=/usr/sbin/nft -f /etc/unos-dev/ipv6-inbound.nft",
+                 "ExecStop=-/usr/sbin/nft delete table ip6 unos_ipv6_inbound", "WantedBy=sysinit.target"):
+        assert line in unit.splitlines(), line
+    assert "flush" not in unit
+    # deploy/uninstall.sh deletes /etc/unos; the filter's file lives apart from the installation.
+    assert "/etc/unos/" not in unit and "/etc/unos/" not in (DEV / "ipv6-filter.sh").read_text()
+
+
+# The device side of ipv6-filter.sh install, run here (FAKE_SSH_MODE=local) below the root
+# UNOS_DEV_FILTER_ROOT: ip answers FAKE_IP_ROUTES and FAKE_IP_ADDRS; nft and systemctl log their
+# arguments to FAKE_LOG, nft -c keeps a copy of the file it checked and fails with
+# FAKE_NFT_CHECK=1, and systemctl keeps the unit's enabled state in FAKE_ENABLED.
+STUB_IP = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    # A write to a closed pipe ends ip, as SIGPIPE does on the device (here SIGPIPE may be ignored).
+    lines() { printf "%s" "$1" | while IFS= read -r line; do echo "$line" || exit 141; [ -z "${FAKE_IP_PAUSE:-}" ] || sleep "$FAKE_IP_PAUSE"; done; }
+    case $* in
+        "-6 -o route show") lines "${FAKE_IP_ROUTES-}" ;;
+        "-6 -o addr show scope global") lines "${FAKE_IP_ADDRS-}" ;;
+        *) echo "the ip stub does not know: $*" >&2; exit 2 ;;
+    esac
+    """
+)
+# FAKE_TABLE exists while the table is loaded: the unit's start or reload loads it, its stop and
+# nft delete table delete it.
+STUB_NFT_CHECK = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    echo "nft $*" >> "$FAKE_LOG"
+    case $* in
+        "-c -f "*) cp "$3" "$FAKE_CHECKED"; exit "${FAKE_NFT_CHECK:-0}" ;;
+        "delete table ip6 unos_ipv6_inbound" | "list table ip6 unos_ipv6_inbound")
+            [ -e "$FAKE_TABLE" ] || { echo "Error: No such file or directory" >&2; exit 1; }
+            [ "$1" = list ] || rm -f "$FAKE_TABLE" ;;
+        *) echo "the nft stub does not know: $*" >&2; exit 2 ;;
+    esac
+    """
+)
+STUB_SYSTEMCTL_UNIT = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    echo "systemctl $*" >> "$FAKE_LOG"
+    case $1 in
+        is-enabled) if [ -e "$FAKE_ENABLED" ]; then echo enabled; else echo disabled; exit 1; fi ;;
+        enable) touch "$FAKE_ENABLED" ;;
+        disable) rm -f "$FAKE_ENABLED"; [ "$2" != --now ] || rm -f "$FAKE_TABLE" ;;
+        reload-or-restart) touch "$FAKE_TABLE" ;;
+        is-active) echo active ;;
+    esac
+    """
+)
+ROUTES = (
+    "2001:db8:1::/64 dev eth0 proto ra metric 100 expires 86000sec pref medium\n"
+    "fd00:1::/64 dev eth0 proto ra metric 100 pref medium\n"
+    "2001:2::c633:6425 nhid 5 via fe80::1 dev eth0 metric 100 pref low\n"
+    "2001:db8:9::/48 via fe80::1 dev eth0 proto ra metric 100 pref medium\n"
+    "2001:db8:7::/48 proto static metric 1024 pref medium \\\tnexthop via fe80::1 dev eth0 weight 1 "
+    "\\\tnexthop via fe80::2 dev eth0 weight 1 \n"
+    "3fff:5::/64 dev wg0 proto kernel metric 256 pref medium\n"
+    "unreachable 2001:db8:dead::/64 dev lo metric 1024 pref medium\n"
+    "default nhid 5 via fe80::1 dev eth0 proto ra metric 100 pref medium\n"
+    "fe80::/64 dev eth0 proto kernel metric 256 pref medium\n"
+)
+ADDRS = "2: eth0    inet6 2001:db8:1::5/64 scope global dynamic mngtmpaddr\n"
+
+
+@pytest.fixture
+def filter_device(local_device):
+    device = local_device
+    device.stub("ip", STUB_IP)
+    device.stub("nft", STUB_NFT_CHECK)
+    device.stub("systemctl", STUB_SYSTEMCTL_UNIT)
+    device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    root = device.tmp / "root"
+    (root / "dev" / "shm").mkdir(parents=True)
+    device.root = root
+    return device
+
+
+def run_filter(device, step: str, **extra: str) -> subprocess.CompletedProcess:
+    env = {"FAKE_SSH_MODE": "local", "UNOS_DEV_FILTER_ROOT": str(device.root), "FAKE_LOG": str(device.tmp / "calls"),
+           "FAKE_CHECKED": str(device.tmp / "checked.nft"), "FAKE_ENABLED": str(device.tmp / "enabled"),
+           "FAKE_TABLE": str(device.tmp / "table"), "FAKE_IP_ROUTES": ROUTES, "FAKE_IP_ADDRS": ADDRS, **extra}
+    (device.tmp / "calls").write_text("")
+    return device.run(DEV / "ipv6-filter.sh", step, **env)
+
+
+def install_filter(device, **extra: str) -> subprocess.CompletedProcess:
+    return run_filter(device, "install", **extra)
+
+
+def filter_calls(device) -> list[str]:
+    """The calls of nft and systemctl that change something (not the is-* and nft -c ones)."""
+    calls = (device.tmp / "calls").read_text().splitlines()
+    return [c for c in calls if not c.startswith(("systemctl is-", "nft -c "))]
+
+
+def test_ipv6_filter_sh_install_adds_the_on_link_global_prefixes_checks_and_loads(filter_device):
+    device = filter_device
+    result = install_filter(device)
+    assert result.returncode == 0, result.stdout + result.stderr
+    rules = (device.root / "etc" / "unos-dev" / "ipv6-inbound.nft").read_text()
+    # The repository's file, then the on-link global prefixes, whatever the route's origin: not
+    # unique-local ones (fc00::/7 is in the set), routes through a gateway (multipath ones
+    # included), host routes or others.
+    assert rules == FILTER_RULES.read_text() + (
+        "\n# The global prefixes of the LAN: on-link routes of the device at install time.\n"
+        "add element ip6 unos_ipv6_inbound lan { 2001:db8:1::/64, 3fff:5::/64 }\n")
+    assert "global LAN prefixes: 2001:db8:1::/64, 3fff:5::/64" in result.stdout
+    assert (device.root / "etc" / "systemd" / "system" / "unos-ipv6-inbound.service").read_text() == FILTER_UNIT.read_text()
+    # nft checked that very file, in RAM, before it reached /etc.
+    calls = (device.tmp / "calls").read_text().splitlines()
+    checked = [c for c in calls if c.startswith("nft -c -f ")]
+    assert len(checked) == 1 and checked[0].startswith(f"nft -c -f {device.root}/dev/shm/")
+    assert (device.tmp / "checked.nft").read_text() == rules
+    assert filter_calls(device) == [
+        "systemctl daemon-reload", "systemctl enable --quiet unos-ipv6-inbound.service",
+        "systemctl reload-or-restart unos-ipv6-inbound.service"]
+    assert list((device.root / "dev" / "shm").iterdir()) == []
+    assert "unos-ipv6-inbound.service: enabled, active" in result.stdout
+
+
+def test_ipv6_filter_sh_install_again_writes_nothing_that_did_not_change(filter_device):
+    device = filter_device
+    assert install_filter(device).returncode == 0
+    files = [device.root / "etc" / "unos-dev" / "ipv6-inbound.nft",
+             device.root / "etc" / "systemd" / "system" / "unos-ipv6-inbound.service"]
+    before = [(f.stat().st_ino, f.stat().st_mtime_ns) for f in files]
+    result = install_filter(device)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [(f.stat().st_ino, f.stat().st_mtime_ns) for f in files] == before
+    assert filter_calls(device) == ["systemctl reload-or-restart unos-ipv6-inbound.service"]
+    assert "unchanged" in result.stdout
+
+
+def test_ipv6_filter_sh_install_refuses_global_addresses_without_an_on_link_prefix(filter_device):
+    """A static or DHCPv6 address, or a prefix announced off-link, gives the device global
+    addresses but no on-link route for them: a filter without the LAN's prefix would drop the
+    LAN hosts that use them, so install changes nothing. ip writes one address at a time, as
+    iproute2 does, so a reader that stops at the first match must not lose it to SIGPIPE."""
+    device = filter_device
+    routes = "default nhid 5 via fe80::1 dev eth0 proto ra metric 100 pref medium\n"
+    addrs = ADDRS + "2: eth0    inet6 fd00:1::5/64 scope global dynamic mngtmpaddr\n"
+    result = install_filter(device, FAKE_IP_ROUTES=routes, FAKE_IP_ADDRS=addrs, FAKE_IP_PAUSE="0.2")
+    assert result.returncode == 1
+    assert "no on-link route for the global addresses" in result.stderr
+    assert not (device.root / "etc").exists() and not (device.tmp / "calls").read_text()
+
+
+def test_ipv6_filter_sh_install_without_global_addresses_needs_no_prefix(filter_device):
+    device = filter_device
+    result = install_filter(device, FAKE_IP_ROUTES="fd00:1::/64 dev eth0 proto ra metric 100\n", FAKE_IP_ADDRS="")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (device.root / "etc" / "unos-dev" / "ipv6-inbound.nft").read_text() == FILTER_RULES.read_text()
+    assert "global LAN prefixes: none" in result.stdout
+
+
+def test_ipv6_filter_sh_install_changes_nothing_when_nft_refuses_the_file(filter_device):
+    device = filter_device
+    result = install_filter(device, FAKE_NFT_CHECK="1")
+    assert result.returncode == 1
+    assert "nft refused the ruleset: nothing changed" in result.stderr
+    assert not (device.root / "etc").exists()
+    assert list((device.root / "dev" / "shm").iterdir()) == []
+    assert not [c for c in (device.tmp / "calls").read_text().splitlines() if c.startswith("systemctl ")]
+
+
+def test_ipv6_filter_sh_install_with_a_new_prefix_rewrites_only_the_ruleset(filter_device):
+    device = filter_device
+    assert install_filter(device).returncode == 0
+    unit = device.root / "etc" / "systemd" / "system" / "unos-ipv6-inbound.service"
+    before = (unit.stat().st_ino, unit.stat().st_mtime_ns)
+    result = install_filter(device, FAKE_IP_ROUTES=ROUTES.replace("2001:db8:1::/64", "2001:db8:2::/64"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (device.root / "etc" / "unos-dev" / "ipv6-inbound.nft").read_text().endswith(
+        "add element ip6 unos_ipv6_inbound lan { 2001:db8:2::/64, 3fff:5::/64 }\n")
+    assert (unit.stat().st_ino, unit.stat().st_mtime_ns) == before
+    assert filter_calls(device) == ["systemctl reload-or-restart unos-ipv6-inbound.service"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes into a read-only directory")
+def test_ipv6_filter_sh_install_stops_when_a_file_cannot_be_written(filter_device):
+    """put() runs where set -e does not apply: a failed write must still end the run before the
+    reload, and not pass for an unchanged file."""
+    device = filter_device
+    assert install_filter(device).returncode == 0
+    rules = device.root / "etc" / "unos-dev" / "ipv6-inbound.nft"
+    before = rules.read_text()
+    rules.parent.chmod(0o555)
+    try:
+        result = install_filter(device, FAKE_IP_ROUTES=ROUTES.replace("2001:db8:1::/64", "2001:db8:2::/64"))
+    finally:
+        rules.parent.chmod(0o755)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"could not write {rules}" in result.stderr
+    assert rules.read_text() == before and not (rules.parent / "ipv6-inbound.nft.new").exists()
+    assert filter_calls(device) == []
+    assert list((device.root / "dev" / "shm").iterdir()) == []
+
+
+def test_ipv6_filter_sh_remove_stops_the_unit_and_leaves_nothing(filter_device):
+    device = filter_device
+    assert install_filter(device).returncode == 0
+    result = run_filter(device, "remove")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the inbound IPv6 filter is removed" in result.stdout
+    # The unit's stop deletes the table; nothing flushes the ruleset, which holds Docker's rules.
+    assert filter_calls(device) == [
+        "systemctl disable --now --quiet unos-ipv6-inbound.service", "systemctl daemon-reload",
+        "systemctl reset-failed unos-ipv6-inbound.service", "nft delete table ip6 unos_ipv6_inbound",
+        "nft list table ip6 unos_ipv6_inbound"]
+    assert not (device.root / "etc" / "unos-dev").exists()
+    assert not (device.root / "etc" / "systemd" / "system" / "unos-ipv6-inbound.service").exists()
+
+
+def test_ipv6_filter_sh_remove_fails_while_the_table_stays_loaded(filter_device):
+    device = filter_device
+    assert install_filter(device).returncode == 0
+    # A stop that left the table, and a delete that fails: remove must not report success.
+    device.stub("systemctl", STUB_SYSTEMCTL_UNIT.replace('[ "$2" != --now ] || rm -f "$FAKE_TABLE"', ":"))
+    device.stub("nft", STUB_NFT_CHECK.replace('[ "$1" = list ] || rm -f "$FAKE_TABLE"', '[ "$1" = list ] || exit 1'))
+    result = run_filter(device, "remove")
+    assert result.returncode == 1
+    assert "the inbound IPv6 filter is not removed" in result.stderr
+
+
+def test_ipv6_filter_sh_refuses_unknown_steps_and_extra_words_without_contacting_anything(device):
+    # "remove --help" must not remove the filter, nor "install --dry-run" install it.
+    for argv in (["bogus"], [], ["status", "x"], ["install", "--dry-run"], ["remove", "--help"]):
+        result = device.run(DEV / "ipv6-filter.sh", *argv)
+        assert result.returncode == 2, argv
+    assert not any(device.log.iterdir())
+
+
+def test_ipv6_filter_sh_locks_and_measures_install_and_remove_only():
+    main = (DEV / "ipv6-filter.sh").read_text().split("\n# --- main\n", 1)[1]
+    assert main.count('dev_lock "ipv6-filter.sh ') == 2 and main.count('dev_sd_report "ipv6-filter ') == 2
+    assert 'status) dev_remote_ro "$REMOTE_STATUS"' in main

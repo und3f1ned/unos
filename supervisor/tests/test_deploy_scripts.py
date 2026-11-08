@@ -1108,7 +1108,7 @@ class TestInstallScript:
 
     def test_wsdd2_answers_over_ipv4_only_from_its_first_start(self, tmp_path):
         # Over IPv6, wsdd2 opens its TCP ports on tunnels too, whose global addresses
-        # nothing filters (ADR-0227). The drop-in is in place and loaded before the package
+        # UNOS does not filter (ADR-0301). The drop-in is in place and loaded before the package
         # is installed, whose installation starts wsdd2; the restart gives it to a wsdd2
         # that ran before the drop-in existed (ADR-0275).
         result, calls = _run_configure_discovery(tmp_path)

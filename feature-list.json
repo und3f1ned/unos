@@ -3490,10 +3490,15 @@
         "Without remote use: SSH, the web UI, Samba and transmission's web port answer only LAN, unique-local and link-local addresses over IPv6, Docker's published ports included; the BitTorrent port stays open",
         "A check from another network shows the service ports closed and the BitTorrent port open"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
+        "ADR-0301",
         "ADR-0227",
         "ADR-0095"
+      ],
+      "notes": "Device check on 2026-11-08 (ADR-0301): the owner chose the filter (\"Yes, turn it on\"). scripts/dev/ipv6-filter.sh install loaded the table ip6 unos_ipv6_inbound from /etc/unos-dev/ipv6-inbound.nft, with the LAN's global prefix read on the device, and enabled unos-ipv6-inbound.service (0.133 MiB written; a rerun 0 MiB). From the workstation, on the LAN, SSH 22, the web UI 80 and 443 (docker-proxy), Samba 445, transmission's web port 9091 and 51413 answer over both global and both unique-local addresses and the link-local one, and 22, 443 and 445 over IPv4; Bonjour still lists the SMB service. From a network outside the LAN, a network namespace on the device with the source 2001:db8:6::2 routed to the device's global address, 22, 80, 443, 445, 5355 and 9091 are closed, 51413 is open and ping answers; before the filter every port answered. The router over link-local and outbound IPv6 (https://deb.debian.org, 200) work. After two reboots from the API the unit is active before systemd-networkd, the table is loaded, the probes answer the same and check.sh, which now reports the filter, is OK. supervisor/tests/test_dev_scripts.py pins the ruleset and the unit and runs the installer's and remove's device side with stand-ins. The router's own inbound filtering was not probed from the internet: the filter decides by source address, so a datagram from outside that forges a unique-local or LAN source is stopped only by the router's ingress filtering (the UDP services).",
+      "verified_by": [
+        "supervisor/tests/test_dev_scripts.py"
       ]
     },
     {

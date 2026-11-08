@@ -350,8 +350,8 @@ The dev device is a single shared resource whose system disk is an SD card that 
 replaced (ADR-0214). It is reached only through `scripts/dev/`, which reads its settings and
 secrets from the git-ignored `dev.env` (ADR-0212):
 
-- `scripts/dev/check.sh`: the device's health (containers, Samba, the API, SD writes since boot),
-  read-only.
+- `scripts/dev/check.sh`: the device's health (containers, Samba, the API, the inbound IPv6
+  filter, SD writes since boot), read-only.
 - `scripts/dev/api.py METHOD PATH`: what the API on the device answers. Methods other than GET
   change the device.
 - `scripts/dev/linux-tests.sh`: the backend tests on Linux in the device's RAM.
@@ -362,10 +362,13 @@ secrets from the git-ignored `dev.env` (ADR-0212):
   they are never shown or extracted (the guard and the settings' deny rules). The building steps,
   `up` and `rollback` run only when the owner asks for a deploy.
 - `scripts/dev/sd.sh measure <label> -- <command>`: how many MiB a command wrote to the SD card.
+- `scripts/dev/ipv6-filter.sh install|status|remove`: the device's inbound IPv6 filter
+  (ADR-0301); `status` only reads, `install` and `remove` run on the owner's request.
 
-`deploy.sh` and `linux-tests.sh` hold the device lock, so that one agent at a time deploys or
-tests there (ADR-0210), and keep their scratch data in RAM. `deploy.sh`, `linux-tests.sh`,
-`check.sh` and `sd.sh` print the SD writes of their run; `ssh.sh`, `api.py` and `bin/testparm`
+`deploy.sh`, `linux-tests.sh` and `ipv6-filter.sh` (install, remove) hold the device lock, so that
+one agent at a time deploys or tests there (ADR-0210), and keep their scratch data in RAM.
+`deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh` (install, remove), `check.sh` and `sd.sh` print
+the SD writes of their run; `ssh.sh`, `api.py` and `bin/testparm`
 take no lock and print no SD writes, so a check made with them runs under `sd.sh measure`. The
 deploy-device and device-checks skills (`.agents/skills/`) give the steps and what to report.
 Neither runs E2E specs on the device.
