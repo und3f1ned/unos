@@ -46,7 +46,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `$lib/i18n` collects every catalog file: an area adds its own file and edits no shared one;
   `common.ts` has the words that many areas use. Dates take `$intlLocale`. A value that the
   server answers as a word (an action, a state, a type) is shown through a map from the value to
-  a key, `{ allow: 'account.firewall.allow' }`, never as it comes.
+  a key, `{ allow: 'account.firewall.allow' }`, never as it comes; the names that the host's
+  tools give (ip's link types, ss's socket states) stay as they come (ADR-0288).
 - English stays word for word what the specs select: `playwright.config.ts` runs an en-US
   browser, and `tests/language.spec.ts` switches to Russian. The server's messages (the
   `ApiError` texts) stay English, like the fakes' copies of them (ADR-0189).

@@ -422,6 +422,70 @@ test.describe('System > Network', () => {
     ).toBeVisible();
   });
 
+  test('in Russian, the interfaces, a disable, the tables and what could not be loaded speak Russian', async ({
+    authenticatedPage: page,
+  }) => {
+    // The language that the Account page keeps in this browser (ADR-0287).
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    const gatewayFailed = 'Failed to get gateway: RTNETLINK answers: Permission denied';
+    const network = await fakeNetworkApi(page, {
+      failures: { 'GET /gateway': { status: 500, detail: gatewayFailed } },
+    });
+    await page.goto('/system#network');
+    await expect(page.getByRole('heading', { name: 'Сеть', exact: true })).toBeVisible();
+
+    // The part that could not be loaded by its name in Russian, the server's message as it comes.
+    const problems = page.getByText('Не удалось загрузить часть сведений о сети').locator('..');
+    await expect(problems).toContainText(`Шлюз: ${gatewayFailed}`);
+    await expect(page.getByText('Шлюз по умолчанию').locator('..')).toContainText('Не задан');
+    await expect(page.getByText('DNS-серверы').locator('..')).toContainText('ещё 1');
+
+    // An interface's state, its speed in the page's units and number format, and its details.
+    const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
+    await expect(eth0).toContainText('Работает');
+    await expect(eth0).toContainText('1 Гбит/с');
+    await expect(eth0).toContainText('ещё 2');
+    await expect(page.getByRole('region', { name: 'Интерфейс eth2' })).toContainText('Выключен');
+    const eth1 = page.getByRole('region', { name: 'Интерфейс eth1' });
+    await expect(eth1).toContainText('2,5 Гбит/с');
+    await eth1.getByRole('button', { expanded: false }).click();
+    await expect(eth1).toContainText('MAC-адрес');
+    await expect(eth1).toContainText('IP-адреса');
+
+    // Disable asks first, counts down and offers to keep the change.
+    await eth1.getByRole('button', { name: 'Выключить', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Выключение eth1' });
+    await expect(dialog).toContainText('Выключение eth1 может прервать ваше подключение к UNOS');
+    await expect(dialog).toContainText('Если вы не сохраните изменение в течение 60 секунд, eth1 сам включится снова');
+    await dialog.getByRole('button', { name: 'Выключить eth1' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('region', { name: 'Выключения, ожидающие подтверждения' })).toBeFocused();
+    await expect(page.getByText(/^Если вы не сохраните это изменение, eth1 сам включится снова через \d+ с\.$/))
+      .toBeVisible();
+    await page.getByRole('button', { name: 'Оставить eth1 выключенным' }).click();
+    await expect(page.getByText('eth1 остаётся выключенным.')).toBeVisible();
+    await expect(eth1).toContainText('Выключен');
+    expect(network.writes).toEqual([
+      { method: 'POST', path: '/interfaces/eth1/down' },
+      { method: 'POST', path: '/interfaces/eth1/down/confirm' },
+    ]);
+
+    // The routes and the connections; the names that ip and ss give stay as they come (ADR-0288).
+    await page.getByRole('button', { name: 'Маршруты' }).click();
+    await expect(page.getByRole('columnheader', { name: 'Назначение' })).toBeVisible();
+    await expect(page.getByRole('table').getByRole('row', { name: /по умолчанию 192\.168\.1\.1 eth0 dhcp/ }))
+      .toBeVisible();
+    await page.getByRole('button', { name: 'Подключения', exact: true }).click();
+    await expect(page.getByText('2 активных подключения', { exact: true })).toBeVisible();
+    await expect(page.getByRole('row', { name: /tcp ESTAB 192\.168\.1\.10:443 192\.168\.1\.20:51515/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Обновить подключения' })).toBeVisible();
+
+    // Nothing of the English tab is left.
+    for (const english of ['Default Gateway', 'DNS Servers', 'Active Connections', 'Refresh connections']) {
+      await expect(page.getByText(english)).toHaveCount(0);
+    }
+  });
+
   test('what could not be loaded is shown with the server\'s message', async ({ authenticatedPage: page }) => {
     await fakeNetworkApi(page, {
       failures: {

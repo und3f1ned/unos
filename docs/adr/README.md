@@ -314,6 +314,7 @@ and this index, and `make check-fast` runs it.
 | [0197](0197-accessible-dialogs-lists-and-hints.md) | Dialogs, lists and hints in the web UI work with keyboard and screen readers | accepted | 2026-11-07 |
 | [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
 | [0287](0287-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
+| [0288](0288-the-names-that-the-hosts-tools-give-stay-as-they-come-in-every-language.md) | The names that the host's tools give stay as they come in every language | accepted | 2026-11-08 |
 
 ## Deploy
 
