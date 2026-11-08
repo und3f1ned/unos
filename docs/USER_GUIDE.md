@@ -886,7 +886,9 @@ From then on the old password no longer signs in, and the new one does.
 Sessions that were open before stay signed in until they end (see
 [First Login](#first-login)).
 
-Admins can reset any user's password via **Users** page.
+Admins can reset any user's password via **Users** page. When no administrator
+can sign in, root on the NAS resets an administrator's password (see
+[Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)).
 
 When SMB is on for the user, the SMB password changes too, and the user's open
 SMB connections are ended: the computers sign in again with the new password.
@@ -961,7 +963,11 @@ a recovery code.
 Turning 2FA off deletes the recovery codes, and after turning it on again you
 generate new ones. Turning 2FA off needs a code from the authenticator app:
 with recovery codes alone you can sign in and generate new codes, but not turn
-2FA off, and an administrator cannot reset it for you.
+2FA off, and an administrator cannot reset it for you. For an administrator
+who lost both the app and the recovery codes, root on the NAS sets a new
+password and turns 2FA off (see
+[Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication));
+a regular user who lost both has no way back into the account yet.
 
 Scripts send the code as `recovery_code` in place of `totp_code` to
 `POST /api/v1/auth/login`; `POST /api/v1/auth/recovery-codes/generate`
@@ -1060,8 +1066,11 @@ regular users have no access to it.
   appears only in the login history), users created, changed and deleted, the
   SMB access of users, shares created, changed, deleted and repaired, shares
   imported from smb.conf and the corrections of the SMB check at startup (by
-  the user `system`), API tokens created and deleted, new recovery codes, and
-  the clearing of the log. Storage, snapshots, containers, apps, backups,
+  the user `system`), API tokens created and deleted, new recovery codes, the
+  reset of an administrator on the NAS's command line (`password_change` and
+  `totp_disabled` by the user `root`, see
+  [Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)),
+  and the clearing of the log. Storage, snapshots, containers, apps, backups,
   restarts and shutdowns, scheduled tasks, the network and system settings
   write no entries yet, and neither do a user's own password and two-factor
   changes, although **Action** lists such actions (feature-list entry
@@ -1564,7 +1573,8 @@ Follow the 3-2-1 rule:
 If you encounter issues:
 
 1. Check **System** → **System Logs** for errors (administrators)
-2. Review [Troubleshooting](INSTALL.md#troubleshooting)
+2. Review [Troubleshooting](INSTALL.md#troubleshooting); when the NAS does not
+   boot or nobody can sign in, see [Recovery](RECOVERY.md)
 3. Search [GitHub Issues](https://github.com/und3f1ned/unos/issues)
 4. Ask in [Discussions](https://github.com/und3f1ned/unos/discussions)
 

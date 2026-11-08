@@ -67,7 +67,7 @@ from ..security.validators import (
     validate_disk_target,
     validate_pool_name,
 )
-from ..snapshots.router import delete_snapshot_by_id, make_snapshot, utc_stamp
+from ..snapshots.router import AUTO_SNAPSHOT_PREFIX, delete_snapshot_by_id, make_snapshot, utc_stamp
 from ..storage import disks as storage_disks
 from .schemas import ScheduledTask, ScheduledTaskInfo, TaskRun, TaskType, ScheduleFrequency
 
@@ -670,7 +670,7 @@ def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
     # Get all auto-created snapshots (prefixed with "auto_"); never follow symlinks.
     auto_snapshots = []
     for snap in snapshots_dir.iterdir():
-        if _real_dir(snap) and snap.name.startswith("auto_"):
+        if _real_dir(snap) and snap.name.startswith(AUTO_SNAPSHOT_PREFIX):
             # Get creation time from btrfs
             result = _run(["btrfs", "subvolume", "show", str(snap)])
             if result.returncode == 0:
@@ -724,7 +724,7 @@ def _create_snapshot(pool_name: str) -> tuple[bool, str]:
     # a directory on the root filesystem under its mount point.
     if not _pool_is_mounted(pool):
         return False, f"Pool {pool_name} is not mounted at {pool}"
-    name = f"auto_{utc_stamp()}"
+    name = f"{AUTO_SNAPSHOT_PREFIX}{utc_stamp()}"
     make_snapshot(pool, name)
     return True, name
 

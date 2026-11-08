@@ -55,6 +55,12 @@ from .schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore, SnapshotSubv
 router = APIRouter(prefix="/snapshots", tags=["snapshots"])
 
 SNAPSHOT_DIR_NAME = ".snapshots"
+# The names UNOS gives, before a <date>_<time> of utc_stamp(): snapshots made on the Snapshots
+# page, the writable copies that Restore makes, and scheduled snapshots (src/scheduler/router.py).
+# docs/RECOVERY.md names them too.
+SNAPSHOT_PREFIX = "snap_"
+RESTORE_PREFIX = "restore_"
+AUTO_SNAPSHOT_PREFIX = "auto_"
 COMMAND_TIMEOUT = 600
 # Id of the top-level subvolume of every btrfs filesystem (BTRFS_FS_TREE_OBJECTID).
 TOP_LEVEL_SUBVOLUME = 5
@@ -415,7 +421,7 @@ async def list_snapshots(subvolume: str, _: dict = Depends(verify_token)):
 async def create_snapshot(req: SnapshotCreate, _: dict = Depends(verify_token)):
     """Create a new read-only snapshot; without a name, ``snap_<date>_<time>`` in UTC."""
     subvol_path = _validate_subvolume(req.subvolume)
-    name = validate_snapshot_name(req.name) if req.name else f"snap_{utc_stamp()}"
+    name = validate_snapshot_name(req.name) if req.name else f"{SNAPSHOT_PREFIX}{utc_stamp()}"
 
     snap_path = await asyncio.to_thread(make_snapshot, subvol_path, name)
 
@@ -468,7 +474,7 @@ def _restore(subvolume: Path, name: str, shown: str, target_path: str | None) ->
             target_fd = _open_folder(fds, target, "Target path")
         else:
             target, target_fd = subvolume, subvolume_fd
-        restore_name = f"restore_{utc_stamp()}"
+        restore_name = f"{RESTORE_PREFIX}{utc_stamp()}"
         restore_path = target / restore_name
         if _exists(target_fd, restore_name):
             raise HTTPException(400, f"Restore target already exists: {restore_path}")

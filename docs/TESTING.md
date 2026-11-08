@@ -269,7 +269,11 @@ fails, e2e.sh stops (log: `.standin/logs/first-run.log`, ADR-0261). The run of t
 that file, so arguments that name only it make this setup the whole run: e2e.sh prints its log
 and, when it passed, `== Playwright exit code 0`. Otherwise it then runs Playwright with
 `BASE_URL` and `HTTP_URL` on localhost and `E2E_STAND_IN=1`, stops everything and exits with
-Playwright's exit code. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
+Playwright's exit code. Playwright also gets the stand-in's pools folder (`E2E_POOLS_BASE`), and its state directory
+and Python (`E2E_STANDIN_STATE`, `E2E_STANDIN_PYTHON`), with which `tests/emergency-reset.spec.ts`
+runs the supervisor's emergency command line against the stand-in's data
+(`scripts/standin/emergency.py`, in place of `docker exec` into the supervisor's container); the
+compose test stack does not set them, and the spec skips there. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
 (`npx playwright show-report` in `webui/`). The ports default to 46443 (HTTPS), 46080 (HTTP) and
 46180 (the supervisor); `E2E_HTTPS_PORT`, `E2E_HTTP_PORT` and `E2E_BACKEND_PORT` change them. The
 standin-e2e skill explains how to find the cause of a failure.
