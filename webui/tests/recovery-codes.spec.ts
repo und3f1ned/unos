@@ -1,11 +1,11 @@
-import { createHmac } from 'node:crypto';
 import { test, expect, E2E_ADMIN } from './fixtures';
+import { currentTotpCode } from './totp';
 import type { APIRequestContext, Page } from '@playwright/test';
 
 // Two-factor recovery codes (feature auth.recovery-codes, ADR-0238) against the
 // real supervisor: no route fakes. A regular account with two-factor
 // authentication is created for this file through the API and deleted
-// afterwards; its first TOTP code is computed here (RFC 6238).
+// afterwards; its first TOTP code is computed by tests/totp.ts (RFC 6238).
 
 const USER = {
   username: `e2e_rc_${Date.now().toString(36)}`,
@@ -21,40 +21,6 @@ const UNKNOWN_HINT = 'any codes you saved before no longer work';
 let adminToken = '';
 let userToken = '';
 let userId: number | undefined;
-
-function base32Bytes(text: string): Buffer {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const bytes: number[] = [];
-  let bits = 0;
-  let value = 0;
-  for (const char of text.replace(/=+$/, '').toUpperCase()) {
-    const index = alphabet.indexOf(char);
-    if (index < 0) throw new Error(`not base32: ${char}`);
-    value = ((value << 5) | index) & 0xffff;
-    bits += 5;
-    if (bits >= 8) {
-      bytes.push((value >>> (bits - 8)) & 0xff);
-      bits -= 8;
-    }
-  }
-  return Buffer.from(bytes);
-}
-
-/** The 6-digit TOTP code of `secret` at `time` (SHA-1, 30-second steps), as authenticator apps make it. */
-function totpCode(secret: string, time: number): string {
-  const counter = Buffer.alloc(8);
-  counter.writeBigUInt64BE(BigInt(Math.floor(time / 30_000)));
-  const digest = createHmac('sha1', base32Bytes(secret)).update(counter).digest();
-  const offset = digest[digest.length - 1] & 0xf;
-  return ((digest.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).toString().padStart(6, '0');
-}
-
-/** A code of the current step, not of its last seconds: the server checks one step only. */
-async function currentTotpCode(secret: string): Promise<string> {
-  const left = 30_000 - (Date.now() % 30_000);
-  if (left < 3_000) await new Promise((resolve) => setTimeout(resolve, left + 200));
-  return totpCode(secret, Date.now());
-}
 
 async function apiLogin(request: APIRequestContext, credentials: { username: string; password: string }) {
   const response = await request.post('/api/v1/auth/login', { data: credentials });

@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0279
 ---
 
 # ADR-0122: SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters
 
 ## Context
+
+Superseded by ADR-0279: SMB-bound passwords must also not be on a list of common passwords.
 
 SMB has no login rate limit and no two-factor authentication (ADR-0102), `smbpasswd` reads
 the password as lines on standard input, and the same password is also the UNOS password,

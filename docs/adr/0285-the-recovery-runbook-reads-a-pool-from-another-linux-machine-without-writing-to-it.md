@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0262: The recovery runbook reads a pool from another Linux machine without writing to it, degraded when a disk is missing
+# ADR-0285: The recovery runbook reads a pool from another Linux machine without writing to it, degraded when a disk is missing
 
 ## Context
 
@@ -13,7 +13,7 @@ When the NAS does not boot, after a failed system disk or board, its users still
 
 ## Decision
 
-- `docs/RECOVERY.md` is the runbook, linked from `docs/INSTALL.md` (Troubleshooting), `docs/USER_GUIDE.md` and `README.md`. It has two parts: reaching a pool's data from another Linux machine, and the emergency reset of an administrator (ADR-0261).
+- `docs/RECOVERY.md` is the runbook, linked from `docs/INSTALL.md` (Troubleshooting), `docs/USER_GUIDE.md` and `README.md`. It has two parts: reaching a pool's data from another Linux machine, and the emergency reset of an administrator (ADR-0284).
 - Nothing mounts a disk of the NAS before the runbook's read-only mount: a desktop may mount a disk read-write as soon as it is attached (GNOME does), which replays the log and writes, and a read-only mount beside it does not stop that. Before the disks are attached, the runbook turns the desktop's automounting off (on GNOME, the desktop of the Debian and Ubuntu live systems: `gsettings set org.gnome.desktop.media-handling automount false`); once they are attached, `lsblk -f` must show no mount point for the pool's disks, nor for the old system disk before its own mount, and a disk that has one is unmounted at once.
 - The pool is found by its label with `btrfs device scan` and `btrfs filesystem show`, and mounted only read-only, with `-o ro,rescue=nologreplay` (`nologreplay` on Linux before 5.9): a plain `ro` mount still replays btrfs's log, which writes to the disks. With a disk missing, `degraded` is added. Which disks a profile can miss is listed for every profile of `PROFILE_MAP`: one for raid1 and raid10, two for raid1c3, three for raid1c4, none for single and raid0.
 - It says where UNOS keeps things on a pool: volumes are the subvolumes at its top (ADR-0069); snapshots are read-only, in the `.snapshots` folder of the pool and of each volume, and the copies that Restore made are `restore_<date>_<time>`; the trash is `.unos-trash` (ADR-0259); app data is in `apps/<app>` (ADR-0039). The share folders are named by the `[name]` sections and `path =` lines of `/etc/samba/smb.conf` on the old system disk, or by the table `smb_shares` of the database `unos.db` in the Docker volume `deploy_unos-data`. Files written over SMB belong to the SMB accounts' user ids and group 70000, and share folders have mode 2770: they are copied as root.

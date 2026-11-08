@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
 
-// The emergency reset of an administrator (feature system.emergency-runbook-and-cli, ADR-0261)
+// The emergency reset of an administrator (feature system.emergency-runbook-and-cli, ADR-0284)
 // against the real supervisor of the local stand-in, without route fakes. On a NAS, root runs
 // deploy/reset-admin.sh, which runs `python -m src.emergency reset-admin` in the supervisor's
 // container; here scripts/standin/emergency.py runs that module against the stand-in's

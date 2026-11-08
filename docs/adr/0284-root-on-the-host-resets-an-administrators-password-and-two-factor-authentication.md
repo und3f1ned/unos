@@ -5,7 +5,7 @@ area: auth
 decided-by: agent
 ---
 
-# ADR-0261: Only root on the host resets an administrator's password and two-factor authentication, with the emergency command line
+# ADR-0284: Only root on the host resets an administrator's password and two-factor authentication, with the emergency command line
 
 ## Context
 
@@ -18,7 +18,7 @@ An administrator who forgot the password, or lost the authenticator app and the 
 - The new password never comes from the command line or the environment: on a terminal it is asked twice without echo (`getpass`), and two different entries change nothing; otherwise it is the first line of standard input, without its line break. It needs at least 8 characters (`MIN_PASSWORD_CHARS`, as the web UI asks), at most 72 bytes in UTF-8 (`MAX_PASSWORD_BYTES` of bcrypt) and no control characters, and is hashed by `hash_password` (bcrypt, 12 rounds, ADR-0239).
 - One UPDATE stores the hash and turns two-factor authentication off: `totp_enabled` false, `totp_secret` and `recovery_codes` null, as turning it off does (ADR-0238). It changes the row only while the id, the name, the administrator flag and the two-factor state are those read before the password was asked (a compare-and-swap): an account changed meanwhile is not reset, and the command says to run it again.
 - The database is opened as an SQLite URI with `mode=rw`: a missing database is an error, never a new empty file on the system disk.
-- After the commit, `log_action` writes the audit entries, by the user `root` (a name that no UNOS user can have, ADR-0115), for the resource `user` NAME, with severity warning: `password_change` "Password reset on the host's command line", and `totp_disabled` "Two-factor authentication turned off on the host's command line, with its recovery codes" when it was on. An entry that cannot be written (a full `/data`) is reported on the error output, which says that the reset was done, and the command exits with 1. The command is a second writer of the audit log, in a process of its own beside the running supervisor: it takes the log's lock across processes, as the supervisor does (ADR-0263).
+- After the commit, `log_action` writes the audit entries, by the user `root` (a name that no UNOS user can have, ADR-0115), for the resource `user` NAME, with severity warning: `password_change` "Password reset on the host's command line", and `totp_disabled` "Two-factor authentication turned off on the host's command line, with its recovery codes" when it was on. An entry that cannot be written (a full `/data`) is reported on the error output, which says that the reset was done, and the command exits with 1. The command is a second writer of the audit log, in a process of its own beside the running supervisor: it takes the log's lock across processes, as the supervisor does (ADR-0286).
 - Exit status: 0 when the reset is done and recorded, 1 when it is not done or not recorded, 2 for a wrong command line, 130 when interrupted at the prompt.
 - Nothing else changes: the account's sessions stay valid until they expire (`auth.session-revocation`), its API tokens keep working, and administrators have no SMB password to change (ADR-0117).
 - Tests: `supervisor/tests/test_emergency.py` (the command in its process, `deploy/reset-admin.sh` with a fake docker, the sign-in and the audit log through the API afterwards, the command's entries waiting for a rotation of the supervisor); `webui/tests/emergency-reset.spec.ts` runs it against the local stand-in's data through `scripts/standin/emergency.py`.

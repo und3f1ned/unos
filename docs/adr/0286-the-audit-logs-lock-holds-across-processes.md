@@ -5,11 +5,11 @@ area: security
 decided-by: agent
 ---
 
-# ADR-0263: The audit log's lock holds across processes, through a file lock that the emergency command line takes too
+# ADR-0286: The audit log's lock holds across processes, through a file lock that the emergency command line takes too
 
 ## Context
 
-ADR-0224 keeps the appends, rotations, reads and clearing of the audit log under one lock, a `threading.Lock` of the supervisor's process. The emergency command line (ADR-0261) writes the log from a process of its own, in the supervisor's container, while the supervisor runs, and a thread lock does not reach it: two rotations at once could lose an old file or fail, and a clearing that read the current file before the command's append and replaced it after would drop the reset's entries.
+ADR-0224 keeps the appends, rotations, reads and clearing of the audit log under one lock, a `threading.Lock` of the supervisor's process. The emergency command line (ADR-0284) writes the log from a process of its own, in the supervisor's container, while the supervisor runs, and a thread lock does not reach it: two rotations at once could lose an old file or fail, and a clearing that read the current file before the command's append and replaced it after would drop the reset's entries.
 
 ## Decision
 
@@ -27,4 +27,4 @@ ADR-0224 keeps the appends, rotations, reads and clearing of the audit log under
 ## Considered options
 
 - An append from the command that never rotates: a clearing could still drop its entries.
-- Writing the command's entries through the supervisor: no route of the API may reach the command (ADR-0261).
+- Writing the command's entries through the supervisor: no route of the API may reach the command (ADR-0284).

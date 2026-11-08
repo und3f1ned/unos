@@ -1,4 +1,4 @@
-"""The emergency command line (ADR-0261): root on the host resets an administrator's password and
+"""The emergency command line (ADR-0284): root on the host resets an administrator's password and
 turns its two-factor authentication off, when no administrator can sign in (docs/RECOVERY.md).
 
     sudo /opt/unos/deploy/reset-admin.sh [NAME]

@@ -372,7 +372,7 @@ class TestLock:
 
 
 # A process of its own that writes the log, as the emergency command line does beside the
-# supervisor (ADR-0261): it appends an entry that does not fit, and so rotates the log, or it
+# supervisor (ADR-0284): it appends an entry that does not fit, and so rotates the log, or it
 # clears the log before a date. Before its first rename it stops: it creates the file PAUSED and
 # goes on once the file GO exists.
 OTHER_PROCESS = textwrap.dedent(
@@ -410,8 +410,8 @@ def entry_line(name: str, second: int) -> str:
 
 class TestOtherProcesses:
     """The emergency command line writes the log from a process of its own while the supervisor
-    runs (ADR-0261): appends, rotations, reads and clearing exclude each other across processes
-    as they do across threads (ADR-0263)."""
+    runs (ADR-0284): appends, rotations, reads and clearing exclude each other across processes
+    as they do across threads (ADR-0286)."""
 
     LIMIT = 1000  # three entries of entry_line fit in a file
 

@@ -6,7 +6,7 @@ disk; ADR-0214). Before an append would grow the file past MAX_FILE_BYTES, it be
 AUDIT_FILE.1 and the older files move one number up; KEEP_ROTATED old files are kept. Readers go
 through the old files and then the current one, and skip every line that is not a valid entry.
 Two processes write the log, the supervisor and the emergency command line beside it
-(src/emergency.py, ADR-0261), so its lock holds across processes too (_log_lock, ADR-0263).
+(src/emergency.py, ADR-0284), so its lock holds across processes too (_log_lock, ADR-0286).
 
 Listing, counting and exporting take the same filters (AuditFilter, ADR-0237), and the CSV
 export holds no cell that a spreadsheet reads as a formula (_spreadsheet_text).
@@ -70,7 +70,7 @@ def _log_lock() -> Iterator[None]:
 
     _lock keeps out the other threads of this process, and an exclusive flock of AUDIT_FILE.lock
     the other processes: the supervisor and the emergency command line, which root runs in its
-    container (ADR-0261, ADR-0263). The lock file stays empty; closing it ends the flock, also
+    container (ADR-0284, ADR-0286). The lock file stays empty; closing it ends the flock, also
     when the process dies.
     """
     with _lock:

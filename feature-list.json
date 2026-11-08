@@ -359,13 +359,16 @@
       ],
       "verified_by": [
         "supervisor/tests/test_auth.py",
-        "supervisor/tests/test_usernames.py"
+        "supervisor/tests/test_usernames.py",
+        "supervisor/tests/test_standin.py",
+        "webui/tests/first-run.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0029"
+        "ADR-0029",
+        "ADR-0261"
       ],
-      "notes": "No E2E test covers the /setup page: scripts/standin/e2e.sh creates the administrator through the API."
+      "notes": "webui/tests/first-run.spec.ts runs on the stand-in's real supervisor, on the new installation that scripts/standin/e2e.sh starts without any account: e2e.sh runs it alone with E2E_FIRST_RUN=1, never retried, before the specs, and stops when it fails (ADR-0261; test_standin.py checks that and that e2e.sh sends no setup request, and runs a copy of e2e.sh with a faked stand-in and Playwright: the setup with E2E_FIRST_RUN=1, then the specs without it, a stop when the setup fails). Named alone, scripts/standin/e2e.sh tests/first-run.spec.ts runs that setup as the whole run. Step 4: /api/v1/auth/status answers setup_required and admin/admin does not sign in. Step 1: the web UI leads to /setup, whose name and password fields are reached through their labels. Step 2: creating E2E_ADMIN there opens the dashboard with that name and Administrator in the sidebar. Step 3: a second setup through the page shows \"Admin user already exists. Use /login instead.\", and the users list holds only the first administrator. test_auth.py's TestFirstRunSetup adds two setups sent at the same moment (200 and 400, one administrator), a refused setup that creates nobody, the new administrator signing in, an app started on a new database without any account, and the one uvicorn process that _setup_lock needs. Database only: not host-level (GLOSSARY.md). The compose test stack still creates its administrator through the API."
     },
     {
       "id": "auth.sign-in-and-out",
@@ -401,15 +404,17 @@
       ],
       "verified_by": [
         "supervisor/tests/test_totp_once.py",
+        "webui/tests/two-factor.spec.ts",
         "webui/tests/auth.spec.ts",
-        "webui/tests/roles.spec.ts"
+        "webui/tests/roles.spec.ts",
+        "webui/tests/security.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0067",
         "ADR-0027"
       ],
-      "notes": "The API tests cover the setup, single-use codes and turning it off; the E2E specs draw the QR code and show the code form with canned answers, but never enter a code to turn two-factor authentication on or off."
+      "notes": "webui/tests/two-factor.spec.ts on the stand-in's real supervisor, for a regular test user (never E2E_ADMIN), with codes computed from the secret of the QR code (tests/totp.ts, RFC 6238). Step 1: Enable draws the QR code from a data: URL in the browser, and the image is, module by module, the QR code of the setup's otpauth://totp/UNOS:<name> URI (the qrcode package, error correction M), whose secret is the one shown for manual entry, with the issuer UNOS and SHA-1, 6 digits and 30 seconds. Step 2: a code turns 2FA on; the card says Enabled and /auth/totp/status agrees. Step 3: after the password the code form appears, and a code of the next 30-second step opens the dashboard. Step 4: the same code again, in the same step, answers \"This two-factor code was already used; wait for the next one\" and the code form stays. Step 5: a code of a newer step turns 2FA off, and the password alone signs in again. The spec waits for new steps (about 40 to 60 seconds). test_totp_once.py reads that URI as an app does (its secret is the stored one, and its code turns 2FA on) and covers the single use at every check, roles.spec.ts that no QR code service is asked, auth.spec.ts the errors of the code form. A status that cannot be loaded is reported with its reason and Retry, not shown as Disabled with Enable (security.spec.ts). Database only: not host-level (GLOSSARY.md). A lost authenticator needs a recovery code (auth.recovery-codes); no administrator can reset another user's 2FA (system.emergency-runbook-and-cli)."
     },
     {
       "id": "auth.login-rate-limit",
@@ -486,14 +491,15 @@
         "supervisor/tests/test_usernames.py",
         "supervisor/tests/test_smb_accounts.py",
         "supervisor/tests/test_smb_integration.py",
+        "webui/tests/change-password.spec.ts",
         "webui/tests/security.spec.ts",
         "webui/tests/account-smb.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0119"
       ],
-      "notes": "The tests check the answer and Samba's copy of the new password, not a sign-in with it; the E2E spec uses a canned answer."
+      "notes": "webui/tests/change-password.spec.ts on the stand-in's real supervisor, for a regular test user without SMB. Step 2: the three fields are filled through their labels, and with any one of them empty the browser reports it missing and sends nothing. Step 1: with all three the page says \"Password changed successfully\" and clears the form. Step 4: after Logout the old password answers \"Incorrect username or password\" and the new one opens the dashboard. Step 3: account-smb.spec.ts shows the warnings of an answer until Dismiss, with a canned answer because ending SMB sessions needs Samba; test_smb_accounts.py makes the server send them. TestPasswordChange of test_smb_accounts.py signs in with the old and the new password after a change, with and without an active SMB account, and refuses a request that lacks a field (422). Without SMB the change is database only: not host-level (GLOSSARY.md); Samba's copy of an active account is shares.password-follows-unos. The server takes a new password of any length from a user without SMB: the 8 characters are the page's rule. Sessions signed in before the change stay valid (auth.session-revocation)."
     },
     {
       "id": "auth.api-tokens",
@@ -532,13 +538,16 @@
       "verified_by": [
         "supervisor/tests/test_authz.py",
         "supervisor/tests/test_security.py",
+        "webui/tests/login-history.spec.ts",
         "webui/tests/security.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0048"
+        "ADR-0048",
+        "ADR-0262",
+        "ADR-0263"
       ],
-      "notes": "The API tests cover it; the E2E spec only opens the section, and also passes while the list says Loading."
+      "notes": "webui/tests/login-history.spec.ts on the stand-in's real supervisor, for a regular test user, with the browser in Asia/Kathmandu (UTC+05:45): a wrong password, then the right one. Login History, once loaded, lists exactly those two, newest first: SUCCESS, then FAILED with \"Incorrect username or password\", each with the time of its sign-in in the browser's time zone and the address that the server recorded for the test process's own sign-in through the API from the same machine (127.0.0.1 and ::1 count as one), and the counts 2, 1 and 1 (steps 1 and 2). On the compose test stack that address is the test-runner's, and the spec also checks that it is not the proxy's (Caddy, the host webui). Fixed with it (ADR-0262): the times were answered without their UTC offset and shown hours off, the attempts of one second came in any order, and clearing the history counted its days in the server's local time. On the stand-in the browser and the proxy share an address; that the list shows the browser's address and not the proxy's is TestRealClientAddress of test_authz.py, through the proxy layer of deploy/docker-compose.yml. The history is kept by name: a regular user sees the attempts on their name since their account was created (ADR-0263), so a user created again with the name of a deleted one does not see that account's rows, which administrators still see (TestLoginHistory). A history that cannot be loaded is reported with its reason and Retry, not shown as empty with counts of 0 (security.spec.ts). DELETE /api/v1/security/login-history takes older_than_days from 0 to 36500 and answers 422 otherwise. Database only: not host-level (GLOSSARY.md)."
     },
     {
       "id": "auth.websocket-auth",
@@ -742,14 +751,15 @@
       ],
       "verified_by": [
         "supervisor/tests/test_disk_safety.py",
-        "webui/tests/storage.spec.ts",
-        "webui/tests/health.spec.ts"
+        "supervisor/tests/test_storage.py",
+        "webui/tests/storage.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0035"
+        "ADR-0035",
+        "ADR-0271"
       ],
-      "notes": "Device check: 2026-11-06 (slice 1 deploy; also on 2026-11-05 after a reboot of the Phase 0 tree). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Proven here, 2026-11-07. Step 1: test_disk_safety.py TestDisksEndpoint (test_lists_every_whole_disk_with_model_size_and_serial: GET /api/v1/storage/disks lists every whole disk with model, size and serial, without the boot SD card and zram) and TestListDisks (hidden boot and virtual devices, a system disk on NVMe, a root shown as /dev/root, old lsblk); storage.spec.ts 'every disk is listed with its model, serial and size, and what uses it' (each row's device, model and serial, size, HDD or SSD, contents, mountpoints and status, on route fakes with the supervisor's texts). Step 2: TestDisksEndpoint test_each_disk_says_what_uses_it_and_which_pool_it_belongs_to (system, in use with its reason, holding data, the pool of a disk and of both members of a mounted pool) and TestListDisks (swap, md, wipefs signatures, a failed probe counts as data); the same spec shows the System, In use, Pool, Has data and Free badges with the reasons. Step 3: test_a_disk_list_that_cannot_be_read_answers_500_with_the_reason (500 'lsblk failed: <reason>') and the specs 'a disk list that cannot be loaded says why, and the pools are still shown' and 'a pool list that cannot be loaded says why, and the disks are still shown' (ADR-0271: each card says why instead of 'No disks found'). The steps only read the host (lsblk, findmnt, swapon and wipefs --no-act through supervisor/src/host.py), so they make no host-level change and need no reboot check; the device check was done on 2026-11-06. A sanity check after the next deploy: Storage on the device lists /dev/sda with its model, serial and size and the badge of the pool data's disk, and the SD card is not listed. Reviewed in a fresh context twice (ADR-0017), 2026-11-07 and 2026-11-08: no finding left open for this entry."
     },
     {
       "id": "storage.create-pool",
@@ -792,7 +802,7 @@
       "adr": [
         "ADR-0034"
       ],
-      "notes": "Device check: 2026-11-05 (Phase 0 deploy: unmount, mount and a reboot of that tree); the deployed tree changed since. Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Built and proven here on 2026-11-07: storage.spec.ts 'Pool unmount, mount and removal (fake data)' on route fakes that change their pools as the supervisor does: Unmount asks first (Cancel sends nothing), POST /pools/<name>/unmount, then the card shows Not mounted, no fstab badge and no Scrub, Volumes or Unmount; Mount sends POST /mount and the card shows Healthy, Mounted at boot and its mountpoint again; the 409s of a pool that running apps or host processes use are shown in the dialog and the pool stays mounted. test_pool_persistence.py pins those 409 texts at the API (TestPoolEndpoints test_a_pool_that_running_apps_use_answers_which_ones, test_a_pool_that_host_processes_use_answers_409) and proves the host side on the fake host: the guard chattr +i, the managed entry removed and written again, the startup reconcile (TestUnmountAndDelete, TestMountPool, TestReconcile, TestAppChecksBeforeStart, TestLifespanRunsReconcile). Device check: 2026-11-05 on the Phase 0 tree; the deployed tree changed since. Open, on the device after a deploy, on a test pool: unmount it from the page, then GET /api/v1/storage/pools shows mounted false and persistent false, /etc/fstab has no '# unos-pool:<name>' line, lsattr -d /mnt/pools/<name> shows the i flag and touch /mnt/pools/<name>/x as root fails with 'Operation not permitted'; Mount brings the managed entry back and health healthy; with transmission running on the pool data, Unmount answers 409 naming transmission; and after the owner's reboot (ADR-0018) the pool data is mounted at /mnt/pools/data before docker.service starts (systemd-analyze critical-chain docker.service lists mnt-pools-data.mount) and transmission runs. Device check 2026-11-08: unmounting the pool data was refused (409) with every app stopped: systemd-resolved, -timesyncd, -udevd, -networkd, rsyslogd and -logind run in mount namespaces of their own, each with a copy of the pool's mount in a peer group of its own, which the host's umount does not reach; UNOS mounted the pool again, as designed."
     },
     {
       "id": "storage.pool-health",
@@ -828,14 +838,15 @@
         "A pool that host processes or containers use is refused with 409"
       ],
       "verified_by": [
-        "supervisor/tests/test_pool_persistence.py"
+        "supervisor/tests/test_pool_persistence.py",
+        "webui/tests/storage.spec.ts"
       ],
       "passes": false,
       "adr": [
         "ADR-0035",
         "ADR-0070"
       ],
-      "notes": "No E2E test. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built and proven here on 2026-11-07: storage.spec.ts 'remove pool asks for its name, and the disks keep the pool to mount later' (the trash button 'Remove pool <name>', Continue, Remove Pool disabled until the exact name is typed, DELETE /pools/<name>, then the pool listed again as Not mounted with Mount) and 'a pool in use is not removed, and the dialog says why' (the 409 in the dialog, the pool still mounted). test_pool_persistence.py: test_delete_forgets_the_pool_but_keeps_the_data (umount, the managed entry dropped, chattr -i and rmdir of the mountpoint, no mkfs or wipefs, listed again as unmounted and mountable), test_delete_keeps_a_non_empty_directory_guarded, test_delete_is_non_destructive, and the 409s at the API for containers and host processes (TestPoolEndpoints). The API takes no typed name: only the page asks for it (ADR-0035). Open, on the device on a test pool of spare disks, not the pool data: Remove Pool, then /etc/fstab has no '# unos-pool:<name>' line, /mnt/pools/<name> is gone, btrfs filesystem show still lists the filesystem and Storage shows it as Not mounted; Mount brings it back; with a container using the pool, Remove Pool answers 409 naming it; and after the owner's reboot (ADR-0018) a removed pool is not mounted."
     },
     {
       "id": "storage.volumes",
@@ -900,11 +911,12 @@
         "supervisor/tests/test_scheduler_validation.py",
         "webui/tests/storage.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0071"
+        "ADR-0071",
+        "ADR-0272"
       ],
-      "notes": "No E2E test starts a scrub. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built and proven here on 2026-11-07. Step 1: test_storage.py TestScrubStart (the request answers once btrfs returns, the scrub process still running), TestScrubOffTheEventLoop (worker threads, timeouts). Step 2: TestScrubStatus (btrfs-progs 6 output parsed: progress while it runs, finished, every error of the error summary summed, aborted, interrupted, never scrubbed) and storage.spec.ts 'Scrub (fake data)': Start Scrub, the progress bar 'Scrub progress' with bytes, percent, rate and duration, updated every 2 seconds, then 'Last scrub: No errors' with the start time; 'Last scrub: 13 error(s)' and the interrupted result (ADR-0272). Step 3: TestScrubStatus test_cancel_answers_the_cancelled_scrub and the spec 'cancel stops a running scrub, and the result says it was cancelled' (DELETE, followed while btrfs still reports running, then 'Last scrub: cancelled before it finished'). A status btrfs cannot report answers 500, not idle (test_a_status_that_btrfs_cannot_report_is_an_error_not_idle), and the card then says 'Could not read the scrub status' instead of a stale progress and still offers Cancel Scrub (spec 'a scrub status that cannot be read says why instead of a stale progress'); a start or cancel that btrfs did is answered running or aborted when the status read after it fails (test_a_start_or_cancel_whose_status_cannot_be_read). Step 4: test_scheduler_validation.py test_scrub_task, test_scrub_of_an_unmounted_pool_fails_without_btrfs, test_a_scheduled_scrub_is_recorded_when_btrfs_returns. Step 5: storage.spec.ts 'shows pool health and mount state' and the unmount spec (no Scrub on a pool that is not mounted). The 409 of the API for an unmounted pool is storage.scrub-needs-mounted-pool. Open, on the device, on the pool data: Scrub on the Storage page shows the progress moving and a result at the end ('Last scrub: No errors' on a healthy pool), Cancel Scrub on a second run shows 'Last scrub: cancelled before it finished', a scheduled scrub task's Run now is recorded as success, the API answers other requests meanwhile, and the SD writes of the run are measured (the scrub status lives in the /var/lib/btrfs tmpfs, ADR-0171); and the re-check after the owner's reboot (ADR-0018), after which the pool shows no last scrub result: the restart forgot it (ADR-0171). Device check 2026-11-08 after the deploy of main 1fdf802: a scrub of the pool data ran to the end in 19 s with 0 errors and its progress moving; a second scrub was cancelled (aborted). Right after the start, GET .../scrub still says idle for a moment."
     },
     {
       "id": "storage.smart",
@@ -942,13 +954,18 @@
         "GET /api/v1/health/smart/trends and /smart/predictions report the trend and a failure estimate per disk"
       ],
       "verified_by": [
-        "supervisor/tests/test_health_monitor.py"
+        "supervisor/tests/test_health_monitor.py",
+        "supervisor/tests/test_smart_predictions.py",
+        "supervisor/tests/test_health_smart.py",
+        "supervisor/tests/test_storage.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0043"
+        "ADR-0043",
+        "ADR-0269",
+        "ADR-0270"
       ],
-      "notes": "Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Proven here, 2026-11-07. Step 1: test_health_monitor.py TestSmartHistoryWrites test_every_pass_is_recorded_in_ram_where_the_endpoints_read_it (each pass adds the disk's counters, temperature and path, as /smart/history, /smart-monitor/status and /smart/trends report), test_health_smart.py test_the_monitor_checks_the_same_disks (every awake whole disk of Disk Health) and test_storage.py test_monitor_round_runs_in_a_worker_thread. The history is written only when a pass changes it and at shutdown (ADR-0269, ADR-0214): TestSmartHistoryWrites proves that passes that change nothing and a start that changes nothing write nothing, that a new disk, a counter, a path or an lsblk serial writes it at once, that a failed write is tried again and the alert still sent, and that the snapshots in RAM are written at shutdown. Step 2: TestSmartAlertChannels (a rise of the reallocated or of the pending sectors reaches every enabled e-mail and Telegram channel once, not a disabled one, with the title, message and recommendation) and TestSmartTrendAlerts (one alert per rise, again for a further rise, none after a snapshot without the counters, again for a rise after a drop, ADR-0270); TestSmartHistoryWrites test_a_pass_that_ends_after_the_shutdown_keeps_nothing_and_alerts_at_the_next_start (ADR-0269; an alert still being sent when the supervisor stops is cut off, as before); test_storage.py TestAlertsOffTheEventLoop (delivery off the event loop, bounded). Step 3: TestSmartTrendsEndpoint (GET /api/v1/health/smart/trends lists every tracked disk with its data points and rising counters, steady and removed disks included, the disks without a serial or with an empty one by path, the window of the last 24 values, ADR-0270) and test_smart_predictions.py (GET /smart/predictions: the failure estimate of each connected disk, ADR-0235). Only the ATA counters are recorded, so NVMe disks have none, and sleeping disks are skipped (smartctl -n standby). No host-level change. A sanity check after the next deploy: GET /api/v1/health/smart/trends lists the device's disks with data_points growing by one per hour, and /data/smart_history.json keeps its mtime across hourly passes (stat), so the hourly SD writes of the old monitor are gone (scripts/dev/sd.sh measure over a pass). Reviewed in a fresh context twice (ADR-0017), 2026-11-07 and 2026-11-08; the findings were fixed except two, recorded in ADR-0269 and ADR-0270: an alert still being sent when the supervisor stops is cut off and not sent again (the monitor writes before it sends, as before), and a history that an older monitor stored under an empty serial is not continued under 'unknown'."
     },
     {
       "id": "storage.smart-replace-soon",
@@ -1455,10 +1472,18 @@
         "The macOS Finder sidebar lists the NAS",
         "NetBIOS can then be turned off"
       ],
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_smb_models.py",
+        "supervisor/tests/test_smbconf_testparm.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0158"
-      ]
+        "ADR-0158",
+        "ADR-0275"
+      ],
+      "notes": "Built (ADR-0275): the rendered [global] turns NetBIOS off (disable netbios = yes, smb ports = 445) and keeps smbd's Bonjour registration on (multicast dns register = yes). install.sh: start_samba enables and restarts smbd and turns nmbd off (systemctl disable --now nmbd); configure_discovery writes /etc/avahi/avahi-daemon.unos.conf (Debian's avahi-daemon settings with use-ipv6=no and publish-aaaa-on-ipv4=no), the drop-in avahi-daemon.service.d/unos.conf (avahi-daemon -s -f that file) and the drop-in wsdd2.service.d/unos.conf (wsdd2 -4), reloads systemd, installs avahi-daemon with --no-install-recommends (no libnss-mdns, which would change the host's name resolution) and enables and restarts it, then wsdd2 the same way when apt-cache show finds the package. Without one (Debian 11, Ubuntu without universe) it warns and the installation goes on; a package that exists but does not install stops it, with apt-get's error. Both services answer over IPv4 only: a Mac would otherwise connect from a global IPv6 address, which hosts allow refuses, and wsdd2's TCP ports would listen on tunnels (ADR-0227). wsdd2 is a reserved account name: wsdd2.service runs as the dynamic user wsdd2, which a static account of that name would replace. uninstall.sh enables nmbd again when it restores smb.conf.original and keeps avahi-daemon, wsdd2 and UNOS's files of both, none of them in /etc/unos. docs/INSTALL.md (Step 5, Network Discovery) and docs/USER_GUIDE.md (Finding the NAS) describe it. Tests: test_smbconf.py (TestGlobal: the three lines in both [global] variants); test_deploy_scripts.py (TestInstallScript: smbd without nmbd on a first installation and a rerun; neither avahi-daemon nor wsdd2 among install_dependencies' packages, avahi-daemon without what it recommends; avahi-daemon's settings and drop-in and wsdd2's drop-in written and loaded before the packages are installed; a missing wsdd2 package lets the installation go on, a package that fails to install stops it with apt-get's error; the order of main; TestUninstallScript: nmbd enabled again with the restored file, the completion; TestInstallGuide: the manual installation's packages, commands and files are those of install.sh); test_smb_models.py (wsdd2 is reserved). Not built: scripts/dev/check.sh still expects nmbd to be active and checks neither wsdd2 nor avahi-daemon (device.check-network-discovery). Open: steps 1 to 3 need the dev device and a Windows and a macOS computer on its LAN. On the device, in this order: deploy the branch while nmbd still runs, since check.sh needs it until device.check-network-discovery is done (smbd reloads the new smb.conf; nmbd keeps running until it is stopped); then the owner's actions (ADR-0211): the commands of docs/INSTALL.md Step 5 after the nmbd line (the three files, systemctl daemon-reload, avahi-daemon without recommends, wsdd2, enabling and restarting both), systemctl disable --now nmbd, and systemctl restart smbd (smb ports applies only at a restart). From then on, until device.check-network-discovery, check.sh reports nmbd inactive: its only expected problem. The device check, once device.check-network-discovery lets check.sh answer OK, and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): test_smbconf_testparm.py passes with scripts/dev/bin/testparm; systemctl is-active smbd wsdd2 avahi-daemon answers active for each, and nmbd is inactive and disabled; ss -tulpn lists no socket on UDP 137 or 138 or TCP 139, smbd on TCP 445, wsdd2 on UDP and TCP 3702 (and on 5355 where systemd-resolved does not hold it) and avahi-daemon on UDP 5353, with IPv4 sockets only; on a Windows computer of the LAN, File Explorer's Network view lists the NAS, and opening it there asks for a UNOS SMB account and then lists the shares it may use (steps 1 and 3); on a macOS computer of the LAN, dns-sd -G v4v6 <name>.local answers IPv4 addresses only, the Finder sidebar lists the NAS under Locations, once, and connecting from there with a UNOS SMB account lists its shares, also from a Mac with a global IPv6 address where the LAN gives it one (steps 2 and 3)."
     },
     {
       "id": "shares.smb-bind-interfaces",
@@ -1564,7 +1589,7 @@
         "ADR-0195",
         "ADR-0248"
       ],
-      "notes": "Built: create, mount, unmount and remove on the Storage page apply smb.conf before they answer, also after a failure (ADR-0248). test_smb_integration.py runs the real pool and SMB code on the fake hosts (unmount and mount, remove, a busy unmount and the mount of a mounted pool that write nothing, a failed apply, an unmount whose apply waits for smb_lock and runs with it held), test_pool_persistence.py (TestPoolEndpoints) checks which requests apply, and storage.spec.ts the Shares page after Unmount and Mount, with route fakes that also change the SMB status as the server does (test_share_api.py checks their texts). Reviewed in a fresh context (ADR-0017), its findings fixed (ADR-0250 supersedes ADR-0195). Open: the device check (btrfs and Samba) and the re-check after a reboot (ADR-0018): with the share DATA served from /mnt/pools/data/shared, an account with access, transmission stopped and no SMB client connected, Unmount data on the Storage page: /etc/samba/smb.conf has no [DATA] section, smbclient -L lists no DATA, and the Shares page shows DATA as Not served and Pool not mounted; Mount data: smb.conf has the same [DATA] section again and the account opens DATA with smbclient. With an SMB client connected to DATA, Unmount answers 409 (busy) and smb.conf is unchanged. Report the SD MiB of each step."
+      "notes": "Built: create, mount, unmount and remove on the Storage page apply smb.conf before they answer, also after a failure (ADR-0248). test_smb_integration.py runs the real pool and SMB code on the fake hosts (unmount and mount, remove, a busy unmount and the mount of a mounted pool that write nothing, a failed apply, an unmount whose apply waits for smb_lock and runs with it held), test_pool_persistence.py (TestPoolEndpoints) checks which requests apply, and storage.spec.ts the Shares page after Unmount and Mount, with route fakes that also change the SMB status as the server does (test_share_api.py checks their texts). Reviewed in a fresh context (ADR-0017), its findings fixed (ADR-0250 supersedes ADR-0195). Open: the device check (btrfs and Samba) and the re-check after a reboot (ADR-0018): with the share DATA served from /mnt/pools/data/shared, an account with access, transmission stopped and no SMB client connected, Unmount data on the Storage page: /etc/samba/smb.conf has no [DATA] section, smbclient -L lists no DATA, and the Shares page shows DATA as Not served and Pool not mounted; Mount data: smb.conf has the same [DATA] section again and the account opens DATA with smbclient. With an SMB client connected to DATA, Unmount answers 409 (busy) and smb.conf is unchanged. Report the SD MiB of each step. Device check 2026-11-08: blocked; unmounting the pool data is refused on the device (409) because systemd services' own mount namespaces keep copies of its mount (storage.mount-and-unmount)."
     },
     {
       "id": "shares.keep-every-replaced-copy",
@@ -1593,9 +1618,18 @@
       "adr": [
         "ADR-0194",
         "ADR-0102",
-        "ADR-0159"
+        "ADR-0159",
+        "ADR-0277",
+        "ADR-0278",
+        "ADR-0281"
       ],
-      "notes": "Unthrottled SMB sign-ins are an accepted risk (ADR-0102); a host rate limit for TCP port 445 is one of the options."
+      "notes": "Built (ADR-0277, ADR-0278), not checked on the device. Step 1: the rendered [global] has `log file = /run/samba/log.samba` and `max log size = 100` on every host, since RAM cannot be told from the system disk reliably (zram shows as a block device with ext4) and where /var/log is in RAM the file was in RAM already; one file for smbd, nmbd and the smbd of each client, without %m, so that clients add no files to /run. deploy/install.sh writes the same file. Tests: test_smbconf.py (TestGlobal), test_deploy_scripts.py; test_smbconf_testparm.py needs the device's testparm. Step 2: the account reconcile reads `pdbedit -P \"password history\"` at every start and sets it to 3 only when it differs, so that a wrong password that is one of an account's two previous passwords skips Samba's passdb write (test_smb_reconcile.py TestPasswordHistory and TestConsistent, against samba_fake.py). A password enters the history only when it is set while the policy is 3 (ADR-0278): an account whose password was set before, as every SMB account on the dev device, has an empty history, so its first change after the deploy does not spare retries of the password it replaced, and only its second change does. Every other wrong password of an existing account still writes passdb.tdb once, as Samba's tdbsam does (ADR-0159): step 2 as written is met only for retries of the two previous passwords that the history holds. Whether the step is narrowed to them or needs another measure is the owner's choice; limiting repeated failures is shares.smb-login-protection (ADR-0280). Unthrottled SMB sign-ins are an accepted risk (ADR-0280). Device check (ADR-0018), with the SD MiB of each step (ADR-0214): test_smbconf_testparm.py passes against the device's testparm (scripts/dev/bin first on PATH); after the deploy, the reconcile's audit entry says \"Set Samba's password history to 3 (it was 0)\" once and `pdbedit -P \"password history\"` prints 3, and the next start reads it without setting it; after the apply's reload, /run/samba/log.samba exists and /var/log/samba/log.smbd and log.nmbd do not grow while clients connect, fail to sign in and Samba reloads; with an SMB account activated after the deploy, or one whose password was changed once after the deploy, change its password through UNOS, then scripts/dev/sd.sh measure around a sign-in with the password just replaced shows about 0 MiB and passdb.tdb's mtime unchanged, while a sign-in with a wrong password that the account never had still changes it (for an account activated before the deploy, Samba spares the replaced password only from the second change after the deploy on, which is no failure); changing the account's password back to the previous one through UNOS still works, since smbpasswd as root is not checked against the history; the same after a reboot. Reviewed in a fresh context (ADR-0017): ADR-0278 and the device check above now say that a password enters the history only when it is set while the policy is 3, and ADR-0281 lists the whole [global] with the lines of step 1, superseding ADR-0087.",
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_smbconf_testparm.py",
+        "supervisor/tests/test_smb_reconcile.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ]
     },
     {
       "id": "shares.apparmor-profile",
@@ -1640,9 +1674,17 @@
       "passes": false,
       "adr": [
         "ADR-0102",
-        "ADR-0194"
+        "ADR-0194",
+        "ADR-0279",
+        "ADR-0280"
       ],
-      "notes": "ADR-0102 accepts the risk for now. A rate limit for TCP port 445 would be a firewall change on the host (ADR-0194)."
+      "notes": "Step 2 built (ADR-0279): constants.smb_password_problem refuses a password whose casefolded form is a line of supervisor/src/shares/common_passwords.txt (about 1450 passwords compiled for UNOS, each of at least 8 characters) with \"SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first\", after the rules of length, size and control characters, wherever SMB-bound passwords are checked. UNOS checks only the passwords that it gives to Samba: Samba's own password change (SAMR) still takes a common password without UNOS, until shares.password-changes-only-through-unos refuses such changes (ADR-0250), so step 2 holds for the changes made through UNOS; and an account that got its password before the list keeps it until its next change. The password that goes back to Samba when the user's own password change fails after smbpasswd ran (ADR-0124) is checked without the list, so that such an account keeps SMB (test_smb_accounts.py TestCommitFailureAfterSmbpasswd and TestSmbpasswdTimeout, test_smb_models.py). Tests: test_smb_models.py (the rule in any case, the order of the rules, the format of the list), test_smb_accounts.py TestCommonPasswords (creating a user with SMB creates nothing; an administrator's and the user's own activation; the password change of an active account by the user and by an administrator; users without SMB keep any password; the text of the E2E fake), users.spec.ts 'creating a user with SMB and a common password is refused with the reason, and creates nobody' (stand-in, the real server) and 'a common password is refused for SMB, and the dialog shows why' (route fakes), account-smb.spec.ts 'turning SMB on with it is refused with the reason and how to go on' (stand-in, the real server) and 'with SMB on, a common password is refused with the reason and nothing changes' (route fakes: the stand-in has no Samba, so no account is active there). Step 2 changes nothing on the host. Reviewed in a fresh context (ADR-0017): a failed change away from a common password that an account got before the list now puts it back instead of turning SMB off, and ADR-0279 names the two exceptions above. Step 1 not built: how to limit repeated failed sign-ins is a security trade-off for the owner (ADR-0280): Samba's lockout policy per account (pdbedit -P \"bad lockout attempt\", \"lockout duration\" and \"reset count minutes\", set by the reconcile like the password history of ADR-0278; any client on the LAN could keep an account locked), a limit per client for TCP port 445 in a host firewall that UNOS would manage, or blocking a client that keeps failing, found in the auth_audit lines of shares.smb-auth-audit-logging. Until then unthrottled SMB sign-ins stay an accepted risk (ADR-0280); the chosen limit needs its host change and a device check.",
+      "verified_by": [
+        "supervisor/tests/test_smb_models.py",
+        "supervisor/tests/test_smb_accounts.py",
+        "webui/tests/users.spec.ts",
+        "webui/tests/account-smb.spec.ts"
+      ]
     },
     {
       "id": "shares.smb-auth-audit-logging",
@@ -1655,8 +1697,18 @@
       "passes": false,
       "adr": [
         "ADR-0164",
-        "ADR-0094"
-      ]
+        "ADR-0094",
+        "ADR-0277",
+        "ADR-0257",
+        "ADR-0281"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_smbconf_testparm.py",
+        "supervisor/tests/test_logs_sources.py",
+        "webui/tests/logs.spec.ts"
+      ],
+      "notes": "Built (ADR-0277), not checked on the device. Step 1: the rendered [global] has `log level = 1 auth_audit:2`, `logging = syslog@2` and `debug timestamp = no`: Samba logs a failed sign-in in its class auth_audit at level 2 and a successful one at 3, the syslog backend takes level 2, and the other classes stay at level 1 (test_smbconf.py TestGlobal); deploy/install.sh writes the same (test_deploy_scripts.py), and ADR-0281 lists the whole [global] with these lines, superseding ADR-0087. Step 2: the source Samba of System > Logs (smbd.service, nmbd.service) lists these lines newest first as notices, and its search finds them by `Auth:` or by a client's address (test_logs_sources.py TestFailedSmbSignIns, against the fake journal; logs.spec.ts 'failed SMB sign-ins: Samba lists them, and a search shows the client that keeps failing', with route fakes: the stand-in has no journal); docs/USER_GUIDE.md (Logs) says how. Device check (ADR-0018), with the SD MiB of each step (ADR-0214): test_smbconf_testparm.py passes against the device's testparm; after the deploy's apply reloaded Samba, a sign-in with a wrong password (for example smbclient on the device against 127.0.0.1 as the account test) adds one journal entry of smbd.service with priority notice that starts with `Auth:` and holds `status [NT_STATUS_WRONG_PASSWORD]`, the account and `remote host [ipv4:127.0.0.1:`; a successful sign-in adds none; GET /api/v1/logs/entries?source=samba&search=Auth: lists the entry and System > Logs shows it; Samba's other messages come without their header line; the same after a reboot."
     },
     {
       "id": "shares.repair-in-background",
@@ -1745,7 +1797,7 @@
       "adr": [
         "ADR-0039"
       ],
-      "notes": "Built (ADR-0256): start, restart, stop and uninstall act only on containers with the unos.app label (400 for another container, 404 for an unknown one); stop and uninstall run in a worker thread (ADR-0254); uninstall removes the container without its volumes and leaves the data folders. TestStopAndUninstall and TestStartChecks (the 409 names the pool) prove the steps against a fake Docker, and the Installed apps tests of webui/tests/apps.spec.ts the Installed tab with route fakes (the stand-in has no Docker). Open: the device check and the re-check after a reboot (ADR-0018). On the device: Stop and Start of transmission on Apps > Installed change its state; with the pool data unmounted (an owner action), Start is refused with the message that names the pool 'data'; Uninstall of an app installed for the check removes its container and leaves its folders under /mnt/pools/data/apps."
+      "notes": "Built (ADR-0256): start, restart, stop and uninstall act only on containers with the unos.app label (400 for another container, 404 for an unknown one); stop and uninstall run in a worker thread (ADR-0254); uninstall removes the container without its volumes and leaves the data folders. TestStopAndUninstall and TestStartChecks (the 409 names the pool) prove the steps against a fake Docker, and the Installed apps tests of webui/tests/apps.spec.ts the Installed tab with route fakes (the stand-in has no Docker). Open: the device check and the re-check after a reboot (ADR-0018). On the device: Stop and Start of transmission on Apps > Installed change its state; with the pool data unmounted (an owner action), Start is refused with the message that names the pool 'data'; Uninstall of an app installed for the check removes its container and leaves its folders under /mnt/pools/data/apps. Device check 2026-11-08: Stop and Start of transmission through Apps > Installed changed its state. Open: the start of an app whose pool is unmounted, which waits for unmounting to work on the device (storage.mount-and-unmount)."
     },
     {
       "id": "apps.containers-and-images",
@@ -1762,11 +1814,11 @@
         "supervisor/tests/test_ws_auth.py",
         "webui/tests/containers.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0031"
       ],
-      "notes": "Built (ADR-0255): the Images tab of the Containers page lists, pulls and removes images, never forced. The server refuses an image that a container uses, running or stopped, with 409 naming the containers; otherwise it removes each tag of the image and then the rest, because Docker deletes an image with more than one tag by its ID only when forced (TestImageRemoval, against a fake that refuses as Docker's classic image store does). The drawer's Logs tab follows /ws/v1/logs/{id} with the first-message auth instead of polling the HTTP log; each line carries Docker's timestamp, and the server closes with 1000 when the log ends or cannot be read (TestTheLogSocketClosesWhenItsLogEnds, under a real uvicorn). On the stand-in (no Docker), webui/tests/containers.spec.ts covers every step with route fakes and page.routeWebSocket, with the ends of a stream (1000, 1011, 4403, 4401) and the view of the newest 500,000 characters. Open: the device check and the re-check after a reboot (ADR-0018). On the device: Containers lists transmission with its state and the state filter Running keeps it; Stop and Start change its state; its Logs tab shows its last lines with their times and a new line live without a reload, and after a Stop from the drawer says that the log stream ended; Images lists lscr.io/linuxserver/transmission and alpine; Pull of a small image (an owner action, ADR-0211, with its SD writes) adds it, a second tag of it (docker tag, an owner action) shows in its row, and Remove deletes the image with both tags; Remove of the transmission image is refused with the answer that names the transmission container."
+      "notes": "Built (ADR-0255): the Images tab of the Containers page lists, pulls and removes images, never forced. The server refuses an image that a container uses, running or stopped, with 409 naming the containers; otherwise it removes each tag of the image and then the rest, because Docker deletes an image with more than one tag by its ID only when forced (TestImageRemoval, against a fake that refuses as Docker's classic image store does). The drawer's Logs tab follows /ws/v1/logs/{id} with the first-message auth instead of polling the HTTP log; each line carries Docker's timestamp, and the server closes with 1000 when the log ends or cannot be read (TestTheLogSocketClosesWhenItsLogEnds, under a real uvicorn). On the stand-in (no Docker), webui/tests/containers.spec.ts covers every step with route fakes and page.routeWebSocket, with the ends of a stream (1000, 1011, 4403, 4401) and the view of the newest 500,000 characters. Open: the device check and the re-check after a reboot (ADR-0018). On the device: Containers lists transmission with its state and the state filter Running keeps it; Stop and Start change its state; its Logs tab shows its last lines with their times and a new line live without a reload, and after a Stop from the drawer says that the log stream ended; Images lists lscr.io/linuxserver/transmission and alpine; Pull of a small image (an owner action, ADR-0211, with its SD writes) adds it, a second tag of it (docker tag, an owner action) shows in its row, and Remove deletes the image with both tags; Remove of the transmission image is refused with the answer that names the transmission container. Device check 2026-11-08: Containers listed transmission as running, Stop and Start changed its state (exited, running), and the Images view listed the host's 7 images. Pulling and removing an image were not run there: a pull writes the whole image to the SD card."
     },
     {
       "id": "apps.container-resource-limits",
@@ -1833,11 +1885,17 @@
         "Install offers to run the app in the SMB group, which sets its PGID to 70000 (unos-smb)",
         "Such an app reads and writes the share folder it was given; an app installed without the option still cannot"
       ],
+      "verified_by": [
+        "supervisor/tests/test_apps.py",
+        "supervisor/tests/test_smb_models.py",
+        "webui/tests/apps.spec.ts"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0160"
+        "ADR-0160",
+        "ADR-0274"
       ],
-      "notes": "Apps run as PUID/PGID 1000 today, outside the group, which also keeps internet-facing apps out of the users' files (ADR-0160)."
+      "notes": "Built (ADR-0274): the install option run_in_unos_smb, the checkbox \"Run in the group unos-smb\" of the app's details, exists for the apps of linuxserver.io images with a pool folder outside {pool}/apps (can_run_in_unos_smb) and adds PUID 80000 (SMB_APP_UID, no other app's user), PGID 70000 and UMASK 007 to the container's environment; other images ignore PUID and PGID, and the option is refused for them and for apps with only their own data. PUID and PGID are no longer environment values (400), and the Environment tab shows them read-only. An install refuses a folder that is, lies inside or holds a share's folder without the option; with it, a share's folder is mounted, and a read-only folder may hold shares, but never a folder inside a share, a share's folder for the app's own data or a writable folder that holds a share. A snapshot folder (.snapshots), the trash (.unos-trash) and folders in them are refused for every app. GET /apps/installed says whether an app runs in the group (runs_in_unos_smb, from its container's PGID), and the Installed tab and the details show it. TestRunInUnosSmb, TestShareFolders, TestInstalledApps and TestConstants prove the environment, the refusals and the list against a fake Docker, and the unos-smb tests of webui/tests/apps.spec.ts the form and the installed view with route fakes (the stand-in has no Docker). Not covered: a share made later on the folder of an app outside the group is not refused (ADR-0274). Open, because Docker apps and share folders are host-level (GLOSSARY.md): the device check and the re-check after a reboot (ADR-0018). On the device: install a linuxserver.io app (for example syncthing) without the option, then uninstall it (its data stays). Install it again with the option and its data folder set to the folder of a share: it starts, its /config belongs to uid 80000 after the start, and docker inspect shows PUID=80000, PGID=70000 and UMASK=007. Inside the container its user (abc, uid 80000) lists and reads the share's files and creates a file and a folder there, which get the group unos-smb with 0660 and 2770, and an SMB user with write access changes that file. Record the owner, group and mode of the share's folder after the app's first start: root or uid 80000 with the group unos-smb and 2770 passes, any other owner (such as uid 1000) or mode fails. The same install without the option is refused with 400 before any image is pulled, and so is one that sets PUID through the API. The Installed tab shows Runs in the group unos-smb for the app. Uninstall the app afterwards; its data stays."
     },
     {
       "id": "apps.catalog-without-docker",
@@ -1930,14 +1988,15 @@
       ],
       "verified_by": [
         "supervisor/tests/test_backup_files.py",
-        "supervisor/tests/test_scheduler_validation.py"
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/scheduler.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0172",
         "ADR-0240"
       ],
-      "notes": "The E2E specs run a backup task on the stand-in, without the Keep Count (webui/tests/scheduler.spec.ts, webui/tests/backup-restore.spec.ts). Device check: 2026-11-06 (two scheduled backups at once), before scheduled backups were encrypted (ADR-0240)."
+      "notes": "webui/tests/scheduler.spec.ts makes a backup task with Keep Count 3 in the form on the stand-in and runs it four times (Run now): each run stores one auto_backup_*.tar.gz.enc, the fourth deletes the oldest, and the Backup & Restore tab lists the three newest and the manual backup. The backend tests check that a backup is listed only once complete and that two runs at once both succeed. Not host-level: the backups stay in the supervisor's /data. Device check: 2026-11-06 (two scheduled backups at once), before scheduled backups were encrypted (ADR-0240)."
     },
     {
       "id": "backup.off-device-copies",
@@ -2132,18 +2191,42 @@
     {
       "id": "files.group-writable-entries-in-shares",
       "category": "files",
-      "description": "Folders and files that the File Manager creates inside a share are writable for the share's SMB users without a Repair",
+      "description": "Folders made with New Folder and files uploaded in Files inside a share are writable for the share's SMB users without a Repair",
       "steps": [
         "Create a folder and upload a file in a share's folder in Files: they get the group unos-smb with group write (2770 for the folder, 0660 for the file)",
         "An SMB user with write access to the share changes the file and creates entries in the folder at once",
         "Outside share folders the File Manager creates entries as before"
       ],
+      "verified_by": [
+        "supervisor/tests/test_files_security.py",
+        "supervisor/tests/test_upload_streaming.py",
+        "supervisor/tests/test_share_api.py",
+        "webui/tests/files.spec.ts"
+      ],
       "passes": false,
       "adr": [
         "ADR-0160",
-        "ADR-0150"
+        "ADR-0150",
+        "ADR-0273"
       ],
-      "notes": "Today such entries get the group unos-smb from the setgid folder but no group write, until a Repair (ADR-0155)."
+      "notes": "Built (ADR-0273): New Folder and Upload give the new entry 2770 or 0660 when the folder it is made in is setgid, of the group unos-smb with group rwx and nothing for others (_share_folder in supervisor/src/files/router.py); the group comes from the folder, and elsewhere new entries keep what the umask leaves. A new folder that cannot get 2770 is removed again, or the answer says that it stays private, since Repair permissions skips private folders. Copy and Move keep the modes of the items, also into a share (files.group-writable-copies-and-moves-in-shares). Steps 1 and 3 are asserted by test_files_security.py, test_upload_streaming.py and test_share_api.py (TestFileManagerInAShareFolder) with the runner's gid as the SMB group, and step 3 in the web UI by files.spec.ts ('outside share folders, a new folder and an upload give the group no write access'); the stand-in cannot give a folder gid 70000. The unnamed upload file (O_TMPFILE) is checked on Linux only: scripts/dev/linux-tests.sh tests/test_upload_streaming.py -k share_folder (both share-folder upload tests, each unnamed and hidden). Open: the device check, and again after a reboot (ADR-0018). In the folder of a share that UNOS created (2770 root:unos-smb) and that gives an active SMB user Read & write, create a folder and upload a file in Files: stat -c '%a %U:%G' shows 2770 root:unos-smb and 660 root:unos-smb. That user then, over SMB (smbclient), overwrites the file and puts a file into the new folder, without a Repair. A folder and an upload made in Files in a pool's top folder, which is never a share's folder, show 755 and 644 root:root (a volume that is shared and was repaired is a share folder: there they get 2770 and 660)."
+    },
+    {
+      "id": "files.group-writable-copies-and-moves-in-shares",
+      "category": "files",
+      "description": "Items that Copy, or Move from another pool or volume, put into a share in Files are writable for the share's SMB users without a Repair",
+      "steps": [
+        "Copy a file and a folder into a share's folder in Files: the copies get the group unos-smb with group write (folders 2770, files 0660, or 0770 for files their owner may run, as Repair permissions gives them)",
+        "Move a file and a folder from another pool or volume into a share's folder: they get the same modes",
+        "An SMB user with write access to the share changes the copied and moved items at once",
+        "Outside share folders Copy and Move keep the modes of the items, as before"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0273",
+        "ADR-0155"
+      ],
+      "notes": "Copies keep the modes of their source (_copy_entry in supervisor/src/files/router.py), and so do moves to another pool or volume, which copy: such items need Repair permissions (ADR-0155), while New Folder and Upload give share modes (ADR-0273, files.group-writable-entries-in-shares). A Move within a pool or volume is a rename and keeps the modes as well; whether it should change them is open."
     },
     {
       "id": "files.delete-to-trash",
@@ -2167,7 +2250,7 @@
         "webui/tests/files.spec.ts",
         "webui/tests/roles.spec.ts"
       ],
-      "notes": "Built 2026-11-07 (ADR-0259, which filled in the steps for the trash it chose; step 3 keeps the original guarantee: the Delete dialog offers no Delete for good before the server refused the move): Delete in Files moves items into <pool>/.unos-trash or <pool>/<volume>/.unos-trash with one rename, a private folder (mode 0700) per item with the item and its origin; a trash that someone else made first is made the supervisor's with mode 0700 before it is used, one that cannot be made so is refused (409), and only private folders in a trash count as its entries; every item is checked before any is moved (also bind mounts on the way, from the mount table), and one that fails after others went answers with how many went; the Delete dialog offers Delete for good (?permanent=true) only after a 409 or 507 refusal of the move, and after any refusal it holds only the items still in their folder, with the focus on Cancel; GET /files/trash, POST /files/trash/restore (every item checked first, also that its folder is on the filesystem of its pool or volume and below no mount point), DELETE /files/trash and POST /files/trash/empty; trash_expiry_loop in the lifespan, at the start and once a day; the name .unos-trash is hidden, refused and left out of copies, every share section vetoes it and it cannot be shared; on the Trash page each checkbox is labelled with the item's name, folder and deletion time. Asserted on this machine: step 1 by test_files_security.py (the trash tests, volumes and deeper subvolumes through st_dev fakes, trashes of other owners through fakes of st_uid, bind mounts through the mount table fake) and files.spec.ts ('deletes the selected items', 'Delete offers no Delete for good until the trash has refused the items', the keyboard test and the two refusal tests of the Delete dialog); step 2 by the test_restore_ and test_a_restore_ tests and files.spec.ts ('the Trash page lists deleted items, and Restore puts them back where they were', 'a restore is refused while the name is taken again, and the item stays in the trash', 'the Trash page tells items of the same name apart by where and when they were deleted'); step 3 by test_deleted_items_are_deleted_for_good_30_days_after_their_deletion, test_an_administrator_deletes_items_for_good_or_empties_the_trash, test_a_trash_that_others_can_change_is_made_private_and_what_they_put_there_is_no_entry, the expiry loop tests, test_lifespan.py and files.spec.ts ('the Trash page deletes items for good, and Empty trash deletes everything', 'Delete offers no Delete for good until the trash has refused the items'). Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step: every share section of the rendered smb.conf has veto files = /.snapshots/.unos-trash/ and testparm takes it; a file and a folder deleted in /mnt/pools/data/shared land in /mnt/pools/data/.unos-trash (mode 0700) and Restore brings them back; a file deleted in a volume lands in that volume's .unos-trash through the real btrfs rename, not in the pool's, and comes back; a .unos-trash that a user other than root made in a volume with mode 0777 is root's with mode 0700 after the next listing (the real fchown, which the tests fake); a file in a snapshot or in the restored copy of a volume's snapshot answers 409 (no trash) and, after that refusal, Delete for good removes the latter; smbclient lists no .unos-trash in the share of a volume; a delete, a restore and an expiry pass write 0 MiB to the SD card; after a reboot the items are still listed, and an entry renamed to a time 31 days back is gone after the pass at the start. The backend tests ran on macOS (renameatx_np, and APFS takes only UTF-8 names): scripts/dev/linux-tests.sh tests/test_files_security.py runs them with renameat2 across two folders and restores a name that is not UTF-8. roles.spec.ts keeps regular users off the Trash page. Whether the Delete dialog should offer Delete for good before a refusal is the owner's decision (ADR-0259, Considered options)."
+      "notes": "Built 2026-11-07 (ADR-0259, which filled in the steps for the trash it chose; step 3 keeps the original guarantee: the Delete dialog offers no Delete for good before the server refused the move): Delete in Files moves items into <pool>/.unos-trash or <pool>/<volume>/.unos-trash with one rename, a private folder (mode 0700) per item with the item and its origin; a trash that someone else made first is made the supervisor's with mode 0700 before it is used, one that cannot be made so is refused (409), and only private folders in a trash count as its entries; every item is checked before any is moved (also bind mounts on the way, from the mount table), and one that fails after others went answers with how many went; the Delete dialog offers Delete for good (?permanent=true) only after a 409 or 507 refusal of the move, and after any refusal it holds only the items still in their folder, with the focus on Cancel; GET /files/trash, POST /files/trash/restore (every item checked first, also that its folder is on the filesystem of its pool or volume and below no mount point), DELETE /files/trash and POST /files/trash/empty; trash_expiry_loop in the lifespan, at the start and once a day; the name .unos-trash is hidden, refused and left out of copies, every share section vetoes it and it cannot be shared; on the Trash page each checkbox is labelled with the item's name, folder and deletion time. Asserted on this machine: step 1 by test_files_security.py (the trash tests, volumes and deeper subvolumes through st_dev fakes, trashes of other owners through fakes of st_uid, bind mounts through the mount table fake) and files.spec.ts ('deletes the selected items', 'Delete offers no Delete for good until the trash has refused the items', the keyboard test and the two refusal tests of the Delete dialog); step 2 by the test_restore_ and test_a_restore_ tests and files.spec.ts ('the Trash page lists deleted items, and Restore puts them back where they were', 'a restore is refused while the name is taken again, and the item stays in the trash', 'the Trash page tells items of the same name apart by where and when they were deleted'); step 3 by test_deleted_items_are_deleted_for_good_30_days_after_their_deletion, test_an_administrator_deletes_items_for_good_or_empties_the_trash, test_a_trash_that_others_can_change_is_made_private_and_what_they_put_there_is_no_entry, the expiry loop tests, test_lifespan.py and files.spec.ts ('the Trash page deletes items for good, and Empty trash deletes everything', 'Delete offers no Delete for good until the trash has refused the items'). Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step: every share section of the rendered smb.conf has veto files = /.snapshots/.unos-trash/ and testparm takes it; a file and a folder deleted in /mnt/pools/data/shared land in /mnt/pools/data/.unos-trash (mode 0700) and Restore brings them back; a file deleted in a volume lands in that volume's .unos-trash through the real btrfs rename, not in the pool's, and comes back; a .unos-trash that a user other than root made in a volume with mode 0777 is root's with mode 0700 after the next listing (the real fchown, which the tests fake); a file in a snapshot or in the restored copy of a volume's snapshot answers 409 (no trash) and, after that refusal, Delete for good removes the latter; smbclient lists no .unos-trash in the share of a volume; a delete, a restore and an expiry pass write 0 MiB to the SD card; after a reboot the items are still listed, and an entry renamed to a time 31 days back is gone after the pass at the start. The backend tests ran on macOS (renameatx_np, and APFS takes only UTF-8 names): scripts/dev/linux-tests.sh tests/test_files_security.py runs them with renameat2 across two folders and restores a name that is not UTF-8. roles.spec.ts keeps regular users off the Trash page. Whether the Delete dialog should offer Delete for good before a refusal is the owner's decision (ADR-0259, Considered options). Device check 2026-11-08 after the deploy: a file deleted on the pool data and in the share's folder went into /mnt/pools/data/.unos-trash (mode 700, root), came back with Restore, and went for good from the trash; every share of smb.conf has the trash's veto line and testparm accepts it. Open: a volume's own trash, the 409 of a snapshot, the listing after a reboot and the 30-day expiry."
     },
     {
       "id": "system.dashboard",
@@ -2329,7 +2412,7 @@
         "ADR-0257",
         "ADR-0258"
       ],
-      "notes": "Built (ADR-0257, ADR-0258): every source is a part of the host's journal, read with one journalctl command on the host through src/host.py, newest first (--reverse --lines=<limit>), off the event loop: System Journal (all of it), Kernel (--dmesg), Docker (docker.service), Samba (smbd.service, nmbd.service), Authentication (the syslog facilities auth and authpriv) and Cron Jobs (cron.service); UNOS Supervisor and Web Server are no longer sources. journalctl runs under the host's timeout(1) (`timeout --kill-after=5 30`), which ends it on the host after 30 seconds, and at most two reads run at once, on a pool of threads of their own. In every source a severity lists that level and the more severe ones and the time range applies, and the search is journalctl's literal, case-insensitive --grep, so it finds the newest matches of the whole range; a search without a match (status 1 without output) lists no entries. The output is split at \\n alone, so an entry with U+2028 stays one entry. The tab shows the entries in the answer's order, says newest first, shows the times in the browser's time zone, sends a new limit with its request, shows only the answer of its newest request, shows an error instead of the list, and Auto and Search wait for an answer that is still coming. Step 1: tests/test_logs_sources.py (TestSources: each source's command and its entries, newest first; TestSeverity: every level in every source; TestTimeRange; TestEntries, with U+2028, the host's timeout and two reads at a time off the default executor; TestErrors, with a journalctl that reads too long ended on the host; TestValues, TestRoles, TestLegacyRoutes) and logs.spec.ts 'pick a source and a severity: the entries are listed, newest first', 'the limit and the time range reach the server with the request they change', 'Auto asks again every 5 seconds, but not while an answer is still coming', 'a late answer for the source picked before does not replace the entries of the one picked last' and 'an error of the server is shown instead of the entries of the request before'. Step 2: logs.spec.ts 'search highlighting shows markup in log lines as text', 'a search asks the server: the matches it lists are highlighted, and no match says so' and 'Search waits while an answer is still coming', and TestSearch (with a search that finds nothing) and TestEntries for the server. Step 3: logs.spec.ts 'filters are comboboxes named by their labels'. Not built: the log files of the description. GET /logs/files and /logs/file/{filename} still read the supervisor container's /var/log and have no view; which of the host's files the API may read as root is the owner's decision. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): on the dev device, for each of the six sources, GET /api/v1/logs/entries?source=<source>&limit=20 answers 200 with the host's entries, newest first (timestamps descending), the same entries as `journalctl -r -n 20` with the source's matches on the host (a 200 also shows that the host runs journalctl under its timeout(1)); ?source=dmesg&priority=warning lists only the levels emerg to warning; ?since=1 hour ago only the last hour's entries; ?search=<a word of an older entry>&limit=5 finds it, and a word no entry has answers 200 with no entries (journalctl --grep's status 1 on no match); System > Logs lists the same; after a reboot Kernel lists the new boot's messages."
+      "notes": "Built (ADR-0257, ADR-0258): every source is a part of the host's journal, read with one journalctl command on the host through src/host.py, newest first (--reverse --lines=<limit>), off the event loop: System Journal (all of it), Kernel (--dmesg), Docker (docker.service), Samba (smbd.service, nmbd.service), Authentication (the syslog facilities auth and authpriv) and Cron Jobs (cron.service); UNOS Supervisor and Web Server are no longer sources. journalctl runs under the host's timeout(1) (`timeout --kill-after=5 30`), which ends it on the host after 30 seconds, and at most two reads run at once, on a pool of threads of their own. In every source a severity lists that level and the more severe ones and the time range applies, and the search is journalctl's literal, case-insensitive --grep, so it finds the newest matches of the whole range; a search without a match (status 1 without output) lists no entries. The output is split at \\n alone, so an entry with U+2028 stays one entry. The tab shows the entries in the answer's order, says newest first, shows the times in the browser's time zone, sends a new limit with its request, shows only the answer of its newest request, shows an error instead of the list, and Auto and Search wait for an answer that is still coming. Step 1: tests/test_logs_sources.py (TestSources: each source's command and its entries, newest first; TestSeverity: every level in every source; TestTimeRange; TestEntries, with U+2028, the host's timeout and two reads at a time off the default executor; TestErrors, with a journalctl that reads too long ended on the host; TestValues, TestRoles, TestLegacyRoutes) and logs.spec.ts 'pick a source and a severity: the entries are listed, newest first', 'the limit and the time range reach the server with the request they change', 'Auto asks again every 5 seconds, but not while an answer is still coming', 'a late answer for the source picked before does not replace the entries of the one picked last' and 'an error of the server is shown instead of the entries of the request before'. Step 2: logs.spec.ts 'search highlighting shows markup in log lines as text', 'a search asks the server: the matches it lists are highlighted, and no match says so' and 'Search waits while an answer is still coming', and TestSearch (with a search that finds nothing) and TestEntries for the server. Step 3: logs.spec.ts 'filters are comboboxes named by their labels'. Not built: the log files of the description. GET /logs/files and /logs/file/{filename} still read the supervisor container's /var/log and have no view; which of the host's files the API may read as root is the owner's decision. Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): on the dev device, for each of the six sources, GET /api/v1/logs/entries?source=<source>&limit=20 answers 200 with the host's entries, newest first (timestamps descending), the same entries as `journalctl -r -n 20` with the source's matches on the host (a 200 also shows that the host runs journalctl under its timeout(1)); ?source=dmesg&priority=warning lists only the levels emerg to warning; ?since=1 hour ago only the last hour's entries; ?search=<a word of an older entry>&limit=5 finds it, and a word no entry has answers 200 with no entries (journalctl --grep's status 1 on no match); System > Logs lists the same; after a reboot Kernel lists the new boot's messages. Device check 2026-11-08 after the deploy: journal, dmesg, docker, samba, auth and cron each listed their entries newest first. Open: the same after a reboot."
     },
     {
       "id": "system.notification-channels",
@@ -2391,13 +2474,20 @@
         "Regular users can neither see nor create such tasks"
       ],
       "verified_by": [
-        "supervisor/tests/test_scheduler_validation.py"
+        "supervisor/tests/test_custom_tasks.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "supervisor/tests/test_scheduler_time_zone.py",
+        "supervisor/tests/test_authz.py",
+        "webui/tests/scheduler.spec.ts",
+        "webui/tests/roles.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0044"
+        "ADR-0044",
+        "ADR-0267",
+        "ADR-0268"
       ],
-      "notes": "The command runs inside the supervisor container. No E2E test covers the custom task form."
+      "notes": "The command runs with /bin/sh as root inside the supervisor container. A run records the exit status and the last 16 KiB of standard output and error together; a command is stopped after 24 hours, and every process of its session ends with it, also those that timeout or job control put in process groups of their own (ADR-0267). A run that a stop of the supervisor cuts off is recorded as failed, at an orderly stop or at the next start (ADR-0268). Step 1: the stand-in's E2E test makes a custom task in the form and runs it (Run now); test_the_scheduler_runs_a_custom_task_at_its_time drives the scheduler loop on a fake clock, since the stand-in runs no background loops. Step 3: the scheduler router is administrator-only (test_scheduler_validation.py, test_authz.py), and roles.spec.ts shows that a regular user gets neither the tab nor the API. On the device, the hour of a run follows the host's time zone: the device check of system.scheduler-time-zone."
     },
     {
       "id": "system.scheduler-fixes",
@@ -2424,10 +2514,16 @@
       "steps": [
         "Set the time zone, add a task for 03:00: it runs at 03:00 local time, also across a change of daylight saving time"
       ],
-      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_scheduler_time_zone.py",
+        "webui/tests/scheduler.spec.ts"
+      ],
+      "passes": true,
       "adr": [
-        "ADR-0015"
-      ]
+        "ADR-0015",
+        "ADR-0266"
+      ],
+      "notes": "Built (ADR-0266): the scheduler reads the host's zone through host.run_on_host (where /etc/localtime links below zoneinfo/) at each pass and answer, and keeps the zone read last while the host cannot be asked, follows its clock with fixed rules for the changes of daylight saving time, and answers next_run with the zone's offset and run times in UTC with +00:00; GET /api/v1/scheduler/timezone names the zone, and the Scheduler tab shows it. The changes of daylight saving time are checked on a fake clock (test_scheduler_time_zone.py); the stand-in's host is the workstation. Open: the device check. Set the zone on the host with timedatectl set-timezone (the web interface cannot yet: system.hostname-and-time-zone); then GET /api/v1/scheduler/timezone must name it, a daily task's next_run must carry its offset, and a custom task made for a minute ahead on the host's clock must start in that minute (its run's started_at, read in that zone); after a change of the zone, within a minute the next_run follows it. The same after a reboot (ADR-0018). Device check 2026-11-08: with the host's zone set to Europe/Moscow by timedatectl, GET /api/v1/scheduler/timezone answered Europe/Moscow; the zone went back to Etc/UTC."
     },
     {
       "id": "system.health-check",
@@ -2637,13 +2733,14 @@
       "verified_by": [
         "webui/tests/roles.spec.ts",
         "webui/tests/files.spec.ts",
-        "webui/tests/backup-restore.spec.ts"
+        "webui/tests/backup-restore.spec.ts",
+        "webui/tests/websocket.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0031"
       ],
-      "notes": "No E2E test closes the stats WebSocket with 4401."
+      "notes": "Step 2: websocket.spec.ts fakes the stats socket only (page.routeWebSocket): after the sign-in and auth_ok it closes with 4401, and the page goes to /login once, the token is gone, and no new socket opens after the first reconnect delay; the HTTP requests keep a valid token, so only the socket path can end the session. Step 1: roles.spec.ts (a request without a token leads to /login once), files.spec.ts and backup-restore.spec.ts (an upload and a download answered 401). Steps 3 and 4: roles.spec.ts (a logout, and a login as another account, in another tab). test_ws_auth.py covers the server's 4401. Web UI only: not host-level (GLOSSARY.md)."
     },
     {
       "id": "webui.keyboard-and-screen-readers",
@@ -3350,6 +3447,21 @@
       ]
     },
     {
+      "id": "device.check-network-discovery",
+      "category": "device",
+      "description": "scripts/dev/check.sh checks the SMB services that UNOS runs: smbd, wsdd2 and avahi-daemon, with nmbd off",
+      "steps": [
+        "check.sh reports a problem unless smbd, wsdd2 and avahi-daemon are active",
+        "check.sh reports a problem while nmbd is active or enabled",
+        "The deploy-device and device-checks skills get check: OK on the dev device once the owner has set up network discovery and turned nmbd off"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0275"
+      ],
+      "notes": "Found by the review of shares.smb-discovery: check.sh loops over smbd and nmbd and marks the device unhealthy unless both are active, so once nmbd is off (ADR-0275) the deploy-device skill stops at its step 3, deploy.sh all ends with check.sh's failure, and every device check reports the device unhealthy. scripts/dev/ was off limits for that branch. The new check.sh passes on the dev device only after the owner's setup of shares.smb-discovery (avahi-daemon and wsdd2 installed and running, nmbd off): it lands between that setup and the device check of shares.smb-discovery."
+    },
+    {
       "id": "apps.compose-stacks",
       "category": "apps",
       "description": "Apps install as compose stacks with pinned versions, generated secrets, resource limits and a port check, and update in place",
@@ -3375,13 +3487,13 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0261",
-        "ADR-0262",
-        "ADR-0263",
+        "ADR-0284",
+        "ADR-0285",
+        "ADR-0286",
         "ADR-0238",
         "ADR-0125"
       ],
-      "notes": "Built: the runbook docs/RECOVERY.md, linked from docs/INSTALL.md (Troubleshooting), docs/USER_GUIDE.md and README.md (ADR-0262), and the emergency command line python -m src.emergency reset-admin [NAME] (supervisor/src/emergency.py), which root on the host runs with deploy/reset-admin.sh through docker exec into unos-supervisor (ADR-0261). Step 1: TestRunbook in tests/test_emergency.py checks that every mount of the runbook is read-only without the log replay (rescue=nologreplay; noload for the old system disk's ext4), that the desktop's automounting is turned off before a disk is attached and lsblk -f shows the pool's disks, and the old system disk, unmounted before their read-only mounts, that one mounts degraded, that no command writes to a pool, that its table of the disks each profile may miss covers PROFILE_MAP, that the places it names (.snapshots, the snap_, auto_ and restore_ names, .unos-trash, /mnt/pools, apps, smb.conf and the table smb_shares in the volume deploy_unos-data, the group 70000, the SMB user ids from 70000 and mode 2770) and the reset command with its rules are those of the code's constants, and that it says what to do when someone else may know the old password: a new JWT secret, the account's API tokens, the accounts it created, changed or made administrators (the Users page and the user entries of the audit log), and what the audit log does not record yet. Step 2: TestReset, TestPassword and TestSafety run the command against the temporary database and audit log of test_smb_accounts.World: the new password signs in through the API without a code and the old one gets 401; 2FA, its secret and the recovery codes are gone; the audit log, also through GET /api/v1/audit/logs, has password_change and, when 2FA was on, totp_disabled, by the user root for the resource user NAME, severity warning; the password comes from standard input or twice from a terminal, never from argv, and is in no output, log or audit entry; at least 8 characters, at most 72 bytes, no control characters; without NAME the only administrator, several administrators or a NAME that is not an administrator change nothing; a missing database is not created; an administrator changed while the password is typed (2FA turned on, demoted, its id given to another user or to another administrator) is not reset; an audit entry that cannot be written is reported with exit status 1; names from a restored database reach the terminal without control characters; no module of supervisor/src imports the command and no route reaches it. TestResetAdminScript runs deploy/reset-admin.sh with a fake docker that starts the module in a process of its own: docker exec -i unos-supervisor python -m src.emergency reset-admin [NAME], -it on a terminal, the password only on standard input, refused without root; the container name, WORKDIR /app and COPY src/ match the compose file and the Dockerfile. TestBesideTheSupervisor: the command's audit entries wait for a rotation in the supervisor's process and none is lost, as the log's lock holds across processes (ADR-0263; TestOtherProcesses in tests/test_audit_log.py). webui/tests/emergency-reset.spec.ts, on the local stand-in: an administrator with 2FA stops at the code step, scripts/standin/emergency.py resets it against the stand-in's data beside its running supervisor, the browser signs in with the new password without a code, the old one gets 401, and the Audit Log page shows Totp disabled and Password change by root for user NAME (TestStandInCommand checks the script). Device check, still open: (1) on a Linux machine with btrfs-progs and Linux 5.9 or later, with the disks of a two-disk raid1 pool that UNOS made (or loop-device images on the Linux test runner), the commands of docs/RECOVERY.md find it by its label, mount it with -o ro,rescue=nologreplay, list its volumes, .snapshots and share folders as the runbook says, copy a file with rsync, and mount it again with -o ro,degraded,rescue=nologreplay with one disk detached, while the write counters of the disks (/sys/block/<disk>/stat) stay unchanged; and on a desktop live session (Ubuntu's GNOME), with automounting turned off as the runbook says, attaching the disks mounts none of them (lsblk -f) and their write counters stay unchanged from the attach on; (2) on the dev device, an owner action because it changes credentials (ADR-0024): for a throwaway administrator with 2FA, sudo /opt/unos/deploy/reset-admin.sh <name> asks for the password twice on a terminal and also takes it on standard input, the name then signs in at the web UI with the new password without a code, the Audit Log page shows password_change and totp_disabled by root, and scripts/dev/sd.sh measure gives the SD writes of a reset. The reset changes only the database and the audit log, not the host: no reboot check is needed. Sessions signed in before a reset stay valid until they expire, and the account's API tokens keep working; docs/RECOVERY.md says how a new JWT secret ends every session, and how to find and remove what someone who knew the old password may have made with the account. The fresh-context review (ADR-0017) is done and its findings are fixed."
+      "notes": "Built: the runbook docs/RECOVERY.md, linked from docs/INSTALL.md (Troubleshooting), docs/USER_GUIDE.md and README.md (ADR-0285), and the emergency command line python -m src.emergency reset-admin [NAME] (supervisor/src/emergency.py), which root on the host runs with deploy/reset-admin.sh through docker exec into unos-supervisor (ADR-0284). Step 1: TestRunbook in tests/test_emergency.py checks that every mount of the runbook is read-only without the log replay (rescue=nologreplay; noload for the old system disk's ext4), that the desktop's automounting is turned off before a disk is attached and lsblk -f shows the pool's disks, and the old system disk, unmounted before their read-only mounts, that one mounts degraded, that no command writes to a pool, that its table of the disks each profile may miss covers PROFILE_MAP, that the places it names (.snapshots, the snap_, auto_ and restore_ names, .unos-trash, /mnt/pools, apps, smb.conf and the table smb_shares in the volume deploy_unos-data, the group 70000, the SMB user ids from 70000 and mode 2770) and the reset command with its rules are those of the code's constants, and that it says what to do when someone else may know the old password: a new JWT secret, the account's API tokens, the accounts it created, changed or made administrators (the Users page and the user entries of the audit log), and what the audit log does not record yet. Step 2: TestReset, TestPassword and TestSafety run the command against the temporary database and audit log of test_smb_accounts.World: the new password signs in through the API without a code and the old one gets 401; 2FA, its secret and the recovery codes are gone; the audit log, also through GET /api/v1/audit/logs, has password_change and, when 2FA was on, totp_disabled, by the user root for the resource user NAME, severity warning; the password comes from standard input or twice from a terminal, never from argv, and is in no output, log or audit entry; at least 8 characters, at most 72 bytes, no control characters; without NAME the only administrator, several administrators or a NAME that is not an administrator change nothing; a missing database is not created; an administrator changed while the password is typed (2FA turned on, demoted, its id given to another user or to another administrator) is not reset; an audit entry that cannot be written is reported with exit status 1; names from a restored database reach the terminal without control characters; no module of supervisor/src imports the command and no route reaches it. TestResetAdminScript runs deploy/reset-admin.sh with a fake docker that starts the module in a process of its own: docker exec -i unos-supervisor python -m src.emergency reset-admin [NAME], -it on a terminal, the password only on standard input, refused without root; the container name, WORKDIR /app and COPY src/ match the compose file and the Dockerfile. TestBesideTheSupervisor: the command's audit entries wait for a rotation in the supervisor's process and none is lost, as the log's lock holds across processes (ADR-0286; TestOtherProcesses in tests/test_audit_log.py). webui/tests/emergency-reset.spec.ts, on the local stand-in: an administrator with 2FA stops at the code step, scripts/standin/emergency.py resets it against the stand-in's data beside its running supervisor, the browser signs in with the new password without a code, the old one gets 401, and the Audit Log page shows Totp disabled and Password change by root for user NAME (TestStandInCommand checks the script). Device check, still open: (1) on a Linux machine with btrfs-progs and Linux 5.9 or later, with the disks of a two-disk raid1 pool that UNOS made (or loop-device images on the Linux test runner), the commands of docs/RECOVERY.md find it by its label, mount it with -o ro,rescue=nologreplay, list its volumes, .snapshots and share folders as the runbook says, copy a file with rsync, and mount it again with -o ro,degraded,rescue=nologreplay with one disk detached, while the write counters of the disks (/sys/block/<disk>/stat) stay unchanged; and on a desktop live session (Ubuntu's GNOME), with automounting turned off as the runbook says, attaching the disks mounts none of them (lsblk -f) and their write counters stay unchanged from the attach on; (2) on the dev device, an owner action because it changes credentials (ADR-0024): for a throwaway administrator with 2FA, sudo /opt/unos/deploy/reset-admin.sh <name> asks for the password twice on a terminal and also takes it on standard input, the name then signs in at the web UI with the new password without a code, the Audit Log page shows password_change and totp_disabled by root, and scripts/dev/sd.sh measure gives the SD writes of a reset. The reset changes only the database and the audit log, not the host: no reboot check is needed. Sessions signed in before a reset stay valid until they expire, and the account's API tokens keep working; docs/RECOVERY.md says how a new JWT secret ends every session, and how to find and remove what someone who knew the old password may have made with the account. The fresh-context review (ADR-0017) is done and its findings are fixed."
     },
     {
       "id": "system.remote-access",
@@ -3454,7 +3566,21 @@
         "Attach the disks of an existing btrfs filesystem: the Storage page offers to import it",
         "After the import the pool is mounted by UUID, survives a reboot and keeps its data"
       ],
-      "passes": false
+      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_pool_import.py",
+        "supervisor/tests/test_pool_persistence.py",
+        "supervisor/tests/test_smb_integration.py",
+        "webui/tests/storage.spec.ts"
+      ],
+      "adr": [
+        "ADR-0034",
+        "ADR-0035",
+        "ADR-0225",
+        "ADR-0248",
+        "ADR-0283"
+      ],
+      "notes": "Built 2026-11-08 (ADR-0283, which superseded ADR-0282 after the fresh-context review). The pool of a name is the btrfs filesystem labelled with it, or of several with one label, the one mounted or managed under it: GET /api/v1/storage/pools lists those, and Mount imports a pool found on the disks (its dialog says the disks are not formatted). Any other btrfs filesystem that is neither the host's system filesystem nor mounted is listed by GET /api/v1/storage/filesystems/importable and under Found on the disks; POST /api/v1/storage/filesystems/{uuid}/import mounts it by UUID at /mnt/pools/<name>, checks that the mount shows the top level, sets the name as its label through the mount, has udev read its devices again and writes the managed fstab entry. Filesystems on boot or virtual devices (the SD card, the eMMC, loop and RAM disks) or on the system disk are neither offered nor listed, and Mount and Import refuse them; an import under a name that SMB shares, NFS exports or containers of an earlier pool still use is refused. A refused or failed import leaves no mountpoint, fstab line or label behind, and Mount, Import and Create undo a mount that shows another subvolume than the top level. Asserted on fakes: step 1 by test_pool_import.py (what is offered: labels, duplicates, boot, virtual and system devices) and storage.spec.ts (Pool import: the offer, the dialog, the refusals, two filesystems with one label, Mount of a found pool); step 2 by test_pool_import.py (the fstab entry by UUID, the mount from it after a reboot, the used bytes kept, no mkfs, the refusals and what an undo leaves), test_pool_persistence.py (TestMountPool) and test_smb_integration.py (an import under the name of a removed pool serves none of its shares). Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214); it needs a spare disk, which the dev device does not have. On it: (1) read only, first: GET /api/v1/storage/pools and GET /api/v1/storage/filesystems/importable list nothing on mmcblk0 (the eMMC) or mmcblk1 (the SD card); nothing is ever imported or mounted there (ADR-0225). (2) A btrfs filesystem without a label (mkfs.btrfs without -L) that holds a few files, not mounted: Storage lists it under Found on the disks with its UUID and size; Import as importtest mounts it at /mnt/pools/importtest by UUID (findmnt), /etc/fstab holds the marker and the UUID entry, btrfs filesystem show and lsblk show the label importtest, and the files are there; after a reboot it is mounted again with its files. (3) An SMB share on importtest, then Remove Pool: the files stay on the disk. Clear the label while it is unmounted (btrfs filesystem label <device> ''): Import as importtest answers 409 and names the share, and nothing changes; after the share is deleted, the import succeeds. (4) Remove Pool, then label the filesystem with a pool name: it is listed as Not mounted, and Mount imports it. (5) Remove Pool, clear the label, mount it by hand, run btrfs subvolume set-default with another subvolume and unmount it: Import as importtest answers 409 with the subvolume message, findmnt shows nothing at /mnt/pools/importtest, that directory does not exist, btrfs filesystem show prints no label, and /etc/fstab is unchanged; labelled with a pool name, Mount answers 409, it stays unmounted and /etc/fstab is unchanged."
     }
   ]
 }

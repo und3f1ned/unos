@@ -165,6 +165,9 @@ class FakeHost:
             "/etc/fstab": BASE_FSTAB,
             "/proc/cmdline": f"console=ttyS2,1500000 root=UUID={ROOT_UUID} rootwait",
         }
+        # Symbolic links and their targets. /etc/localtime names the time zone, as on
+        # a Debian host installed in UTC; timedatectl set-timezone writes a relative link.
+        self.links: dict[str, str] = {"/etc/localtime": "/usr/share/zoneinfo/Etc/UTC"}
         self.dirs: set[str] = {"/mnt", "/mnt/pools"}
         self.immutable: set[str] = set()
         self.nonempty: set[str] = set()
@@ -237,9 +240,12 @@ class FakeHost:
         self.node(parent).setdefault("children", []).append(holder)
         return holder
 
-    def add_btrfs(self, label, uuid, devices, *, missing=0, used=1_048_576, profile="single"):
+    def add_btrfs(self, label, uuid, devices, *, missing=0, used=1_048_576, profile="single",
+                  default_subvolume=5):
+        """A btrfs filesystem; ``default_subvolume`` is the one a mount without subvol= shows
+        (5, the top level, unless ``btrfs subvolume set-default`` changed it)."""
         fs = {"label": label, "uuid": uuid, "devices": list(devices), "missing": missing,
-              "used": used, "profile": profile}
+              "used": used, "profile": profile, "default_subvolume": default_subvolume}
         self.filesystems.append(fs)
         return fs
 
@@ -334,6 +340,11 @@ class FakeHost:
             if path in self.files:
                 return self._result(stdout=self.files[path])
             return self._result(1, stderr=f"cat: {path}: No such file or directory")
+        if prog == "readlink":
+            path = cmd[-1]
+            if path in self.links:
+                return self._result(stdout=f"{self.links[path]}\n")
+            return self._result(1)  # GNU readlink without -v: not a link, or no such file
         if prog == "/bin/sh" and "unos-write" in cmd:
             path = cmd[cmd.index("unos-write") + 1]
             self.files[path] = input
@@ -407,11 +418,17 @@ class FakeHost:
             return self._result(stdout=self._btrfs_show())
         if sub == ["device", "scan"]:
             return self._result()
+        if sub == ["filesystem", "label"]:
+            return self._btrfs_label(cmd)
         target = cmd[-1]
         mount = next((m for m in self.mounts if m["target"] == target and m["fstype"] == "btrfs"), None)
         fs = next((f for f in self.filesystems if mount and f["uuid"] == mount["uuid"]), None)
         if fs is None:
             return self._result(1, stderr=f"ERROR: '{target}' is not a mounted btrfs device")
+        if sub == ["inspect-internal", "rootid"]:
+            # The subvolume a mount without subvol= shows: the filesystem's default one.
+            assert len(cmd) == 4, cmd
+            return self._result(stdout=f"{fs['default_subvolume']}\n")
         if sub == ["filesystem", "usage"]:
             size = sum(self._node_by_path(d)["size"] for d in fs["devices"])
             data = "RAID1" if fs["profile"] == "raid1" else fs["profile"]
@@ -432,6 +449,23 @@ class FakeHost:
                 lines.append(f"[{device}].generation_errs  0")
             return self._result(stdout="\n".join(lines) + "\n")
         raise AssertionError(f"unexpected btrfs command: {cmd}")
+
+    def _btrfs_label(self, cmd):
+        """``btrfs filesystem label <mountpoint> <label>``: the kernel sets it on the mounted filesystem.
+
+        Only through a mount: given a device, btrfs-progs writes the superblocks
+        itself, which UNOS never has it do (ADR-0283).
+        """
+        assert len(cmd) == 5, cmd
+        target, label = cmd[3], cmd[4]
+        mount = next((m for m in self.mounts if m["target"] == target and m["fstype"] == "btrfs"), None)
+        assert mount is not None, f"label set through {target}, which is not a btrfs mount: {cmd}"
+        if "ro" in f"{mount['vfs-options']},{mount['fs-options']}".split(","):
+            return self._result(1, stderr="ERROR: unable to set label for "
+                                f"{target}: Read-only file system")
+        self.changes.append(cmd)
+        next(f for f in self.filesystems if f["uuid"] == mount["uuid"])["label"] = label
+        return self._result()
 
     def _btrfs_show(self):
         chunks = []
@@ -809,6 +843,56 @@ class TestMountPool:
     def test_unknown_pool(self, fake_host):
         with pytest.raises(pools.PoolNotFoundError):
             pools.mount_pool("nope")
+
+    def test_refuses_a_filesystem_that_mounts_another_subvolume_by_default(self, data_pool):
+        # Made elsewhere, with 'btrfs subvolume set-default': a mount without subvol=
+        # shows subvolume 256, and volumes and share folders need the top level (ADR-0283).
+        data_pool.fs_by_label("data")["default_subvolume"] = 256
+        with pytest.raises(pools.PoolConflictError) as excinfo:
+            pools.mount_pool("data")
+        assert str(excinfo.value).startswith(
+            "Pool 'data' was not mounted: its filesystem mounts subvolume 256 by default, not its top level"
+        )
+        assert "btrfs subvolume set-default 5" in str(excinfo.value)
+        assert data_pool.changes == [
+            ["mkdir", "-p", "/mnt/pools/data"],
+            ["chattr", "+i", "/mnt/pools/data"],
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+            ["umount", "/mnt/pools/data"],
+        ]
+        assert not data_pool.mounted("/mnt/pools/data")
+        assert data_pool.fstab == BASE_FSTAB
+        assert "/mnt/pools/data" in data_pool.immutable  # still guarded: the mount was on top
+
+    def test_a_stale_entry_comes_back_when_the_mount_shows_another_subvolume(self, data_pool):
+        data_pool.files["/etc/fstab"] = BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
+        data_pool.files["/etc/fstab.unos-backup"] = BASE_FSTAB
+        data_pool.fs_by_label("data")["default_subvolume"] = 256
+        with pytest.raises(pools.PoolConflictError, match="subvolume 256"):
+            pools.mount_pool("data")
+        # Replaced before the mount (test_stale_entry_is_replaced_before_mounting), put back after it.
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
+        assert not data_pool.mounted("/mnt/pools/data")
+
+    def test_a_mountpoint_made_for_a_mount_that_is_undone_is_removed_again(self, data_pool):
+        data_pool.dirs.discard("/mnt/pools/data")
+        data_pool.fs_by_label("data")["default_subvolume"] = 256
+        with pytest.raises(pools.PoolConflictError, match="It was unmounted again, with its label and "
+                           "the host's /etc/fstab as they were"):
+            pools.mount_pool("data")
+        assert data_pool.changes[-3:] == [
+            ["umount", "/mnt/pools/data"], ["chattr", "-i", "/mnt/pools/data"], ["rmdir", "/mnt/pools/data"]]
+        assert "/mnt/pools/data" not in data_pool.dirs
+        assert data_pool.fstab == BASE_FSTAB
+
+    def test_a_stale_entry_comes_back_when_the_mount_fails(self, data_pool):
+        data_pool.files["/etc/fstab"] = BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
+        data_pool.files["/etc/fstab.unos-backup"] = BASE_FSTAB
+        data_pool.fail[("mount",)] = (32, "mount: /mnt/pools/data: wrong fs type")
+        with pytest.raises(RuntimeError, match="wrong fs type"):
+            pools.mount_pool("data")
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
+        assert "/mnt/pools/data" in data_pool.immutable  # the pool's mountpoint, as before
 
     def test_failed_mount_leaves_fstab_alone_and_guard_in_place(self, data_pool):
         data_pool.fail[("mount",)] = (32, "mount: /mnt/pools/data: wrong fs type")
@@ -1797,6 +1881,41 @@ class TestPoolEndpoints:
         assert response.status_code == 409
         assert "transmission" in response.json()["detail"]
         assert data_pool.mounted("/mnt/pools/data")
+
+    # The texts the Unmount and Remove Pool dialogs show (webui/tests/storage.spec.ts).
+    @pytest.mark.parametrize(
+        ("method", "url"),
+        [("post", "/api/v1/storage/pools/data/unmount"), ("delete", "/api/v1/storage/pools/data")],
+    )
+    def test_a_pool_that_running_apps_use_answers_which_ones(self, api, data_pool, method, url):
+        pools.mount_pool("data")
+        data_pool.docker.add("transmission", sources=["/mnt/pools/data/apps/transmission"])
+        data_pool.docker.add("jellyfin", labels={"unos.app": "jellyfin", "unos.app.pool": "data"})
+
+        response = getattr(api, method)(url)
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "Pool 'data' is used by running containers (jellyfin, transmission). "
+                      "Stop them and try again."})
+        assert data_pool.mounted("/mnt/pools/data")
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+
+    @pytest.mark.parametrize(
+        ("method", "url"),
+        [("post", "/api/v1/storage/pools/data/unmount"), ("delete", "/api/v1/storage/pools/data")],
+    )
+    def test_a_pool_that_host_processes_use_answers_409(self, api, data_pool, method, url):
+        pools.mount_pool("data")
+        data_pool.busy.add("/mnt/pools/data")
+
+        response = getattr(api, method)(url)
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "/mnt/pools/data is busy (umount: /mnt/pools/data: target is busy.). Stop the "
+                      "shares, apps and containers that use the pool and try again."})
+        assert data_pool.mounted("/mnt/pools/data")
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+        assert "/mnt/pools/data" in data_pool.dirs
 
     def test_pool_still_in_use_after_unmounting_is_409(self, api, data_pool):
         pools.mount_pool("data")

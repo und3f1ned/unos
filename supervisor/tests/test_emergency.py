@@ -1,4 +1,4 @@
-"""The emergency command line and the recovery runbook (ADR-0261, ADR-0262; feature
+"""The emergency command line and the recovery runbook (ADR-0284, ADR-0285; feature
 system.emergency-runbook-and-cli).
 
 `python -m src.emergency reset-admin [NAME]` sets a new password for an administrator and turns
@@ -685,7 +685,7 @@ class TestResetAdminScript:
 
 class TestBesideTheSupervisor:
     """The command writes the audit log from a process of its own while the supervisor runs, so
-    it takes the log's lock across processes as the supervisor does (ADR-0263)."""
+    it takes the log's lock across processes as the supervisor does (ADR-0286)."""
 
     @staticmethod
     def _line(name: str) -> str:

@@ -2,7 +2,7 @@
 """Run the supervisor's emergency command line against the local stand-in's data.
 
 On a NAS, root runs `python -m src.emergency` in the supervisor's container through
-deploy/reset-admin.sh (ADR-0261). This runs the same module beside the stand-in's supervisor,
+deploy/reset-admin.sh (ADR-0284). This runs the same module beside the stand-in's supervisor,
 with the paths of scripts/standin/run_supervisor.py: the database and the audit log of the
 stand-in's state directory, never /data of this machine. webui/tests/emergency-reset.spec.ts
 runs it; scripts/standin/e2e.sh gives the specs its Python and state directory

@@ -2,7 +2,7 @@
 #
 # UNOS emergency reset: a new password for an administrator, and two-factor
 # authentication off, for when no administrator can sign in (docs/RECOVERY.md,
-# ADR-0261).
+# ADR-0284).
 #
 #   sudo /opt/unos/deploy/reset-admin.sh [NAME]
 #
