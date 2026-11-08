@@ -2,7 +2,7 @@ import { test, expect, E2E_ADMIN } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
 import type { Page } from '@playwright/test';
 
-// The web UI in English or Russian (feature webui.translations, ADR-0273), against the real
+// The web UI in English or Russian (feature webui.translations, ADR-0284), against the real
 // supervisor: the Account page offers both languages, the choice applies at once and stays in
 // this browser, also on the sign-in page. Without a choice the browser's language decides:
 // playwright.config.ts runs the browser in en-US, so every other spec sees English. Values that

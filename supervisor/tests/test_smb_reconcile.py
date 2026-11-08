@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.host import HostResult
 from src.shares import accounts, interfaces
 
 from .test_smb_accounts import ALICE_PW, BOB_PW, World, hide_from_enumeration
@@ -62,7 +63,8 @@ def raw(world: World, *statements: str) -> None:
 
 
 def consistent(world: World) -> None:
-    """alice active, bob deactivated (account kept, no passdb), carol allowed (never activated)."""
+    """alice active, bob deactivated (account kept, no passdb), carol allowed (never activated);
+    Samba keeps the password history that the reconcile sets (ADR-0278)."""
     world.make_active("alice", 70000, ALICE_PW)
     world.deactivated("bob", 70001)
     world.add_user("carol", "Carol-pass-2026")
@@ -70,6 +72,7 @@ def consistent(world: World) -> None:
     world.set_next_uid(70002)
     world.fake.add_account("nas", 1000, gid=1000, gecos="nas", home="/home/nas", shell="/bin/bash")
     world.fake.add_passdb("nas", uid=1000)
+    world.fake.policies["password history"] = accounts.PASSWORD_HISTORY
 
 
 def _erin_with_daves_uid(world: World) -> None:
@@ -105,9 +108,10 @@ class TestConsistent:
         assert result == interfaces.ReconcileResult(changes=[], problems=[])
         assert world.fake.mutating_calls() == []
         assert commits["n"] == 0
-        # The read-only commands of a consistent start (ADR-0138).
+        # The read-only commands of a consistent start (ADR-0138), Samba's password history among them (ADR-0278).
         assert [a[:2] for a in world.fake.argvs()] == [
             ["/bin/sh", "-c"], ["getent", "passwd"], ["getent", "group"], ["getent", "group"], ["pdbedit", "-L"],
+            ["pdbedit", "-P"],
         ]
 
     def test_twice(self, world, commits):
@@ -119,6 +123,108 @@ class TestConsistent:
 
         assert first.changes == ["Created the missing host account alice (uid 70000)"]
         assert second == interfaces.ReconcileResult()
+
+
+READ_HISTORY = ["pdbedit", "-P", "password history"]
+SET_HISTORY = ["pdbedit", "-P", "password history", "-C", "3"]
+
+
+class TestPasswordHistory:
+    """shares.samba-runtime-writes, step 2 (ADR-0278): Samba keeps the hashes of an account's last
+    passwords, and a wrong password that is one of the two before the current one writes nothing to
+    passdb.tdb. The reconcile reads the policy at every start and sets it only when it differs."""
+
+    def test_a_host_without_a_history_gets_one(self, world):
+        consistent(world)
+        world.fake.policies["password history"] = 0  # Samba's default
+
+        result = reconcile(world)
+
+        assert result == interfaces.ReconcileResult(changes=["Set Samba's password history to 3 (it was 0)"])
+        assert world.fake.policies["password history"] == 3
+        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY, SET_HISTORY]
+        assert world.fake.mutating_calls() == [SET_HISTORY]
+
+    def test_another_value_is_set_back(self, world):
+        consistent(world)
+        world.fake.policies["password history"] = 24
+
+        result = reconcile(world)
+
+        assert result.changes == ["Set Samba's password history to 3 (it was 24)"]
+        assert world.fake.policies["password history"] == 3
+
+    def test_a_host_that_has_it_is_only_read(self, world, commits):
+        consistent(world)
+
+        first = reconcile(world)
+        second = reconcile(world)
+
+        assert first == second == interfaces.ReconcileResult()
+        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY, READ_HISTORY]
+        assert world.fake.mutating_calls() == []
+        assert commits["n"] == 0
+
+    def test_set_once_then_only_read(self, world):
+        consistent(world)
+        world.fake.policies["password history"] = 0
+
+        reconcile(world)
+        again = reconcile(world)
+
+        assert again == interfaces.ReconcileResult()
+        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY, SET_HISTORY, READ_HISTORY]
+
+    def test_a_failed_read_is_a_problem_and_the_rest_goes_on(self, world):
+        consistent(world)
+        world.fake.policies["password history"] = 0
+        world.fake.fail[("pdbedit", "-P")] = (1, "Failed to open account policy database")
+        del world.fake.passwd["alice"]
+
+        result = reconcile(world)
+
+        assert result.problems == [
+            "pdbedit could not read Samba's password history: Failed to open account policy database"
+        ]
+        assert result.changes == ["Created the missing host account alice (uid 70000)"]
+        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY]
+        assert world.fake.policies["password history"] == 0
+
+    def test_a_failed_change_is_a_problem(self, world):
+        consistent(world)
+        world.fake.policies["password history"] = 0
+        world.fake.fail[tuple(SET_HISTORY)] = (1, "valid account policy, but unable to set value!")
+
+        result = reconcile(world)
+
+        assert result.problems == [
+            "pdbedit could not set Samba's password history: valid account policy, but unable to set value!"
+        ]
+        assert result.changes == []
+        assert world.fake.policies["password history"] == 0
+
+    @pytest.mark.parametrize("stdout", [
+        "",
+        'account policy "password history" description: Length of Password History Entries (0 = off)\n',
+        'account policy "password history" value is: many\n',
+        'account policy "min password length" value is: 3\n',
+    ])
+    def test_an_answer_without_the_value_is_a_problem_and_nothing_is_set(self, world, monkeypatch, stdout):
+        consistent(world)
+        real = world.fake.run
+
+        def run(cmd, **kwargs):
+            if list(cmd) == READ_HISTORY:
+                world.fake.calls.append((list(cmd), kwargs.get("input")))
+                return HostResult(0, stdout, "")
+            return real(cmd, **kwargs)
+
+        monkeypatch.setattr("src.host.run_on_host", run)
+
+        result = reconcile(world)
+
+        assert result.problems == ["pdbedit did not print Samba's password history"]
+        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY]
 
 
 class TestHostRepairs:

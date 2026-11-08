@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// Words that many areas use. Areas add their own keys to their own file (ADR-0273).
+// Words that many areas use. Areas add their own keys to their own file (ADR-0284).
 
 export const en = {
 	'common.product': 'UNOS',

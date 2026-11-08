@@ -37,7 +37,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   once on a 401 and throws `ApiError` with the server's message.
 - Regular users see Dashboard and Account only (ADR-0030): every other page is for administrators.
 
-## Texts (ADR-0273)
+## Texts (ADR-0284)
 
 - Every text comes from a catalog in English and Russian: `src/lib/i18n/catalog/<area>.ts`
   exports `en` and `ru: Translation<typeof en>`, keys start with `<area>.`. Markup and scripts use
@@ -59,7 +59,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   puts together from data, a single lower-case word in a script, or a `.ts` module
   (`$lib/components/shares/texts.ts`): translate those too. `scripts/i18n-untranslated.txt`
   lists the files not translated yet; a translated file leaves it. The empty list is not enough:
-  the feature passes after a walk through every page in Russian (ADR-0273).
+  the feature passes after a walk through every page in Russian (ADR-0284).
 
 ## Checks and build
 

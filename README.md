@@ -47,7 +47,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Pool Scrubbing** - Data integrity verification with scheduled scrubs
 
 ### File Sharing
-- **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux
+- **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux; Windows and macOS list the NAS in their network browsers (WS-Discovery and Bonjour, NetBIOS off)
 - **Web File Browser** - Upload, download, copy, move, rename, and manage files via browser, with a trash that keeps deleted items for 30 days
 
 ### Application Platform
@@ -243,9 +243,11 @@ SMB accounts other user ids. The script prints how to remove them, and names
 the accounts whose Samba password it could not remove.
 `/etc/samba/smb.conf` stays, and Samba still serves the shares it lists,
 unless `install.sh` kept the file it replaced (`smb.conf.original`), which
-is then restored. If the supervisor replaced an existing smb.conf with its own
-(after a manual installation, for example), it kept that file, whose shares it
-imported, as `/etc/samba/smb.conf.unos-import-backup`.
+is then restored, with NetBIOS (nmbd) on again. The network discovery
+services avahi-daemon and wsdd2 keep running. If the supervisor replaced an
+existing smb.conf with its own (after a manual installation, for example), it
+kept that file, whose shares it imported, as
+`/etc/samba/smb.conf.unos-import-backup`.
 
 ## Contributing
 

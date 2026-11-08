@@ -19,7 +19,7 @@ Read the nested file before you change its area:
 
 All text written into the repository is English: code, comments, docs, ADRs, skills, hook and
 commit messages (ADR-0200); an ADR quotes the owner in translation. Answer the owner in Russian.
-The one exception is the web UI's Russian texts and the tests that check them (ADR-0273).
+The one exception is the web UI's Russian texts and the tests that check them (ADR-0284).
 
 ## Start of a session
 
@@ -41,7 +41,7 @@ The one exception is the web UI's Russian texts and the tests that check them (A
 
 | Command | A pass proves |
 | --- | --- |
-| `make check` | The gate (ADR-0216), the only one while CI is off on GitHub (ADR-0230): what the CI workflow's Unit Tests, Lint and Frontend jobs check. All backend tests, `ruff check --select F,E9`, `bash -n` on the shell scripts, JSON syntax, svelte-check, the check of the web UI's texts (ADR-0273) and the production build; `make test`, `make lint` and `make frontend` run its parts. Linux-only tests skip on macOS. |
+| `make check` | The gate (ADR-0216), the only one while CI is off on GitHub (ADR-0230): what the CI workflow's Unit Tests, Lint and Frontend jobs check. All backend tests, `ruff check --select F,E9`, `bash -n` on the shell scripts, JSON syntax, svelte-check, the check of the web UI's texts (ADR-0284) and the production build; `make test`, `make lint` and `make frontend` run its parts. Linux-only tests skip on macOS. |
 | `make check-fast` | Lint plus `make test-fast`: the convention tests of the ADRs, the ledger, the guard, the repository tooling, the dev scripts and the stand-in. The pre-commit hook runs it, and so does the Stop hook `.claude/hooks/stop-check.sh` when the tree changed since its last green run: a failure sends you back to work. |
 | `make smoke` | In a few seconds, through existing backend tests: the app starts and serves health, first-run setup and login. The baseline of a session. |
 | `make e2e-local` | The Playwright specs pass against the local stand-in: the real supervisor and the built web UI on this machine. `scripts/standin/e2e.sh <spec> [args]` runs a part. |

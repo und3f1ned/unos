@@ -9,7 +9,7 @@ import {
 	type Params
 } from './translate';
 
-// The web UI in English or Russian (ADR-0273). Texts come from the catalogs, one file per area
+// The web UI in English or Russian (ADR-0284). Texts come from the catalogs, one file per area
 // of the web UI: catalog/<area>.ts exports `en` and `ru` with keys that start with "<area>.".
 // Pages use $t('area.key') and $t('area.key', { n: 3 }).
 

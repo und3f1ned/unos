@@ -125,6 +125,8 @@ and this index, and `make check-fast` runs it.
 | [0269](0269-the-smart-history-is-kept-in-ram-and-written-when-it-changes.md) | The SMART monitor keeps its history in RAM and writes it only when a pass changes it, and at shutdown | accepted | 2026-11-07 |
 | [0270](0270-smart-trends-report-every-tracked-disk.md) | GET /health/smart/trends reports every tracked disk, and trends read each counter from the snapshots that hold it | accepted | 2026-11-07 |
 | [0272](0272-scrub-results-name-cancelled-scrubs-and-count-every-error.md) | A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports | accepted | 2026-11-07 |
+| [0282](0282-a-filesystem-found-on-the-disks-is-imported-under-a-name-that-becomes-its-label.md) | A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label | superseded by [0283](0283-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | 2026-11-08 |
+| [0283](0283-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | A filesystem found on the disks becomes a pool only from data disks and under a name that no earlier pool still uses | accepted | 2026-11-08 |
 
 ## Shares
 
@@ -145,14 +147,14 @@ and this index, and `make check-fast` runs it.
 | [0084](0084-import-the-existing-smb-conf-once.md) | The existing smb.conf is imported once per database, controlled by a marker | accepted | 2026-11-06 |
 | [0085](0085-keep-the-original-smb-conf-as-import-backup.md) | The original smb.conf is kept once as smb.conf.unos-import-backup | accepted | 2026-11-06 |
 | [0086](0086-the-import-only-narrows-access.md) | The smb.conf import only narrows access and reports every option it drops | accepted | 2026-11-06 |
-| [0087](0087-hardened-pinned-global-section.md) | UNOS renders a hardened [global] section with pinned values | accepted | 2026-11-06 |
+| [0087](0087-hardened-pinned-global-section.md) | UNOS renders a hardened [global] section with pinned values | superseded by [0281](0281-hardened-pinned-global-section-with-auth-audit-logging.md) | 2026-11-06 |
 | [0088](0088-fail-safe-share-sections.md) | Share sections never express a restriction by leaving a line out | accepted | 2026-11-06 |
 | [0089](0089-apply-is-checked-by-testparm-and-atomic.md) | Every apply is checked by testparm and installed atomically | accepted | 2026-11-06 |
 | [0090](0090-reload-all-and-retry-failed-reloads.md) | Samba is reloaded with smbcontrol all, and failed reloads and closes are retried | accepted | 2026-11-06 |
 | [0091](0091-testparm-tolerates-two-unknown-parameters.md) | The testparm check tolerates only two parameters that older Samba lacks | accepted | 2026-11-06 |
 | [0092](0092-copy-foreign-sections-before-overwriting.md) | Foreign share sections are saved to smb.conf.unos-replaced before an apply | accepted | 2026-11-06 |
 | [0093](0093-globals-is-a-reserved-share-name.md) | The share name 'globals' is reserved like 'global' | accepted | 2026-11-06 |
-| [0094](0094-samba-cache-in-ram-and-syslog-logging.md) | Samba keeps its cache in /run/samba and logs to syslog | accepted | 2026-11-06 |
+| [0094](0094-samba-cache-in-ram-and-syslog-logging.md) | Samba keeps its cache in /run/samba and logs to syslog | superseded by [0277](0277-samba-logs-failed-sign-ins-to-syslog-and-keeps-its-log-file-in-ram.md) | 2026-11-06 |
 | [0095](0095-smb-answers-lan-addresses-only.md) | SMB answers only LAN addresses, through hosts allow in [global] | accepted | 2026-11-06 |
 | [0096](0096-guest-access-off-and-guest-shares-read-only.md) | Guest access is off by default, and guest shares are read-only | accepted | 2026-11-06 |
 | [0097](0097-restrict-anonymous-0-with-guest-shares.md) | A guest share sets restrict anonymous = 0 and map to guest = Bad User | superseded by [0098](0098-guest-globals-follow-guest-shares.md) | 2026-11-06 |
@@ -160,7 +162,7 @@ and this index, and `make check-fast` runs it.
 | [0099](0099-server-signing-at-samba-default.md) | Server signing stays at Samba's default | superseded by [0100](0100-signing-mandatory-unless-a-guest-share-exists.md) | 2026-11-06 |
 | [0100](0100-signing-mandatory-unless-a-guest-share-exists.md) | Server signing is mandatory unless a guest share exists | accepted | 2026-11-06 |
 | [0101](0101-smb3-unix-extensions-off.md) | SMB3 Unix extensions stay off, so app folders may be shared | accepted | 2026-11-06 |
-| [0102](0102-accepted-risk-unthrottled-smb-logins.md) | SMB logins have no rate limit and no common-password check, as an accepted risk | accepted | 2026-11-06 |
+| [0102](0102-accepted-risk-unthrottled-smb-logins.md) | SMB logins have no rate limit and no common-password check, as an accepted risk | superseded by [0280](0280-smb-logins-stay-unthrottled-until-the-owner-chooses-a-limit.md) | 2026-11-06 |
 | [0103](0103-close-share-after-every-shrink.md) | Open connections to a share are closed after every shrink of its access | accepted | 2026-11-06 |
 | [0104](0104-end-smb-sessions-on-password-change-and-revocation.md) | An account's SMB sessions end at every password change and revocation | accepted | 2026-11-06 |
 | [0105](0105-smb-accounts-are-host-accounts-plus-tdbsam.md) | SMB accounts are real Linux host accounts plus a tdbsam entry | accepted | 2026-11-06 |
@@ -180,7 +182,7 @@ and this index, and `make check-fast` runs it.
 | [0119](0119-smb-password-is-the-unos-password.md) | The SMB password is the UNOS password, captured only where the plaintext is given | accepted | 2026-11-06 |
 | [0120](0120-smb-password-set-wherever-the-plaintext-is-given.md) | The SMB password is set wherever the plaintext is available | superseded by [0121](0121-password-changes-update-only-active-accounts.md) | 2026-11-06 |
 | [0121](0121-password-changes-update-only-active-accounts.md) | A password change updates Samba only for active accounts, and activation is explicit | accepted | 2026-11-06 |
-| [0122](0122-smb-bound-password-rule.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters | accepted | 2026-11-06 |
+| [0122](0122-smb-bound-password-rule.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters | superseded by [0279](0279-smb-bound-passwords-must-not-be-common-passwords.md) | 2026-11-06 |
 | [0123](0123-samba-gets-the-password-before-the-hash.md) | Samba's copy of a password is written before the bcrypt hash | accepted | 2026-11-06 |
 | [0124](0124-compensate-a-failed-commit-after-smbpasswd.md) | A failed commit after a successful smbpasswd is compensated | accepted | 2026-11-06 |
 | [0125](0125-no-smb-password-in-argv-logs-or-answers.md) | No SMB password appears in argv, logs, errors, HTTP answers or the database | accepted | 2026-11-06 |
@@ -216,20 +218,27 @@ and this index, and `make check-fast` runs it.
 | [0155](0155-repair-permissions-only-on-request.md) | Guest-era permissions are fixed only by an explicit per-share Repair | accepted | 2026-11-06 |
 | [0156](0156-repair-walks-with-descriptors.md) | Repair walks the folder tree with descriptors and opens nothing it must not | accepted | 2026-11-06 |
 | [0157](0157-smb-audits-only-real-changes.md) | The SMB code audits only real changes, and problems go to the status | accepted | 2026-11-06 |
-| [0158](0158-netbios-stays-until-discovery.md) | NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour | accepted | 2026-11-06 |
+| [0158](0158-netbios-stays-until-discovery.md) | NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour | superseded by [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | 2026-11-06 |
 | [0159](0159-passdb-stays-on-the-system-disk.md) | Samba's passdb stays on the system disk until its writes are measured | accepted | 2026-11-06 |
-| [0160](0160-no-file-manager-or-app-group-access-to-shares.md) | The File Manager and apps get no group access to share folders yet | accepted | 2026-11-06 |
+| [0160](0160-no-file-manager-or-app-group-access-to-shares.md) | The File Manager and apps get no group access to share folders yet | superseded by [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | 2026-11-06 |
 | [0161](0161-no-per-share-protocol-options-yet.md) | Per-share protocol options wait for a later slice | accepted | 2026-11-06 |
 | [0162](0162-apparmor-profile-for-new-share-paths.md) | UNOS does not manage smbd's AppArmor profile while smbd runs unconfined | accepted | 2026-11-07 |
 | [0163](0163-nfs-unchanged-in-slice-2.md) | NFS exports stay unchanged in slice 2 | accepted | 2026-11-06 |
 | [0164](0164-smb-and-audit-follow-ups-left-for-later.md) | Six SMB and audit follow-ups wait for later slices | accepted | 2026-11-06 |
 | [0192](0192-reread-host-facts-before-destructive-commands.md) | Host facts are read again right before destructive commands, and doubt fails closed | accepted | 2026-11-07 |
 | [0193](0193-acl-entries-and-sticky-folders-in-the-parent-chain.md) | ACL entries and sticky folders count in the parent-chain rule | proposed | 2026-11-07 |
-| [0194](0194-reduce-samba-runtime-writes.md) | Reduce Samba's remaining writes to the system disk | proposed | 2026-11-07 |
+| [0194](0194-reduce-samba-runtime-writes.md) | Reduce Samba's remaining writes to the system disk | superseded by [0278](0278-samba-keeps-a-password-history-of-three.md) | 2026-11-07 |
 | [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | superseded by [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | 2026-11-07 |
 | [0248](0248-pool-changes-apply-smb-conf.md) | The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once | accepted | 2026-11-07 |
 | [0249](0249-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
-| [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | proposed | 2026-11-07 |
+| [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | superseded by [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | 2026-11-07 |
+| [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | Windows finds the NAS through wsdd2, macOS through Samba's Bonjour announcement, and NetBIOS is off | accepted | 2026-11-08 |
+| [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | Handle the SMB follow-ups still open after network discovery | proposed | 2026-11-08 |
+| [0277](0277-samba-logs-failed-sign-ins-to-syslog-and-keeps-its-log-file-in-ram.md) | Samba logs failed sign-ins through auth_audit to syslog and keeps its own log file in /run/samba | accepted | 2026-11-08 |
+| [0278](0278-samba-keeps-a-password-history-of-three.md) | Samba keeps a password history of 3, so that retries with an account's previous passwords write nothing to passdb | accepted | 2026-11-08 |
+| [0279](0279-smb-bound-passwords-must-not-be-common-passwords.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters, and must not be common passwords | accepted | 2026-11-08 |
+| [0280](0280-smb-logins-stay-unthrottled-until-the-owner-chooses-a-limit.md) | SMB logins have no rate limit and no lockout, as an accepted risk until the owner chooses how to limit them | accepted | 2026-11-08 |
+| [0281](0281-hardened-pinned-global-section-with-auth-audit-logging.md) | UNOS renders a hardened [global] section with pinned values, among them Samba's logging lines of ADR-0277 | accepted | 2026-11-08 |
 
 ## Apps
 
@@ -240,6 +249,7 @@ and this index, and `make check-fast` runs it.
 | [0254](0254-docker-calls-run-in-worker-threads-and-conflicts-answer-409.md) | Docker calls of the containers and apps APIs run in worker threads within the Docker client's timeout, and the containers API answers Docker's conflicts with 409 | accepted | 2026-11-07 |
 | [0255](0255-container-logs-stream-in-the-drawer-and-images-get-a-tab.md) | The container drawer follows the log over the logs socket, and the Images tab pulls by name and removes only what no container uses | accepted | 2026-11-07 |
 | [0256](0256-the-apps-api-acts-only-on-apps-and-uninstall-keeps-their-data.md) | The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data | accepted | 2026-11-07 |
+| [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | Apps of linuxserver.io images can be installed to run in the group unos-smb, and only such an app is given a share's folder | accepted | 2026-11-08 |
 
 ## Backup
 
@@ -262,6 +272,7 @@ and this index, and `make check-fast` runs it.
 | [0170](0170-file-manager-protects-volumes-and-mounts.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts | accepted | 2026-11-06 |
 | [0232](0232-file-manager-renames-in-the-row-and-never-replaces.md) | The file manager renames one selected item in its row and never replaces an entry | accepted | 2026-11-07 |
 | [0259](0259-deleted-items-go-to-the-trash-of-their-pool-or-volume-for-30-days.md) | Deleted items go to the trash of their pool or volume for 30 days, unless they are restored or deleted for good | accepted | 2026-11-07 |
+| [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | New folders and uploads of the file manager in a share folder get 2770 and 0660 | superseded by [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | 2026-11-08 |
 
 ## System
 
@@ -299,7 +310,7 @@ and this index, and `make check-fast` runs it.
 | [0196](0196-windows-hint-uses-ipv6-literal-net.md) | The Windows connection hint uses the ipv6-literal.net form for IPv6 hosts | accepted | 2026-11-07 |
 | [0197](0197-accessible-dialogs-lists-and-hints.md) | Dialogs, lists and hints in the web UI work with keyboard and screen readers | accepted | 2026-11-07 |
 | [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
-| [0273](0273-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
+| [0284](0284-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
 
 ## Deploy
 

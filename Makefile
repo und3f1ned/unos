@@ -100,7 +100,7 @@ test-fast: ## The convention tests: ADRs, ledger, guard, repo tooling and secret
 smoke: ## A few seconds: the app starts and serves health, first-run setup and login (backend tests)
 	cd supervisor && $(LOCK) $(PY) -m pytest $(SMOKE) -q --tb=short $(PYTEST_ARGS)
 
-frontend: ## svelte-check, the check of the web UI's texts (ADR-0273) and the production build; all run
+frontend: ## svelte-check, the check of the web UI's texts (ADR-0284) and the production build; all run
 	+@$(call run_all,frontend-check frontend-i18n frontend-build)
 
 frontend-check:

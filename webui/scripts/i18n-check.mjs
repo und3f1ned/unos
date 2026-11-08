@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The texts of the web UI come from catalogs with English and Russian (ADR-0273). make frontend
+// The texts of the web UI come from catalogs with English and Russian (ADR-0284). make frontend
 // runs this check (npm run i18n); supervisor/tests/test_i18n.py tests it.
 //
 //   node scripts/i18n-check.mjs [webui directory]      (default: the webui/ of this script)
@@ -707,7 +707,7 @@ for (const [entry, line] of listed) {
 if (errors.length > 0) {
 	for (const error of errors) console.error(error);
 	console.error(`i18n: ${errors.length} problem(s). Texts come from the catalogs as $t('area.key') ` +
-		'(webui/AGENTS.md, ADR-0273).');
+		'(webui/AGENTS.md, ADR-0284).');
 	process.exit(1);
 }
 console.log(`i18n: ${english.size} keys in en and ru; ${files.length} .svelte files, ${pending} of them ` +

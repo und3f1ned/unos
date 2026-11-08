@@ -1,4 +1,4 @@
-"""The web UI in English and Russian (ADR-0273), run with node.
+"""The web UI in English and Russian (ADR-0284), run with node.
 
 * webui/scripts/i18n-check.mjs, which make frontend runs: every text of a .svelte file comes from
   the catalogs, except in the files of webui/scripts/i18n-untranslated.txt; both halves of every
@@ -343,7 +343,7 @@ class TestCatalogs:
                    for line in result.stderr.splitlines()), result.stderr
 
     def test_the_first_areas_have_catalogs(self):
-        # The areas the first part of the feature translated (ADR-0273); others join them.
+        # The areas the first part of the feature translated (ADR-0284); others join them.
         catalogs = sorted(path.stem for path in (WEBUI / "src" / "lib" / "i18n" / "catalog").glob("*.ts"))
 
         assert {"account", "common", "layout", "login", "setup", "system", "ui"} <= set(catalogs)

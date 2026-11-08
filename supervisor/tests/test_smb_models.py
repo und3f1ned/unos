@@ -439,6 +439,15 @@ class TestConstants:
         assert (constants.SHARE_DIR_MODE, constants.SHARE_FILE_MODE) == (0o2770, 0o660)
         assert share_root_mode_ok(stat.S_IFDIR | constants.SHARE_DIR_MODE, constants.SMB_GROUP_GID)
 
+    def test_the_user_of_apps_in_the_group_is_no_one_elses(self):
+        """The user of the apps that run in unos-smb (ADR-0274) owns what they write in share folders."""
+        assert constants.SMB_APP_UID == 80000
+        # No SMB account, and no account made with useradd (UID_MAX 60000 in
+        # login.defs), below SUB_UID_MIN (100000), and in the block that
+        # systemd never allocates (65536-524287), as the SMB ids (ADR-0107).
+        assert not constants.SMB_UID_MIN <= constants.SMB_APP_UID <= constants.SMB_UID_MAX
+        assert 65536 <= constants.SMB_APP_UID < 100000
+
     @pytest.mark.parametrize("name", ["alice", "a", "a" * 32, "e2e_user_abc", "bob-smith", "x9", "admin"])
     def test_valid_linux_names(self, name):
         assert linux_name_problem(name) is None
@@ -454,6 +463,10 @@ class TestConstants:
 
     @pytest.mark.parametrize("name", [
         "root", "nobody", "www-data", "docker", "sambashare", "unos", "unos-smb", "systemd-network", "systemd-x",
+        # wsdd2.service runs as the dynamic user named after it (DynamicUser=true). A static
+        # account of that name takes its place: an SMB host account wsdd2 would give the
+        # network-facing daemon the group unos-smb and with it the share folders (ADR-0275).
+        "wsdd2",
     ])
     def test_reserved_names(self, name):
         assert linux_name_problem(name) == f"'{name}' is reserved for the system"
@@ -505,6 +518,57 @@ class TestConstants:
     def test_smb_passwords_refused(self, password, problem):
         assert smb_password_problem(password) == problem
         assert password not in problem  # the message never carries the password
+
+    @pytest.mark.parametrize("password", [
+        "password", "Password1", "PASSWORD123", "P@ssw0rd", "12345678", "1234567890", "11111111",
+        "qwertyuiop", "1q2w3e4r", "Iloveyou", "sunshine", "Summer2024!", "Welcome@123", "abcd1234",
+    ])
+    def test_a_common_password_is_refused_with_the_reason_in_any_case(self, password):
+        """shares.smb-login-protection, step 2 (ADR-0279)."""
+        assert smb_password_problem(password) == (
+            "SMB passwords must not be common passwords: this one is on the list of passwords that attackers "
+            "try first"
+        )
+        assert smb_password_problem(password) == constants.COMMON_PASSWORD_RULE
+        # The web UI shows its hint to change the password after every "SMB passwords must ..." answer.
+        assert constants.COMMON_PASSWORD_RULE.startswith("SMB passwords must")
+
+    @pytest.mark.parametrize("password", ["password-for-the-nas", "Sunshine on 7 hills", "qwertyuiop[]", " password"])
+    def test_a_password_that_only_contains_a_common_one_is_taken(self, password):
+        assert smb_password_problem(password) is None
+
+    def test_the_other_rules_come_first(self):
+        assert smb_password_problem("letmein") == "SMB passwords must have at least 8 characters"
+        assert smb_password_problem("password\t") == (
+            "SMB passwords must not contain control characters such as tabs or line breaks"
+        )
+
+    def test_a_password_that_goes_back_to_samba_is_not_checked_against_the_list(self):
+        """``restoring``: the password Samba held before a change that failed goes back to it (ADR-0124),
+        also a common one that an account got before the list; the other rules still apply (ADR-0279)."""
+        assert smb_password_problem("Password123") == constants.COMMON_PASSWORD_RULE
+        assert smb_password_problem("Password123", restoring=True) is None
+        assert smb_password_problem("letmein", restoring=True) == "SMB passwords must have at least 8 characters"
+        assert smb_password_problem("password\n", restoring=True) == (
+            "SMB passwords must not contain control characters such as tabs or line breaks"
+        )
+
+    def test_the_list_of_common_passwords(self):
+        """common_passwords.txt: a comment header, then one password per line, in lower case (casefolded),
+        sorted and unique, each one that the other rules would take; it ships with the code (src/)."""
+        path = SUPERVISOR / "src" / "shares" / "common_passwords.txt"
+        lines = path.read_text(encoding="utf-8").split("\n")
+        header = [line for line in lines if line.startswith("#")]
+        entries = [line for line in lines if line and not line.startswith("#")]
+
+        assert lines[: len(header)] == header and header, "the comment header comes first"
+        assert lines[-1] == "" and "" not in lines[len(header):-1]
+        assert "GNU General Public License" in " ".join(header) and "ADR-0279" in " ".join(header)
+        assert entries == sorted(set(entries)), "sorted, without duplicates"
+        assert [e for e in entries if e != e.casefold() or e != e.strip() or not e.isprintable()] == []
+        assert [e for e in entries if len(e) < constants.SMB_PASSWORD_MIN_CHARS] == []
+        assert len(entries) >= 500
+        assert constants.common_passwords() == frozenset(entries)
 
     @pytest.mark.parametrize("mode, gid, ok", [
         pytest.param(stat.S_IFDIR | 0o2770, 70000, True, id="2770-unos-smb"),
