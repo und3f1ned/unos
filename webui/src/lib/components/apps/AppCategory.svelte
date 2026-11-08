@@ -4,7 +4,7 @@
 	/** A category as the server answers it (AppCategory of supervisor/src/apps/schemas.py); '' is every app. */
 	export let category: string;
 
-	// One label per category, the category list's, also on the cards and in the details (ADR-0288).
+	// One label per category, the category list's, also on the cards and in the details (ADR-0289).
 	const LABELS: Record<string, string> = {
 		'': 'apps.category.all',
 		home_automation: 'apps.category.homeAutomation',

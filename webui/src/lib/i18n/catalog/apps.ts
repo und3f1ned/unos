@@ -2,7 +2,7 @@ import type { Translation } from '../translate';
 
 // The App Store: src/routes/apps/+page.svelte and src/lib/components/apps/. The names and the
 // descriptions of the apps and of their variables, and their memory recommendations, come from
-// the server's catalog and are shown as it answers them (ADR-0288).
+// the server's catalog and are shown as it answers them (ADR-0289).
 
 export const en = {
 	'apps.title': 'App Store',
