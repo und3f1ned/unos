@@ -45,7 +45,7 @@ LSBLK_COLUMNS = (
     "NAME,KNAME,PATH,PKNAME,TYPE,SIZE,ROTA,MODEL,SERIAL,WWN,"
     "FSTYPE,LABEL,UUID,PARTUUID,PTTYPE,MOUNTPOINTS,MAJ:MIN"
 )
-FINDMNT_COLUMNS = "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,VFS-OPTIONS,FS-OPTIONS"
+FINDMNT_COLUMNS = "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,FSROOT,VFS-OPTIONS,FS-OPTIONS"
 
 SMARTCTL_TIMEOUT = 60
 
@@ -58,7 +58,7 @@ def _has_ro(options: str | None) -> bool:
 
 @dataclass(frozen=True)
 class HostMount:
-    """One entry of the host's mount table."""
+    """One entry of the host's mount table (or of another mount namespace's)."""
 
     target: str
     source: str | None  # device path without a btrfs "[/subvolume]" suffix
@@ -67,6 +67,9 @@ class HostMount:
     majmin: str | None
     vfs_options: str | None = None  # per-mount options ("rw,noatime")
     fs_options: str | None = None  # superblock options ("ro,space_cache=v2,...")
+    # The folder of the filesystem that the mount shows: "/" for its root, else a
+    # btrfs subvolume or the folder of a bind mount ("/apps/x").
+    fsroot: str | None = None
 
     @property
     def read_only(self) -> bool:
@@ -182,8 +185,40 @@ def host_mounts() -> list[HostMount]:
     the btrfs subvolume (subvol=) as they are named now, and whatever can
     write in a pool names them: bytes that are not UTF-8 become U+FFFD.
     """
+    return _findmnt([])
+
+
+def namespace_mounts(pid: int) -> list[HostMount]:
+    """The mount table of the mount namespace of the host's process ``pid``.
+
+    findmnt reads /proc/<pid>/mountinfo: the mountpoints are the ones that the
+    process sees. Raises RuntimeError if findmnt fails, for example because
+    the process has exited.
+    """
+    return _findmnt(["--task", str(pid)])
+
+
+def mount_namespace_pids() -> list[int]:
+    """One process of each mount namespace on the host other than the host's own, by PID.
+
+    lsns names the lowest PID of each namespace, so the host's (PID 1's) has
+    PID 1. Raises RuntimeError if lsns fails or does not print the expected
+    JSON. Older versions of lsns print the numbers as strings.
+    """
+    result = host.run_on_host(["lsns", "--json", "--type", "mnt", "--output", "NS,PID"], timeout=30)
+    if not result.ok:
+        raise RuntimeError(f"lsns failed: {result.stderr.strip() or result.returncode}")
+    try:
+        rows = json.loads(result.stdout)["namespaces"]
+        pids = {_to_int(row.get("pid")) for row in rows}
+    except (json.JSONDecodeError, TypeError, KeyError, AttributeError) as exc:
+        raise RuntimeError(f"lsns returned invalid JSON: {exc}") from exc
+    return sorted(pid for pid in pids if pid > 1)
+
+
+def _findmnt(options: list[str]) -> list[HostMount]:
     result = host.run_on_host(
-        ["findmnt", "-J", "-l", "-o", FINDMNT_COLUMNS], timeout=30, errors="replace"
+        ["findmnt", "-J", "-l", *options, "-o", FINDMNT_COLUMNS], timeout=30, errors="replace"
     )
     if not result.ok:
         raise RuntimeError(f"findmnt failed: {result.stderr.strip() or result.returncode}")
@@ -210,6 +245,7 @@ def host_mounts() -> list[HostMount]:
                         majmin=item.get("maj:min"),
                         vfs_options=item.get("vfs-options"),
                         fs_options=item.get("fs-options"),
+                        fsroot=item.get("fsroot"),
                     )
                 )
             visit(item.get("children"))
