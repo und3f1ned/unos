@@ -3,14 +3,14 @@ status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
-superseded-by: ADR-0261
+superseded-by: ADR-0277
 ---
 
 # ADR-0094: Samba keeps its cache in /run/samba and logs to syslog
 
 ## Context
 
-Superseded by ADR-0261: Samba keeps its cache and its own log file in /run/samba, and logs failed sign-ins through auth_audit to syslog.
+Superseded by ADR-0277: Samba keeps its cache and its own log file in /run/samba, and logs failed sign-ins through auth_audit to syslog.
 
 With Debian's defaults, nmbd rewrites `browse.dat` about every 12 minutes and smbd writes `smbprofile.tdb` at the end of every connection, both in `/var/cache/samba` on the system disk, and `log file = /var/log/samba/log.%m` writes one log file per client. The system disk must be written as little as possible (ADR-0214). testparm exits with an error when the cache directory does not exist, for example after a boot before smbd has run.
 

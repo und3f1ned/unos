@@ -35,6 +35,13 @@ Avoid: user (a UNOS user), admin.
 addresses and routes: a timer on the host that runs unless the administrator keeps the disable
 within 60 seconds (ADR-0244). Avoid: rollback (what `update.sh` and `deploy.sh` do), undo.
 
+**Scheduled task**: A task of System > Scheduler that runs at the times of its schedule on the
+clock of the host's time zone: a snapshot, a scrub, a SMART test, a backup or a custom task. Each
+run is recorded with its status in the task's history (ADR-0044, ADR-0266, ADR-0268). Avoid: job, cron job.
+
+**Custom task**: A scheduled task that runs a shell command as root in the supervisor's container;
+its runs record the command's output and exit status (ADR-0044, ADR-0267). Avoid: script.
+
 **Notification channel**: Where UNOS sends notifications: e-mail through a mail server, a Telegram
 chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0260).
 Avoid: notifier, integration.
@@ -69,8 +76,9 @@ in Files deletes there, until it is restored, deleted for good, or deleted for g
 its deletion (ADR-0259). Avoid: recycle bin, snapshot.
 
 **SMART history**: The sector and error counters of each disk that the SMART monitor records every
-hour while the disk is awake, kept by serial in `/data/smart_history.json` (ADR-0235). Avoid: SMART
-log (smartctl's own self-test and error logs).
+hour while the disk is awake, kept by serial in RAM and in `/data/smart_history.json`, which is
+written when they change (ADR-0235, ADR-0269). Avoid: SMART log (smartctl's own self-test and error
+logs).
 
 **Replace soon**: The mark of a connected disk whose failure prediction, a score of the rises in
 its SMART history, reaches 50; Disk Health and the dashboard show it with its reasons (ADR-0235).
@@ -120,6 +128,11 @@ passwords and smb.conf in line with the database (ADR-0138). Avoid: sync, repair
 the group unos-smb and removes other accounts' access (ADR-0155). Avoid: fix permissions, chmod,
 reconcile.
 
+**Network discovery**: How computers on the LAN find the NAS without its address: Windows through
+WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd registers with
+avahi-daemon), both over IPv4 only; NetBIOS is off (ADR-0275). Avoid: network browsing (a share's
+"Show in network browsing" lists the share among the NAS's shares), NetBIOS browsing.
+
 ## Users and access
 
 **UNOS user**: An account that people sign in to the web UI with: an administrator or a regular
@@ -149,6 +162,11 @@ Account page and keeps; each one signs in once in place of a code of the authent
 
 **App**: An application installed from the App Store catalog, with its data on a pool (ADR-0039).
 Avoid: container, service.
+
+**App in unos-smb**: An app installed with the option to run in the group unos-smb (PUID 80000,
+PGID 70000, UMASK 007), which only apps of linuxserver.io images with a folder besides their own
+data have: the only kind of app that is given a share's folder (ADR-0274). Avoid: SMB app, app
+in the SMB group.
 
 **Container**: Any Docker container on the host, as the Containers page lists it; an app runs as
 one or more containers. Avoid: app.

@@ -338,7 +338,7 @@ test.describe('Change Password (fake answer)', () => {
     authenticatedPage: page,
   }) => {
     // The server refuses a password of its list of common passwords for an account with SMB
-    // (ADR-0263), and its answer does not carry the password.
+    // (ADR-0279), and its answer does not carry the password.
     await fakeSmbApi(page, { mySmb: mySmb('active') });
     const sent: unknown[] = [];
     await page.route('**/api/v1/auth/change-password', (route) => {
@@ -420,7 +420,7 @@ test.describe('A common password on the Account page (stand-in)', () => {
     'turns SMB on for a test user: only where E2E_STAND_IN=1, on the stand-in or the compose test stack, which have no Samba',
   );
 
-  // The API takes a common UNOS password for a user without SMB; SMB does not (ADR-0263).
+  // The API takes a common UNOS password for a user without SMB; SMB does not (ADR-0279).
   const user = { username: `e2e_acct_common_${Date.now().toString(36)}`, password: 'Password123' };
   let adminToken = '';
   let userId: number | undefined;

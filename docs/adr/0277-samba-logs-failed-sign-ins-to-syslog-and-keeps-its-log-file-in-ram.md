@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0094]
 ---
 
-# ADR-0261: Samba logs failed sign-ins through auth_audit to syslog and keeps its own log file in /run/samba
+# ADR-0277: Samba logs failed sign-ins through auth_audit to syslog and keeps its own log file in /run/samba
 
 ## Context
 
@@ -28,7 +28,7 @@ Tests: `supervisor/tests/test_smbconf.py` (the lines, the log file in RAM, the l
 
 ## Consequences
 
-- Each failed SMB sign-in adds one journal entry that names the account the client gave and the client's address. Where the journal, or rsyslog's files, are on the system disk, that is a small write, which journald batches, beside the passdb write of the same failure (ADR-0159, ADR-0262).
+- Each failed SMB sign-in adds one journal entry that names the account the client gave and the client's address. Where the journal, or rsyslog's files, are on the system disk, that is a small write, which journald batches, beside the passdb write of the same failure (ADR-0159, ADR-0278).
 - Samba's messages have no header line any more, in syslog too; the journal gives each its time and program.
 - What smbd and nmbd print before they have read smb.conf still goes to Samba's default files in `/var/log/samba`, and the file in `/run/samba` is gone after a reboot.
 - A running smbd and nmbd take the new lines at the reload of the next apply that writes smb.conf (ADR-0090); the cache starts empty after every boot, as before.

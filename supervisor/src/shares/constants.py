@@ -23,6 +23,12 @@ SMB_GROUP_GID = 70000
 SMB_UID_MIN = 70000
 SMB_UID_MAX = 79999
 
+# User id of the apps that run in the group unos-smb (ADR-0274): what they
+# write in share folders belongs to it, and so may a share's folder, which
+# their images give to their user when they start. No SMB account and no app
+# outside the group has it.
+SMB_APP_UID = 80000
+
 # A host account is UNOS's ("marked") only with this GECOS, a uid in the range
 # above and SMB_GROUP_GID as primary group. UNOS never touches other accounts.
 SMB_GECOS = "UNOS SMB user"
@@ -46,6 +52,9 @@ RESERVED_ACCOUNT_NAMES = frozenset(
         "ntpsec", "tss", "uuidd", "tcpdump", "lpadmin", "bluetooth", "i2c", "gpio", "spi",
         "docker", "sambashare", "postfix", "postdrop", "mysql", "postgres", "redis", "nginx",
         "statd", "rpc", "unbound", "usbmux", "pulse", "rtkit", "geoclue", "colord", "saned",
+        # wsdd2.service, which install.sh sets up, runs as the dynamic user wsdd2: a static
+        # account of that name, with its primary group, would take its place (ADR-0275).
+        "wsdd2",
         # UNOS
         "unos", "unos-smb",
     }
@@ -61,8 +70,8 @@ SID_LIKE_RULE = "Names that start with 's-' and a digit are reserved: Samba read
 
 SMB_PASSWORD_MIN_CHARS = 8
 SMB_PASSWORD_MAX_BYTES = 72
-# SMB has no second factor and no login limit (ADR-0264): passwords on the list of
-# common_passwords.txt are refused (ADR-0263). The web UI shows its hint to change the
+# SMB has no second factor and no login limit (ADR-0280): passwords on the list of
+# common_passwords.txt are refused (ADR-0279). The web UI shows its hint to change the
 # password after every answer that starts with "SMB passwords must".
 COMMON_PASSWORD_RULE = (
     "SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first"
@@ -90,7 +99,7 @@ def is_valid_linux_name(name: object) -> bool:
 
 @functools.cache
 def common_passwords() -> frozenset[str]:
-    """The lines of common_passwords.txt that are not comments: casefolded passwords (ADR-0263)."""
+    """The lines of common_passwords.txt that are not comments: casefolded passwords (ADR-0279)."""
     lines = _COMMON_PASSWORDS_FILE.read_text(encoding="utf-8").split("\n")
     return frozenset(line for line in lines if line and not line.startswith("#"))
 
@@ -98,7 +107,7 @@ def common_passwords() -> frozenset[str]:
 def smb_password_problem(password: str, *, restoring: bool = False) -> str | None:
     """Why ``password`` cannot be given to Samba (smbpasswd reads it as a line on stdin), or None.
 
-    The rules of ADR-0263, in this order: at least 8 characters, at most 72 bytes of valid UTF-8,
+    The rules of ADR-0279, in this order: at least 8 characters, at most 72 bytes of valid UTF-8,
     no control characters, and not a common password (compared ignoring case). ``restoring``: the
     password that Samba held before a change that failed goes back to it (ADR-0124); the list
     applies only to new passwords, and an account may have got its password before the list.

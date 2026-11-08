@@ -46,6 +46,9 @@ GLOBAL_WITHOUT_GUESTS = """[global]
    logging = syslog@2
    debug timestamp = no
    dns proxy = no
+   disable netbios = yes
+   smb ports = 445
+   multicast dns register = yes
 """
 
 GLOBAL_WITH_GUESTS = (
@@ -74,7 +77,7 @@ def section(name, body):
     return f"[{name}]\n{body}{FIXED}"
 
 
-# --- [global] (ADR-0265) -------------------------------------------------------------------
+# --- [global] (ADR-0281) -------------------------------------------------------------------
 
 
 class TestGlobal:
@@ -103,7 +106,7 @@ class TestGlobal:
     @pytest.mark.parametrize("guest", [False, True])
     def test_samba_writes_its_own_log_file_into_ram(self, guest):
         """smbd, nmbd and the smbd of each client share one log file in /run/samba, a tmpfs, on every
-        host (ADR-0261): no file of their own on the system disk, no file per client name or address
+        host (ADR-0277): no file of their own on the system disk, no file per client name or address
         (%m) that a client could multiply, and Samba renames the file to .old past 100 KiB."""
         settings = dict(smbconf.global_settings(guest))
 
@@ -116,7 +119,7 @@ class TestGlobal:
     def test_failed_sign_ins_reach_syslog_and_successful_ones_do_not(self, guest):
         """Samba logs a failed sign-in in its class auth_audit at level 2 and a successful one at level 3
         (auth/auth_log.c). A message reaches syslog when its level is at most the level of its class in
-        "log level" and at most the level of the syslog backend in "logging" (ADR-0261)."""
+        "log level" and at most the level of the syslog backend in "logging" (ADR-0277)."""
         settings = dict(smbconf.global_settings(guest))
         levels: dict[str, int] = {}
         for item in settings["log level"].split():
@@ -134,6 +137,16 @@ class TestGlobal:
         # Without Samba's header line ([date, level] file:line(function)) each message is one entry
         # of the journal, which has its own time.
         assert settings["debug timestamp"] == "no"
+
+    @pytest.mark.parametrize("guest", [False, True])
+    def test_netbios_is_off_and_smbd_announces_itself_over_bonjour(self, guest):
+        # Windows finds the NAS through wsdd2 and macOS through the _smb._tcp service that
+        # smbd registers with avahi-daemon (ADR-0275): nmbd answers nothing, and smbd
+        # listens on 445 only, not on the NetBIOS session port 139.
+        text = smbconf.render_global(guest)
+        assert "   disable netbios = yes\n" in text
+        assert "   smb ports = 445\n" in text
+        assert "   multicast dns register = yes\n" in text
 
     def test_config_without_shares(self):
         assert smbconf.render_config([]) == HEADER + "\n" + GLOBAL_WITHOUT_GUESTS

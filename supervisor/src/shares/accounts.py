@@ -104,7 +104,7 @@ SMB_CONF_REPLACED = (
 AUTH_IN_PROGRESS = "(auth in progress)"
 _DIGITS = re.compile(r"[0-9]{1,10}")
 
-# Samba keeps the hashes of each account's current and two previous passwords (ADR-0262).
+# Samba keeps the hashes of each account's current and two previous passwords (ADR-0278).
 PASSWORD_HISTORY = 3
 PASSWORD_HISTORY_POLICY = "password history"
 # What ``pdbedit -P "password history"`` prints for the value (source3/utils/pdbedit.c).
@@ -399,7 +399,7 @@ def read_passdb_names() -> dict[str, str]:
 
 
 def ensure_password_history() -> str | None:
-    """Samba keeps the last PASSWORD_HISTORY passwords of each passdb entry (ADR-0262).
+    """Samba keeps the last PASSWORD_HISTORY passwords of each passdb entry (ADR-0278).
 
     A wrong password that is one of the two before an account's current one
     then writes nothing to passdb.tdb, while every other wrong password still
@@ -546,7 +546,7 @@ def set_samba_password(name: str, password: str, *, restoring: bool = False) -> 
     """``smbpasswd -s -a <name>`` with the password twice on stdin (never in argv).
 
     ``restoring``: the password goes back after a change that failed (ADR-0124), and
-    is not checked against the list of common passwords (ADR-0263).
+    is not checked against the list of common passwords (ADR-0279).
     """
     name = _checked_name(name, "smbpasswd")
     problem = constants.smb_password_problem(password, restoring=restoring)
@@ -1248,7 +1248,7 @@ async def _reset_account(db: AsyncSession, user_id: int, name: str) -> str | Non
 async def _compensate_password(db: AsyncSession, user_id: int, name: str, current_password: str | None) -> str | None:
     """Samba may hold a new password that UNOS did not store (ADR-0124): a self change
     puts the current password back, also a common one that the account got before the
-    list of ADR-0263; otherwise, or when that fails, _reset_account().
+    list of ADR-0279; otherwise, or when that fails, _reset_account().
 
     Returns why this failed, or None.
     """
@@ -1646,7 +1646,7 @@ def _reconcile_host(plan: _HostPlan) -> _HostOutcome:
     accounts = dict(plan.accounts)
     passwd_changed = False
 
-    # Samba's password history (ADR-0262): read at every start, set only when it differs.
+    # Samba's password history (ADR-0278): read at every start, set only when it differs.
     try:
         history = ensure_password_history()
     except SmbHostError as error:

@@ -514,7 +514,7 @@ class TestWholePath:
         """The carry-over: alice is carried over with her uid (the live owner keeps it), the
         restored row of bob that had it gets none, and bob's activation gets a fresh one."""
         world.make_active("alice", 70000, ALICE_PW)
-        world.fake.policies["password history"] = accounts.PASSWORD_HISTORY  # set at an earlier start (ADR-0262)
+        world.fake.policies["password history"] = accounts.PASSWORD_HISTORY  # set at an earlier start (ADR-0278)
         snapshot = accounts.snapshot_for_restore(world.path)
         restored = make_db(
             tmp_path / "restored.db",

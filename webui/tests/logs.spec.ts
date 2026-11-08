@@ -8,7 +8,7 @@ const SOURCES = [
   { name: 'journal', label: 'System Journal', description: "Everything in the host's systemd journal" },
   { name: 'dmesg', label: 'Kernel', description: "The kernel's messages since the host started" },
   { name: 'docker', label: 'Docker', description: 'The Docker daemon' },
-  { name: 'samba', label: 'Samba', description: 'The SMB file server: smbd and nmbd' },
+  { name: 'samba', label: 'Samba', description: 'The SMB file server: smbd, and nmbd where NetBIOS is on' },
   {
     name: 'auth',
     label: 'Authentication',
@@ -36,7 +36,7 @@ const USB_DEVICE = 'usb 1-1: new high-speed USB device number 2 using xhci-hcd';
 const USB_ERROR = 'usb 1-1: device descriptor read/64, error -71';
 
 // What smbd logs for a failed SMB sign-in through its class auth_audit (Samba's auth/auth_log.c):
-// a notice, without Samba's header line (ADR-0261), naming the account the client gave and the
+// a notice, without Samba's header line (ADR-0277), naming the account the client gave and the
 // client's address (supervisor/tests/test_logs_sources.py, TestFailedSmbSignIns).
 function failedSignIn(account: string, address: string, status = 'NT_STATUS_WRONG_PASSWORD'): string {
   return (

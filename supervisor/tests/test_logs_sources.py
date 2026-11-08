@@ -49,7 +49,9 @@ SOURCES = [
     {"name": "journal", "label": "System Journal", "description": "Everything in the host's systemd journal"},
     {"name": "dmesg", "label": "Kernel", "description": "The kernel's messages since the host started"},
     {"name": "docker", "label": "Docker", "description": "The Docker daemon"},
-    {"name": "samba", "label": "Samba", "description": "The SMB file server: smbd and nmbd"},
+    # nmbd runs only where NetBIOS is on; UNOS turns it off (ADR-0275), and the journal keeps
+    # what nmbd logged before.
+    {"name": "samba", "label": "Samba", "description": "The SMB file server: smbd, and nmbd where NetBIOS is on"},
     {"name": "auth", "label": "Authentication",
      "description": "Sign-ins, sudo and the other messages of the auth and authpriv facilities"},
     {"name": "cron", "label": "Cron Jobs", "description": "The host's cron daemon"},
@@ -608,7 +610,7 @@ class TestSearch:
 def failed_sign_in(account: str, address: str, status: str = "NT_STATUS_WRONG_PASSWORD") -> str:
     """The line smbd logs for a failed SMB sign-in through its class auth_audit (Samba's
     auth/auth_log.c), at level 2: a syslog notice, one journal entry without Samba's header line
-    (ADR-0261). It names the account the client gave and the client's address and port."""
+    (ADR-0277). It names the account the client gave and the client's address and port."""
     return (
         f"Auth: [SMB2,(null)] user [WORKGROUP]\\[{account}] at [Sun, 08 Nov 2026 09:58:02.123456 UTC] "
         f"with [NTLMv2] status [{status}] workstation [LAPTOP-7] remote host [ipv4:{address}:50122] "
@@ -618,7 +620,7 @@ def failed_sign_in(account: str, address: str, status: str = "NT_STATUS_WRONG_PA
 
 class TestFailedSmbSignIns:
     """An administrator finds the lines of failed SMB sign-ins in System > Logs, source Samba, and
-    sees which client keeps failing (ADR-0261, ADR-0257)."""
+    sees which client keeps failing (ADR-0277, ADR-0257)."""
 
     LINES = [
         failed_sign_in("alice", "192.168.1.50"),

@@ -6,11 +6,11 @@ decided-by: agent
 supersedes: [ADR-0122]
 ---
 
-# ADR-0263: SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters, and must not be common passwords
+# ADR-0279: SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters, and must not be common passwords
 
 ## Context
 
-ADR-0122 set the rules of SMB-bound passwords and still allowed common ones, an accepted risk of ADR-0102. SMB has no second factor and no login limit (ADR-0264), so a common password is the first that anyone on the LAN tries (`shares.smb-login-protection`).
+ADR-0122 set the rules of SMB-bound passwords and still allowed common ones, an accepted risk of ADR-0102. SMB has no second factor and no login limit (ADR-0280), so a common password is the first that anyone on the LAN tries (`shares.smb-login-protection`).
 
 ## Decision
 
@@ -25,5 +25,5 @@ ADR-0122 set the rules of SMB-bound passwords and still allowed common ones, an 
 - A password of the list, in any letter case, cannot turn SMB on through UNOS and cannot become the password of an active account through UNOS; a password that only contains one, such as `password-for-the-nas`, is taken.
 - UNOS checks only the passwords that it gives to Samba. Samba's own password change (SAMR) still takes any password, a common one too, without UNOS, until `shares.password-changes-only-through-unos` refuses such changes (ADR-0250).
 - An account that got its password before the list keeps it until its next change, whether or not it is on the list: UNOS cannot read Samba's passwords to check them, and a change that fails puts it back.
-- The list stops the most common choices, not every guess: attempts at other passwords stay unlimited until the other step of `shares.smb-login-protection` limits them (ADR-0264).
+- The list stops the most common choices, not every guess: attempts at other passwords stay unlimited until the other step of `shares.smb-login-protection` limits them (ADR-0280).
 - Adding or removing a password is a change of the file; its test keeps it sorted, in lower case and without entries shorter than 8 characters.

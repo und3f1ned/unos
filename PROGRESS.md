@@ -6,15 +6,15 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Now
 
-- `main` holds the first feature batch (pull requests #32 to #39, ADR-0232 to ADR-0246):
-  rename in the file manager, SMART data and replace-soon marks, the Audit Log page, two-factor
-  recovery codes, encrypted scheduled backups, snapshots of volumes with volume quotas in the web
-  UI, the network interface's disable confirmation with its automatic revert, and power actions
-  on the host with an Updates tab that works. Before them: the audit log, the device's security,
-  the upload fix for ext4, Dependabot's Actions and pip updates (#23 to #30).
-- The batch passed on the dev device (2026-11-07). A magic packet from the workstation did not
-  start the device after a shutdown: its board cuts the network card's power (ADR-0247), so only
-  its power button starts it again; a reboot is the remote restart.
+- `main` holds the first and second feature batches (#32 to #51) and the Wake-on-LAN statement
+  (#42, ADR-0247). The second batch: the trash, notification channels with TLS for SMTP, the logs
+  of the host, the Images view, the scheduler's command output and the host's time zone, smb.conf
+  re-applied when a pool goes, sign-in with a full system disk and API token fixes, and tests that
+  prove the first-run setup, two-factor sign-in, the disk list, mounts, forget and scrub.
+- The third batch (NFS exports, SMB discovery, group-writable files in shares, storage command
+  timeouts, Samba's writes and sign-in logging, the emergency runbook, the SMB group for apps,
+  importing a pool) and the fix of unmounting for `storage.mount-and-unmount` are in progress in
+  their own worktrees.
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
@@ -81,6 +81,20 @@ Open owner actions:
 5. Whether the services are used from outside over IPv6 (`device.ipv6-inbound-filter`).
 
 ## Log
+
+### 2026-11-08: the second feature batch, on the dev device
+
+- Nine groups built in parallel as in the first batch; merged as #43 to #51 with their ADRs
+  renumbered (ADR-0248 to ADR-0268). Deployed main 1fdf802: sync 4.0 MiB, the supervisor 12.6
+  MiB, the web UI 17.4 MiB, up 5.5 MiB.
+- Passed on the device: the trash on the pool and in a share (with the veto line and testparm),
+  the host's logs from six sources newest first, a custom task's output and exit status,
+  Containers' stop and start and the Images list, a scrub to the end and a cancelled one, and
+  the scheduler following the host's time zone (set to Europe/Moscow and back to UTC; that change
+  wrote 9.7 MiB).
+- Found: unmounting a pool is refused on the device, because systemd services' own mount
+  namespaces keep copies of the pool's mount that the host's umount does not reach. UNOS mounts
+  the pool again, so nothing is lost; the fix is on its way for `storage.mount-and-unmount`.
 
 ### 2026-11-07: the first feature batch on the dev device
 

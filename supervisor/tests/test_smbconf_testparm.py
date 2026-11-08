@@ -26,7 +26,7 @@ def share(name, *, guest_ok=False, readers=(), writers=(), comment="", browseabl
 
 
 def testparm(tmp_path, text: str) -> str:
-    # The cache directory of [global]: testparm exits 1 without it (ADR-0261).
+    # The cache directory of [global]: testparm exits 1 without it (ADR-0277).
     subprocess.run(["mkdir", "-p", "/run/samba"], capture_output=True, check=False)
     conf = tmp_path / "smb.conf"
     conf.write_text(text)
@@ -91,7 +91,7 @@ def test_every_rendered_share_is_a_section_of_its_own(tmp_path):
 
 
 def test_samba_takes_the_logging_lines(tmp_path):
-    """Samba takes the logging lines of [global] as UNOS writes them (ADR-0261): its log file in
+    """Samba takes the logging lines of [global] as UNOS writes them (ADR-0277): its log file in
     /run/samba with a size limit, the class auth_audit at level 2 and the syslog backend at level 2,
     and no header line before each message."""
     output = testparm(tmp_path, smbconf.render_config([]))

@@ -433,7 +433,7 @@ class TestReloadAndClose:
 
     async def test_a_reload_with_systemctl_only_closes_now_and_again_after_the_full_reload(self, env):
         """systemctl reload smbd signals the main smbd only: the processes serving open
-        connections (and nmbd) keep the old file until their periodic check. A process with
+        connections keep the old file until their periodic check. A process with
         no connection to docs did not reload at the close, so a client could connect to docs
         through it with the old access, which its tree connect keeps (uid.c vuid_cache): docs
         is closed again after the next full reload."""

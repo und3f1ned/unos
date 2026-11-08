@@ -100,7 +100,7 @@ def _safe_user(name: object) -> str:
     return name  # type: ignore[return-value]
 
 
-# --- rendering (ADR-0265, ADR-0088) ------------------------------------------------------
+# --- rendering (ADR-0281, ADR-0088) ------------------------------------------------------
 
 
 def _line(key: str, value: str) -> str:
@@ -142,7 +142,7 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
         # Samba's cache and its own log file in RAM (a tmpfs), the log file one for every
         # process, so that clients cannot add files of their own; its messages go to syslog,
         # with a failed sign-in at level 2 of the class auth_audit and no header line
-        # before each message (ADR-0261).
+        # before each message (ADR-0277).
         ("cache directory", "/run/samba"),
         ("log file", "/run/samba/log.samba"),
         ("max log size", "100"),
@@ -150,11 +150,16 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
         ("logging", "syslog@2"),
         ("debug timestamp", "no"),
         ("dns proxy", "no"),
+        # NetBIOS is off: Windows finds the NAS through wsdd2 and macOS through the
+        # _smb._tcp service that smbd registers with avahi-daemon (ADR-0275).
+        ("disable netbios", "yes"),
+        ("smb ports", "445"),
+        ("multicast dns register", "yes"),
     ]
 
 
 def render_global(guest_enabled: bool) -> str:
-    """The ``[global]`` section (ADR-0265); three lines depend on whether a guest share exists (ADR-0098)."""
+    """The ``[global]`` section (ADR-0281); three lines depend on whether a guest share exists (ADR-0098)."""
     return "[global]\n" + "".join(_line(key, value) for key, value in global_settings(guest_enabled))
 
 

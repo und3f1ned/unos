@@ -3,14 +3,14 @@ status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
-superseded-by: ADR-0264
+superseded-by: ADR-0280
 ---
 
 # ADR-0102: SMB logins have no rate limit and no common-password check, as an accepted risk
 
 ## Context
 
-Superseded by ADR-0264: SMB-bound passwords are now checked against a list of common passwords (ADR-0263), and only the missing rate limit stays an accepted risk.
+Superseded by ADR-0280: SMB-bound passwords are now checked against a list of common passwords (ADR-0279), and only the missing rate limit stays an accepted risk.
 
 The web login is limited to 5 attempts per minute per client (ADR-0010) and can require a second factor. SMB has no second factor, and UNOS sets neither a login rate limit nor a lockout for it. SMB passwords are the users' UNOS passwords (ADR-0119), and UNOS does not check them against a list of common passwords.
 

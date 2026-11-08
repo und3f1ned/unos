@@ -498,7 +498,7 @@ test.describe('Users page SMB (fake data)', () => {
 
   test('a common password is refused for SMB, and the dialog shows why', async ({ authenticatedPage: page }) => {
     // The server refuses a password of its list of common passwords for an account with SMB, and
-    // for turning SMB on with it (ADR-0263); the password itself is never in the answer.
+    // for turning SMB on with it (ADR-0279); the password itself is never in the answer.
     const fake = await fakeSmbApi(page, { users: fakeUsers() });
     fake.intercept = ({ method, path }) =>
       (method === 'PUT' && path === '/auth/users/2') || (method === 'POST' && path === '/auth/users/3/smb/enable')
@@ -689,7 +689,7 @@ test.describe('SMB activation (stand-in)', () => {
   test('creating a user with SMB and a common password is refused with the reason, and creates nobody', async ({
     authenticatedPage: page,
   }) => {
-    // The server checks the SMB password rules before it creates the user (ADR-0263).
+    // The server checks the SMB password rules before it creates the user (ADR-0279).
     const username = `e2e_common_${Date.now().toString(36)}`;
     created.push(username);
     await page.goto('/users');

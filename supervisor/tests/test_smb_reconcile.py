@@ -64,7 +64,7 @@ def raw(world: World, *statements: str) -> None:
 
 def consistent(world: World) -> None:
     """alice active, bob deactivated (account kept, no passdb), carol allowed (never activated);
-    Samba keeps the password history that the reconcile sets (ADR-0262)."""
+    Samba keeps the password history that the reconcile sets (ADR-0278)."""
     world.make_active("alice", 70000, ALICE_PW)
     world.deactivated("bob", 70001)
     world.add_user("carol", "Carol-pass-2026")
@@ -108,7 +108,7 @@ class TestConsistent:
         assert result == interfaces.ReconcileResult(changes=[], problems=[])
         assert world.fake.mutating_calls() == []
         assert commits["n"] == 0
-        # The read-only commands of a consistent start (ADR-0138), Samba's password history among them (ADR-0262).
+        # The read-only commands of a consistent start (ADR-0138), Samba's password history among them (ADR-0278).
         assert [a[:2] for a in world.fake.argvs()] == [
             ["/bin/sh", "-c"], ["getent", "passwd"], ["getent", "group"], ["getent", "group"], ["pdbedit", "-L"],
             ["pdbedit", "-P"],
@@ -130,7 +130,7 @@ SET_HISTORY = ["pdbedit", "-P", "password history", "-C", "3"]
 
 
 class TestPasswordHistory:
-    """shares.samba-runtime-writes, step 2 (ADR-0262): Samba keeps the hashes of an account's last
+    """shares.samba-runtime-writes, step 2 (ADR-0278): Samba keeps the hashes of an account's last
     passwords, and a wrong password that is one of the two before the current one writes nothing to
     passdb.tdb. The reconcile reads the policy at every start and sets it only when it differs."""
 
