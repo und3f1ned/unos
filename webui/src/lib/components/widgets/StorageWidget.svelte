@@ -30,7 +30,7 @@
 		unknown: { variant: 'neutral', key: 'common.unknown' }
 	};
 
-	// The units of a size, from bytes up: keys of the catalog (ADR-0288).
+	// The units of a size, from bytes up: keys of the catalog (ADR-0292).
 	const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
 
 	$: formatBytes = (bytes: number): string => {

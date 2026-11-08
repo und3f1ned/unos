@@ -130,6 +130,9 @@ and this index, and `make check-fast` runs it.
 | [0282](0282-a-filesystem-found-on-the-disks-is-imported-under-a-name-that-becomes-its-label.md) | A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label | superseded by [0283](0283-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | 2026-11-08 |
 | [0283](0283-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | A filesystem found on the disks becomes a pool only from data disks and under a name that no earlier pool still uses | accepted | 2026-11-08 |
 | [0285](0285-the-recovery-runbook-reads-a-pool-from-another-linux-machine-without-writing-to-it.md) | The recovery runbook reads a pool from another Linux machine without writing to it, degraded when a disk is missing | accepted | 2026-11-08 |
+| [0288](0288-an-unmount-also-unmounts-the-copies-that-services-keep-in-their-mount-namespaces.md) | An unmount also unmounts the copies of a pool's mount that services keep in mount namespaces of their own, and refuses every other user as before | accepted | 2026-11-08 |
+| [0289](0289-commands-in-the-container-are-killed-at-their-timeout-and-not-waited-for.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, and a command still stuck is not started again | superseded by [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | 2026-11-08 |
+| [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, a command still stuck is not started again, and a snapshot cleanup without an answer fails its run | accepted | 2026-11-08 |
 
 ## Shares
 
@@ -314,7 +317,8 @@ and this index, and `make check-fast` runs it.
 | [0197](0197-accessible-dialogs-lists-and-hints.md) | Dialogs, lists and hints in the web UI work with keyboard and screen readers | accepted | 2026-11-07 |
 | [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
 | [0287](0287-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
-| [0288](0288-units-that-the-web-ui-writes-after-a-number-come-from-the-catalogs.md) | Units that the web UI writes after a number come from the catalogs, and numbers keep their decimal point | accepted | 2026-11-08 |
+| [0291](0291-the-app-store-translates-its-own-texts-and-not-the-app-catalog.md) | The App Store gives each category one label and shows the app catalog's texts as the server answers them | proposed | 2026-11-08 |
+| [0292](0292-units-that-the-web-ui-writes-after-a-number-come-from-the-catalogs.md) | Units that the web UI writes after a number come from the catalogs, and numbers keep their decimal point | accepted | 2026-11-08 |
 
 ## Deploy
 

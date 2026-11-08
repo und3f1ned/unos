@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0288: Units that the web UI writes after a number come from the catalogs, and numbers keep their decimal point
+# ADR-0292: Units that the web UI writes after a number come from the catalogs, and numbers keep their decimal point
 
 ## Context
 

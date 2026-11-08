@@ -18,12 +18,14 @@ import importlib
 import json
 import logging
 import os
+import re
 import stat
 import subprocess
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import docker
@@ -62,6 +64,17 @@ BASE_FSTAB = (
 OPTIONS = (
     "defaults,noatime,nofail,x-systemd.device-timeout=15s,x-systemd.before=docker.service"
 )
+# The root of a container's mount namespace, the overlay of its image (Docker's overlay2), as
+# findmnt --task prints it for a process in that namespace.
+CONTAINER_ROOT = {"target": "/", "source": "overlay", "fstype": "overlay", "uuid": None, "maj:min": "0:51",
+                  "fsroot": "/", "vfs-options": "rw,relatime", "fs-options": "rw"}
+# The mount table of a container that keeps nothing on a pool (the web UI's).
+WEBUI_MOUNTS = [
+    CONTAINER_ROOT,
+    {"target": "/srv", "source": "/dev/mmcblk1p1[/opt/unos/webui/build]", "fstype": "ext4",
+     "uuid": ROOT_UUID, "maj:min": "179:2", "fsroot": "/opt/unos/webui/build",
+     "vfs-options": "ro,relatime", "fs-options": "rw,commit=600"},
+]
 
 
 def marker(name: str) -> str:
@@ -181,9 +194,21 @@ class FakeHost:
         self.signatures: dict[str, list[dict]] = {}
         self.device_errors: dict[str, int] = {}
         self.busy: set[str] = set()
-        # UUIDs of filesystems that stay mounted in another mount namespace
-        # (e.g. a container's private bind mount) after the host unmounts them.
+        # UUIDs of filesystems that stay mounted after the host unmounts them where
+        # no mount table shows them (e.g. a mount namespace that no process is in):
+        # only sysfs knows (pools._filesystem_active).
         self.held: set[str] = set()
+        # The mount namespaces of host processes other than the host's (PID 1's), by
+        # the PID that lsns names for each: their mount tables, as findmnt --task
+        # prints them. A systemd service with sandboxing keeps a copy of a pool's
+        # mount there, which the host's umount does not reach (copy_into_namespace);
+        # a container keeps a bind mount of a folder of the pool (bind_into_namespace).
+        self.namespaces: dict[int, list[dict]] = {}
+        # Processes that lsns lists but that exit before their mount table is read.
+        self.exited: set[int] = set()
+        # Namespaces whose copies of a mount are peers: unmounting the copy in one
+        # of them unmounts it in the others as well (mount propagation).
+        self.namespace_peers: list[set[int]] = []
         self.fail: dict[tuple[str, ...], tuple[int, str]] = {}
         self.calls: list[list[str]] = []
         self.changes: list[list[str]] = []
@@ -244,8 +269,10 @@ class FakeHost:
                   default_subvolume=5):
         """A btrfs filesystem; ``default_subvolume`` is the one a mount without subvol= shows
         (5, the top level, unless ``btrfs subvolume set-default`` changed it)."""
+        # The anonymous device number that the mounts of the filesystem show (MAJ:MIN).
         fs = {"label": label, "uuid": uuid, "devices": list(devices), "missing": missing,
-              "used": used, "profile": profile, "default_subvolume": default_subvolume}
+              "used": used, "profile": profile, "default_subvolume": default_subvolume,
+              "maj:min": f"0:{44 + len(self.filesystems)}"}
         self.filesystems.append(fs)
         return fs
 
@@ -253,9 +280,13 @@ class FakeHost:
                   vfs_options="rw,noatime", fs_options="rw"):
         if majmin is None:
             node = self._node_by_path(source)
-            majmin = "0:44" if fstype == "btrfs" or node is None else node["maj:min"]
+            fs = next((f for f in self.filesystems if f["uuid"] == uuid), None) if fstype == "btrfs" else None
+            majmin = fs["maj:min"] if fs else "0:44" if fstype == "btrfs" or node is None else node["maj:min"]
+        # findmnt names the folder that a mount shows in SOURCE ("/dev/sda[/folder]")
+        # and in FSROOT; "/" is the filesystem's root.
+        fsroot = source[source.index("[") + 1:-1] if source and source.endswith("]") and "[" in source else "/"
         self.mounts.append({"target": target, "source": source, "fstype": fstype,
-                            "uuid": uuid, "maj:min": majmin,
+                            "uuid": uuid, "maj:min": majmin, "fsroot": fsroot,
                             "vfs-options": vfs_options, "fs-options": fs_options})
         self.dirs.add(target)
 
@@ -264,6 +295,36 @@ class FakeHost:
         fs = self.fs_by_label(name)
         self.add_mount(target or f"/mnt/pools/{name}", fs["devices"][0], "btrfs", fs["uuid"],
                        **options)
+
+    def _host_mount(self, target):
+        return next(m for m in self.mounts if m["target"] == target)
+
+    def copy_into_namespace(self, pid, target="/mnt/pools/data"):
+        """Process ``pid``'s mount namespace keeps a copy of the host's mount at ``target``.
+
+        The same filesystem, root and mountpoint. A new namespace is a service's:
+        systemd made it as a copy of the host's when a service with sandboxing
+        started, so its root is a copy of the host's root mount too. In a
+        container's namespace (container_namespace) the copy is what a bind of a
+        parent folder of ``target`` without propagation gives
+        (``-v /mnt/pools:/mnt/pools``, Docker's default rprivate).
+        """
+        self.namespaces.setdefault(pid, [dict(self._host_mount("/"))]).append(dict(self._host_mount(target)))
+
+    def container_namespace(self, pid):
+        """Process ``pid`` is a container's: the root of its mount namespace is the container's overlay."""
+        self.namespaces[pid] = [dict(CONTAINER_ROOT)]
+
+    def bind_into_namespace(self, pid, folder, at, target="/mnt/pools/data"):
+        """Process ``pid``'s mount namespace has ``folder`` of the filesystem at ``target`` bound at ``at``.
+
+        As a container has a folder of a pool bound (``-v /mnt/pools/data/downloads:/downloads``):
+        a new namespace is a container's (container_namespace).
+        """
+        mount = self._host_mount(target)
+        source = mount["source"] if folder == "/" else f"{mount['source']}[{folder}]"
+        self.namespaces.setdefault(pid, [dict(CONTAINER_ROOT)]).append(
+            {**mount, "target": at, "source": source, "fsroot": folder})
 
     def node(self, name):
         for top in self.tree:
@@ -355,7 +416,8 @@ class FakeHost:
             if path.startswith("/sys/fs/btrfs/"):
                 # sysfs lists every btrfs filesystem mounted in any namespace.
                 uuid = path.rsplit("/", 1)[-1]
-                active = uuid in self.held or any(m["uuid"] == uuid for m in self.mounts)
+                mounts = [*self.mounts, *(m for table in self.namespaces.values() for m in table)]
+                active = uuid in self.held or any(m["uuid"] == uuid for m in mounts)
                 return self._result(0 if active else 1)
             exists = path in self.dirs if flag == "-d" else (path in self.files or path in self.dirs)
             return self._result(0 if exists else 1)
@@ -373,7 +435,19 @@ class FakeHost:
             # findmnt -J prints the bytes of a name as they are, also bytes that
             # are not UTF-8 (it escapes only quotes, backslashes and control
             # characters).
-            return self._result(stdout=json.dumps({"filesystems": self.mounts}, ensure_ascii=False))
+            table = self.mounts
+            if "--task" in cmd:  # the mount table of another process's namespace
+                pid = int(cmd[cmd.index("--task") + 1])
+                if pid not in self.namespaces or pid in self.exited:
+                    return self._result(1, stderr=f"findmnt: can't read /proc/{pid}/mountinfo: No such file or directory")
+                table = self.namespaces[pid]
+            return self._result(stdout=json.dumps({"filesystems": table}, ensure_ascii=False))
+        if prog == "lsns":
+            assert cmd == ["lsns", "--json", "--type", "mnt", "--output", "NS,PID"], cmd
+            # One row per mount namespace, with its lowest PID: the host's has PID 1.
+            pids = [1, *sorted(set(self.namespaces) | self.exited, reverse=True)]
+            rows = [{"ns": 4026531841 + index, "pid": pid} for index, pid in enumerate(pids)]
+            return self._result(stdout=json.dumps({"namespaces": rows}))
         if prog == "lsblk":
             return self._result(stdout=self._lsblk())
         if prog == "swapon":
@@ -540,6 +614,9 @@ class FakeHost:
         return self._result()
 
     def _umount(self, cmd):
+        assert not {"-l", "--lazy"} & set(cmd), f"a lazy unmount: {cmd}"
+        if cmd[1] == "--namespace":
+            return self._umount_in_namespace(int(cmd[2]), cmd[3])
         target = cmd[1]
         if target in self.busy:
             return self._result(32, stderr=f"umount: {target}: target is busy.")
@@ -548,6 +625,27 @@ class FakeHost:
                 del self.mounts[index]
                 return self._result()
         return self._result(32, stderr=f"umount: {target}: not mounted.")
+
+    def _umount_in_namespace(self, pid, target):
+        """``umount --namespace <pid> <target>``: the host's umount, in process ``pid``'s namespace."""
+        if pid not in self.namespaces or pid in self.exited:
+            return self._result(32, stderr=f"umount: failed to set target namespace to /proc/{pid}/ns/mnt: "
+                                           "No such file or directory")
+        if not self._drop_namespace_mount(pid, target):
+            return self._result(32, stderr=f"umount: {target}: not mounted.")
+        for group in self.namespace_peers:  # the unmount propagates to the copy's peers
+            for other in group - {pid} if pid in group else ():
+                self._drop_namespace_mount(other, target)
+        return self._result()
+
+    def _drop_namespace_mount(self, pid, target) -> bool:
+        """Remove the topmost mount at ``target`` from process ``pid``'s mount table."""
+        table = self.namespaces.get(pid, [])
+        for index in range(len(table) - 1, -1, -1):
+            if table[index]["target"] == target:
+                del table[index]
+                return True
+        return False
 
     def _chattr(self, cmd):
         flag, target = cmd[1], cmd[2]
@@ -589,6 +687,8 @@ def install_fake_host(monkeypatch) -> FakeHost:
     fake = FakeHost()
     monkeypatch.setattr(host_module, "run_on_host", fake.run)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    # btrfs scrubs and smartctl, which run in the container (ADR-0290).
+    monkeypatch.setattr(host_module, "run_in_container", _forbidden_subprocess)
     monkeypatch.setattr(pools, "_docker_api", fake.docker.api)
     monkeypatch.setattr(pools.settings, "pools_base_path", "/mnt/pools")
     # The checks before an app starts (apps.router.prepare_app_start) would look
@@ -1121,6 +1221,373 @@ class TestUnmountAndDelete:
     def test_without_docker_an_unused_pool_is_unmounted(self, mounted):
         mounted.docker.unavailable = True
         assert not pools.unmount_pool("data").mounted
+
+    # -- services keep copies of the pool's mount in mount namespaces of their own --
+
+    # On Armbian, systemd runs services with sandboxing (systemd-resolved, -timesyncd,
+    # -networkd, -logind, -udevd, rsyslogd) in mount namespaces of their own. Each keeps
+    # a copy of the pool's mount (root "/" at /mnt/pools/data) in a peer group of its
+    # own, which the host's umount does not reach: the filesystem stayed mounted, and
+    # every unmount was refused as still in use and mounted again (ADR-0288).
+    SERVICES = (612, 640, 655)
+    UNMOUNTED_IN_SERVICES = [["umount", "--namespace", str(pid), "/mnt/pools/data"] for pid in SERVICES]
+
+    @pytest.fixture
+    def services(self, mounted):
+        for pid in reversed(self.SERVICES):
+            mounted.copy_into_namespace(pid)
+        mounted.namespaces[900] = [dict(mount) for mount in WEBUI_MOUNTS]  # nothing of the pool
+        return mounted
+
+    @staticmethod
+    def namespaces_holding(host, uuid=DATA_UUID):
+        return sorted(pid for pid, table in host.namespaces.items() if any(m["uuid"] == uuid for m in table))
+
+    def test_unmount_unmounts_the_copies_that_services_keep(self, services, caplog):
+        info = pools.unmount_pool("data")
+
+        # In the supervisor's log, which shows warnings and above.
+        assert [(record.levelno, record.getMessage()) for record in caplog.records
+                if record.name == "src.storage.pools" and "namespaces" in record.getMessage()] == [
+            (logging.WARNING, "Unmounted /mnt/pools/data in the mount namespaces of processes 612, 640, 655, "
+                              "which kept copies of its mount"),
+        ]
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            *self.UNMOUNTED_IN_SERVICES,
+            ["write", "/etc/fstab"],
+            ["systemctl", "daemon-reload"],
+            ["chattr", "+i", "/mnt/pools/data"],
+        ]
+        assert self.namespaces_holding(services) == []
+        assert services.namespaces[900] == WEBUI_MOUNTS
+        assert services.fstab == BASE_FSTAB
+        assert not info.mounted and not info.persistent
+
+    def test_delete_unmounts_the_copies_that_services_keep(self, services):
+        pools.delete_pool("data")
+
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            *self.UNMOUNTED_IN_SERVICES,
+            ["write", "/etc/fstab"],
+            ["systemctl", "daemon-reload"],
+            ["chattr", "-i", "/mnt/pools/data"],
+            ["rmdir", "/mnt/pools/data"],
+        ]
+        assert self.namespaces_holding(services) == []
+        assert not any(c[0] in ("mkfs.btrfs", "wipefs") for c in services.calls)
+        [listed] = pools.list_pools()
+        assert (listed.name, listed.health, listed.uuid) == ("data", "unmounted", DATA_UUID)
+
+    def test_stacked_copies_are_all_unmounted(self, services):
+        services.copy_into_namespace(640)  # the copy of a pool that was mounted twice
+        pools.unmount_pool("data")
+        assert services.changes.count(["umount", "--namespace", "640", "/mnt/pools/data"]) == 2
+        assert self.namespaces_holding(services) == []
+
+    def test_copies_of_other_filesystems_are_left_alone(self, services):
+        services.add_disk("sdb")
+        services.add_btrfs("media", MEDIA_UUID, ["/dev/sdb"])
+        services.mount_pool("media")
+        services.copy_into_namespace(640, "/mnt/pools/media")
+        pools.unmount_pool("data")
+        assert self.namespaces_holding(services, MEDIA_UUID) == [640]
+        assert ["umount", "--namespace", "640", "/mnt/pools/media"] not in services.calls
+
+    def test_a_copy_that_went_with_the_unmount_of_its_peer_is_no_failure(self, services, caplog):
+        # 640's copy came from 612's namespace (a process of the service made a namespace
+        # of its own): both are one peer group, and the unmount in 612 takes 640's too.
+        services.namespace_peers.append({612, 640})
+        assert not pools.unmount_pool("data").mounted
+        assert ["umount", "--namespace", "640", "/mnt/pools/data"] in services.changes
+        assert self.namespaces_holding(services) == []
+        assert "Could not unmount" not in caplog.text
+
+    def test_a_copy_that_went_with_its_peer_is_not_blamed_for_a_refusal(self, services):
+        services.namespace_peers.append({612, 640})
+        services.held.add(DATA_UUID)  # something no mount table shows keeps the pool mounted
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "still in use outside the host (for example by a container's bind mount)"
+        )):
+            pools.unmount_pool("data")
+
+    # systemd hides a path from a sandboxed service by mounting over it (InaccessiblePaths=,
+    # TemporaryFileSystem=). An umount by the path removes the topmost mount, which would be
+    # that cover and not the copy below it: nothing is unmounted in such a namespace.
+    @pytest.mark.parametrize("cover_first", [False, True], ids=["cover-on-top", "copy-on-top"])
+    def test_a_namespace_with_another_filesystem_at_the_mountpoint_is_left_alone(self, services, cover_first):
+        cover = {**WEBUI_MOUNTS[0], "target": "/mnt/pools/data", "source": "tmpfs", "fstype": "tmpfs",
+                 "maj:min": "0:27"}
+        if cover_first:
+            services.namespaces[640].insert(0, cover)
+        else:
+            services.namespaces[640].append(cover)
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "Pool 'data' is still in use outside the host (process 640 has another filesystem mounted at "
+            "/mnt/pools/data together with its copy), so it was mounted again."
+        )):
+            pools.unmount_pool("data")
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+        ]
+        assert cover in services.namespaces[640]
+        self.assert_still_mounted_and_persistent(services)
+
+    def test_copies_without_a_root_in_the_mount_table_count_as_copies(self, services):
+        # A findmnt that leaves FSROOT out leaves it out on the host and in the namespaces alike.
+        for table in [services.mounts, *services.namespaces.values()]:
+            for mount in table:
+                mount.pop("fsroot", None)
+        assert not pools.unmount_pool("data").mounted
+        assert self.namespaces_holding(services) == []
+
+    def test_a_process_that_exited_before_its_mount_table_was_read_is_left_out(self, services, caplog):
+        services.exited.add(700)
+        assert not pools.unmount_pool("data").mounted
+        assert "Could not read the mount table of process 700" in caplog.text
+
+    # A container that Docker did not report (another runtime, or a bind mount made
+    # by hand) has the pool, or a folder of it, mounted in its namespace: its users
+    # keep writing there, so the disk must not be removed.
+    @pytest.mark.parametrize(
+        ("folder", "at"),
+        [("/downloads", "/downloads"), ("/", "/data"), ("/apps/x", "/mnt/pools/data")],
+        ids=["a-folder", "the-whole-pool-elsewhere", "a-folder-at-the-pools-mountpoint"],
+    )
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    def test_refuses_while_a_namespace_has_the_pool_mounted_elsewhere(self, services, operation, folder, at):
+        services.bind_into_namespace(1200, folder, at)
+        with pytest.raises(
+            pools.PoolBusyError,
+            match=re.escape(
+                f"Pool 'data' is still in use outside the host (process 1200 has it mounted at {at}), so "
+                "it was mounted again. Stop the apps and containers that use the pool and try again."
+            ),
+        ):
+            operation("data")
+        # The copies of the services are not unmounted either while a user is left.
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+        ]
+        assert self.namespaces_holding(services) == [*self.SERVICES, 1200]
+        self.assert_still_mounted_and_persistent(services)
+
+    # A container that binds a parent folder of the pool (-v /mnt/pools:/mnt/pools, or the whole
+    # /mnt, which the Containers page can make) with Docker's default propagation, rprivate, has
+    # the pool's mount at the pool's mountpoint with the host mount's root, like a service's copy;
+    # Docker reports a Source outside the pool, which _containers_using does not count. Its apps
+    # use the pool there: unmounting it would leave them writing into an empty folder, or into the
+    # container's own layer on the system disk. Only namespaces whose root is the host's root
+    # filesystem, as systemd makes them for services, have their copies unmounted.
+    @pytest.mark.parametrize("source", ["/mnt/pools", "/mnt"])
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    def test_refuses_while_a_container_has_the_pool_at_its_mountpoint(self, services, operation, source):
+        services.docker.add("syncthing", mounts=[_bind(source, source)])
+        services.container_namespace(1300)
+        services.copy_into_namespace(1300)
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "Pool 'data' is still in use outside the host (process 1300 has it mounted at /mnt/pools/data), "
+            "so it was mounted again. Stop the apps and containers that use the pool and try again."
+        )):
+            operation("data")
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+        ]
+        assert self.namespaces_holding(services) == [*self.SERVICES, 1300]
+        self.assert_still_mounted_and_persistent(services)
+
+    def test_without_docker_a_container_that_binds_the_pools_mountpoint_is_refused(self, services):
+        # -v /mnt/pools/data:/mnt/pools/data: Docker would name the container up front, but cannot
+        # be asked, so the check after the umount must find it (ADR-0070).
+        services.docker.add("app", sources=["/mnt/pools/data"])
+        services.docker.unavailable = True
+        services.container_namespace(1400)
+        services.copy_into_namespace(1400)
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "(process 1400 has it mounted at /mnt/pools/data), so it was mounted again"
+        )):
+            pools.unmount_pool("data")
+        assert not [c for c in services.changes if c[:2] == ["umount", "--namespace"]]
+        self.assert_still_mounted_and_persistent(services)
+
+    # The root that tells a service's namespace from a container's is the host's root filesystem
+    # (MAJ:MIN) and the folder of it (FSROOT) that the host's "/" shows. A container whose root is
+    # a folder of the host's root filesystem (Docker's vfs driver, systemd-nspawn), and a process
+    # that a chroot into a folder keeps from seeing any mount at "/", have roots of their own.
+    @pytest.mark.parametrize("folder", ["/var/lib/machines/backup", None],
+                             ids=["a-folder-of-the-hosts-root-filesystem", "no-mount-at-its-root"])
+    def test_a_namespace_with_a_root_of_its_own_is_refused(self, services, folder):
+        host_root = services._host_mount("/")
+        services.namespaces[1500] = [] if folder is None else [
+            {**host_root, "source": f"{host_root['source']}[{folder}]", "fsroot": folder}]
+        services.copy_into_namespace(1500)
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "(process 1500 has it mounted at /mnt/pools/data), so it was mounted again"
+        )):
+            pools.unmount_pool("data")
+        assert not [c for c in services.changes if c[:2] == ["umount", "--namespace"]]
+        self.assert_still_mounted_and_persistent(services)
+
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    def test_refuses_when_a_copy_cannot_be_unmounted(self, services, operation):
+        # A service has a file of the pool open, for example rsyslogd a log file.
+        services.fail[("umount", "--namespace", "640")] = (32, "umount: /mnt/pools/data: target is busy.")
+        with pytest.raises(
+            pools.PoolBusyError,
+            match=re.escape(
+                "Pool 'data' is still in use outside the host (process 640 keeps a copy of its mount, and "
+                "unmounting it there failed: umount: /mnt/pools/data: target is busy), so it was mounted "
+                "again. Stop the apps and containers that use the pool and try again."
+            ),
+        ):
+            operation("data")
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            ["umount", "--namespace", "612", "/mnt/pools/data"],
+            ["umount", "--namespace", "655", "/mnt/pools/data"],
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+        ]
+        assert self.namespaces_holding(services) == [640]
+        self.assert_still_mounted_and_persistent(services)
+
+    def test_refuses_when_unmounting_a_copy_does_not_finish(self, services, monkeypatch):
+        real_run = host_module.run_on_host
+
+        def hanging_umount(cmd, **kwargs):
+            if cmd[:3] == ["umount", "--namespace", "640"]:
+                raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+            return real_run(cmd, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", hanging_umount)
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "(process 640 keeps a copy of its mount, and unmounting it there failed: umount did not "
+            f"finish within {pools.UMOUNT_TIMEOUT} seconds)"
+        )):
+            pools.unmount_pool("data")
+        self.assert_still_mounted_and_persistent(services)
+
+    def test_mounts_again_when_the_filesystem_stays_in_use_after_the_copies_are_unmounted(self, services):
+        services.held.add(DATA_UUID)  # in use where no mount table shows it
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "Pool 'data' is still in use outside the host (for example by a container's bind mount), so it "
+            "was mounted again."
+        )):
+            pools.unmount_pool("data")
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            *self.UNMOUNTED_IN_SERVICES,
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+        ]
+        self.assert_still_mounted_and_persistent(services)
+
+    def test_mount_namespaces_that_cannot_be_listed_leave_the_pool_mounted(self, services, caplog):
+        services.fail[("lsns",)] = (1, "lsns: unknown column: NS")
+        with pytest.raises(pools.PoolBusyError, match="still in use outside the host .*mounted again"):
+            pools.unmount_pool("data")
+        assert "Could not list the host's mount namespaces: lsns failed: lsns: unknown column: NS" in caplog.text
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+        ]
+
+    def test_the_reason_is_named_when_mounting_again_fails(self, services):
+        services.bind_into_namespace(1200, "/downloads", "/downloads")
+        services.fail[("mount",)] = (32, "mount: /mnt/pools/data: wrong fs type")
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "/mnt/pools/data was unmounted on the host, but the filesystem is still in use elsewhere "
+            "(process 1200 has it mounted at /downloads), and mounting it again failed: "
+        )):
+            pools.unmount_pool("data")
+        assert services.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+
+    def test_a_filesystem_also_mounted_elsewhere_on_the_host_keeps_the_copies(self, services):
+        services.mount_pool("data", target="/srv/data")  # the administrator's own mount
+        assert not pools.unmount_pool("data").mounted
+        assert services.changes[0] == ["umount", "/mnt/pools/data"]
+        assert not [c for c in services.calls if c[0] == "lsns"]
+
+
+class TestMountNamespaces:
+    """disks.mount_namespace_pids (lsns) and disks.namespace_mounts (findmnt --task) on the host."""
+
+    @staticmethod
+    def answer(monkeypatch, stdout, returncode=0, stderr=""):
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return HostResult(returncode, stdout, stderr)
+
+        monkeypatch.setattr(host_module, "run_on_host", run)
+        return calls
+
+    def test_one_process_of_each_namespace_other_than_the_hosts_in_pid_order(self, monkeypatch):
+        calls = self.answer(monkeypatch, json.dumps({"namespaces": [
+            {"ns": 4026531841, "pid": 1}, {"ns": 4026532310, "pid": 655}, {"ns": 4026532200, "pid": 612},
+        ]}))
+        assert disks_module.mount_namespace_pids() == [612, 655]
+        assert calls == [["lsns", "--json", "--type", "mnt", "--output", "NS,PID"]]
+
+    def test_numbers_that_older_lsns_prints_as_strings(self, monkeypatch):
+        self.answer(monkeypatch, '{"namespaces": [{"ns": "4026531841", "pid": "1"}, {"ns": "4026532200", "pid": "612"},'
+                                 ' {"ns": "4026532201", "pid": null}]}')
+        assert disks_module.mount_namespace_pids() == [612]
+
+    @pytest.mark.parametrize(("stdout", "returncode", "stderr", "problem"), [
+        ("", 1, "lsns: unknown column: NS", "lsns failed: lsns: unknown column: NS"),
+        ("not json", 0, "", "lsns returned invalid JSON"),
+        ("[1, 2]", 0, "", "lsns returned invalid JSON"),
+    ])
+    def test_failures_raise(self, monkeypatch, stdout, returncode, stderr, problem):
+        self.answer(monkeypatch, stdout, returncode, stderr)
+        with pytest.raises(RuntimeError, match=re.escape(problem)):
+            disks_module.mount_namespace_pids()
+
+    def test_the_mount_table_of_a_process(self, monkeypatch):
+        calls = self.answer(monkeypatch, json.dumps({"filesystems": [
+            {"target": "/downloads", "source": "/dev/sda[/downloads]", "fstype": "btrfs", "uuid": DATA_UUID,
+             "maj:min": "0:44", "fsroot": "/downloads", "vfs-options": "rw,noatime", "fs-options": "rw"},
+        ]}))
+        [mount] = disks_module.namespace_mounts(1200)
+        assert (mount.target, mount.source, mount.fsroot, mount.majmin) == ("/downloads", "/dev/sda", "/downloads", "0:44")
+        assert calls == [["findmnt", "-J", "-l", "--task", "1200", "-o", disks_module.FINDMNT_COLUMNS]]
+
+    def test_a_mount_table_that_cannot_be_read_raises(self, monkeypatch):
+        self.answer(monkeypatch, "", 1, "findmnt: can't read /proc/700/mountinfo: No such file or directory")
+        with pytest.raises(RuntimeError, match="findmnt failed: findmnt: can't read /proc/700/mountinfo"):
+            disks_module.namespace_mounts(700)
+
+    def test_lsns_is_a_host_tool(self):
+        assert host_module.HOST_TOOLS["lsns"] == "util-linux"
+
+
+def test_the_e2e_fakes_answer_with_the_servers_texts(data_pool):
+    """webui/tests/storage-fakes.ts refuses an unmount or a removal of a pool in use with these
+    texts word for word (ADR-0189): running containers that Docker reports, and a mount namespace
+    that has the pool mounted elsewhere after the host's umount (ADR-0288)."""
+    fakes = (Path(__file__).resolve().parents[2] / "webui" / "tests" / "storage-fakes.ts").read_text(encoding="utf-8")
+    pools.mount_pool("data")
+
+    data_pool.docker.add("transmission", sources=["/mnt/pools/data/downloads"])
+    with pytest.raises(pools.PoolBusyError) as used:
+        pools.unmount_pool("data")
+    assert str(used.value) == "Pool 'data' is used by running containers (transmission). Stop them and try again."
+    template = str(used.value).replace("'data'", "'${pool}'").replace("transmission", "${containers.join(', ')}")
+    assert f"`{template}`" in fakes
+
+    data_pool.docker.containers_.clear()  # a container that Docker does not report
+    data_pool.bind_into_namespace(1200, "/downloads", "/downloads")
+    with pytest.raises(pools.PoolBusyError) as held:
+        pools.unmount_pool("data")
+    reason = "process 1200 has it mounted at /downloads"
+    assert reason in str(held.value)
+    template = str(held.value).replace("'data'", "'${pool}'").replace(reason, "${reason}")
+    assert f"`{template}`" in fakes
+    assert "`process ${pid} has it mounted at ${at}`" in fakes
 
 
 class TestMountpointGuard:
@@ -1758,7 +2225,7 @@ class TestPoolHealth:
         fake_host.add_mount("/srv/x", "/dev/sdb", "btrfs", MEDIA_UUID, vfs_options=vfs, fs_options=fs)
         [mount] = [m for m in disks_module.host_mounts() if m.target == "/srv/x"]
         assert (mount.read_only, mount.forced_read_only) == (read_only, forced)
-        assert ["findmnt", "-J", "-l", "-o", "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,VFS-OPTIONS,FS-OPTIONS"] \
+        assert ["findmnt", "-J", "-l", "-o", "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,FSROOT,VFS-OPTIONS,FS-OPTIONS"] \
             in fake_host.calls
 
     def test_parse_btrfs_show(self):
@@ -1923,6 +2390,47 @@ class TestPoolEndpoints:
         response = api.post("/api/v1/storage/pools/data/unmount")
         assert response.status_code == 409
         assert "mounted again" in response.json()["detail"]
+        assert api.get("/api/v1/storage/pools/data").json()["mounted"] is True
+
+    @pytest.mark.parametrize(
+        ("method", "url", "answer"),
+        [("post", "/api/v1/storage/pools/data/unmount", None),
+         ("delete", "/api/v1/storage/pools/data", {"status": "deleted"})],
+    )
+    def test_a_pool_whose_mount_services_keep_copies_of_is_unmounted_and_smb_conf_applied(
+        self, api, data_pool, method, url, answer
+    ):
+        """ADR-0288: the copies in the services' mount namespaces are unmounted, the request
+        succeeds, and smb.conf is applied after it as after any unmount (ADR-0248)."""
+        pools.mount_pool("data")
+        for pid in (612, 640):
+            data_pool.copy_into_namespace(pid)
+        before = data_pool.smb_applies
+
+        response = getattr(api, method)(url)
+
+        assert response.status_code == 200, response.text
+        if answer is None:
+            assert (response.json()["mounted"], response.json()["persistent"]) == (False, False)
+        else:
+            assert response.json() == answer
+        assert data_pool.smb_applies == before + 1
+        assert data_pool.fstab == BASE_FSTAB
+        assert TestUnmountAndDelete.namespaces_holding(data_pool) == []
+        assert api.get("/api/v1/storage/pools/data").json()["mounted"] is False
+
+    def test_pool_that_another_mount_namespace_binds_is_409(self, api, data_pool):
+        pools.mount_pool("data")
+        data_pool.copy_into_namespace(612)
+        data_pool.bind_into_namespace(1200, "/downloads", "/downloads")
+        before = data_pool.smb_applies
+        response = api.post("/api/v1/storage/pools/data/unmount")
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "Pool 'data' is still in use outside the host (process 1200 has it mounted at /downloads), so "
+            "it was mounted again. Stop the apps and containers that use the pool and try again."
+        )
+        assert data_pool.smb_applies == before + 1
         assert api.get("/api/v1/storage/pools/data").json()["mounted"] is True
 
     def test_mount_over_files_is_409(self, api, data_pool):

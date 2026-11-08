@@ -58,7 +58,7 @@ export const en = {
 	'files.deleteForGood': 'Delete for good',
 	'files.moveToTrash': 'Move to trash',
 
-	// The units of a size, from bytes up (ADR-0288).
+	// The units of a size, from bytes up (ADR-0292).
 	'files.unit.b': 'B',
 	'files.unit.kb': 'KB',
 	'files.unit.mb': 'MB',

@@ -591,6 +591,30 @@ def test_forgetting_a_pool_stops_serving_its_shares(pool_cycle):
     assert served_state(docs_info(c)) == (True, None, True, True, [True])
 
 
+@pytest.mark.parametrize(("method", "url"), [("post", "/storage/pools/data/unmount"),
+                                             ("delete", "/storage/pools/data")])
+def test_a_pool_whose_mount_services_keep_copies_of_stops_serving_its_shares(pool_cycle, method, url):
+    """ADR-0288, ADR-0248: on Armbian, services with sandboxing keep copies of the pool's mount in
+    mount namespaces of their own. The unmount takes them too and succeeds, and smb.conf no longer
+    serves the pool's shares; mounting the pool serves them again."""
+    c, fake = pool_cycle, pool_cycle.fake
+    target = pools.pool_mountpoint("data")
+    for pid in (612, 640):
+        c.pool_host.copy_into_namespace(pid, target)
+
+    response = getattr(c.client, method)(f"{API}{url}", headers=c.admin)
+    assert response.status_code == 200, response.text
+    assert [argv for argv in c.pool_host.changes if argv[:2] == ["umount", "--namespace"]] == [
+        ["umount", "--namespace", "612", target], ["umount", "--namespace", "640", target]]
+    assert "[docs]" not in c.conf.read_text()
+    assert [session["shares"] for session in fake.sessions] == [["IPC$"]]
+    assert served_state(docs_info(c)) == (False, UNMANAGED, False, False, [False])
+
+    assert c.client.post(f"{API}/storage/pools/data/mount", headers=c.admin).status_code == 200
+    assert "   valid users = alice" in section(c.conf.read_text(), "docs")
+    assert served_state(docs_info(c)) == (True, None, True, True, [True])
+
+
 def test_an_import_under_the_name_of_a_removed_pool_would_serve_its_shares_and_is_refused(
     pool_cycle, monkeypatch
 ):

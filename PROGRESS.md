@@ -11,10 +11,10 @@ significant step. Features and their state live in `feature-list.json`, decision
   of the host, the Images view, the scheduler's command output and the host's time zone, smb.conf
   re-applied when a pool goes, sign-in with a full system disk and API token fixes, and tests that
   prove the first-run setup, two-factor sign-in, the disk list, mounts, forget and scrub.
-- The third batch (NFS exports, SMB discovery, group-writable files in shares, storage command
-  timeouts, Samba's writes and sign-in logging, the emergency runbook, the SMB group for apps,
-  importing a pool) and the fix of unmounting for `storage.mount-and-unmount` are in progress in
-  their own worktrees.
+- The third batch is in main except NFS exports and the storage commands' timeouts (in review):
+  group-writable files in shares, apps in the SMB group, network discovery, Samba's logs and
+  sign-in audit, importing a pool, the emergency runbook (#53 to #58), and the fix of unmounting
+  (#60). The Russian web UI's shell is in main (#59); the pages are being translated.
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
@@ -81,6 +81,19 @@ Open owner actions:
 5. Whether the services are used from outside over IPv6 (`device.ipv6-inbound-filter`).
 
 ## Log
+
+### 2026-11-08: the third feature batch and unmounting, on the dev device
+
+- Deployed main 533668a (#53 to #60): sync, the supervisor 13.3 MiB, the web UI 17.5 MiB, up
+  5.7 MiB; 41.4 MiB in all. Network discovery set up with install.sh's own steps: avahi-daemon and
+  wsdd2, 16 MiB.
+- Passed on the device: unmounting the pool data (refused while transmission ran; with it stopped,
+  the supervisor unmounted a service's copy of the mount, and the host was clean), the share taken
+  out of smb.conf and served again, an app refused to start on the unmounted pool, mounting with
+  the marker and health back, a New Folder in a share at 2770 with the group unos-smb, Samba's log
+  file in /run/samba and a failed sign-in found in System > Logs, and Bonjour listing the NAS on
+  the workstation. A reboot from the API brought it all back; check.sh no longer counts the
+  stopped nmbd as a problem, since NetBIOS is off (ADR-0275).
 
 ### 2026-11-08: the second feature batch, on the dev device
 
