@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0261
 ---
 
 # ADR-0163: NFS exports stay unchanged in slice 2
 
 ## Context
+
+Superseded by ADR-0261: UNOS keeps its NFS exports in its own export file on the host and reads every export file as exportfs reads it.
 
 Slice 2 is about SMB (ADR-0059). NFS exports are written to /etc/exports by
 `supervisor/src/shares/nfs.py`, and a parser for existing exports has been in the backlog

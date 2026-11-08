@@ -1377,21 +1377,26 @@
       "category": "shares",
       "description": "An administrator exports a pool folder over NFS to a client network and removes the export",
       "steps": [
-        "On Shares > NFS, add an export of a pool folder for a client network: the host's /etc/exports lists it, and the host's exportfs applies it",
+        "On Shares > NFS, add an export of a pool folder for a client network: the host's /etc/exports.d/unos.exports lists it, and the host's exportfs applies it",
         "A client in that network mounts it, read-only or read-write as set",
         "Delete removes the line and unexports the folder",
         "Lines of /etc/exports that UNOS did not write are kept as they are"
       ],
       "verified_by": [
-        "supervisor/tests/test_shares.py",
+        "supervisor/tests/test_nfs.py",
+        "supervisor/tests/test_volumes.py",
+        "supervisor/tests/test_deploy_scripts.py",
+        "webui/tests/nfs-exports.spec.ts",
         "webui/tests/shares.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0037",
-        "ADR-0163"
+        "ADR-0020",
+        "ADR-0261",
+        "ADR-0262",
+        "ADR-0263"
       ],
-      "notes": "The exports are written to the supervisor container's own /etc/exports, and exportfs runs there: nothing reaches the host yet (architecture.host-command-layer). The E2E spec only opens the tab. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built: UNOS writes its exports into /etc/exports.d/unos.exports on the host and runs exportfs -ra there through src/host.py; the NFS tab exports an existing folder of a managed pool to one address or network of the local network, read-only or read-write, and lists every export of every export file (ADR-0261, ADR-0262, ADR-0263). test_nfs.py proves the file's content byte for byte, the exportfs run, the refusals and that no other file is written; nfs-exports.spec.ts the user flow against route fakes. Open, the device check and its re-check after a reboot (ADR-0018), once the owner installed nfs-kernel-server (install.sh does not, ADR-0261): add an export of a folder of the pool data for the workstation's network; on the host `cat /etc/exports.d/unos.exports` and `exportfs -v` show it with mp=/mnt/pools/data; the workstation mounts it, can write with rw and cannot with ro, and its root is squashed; a line written by hand into /etc/exports stays byte for byte, and GET /shares/nfs lists it as `exportfs -v` shows it; Delete removes the line and `exportfs -v` no longer lists the folder; after a reboot the export is back once the pool is mounted; the SD MiB of the add, the delete and the reboot."
     },
     {
       "id": "shares.restore-keeps-smb-with-proof",
@@ -1679,15 +1684,19 @@
       "category": "shares",
       "description": "The parser of /etc/exports reads every line form that exportfs accepts and leaves the lines UNOS did not write as they are",
       "steps": [
-        "Tests give the parser of supervisor/src/shares/nfs.py every line form of exports(5): comments, continuation lines, quoted and escaped paths, several clients on one line, default and per-client options",
+        "Tests give the parser of supervisor/src/shares/exports.py every line form of exports(5): comments, continuation lines, quoted and escaped paths, several clients on one line, default and per-client options",
         "Each line is read as exportfs reads it, or reported as unreadable and left in the file unchanged",
         "Adding or removing an export changes only the lines that UNOS wrote"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0163",
-        "ADR-0175"
-      ]
+        "ADR-0175",
+        "ADR-0261"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_nfs.py"
+      ],
+      "notes": "exports.py ports the reader of nfs-utils 2.8 (support/nfs/xio.c, getexportent and parseopts of support/nfs/exports.c). test_nfs.py gives it every line form, checks where exportfs stops reading a file, and checks that an add or a delete changes only the lines of UNOS's own file and no other file. The device check of shares.nfs-exports compares GET /shares/nfs with the host's exportfs -v."
     },
     {
       "id": "apps.install-on-a-pool",

@@ -19,6 +19,7 @@ from fastapi import HTTPException
 
 from src import host as host_module
 from src.host import HostResult
+from src.shares import nfs
 from src.storage import pools
 from src.storage.schemas import VolumeCreate
 
@@ -267,8 +268,8 @@ class FakeSubvolumes:
 def host(monkeypatch, tmp_path):
     """Pool "data" mounted at /mnt/pools/data; pool "media" exists but is not mounted.
 
-    No SMB shares or NFS exports: ``host.smb_conf`` and ``host.exports`` are
-    files of this test (see add_share and add_export).
+    No SMB shares or NFS exports: ``host.smb_conf`` is a file of this test, and the
+    host's export files are files of the FakeHost (see add_share and add_export).
     """
     fake = install_fake_host(monkeypatch)
     fake.add_disk("sda", serial="WD-1")
@@ -281,11 +282,10 @@ def host(monkeypatch, tmp_path):
     fake.subvols = FakeSubvolumes(fake)
     fake.smb_conf = tmp_path / "smb.conf"
     fake.smb_conf.write_text("[global]\n   workgroup = WORKGROUP\n   security = user\n")
-    fake.exports = tmp_path / "exports"
-    fake.exports.write_text("")
+    fake.files["/etc/exports"] = ""
     # One settings object for pools, shares.smb and shares.nfs.
     monkeypatch.setattr(pools.settings, "smb_conf_path", str(fake.smb_conf))
-    monkeypatch.setattr(pools.settings, "nfs_exports_path", str(fake.exports))
+    monkeypatch.setattr(pools.settings, "nfs_exports_path", "/etc/exports")
     yield fake
     wait_for_app_starts()
 
@@ -316,10 +316,9 @@ def add_share(host, name: str, path: str) -> None:
         conf.write(f"\n[{name}]\n   path = {path}\n   browseable = yes\n   read only = no\n")
 
 
-def add_export(host, path: str) -> None:
-    """An NFS export in /etc/exports, as shares/nfs.py writes it."""
-    with open(host.exports, "a") as exports:
-        exports.write(f"{path} 192.168.1.0/24(rw,sync,no_subtree_check)\n")
+def add_export(host, path: str, file: str = "/etc/exports") -> None:
+    """An NFS export in an export file of the host: /etc/exports, or the file of UNOS (ADR-0261)."""
+    host.files[file] = host.files.get(file, "") + f"{path} 192.168.1.0/24(rw,sync,no_subtree_check)\n"
 
 
 def list_with_a_real_command(monkeypatch, listing: bytes) -> None:
@@ -1202,9 +1201,18 @@ class TestVolumeInUse:
         )
         self.assert_kept(documents)
 
-    @pytest.mark.parametrize("path", [DOCUMENTS, f"{DOCUMENTS}/scans", f"/{DOCUMENTS}"])
-    def test_nfs_export_of_the_volume(self, api, documents, path):
-        add_export(documents, path)
+    @pytest.mark.parametrize(
+        "path, file",
+        [
+            (DOCUMENTS, "/etc/exports"),
+            (f"{DOCUMENTS}/scans", "/etc/exports"),
+            (f"/{DOCUMENTS}", "/etc/exports"),
+            (DOCUMENTS, "/etc/exports.d/unos.exports"),
+            (DOCUMENTS, "/etc/exports.d/backup.exports"),
+        ],
+    )
+    def test_nfs_export_of_the_volume(self, api, documents, path, file):
+        add_export(documents, path, file)
 
         response = api.delete(f"{API}/data/volumes/documents")
 
@@ -1299,9 +1307,12 @@ class TestVolumeInUse:
         assert response.status_code == 200, response.text
         [(locked, calls_before)] = asked
         assert locked
-        # After the volume's id was checked, and nothing ran on the host in between.
+        # After the volume's id was checked; in between, only the rest of the check ran on the
+        # host: the NFS export files are read there (ADR-0261).
         assert documents.calls[calls_before - 1][:4] == ["btrfs", "subvolume", "show", "-r"]
-        assert documents.calls[calls_before][:3] == ["btrfs", "subvolume", "delete"]
+        assert documents.calls[calls_before] == [
+            "/bin/sh", "-c", nfs._FILES_SCRIPT, "unos-nfs-files", "/etc/exports", "/etc/exports.d"]
+        assert documents.calls[calls_before + 1][:3] == ["btrfs", "subvolume", "delete"]
 
     def test_a_new_volume_whose_quota_fails_is_removed_without_asking_docker(self, api, host):
         host.docker.unavailable = True

@@ -1,9 +1,10 @@
 """Share endpoints: SMB shares and NFS exports. Administrator-only (main.py).
 
 SMB shares are rows of the UNOS database; shares/service.py changes them
-under smb_lock() and renders smb.conf from them. Every mutation is audited
-(ADR-0157). PUT /shares/smb/{name} is gone (405): PATCH changes only the
-fields it sends.
+under smb_lock() and renders smb.conf from them. NFS exports are the lines
+of the host's export files; shares/nfs.py changes only UNOS's own file
+(ADR-0261). Every mutation is audited (ADR-0157). PUT /shares/smb/{name} is
+gone (405): PATCH changes only the fields it sends.
 """
 
 import asyncio
@@ -16,7 +17,7 @@ from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit.router import log_action
-from ..audit.schemas import AuditAction
+from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import verify_token
 from ..database import get_db
 from ..security.validators import sanitize_error_message
@@ -24,7 +25,10 @@ from ..storage import pools
 from . import nfs, service, smb
 from .schemas import (
     NfsExportCreate,
+    NfsExportDeleted,
     NfsExportInfo,
+    NfsServiceStatus,
+    ShareAccessLevel,
     SmbServiceStatus,
     SmbShareCreate,
     SmbShareDeleted,
@@ -43,7 +47,7 @@ class SharePath(BaseModel):
     label: str
     type: str  # "pool" or "volume"
     # The pool is one that UNOS manages (its fstab marker): only such folders can be SMB
-    # shares (ADR-0148). A volume has its pool's value; false for every path when
+    # shares and NFS exports (ADR-0263). A volume has its pool's value; false for every path when
     # the pool list cannot be read.
     managed: bool
 
@@ -210,18 +214,46 @@ async def delete_smb_share(
 # NFS Endpoints
 @router.get("/nfs", response_model=list[NfsExportInfo])
 async def list_nfs_exports(_=Depends(verify_token)):
-    """List all NFS exports."""
+    """Every export of the host's export files, as exportfs reads them; managed: in UNOS's file."""
     return await _call(nfs.list_exports)
 
 
+@router.get("/nfs-status", response_model=NfsServiceStatus)
+async def get_nfs_status(_=Depends(verify_token)):
+    """Whether the host has an NFS server (exportfs), and the lines where exportfs stops reading."""
+    return await _call(nfs.service_status)
+
+
 @router.post("/nfs", response_model=NfsExportInfo)
-async def create_nfs_export(export: NfsExportCreate, _=Depends(verify_token)):
-    """Create a new NFS export."""
-    return await _call(nfs.create_export, export)
+async def create_nfs_export(request: Request, export: NfsExportCreate, user=Depends(verify_token)):
+    """Export an existing folder to one local address or network (ADR-0262); exportfs applies it.
+
+    What exportfs reports comes back as warnings: the export is written either way.
+    """
+    info = await _call(nfs.create_export, export)
+    access = "read and write" if export.access == ShareAccessLevel.WRITE else "read only"
+    await log_action(
+        AuditAction.SHARE_CREATED,
+        request=request,
+        username=user.username,
+        resource_type="nfs_export",
+        resource_id=info.path,
+        details=f"Exported {info.path} to {info.clients[0].client}, {access}",
+    )
+    return info
 
 
-@router.delete("/nfs")
-async def delete_nfs_export(path: str, _=Depends(verify_token)):
-    """Delete an NFS export."""
-    await _call(nfs.delete_export, path, not_found_status=404)
-    return {"status": "deleted"}
+@router.delete("/nfs", response_model=NfsExportDeleted)
+async def delete_nfs_export(request: Request, path: str, user=Depends(verify_token)):
+    """Delete an export of UNOS's own file (404 for none, 409 for one of another file)."""
+    result = await _call(nfs.delete_export, path)
+    await log_action(
+        AuditAction.SHARE_DELETED,
+        request=request,
+        username=user.username,
+        resource_type="nfs_export",
+        resource_id=path,
+        details=f"Removed the NFS export of {path}",
+        severity=AuditSeverity.WARNING,
+    )
+    return result

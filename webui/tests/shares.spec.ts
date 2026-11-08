@@ -37,8 +37,12 @@ test.describe('Shares Management', () => {
   test('should display NFS shares section', async ({ authenticatedPage: page }) => {
     await page.goto('/shares');
     await page.getByRole('tab', { name: 'NFS' }).click();
-    await expect(page.getByRole('heading', { name: 'NFS exports' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'NFS exports', exact: true })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'NFS' })).toHaveAttribute('aria-selected', 'true');
+    // The supervisor read the export files and the NFS status (the stand-in's own files: none).
+    await expect(page.getByText('No NFS exports yet')).toBeVisible();
+    await expect(page.getByText('The NFS exports could not be loaded')).toHaveCount(0);
+    await expect(page.getByText('The NFS status could not be read')).toHaveCount(0);
   });
 
   test('should have add share button', async ({ authenticatedPage: page }) => {
@@ -602,7 +606,7 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(nfs).toHaveAttribute('tabindex', '0');
     await expect(smb).toHaveAttribute('tabindex', '-1');
     await expect(panel).toHaveAccessibleName('NFS');
-    await expect(panel.getByRole('heading', { name: 'NFS exports' })).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'NFS exports', exact: true })).toBeVisible();
     await page.keyboard.press('ArrowRight');
     await expect(smb).toBeFocused();
     await expect(panel).toHaveAccessibleName('SMB');
@@ -613,7 +617,7 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(smb).toHaveAttribute('aria-selected', 'true');
     await page.keyboard.press('End');
     await expect(nfs).toBeFocused();
-    await expect(panel.getByRole('heading', { name: 'NFS exports' })).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'NFS exports', exact: true })).toBeVisible();
   });
 
   test('share cards show the state, the access and how to connect', async ({ authenticatedPage: page }) => {
@@ -980,17 +984,23 @@ test.describe('SMB shares page (fake data)', () => {
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
 
-    // NFS exports can use every location, as before.
+    // NFS exports too need a pool that UNOS manages (ADR-0262).
     await page.getByRole('tab', { name: 'NFS' }).click();
     await page.getByRole('button', { name: 'Add NFS export' }).click();
     const nfs = page.getByRole('dialog', { name: 'Add NFS export' });
-    await nfs.getByRole('combobox', { name: 'Path' }).click();
-    await expect(nfs.getByRole('listbox', { name: 'Path' }).getByRole('option')).toHaveText([
-      'other (Pool)',
-      'other/media (Volume)',
+    const nfsLocation = nfs.getByRole('combobox', { name: 'Location' });
+    await expect(nfsLocation).toHaveText('tank (Pool)');
+    await expect(
+      nfs.getByText('Pools marked "Not mounted at boot" on the Storage page are not listed: NFS exports need a pool that UNOS manages.'),
+    ).toBeVisible();
+    await nfsLocation.click();
+    await expect(nfs.getByRole('listbox', { name: 'Location' }).getByRole('option')).toHaveText([
       'tank (Pool)',
       'tank/media (Volume)',
     ]);
+    await nfsLocation.click();
+    await nfs.getByRole('button', { name: 'Cancel' }).click();
+    await expect(nfs).toBeHidden();
 
     // With no location of a managed pool, the dialog says why.
     fake.paths = [other];

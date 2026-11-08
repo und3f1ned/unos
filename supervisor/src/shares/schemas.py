@@ -1,4 +1,4 @@
-"""Request and answer models of the share API; NFS models unchanged.
+"""Request and answer models of the share API: SMB shares and NFS exports.
 
 SMB shares and their per-user access are rows of the UNOS database (ADR-0074):
 smb.conf is rendered from them. Access is granted per UNOS user, read or
@@ -115,12 +115,37 @@ class SmbServiceStatus(BaseModel):
 
 
 class NfsExportCreate(BaseModel):
-    path: str
-    clients: str = "*"  # e.g., "192.168.1.0/24" or "*"
-    options: str = "rw,sync,no_subtree_check"
+    """An export that UNOS writes (ADR-0262): an existing folder for one client, read or write."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(max_length=4096)
+    client: str = Field(max_length=64)              # an address or network of the local network
+    access: ShareAccessLevel
+
+
+class NfsExportClient(BaseModel):
+    client: str                                     # "*" for everyone, also for a line without clients
+    options: list[str]                              # the line's default options, then the client's own
+    access: ShareAccessLevel | None                 # the last of ro and rw; None: sec= sets them per flavor
 
 
 class NfsExportInfo(BaseModel):
+    """One entry of an export file, as exportfs reads it (ADR-0261)."""
+
     path: str
-    clients: str
-    options: str
+    clients: list[NfsExportClient]
+    managed: bool                                   # in UNOS's own file: the web UI can delete it
+    file: str                                       # the export file, and the line where the entry starts
+    line: int
+    warnings: list[str] = []                        # only in answers to changes: what exportfs reported
+
+
+class NfsExportDeleted(BaseModel):
+    status: Literal["deleted"] = "deleted"
+    warnings: list[str] = []
+
+
+class NfsServiceStatus(BaseModel):
+    server_missing: bool | None                     # the host has no exportfs (nfs-kernel-server); None: check failed
+    problems: list[str]                             # entries exportfs cannot read: it stops reading their files there

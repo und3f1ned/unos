@@ -32,9 +32,10 @@ logger = logging.getLogger(__name__)
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
-# busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl, under
-# timeout: ADR-0257, ADR-0258). cat, test, mkdir, rmdir, rm, find, sync, sleep,
-# timeout, hostname and sh also run there but come from essential packages.
+# busctl, systemctl, ip, ethtool: ADR-0233), logs/router.py (journalctl, under
+# timeout: ADR-0257, ADR-0258) and shares/nfs.py (exportfs, under timeout:
+# ADR-0261). cat, od, test, mkdir, rmdir, rm, find, sync, sleep, timeout, hostname
+# and sh also run there but come from essential packages.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
@@ -65,6 +66,7 @@ HOST_TOOLS: dict[str, str] = {
     "busctl": "systemd",
     "ethtool": "ethtool",
     "journalctl": "systemd",
+    "exportfs": "nfs-kernel-server",
 }
 
 # Enter all of PID 1's namespaces except the user and cgroup namespaces.
@@ -181,13 +183,15 @@ def read_host_file(path: str, *, timeout: float = 10) -> str:
 
 
 def write_host_file_atomic(
-    path: str, content: str, *, mode: str = "0644", timeout: float = 30
+    path: str, content: str, *, mode: str = "0644", timeout: float = 30, errors: str | None = None
 ) -> None:
     """Atomically and durably replace a file on the host filesystem.
 
     The content is written to a temporary file next to ``path``, flushed to
     disk, and renamed over the original. Readers therefore see either the old
-    or the new file, never a truncated one.
+    or the new file, never a truncated one. ``errors`` is the error handler for
+    encoding ``content``: strict by default; "surrogateescape" writes back the
+    bytes of a file that was read with it, also those that are not UTF-8.
 
     The directory is flushed after the rename as well. Until then the rename
     only lives in the filesystem journal, and ext4 commits the journal every
@@ -208,6 +212,7 @@ def write_host_file_atomic(
         input=content,
         timeout=timeout,
         check=True,
+        errors=errors,
     )
 
 

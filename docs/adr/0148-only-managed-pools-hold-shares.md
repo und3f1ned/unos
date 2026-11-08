@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0263
 ---
 
 # ADR-0148: Only pools that UNOS manages can hold SMB shares, and the UI offers only those
 
 ## Context
+
+Superseded by ADR-0263: NFS exports, too, need a pool that UNOS manages.
 
 Shares must live on pools that UNOS manages, mounted by UUID from a managed fstab entry
 (ADR-0034), not on plain folders of the system disk. The share form offered every location

@@ -125,7 +125,7 @@ and this index, and `make check-fast` runs it.
 
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
-| [0037](0037-share-and-export-values-validated.md) | Share and export values are validated before they reach smb.conf or /etc/exports | accepted | 2026-11-05 |
+| [0037](0037-share-and-export-values-validated.md) | Share and export values are validated before they reach smb.conf or /etc/exports | superseded by [0262](0262-share-and-export-values-validated-and-web-exports-limited-to-local-networks.md) | 2026-11-05 |
 | [0038](0038-share-name-rule.md) | Share names have 1 to 32 letters, digits, '_' or '-' and do not start with '-' | accepted | 2026-11-05 |
 | [0074](0074-smb-state-in-sqlite-and-unos-writes-smb-conf.md) | Shares and SMB accounts live in SQLite, and UNOS alone writes smb.conf | accepted | 2026-11-06 |
 | [0075](0075-per-user-share-access-levels.md) | Each share grants each user none, read or write, and new users get no access | accepted | 2026-11-06 |
@@ -201,7 +201,7 @@ and this index, and `make check-fast` runs it.
 | [0145](0145-what-may-be-shared.md) | A share is a folder strictly inside a managed pool, never the pool root or apps/ | accepted | 2026-11-06 |
 | [0146](0146-share-folders-do-not-overlap.md) | Share folders must not overlap | accepted | 2026-11-06 |
 | [0147](0147-snapshots-hidden-from-smb.md) | Snapshot folders are hidden from SMB and never shared or repaired | accepted | 2026-11-06 |
-| [0148](0148-only-managed-pools-hold-shares.md) | Only pools that UNOS manages can hold SMB shares, and the UI offers only those | accepted | 2026-11-06 |
+| [0148](0148-only-managed-pools-hold-shares.md) | Only pools that UNOS manages can hold SMB shares, and the UI offers only those | superseded by [0263](0263-only-managed-pools-hold-shares-and-nfs-exports.md) | 2026-11-06 |
 | [0149](0149-fail-closed-without-the-pool-list.md) | SMB changes fail closed when the pool list cannot be read | accepted | 2026-11-06 |
 | [0150](0150-share-folders-root-unos-smb-2770.md) | Share folders belong to root and the group unos-smb with mode 2770 | accepted | 2026-11-06 |
 | [0151](0151-no-folders-while-gid-70000-is-taken.md) | No share folder is created and no Repair runs while another group has gid 70000 | accepted | 2026-11-06 |
@@ -216,7 +216,7 @@ and this index, and `make check-fast` runs it.
 | [0160](0160-no-file-manager-or-app-group-access-to-shares.md) | The File Manager and apps get no group access to share folders yet | accepted | 2026-11-06 |
 | [0161](0161-no-per-share-protocol-options-yet.md) | Per-share protocol options wait for a later slice | accepted | 2026-11-06 |
 | [0162](0162-apparmor-profile-for-new-share-paths.md) | UNOS does not manage smbd's AppArmor profile while smbd runs unconfined | accepted | 2026-11-07 |
-| [0163](0163-nfs-unchanged-in-slice-2.md) | NFS exports stay unchanged in slice 2 | accepted | 2026-11-06 |
+| [0163](0163-nfs-unchanged-in-slice-2.md) | NFS exports stay unchanged in slice 2 | superseded by [0261](0261-nfs-exports-in-their-own-file-read-as-exportfs-reads-them.md) | 2026-11-06 |
 | [0164](0164-smb-and-audit-follow-ups-left-for-later.md) | Six SMB and audit follow-ups wait for later slices | accepted | 2026-11-06 |
 | [0192](0192-reread-host-facts-before-destructive-commands.md) | Host facts are read again right before destructive commands, and doubt fails closed | accepted | 2026-11-07 |
 | [0193](0193-acl-entries-and-sticky-folders-in-the-parent-chain.md) | ACL entries and sticky folders count in the parent-chain rule | proposed | 2026-11-07 |
@@ -225,6 +225,9 @@ and this index, and `make check-fast` runs it.
 | [0248](0248-pool-changes-apply-smb-conf.md) | The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once | accepted | 2026-11-07 |
 | [0249](0249-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
 | [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | proposed | 2026-11-07 |
+| [0261](0261-nfs-exports-in-their-own-file-read-as-exportfs-reads-them.md) | UNOS keeps its NFS exports in its own export file on the host, reads every export file as exportfs reads it, and applies them with the host's exportfs | accepted | 2026-11-08 |
+| [0262](0262-share-and-export-values-validated-and-web-exports-limited-to-local-networks.md) | Share and export values are validated before they reach smb.conf or an export file, and an NFS export from the web interface is an existing folder for one local network, read-only or read-write | accepted | 2026-11-08 |
+| [0263](0263-only-managed-pools-hold-shares-and-nfs-exports.md) | Only pools that UNOS manages can hold SMB shares and NFS exports, and the UI offers only those | accepted | 2026-11-08 |
 
 ## Apps
 

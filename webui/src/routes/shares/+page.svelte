@@ -3,23 +3,30 @@
 	import { FolderOpen, Network, Plus, Trash2 } from 'lucide-svelte';
 	import {
 		clearImportReport,
-		createNfsExport,
 		deleteNfsExport,
 		deleteSmbShare,
 		getNfsExports,
+		getNfsStatus,
 		getSharePaths,
 		getSmbShares,
 		getSmbStatus,
 		updateSmbShare,
 		type NfsExport,
+		type NfsExportClient,
+		type NfsServiceStatus,
 		type SharePath,
 		type SmbServiceStatus,
 		type SmbShare
 	} from '$lib/api/shares';
 	import { ApiError } from '$lib/api/client';
-	import { Alert, Button, Card, EmptyState, Input, Modal, Select } from '$lib/components/ui';
-	import { RepairPermissionsModal, ShareCard, ShareFormModal } from '$lib/components/shares';
-	import { NETWORK_NOTE } from '$lib/components/shares/texts';
+	import { Alert, Button, Card, EmptyState, Modal } from '$lib/components/ui';
+	import {
+		NfsExportFormModal,
+		RepairPermissionsModal,
+		ShareCard,
+		ShareFormModal
+	} from '$lib/components/shares';
+	import { NETWORK_NOTE, NFS_NOTE } from '$lib/components/shares/texts';
 
 	const tabs = [
 		{ id: 'smb', label: 'SMB' },
@@ -57,10 +64,10 @@
 	// ---- NFS ----
 	let nfsExports: NfsExport[] = [];
 	let nfsError = '';
+	let nfsStatus: NfsServiceStatus | null = null;
+	let nfsStatusError = '';
+	// The Add NFS export dialog: mounted while open.
 	let nfsFormOpen = false;
-	let nfsSaving = false;
-	let nfsFormError = '';
-	let nfsForm = { path: '', clients: '*', options: 'rw,sync,no_subtree_check' };
 	let exportToDelete: NfsExport | null = null;
 	let nfsDeleting = false;
 	let nfsDeleteError = '';
@@ -112,11 +119,25 @@
 	}
 
 	async function loadNfs() {
+		await Promise.all([loadNfsExports(), loadNfsStatus()]);
+	}
+
+	async function loadNfsExports() {
 		try {
 			nfsExports = await getNfsExports();
 			nfsError = '';
 		} catch (e) {
 			nfsError = messageOf(e);
+		}
+	}
+
+	async function loadNfsStatus() {
+		try {
+			nfsStatus = await getNfsStatus();
+			nfsStatusError = '';
+		} catch (e) {
+			nfsStatus = null;
+			nfsStatusError = messageOf(e);
 		}
 	}
 
@@ -233,32 +254,18 @@
 
 	// ---- NFS exports ----
 
-	$: pathOptions = paths.map((p) => ({ value: p.path, label: p.label }));
-
-	function openNfsCreate() {
-		nfsForm = { path: paths[0]?.path ?? '', clients: '*', options: 'rw,sync,no_subtree_check' };
-		nfsFormError = '';
-		nfsFormOpen = true;
+	/** What a client may do, in the words of the SMB access levels. */
+	function nfsAccessLabel(client: NfsExportClient): string {
+		if (client.access === 'write') return 'Read & write';
+		if (client.access === 'read') return 'Read only';
+		return 'Per security flavor';
 	}
 
-	function closeNfsCreate() {
-		if (!nfsSaving) nfsFormOpen = false;
-	}
-
-	async function handleNfsCreate() {
-		if (!nfsForm.path || nfsSaving) return;
-		nfsSaving = true;
-		nfsFormError = '';
-		try {
-			await createNfsExport(nfsForm);
-			nfsSaving = false;
-			nfsFormOpen = false;
-			await loadNfs();
-		} catch (e) {
-			nfsFormError = messageOf(e);
-		} finally {
-			nfsSaving = false;
-		}
+	async function handleNfsSaved(event: CustomEvent<{ exp: NfsExport }>) {
+		const { exp } = event.detail;
+		nfsFormOpen = false;
+		showOutcome(`NFS export of ${exp.path} created`, exp.warnings);
+		await loadNfs();
 	}
 
 	function openNfsDelete(exp: NfsExport) {
@@ -272,12 +279,14 @@
 
 	async function confirmNfsDelete() {
 		if (!exportToDelete) return;
+		const path = exportToDelete.path;
 		nfsDeleting = true;
 		nfsDeleteError = '';
 		try {
-			await deleteNfsExport(exportToDelete.path);
+			const result = await deleteNfsExport(path);
 			nfsDeleting = false;
 			exportToDelete = null;
+			showOutcome(`NFS export of ${path} deleted`, result.warnings);
 			await loadNfs();
 		} catch (e) {
 			nfsDeleteError = messageOf(e);
@@ -295,7 +304,7 @@
 				Add SMB share
 			</Button>
 		{:else}
-			<Button icon={Plus} disabled={loading || paths.length === 0} on:click={openNfsCreate}>
+			<Button icon={Plus} disabled={loading || paths.length === 0} on:click={() => (nfsFormOpen = true)}>
 				Add NFS export
 			</Button>
 		{/if}
@@ -436,6 +445,24 @@
 				<p class="form-hint mt-4">{NETWORK_NOTE}</p>
 			</Card>
 		{:else}
+			{#if nfsStatus}
+				{#if nfsStatus.server_missing}
+					<Alert variant="warning">
+						<p>The NFS server is not installed on the host: no computer can mount the exports</p>
+						<p class="text-sm mt-1">Install the package nfs-kernel-server on the NAS.</p>
+					</Alert>
+				{/if}
+				{#if nfsStatus.problems.length > 0}
+					<Alert variant="error" title="exportfs cannot read these lines">
+						{#each nfsStatus.problems as problem}
+							<p>{problem}</p>
+						{/each}
+					</Alert>
+				{/if}
+			{:else if nfsStatusError}
+				<Alert variant="error" title="The NFS status could not be read">{nfsStatusError}</Alert>
+			{/if}
+
 			<Card>
 				<h2 class="section-title mb-4">
 					<Network class="w-5 h-5" />
@@ -445,23 +472,46 @@
 				{#if nfsError}
 					<Alert variant="error" title="The NFS exports could not be loaded">{nfsError}</Alert>
 				{:else if nfsExports.length === 0}
-					<p class="text-muted">No NFS exports configured</p>
+					<EmptyState
+						icon={Network}
+						title="No NFS exports yet"
+						description="Export a folder of a pool, or a volume, to the computers of a network."
+					/>
 				{:else}
-					<ul class="space-y-2">
-						{#each nfsExports as exp (exp.path)}
-							<li class="card-nested flex items-center justify-between gap-2">
-								<div class="min-w-0">
+					<ul class="space-y-2" aria-label="NFS exports">
+						{#each nfsExports as exp (`${exp.file}:${exp.line}`)}
+							<li class="card-nested flex items-start justify-between gap-2">
+								<div class="min-w-0 space-y-1">
 									<p class="mono break-all">{exp.path}</p>
-									<p class="text-sm text-secondary">{exp.clients} ({exp.options})</p>
+									<ul class="space-y-0.5" aria-label="Clients of {exp.path}">
+										{#each exp.clients as client}
+											<li class="text-sm">
+												<span class="mono break-all">{client.client}</span>
+												<span class="text-secondary">· {nfsAccessLabel(client)}</span>
+												{#if client.options.length > 0}
+													<span class="mono-xs text-muted break-all">({client.options.join(',')})</span>
+												{/if}
+											</li>
+										{/each}
+									</ul>
+									{#if !exp.managed}
+										<p class="text-xs text-muted">
+											In {exp.file}, line {exp.line}: not added in UNOS, so change it on the NAS
+										</p>
+									{/if}
 								</div>
-								<Button variant="ghost" size="icon-sm" on:click={() => openNfsDelete(exp)}>
-									<Trash2 class="w-4 h-4 text-error" />
-									<span class="sr-only">Delete export {exp.path}</span>
-								</Button>
+								{#if exp.managed}
+									<Button variant="ghost" size="icon-sm" on:click={() => openNfsDelete(exp)}>
+										<Trash2 class="w-4 h-4 text-error" />
+										<span class="sr-only">Delete export {exp.path}</span>
+									</Button>
+								{/if}
 							</li>
 						{/each}
 					</ul>
 				{/if}
+
+				<p class="form-hint mt-4">{NFS_NOTE}</p>
 			</Card>
 		{/if}
 	</div>
@@ -508,46 +558,9 @@
 	</svelte:fragment>
 </Modal>
 
-<Modal
-	open={nfsFormOpen}
-	title="Add NFS export"
-	size="md"
-	closable={!nfsSaving}
-	on:close={closeNfsCreate}
->
-	<form on:submit|preventDefault={handleNfsCreate} class="space-y-4">
-		<Select id="nfs-path" label="Path" bind:value={nfsForm.path} options={pathOptions} required />
-		<Input
-			id="nfs-clients"
-			label="Allowed clients"
-			bind:value={nfsForm.clients}
-			placeholder="* or 192.168.1.0/24"
-		/>
-		<Input
-			id="nfs-options"
-			label="Options"
-			bind:value={nfsForm.options}
-			placeholder="rw,sync,no_subtree_check"
-		/>
-		{#if nfsFormError}
-			<Alert variant="error" title="Export was not created">{nfsFormError}</Alert>
-		{/if}
-	</form>
-
-	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={nfsSaving} on:click={closeNfsCreate}>
-			Cancel
-		</Button>
-		<Button
-			class="flex-1"
-			loading={nfsSaving}
-			disabled={!nfsForm.path}
-			on:click={handleNfsCreate}
-		>
-			Create export
-		</Button>
-	</svelte:fragment>
-</Modal>
+{#if nfsFormOpen}
+	<NfsExportFormModal {paths} on:close={() => (nfsFormOpen = false)} on:saved={handleNfsSaved} />
+{/if}
 
 <Modal
 	open={exportToDelete !== null}
@@ -560,7 +573,7 @@
 	{#if exportToDelete}
 		<p>
 			Delete the export of <span class="mono break-all">{exportToDelete.path}</span>? NFS clients
-			lose access to it.
+			lose access to it. The folder and its files are kept.
 		</p>
 		{#if nfsDeleteError}
 			<Alert variant="error" title="Export was not deleted">{nfsDeleteError}</Alert>

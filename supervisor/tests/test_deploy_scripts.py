@@ -1381,6 +1381,54 @@ class TestUninstallScript:
         assert refused == expected
         assert removed == set(names) - expected
 
+    def test_the_nfs_exports_of_unos_are_removed_and_no_longer_exported(self, tmp_path):
+        # UNOS's own export file (ADR-0261); /etc/exports and the other files are not UNOS's.
+        own = tmp_path / "unos.exports"
+        own.write_text("/mnt/pools/data/media 192.168.1.0/24(rw,sync)\n")
+        other = tmp_path / "other.exports"
+        other.write_text("/srv/other 10.0.0.0/8(ro)\n")
+
+        result, calls, _ = self._run(
+            tmp_path, f'NFS_EXPORTS_FILE="{own}"; remove_nfs_exports', stubs={"exportfs": _LOGGER + _FAILS}
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not own.exists() and other.exists()
+        assert calls == ["exportfs -ra"]
+        assert "NFS exports of UNOS removed" in result.stdout
+
+    def test_without_nfs_exports_of_unos_nothing_runs(self, tmp_path):
+        result, calls, _ = self._run(
+            tmp_path, f'NFS_EXPORTS_FILE="{tmp_path / "unos.exports"}"; remove_nfs_exports',
+            stubs={"exportfs": _LOGGER},
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == []
+
+    def test_a_failed_exportfs_does_not_stop_the_uninstallation(self, tmp_path):
+        own = tmp_path / "unos.exports"
+        own.write_text("/mnt/pools/data/media 192.168.1.0/24(rw,sync)\n")
+
+        result, calls, _ = self._run(
+            tmp_path, f'NFS_EXPORTS_FILE="{own}"; remove_nfs_exports; echo after',
+            fail=("exportfs -ra",), stubs={"exportfs": _LOGGER + _FAILS},
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not own.exists() and calls == ["exportfs -ra"]
+        assert "exportfs -ra failed: the host may keep exporting the folders of UNOS until" in self._text(result)
+        assert result.stdout.rstrip().endswith("after")
+
+    def test_main_removes_the_nfs_exports_after_unos_has_stopped(self):
+        script = (REPO_ROOT / "deploy" / "uninstall.sh").read_text()
+        body = re.search(r"^main\(\) \{\n(.*?)^\}", script, re.M | re.S).group(1)
+        steps = [line.strip() for line in body.splitlines() if line.strip() and not line.strip().startswith("#")]
+
+        assert steps.index("stop_and_remove_containers") < steps.index("remove_nfs_exports") < steps.index(
+            "print_completion")
+        assert 'NFS_EXPORTS_FILE="/etc/exports.d/unos.exports"' in script
+
     def test_main_removes_the_samba_passwords_once_unos_has_stopped_and_before_samba_is_restored(self):
         script = (REPO_ROOT / "deploy" / "uninstall.sh").read_text()
         body = re.search(r"^main\(\) \{\n(.*?)^\}", script, re.M | re.S).group(1)

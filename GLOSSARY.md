@@ -52,7 +52,7 @@ Logs tab shows the journal and container output).
 Avoid: array, volume, RAID.
 
 **Managed pool**: A pool that UNOS mounts at every boot through its own entry in the host's fstab.
-Only managed pools can hold shares (ADR-0034, ADR-0148). Avoid: mounted pool (a managed pool can
+Only managed pools can hold shares and NFS exports (ADR-0034, ADR-0263). Avoid: mounted pool (a managed pool can
 be unmounted).
 
 **Pool root**: The top folder of a pool, which holds its apps, volumes and snapshots; it is never a
@@ -119,6 +119,14 @@ passwords and smb.conf in line with the database (ADR-0138). Avoid: sync, repair
 **Repair permissions**: An administrator's action on one share that gives the files already in it
 the group unos-smb and removes other accounts' access (ADR-0155). Avoid: fix permissions, chmod,
 reconcile.
+
+**NFS export**: A folder that the host's NFS server offers to the computers of a network: one entry
+of an export file, read as exportfs reads it. UNOS adds and deletes only those of its own export
+file, `/etc/exports.d/unos.exports`, and keeps every other line (ADR-0261, ADR-0262).
+Avoid: share (an SMB share), NFS share.
+
+**Export file**: A file that exportfs reads: `/etc/exports`, then each `*.exports` file of
+`/etc/exports.d` (ADR-0261). Avoid: exports table (the kernel's), etab.
 
 ## Users and access
 
