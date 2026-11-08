@@ -255,8 +255,14 @@ commands it does not know (ADR-0189). Avoid: mock.
 **Linux test runner**: The backend tests run in the dev device's RAM, for the tests that only run
 on Linux (ADR-0187). Avoid: CI.
 
-**Device lock**: The lock on the dev device that deploy steps and Linux test runs hold, so that one
-agent at a time changes or loads the device (ADR-0210). Avoid: deploy lock.
+**Device lock**: The lock on the dev device that deploy steps, Linux test runs and scenario checks
+hold, so that one agent at a time changes or loads the device (ADR-0210). Avoid: deploy lock.
+
+**Scenario check**: A check of one area's user scenario on the dev device,
+`scripts/dev/scenario.sh <area>`: through the API and on the host, with a temporary user, share,
+volume, folders or backups that it removes again, PASS or FAIL and the SD writes of each step,
+and a comparison with how it found the device (ADR-0304). The feature-pass skill names the
+scenario check of each host-level entry. Avoid: smoke test, E2E test.
 
 **Device backup**: A copy of the dev device's fstab, smb.conf and data volume on the workstation
 (`tmp/dev/backup`), which a deploy takes before it starts the containers; it holds the device's

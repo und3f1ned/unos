@@ -35,10 +35,13 @@ significant step. Features and their state live in `feature-list.json`, decision
   `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
   `AGENTS.md` or `.claude/settings.json` is a stop.
 - Next, in this order:
-  1. `device.scenario-checks-in-repo`: the device checks of slices 1 and 2 as scripts in
-     `scripts/dev/`, each reporting its SD writes.
-  2. The owner's reboot of the device, then the re-check of the host-level entries with those
-     scripts (ADR-0018).
+  1. `device.scenario-checks-in-repo` is built on its branch (ADR-0304): the scenario checks
+     `scripts/dev/scenario.sh files|volumes|smart|backups|smb|all`. Their first run on the device,
+     `scripts/dev/scenario.sh all`, waits for the owner's go: it makes and removes a temporary
+     user, share, volume, folders and backups, and signs in once with a wrong SMB password.
+  2. The owner's reboot of the device, then the re-check of the host-level entries:
+     `scripts/dev/scenario.sh all` again, and the checks by hand that the feature-pass skill's
+     table lists (ADR-0018).
   3. `deploy.digest-pinned-base-images` and `architecture.sqlite-write-cost` (the SD card).
 
 ## Dev device
@@ -86,11 +89,59 @@ Open owner actions:
    Developer settings, Tokens).
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
-3. The reboot of the device for the re-check of ADR-0018, once `device.scenario-checks-in-repo`
-   is done; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh` is made again.
+3. The go for the first run of `scripts/dev/scenario.sh all` on the device (ADR-0304), then the
+   reboot of the device for the re-check of ADR-0018 with the same run; afterwards the RAM rootfs
+   of `scripts/dev/linux-tests.sh` is made again. The smb check needs smbclient and stdbuf on the
+   device: if its first steps say one is missing, installing it is an owner action (ADR-0211).
 4. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-08: the scenario checks of the dev device, in the repository
+
+- Built `device.scenario-checks-in-repo` (ADR-0304) in its worktree, not yet run on the device:
+  `scripts/dev/scenario.sh [--pool NAME] files|volumes|smart|backups|smb|all` holds the device
+  lock, runs `scripts/dev/scenario.py` once per area and prints `SD writes scenario <area>`.
+  Each check reads the device's state, makes a temporary user, share, volume and folders named
+  `unoscheck<6 hex digits>` and two backups through the API, prints PASS or FAIL with each
+  step's SD MiB, removes what it made (also after a FAIL, a lost answer or a signal) and compares
+  the device with the state it read. The smb check runs the slice-2 flows of ADR-0185 with
+  smbclient on the device, one session held open while the API lowers and removes the access and
+  changes the password. `scripts/dev/api.py`'s relay now uploads files. The feature-pass skill's
+  table names the check of each host-level entry, and what each scenario check leaves out.
+- Tests: `supervisor/tests/test_dev_scenarios.py` (81, in `make test-fast`) runs every area
+  against a stand-in of the device in memory, with a 500 at each API call before and after the
+  call changed something, and checks that every call is a route of the supervisor with a body its
+  model accepts; `make check`: 5953 backend tests passed (121 Linux-only skipped, 1 xfailed),
+  svelte-check without errors, the build passed.
+- This worktree's `supervisor/.venv`, `.venv-lint` and `webui/node_modules` were copied from
+  `../unos-shares.nfs-exports-pass` with their stamps; the venv holds the pins of before #25, as
+  the main checkout's, so `setup.sh --check` reports it outdated (Open owner actions, 2).
+  `make smoke` passed before the change.
+- The first fresh-context review found 4 major and 6 minor problems and some nits, all fixed:
+  writing to a closed terminal stopped the clean-up; the quota step read a field that the API's
+  list of volumes does not have (now the quota group's limit is read with btrfs); backups are not
+  named `unoscheck`, and their clean-up, like the user's and the share's, was registered after
+  the call that made them (now before, and a backup whose answer was lost is named, never
+  deleted); the skill's table missed `shares.nfs-exports`, `device.ipv6-inbound-filter` and
+  `device.key-only-ssh` and hid what the checks leave out; the clean-up caught fewer errors than
+  a step; the docs understated the SD writes; an unreadable log counted as clean; several steps
+  took any failure, and the anonymous attempt was no null session and required signing on the
+  client; the advice for leftovers was incomplete; digests in the output, an interrupted check
+  without its SD line, untested helpers, and `scenario.py` running without the lock.
+- A second fresh-context review of the fixes found no major problem and 6 minor ones and 4 nits,
+  all fixed: a HUP or TERM to the process group ended the session that holds the device lock while
+  a check still cleaned up (`dev_lock` of `scripts/dev/env.sh` now starts it with both ignored and
+  ends it with SIGKILL at the release, for every script that takes the lock); a Ctrl-C during the
+  SD measurement let the next check start; a lost output let the steps go on unseen and turned
+  the exit status into 120; with a guest share the null session's refusal was expected; the
+  "partition" refused was no partition on the device; any 409 naming a quota passed as quotas
+  being off; a signal during the clean-up was dropped instead of waiting; `client ipc signing`
+  was left to its default; and the leftover advice, the ADR's wording and the lock's check of
+  its holder.
+- Left out by design, in the skill's table: a restore, a supervisor restart, a pool mounted
+  read-only, a bind mount below a folder, guest shares, Empty trash, scrubs, the Scheduler's
+  tasks, and what survives a reboot (each check removes what it makes): by hand.
 
 ### 2026-11-08: the NFS server on the dev device, and `shares.nfs-exports` on it
 

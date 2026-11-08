@@ -50,6 +50,7 @@ The one exception is the web UI's Russian texts and the tests that check them (A
 | `scripts/dev/api.py METHOD PATH` | What the API on the dev device answers. Methods other than GET change the device. |
 | `scripts/dev/deploy.sh status` | Which runtime files differ between this tree and the device. `status`, `sync --dry-run` and `backup` only read the device (ADR-0223); `backup` copies its secrets into the git-ignored `tmp/dev/backup` and keeps the newest 3 copies. |
 | `scripts/dev/sd.sh measure <label> -- <command>` | How many MiB a command wrote to the device's SD card. |
+| `scripts/dev/scenario.sh AREA` | The user scenario of an area (`files`, `volumes`, `smart`, `backups`, `smb`, `all`) works on the dev device, step by step with each step's SD MiB, and the check left the device as it found it (ADR-0304). It changes the device for its duration: on the owner's request. |
 | `make setup`, `make audit` | Bootstrap and dependency audit. Both need the network: the owner runs them. |
 
 The backend tests use fixed paths under `/tmp`: run them through make, whose test targets wait for
@@ -108,10 +109,11 @@ A denial by the guard or the permission system is an answer: ask the owner how t
 
 - The dev device runs from an SD card that wears with every write; its eMMC keeps the vendor's
   firmware and is never written (ADR-0214, ADR-0225). Reach the device only through `scripts/dev/`
-  (ADR-0016), scratch files in its `/dev/shm`. `deploy.sh`, `linux-tests.sh` and `ipv6-filter.sh`
-  (install, remove) hold the device lock (ADR-0210) and print `SD writes`; `sd.sh measure`
-  measures any command. Builds, `up` and `rollback` go through `deploy.sh`, on the owner's request
-  (ADR-0223). Container runs, image pulls, prunes, package installs and reboots on the device are
+  (ADR-0016), scratch files in its `/dev/shm`. `deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh`
+  (install, remove) and `scenario.sh` hold the device lock (ADR-0210) and print `SD writes`;
+  `sd.sh measure` measures any command. Builds, `up` and `rollback` go through `deploy.sh`, and
+  the scenario checks, which make temporary things and remove them, through `scenario.sh`, both on
+  the owner's request (ADR-0223, ADR-0304). Container runs, image pulls, prunes, package installs and reboots on the device are
   owner actions (ADR-0211). Enforced by the guard, which also blocks disk-wiping tools everywhere
   (`supervisor/tests/test_agent_guard.py`).
 - Secrets live in `dev.env`, read only by the scripts (ADR-0212), and `tmp/dev/backup` holds the
