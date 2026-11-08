@@ -28,7 +28,11 @@ can hang on a failing disk.
 A pool is never mounted over a directory that holds files: those files would
 be hidden while they keep using space on the boot disk. Unmounting is refused
 while containers use the pool: a container's bind mount keeps the filesystem
-mounted (and written to) even after the host's mountpoint is gone.
+mounted (and written to) even after the host's mountpoint is gone. The copies
+of the pool's mount that systemd services keep in mount namespaces of their
+own, whose root is the host's, are unmounted there as well; a container whose
+namespace still has the pool mounted, also at its mountpoint, keeps it in use
+(ADR-0288).
 
 Deleting or unmounting a pool never touches the disks: the filesystem stays
 intact and can be mounted again.
@@ -1037,6 +1041,156 @@ def _mounted_uuid(here: list[disks.HostMount]) -> str | None:
     return None
 
 
+def _root_of(table: list[disks.HostMount]) -> tuple[str, str] | None:
+    """The filesystem (MAJ:MIN) and its folder (FSROOT) that a mount table shows at "/".
+
+    None when the table has no mount at "/" (a process that a chroot into a
+    folder keeps from seeing it), mounts of more than one there, or no MAJ:MIN.
+    """
+    roots = {(m.majmin, m.fsroot or "/") for m in table if m.target == "/"}
+    if len(roots) != 1:
+        return None
+    [(majmin, fsroot)] = roots
+    return (majmin, fsroot) if majmin else None
+
+
+def _pool_mounts_in(pid: int, target: str, mounts: list[disks.HostMount]) -> tuple[int, str | None]:
+    """How the mount namespace of the host's process ``pid`` has the pool mounted (ADR-0288).
+
+    ``mounts`` is the host's mount table before its umount. A mount of the
+    pool's filesystem is recognised by the device number (MAJ:MIN) that
+    every mount of a btrfs filesystem shows. A copy of the host's mount is
+    one of that filesystem at ``target`` with the root that the host's mount
+    had, in a namespace whose own root is the host's: the same filesystem and
+    folder at "/" (:func:`_root_of`), as systemd makes the namespaces of
+    services. Under such a copy lies the host's mountpoint, which the unmount
+    write-protects (ADR-0034).
+
+    Returns the number of copies, and why the namespace keeps the pool
+    mounted otherwise, or None: the filesystem mounted anywhere else, such as
+    a container's bind mount of a folder; mounted in a namespace with a root
+    of its own, even as a copy at ``target``, such as a container's that
+    binds a parent folder of the pool (``-v /mnt/pools:/mnt/pools``), whose
+    apps use the pool there; or another filesystem mounted at ``target`` too,
+    such as the cover with which systemd hides a path from a service (an
+    umount by the path would remove the topmost of them). Raises
+    RuntimeError when the table cannot be read, for example because the
+    process has exited.
+    """
+    btrfs_here = [m for m in mounts if m.target == target and m.fstype == "btrfs" and m.majmin]
+    if not btrfs_here:
+        return 0, None
+    majmin = btrfs_here[0].majmin
+    roots = {m.fsroot or "/" for m in btrfs_here}
+    table = disks.namespace_mounts(pid)
+    host_root = _root_of(mounts)
+    shares_host_root = host_root is not None and _root_of(table) == host_root
+    copies, covered = 0, False
+    for mount in table:
+        if mount.fstype != "btrfs" or mount.majmin != majmin:
+            covered = covered or mount.target == target
+            continue
+        if not shares_host_root or mount.target != target or (mount.fsroot or "/") not in roots:
+            return copies, f"process {pid} has it mounted at {mount.target}"
+        copies += 1
+    if copies and covered:
+        return copies, f"process {pid} has another filesystem mounted at {target} together with its copy"
+    return copies, None
+
+
+def _namespace_copies(target: str, mounts: list[disks.HostMount]) -> tuple[dict[int, int], str | None]:
+    """The copies of the pool's host mount that other mount namespaces keep (ADR-0288).
+
+    systemd runs services with sandboxing (PrivateTmp=, ProtectSystem=, ...)
+    in mount namespaces of their own, made as copies of the host's when they
+    start. A copy of the pool's mount can sit there in a peer group of its
+    own, which the host's umount does not reach; the services do not use it.
+    A container's namespace has a root of its own: the pool mounted there is
+    in use (:func:`_pool_mounts_in`).
+
+    ``mounts`` is the host's mount table before its umount. Returns the
+    processes whose namespaces keep copies, each with how many are stacked at
+    ``target``, and why a namespace keeps the pool mounted otherwise, or
+    None. A namespace whose table cannot be read is left out (its process has
+    most likely exited): what it may still hold keeps the filesystem active,
+    which the caller checks.
+    """
+    if not any(m.target == target and m.fstype == "btrfs" and m.majmin for m in mounts):
+        return {}, None
+    try:
+        pids = disks.mount_namespace_pids()
+    except Exception as exc:
+        logger.warning("Could not list the host's mount namespaces: %s", exc)
+        return {}, None
+    copies: dict[int, int] = {}
+    for pid in pids:
+        try:
+            count, reason = _pool_mounts_in(pid, target, mounts)
+        except Exception as exc:
+            logger.warning("Could not read the mount table of process %d: %s", pid, exc)
+            continue
+        if reason:
+            return copies, reason
+        if count:
+            copies[pid] = count
+    return copies, None
+
+
+def _umount_in_namespace(pid: int, target: str) -> str | None:
+    """Unmount the topmost mount at ``target`` in process ``pid``'s namespace; why not, or None.
+
+    The host's umount enters the namespace for the unmount alone
+    (``--namespace``), so the namespace needs no umount of its own. Never lazily.
+    """
+    try:
+        result = host.run_on_host(["umount", "--namespace", str(pid), target], timeout=UMOUNT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f"umount did not finish within {UMOUNT_TIMEOUT} seconds"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    return None if result.ok else result.stderr.strip() or f"exit status {result.returncode}"
+
+
+def _unmount_namespace_copies(target: str, mounts: list[disks.HostMount], copies: dict[int, int]) -> str | None:
+    """Unmount the copies in their namespaces; the first one that stays, or None.
+
+    ``mounts`` is the host's mount table before its umount. After a failure
+    the other copies are still unmounted, and the namespace is read again: a
+    copy that the unmount of a peer took with it fails as not mounted, and
+    the namespace of a process that exited is gone. Whether the filesystem is
+    still in use is for the caller's check to say.
+    """
+    problem = None
+    unmounted = []
+    for pid, count in copies.items():
+        failure = None
+        for _ in range(count):
+            failure = _umount_in_namespace(pid, target)
+            if failure:
+                break
+        if failure:
+            try:
+                left, _ = _pool_mounts_in(pid, target, mounts)
+            except Exception:
+                left = 0
+            if left:
+                logger.warning("Could not unmount %s in the mount namespace of process %d: %s",
+                               target, pid, failure)
+                problem = problem or (
+                    f"process {pid} keeps a copy of its mount, and unmounting it there "
+                    f"failed: {failure.rstrip('.')}"
+                )
+                continue
+        unmounted.append(str(pid))
+    if unmounted:
+        logger.warning(
+            "Unmounted %s in the mount namespaces of processes %s, which kept copies of its mount",
+            target,
+            ", ".join(unmounted),
+        )
+    return problem
+
+
 def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) -> None:
     """Unmount whatever is mounted at the pool's mountpoint; PoolBusyError while in use.
 
@@ -1045,8 +1199,12 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
     container's bind mount of a directory on the pool is a separate, private
     mount: the host's umount succeeds, the filesystem stays mounted inside
     the container and keeps being written to, and the disk must not be
-    removed. Containers that Docker reports are refused up front; any other
-    user is detected after the umount, and the pool is mounted again.
+    removed. Containers that Docker reports are refused up front. After the
+    umount, the copies of the mount that services keep in mount namespaces of
+    their own, whose root is the host's, are unmounted there
+    (:func:`_namespace_copies`), unless a namespace has the filesystem mounted
+    anywhere else, or has a root of its own like a container's; any other
+    user is detected, and the pool is mounted again.
     """
     here = [m for m in mounts if m.target == target]
     if not here:
@@ -1066,19 +1224,23 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
             return  # also mounted elsewhere on the host, deliberately
     except Exception as exc:
         logger.warning("Could not read the host mount table: %s", exc)
+    copies, reason = _namespace_copies(target, mounts)
+    if copies and reason is None:
+        reason = _unmount_namespace_copies(target, mounts, copies)
+        if not _filesystem_active(uuid):
+            return
+    reason = reason or "for example by a container's bind mount"
     try:
         _mount_by_uuid(uuid, target)
     except Exception as exc:
         raise PoolBusyError(
             f"{target} was unmounted on the host, but the filesystem is still in use "
-            "elsewhere (for example by a container's bind mount), and mounting it again "
-            f"failed: {exc}. Stop the apps and containers that use the pool before "
-            "removing its disks."
+            f"elsewhere ({reason}), and mounting it again failed: {exc}. Stop the apps "
+            "and containers that use the pool before removing its disks."
         ) from exc
     raise PoolBusyError(
-        f"Pool '{name}' is still in use outside the host (for example by a container's "
-        "bind mount), so it was mounted again. Stop the apps and containers that use "
-        "the pool and try again."
+        f"Pool '{name}' is still in use outside the host ({reason}), so it was mounted "
+        "again. Stop the apps and containers that use the pool and try again."
     )
 
 

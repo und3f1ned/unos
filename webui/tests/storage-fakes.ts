@@ -181,6 +181,23 @@ export function noScrub(pool: string): FakeScrubStatus {
   };
 }
 
+// The 409s of an unmount or a removal of a pool in use, word for word as the server sends them
+// (_unmount_pool_target in supervisor/src/storage/pools.py; test_pool_persistence.py checks them).
+
+/** Running containers that Docker reports keep data on the pool. */
+export const usedByContainers = (pool: string, containers: string[]) =>
+  `Pool '${pool}' is used by running containers (${containers.join(', ')}). Stop them and try again.`;
+
+/**
+ * The filesystem stays mounted outside the host after the host's umount, for example in a
+ * container's mount namespace (ADR-0288), so the server mounted the pool again.
+ */
+export const stillInUse = (pool: string, reason: string) =>
+  `Pool '${pool}' is still in use outside the host (${reason}), so it was mounted again. Stop the apps and containers that use the pool and try again.`;
+
+/** The reason of stillInUse when the mount namespace of a process has the pool mounted elsewhere. */
+export const mountedElsewhere = (pid: number, at: string) => `process ${pid} has it mounted at ${at}`;
+
 export interface RecordedWrite {
   method: string;
   path: string;
@@ -208,7 +225,8 @@ export interface FakeStorageOptions {
   createPoolResponse?: { status: number; json: unknown };
   /**
    * Answer a mount, unmount or delete of a pool with this instead (for example the
-   * supervisor's 409 for a pool in use): the pools stay as they are. Undefined: done.
+   * supervisor's 409 for a pool in use, usedByContainers or stillInUse): the pools stay as
+   * they are. Undefined: done.
    */
   poolActionResponse?: (write: RecordedWrite) => FakeResponse | undefined;
   /**

@@ -229,7 +229,12 @@ For each pool, you can:
   disk there. Unmounting is refused while a running app or container uses the
   pool, also through a Docker volume that binds a folder in it, or while
   files on it are open, for example by a computer that has one of its SMB
-  shares open; the dialog names the containers or the reason. Once the pool
+  shares open; the dialog names the containers or the reason. System services
+  that run in a sandbox of their own keep a copy of the pool's mount there:
+  UNOS unmounts those copies too. When another process still has the pool
+  mounted, for example a container that binds the whole `/mnt/pools` or `/mnt`
+  folder, or one that Docker does not list, UNOS mounts the pool again and the
+  message names the process and where it has the pool mounted. Once the pool
   is unmounted, its SMB shares are no longer served: their open connections
   are closed, and the **Shares** page marks them **Not served** and **Pool
   not mounted**. They keep their access, and mounting the pool serves them
