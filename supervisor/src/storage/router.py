@@ -162,12 +162,14 @@ async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_to
     """Unmount a pool on the host and remove its managed fstab entry.
 
     The copies of its mount that services keep in mount namespaces of their
-    own are unmounted with it (ADR-0269). 409 while host processes or running
-    containers use the pool, such as smbd for an SMB client that has one of
-    its shares open, and when the mount namespace of another process has it
-    mounted elsewhere after the host's umount; the pool is then mounted
-    again. Before it answers, smb.conf no longer serves the pool's shares,
-    and their open connections are closed (ADR-0248).
+    own, whose root is the host's, are unmounted with it (ADR-0269). 409
+    while host processes or running containers use the pool, such as smbd
+    for an SMB client that has one of its shares open, and when the mount
+    namespace of another process still has it mounted after the host's
+    umount: elsewhere, or in a namespace with a root of its own, such as a
+    container that binds /mnt/pools; the pool is then mounted again. Before
+    it answers, smb.conf no longer serves the pool's shares, and their open
+    connections are closed (ADR-0248).
     """
     validated_name = validate_pool_name(name)
 

@@ -64,11 +64,13 @@ BASE_FSTAB = (
 OPTIONS = (
     "defaults,noatime,nofail,x-systemd.device-timeout=15s,x-systemd.before=docker.service"
 )
-# The mount table of a container that keeps nothing on a pool (the web UI's), as
-# findmnt --task prints it for a process in its mount namespace.
+# The root of a container's mount namespace, the overlay of its image (Docker's overlay2), as
+# findmnt --task prints it for a process in that namespace.
+CONTAINER_ROOT = {"target": "/", "source": "overlay", "fstype": "overlay", "uuid": None, "maj:min": "0:51",
+                  "fsroot": "/", "vfs-options": "rw,relatime", "fs-options": "rw"}
+# The mount table of a container that keeps nothing on a pool (the web UI's).
 WEBUI_MOUNTS = [
-    {"target": "/", "source": "overlay", "fstype": "overlay", "uuid": None, "maj:min": "0:51",
-     "fsroot": "/", "vfs-options": "rw,relatime", "fs-options": "rw"},
+    CONTAINER_ROOT,
     {"target": "/srv", "source": "/dev/mmcblk1p1[/opt/unos/webui/build]", "fstype": "ext4",
      "uuid": ROOT_UUID, "maj:min": "179:2", "fsroot": "/opt/unos/webui/build",
      "vfs-options": "ro,relatime", "fs-options": "rw,commit=600"},
@@ -296,19 +298,28 @@ class FakeHost:
     def copy_into_namespace(self, pid, target="/mnt/pools/data"):
         """Process ``pid``'s mount namespace keeps a copy of the host's mount at ``target``.
 
-        The same filesystem, root and mountpoint: systemd made the namespace of a
-        service with sandboxing as a copy of the host's when the service started.
+        The same filesystem, root and mountpoint. A new namespace is a service's:
+        systemd made it as a copy of the host's when a service with sandboxing
+        started, so its root is a copy of the host's root mount too. In a
+        container's namespace (container_namespace) the copy is what a bind of a
+        parent folder of ``target`` without propagation gives
+        (``-v /mnt/pools:/mnt/pools``, Docker's default rprivate).
         """
-        self.namespaces.setdefault(pid, []).append(dict(self._host_mount(target)))
+        self.namespaces.setdefault(pid, [dict(self._host_mount("/"))]).append(dict(self._host_mount(target)))
+
+    def container_namespace(self, pid):
+        """Process ``pid`` is a container's: the root of its mount namespace is the container's overlay."""
+        self.namespaces[pid] = [dict(CONTAINER_ROOT)]
 
     def bind_into_namespace(self, pid, folder, at, target="/mnt/pools/data"):
         """Process ``pid``'s mount namespace has ``folder`` of the filesystem at ``target`` bound at ``at``.
 
-        As a container has a folder of a pool bound (``-v /mnt/pools/data/downloads:/downloads``).
+        As a container has a folder of a pool bound (``-v /mnt/pools/data/downloads:/downloads``):
+        a new namespace is a container's (container_namespace).
         """
         mount = self._host_mount(target)
         source = mount["source"] if folder == "/" else f"{mount['source']}[{folder}]"
-        self.namespaces.setdefault(pid, []).append(
+        self.namespaces.setdefault(pid, [dict(CONTAINER_ROOT)]).append(
             {**mount, "target": at, "source": source, "fsroot": folder})
 
     def node(self, name):
@@ -1285,6 +1296,63 @@ class TestUnmountAndDelete:
         assert self.namespaces_holding(services) == [*self.SERVICES, 1200]
         self.assert_still_mounted_and_persistent(services)
 
+    # A container that binds a parent folder of the pool (-v /mnt/pools:/mnt/pools, or the whole
+    # /mnt, which the Containers page can make) with Docker's default propagation, rprivate, has
+    # the pool's mount at the pool's mountpoint with the host mount's root, like a service's copy;
+    # Docker reports a Source outside the pool, which _containers_using does not count. Its apps
+    # use the pool there: unmounting it would leave them writing into an empty folder, or into the
+    # container's own layer on the system disk. Only namespaces whose root is the host's root
+    # filesystem, as systemd makes them for services, have their copies unmounted.
+    @pytest.mark.parametrize("source", ["/mnt/pools", "/mnt"])
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    def test_refuses_while_a_container_has_the_pool_at_its_mountpoint(self, services, operation, source):
+        services.docker.add("syncthing", mounts=[_bind(source, source)])
+        services.container_namespace(1300)
+        services.copy_into_namespace(1300)
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "Pool 'data' is still in use outside the host (process 1300 has it mounted at /mnt/pools/data), "
+            "so it was mounted again. Stop the apps and containers that use the pool and try again."
+        )):
+            operation("data")
+        assert services.changes == [
+            ["umount", "/mnt/pools/data"],
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+        ]
+        assert self.namespaces_holding(services) == [*self.SERVICES, 1300]
+        self.assert_still_mounted_and_persistent(services)
+
+    def test_without_docker_a_container_that_binds_the_pools_mountpoint_is_refused(self, services):
+        # -v /mnt/pools/data:/mnt/pools/data: Docker would name the container up front, but cannot
+        # be asked, so the check after the umount must find it (ADR-0070).
+        services.docker.add("app", sources=["/mnt/pools/data"])
+        services.docker.unavailable = True
+        services.container_namespace(1400)
+        services.copy_into_namespace(1400)
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "(process 1400 has it mounted at /mnt/pools/data), so it was mounted again"
+        )):
+            pools.unmount_pool("data")
+        assert not [c for c in services.changes if c[:2] == ["umount", "--namespace"]]
+        self.assert_still_mounted_and_persistent(services)
+
+    # The root that tells a service's namespace from a container's is the host's root filesystem
+    # (MAJ:MIN) and the folder of it (FSROOT) that the host's "/" shows. A container whose root is
+    # a folder of the host's root filesystem (Docker's vfs driver, systemd-nspawn), and a process
+    # that a chroot into a folder keeps from seeing any mount at "/", have roots of their own.
+    @pytest.mark.parametrize("folder", ["/var/lib/machines/backup", None],
+                             ids=["a-folder-of-the-hosts-root-filesystem", "no-mount-at-its-root"])
+    def test_a_namespace_with_a_root_of_its_own_is_refused(self, services, folder):
+        host_root = services._host_mount("/")
+        services.namespaces[1500] = [] if folder is None else [
+            {**host_root, "source": f"{host_root['source']}[{folder}]", "fsroot": folder}]
+        services.copy_into_namespace(1500)
+        with pytest.raises(pools.PoolBusyError, match=re.escape(
+            "(process 1500 has it mounted at /mnt/pools/data), so it was mounted again"
+        )):
+            pools.unmount_pool("data")
+        assert not [c for c in services.changes if c[:2] == ["umount", "--namespace"]]
+        self.assert_still_mounted_and_persistent(services)
+
     @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
     def test_refuses_when_a_copy_cannot_be_unmounted(self, services, operation):
         # A service has a file of the pool open, for example rsyslogd a log file.
@@ -2234,7 +2302,7 @@ class TestPoolEndpoints:
             assert response.json() == answer
         assert data_pool.smb_applies == before + 1
         assert data_pool.fstab == BASE_FSTAB
-        assert not any(table for table in data_pool.namespaces.values())
+        assert TestUnmountAndDelete.namespaces_holding(data_pool) == []
         assert api.get("/api/v1/storage/pools/data").json()["mounted"] is False
 
     def test_pool_that_another_mount_namespace_binds_is_409(self, api, data_pool):
