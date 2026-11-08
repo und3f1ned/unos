@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { X } from 'lucide-svelte';
 	import { createEventDispatcher } from 'svelte';
+	import { t } from '$lib/i18n';
 
 	export let open: boolean = false;
 	export let title: string = '';
@@ -72,7 +73,7 @@
 						type="button"
 						class="modal-close"
 						on:click={handleClose}
-						aria-label="Close modal"
+						aria-label={$t('ui.modal.close')}
 					>
 						<X class="w-5 h-5" />
 					</button>

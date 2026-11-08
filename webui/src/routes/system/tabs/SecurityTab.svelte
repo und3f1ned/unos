@@ -4,6 +4,8 @@
   import { user } from "$lib/stores/auth";
   import SmbAccessCard from "$lib/components/account/SmbAccessCard.svelte";
   import RecoveryCodes from "$lib/components/account/RecoveryCodes.svelte";
+  import LanguageCard from "$lib/components/account/LanguageCard.svelte";
+  import { intlLocale, t } from "$lib/i18n";
   import { Alert, Badge, Button } from "$lib/components/ui";
   import { changePassword, setupTOTP, enableTOTP, disableTOTP, getTOTPStatus, type TOTPSetupResponse } from "$lib/api/auth";
   import {
@@ -98,6 +100,48 @@
   // manage its own password, 2FA and see its own login history.
   $: isAdmin = $user?.is_admin === true;
 
+  // The labels of the values that the server answers as words (FirewallRule, FirewallStatus and
+  // Certificate of $lib/api/security): keys of the catalog, by value.
+  const RULE_ACTIONS: Record<string, string> = {
+    allow: "account.firewall.allow",
+    deny: "account.firewall.deny",
+    reject: "account.firewall.reject"
+  };
+  const RULE_DIRECTIONS: Record<string, string> = { in: "account.firewall.in", out: "account.firewall.out" };
+  const RULE_PROTOCOLS: Record<string, string> = {
+    tcp: "account.firewall.tcp",
+    udp: "account.firewall.udp",
+    any: "account.firewall.anyProtocol"
+  };
+  const POLICIES: Record<string, string> = {
+    allow: "account.firewall.policyAllow",
+    deny: "account.firewall.policyDeny",
+    reject: "account.firewall.policyReject"
+  };
+  const CERTIFICATE_TYPES: Record<string, string> = {
+    self_signed: "account.certs.selfSigned",
+    lets_encrypt: "account.certs.letsEncrypt",
+    custom: "account.certs.custom"
+  };
+
+  /** The label of `value` in the language of the page; a value without one as it comes. */
+  $: labelOf = (labels: Record<string, string>, value: string): string =>
+    Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
+
+  // A certificate's dates are openssl's, in UTC: "Nov  8 01:47:31 2027 GMT".
+  const OPENSSL_DATE = /^([A-Z][a-z]{2}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4}) GMT$/;
+  // i18n-ignore: openssl's names of the months, which the dates of the server hold
+  const OPENSSL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  /** A certificate's date in the language of the page and the browser's time zone; else as it comes. */
+  $: formatCertificateDate = (value: string): string => {
+    const match = OPENSSL_DATE.exec(value);
+    const month = match ? OPENSSL_MONTHS.indexOf(match[1]) : -1;
+    if (!match || month < 0) return value;
+    const [, , day, hours, minutes, seconds, year] = match.map(Number);
+    return new Date(Date.UTC(year, month, day, hours, minutes, seconds)).toLocaleString($intlLocale);
+  };
+
   onMount(async () => {
     await Promise.all([
       loadTOTPStatus(),
@@ -129,12 +173,12 @@
     passwordWarnings = [];
 
     if (newPassword !== confirmPassword) {
-      passwordError = "New passwords do not match";
+      passwordError = $t("account.password.mismatch");
       return;
     }
 
     if (newPassword.length < 8) {
-      passwordError = "Password must be at least 8 characters";
+      passwordError = $t("account.password.tooShort");
       return;
     }
 
@@ -144,13 +188,13 @@
         current_password: currentPassword,
         new_password: newPassword,
       });
-      passwordSuccess = "Password changed successfully";
+      passwordSuccess = $t("account.password.changed");
       passwordWarnings = result?.warnings ?? [];
       currentPassword = "";
       newPassword = "";
       confirmPassword = "";
     } catch (e: any) {
-      passwordError = e.message || "Failed to change password";
+      passwordError = e.message || $t("account.password.failed");
     } finally {
       changingPassword = false;
     }
@@ -163,6 +207,7 @@
       totpSetupData = await setupTOTP();
       try {
         // Twice the displayed size so it stays sharp on high-DPI screens.
+        // i18n-ignore: the options of the QR code
         qrDataUrl = await toDataURL(totpSetupData.qr_uri, {
           width: 384,
           margin: 2,
@@ -175,7 +220,7 @@
       }
       showSetupModal = true;
     } catch (e: any) {
-      totpError = e.message || "Failed to setup 2FA";
+      totpError = e.message || $t("account.totp.setupFailed");
     } finally {
       totpLoading = false;
     }
@@ -183,7 +228,7 @@
 
   async function confirmTOTPEnable() {
     if (totpCode.length !== 6) {
-      totpError = "Please enter a 6-digit code";
+      totpError = $t("account.totp.codeRequired");
       return;
     }
 
@@ -192,14 +237,14 @@
     try {
       await enableTOTP(totpCode);
       totpEnabled = true;
-      totpSuccess = "Two-Factor Authentication enabled successfully";
+      totpSuccess = $t("account.totp.enabled");
       void smbCard?.refresh();
       showSetupModal = false;
       totpSetupData = null;
       qrDataUrl = "";
       totpCode = "";
     } catch (e: any) {
-      totpError = e.message || "Invalid code. Please try again.";
+      totpError = e.message || $t("account.totp.invalidCode");
     } finally {
       totpLoading = false;
     }
@@ -207,7 +252,7 @@
 
   async function confirmTOTPDisable() {
     if (disableCode.length !== 6) {
-      totpError = "Please enter a 6-digit code";
+      totpError = $t("account.totp.codeRequired");
       return;
     }
 
@@ -216,12 +261,12 @@
     try {
       await disableTOTP(disableCode);
       totpEnabled = false;
-      totpSuccess = "Two-Factor Authentication disabled";
+      totpSuccess = $t("account.totp.disabled");
       void smbCard?.refresh();
       showDisableModal = false;
       disableCode = "";
     } catch (e: any) {
-      totpError = e.message || "Invalid code. Please try again.";
+      totpError = e.message || $t("account.totp.invalidCode");
     } finally {
       totpLoading = false;
     }
@@ -275,23 +320,25 @@
     }
   }
 
-  function formatTimestamp(ts: string | null): string {
-    if (!ts) return "Unknown";
+  // Reactive, so that an open list follows a change of the language. The times are in the
+  // language of the page, in the browser's own format when it is of that language.
+  $: formatTimestamp = (ts: string | null): string => {
+    if (!ts) return $t("common.unknown");
     try {
-      return new Date(ts).toLocaleString();
+      return new Date(ts).toLocaleString($intlLocale);
     } catch {
       return ts;
     }
-  }
+  };
 
-  function parseUserAgent(ua: string | null): string {
-    if (!ua) return "Unknown";
-    if (ua.includes("Chrome")) return "Chrome";
-    if (ua.includes("Firefox")) return "Firefox";
-    if (ua.includes("Safari")) return "Safari";
-    if (ua.includes("Edge")) return "Edge";
-    return "Browser";
-  }
+  // i18n-ignore: the names of browsers, the same in every language
+  const BROWSERS = ["Chrome", "Firefox", "Safari", "Edge"];
+
+  // The first of BROWSERS that the user agent names: Chrome's also names Safari.
+  $: parseUserAgent = (ua: string | null): string => {
+    if (!ua) return $t("common.unknown");
+    return BROWSERS.find((name) => ua.includes(name)) ?? $t("account.history.browser");
+  };
 
   // Firewall functions
   async function loadFirewallStatus() {
@@ -312,14 +359,14 @@
     try {
       if (firewallStatus?.enabled) {
         await disableFirewall();
-        firewallSuccess = "Firewall disabled";
+        firewallSuccess = $t("account.firewall.disabledNotice");
       } else {
         await enableFirewall();
-        firewallSuccess = "Firewall enabled";
+        firewallSuccess = $t("account.firewall.enabledNotice");
       }
       await loadFirewallStatus();
     } catch (e: any) {
-      firewallError = e.message || "Failed to toggle firewall";
+      firewallError = e.message || $t("account.firewall.toggleFailed");
     } finally {
       firewallLoading = false;
     }
@@ -327,7 +374,7 @@
 
   async function handleAddRule() {
     if (!newRule.name || !newRule.port) {
-      firewallError = "Name and port are required";
+      firewallError = $t("account.firewall.nameAndPort");
       return;
     }
 
@@ -343,42 +390,42 @@
         source: newRule.source || null,
         comment: newRule.comment || null
       });
-      firewallSuccess = "Rule added successfully";
+      firewallSuccess = $t("account.firewall.added");
       showAddRuleModal = false;
       newRule = { name: "", action: "allow", direction: "in", protocol: "tcp", port: "", source: "", comment: "" };
       await loadFirewallStatus();
     } catch (e: any) {
-      firewallError = e.message || "Failed to add rule";
+      firewallError = e.message || $t("account.firewall.addFailed");
     } finally {
       firewallLoading = false;
     }
   }
 
   async function handleDeleteRule(ruleId: string) {
-    if (!confirm("Are you sure you want to delete this rule?")) return;
+    if (!confirm($t("account.firewall.confirmDelete"))) return;
 
     firewallLoading = true;
     try {
       await deleteFirewallRule(ruleId);
-      firewallSuccess = "Rule deleted";
+      firewallSuccess = $t("account.firewall.deleted");
       await loadFirewallStatus();
     } catch (e: any) {
-      firewallError = e.message || "Failed to delete rule";
+      firewallError = e.message || $t("account.firewall.deleteFailed");
     } finally {
       firewallLoading = false;
     }
   }
 
   async function handleResetFirewall() {
-    if (!confirm("This will reset all firewall rules to defaults. Continue?")) return;
+    if (!confirm($t("account.firewall.confirmReset"))) return;
 
     firewallLoading = true;
     try {
       await resetFirewall();
-      firewallSuccess = "Firewall reset to defaults";
+      firewallSuccess = $t("account.firewall.resetDone");
       await loadFirewallStatus();
     } catch (e: any) {
-      firewallError = e.message || "Failed to reset firewall";
+      firewallError = e.message || $t("account.firewall.resetFailed");
     } finally {
       firewallLoading = false;
     }
@@ -400,7 +447,7 @@
 
   async function handleGenerateCert() {
     if (!newCert.domain) {
-      certError = "Domain is required";
+      certError = $t("account.certs.domainRequired");
       return;
     }
 
@@ -413,27 +460,27 @@
         organization: newCert.organization || undefined,
         country: newCert.country || undefined
       });
-      certSuccess = "Certificate generated successfully";
+      certSuccess = $t("account.certs.generated");
       showGenCertModal = false;
       newCert = { domain: "", validity_days: 365, organization: "", country: "" };
       await loadCertificateStatus();
     } catch (e: any) {
-      certError = e.message || "Failed to generate certificate";
+      certError = e.message || $t("account.certs.generateFailed");
     } finally {
       certLoading = false;
     }
   }
 
   async function handleDeleteCert(certId: string) {
-    if (!confirm("Are you sure you want to delete this certificate?")) return;
+    if (!confirm($t("account.certs.confirmDelete"))) return;
 
     certLoading = true;
     try {
       await deleteCertificate(certId);
-      certSuccess = "Certificate deleted";
+      certSuccess = $t("account.certs.deleted");
       await loadCertificateStatus();
     } catch (e: any) {
-      certError = e.message || "Failed to delete certificate";
+      certError = e.message || $t("account.certs.deleteFailed");
     } finally {
       certLoading = false;
     }
@@ -441,13 +488,15 @@
 </script>
 
 <div class="space-y-6">
-  <h2 class="text-xl font-semibold">Security Settings</h2>
+  <h2 class="text-xl font-semibold">{$t("account.title")}</h2>
+
+  <LanguageCard />
 
   <!-- Two-Factor Authentication -->
   <div class="bg-slate-800 rounded-lg p-4">
     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
       <Smartphone class="w-5 h-5" />
-      Two-Factor Authentication
+      {$t("account.totp.title")}
     </h3>
 
     {#if totpSuccess}
@@ -466,47 +515,47 @@
 
     <div class="flex items-center justify-between">
       <div>
-        <p class="font-medium">Authenticator App</p>
+        <p class="font-medium">{$t("account.totp.app")}</p>
         <p class="text-sm text-slate-400">
-          Use an app like Google Authenticator or Authy to generate codes
+          {$t("account.totp.appHint")}
         </p>
       </div>
       <div class="flex items-center gap-3">
         {#if !totpStatusLoaded}
           {#if !totpStatusError}
-            <span class="text-sm text-content-muted">Loading...</span>
+            <span class="text-sm text-content-muted">{$t("common.loading")}</span>
           {/if}
         {:else if totpEnabled}
           <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
             <CheckCircle class="w-4 h-4" />
-            Enabled
+            {$t("account.totp.on")}
           </span>
           <button
             on:click={() => { showDisableModal = true; totpError = ""; }}
             class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm transition-colors"
           >
-            Disable
+            {$t("account.totp.disable")}
           </button>
         {:else}
           <span class="px-3 py-1 bg-slate-700 text-slate-400 rounded-lg text-sm">
-            Disabled
+            {$t("account.totp.off")}
           </span>
           <button
             on:click={startTOTPSetup}
             disabled={totpLoading}
             class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg text-sm transition-colors"
           >
-            {totpLoading ? "Setting up..." : "Enable"}
+            {totpLoading ? $t("account.totp.settingUp") : $t("account.totp.enable")}
           </button>
         {/if}
       </div>
     </div>
 
     {#if totpStatusError}
-      <Alert variant="error" title="Could not load the two-factor status" class="mt-4">
+      <Alert variant="error" title={$t("account.totp.statusError")} class="mt-4">
         <p>{totpStatusError}</p>
         <Button variant="secondary" size="sm" class="mt-3" loading={totpStatusLoading} on:click={loadTOTPStatus}
-          >Retry</Button
+          >{$t("common.retry")}</Button
         >
       </Alert>
     {/if}
@@ -521,7 +570,7 @@
   <div class="bg-slate-800 rounded-lg p-4">
     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
       <Key class="w-5 h-5" />
-      Change Password
+      {$t("account.password.title")}
     </h3>
 
     {#if passwordSuccess}
@@ -549,7 +598,7 @@
     <form on:submit|preventDefault={handlePasswordChange} class="space-y-4 max-w-md">
       <div>
         <label for="currentPassword" class="block text-sm font-medium text-slate-400 mb-1">
-          Current Password
+          {$t("account.password.current")}
         </label>
         <div class="relative">
           {#if showCurrentPassword}
@@ -585,7 +634,7 @@
 
       <div>
         <label for="newPassword" class="block text-sm font-medium text-slate-400 mb-1">
-          New Password
+          {$t("account.password.new")}
         </label>
         <div class="relative">
           {#if showNewPassword}
@@ -619,12 +668,12 @@
             {/if}
           </button>
         </div>
-        <p class="text-xs text-slate-500 mt-1">Minimum 8 characters</p>
+        <p class="text-xs text-slate-500 mt-1">{$t("account.password.minimum")}</p>
       </div>
 
       <div>
         <label for="confirmPassword" class="block text-sm font-medium text-slate-400 mb-1">
-          Confirm New Password
+          {$t("account.password.confirm")}
         </label>
         <input
           type="password"
@@ -640,7 +689,7 @@
         disabled={changingPassword}
         class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors"
       >
-        {changingPassword ? "Changing..." : "Change Password"}
+        {changingPassword ? $t("account.password.changing") : $t("account.password.submit")}
       </button>
     </form>
   </div>
@@ -653,19 +702,19 @@
     <div class="flex items-center justify-between mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <Flame class="w-5 h-5" />
-        Firewall
+        {$t("account.firewall.title")}
       </h3>
       <div class="flex items-center gap-2">
         {#if firewallStatus}
           {#if firewallStatus.enabled}
             <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
               <ShieldCheck class="w-4 h-4" />
-              Active
+              {$t("account.firewall.active")}
             </span>
           {:else}
             <span class="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm flex items-center gap-1">
               <ShieldX class="w-4 h-4" />
-              Inactive
+              {$t("account.firewall.inactive")}
             </span>
           {/if}
         {/if}
@@ -673,7 +722,7 @@
           on:click={() => showFirewallModal = !showFirewallModal}
           class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"
         >
-          Configure
+          {$t("account.firewall.configure")}
         </button>
       </div>
     </div>
@@ -693,16 +742,19 @@
     {/if}
 
     <p class="text-sm text-slate-400">
-      Configure network firewall rules to control incoming and outgoing traffic.
+      {$t("account.firewall.description")}
     </p>
 
     {#if showFirewallModal && firewallStatus}
       <div class="mt-4 space-y-4">
         <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
           <div>
-            <p class="font-medium">Firewall Status</p>
+            <p class="font-medium">{$t("account.firewall.status")}</p>
             <p class="text-sm text-slate-400">
-              Default: Incoming {firewallStatus.default_incoming}, Outgoing {firewallStatus.default_outgoing}
+              {$t("account.firewall.defaults", {
+                incoming: labelOf(POLICIES, firewallStatus.default_incoming),
+                outgoing: labelOf(POLICIES, firewallStatus.default_outgoing)
+              })}
             </p>
           </div>
           <div class="flex gap-2">
@@ -711,7 +763,7 @@
               disabled={firewallLoading}
               class="px-4 py-2 rounded-lg text-sm transition-colors {firewallStatus.enabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}"
             >
-              {firewallStatus.enabled ? 'Disable' : 'Enable'}
+              {firewallStatus.enabled ? $t("account.firewall.disable") : $t("account.firewall.enable")}
             </button>
             <button
               on:click={handleResetFirewall}
@@ -719,37 +771,38 @@
               class="px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm transition-colors flex items-center gap-1"
             >
               <RefreshCw class="w-4 h-4" />
-              Reset
+              {$t("account.firewall.reset")}
             </button>
           </div>
         </div>
 
         <div class="flex justify-between items-center">
-          <h4 class="font-medium">Firewall Rules</h4>
+          <h4 class="font-medium">{$t("account.firewall.rules")}</h4>
           <button
             on:click={() => showAddRuleModal = true}
             class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm flex items-center gap-1"
           >
             <Plus class="w-4 h-4" />
-            Add Rule
+            {$t("account.firewall.addRule")}
           </button>
         </div>
 
         {#if firewallStatus.rules.length === 0}
-          <p class="text-sm text-slate-400 text-center py-4">No custom rules configured</p>
+          <p class="text-sm text-slate-400 text-center py-4">{$t("account.firewall.noRules")}</p>
         {:else}
           <div class="space-y-2">
             {#each firewallStatus.rules as rule}
               <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
                 <div class="flex items-center gap-3">
-                  <span class="px-2 py-1 rounded text-xs font-medium {rule.action === 'allow' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
-                    {rule.action.toUpperCase()}
+                  <span class="px-2 py-1 rounded text-xs font-medium uppercase {rule.action === 'allow' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
+                    {labelOf(RULE_ACTIONS, rule.action)}
                   </span>
                   <div>
                     <p class="font-medium">{rule.name}</p>
                     <p class="text-sm text-slate-400">
-                      {rule.direction.toUpperCase()} | {rule.protocol.toUpperCase()} | Port: {rule.port || 'Any'}
-                      {#if rule.source}| From: {rule.source}{/if}
+                      {labelOf(RULE_DIRECTIONS, rule.direction)} | {labelOf(RULE_PROTOCOLS, rule.protocol)} |
+                      {$t("account.firewall.port", { port: rule.port || $t("account.firewall.any") })}
+                      {#if rule.source}| {$t("account.firewall.from", { source: rule.source })}{/if}
                     </p>
                   </div>
                 </div>
@@ -772,23 +825,23 @@
     <div class="flex items-center justify-between mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <FileKey class="w-5 h-5" />
-        SSL/TLS Certificates
+        {$t("account.certs.title")}
       </h3>
       <div class="flex items-center gap-2">
         {#if certStatus}
           {#if certStatus.has_certificate && certStatus.is_valid}
             <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
               <CheckCircle class="w-4 h-4" />
-              Valid
+              {$t("account.certs.valid")}
             </span>
           {:else if certStatus.has_certificate}
             <span class="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm flex items-center gap-1">
               <AlertCircle class="w-4 h-4" />
-              Expired
+              {$t("account.certs.expired")}
             </span>
           {:else}
             <span class="px-3 py-1 bg-slate-700 text-slate-400 rounded-lg text-sm">
-              No Certificate
+              {$t("account.certs.none")}
             </span>
           {/if}
         {/if}
@@ -796,7 +849,7 @@
           on:click={() => showCertModal = !showCertModal}
           class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"
         >
-          Manage
+          {$t("account.certs.manage")}
         </button>
       </div>
     </div>
@@ -816,7 +869,7 @@
     {/if}
 
     <p class="text-sm text-slate-400">
-      Manage HTTPS certificates for secure connections.
+      {$t("account.certs.description")}
     </p>
 
     {#if showCertModal}
@@ -825,47 +878,50 @@
           <div class="p-3 bg-slate-700 rounded-lg">
             <div class="flex items-center justify-between">
               <div>
-                <p class="font-medium">{certStatus.domain || 'Certificate'}</p>
+                <p class="font-medium">{certStatus.domain || $t("account.certs.certificate")}</p>
                 <p class="text-sm text-slate-400">
-                  Type: {certStatus.type?.replace('_', ' ').toUpperCase() || 'Unknown'}
+                  {$t("account.certs.type", {
+                    type: certStatus.type ? labelOf(CERTIFICATE_TYPES, certStatus.type) : $t("common.unknown")
+                  })}
                   {#if certStatus.valid_until}
-                    | Expires: {certStatus.valid_until}
+                    | {$t("account.certs.expires", { date: formatCertificateDate(certStatus.valid_until) })}
                   {/if}
                 </p>
               </div>
               {#if certStatus.auto_renew}
-                <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">Auto-renew</span>
+                <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">{$t("account.certs.autoRenew")}</span>
               {/if}
             </div>
           </div>
         {/if}
 
         <div class="flex justify-between items-center">
-          <h4 class="font-medium">All Certificates</h4>
+          <h4 class="font-medium">{$t("account.certs.all")}</h4>
           <button
             on:click={() => showGenCertModal = true}
             class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm flex items-center gap-1"
           >
             <Plus class="w-4 h-4" />
-            Generate Self-Signed
+            {$t("account.certs.generateSelfSigned")}
           </button>
         </div>
 
         {#if certificates.length === 0}
-          <p class="text-sm text-slate-400 text-center py-4">No certificates found</p>
+          <p class="text-sm text-slate-400 text-center py-4">{$t("account.certs.noneFound")}</p>
         {:else}
           <div class="space-y-2">
             {#each certificates as cert}
               <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
                 <div class="flex items-center gap-3">
                   <span class="px-2 py-1 rounded text-xs font-medium {cert.is_valid ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
-                    {cert.is_valid ? 'VALID' : 'EXPIRED'}
+                    {cert.is_valid ? $t("account.certs.validBadge") : $t("account.certs.expiredBadge")}
                   </span>
                   <div>
                     <p class="font-medium">{cert.domain}</p>
                     <p class="text-sm text-slate-400">
-                      {cert.type.replace('_', ' ')} | Issuer: {cert.issuer || 'Self'}
-                      {#if cert.valid_until}| Until: {cert.valid_until}{/if}
+                      {labelOf(CERTIFICATE_TYPES, cert.type)} |
+                      {$t("account.certs.issuer", { issuer: cert.issuer || $t("account.certs.self") })}
+                      {#if cert.valid_until}| {$t("account.certs.until", { date: formatCertificateDate(cert.valid_until) })}{/if}
                     </p>
                   </div>
                 </div>
@@ -892,56 +948,56 @@
     <div class="flex items-center justify-between mb-4">
       <h3 class="text-lg font-semibold flex items-center gap-2">
         <History class="w-5 h-5" />
-        Login History
+        {$t("account.history.title")}
       </h3>
       <button
         on:click={toggleLoginHistory}
         class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"
       >
-        {showLoginHistory ? 'Hide' : 'View History'}
+        {showLoginHistory ? $t("account.history.hide") : $t("account.history.show")}
       </button>
     </div>
 
     <p class="text-sm text-slate-400">
-      View recent login attempts and monitor account activity.
+      {$t("account.history.description")}
     </p>
 
     {#if showLoginHistory}
       <div class="mt-4 space-y-4">
         {#if loginHistoryLoading}
-          <div class="text-center py-4 text-slate-400">Loading...</div>
+          <div class="text-center py-4 text-slate-400">{$t("common.loading")}</div>
         {:else if loginHistoryError}
-          <Alert variant="error" title="Could not load the login history">
+          <Alert variant="error" title={$t("account.history.loadError")}>
             <p>{loginHistoryError}</p>
-            <Button variant="secondary" size="sm" class="mt-3" on:click={loadLoginHistory}>Retry</Button>
+            <Button variant="secondary" size="sm" class="mt-3" on:click={loadLoginHistory}>{$t("common.retry")}</Button>
           </Alert>
         {:else}
           <!-- Stats -->
           <div class="grid grid-cols-3 gap-4">
             <div class="p-3 bg-slate-700 rounded-lg text-center">
               <p class="text-2xl font-bold">{loginHistoryTotal}</p>
-              <p class="text-sm text-slate-400">Total Attempts</p>
+              <p class="text-sm text-slate-400">{$t("account.history.total")}</p>
             </div>
             <div class="p-3 bg-slate-700 rounded-lg text-center">
               <p class="text-2xl font-bold text-green-400">{loginHistorySuccess}</p>
-              <p class="text-sm text-slate-400">Successful</p>
+              <p class="text-sm text-slate-400">{$t("account.history.successful")}</p>
             </div>
             <div class="p-3 bg-slate-700 rounded-lg text-center">
               <p class="text-2xl font-bold text-red-400">{loginHistoryFailed}</p>
-              <p class="text-sm text-slate-400">Failed</p>
+              <p class="text-sm text-slate-400">{$t("account.history.failed")}</p>
             </div>
           </div>
 
           <!-- History List -->
           {#if loginHistory.length === 0}
-            <p class="text-sm text-slate-400 text-center py-4">No login history found</p>
+            <p class="text-sm text-slate-400 text-center py-4">{$t("account.history.empty")}</p>
           {:else}
             <!-- Newest first; the times are the browser's local time (ADR-0262). -->
-            <ul class="space-y-2 max-h-80 overflow-y-auto" aria-label="Login history">
+            <ul class="space-y-2 max-h-80 overflow-y-auto" aria-label={$t("account.history.list")}>
               {#each loginHistory as attempt (attempt.id)}
                 <li class="flex items-center gap-3 p-3 bg-surface-overlay rounded-lg">
                   <Badge variant={attempt.success ? "success" : "error"}>
-                    {attempt.success ? "SUCCESS" : "FAILED"}
+                    {attempt.success ? $t("account.history.success") : $t("account.history.failure")}
                   </Badge>
                   <div>
                     <div class="flex items-center gap-2">
@@ -978,7 +1034,7 @@
               class="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
             >
               <RefreshCw class="w-4 h-4" />
-              Refresh
+              {$t("common.refresh")}
             </button>
           {/if}
         {/if}
@@ -993,24 +1049,24 @@
     <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
       <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
         <Lock class="w-5 h-5" />
-        Setup Two-Factor Authentication
+        {$t("account.totp.setupTitle")}
       </h3>
 
       <div class="space-y-4">
         <p class="text-sm text-slate-400">
-          Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.)
+          {$t("account.totp.scan")}
         </p>
 
         {#if qrDataUrl}
           <div class="flex justify-center">
             <div class="bg-white p-2 rounded-lg">
-              <img src={qrDataUrl} alt="QR code for your authenticator app" class="w-48 h-48" />
+              <img src={qrDataUrl} alt={$t("account.totp.qrAlt")} class="w-48 h-48" />
             </div>
           </div>
         {/if}
 
         <div class="text-center">
-          <p class="text-xs text-slate-500 mb-2">Or enter this code manually:</p>
+          <p class="text-xs text-slate-500 mb-2">{$t("account.totp.manual")}</p>
           <div class="flex items-center justify-center gap-2">
             <code class="bg-slate-700 px-3 py-1 rounded font-mono text-sm">
               {totpSetupData.secret}
@@ -1019,19 +1075,19 @@
               type="button"
               on:click={copySecret}
               class="p-1 hover:bg-slate-700 rounded transition-colors"
-              title="Copy to clipboard"
+              title={$t("account.totp.copy")}
             >
               <Copy class="w-4 h-4" />
             </button>
           </div>
           {#if secretCopied}
-            <p class="text-xs text-green-400 mt-1">Copied!</p>
+            <p class="text-xs text-green-400 mt-1">{$t("account.totp.copied")}</p>
           {/if}
         </div>
 
         <div>
           <label for="totpVerify" class="block text-sm font-medium text-slate-400 mb-1">
-            Enter the 6-digit code from your app
+            {$t("account.totp.verifyLabel")}
           </label>
           <input
             type="text"
@@ -1057,7 +1113,7 @@
             on:click={cancelSetup}
             class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
           >
-            Cancel
+            {$t("common.cancel")}
           </button>
           <button
             type="button"
@@ -1065,7 +1121,7 @@
             disabled={totpLoading || totpCode.length !== 6}
             class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors"
           >
-            {totpLoading ? "Verifying..." : "Enable 2FA"}
+            {totpLoading ? $t("account.totp.verifying") : $t("account.totp.enable2fa")}
           </button>
         </div>
       </div>
@@ -1079,18 +1135,17 @@
     <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
       <h3 class="text-lg font-semibold mb-4 flex items-center gap-2 text-red-400">
         <AlertCircle class="w-5 h-5" />
-        Disable Two-Factor Authentication
+        {$t("account.totp.disableTitle")}
       </h3>
 
       <div class="space-y-4">
         <p class="text-sm text-slate-400">
-          This will remove the extra security layer from your account.
-          Enter a code from your authenticator app to confirm.
+          {$t("account.totp.disableHint")}
         </p>
 
         <div>
           <label for="disableCode" class="block text-sm font-medium text-slate-400 mb-1">
-            Authentication Code
+            {$t("account.totp.codeLabel")}
           </label>
           <input
             type="text"
@@ -1116,7 +1171,7 @@
             on:click={cancelDisable}
             class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
           >
-            Cancel
+            {$t("common.cancel")}
           </button>
           <button
             type="button"
@@ -1124,7 +1179,7 @@
             disabled={totpLoading || disableCode.length !== 6}
             class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-800 rounded-lg transition-colors"
           >
-            {totpLoading ? "Disabling..." : "Disable 2FA"}
+            {totpLoading ? $t("account.totp.disabling") : $t("account.totp.disable2fa")}
           </button>
         </div>
       </div>
@@ -1138,86 +1193,86 @@
     <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
       <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
         <Plus class="w-5 h-5" />
-        Add Firewall Rule
+        {$t("account.firewall.addTitle")}
       </h3>
 
       <form on:submit|preventDefault={handleAddRule} class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">Rule Name</label>
+          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.name")}</label>
           <input
             type="text"
             bind:value={newRule.name}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="e.g., Web Server"
+            placeholder={$t("account.firewall.namePlaceholder")}
             required
           />
         </div>
 
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-slate-400 mb-1">Action</label>
+            <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.action")}</label>
             <select
               bind:value={newRule.action}
               class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             >
-              <option value="allow">Allow</option>
-              <option value="deny">Deny</option>
-              <option value="reject">Reject</option>
+              <option value="allow">{$t("account.firewall.allow")}</option>
+              <option value="deny">{$t("account.firewall.deny")}</option>
+              <option value="reject">{$t("account.firewall.reject")}</option>
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-slate-400 mb-1">Direction</label>
+            <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.direction")}</label>
             <select
               bind:value={newRule.direction}
               class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             >
-              <option value="in">Incoming</option>
-              <option value="out">Outgoing</option>
+              <option value="in">{$t("account.firewall.incoming")}</option>
+              <option value="out">{$t("account.firewall.outgoing")}</option>
             </select>
           </div>
         </div>
 
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-slate-400 mb-1">Protocol</label>
+            <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.protocol")}</label>
             <select
               bind:value={newRule.protocol}
               class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             >
-              <option value="tcp">TCP</option>
-              <option value="udp">UDP</option>
-              <option value="any">Any</option>
+              <option value="tcp">{$t("account.firewall.tcp")}</option>
+              <option value="udp">{$t("account.firewall.udp")}</option>
+              <option value="any">{$t("account.firewall.any")}</option>
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-slate-400 mb-1">Port</label>
+            <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.portLabel")}</label>
             <input
               type="text"
               bind:value={newRule.port}
               class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-              placeholder="e.g., 80 or 80:443"
+              placeholder={$t("account.firewall.portPlaceholder")}
               required
             />
           </div>
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">Source IP (optional)</label>
+          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.source")}</label>
           <input
             type="text"
             bind:value={newRule.source}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="e.g., 192.168.1.0/24"
+            placeholder={$t("account.firewall.sourcePlaceholder")}
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">Comment (optional)</label>
+          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.firewall.comment")}</label>
           <input
             type="text"
             bind:value={newRule.comment}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="Description of this rule"
+            placeholder={$t("account.firewall.commentPlaceholder")}
           />
         </div>
 
@@ -1227,14 +1282,14 @@
             on:click={() => showAddRuleModal = false}
             class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
           >
-            Cancel
+            {$t("common.cancel")}
           </button>
           <button
             type="submit"
             disabled={firewallLoading}
             class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors"
           >
-            {firewallLoading ? "Adding..." : "Add Rule"}
+            {firewallLoading ? $t("account.firewall.adding") : $t("account.firewall.addRule")}
           </button>
         </div>
       </form>
@@ -1248,23 +1303,23 @@
     <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
       <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
         <FileKey class="w-5 h-5" />
-        Generate Self-Signed Certificate
+        {$t("account.certs.generateTitle")}
       </h3>
 
       <form on:submit|preventDefault={handleGenerateCert} class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">Domain Name</label>
+          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.domain")}</label>
           <input
             type="text"
             bind:value={newCert.domain}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="e.g., nas.local or 192.168.1.100"
+            placeholder={$t("account.certs.domainPlaceholder")}
             required
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">Validity (days)</label>
+          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.validity")}</label>
           <input
             type="number"
             bind:value={newCert.validity_days}
@@ -1275,23 +1330,23 @@
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">Organization (optional)</label>
+          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.organization")}</label>
           <input
             type="text"
             bind:value={newCert.organization}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="e.g., My Home"
+            placeholder={$t("account.certs.organizationPlaceholder")}
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-slate-400 mb-1">Country Code (optional)</label>
+          <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.country")}</label>
           <input
             type="text"
             bind:value={newCert.country}
             maxlength="2"
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
-            placeholder="e.g., US"
+            placeholder={$t("account.certs.countryPlaceholder")}
           />
         </div>
 
@@ -1301,14 +1356,14 @@
             on:click={() => showGenCertModal = false}
             class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
           >
-            Cancel
+            {$t("common.cancel")}
           </button>
           <button
             type="submit"
             disabled={certLoading}
             class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 rounded-lg transition-colors"
           >
-            {certLoading ? "Generating..." : "Generate"}
+            {certLoading ? $t("account.certs.generating") : $t("account.certs.generate")}
           </button>
         </div>
       </form>
