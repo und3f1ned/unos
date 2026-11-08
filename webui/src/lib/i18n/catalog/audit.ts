@@ -31,7 +31,7 @@ export const en = {
 	'audit.noMatches': 'No entries match the filters',
 	'audit.noMatchesHint': 'Change or clear the filters to see more entries.',
 	// The same with a search: the English names are the words the search finds, and a Russian page
-	// says that it finds actions and resources by them only (ADR-0296).
+	// says that it finds actions and resources by them only (ADR-0298).
 	'audit.noSearchMatchesHint': 'Change or clear the filters to see more entries.',
 	'audit.empty': 'No audit entries yet',
 	'audit.emptyHint': 'Sign-ins and changes by administrators appear here.',

@@ -80,10 +80,15 @@ export async function deleteBackup(filename: string): Promise<{ status: string }
   return api.delete<{ status: string }>(`/backup/${encodeURIComponent(filename)}`);
 }
 
-export function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
+/**
+ * A backup's size in the largest unit that keeps it at least 1, with at most two decimals.
+ * `units` are the page's texts for bytes, kilobytes, megabytes and gigabytes (each 1024 times the
+ * one before), and `locale` writes the number: the page's decimal separator ($intlLocale).
+ */
+export function formatBytes(bytes: number, locale: string, units: readonly string[]): string {
+  if (bytes === 0) return `0 ${units[0]}`;
   const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  const size = (bytes / Math.pow(k, i)).toLocaleString(locale, { maximumFractionDigits: 2, useGrouping: false });
+  return `${size} ${units[i]}`;
 }

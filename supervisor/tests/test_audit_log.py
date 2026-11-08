@@ -781,7 +781,7 @@ AUDIT_PAGE = REPO / "webui" / "src" / "routes" / "audit" / "+page.svelte"
 
 
 def test_the_web_ui_names_every_action_by_words_the_search_finds():
-    """The Audit Log page shows an action by its name in the audit catalog (ADR-0287, ADR-0296):
+    """The Audit Log page shows an action by its name in the audit catalog (ADR-0287, ADR-0298):
     one for every AuditAction, in Russian and in English, where the name is the action with spaces
     for its underscores and a capital (ADR-0237), words that the search of the list finds in the
     action's entries."""
@@ -811,7 +811,7 @@ def _recorded_resource_types() -> set[str]:
 
 def test_the_web_ui_names_every_resource_type_as_the_server_records_it():
     """The Audit Log page shows an entry's resource as its type, by its name in the audit catalog,
-    and its id (ADR-0287, ADR-0296): a name for every type the server records, which in English is
+    and its id (ADR-0287, ADR-0298): a name for every type the server records, which in English is
     the type as recorded, so that the search finds the resource as the English page shows it
     (ADR-0237), and a Russian name."""
     types = key_map(AUDIT_PAGE, "RESOURCE_TYPES")

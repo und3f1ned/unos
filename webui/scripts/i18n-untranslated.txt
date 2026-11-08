@@ -8,18 +8,11 @@
 # they keep the removals of branches that translate other areas apart, so that git merges them.
 
 # dashboard
-src/routes/+page.svelte
-src/lib/components/widgets/ContainersWidget.svelte
-src/lib/components/widgets/QuickActionsWidget.svelte
-src/lib/components/widgets/RecentActivityWidget.svelte
-src/lib/components/widgets/StorageWidget.svelte
-src/lib/components/widgets/SystemStatsWidget.svelte
 
 # storage
 src/routes/storage/+page.svelte
 
 # snapshots
-src/routes/snapshots/+page.svelte
 
 # shares
 src/routes/shares/+page.svelte
@@ -31,21 +24,13 @@ src/lib/components/shares/ShareFormModal.svelte
 src/lib/components/shares/SmbStateBadge.svelte
 
 # files
-src/routes/files/+page.svelte
-src/routes/files/trash/+page.svelte
 
 # containers
 
 # apps
 
 # users
-src/routes/users/+page.svelte
 
 # audit
 
 # system
-src/routes/settings/+page.svelte
-src/routes/system/tabs/BackupTab.svelte
-src/routes/system/tabs/GeneralTab.svelte
-src/routes/system/tabs/SchedulerTab.svelte
-src/routes/system/tabs/UpdateTab.svelte

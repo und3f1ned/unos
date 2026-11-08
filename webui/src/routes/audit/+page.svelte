@@ -63,7 +63,7 @@
 
 	// The server's values, shown by the keys of their texts in the catalog (ADR-0287); a value
 	// without a key shows as it comes. The actions of AuditAction (supervisor/src/audit/schemas.py),
-	// whose English names are the words the search finds (ADR-0296,
+	// whose English names are the words the search finds (ADR-0298,
 	// supervisor/tests/test_audit_log.py), the severities and the types of resource it records.
 	const ACTION_NAMES: Record<string, string> = {
 		login_success: 'audit.action.loginSuccess',

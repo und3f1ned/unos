@@ -322,7 +322,9 @@ and this index, and `make check-fast` runs it.
 | [0287](0287-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
 | [0291](0291-the-app-store-translates-its-own-texts-and-not-the-app-catalog.md) | The App Store gives each category one label and shows the app catalog's texts as the server answers them | proposed | 2026-11-08 |
 | [0295](0295-the-network-tab-keeps-the-values-that-ip-and-ss-print-in-its-tables-as-they-come.md) | The Network tab keeps the values that ip and ss print in its tables as they come in every language | accepted | 2026-11-08 |
-| [0296](0296-a-russian-audit-log-names-actions-in-russian-and-its-search-finds-english-words.md) | A Russian Audit Log page names actions and resources in Russian, and its search still finds them by their English words | proposed | 2026-11-08 |
+| [0296](0296-a-sentence-around-a-name-a-path-or-a-link-is-translated-in-parts-and-names-on-the-disk-stay.md) | A sentence around a name, a path or a link is translated in parts, and names on the disk stay as they are | accepted | 2026-11-08 |
+| [0297](0297-the-dashboard-and-files-take-the-units-after-a-number-from-their-catalogs.md) | The dashboard and Files take the units they write after a number from their catalogs, and numbers keep their decimal point | accepted | 2026-11-08 |
+| [0298](0298-a-russian-audit-log-names-actions-in-russian-and-its-search-finds-english-words.md) | A Russian Audit Log page names actions and resources in Russian, and its search still finds them by their English words | proposed | 2026-11-08 |
 
 ## Deploy
 

@@ -417,7 +417,7 @@ test.describe('Audit log in Russian', () => {
     await expect(page.getByRole('status')).toHaveText('Показано 100 из 101 записи');
   });
 
-  // ADR-0296 (proposed): the server's search finds an action by its English words, also on a
+  // ADR-0298 (proposed): the server's search finds an action by its English words, also on a
   // Russian page, which says so when a search finds nothing. Against the real audit log.
   test('the search finds an action by its English words and says so', async ({ authenticatedPage: page, request }) => {
     const stranger = `e2e_ru_nobody_${RUN}`;
