@@ -17,7 +17,7 @@ PYTEST_ARGS ?=
 # The repository-convention tests: make test-fast and the pre-commit hook. test_repo_tooling.py
 # also scans the repository's text files for secrets.
 TEST_FAST = tests/test_adrs.py tests/test_feature_list.py tests/test_agent_guard.py \
-	tests/test_repo_tooling.py tests/test_dev_scripts.py tests/test_standin.py
+	tests/test_repo_tooling.py tests/test_dev_scripts.py tests/test_dev_scenarios.py tests/test_standin.py
 # make smoke: existing backend tests that start the app and serve requests through it, in a few
 # seconds: the startup and /api/v1/health, the first-run setup, a login through the proxy layer
 # and the refusal of anonymous requests. The baseline of make setup and of a session.

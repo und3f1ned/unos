@@ -33,11 +33,17 @@ One shared board. It runs from an SD card that wears with every write, and its e
 vendor's firmware and is never written, so every write counts (ADR-0214, ADR-0225).
 
 - Every action goes through `scripts/dev/`, with the settings of `dev.env`: the deploy-device
-  skill for deploys, the device-checks skill for checks. `deploy.sh`, `linux-tests.sh` and
-  `ipv6-filter.sh` (install, remove) hold the device lock `/run/unos-dev.lock` (ADR-0210). They
-  and `check.sh` print
+  skill for deploys, the device-checks skill for checks. `deploy.sh`, `linux-tests.sh`,
+  `ipv6-filter.sh` (install, remove) and `scenario.sh` hold the device lock `/run/unos-dev.lock`
+  (ADR-0210). They and `check.sh` print
   `SD writes <label>: <MiB>`; `ssh.sh`, `api.py` and `bin/testparm` print none, so wrap them in
   `scripts/dev/sd.sh measure <label> -- ...`. The report carries those numbers.
+- The scenario checks (`scripts/dev/scenario.sh <area>`, ADR-0304) run an area's user scenario
+  through the API and on the host with a temporary user, share, volume and folders named
+  `unoscheck<6 hex digits>` and two backups, remove them again and compare the device with how
+  they found it. They change the device for their duration, so they run on the owner's request;
+  the feature-pass skill names the check of each host-level entry, and after a reboot
+  (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table lists.
 - A linked worktree without a `dev.env` of its own uses the main checkout's (`scripts/dev/env.sh`),
   and `tmp/dev/` is the main checkout's too (ADR-0223). Never create or fill in another `dev.env`:
   its passwords are the owner's (ADR-0212, ADR-0024).

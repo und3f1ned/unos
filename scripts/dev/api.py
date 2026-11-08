@@ -30,15 +30,19 @@ with such a KEY; the user part of URLs (user:password@, token@); JWTs; and the v
 dev.env's secrets wherever they appear. Exit status: 0 for a 2xx answer, 1 for another HTTP
 status, 2 for a usage error or when the device could not be asked.
 
-Importable: DeviceApi().get("/system/stats").json(); also post, put, patch, delete, request.
+Importable: DeviceApi().get("/system/stats").json(); also post, put, patch, delete, request, and
+upload, which sends a file as the form field "file" (multipart/form-data, as the web UI's uploads
+do; the relay gets its bytes in base64 on standard input).
 Standard library only; Python 3.9 or later.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import re
+import secrets
 import shlex
 import subprocess
 import sys
@@ -82,7 +86,7 @@ TEXT_PAIR = re.compile(
 # input and writes {"status", "body"} or {"error"} as JSON on standard output. The request
 # names the API ("base", only a loopback address) and the token cache ("cache").
 RELAY = r'''
-import json, os, ssl, stat, sys, tempfile, urllib.error, urllib.parse, urllib.request
+import base64, json, os, ssl, stat, sys, tempfile, urllib.error, urllib.parse, urllib.request
 req = json.load(sys.stdin)
 cache = req["cache"]
 base = req.get("base") or "https://127.0.0.1/api/v1"
@@ -110,14 +114,18 @@ ctx.verify_mode = ssl.CERT_NONE
 # No proxy, whatever the environment says: the login and the token stay on the device.
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=ctx))
 
-def call(method, path, params=None, body=None, has_body=False, token=None):
+# A body that is not JSON (an upload's form) comes in base64, with its content type.
+raw = base64.b64decode(req["data"]) if req.get("data") is not None else None
+
+def call(method, path, params=None, body=None, has_body=False, token=None, data=None, content_type=None):
     url = base + path
     if params:
         url += "?" + urllib.parse.urlencode(params, doseq=True)
-    data = json.dumps(body).encode() if has_body else None
+    if data is None and has_body:
+        data = json.dumps(body).encode()
     headers = {"Accept": "application/json"}
     if data is not None:
-        headers["Content-Type"] = "application/json"
+        headers["Content-Type"] = content_type or "application/json"
     if token:
         headers["Authorization"] = "Bearer " + token
     r = urllib.request.Request(url, data=data, method=method, headers=headers)
@@ -192,9 +200,10 @@ if req.get("auth"):
     if token is None:
         token, fresh = login(), True
 args = (req["method"], req["path"], req.get("params"), req.get("body"), req.get("has_body", False))
-status, body = call(*args, token=token)
+extra = {"data": raw, "content_type": req.get("content_type")}
+status, body = call(*args, token=token, **extra)
 if status == 401 and req.get("auth") and not fresh:
-    status, body = call(*args, token=login())
+    status, body = call(*args, token=login(), **extra)
 done(status=status, body=body)
 '''
 
@@ -350,7 +359,10 @@ class DeviceApi:
         json_body: Any = None,
         params: dict[str, Any] | None = None,
         auth: bool = True,
+        data: bytes | None = None,
+        content_type: str | None = None,
     ) -> Answer:
+        """data and content_type: a body that is not JSON (it replaces json_body)."""
         payload: dict[str, Any] = {
             "method": method.upper(),
             "path": api_path(path),
@@ -359,6 +371,9 @@ class DeviceApi:
             "body": json_body,
             "auth": auth,
         }
+        if data is not None:
+            payload["data"] = base64.b64encode(data).decode()
+            payload["content_type"] = content_type
         password = self.settings.get("UNOS_DEV_ADMIN_PASSWORD", "")
         if auth and password:
             payload["login"] = {"username": self.settings.get("UNOS_DEV_ADMIN_USER") or "admin", "password": password}
@@ -379,6 +394,17 @@ class DeviceApi:
 
     def delete(self, path: str, params: dict[str, Any] | None = None) -> Answer:
         return self.request("DELETE", path, params=params)
+
+    def upload(self, path: str, params: dict[str, Any] | None, filename: str, content: bytes) -> Answer:
+        """POST the file CONTENT, named FILENAME, as the form field "file" (multipart/form-data)."""
+        if not re.fullmatch(r"[^\x00-\x1f\"\\/]+", filename):
+            raise ValueError(f"not a plain file name: {filename!r}")
+        boundary = "unos-" + secrets.token_hex(16)
+        head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+                "Content-Type: application/octet-stream\r\n\r\n")
+        body = head.encode() + content + f"\r\n--{boundary}--\r\n".encode()
+        return self.request("POST", path, params=params, data=body,
+                            content_type=f"multipart/form-data; boundary={boundary}")
 
     def forget_token(self) -> None:
         self._relay({"forget": True})

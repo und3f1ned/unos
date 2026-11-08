@@ -36,7 +36,8 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 TARGETS = ("help", "setup", "check", "check-fast", "lint", "test", "test-fast", "smoke", "frontend", "e2e-local",
            "audit")
 TEST_FAST = ("tests/test_adrs.py", "tests/test_feature_list.py", "tests/test_agent_guard.py",
-             "tests/test_repo_tooling.py", "tests/test_dev_scripts.py", "tests/test_standin.py")
+             "tests/test_repo_tooling.py", "tests/test_dev_scripts.py", "tests/test_dev_scenarios.py",
+             "tests/test_standin.py")
 # make smoke: the startup and /api/v1/health, the first-run setup, a login, anonymous requests.
 SMOKE = ("tests/test_lifespan.py", "tests/test_auth.py::TestFirstRunSetup", "tests/test_authz.py::TestRealClientAddress",
          "tests/test_authz.py::TestRouteMatrix::test_anonymous_requests_are_rejected")

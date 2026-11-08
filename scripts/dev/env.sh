@@ -262,7 +262,7 @@ timeout "$3" cat > /dev/null
 rm -f "$1.owner"'
 
 # Release: end the session's standard input, so that the device side removes the owner file
-# and exits; give it a few seconds, then end the session.
+# and exits; give it a few seconds, then end the session (with SIGKILL: it ignores HUP and TERM).
 dev__unlock() {
     local i
     exec 8>&-
@@ -270,7 +270,7 @@ dev__unlock() {
         kill -0 "$1" 2>/dev/null || break
         sleep 0.5
     done
-    kill "$1" 2>/dev/null
+    kill -KILL "$1" 2>/dev/null
     exec 7<&-
 }
 
@@ -284,8 +284,12 @@ dev_lock() {
     fi
     dir=$(mktemp -d "${TMPDIR:-/tmp}/unos-dev-lock.XXXXXX") || dev_die "mktemp failed"
     mkfifo "$dir/in" "$dir/out" || dev_die "mkfifo failed"
-    dev_ssh "unshare --mount --propagation private bash -c $(dev_quote "$dev__lock_script") unos-dev-lock $(dev_quote "$UNOS_DEV_LOCK" \
-        "$UNOS_DEV_LOCK_WAIT" "$UNOS_DEV_LOCK_MAX")" < "$dir/in" > "$dir/out" 2>&1 &
+    # The session ignores HUP and TERM (SIGINT a background job ignores anyway, and ssh keeps a
+    # signal that it starts with ignored): a closed terminal or a TERM to the script's process
+    # group must not release the lock while the script still works, as scenario.sh's checks do
+    # while they clean up; the script's exit handler releases it (dev__unlock).
+    (trap '' HUP TERM; exec "$UNOS_DEV_DIR/ssh.sh" "unshare --mount --propagation private bash -c $(dev_quote "$dev__lock_script") unos-dev-lock $(dev_quote "$UNOS_DEV_LOCK" \
+        "$UNOS_DEV_LOCK_WAIT" "$UNOS_DEV_LOCK_MAX")") < "$dir/in" > "$dir/out" 2>&1 &
     pid=$!
     exec 8> "$dir/in" 7< "$dir/out"
     rm -rf "$dir"
