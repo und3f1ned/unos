@@ -233,8 +233,9 @@ manager, encrypted backup uploads, health checks, CI checks).
 - An emergency runbook (`docs/RECOVERY.md`) that reaches a pool's data from
   another Linux machine, and `deploy/reset-admin.sh`, which resets the
   administrator's password and two-factor authentication from the host.
-- The web interface in Russian: Language on the Account page. The frame,
-  sign-in, setup and Account pages are translated; the other pages follow.
+- The web interface in Russian: Language on the Account page switches every
+  page between English and Russian, with Russian dates, numbers and plural
+  forms. Messages from the server stay in English.
 - File manager: Delete moves items into a trash of their pool or volume
   (`.unos-trash`); the Trash page restores them, deletes them for good or
   empties the trash, and items deleted 30 days ago go by themselves. Delete for
