@@ -29,7 +29,9 @@
 <div class="alert {variantClasses[variant]} {$$props.class || ''}">
 	<div class="flex items-start gap-3">
 		<Icon class="w-5 h-5 flex-shrink-0 mt-0.5" />
-		<div class="flex-1">
+		<!-- A long word, such as a file's name, breaks: on a phone it would push the alert, and
+		     its button, beyond the screen (ADR-0302). -->
+		<div class="flex-1 min-w-0 break-words">
 			{#if title}
 				<p class="font-medium mb-1">{title}</p>
 			{/if}

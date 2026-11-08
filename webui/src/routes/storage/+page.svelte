@@ -823,7 +823,7 @@
 			{:else if disks.length === 0}
 				<p class="text-muted">{$t('storage.disks.none')}</p>
 			{:else}
-				<div class="overflow-x-auto">
+				<div class="table-frame">
 					<table class="table">
 						<thead class="table-header">
 							<tr>
@@ -949,7 +949,7 @@
 						{@const scrubStatus = scrubStatuses[pool.name]}
 						{@const health = healthBadge(pool)}
 						<div class="card-nested">
-							<div class="flex items-center justify-between mb-2 gap-2">
+							<div class="flex flex-wrap items-center justify-between mb-2 gap-2">
 								<div class="flex flex-wrap items-center gap-2">
 									<h3 class="font-semibold">{pool.name}</h3>
 									<Badge variant={health.variant}>{health.label}</Badge>
@@ -961,7 +961,7 @@
 										<Badge variant="warning">{$t('storage.pool.inFstab')}</Badge>
 									{/if}
 								</div>
-								<div class="flex items-center gap-2">
+								<div class="flex flex-wrap items-center gap-2">
 									{#if pool.mounted}
 										{#if scrubStatus?.status === 'running'}
 											<Button
@@ -1047,11 +1047,11 @@
 								</div>
 								<div>
 									<span class="text-secondary">{$t('storage.pool.devices')}</span>
-									<span class="ml-2 mono-xs">{pool.devices.join(', ') || '-'}</span>
+									<span class="ml-2 mono-xs break-words">{pool.devices.join(', ') || '-'}</span>
 								</div>
 								<div>
 									<span class="text-secondary">{$t('storage.pool.mountpoint')}</span>
-									<span class="ml-2 mono-xs"
+									<span class="ml-2 mono-xs break-words"
 										>{pool.mounted ? pool.mountpoint || '-' : $t('storage.pool.notMounted')}</span
 									>
 								</div>

@@ -2837,10 +2837,15 @@
         "On a 375 px wide screen every page is usable without horizontal scrolling",
         "The navigation folds into a menu"
       ],
-      "passes": false,
+      "passes": true,
+      "verified_by": [
+        "webui/tests/mobile-layout.spec.ts"
+      ],
       "adr": [
-        "ADR-0023"
-      ]
+        "ADR-0023",
+        "ADR-0302"
+      ],
+      "notes": "webui/tests/mobile-layout.spec.ts checks both steps on the local stand-in (ADR-0302). Step 1, at 375 x 812 in English and in Russian: the first view of every page of the navigation, of the views behind the tabs of Shares, Containers, the App Store and System > Network and of every tab of System, the File Browser's New Folder row and a folder of 40 entries, the alert of a failed download on System > Backup, the sign-in history on System > Security, 16 dialogs, a regular user's Dashboard and Account page, sign-in and first run; on each, neither the document nor an element scrolls sideways except a table inside its table-frame, nothing is cut off at the side, and an open dialog's overlay scrolls no further than the dialog. Each dialog shows its title as it opens and its end (its last button, or the end of its content) once scrolled to as a finger can, and the long folder its last entry, there and at 667 x 375, a phone held sideways (the folder also at 768 x 1024 and 1280 x 720). Step 2: the header bar's menu button opens the drawer with every link, the user and Logout, also reachable at 667 x 375; a click beside it (also one that only the backdrop receives, as a tap on iOS), Escape, a link, Tab out of it, Back and Back within one page close it; a regular user's menu; no menu from 768 px up. Not checked: the other states of the pages, and a phone's own browser (the spec drives Chromium). No step changes the host: no device check is needed."
     },
     {
       "id": "webui.translations",

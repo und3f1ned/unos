@@ -208,7 +208,7 @@
 				{#if status.shares.length === 0}
 					<EmptyState icon={FolderOpen} title={$t('account.smb.noShares')} />
 				{:else}
-					<div class="overflow-x-auto">
+					<div class="table-frame">
 						<table class="table">
 							<thead class="table-header">
 								<tr>

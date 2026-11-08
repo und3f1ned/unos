@@ -64,20 +64,22 @@
   }
 </script>
 
-<div class="flex h-full -m-6">
+<!-- From md the tabs are a sidebar beside the tab, which scrolls on its own; below md they wrap
+     above it, and the page scrolls as a whole (ADR-0302). -->
+<div class="flex flex-col md:flex-row md:h-full -m-4 md:-m-6">
   <!-- Sidebar tabs -->
-  <div class="w-56 bg-slate-800 border-r border-slate-700 p-3 overflow-y-auto">
+  <div class="md:w-56 md:shrink-0 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 p-3 md:overflow-y-auto">
     <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-2">{$isAdmin ? $t("system.heading.admin") : $t("system.heading.user")}</h2>
-    <nav class="space-y-1">
+    <nav class="flex flex-wrap gap-1 md:block md:space-y-1">
       {#each visibleTabs as tab}
         <button
           on:click={() => setTab(tab.id)}
-          class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}"
+          class="md:w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors {activeTab === tab.id ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700'}"
         >
           <svelte:component this={tab.icon} class="w-4 h-4" />
           <span>{tab.label}</span>
           {#if activeTab === tab.id}
-            <ChevronRight class="w-4 h-4 ml-auto" />
+            <ChevronRight class="w-4 h-4 ml-auto hidden md:block" />
           {/if}
         </button>
       {/each}
@@ -85,7 +87,7 @@
   </div>
 
   <!-- Content area -->
-  <div class="flex-1 overflow-auto p-6">
+  <div class="min-w-0 md:flex-1 md:overflow-auto p-4 md:p-6">
     {#if activeTab === "general"}
       {#await import("./tabs/GeneralTab.svelte") then { default: GeneralTab }}
         <GeneralTab />

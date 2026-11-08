@@ -170,9 +170,9 @@
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between">
+  <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 class="text-xl font-bold">{$t("backup.title")}</h2>
-    <div class="flex gap-2">
+    <div class="flex flex-wrap gap-2">
       <!-- Encrypted backups (.tar.gz.enc) are checked with their passphrase when restored. -->
       <input
         type="file"
@@ -231,12 +231,12 @@
     {:else}
       <div class="space-y-2">
         {#each backups as backup}
-          <div class="flex items-center justify-between p-3 bg-slate-700 rounded-lg">
-            <div class="flex items-center gap-3">
-              <Archive class="w-8 h-8 text-blue-400" />
-              <div>
-                <p class="font-medium text-sm">{backup.filename}</p>
-                <p class="text-xs text-slate-400 flex items-center gap-2">
+          <div class="flex items-center justify-between gap-2 p-3 bg-slate-700 rounded-lg">
+            <div class="flex items-center gap-3 min-w-0">
+              <Archive class="w-8 h-8 text-blue-400 shrink-0" />
+              <div class="min-w-0">
+                <p class="font-medium text-sm break-all">{backup.filename}</p>
+                <p class="text-xs text-slate-400 flex flex-wrap items-center gap-x-2">
                   <Clock class="w-3 h-3" />
                   {new Date(backup.created).toLocaleString($intlLocale)}
                   <span class="text-slate-500">|</span>
@@ -252,7 +252,7 @@
                 </p>
               </div>
             </div>
-            <div class="flex items-center gap-1">
+            <div class="flex shrink-0 items-center gap-1">
               <button
                 on:click={() => openRestoreModal(backup)}
                 class="p-2 text-green-400 hover:bg-slate-600 rounded"
@@ -285,10 +285,11 @@
   </div>
 </div>
 
-<!-- Restore Confirmation Modal -->
+<!-- Restore Confirmation Modal. Modal's overlay (ADR-0302): taller than the window, the dialog
+     scrolls with it, so that its buttons stay reachable; my-auto centers it while it fits. -->
 {#if showRestoreModal && restoreTarget}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4" role="dialog" aria-modal="true" aria-label={$t("backup.dialog.label")}>
+  <div class="modal-overlay items-start overflow-y-auto p-4">
+    <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto" role="dialog" aria-modal="true" aria-label={$t("backup.dialog.label")}>
       {#if restoreResult}
         <!-- Result view -->
         <div class="text-center">

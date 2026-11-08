@@ -452,15 +452,16 @@
 				{#each installed as app}
 					{@const template = catalog.find((c) => c.id === app.template_id)}
 					<Card>
-						<div class="flex items-center gap-4">
+						<!-- On a narrow screen the buttons wrap below the app (ADR-0302). -->
+						<div class="flex flex-wrap items-center gap-4">
 							<div
 								class="w-14 h-14 rounded-xl bg-surface-muted flex items-center justify-center text-3xl flex-shrink-0"
 							>
 								{template?.icon || '📦'}
 							</div>
 							<div class="flex-1 min-w-0">
-								<div class="flex items-center gap-2 mb-1">
-									<h3 class="font-semibold text-lg">{app.name}</h3>
+								<div class="flex flex-wrap items-center gap-2 mb-1">
+									<h3 class="font-semibold text-lg break-all">{app.name}</h3>
 									<Badge variant={app.status === 'running' ? 'success' : 'neutral'}>
 										{app.status === 'running' ? $t('apps.state.running') : $t('apps.state.stopped')}
 									</Badge>
@@ -485,7 +486,7 @@
 									</p>
 								{/if}
 							</div>
-							<div class="flex items-center gap-2">
+							<div class="flex flex-wrap items-center gap-2">
 								{#if getWebUrl(app)}
 									<a
 										href={getWebUrl(app)}

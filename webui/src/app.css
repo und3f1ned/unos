@@ -14,8 +14,9 @@
 		@apply space-y-6;
 	}
 
+	/* A title and its buttons: on a narrow screen the buttons wrap below the title (ADR-0302). */
 	.page-header {
-		@apply flex items-center justify-between;
+		@apply flex flex-wrap items-center justify-between gap-x-4 gap-y-3;
 	}
 
 	.page-title {
@@ -34,7 +35,7 @@
 	}
 
 	.card-header {
-		@apply flex items-center justify-between mb-4;
+		@apply flex flex-wrap items-center justify-between gap-2 mb-4;
 	}
 
 	.card-title {
@@ -319,6 +320,13 @@
 
 	.table-row:last-child {
 		@apply border-b-0;
+	}
+
+	/* The frame of a table that can be wider than the screen: the table scrolls sideways in it,
+	   the page never does (ADR-0302). Relative, so that what the table places absolutely (the
+	   texts for screen readers of its buttons) stays inside the frame too. */
+	.table-frame {
+		@apply relative overflow-x-auto;
 	}
 
 	/* ----------------------------------------

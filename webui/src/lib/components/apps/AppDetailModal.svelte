@@ -444,8 +444,8 @@
 			<AppStorageWarning app={installedApp} class="mb-4" />
 		{/if}
 
-		<!-- Tabs -->
-		<div class="flex border-b border-border -mx-6 px-6 mb-4">
+		<!-- Tabs: they wrap on a narrow screen (ADR-0302) -->
+		<div class="flex flex-wrap border-b border-border -mx-6 px-6 mb-4">
 			<button
 				class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors {activeTab ===
 				'overview'
@@ -498,11 +498,11 @@
 		<div class="min-h-[200px]">
 			{#if activeTab === 'overview'}
 				<div class="space-y-4">
-					<!-- Docker Image -->
+					<!-- Docker Image: on a phone it goes below its label and breaks (ADR-0302). -->
 					<div class="card-nested">
-						<div class="flex items-center justify-between">
+						<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
 							<span class="text-secondary text-sm">{$t('apps.detail.image')}</span>
-							<code class="mono text-sm">{app.image}</code>
+							<code class="mono text-sm min-w-0 break-all">{app.image}</code>
 						</div>
 					</div>
 

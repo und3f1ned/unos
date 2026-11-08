@@ -217,7 +217,7 @@
 <div class="page-container">
 	<div class="page-header">
 		<h1 class="page-title">{$t('snapshots.title')}</h1>
-		<div class="flex items-center gap-2">
+		<div class="flex flex-wrap items-center gap-2">
 			<Button icon={Plus} disabled={!selected} on:click={openCreate}>{$t('snapshots.create')}</Button>
 			<Button variant="secondary" size="icon" disabled={busy} on:click={refresh}>
 				<RefreshCw class="w-4 h-4 {busy ? 'animate-spin' : ''}" />
@@ -285,7 +285,7 @@
 					description={$t('snapshots.emptyHint')}
 				/>
 			{:else}
-				<div class="overflow-x-auto">
+				<div class="table-frame">
 					<table class="table" aria-label={$t('snapshots.list')}>
 						<thead class="table-header">
 							<tr>
