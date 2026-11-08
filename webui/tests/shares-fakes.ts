@@ -48,6 +48,15 @@ export const nfsExportedAlready = (path: string) => `${path} is exported by UNOS
 export const nfsNotExported = (path: string) => `UNOS does not export ${path}`;
 export const nfsForeignExport = (path: string, file: string, line: number) =>
   `The export of ${path} is in ${file}, line ${line}, which UNOS does not change: edit that file on the NAS`;
+/** The refusal of an add or a delete while an export file has a line that exportfs cannot read. */
+export const nfsFileUnreadable = (file: string, line: number) =>
+  `${file}, line ${line} cannot be read by exportfs, which then reads no further in that file: after a change it would stop exporting what follows the line. Correct or remove the line on the NAS first`;
+/** How GET /shares/nfs-status names a line that exportfs cannot read. */
+export const nfsFileProblem = (file: string, line: number, message: string) =>
+  `${file}, line ${line}: ${message}; exportfs reads no further in this file, and UNOS adds and deletes no export until the line is corrected`;
+/** How GET /shares/nfs-status names an export of UNOS below a folder that other accounts can change. */
+export const nfsUnsafeExport = (path: string, folder: string, detail: string, commands: string) =>
+  `NFS export ${path}: ${folder} can be changed by other accounts (${detail}), so they can put a symbolic link in place of the exported folder or a folder above it, and exportfs would export the link's target. Run ${commands} on the NAS.`;
 /** The export file of UNOS, which it alone changes; its first two lines are a comment. */
 export const NFS_UNOS_FILE = '/etc/exports.d/unos.exports';
 
@@ -146,6 +155,13 @@ export interface FakeNfsStatus {
   problems: string[];
 }
 
+/** A line of an export file that exportfs cannot read. */
+export interface FakeNfsUnreadable {
+  file: string;
+  line: number;
+  message: string;
+}
+
 export interface SharePathInfo {
   path: string;
   label: string;
@@ -194,7 +210,10 @@ export interface FakeSmbApi {
   mySmb: FakeMySmb;
   /** The entries of the host's export files, as GET /shares/nfs answers them. */
   nfsExports: FakeNfsExport[];
+  /** The status; GET /shares/nfs-status lists the lines of nfsUnreadable before its problems. */
   nfsStatus: FakeNfsStatus;
+  /** Lines that exportfs cannot read: while there is one, adds and deletes are refused. */
+  nfsUnreadable: FakeNfsUnreadable[];
   /** Warnings of the answers to export changes: what exportfs reported. */
   nfsWarnings: string[];
   /** The current password and the 2FA code POST /auth/me/smb/enable accepts. */
@@ -363,6 +382,7 @@ export interface FakeSmbOptions {
   mySmb?: FakeMySmb;
   nfsExports?: FakeNfsExport[];
   nfsStatus?: Partial<FakeNfsStatus>;
+  nfsUnreadable?: FakeNfsUnreadable[];
 }
 
 const OK_STATUS: FakeServiceStatus = {
@@ -423,6 +443,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
     mySmb: options.mySmb ?? { account: smbStatus('unavailable', 'admin'), totp_required: false, shares: [] },
     nfsExports: options.nfsExports ?? [],
     nfsStatus: { server_missing: false, problems: [], ...options.nfsStatus },
+    nfsUnreadable: options.nfsUnreadable ?? [],
     nfsWarnings: [],
     myPassword: 'e2e-Current-Password-1',
     myTotpCode: '123456',
@@ -459,14 +480,20 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
     // ---- Shares ----
     if (path === '/shares/paths' && method === 'GET') return ok(fake.paths);
     if (path === '/shares/nfs' && method === 'GET') return ok(fake.nfsExports);
-    if (path === '/shares/nfs-status' && method === 'GET') return ok(fake.nfsStatus);
+    if (path === '/shares/nfs-status' && method === 'GET') {
+      const unreadable = fake.nfsUnreadable.map((u) => nfsFileProblem(u.file, u.line, u.message));
+      return ok({ ...fake.nfsStatus, problems: [...unreadable, ...fake.nfsStatus.problems] });
+    }
     if (path === '/shares/nfs' && method === 'POST') {
-      // As shares/nfs.py: the client first, then the folder; one export per folder in the file of UNOS.
+      // As shares/nfs.py: the client first, then the folder, then the export files: no change while
+      // one has a line that exportfs cannot read, and one export per folder in the file of UNOS.
       const exportPath = String(data.path);
       const client = String(data.client);
       const problem = nfsClientProblem(client);
       if (problem) return detail(400, problem);
       if (exportPath.slice(POOLS.length + 1).split('/').length < 2) return detail(400, NFS_POOL_ROOT);
+      const [unreadable] = fake.nfsUnreadable;
+      if (unreadable) return detail(409, nfsFileUnreadable(unreadable.file, unreadable.line));
       if (fake.nfsExports.some((e) => e.managed && e.path === exportPath)) {
         return detail(409, nfsExportedAlready(exportPath));
       }
@@ -486,6 +513,8 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
           ? detail(409, nfsForeignExport(target, other.file, other.line))
           : detail(404, nfsNotExported(target));
       }
+      const [unreadable] = fake.nfsUnreadable;
+      if (unreadable) return detail(409, nfsFileUnreadable(unreadable.file, unreadable.line));
       fake.nfsExports = fake.nfsExports.filter((e) => e !== mine);
       return ok({ status: 'deleted', warnings: [...fake.nfsWarnings] });
     }

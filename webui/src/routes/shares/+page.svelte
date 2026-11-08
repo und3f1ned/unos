@@ -453,7 +453,9 @@
 					</Alert>
 				{/if}
 				{#if nfsStatus.problems.length > 0}
-					<Alert variant="error" title="exportfs cannot read these lines">
+					<!-- Lines that exportfs cannot read, and exports of UNOS below folders that other
+					     accounts can change: each text names the file or the folder. -->
+					<Alert variant="error">
 						{#each nfsStatus.problems as problem}
 							<p>{problem}</p>
 						{/each}
@@ -479,7 +481,9 @@
 					/>
 				{:else}
 					<ul class="space-y-2" aria-label="NFS exports">
-						{#each nfsExports as exp (`${exp.file}:${exp.line}`)}
+						<!-- Not keyed: two exports can start on the same line of a file, and nothing
+						     else of an entry is unique. -->
+						{#each nfsExports as exp}
 							<li class="card-nested flex items-start justify-between gap-2">
 								<div class="min-w-0 space-y-1">
 									<p class="mono break-all">{exp.path}</p>

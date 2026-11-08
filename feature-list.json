@@ -1396,7 +1396,7 @@
         "ADR-0262",
         "ADR-0263"
       ],
-      "notes": "Built: UNOS writes its exports into /etc/exports.d/unos.exports on the host and runs exportfs -ra there through src/host.py; the NFS tab exports an existing folder of a managed pool to one address or network of the local network, read-only or read-write, and lists every export of every export file (ADR-0261, ADR-0262, ADR-0263). test_nfs.py proves the file's content byte for byte, the exportfs run, the refusals and that no other file is written; nfs-exports.spec.ts the user flow against route fakes. Open, the device check and its re-check after a reboot (ADR-0018), once the owner installed nfs-kernel-server (install.sh does not, ADR-0261): add an export of a folder of the pool data for the workstation's network; on the host `cat /etc/exports.d/unos.exports` and `exportfs -v` show it with mp=/mnt/pools/data; the workstation mounts it, can write with rw and cannot with ro, and its root is squashed; a line written by hand into /etc/exports stays byte for byte, and GET /shares/nfs lists it as `exportfs -v` shows it; Delete removes the line and `exportfs -v` no longer lists the folder; after a reboot the export is back once the pool is mounted; the SD MiB of the add, the delete and the reboot."
+      "notes": "Built: UNOS writes its exports into /etc/exports.d/unos.exports on the host and runs exportfs -ra there through src/host.py; the NFS tab exports an existing folder of a managed pool to one address or network of the local network, read-only or read-write, and lists every export of every export file (ADR-0261, ADR-0262, ADR-0263). test_nfs.py proves the file's content byte for byte, the exportfs run, the refusals and that no other file is written; nfs-exports.spec.ts the user flow against route fakes. Since the review: no add or delete while an export file has a line that exportfs cannot read (its exportfs -ra would end the exports after it); the status names exports of UNOS below folders that other accounts can change; exportfs is in OPTIONAL_HOST_TOOLS, so the startup check leaves it out. Open, the device check and its re-check after a reboot (ADR-0018), once the owner installed nfs-kernel-server (install.sh does not, ADR-0261): add an export of a folder of the pool data for the workstation's network; on the host `cat /etc/exports.d/unos.exports` and `exportfs -v` show it with mp=/mnt/pools/data; the workstation mounts it, can write with rw and cannot with ro, and its root is squashed; a line written by hand into /etc/exports stays byte for byte, and GET /shares/nfs lists it as `exportfs -v` shows it; Delete removes the line and `exportfs -v` no longer lists the folder; after a reboot the export is back once the pool is mounted; the SD MiB of the add, the delete and the reboot."
     },
     {
       "id": "shares.restore-keeps-smb-with-proof",
@@ -1688,7 +1688,7 @@
         "Each line is read as exportfs reads it, or reported as unreadable and left in the file unchanged",
         "Adding or removing an export changes only the lines that UNOS wrote"
       ],
-      "passes": true,
+      "passes": false,
       "adr": [
         "ADR-0175",
         "ADR-0261"
@@ -1696,7 +1696,7 @@
       "verified_by": [
         "supervisor/tests/test_nfs.py"
       ],
-      "notes": "exports.py ports the reader of nfs-utils 2.8 (support/nfs/xio.c, getexportent and parseopts of support/nfs/exports.c). test_nfs.py gives it every line form, checks where exportfs stops reading a file, and checks that an add or a delete changes only the lines of UNOS's own file and no other file. The device check of shares.nfs-exports compares GET /shares/nfs with the host's exportfs -v."
+      "notes": "Built: exports.py ports the reader of nfs-utils 2.8 (support/nfs/xio.c, getexportent and parseopts of support/nfs/exports.c). test_nfs.py gives it every line form and checks where exportfs stops reading a file; with the fake host it checks that an add or a delete changes only the lines that UNOS wrote, those exactly in its form (a line written by hand into UNOS's file is listed but never deleted), keeps every other byte, and changes nothing while a file has a line that exportfs cannot read (ADR-0261). Not passing: step 2 is checked only against the port's own expectations, and step 3 writes a host file, a host-level change (ADR-0018); the real sh, od and atomic write ran only on macOS. Open, on the device after the owner installed nfs-kernel-server and deployed: GET /shares/nfs compared with `exportfs -v` for hand-written lines of /etc/exports and of /etc/exports.d (continuations, quotes, several clients, '-' options), and a line that exportfs cannot read named with its file and line; an add and a delete keep every other line of /etc/exports.d/unos.exports byte for byte (sha256 of the file without UNOS's line, before and after), the host's dash and GNU od included; then the same after a reboot."
     },
     {
       "id": "apps.install-on-a-pool",

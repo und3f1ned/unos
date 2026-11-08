@@ -5,23 +5,28 @@ file ``*.exports`` of the directory beside it (/etc/exports.d), each on its own:
 cannot read ends the reading of its file, and the other files are still read. UNOS writes only
 its own file in that directory, /etc/exports.d/unos.exports, and only its own lines there: an add
 appends one line, a delete removes the lines of that export, and every other line of every file
-stays as it is. shares/exports.py reads the files as exportfs reads them.
+stays as it is. A line of UNOS's is one exactly as UNOS writes it (below), alone on its line; a
+line written by hand into its file is the owner's, as are the other files. shares/exports.py
+reads the files as exportfs reads them.
 
 The supervisor runs in a container: the files are read and written, and exportfs runs, on the
 host through src/host.py (ADR-0020). One host command reads every file, as hex so that no byte
 changes on the way, and a write gives back the bytes of every line it keeps. After a change
-``exportfs -ra`` applies every file, under the host's timeout(1) (ADR-0258). What it reports is
-a warning of the change, not an error: it exits with status 1 for a problem in any file, also in
-a line that UNOS did not write.
+``exportfs -ra`` applies every file, under the host's timeout(1) (ADR-0258). It reads no further
+in a file than a line that it cannot read, and stops exporting what follows: while any file has
+such a line, UNOS changes no export. What exportfs reports is a warning of the change, not an
+error: it exits with status 1 for a problem in any file, also in a line that UNOS did not write.
 
 An export that UNOS writes (ADR-0262) is an existing folder of a pool that UNOS manages, below
-folders that only root can change (exportfs resolves symbolic links), for one address or
-network of the local network, read-only or read-write::
+folders that only root can change, for one address or network of the local network, read-only
+or read-write::
 
     /mnt/pools/data/media 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp=/mnt/pools/data)
 
-``mp=`` makes exportfs and mountd export the folder only while the pool is mounted, so that a
-pool missing after a reboot never exports the mountpoint's directory on the system disk.
+exportfs resolves symbolic links at every run and at every start of the NFS server: the status
+checks the folders above every export of UNOS again. ``mp=`` makes exportfs and mountd export the
+folder only while the pool is mounted, so that a pool missing after a reboot never exports the
+mountpoint's directory on the system disk.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ import os
 import re
 import subprocess
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -135,15 +141,24 @@ def unfinished_file(file: str) -> str:
     )
 
 
-def own_file_unreadable(file: str, line: int) -> str:
+def file_unreadable(file: str, line: int | str) -> str:
     return (
         f"{file}, line {line} cannot be read by exportfs, which then reads no further in that file: "
-        "correct or remove the line on the NAS first"
+        "after a change it would stop exporting what follows the line. Correct or remove the line on "
+        "the NAS first"
     )
 
 
-def shared_line(file: str, line: int) -> str:
-    return f"{file}, line {line} holds more than one export: change it on the NAS"
+def unsafe_export(path: str, folder: str, detail: str, commands: str) -> str:
+    return (
+        f"NFS export {path}: {folder} can be changed by other accounts ({detail}), so they can put a "
+        "symbolic link in place of the exported folder or a folder above it, and exportfs would export "
+        f"the link's target. Run {commands} on the NAS."
+    )
+
+
+def unchecked_export(path: str, reason: str) -> str:
+    return f"NFS export {path}: the folders above it could not be checked: {reason}"
 
 
 def not_exported(path: str) -> str:
@@ -158,7 +173,10 @@ def foreign_export(path: str, file: str, line: int | str) -> str:
 
 
 def file_problem(file: str, problem: exports.Problem) -> str:
-    return f"{file}, line {problem.line}: {problem.message}; exportfs reads no further in this file"
+    return (
+        f"{file}, line {problem.line}: {problem.message}; exportfs reads no further in this file, "
+        "and UNOS adds and deletes no export until the line is corrected"
+    )
 
 
 def exportfs_failed(returncode: int, output: str) -> str:
@@ -177,6 +195,14 @@ class _File:
     path: str
     data: bytes
     parsed: exports.Parsed
+    lines: tuple[bytes, ...]    # line n is lines[n - 1], with its "\n" (the last one may have none)
+
+
+def _split_lines(data: bytes) -> tuple[bytes, ...]:
+    """The lines of an export file as exports.py numbers them: each ends at "\\n" and keeps it."""
+    lines = [line + b"\n" for line in data.split(b"\n")]
+    lines[-1] = lines[-1][:-1]
+    return tuple(lines if lines[-1] else lines[:-1])
 
 
 def _locations() -> tuple[str, str, str]:
@@ -213,7 +239,26 @@ def _read_files() -> list[_File]:
         except ValueError:
             raise RuntimeError(f"The export file {_shown(name)} could not be read") from None
     ordered = [name for name in contents if name == main] + sorted(name for name in contents if name != main)
-    return [_File(name, contents[name], exports.parse(contents[name])) for name in ordered]
+    return [
+        _File(name, contents[name], exports.parse(contents[name]), _split_lines(contents[name])) for name in ordered
+    ]
+
+
+def _is_unos(file: _File, entry: exports.Entry, own: str) -> bool:
+    """Whether ``entry`` of ``file`` is an export of UNOS: a line of its own file that is exactly as
+    UNOS writes it, alone on its line. UNOS changes no other line (ADR-0261): one written by hand
+    into its file, also one that looks like UNOS's, is the owner's."""
+    if file.path != own or entry.first_line != entry.last_line or len(entry.clients) != 1:
+        return False
+    client = entry.clients[0]
+    parts = _pool_parts(entry.path)
+    network = _network(client.name)
+    if parts is None or len(parts) < 2 or network is None or not _is_local(network):
+        return False
+    if _client_text(network) != client.name or client.options[:1] not in (("ro",), ("rw",)):
+        return False
+    line = _unos_line(entry.path, client.name, _unos_options(client.options[0], parts[0]))
+    return file.lines[entry.first_line - 1].removesuffix(b"\n") == line.removesuffix(b"\n")
 
 
 def _info(file: _File, entry: exports.Entry, own: str) -> NfsExportInfo:
@@ -223,7 +268,7 @@ def _info(file: _File, entry: exports.Entry, own: str) -> NfsExportInfo:
             NfsExportClient(client=client.name, options=list(client.options), access=client.access)
             for client in entry.clients
         ],
-        managed=file.path == own,
+        managed=_is_unos(file, entry, own),
         file=_shown(file.path),
         line=entry.first_line,
     )
@@ -235,8 +280,33 @@ def list_exports() -> list[NfsExportInfo]:
     return [_info(file, entry, own) for file in _read_files() for entry in file.parsed.entries]
 
 
+def _unsafe_exports(files: Sequence[_File]) -> list[str]:
+    """The status problem of every export of UNOS below a folder that other accounts can change
+    (sync). exportfs resolves symbolic links at every run and at every start of the NFS server:
+    whoever can change such a folder can put a link in place of the exported folder, and its target
+    would be exported. The add checks the folders (_check_folder); they can change after it, as for
+    SMB shares (ADR-0153). Exports that UNOS did not write are the owner's, and not checked."""
+    from . import service  # service imports pools, which imports this module
+
+    _, _, own = _locations()
+    problems = []
+    for file in files:
+        for entry in file.parsed.entries:
+            if not _is_unos(file, entry, own):
+                continue
+            try:
+                unsafe = service.unsafe_parent_of(entry.path)
+            except (OSError, ValueError) as exc:
+                problems.append(unchecked_export(entry.path, sanitize_error_message(exc) or type(exc).__name__))
+                continue
+            if unsafe is not None:
+                problems.append(unsafe_export(entry.path, unsafe.path, unsafe.detail, unsafe.commands))
+    return problems
+
+
 def service_status() -> NfsServiceStatus:
-    """Whether the host has exportfs, and where exportfs stops reading a file (sync).
+    """Whether the host has exportfs, where exportfs stops reading a file, and the exports of UNOS
+    below folders that other accounts can change (sync).
 
     A failed read of the files is a problem of the status, which still says whether the host
     has an NFS server.
@@ -247,8 +317,18 @@ def service_status() -> NfsServiceStatus:
         problems = [f"The export files of the host could not be read: {sanitize_error_message(exc)}"]
     else:
         problems = [file_problem(_shown(file.path), file.parsed.problem) for file in files if file.parsed.problem]
+        problems += _unsafe_exports(files)
     missing = host.missing_host_binaries(["exportfs"])
     return NfsServiceStatus(server_missing=None if missing is None else bool(missing), problems=problems)
+
+
+def _refuse_while_unreadable(files: Sequence[_File]) -> None:
+    """409 while an export file has a line that exportfs cannot read (ADR-0261): exportfs -ra, which
+    applies a change, reads no further in that file and stops exporting what follows the line, the
+    owner's exports too, and a line added to UNOS's file after it would never be read."""
+    for file in files:
+        if file.parsed.problem is not None:
+            raise HTTPException(status_code=409, detail=file_unreadable(_shown(file.path), file.parsed.problem.line))
 
 
 def _apply() -> list[str]:
@@ -277,19 +357,55 @@ def _apply() -> list[str]:
 # --- an export that UNOS writes (ADR-0262) -----------------------------------------------------
 
 
+def _network(value: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network | None:
+    """An IPv4 or IPv6 address or network, or None for anything else (a host name, '*', ...)."""
+    if not _CLIENT_PATTERN.fullmatch(value):
+        return None
+    try:
+        return ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return None
+
+
+def _client_text(network: ipaddress.IPv4Network | ipaddress.IPv6Network) -> str:
+    """A client as UNOS writes it: an address without a prefix length, a network with one."""
+    single = network.prefixlen == network.max_prefixlen
+    return str(network.network_address) if single else network.with_prefixlen
+
+
+def _is_local(network: ipaddress.IPv4Network | ipaddress.IPv6Network) -> bool:
+    return any(network.version == local.version and network.subnet_of(local) for local in LOCAL_NETWORKS)
+
+
 def _validate_client(value: str) -> str:
     """One address or network of the local network, written as UNOS writes it."""
-    if not _CLIENT_PATTERN.fullmatch(value):
+    network = _network(value)
+    if network is None:
         raise HTTPException(status_code=400, detail=CLIENT_SYNTAX_PROBLEM)
+    if not _is_local(network):
+        raise HTTPException(status_code=400, detail=client_not_local_problem(_client_text(network)))
+    return _client_text(network)
+
+
+def _pool_parts(path: str) -> tuple[str, ...] | None:
+    """The components below the pools base of a folder written as UNOS writes it (normalized, of
+    the characters it allows), or None."""
+    pure = PurePosixPath(path)
+    if str(pure) != path or ".." in pure.parts or not _EXPORT_PATH_PATTERN.fullmatch(path):
+        return None
     try:
-        network = ipaddress.ip_network(value, strict=False)
+        return pure.relative_to(pools_base()).parts
     except ValueError:
-        raise HTTPException(status_code=400, detail=CLIENT_SYNTAX_PROBLEM) from None
-    single = network.prefixlen == network.max_prefixlen
-    text = str(network.network_address) if single else network.with_prefixlen
-    if not any(network.version == local.version and network.subnet_of(local) for local in LOCAL_NETWORKS):
-        raise HTTPException(status_code=400, detail=client_not_local_problem(text))
-    return text
+        return None
+
+
+def _unos_options(access: str, pool: str) -> tuple[str, ...]:
+    """The options UNOS writes: ro or rw, the fixed ones, and mp= of the pool's mountpoint."""
+    return (access, *FIXED_OPTIONS, f"mp={pools_base() / pool}")
+
+
+def _unos_line(path: str, client: str, options: Sequence[str]) -> bytes:
+    return f"{path} {client}({','.join(options)})\n".encode()
 
 
 def _validate_export_path(path: str) -> tuple[str, tuple[str, ...]]:
@@ -369,7 +485,7 @@ def create_export(request: NfsExportCreate) -> NfsExportInfo:
     client = _validate_client(request.client)
     path, parts = _validate_export_path(request.path)
     access = "rw" if request.access == ShareAccessLevel.WRITE else "ro"
-    options = (access, *FIXED_OPTIONS, f"mp={pools_base() / parts[0]}")
+    options = _unos_options(access, parts[0])
     with _lock:
         # The volume check of storage/pools.py holds its lock: no volume is deleted between the
         # folder check and the write.
@@ -377,16 +493,13 @@ def create_export(request: NfsExportCreate) -> NfsExportInfo:
             _check_folder(path, parts)
             _, directory, own_path = _locations()
             files = _read_files()
+            _refuse_while_unreadable(files)
             own = next((file for file in files if file.path == own_path), None)
-            if own is not None and own.parsed.problem is not None:
-                raise HTTPException(
-                    status_code=409, detail=own_file_unreadable(own_path, own.parsed.problem.line)
-                )
             for file in files:
                 for entry in file.parsed.entries:
                     if PurePosixPath(entry.path) != PurePosixPath(path):
                         continue
-                    if file is own:
+                    if _is_unos(file, entry, own_path):
                         raise HTTPException(status_code=409, detail=exported_already(path))
                     # mountd answers a client from one entry of the folder, chosen by the kind of
                     # client and the order of the files: UNOS could not tell which applies.
@@ -397,7 +510,7 @@ def create_export(request: NfsExportCreate) -> NfsExportInfo:
             if before and not before.endswith(b"\n"):
                 before += b"\n"
             line = before.count(b"\n") + 1
-            after = before + f"{path} {client}({','.join(options)})\n".encode()
+            after = before + _unos_line(path, client, options)
             # A last line that ends with a backslash, or an open quote, would take the new line in.
             check = exports.parse(after)
             last = check.entries[-1] if check.entries else None
@@ -425,17 +538,21 @@ def create_export(request: NfsExportCreate) -> NfsExportInfo:
 
 
 def delete_export(path: str) -> NfsExportDeleted:
-    """Remove the lines of an export of UNOS's own file and apply the change (sync).
+    """Remove the lines of an export of UNOS and apply the change (sync).
 
-    LookupError (404) when no file exports ``path``; 409 for an export of another file, which
-    UNOS never changes, and for one whose lines exportfs cannot read or share with another.
+    LookupError (404) when no file exports ``path``; 409 for an export that UNOS did not write, in
+    another file or by hand into its own, which UNOS never changes, and while a file has a line
+    that exportfs cannot read. Every other line keeps its bytes, its newline included.
     """
     with _lock:
         _, _, own_path = _locations()
         files = _read_files()
         own = next((file for file in files if file.path == own_path), None)
         wanted = PurePosixPath(path)
-        mine = [entry for entry in own.parsed.entries if PurePosixPath(entry.path) == wanted] if own else []
+        mine = [
+            entry for entry in (own.parsed.entries if own else ())
+            if PurePosixPath(entry.path) == wanted and _is_unos(own, entry, own_path)
+        ]
         if not mine:
             for file in files:
                 for entry in file.parsed.entries:
@@ -444,15 +561,10 @@ def delete_export(path: str) -> NfsExportDeleted:
                             status_code=409, detail=foreign_export(path, _shown(file.path), entry.first_line)
                         )
             raise LookupError(not_exported(path))
-        removed = {number for entry in mine for number in range(entry.first_line, entry.last_line + 1)}
-        problem = own.parsed.problem
-        if problem is not None and problem.line in removed:
-            raise HTTPException(status_code=409, detail=own_file_unreadable(own_path, problem.line))
-        for entry in own.parsed.entries:
-            if entry not in mine and (removed & set(range(entry.first_line, entry.last_line + 1))):
-                raise HTTPException(status_code=409, detail=shared_line(own_path, entry.first_line))
-        lines = own.data.split(b"\n")
-        kept = b"\n".join(line for number, line in enumerate(lines, 1) if number not in removed)
+        _refuse_while_unreadable(files)
+        # A line of UNOS's holds its entry alone: removing it changes no other entry.
+        removed = {entry.first_line for entry in mine}
+        kept = b"".join(line for number, line in enumerate(own.lines, 1) if number not in removed)
         host.write_host_file_atomic(
             own_path, kept.decode("utf-8", "surrogateescape"), mode="0644", errors="surrogateescape"
         )

@@ -121,9 +121,9 @@ the group unos-smb and removes other accounts' access (ADR-0155). Avoid: fix per
 reconcile.
 
 **NFS export**: A folder that the host's NFS server offers to the computers of a network: one entry
-of an export file, read as exportfs reads it. UNOS adds and deletes only those of its own export
-file, `/etc/exports.d/unos.exports`, and keeps every other line (ADR-0261, ADR-0262).
-Avoid: share (an SMB share), NFS share.
+of an export file, read as exportfs reads it. UNOS adds lines to its own export file,
+`/etc/exports.d/unos.exports`, deletes only the lines it wrote there, exactly as it writes them,
+and keeps every other line (ADR-0261, ADR-0262). Avoid: share (an SMB share), NFS share.
 
 **Export file**: A file that exportfs reads: `/etc/exports`, then each `*.exports` file of
 `/etc/exports.d` (ADR-0261). Avoid: exports table (the kernel's), etab.

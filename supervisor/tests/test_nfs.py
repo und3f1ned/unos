@@ -332,8 +332,9 @@ def nfs_api(monkeypatch, tmp_path):
 
 class TestList:
     def test_every_export_of_the_host_is_listed_with_its_file_and_line(self, nfs_api):
-        nfs_api.host.files[UNOS_FILE] = nfs.HEADER + unos_line(
-            "/mnt/pools/data/media", "192.168.1.0/24", "rw", "/mnt/pools/data")
+        # A line that UNOS writes names a folder below the pools base (the test's pools folder).
+        media = str(nfs_api.data / "media")
+        nfs_api.host.files[UNOS_FILE] = nfs.HEADER + unos_line(media, "192.168.1.0/24", "rw", str(nfs_api.data))
         nfs_api.host.files["/etc/exports.d/other.exports"] = "/srv/other fd00::/64(rw)\n"
         nfs_api.host.files["/etc/exports.d/.hidden.exports"] = "/srv/hidden *(rw)\n"
         nfs_api.host.files["/etc/exports.d/notes.txt"] = "/srv/notes *(rw)\n"
@@ -344,7 +345,7 @@ class TestList:
             ("/srv/nfs/backup", "/etc/exports", 2, False),
             ("/srv/nfs/iso", "/etc/exports", 3, False),
             ("/srv/other", "/etc/exports.d/other.exports", 1, False),
-            ("/mnt/pools/data/media", UNOS_FILE, 3, True),
+            (media, UNOS_FILE, 3, True),
         ]
         assert listed[0]["clients"] == [
             {"client": "10.0.0.5", "options": ["rw", "no_root_squash"], "access": "write"},
@@ -367,7 +368,8 @@ class TestList:
         assert response.json() == {
             "server_missing": True,
             "problems": [
-                '/etc/exports, line 5: unknown keyword "bogus"; exportfs reads no further in this file'
+                '/etc/exports, line 5: unknown keyword "bogus"; exportfs reads no further in this file, '
+                "and UNOS adds and deletes no export until the line is corrected"
             ],
         }
         # The exports before the line are listed, those after it are not: exportfs never reads them.
@@ -389,6 +391,100 @@ class TestList:
     def test_the_status_of_a_host_with_an_nfs_server(self, nfs_api):
         response = nfs_api.client.get(f"{API}/nfs-status")
         assert response.json() == {"server_missing": False, "problems": []}
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} 10.0.0.7(ro,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} fd00::/64(ro,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            # The last line of the file, without its newline.
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})",
+        ],
+    )
+    def test_a_line_as_unos_writes_it_is_an_export_of_unos(self, nfs_api, line):
+        media, data = nfs_api.data / "media", nfs_api.data
+        nfs_api.host.files[UNOS_FILE] = nfs.HEADER + "# by hand\n" + line.format(media=media, data=data)
+
+        [entry] = [e for e in nfs_api.listed() if e["file"] == UNOS_FILE]
+
+        assert (entry["path"], entry["line"], entry["managed"]) == (str(media), 4, True)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            # As UNOS writes a line, with something more, less or else: written by hand.
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data}) # mine\n",
+            "{media}  192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            " {media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\r\n",
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash,secure,mp={data})\n",
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data},insecure)\n",
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure)\n",
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp=/mnt)\n",
+            "{media} 192.168.1.0/24(sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} 192.168.1.0/255.255.255.0(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} *(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} nas.lan(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} 8.8.8.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data}) 10.0.0.1(ro)\n",
+            "{media} -rw 192.168.1.0/24(sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{media} \\\n  192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            '"{media}" 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n',
+            "{data}/./media 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{data}//media 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "{data} 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+            "/srv/media 192.168.1.0/24(rw,sync,no_subtree_check,root_squash,secure,mp={data})\n",
+        ],
+    )
+    def test_a_line_of_unos_s_file_that_unos_did_not_write_is_left_to_the_owner(self, nfs_api, line):
+        # The file's first lines promise that UNOS keeps every line it did not write: it lists such a
+        # line with its file and line, and does not delete it.
+        media, data = nfs_api.data / "media", nfs_api.data
+        before = nfs.HEADER + "# by hand\n" + line.format(media=media, data=data)
+        nfs_api.host.files[UNOS_FILE] = before
+
+        [entry] = [e for e in nfs_api.listed() if e["file"] == UNOS_FILE]
+        response = nfs_api.delete(entry["path"])
+
+        assert (entry["line"], entry["managed"]) == (4, False)
+        assert (response.status_code, response.json()["detail"]) == (
+            409, nfs.foreign_export(entry["path"], UNOS_FILE, 4))
+        assert nfs_api.unos_file == before and nfs_api.writes == [] and nfs_api.exportfs_runs == []
+
+    def test_the_status_names_exports_of_unos_below_folders_that_other_accounts_can_change(self, nfs_api):
+        # exportfs follows symbolic links at every run and at every start of the NFS server: whoever
+        # can change a folder above an export can put a link in its place, and exportfs would export
+        # the link's target (ADR-0262). The rule is checked when the export is added, and again here.
+        docs, shared = nfs_api.data / "shared" / "docs", nfs_api.data / "shared"
+        assert nfs_api.create(docs).status_code == 200
+        # Exports that UNOS did not write are the owner's, as are their folders.
+        nfs_api.host.files["/etc/exports"] = OWNER_EXPORTS + f"{docs} 10.9.0.0/16(ro)\n"
+        nfs_api.host.files[UNOS_FILE] += f"{docs}/x 10.8.0.0/16(ro)\n"
+
+        shared.chmod(0o777)
+        try:
+            response = nfs_api.client.get(f"{API}/nfs-status")
+        finally:
+            shared.chmod(0o755)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["problems"] == [
+            nfs.unsafe_export(str(docs), str(shared), "mode 0777", f"'chmod 755 {shared}'")
+        ]
+        assert nfs_api.client.get(f"{API}/nfs-status").json()["problems"] == []
+
+    def test_the_status_says_when_the_folders_above_an_export_of_unos_cannot_be_checked(self, nfs_api, tmp_path):
+        docs = nfs_api.data / "shared" / "docs"
+        assert nfs_api.create(docs).status_code == 200
+        # The folder above the export is a symbolic link now.
+        moved = tmp_path / "moved"
+        (nfs_api.data / "shared").rename(moved)
+        os.symlink(moved, nfs_api.data / "shared")
+
+        [problem] = nfs_api.client.get(f"{API}/nfs-status").json()["problems"]
+
+        assert problem.startswith(f"NFS export {docs}: the folders above it could not be checked: ")
 
 
 class TestCreate:
@@ -430,8 +526,9 @@ class TestCreate:
             str(nfs_api.data / "shared" / "docs"), "fd00::/64", "ro", str(nfs_api.data))
         assert response.json()["line"] == 6
         assert nfs_api.writes == [["write", UNOS_FILE]]
-        assert [e["path"] for e in nfs_api.listed() if e["managed"]] == [
-            "/srv/hand", str(nfs_api.data / "shared" / "docs")]
+        # The line written by hand is listed, but it is not one of UNOS's.
+        assert [(e["path"], e["managed"]) for e in nfs_api.listed() if e["file"] == UNOS_FILE] == [
+            ("/srv/hand", False), (str(nfs_api.data / "shared" / "docs"), True)]
 
     @pytest.mark.parametrize(
         "client, written",
@@ -591,6 +688,35 @@ class TestCreate:
         # Another folder can be exported.
         assert nfs_api.create(nfs_api.data / "shared" / "docs", "192.168.1.0/24").status_code == 200
 
+    def test_a_folder_that_a_line_written_by_hand_into_unos_s_file_exports(self, nfs_api):
+        folder = nfs_api.data / "media"
+        before = nfs.HEADER + f"{folder} 192.168.1.0/24(rw)\n"
+        nfs_api.host.files[UNOS_FILE] = before
+
+        response = nfs_api.create(folder)
+
+        assert (response.status_code, response.json()["detail"]) == (
+            409, nfs.exported_elsewhere(UNOS_FILE, 3, str(folder)))
+        assert nfs_api.unos_file == before and nfs_api.exportfs_runs == []
+
+    @pytest.mark.parametrize(
+        "file, number",
+        [("/etc/exports", 5), ("/etc/exports.d/backup.exports", 2), (UNOS_FILE, 3)],
+    )
+    def test_no_export_is_added_while_an_export_file_has_a_line_that_exportfs_cannot_read(
+        self, nfs_api, file, number
+    ):
+        # exportfs -ra, which applies a change, reads no further in that file: the exports after the
+        # line, live until then, would end, and a new line of UNOS's file would never be read.
+        start = {"/etc/exports": OWNER_EXPORTS, UNOS_FILE: nfs.HEADER}.get(file, "# backup\n")
+        nfs_api.host.files[file] = start + "/srv/broken 10.0.0.9(rw,bogus)\n/srv/after 10.0.0.10(ro)\n"
+        before = dict(nfs_api.host.files)
+
+        response = nfs_api.create(nfs_api.data / "media")
+
+        assert (response.status_code, response.json()["detail"]) == (409, nfs.file_unreadable(file, number))
+        assert nfs_api.host.files == before and nfs_api.writes == [] and nfs_api.exportfs_runs == []
+
     def test_a_folder_of_a_pool_that_is_not_mounted(self, nfs_api, monkeypatch):
         # Its mountpoint is a folder of the system disk (tests/conftest.py replaces the check:
         # the test's pools are folders).
@@ -666,7 +792,7 @@ class TestCreate:
         response = nfs_api.create(nfs_api.data / "media")
 
         assert response.status_code == 409, response.text
-        assert response.json()["detail"] == nfs.own_file_unreadable(UNOS_FILE, 3)
+        assert response.json()["detail"] == nfs.file_unreadable(UNOS_FILE, 3)
         assert nfs_api.unos_file == broken and nfs_api.exportfs_runs == []
 
     def test_old_fields_are_refused(self, nfs_api):
@@ -728,10 +854,57 @@ class TestDelete:
         assert (entry["action"], entry["severity"], entry["resource_type"], entry["resource_id"], entry["details"]) == (
             "share_deleted", "warning", "nfs_export", str(media), f"Removed the NFS export of {media}")
 
-        # A line written by hand in UNOS's file can be deleted too: all of its lines go.
-        assert nfs_api.delete("/srv/hand").status_code == 200
-        assert nfs_api.unos_file == nfs.HEADER + "# a note by hand\n" + unos_line(
-            str(docs), "fd00::/64", "ro", str(nfs_api.data))
+        # A line written by hand into UNOS's file is the owner's: UNOS does not delete it.
+        after = nfs_api.unos_file
+        response = nfs_api.delete("/srv/hand")
+        assert (response.status_code, response.json()["detail"]) == (
+            409, nfs.foreign_export("/srv/hand", UNOS_FILE, 4))
+        assert nfs_api.unos_file == after and len(nfs_api.exportfs_runs) == 1
+
+    def test_an_export_that_shares_its_line_with_another_is_not_deleted(self, nfs_api):
+        # A blank and a carriage return inside a line end an entry, so exportfs reads two exports
+        # from line 3. UNOS writes one export per line: this line is not one of its own, and
+        # removing it for either export would remove the other one too.
+        media = nfs_api.data / "media"
+        before = (
+            nfs.HEADER
+            + unos_line(str(media), "192.168.1.0/24", "rw", str(nfs_api.data)).rstrip("\n")
+            + " \r /srv/b 10.0.0.2(ro)\n"
+        )
+        nfs_api.host.files[UNOS_FILE] = before
+
+        listed = [(e["path"], e["line"], e["managed"]) for e in nfs_api.listed() if e["file"] == UNOS_FILE]
+
+        assert listed == [(str(media), 3, False), ("/srv/b", 3, False)]
+        for path in (str(media), "/srv/b"):
+            response = nfs_api.delete(path)
+            assert (response.status_code, response.json()["detail"]) == (409, nfs.foreign_export(path, UNOS_FILE, 3))
+        assert nfs_api.unos_file == before and nfs_api.writes == [] and nfs_api.exportfs_runs == []
+
+    def test_the_line_before_a_last_line_without_a_newline_keeps_its_newline(self, nfs_api):
+        media = nfs_api.data / "media"
+        nfs_api.host.files[UNOS_FILE] = nfs.HEADER + "# kept by hand\n" + unos_line(
+            str(media), "192.168.1.0/24", "rw", str(nfs_api.data)).rstrip("\n")
+
+        response = nfs_api.delete(media)
+
+        assert response.status_code == 200, response.text
+        assert nfs_api.unos_file == nfs.HEADER + "# kept by hand\n"
+
+    @pytest.mark.parametrize("file, number", [("/etc/exports", 5), ("/etc/exports.d/backup.exports", 2)])
+    def test_no_export_is_deleted_while_an_export_file_has_a_line_that_exportfs_cannot_read(
+        self, nfs_api, file, number
+    ):
+        # exportfs -ra would read no further in that file: the exports after the line would end.
+        assert nfs_api.create(nfs_api.data / "media").status_code == 200
+        start = OWNER_EXPORTS if file == "/etc/exports" else "# backup\n"
+        nfs_api.host.files[file] = start + "/srv/broken 10.0.0.9(rw,bogus)\n/srv/after 10.0.0.10(ro)\n"
+        before = dict(nfs_api.host.files)
+
+        response = nfs_api.delete(nfs_api.data / "media")
+
+        assert (response.status_code, response.json()["detail"]) == (409, nfs.file_unreadable(file, number))
+        assert nfs_api.host.files == before and len(nfs_api.exportfs_runs) == 1
 
     def test_add_then_delete_leaves_the_header(self, nfs_api):
         assert nfs_api.create(nfs_api.data / "media").status_code == 200
@@ -765,12 +938,19 @@ class TestDelete:
         assert nfs_api.writes == [] and nfs_api.exportfs_runs == []
 
     def test_an_export_whose_lines_exportfs_cannot_read_is_left_to_the_owner(self, nfs_api):
-        broken = nfs.HEADER + "/srv/hand 10.1.0.0/16(rw) 10.2.0.0/16(bogus)\n"
+        media = nfs_api.data / "media"
+        broken = (
+            nfs.HEADER
+            + unos_line(str(media), "192.168.1.0/24", "rw", str(nfs_api.data))
+            + "/srv/hand 10.1.0.0/16(rw) 10.2.0.0/16(bogus)\n"
+        )
         nfs_api.host.files[UNOS_FILE] = broken
 
-        response = nfs_api.delete("/srv/hand")
+        hand = nfs_api.delete("/srv/hand")
+        mine = nfs_api.delete(media)
 
-        assert (response.status_code, response.json()["detail"]) == (409, nfs.own_file_unreadable(UNOS_FILE, 3))
+        assert (hand.status_code, hand.json()["detail"]) == (409, nfs.foreign_export("/srv/hand", UNOS_FILE, 4))
+        assert (mine.status_code, mine.json()["detail"]) == (409, nfs.file_unreadable(UNOS_FILE, 4))
         assert nfs_api.unos_file == broken and nfs_api.exportfs_runs == []
 
     def test_exportfs_problems_are_warnings(self, nfs_api):
@@ -838,9 +1018,15 @@ def test_the_e2e_fakes_answer_with_the_servers_texts():
     assert f"`{nfs.exported_already('${path}')}`" in fakes
     assert f"`{nfs.not_exported('${path}')}`" in fakes
     assert f"`{nfs.foreign_export('${path}', '${file}', '${line}')}`" in fakes
+    assert f"`{nfs.file_unreadable('${file}', '${line}')}`" in fakes
+    assert f"`{nfs.file_problem('${file}', exports.Problem('${line}', '${message}'))}`" in fakes
+    assert f"`{nfs.unsafe_export('${path}', '${folder}', '${detail}', '${commands}')}`" in fakes
 
 
-def test_exportfs_is_a_host_tool_of_its_package():
+def test_exportfs_is_an_optional_host_tool_of_its_package():
+    # deploy/install.sh does not install the NFS server (ADR-0261): the startup check of the host's
+    # programs leaves exportfs out, and the NFS tab says when the host lacks it.
     from src import host
 
-    assert host.HOST_TOOLS["exportfs"] == "nfs-kernel-server"
+    assert host.OPTIONAL_HOST_TOOLS["exportfs"] == "nfs-kernel-server"
+    assert "exportfs" not in host.HOST_TOOLS

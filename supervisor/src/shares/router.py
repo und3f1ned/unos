@@ -2,9 +2,9 @@
 
 SMB shares are rows of the UNOS database; shares/service.py changes them
 under smb_lock() and renders smb.conf from them. NFS exports are the lines
-of the host's export files; shares/nfs.py changes only UNOS's own file
-(ADR-0261). Every mutation is audited (ADR-0157). PUT /shares/smb/{name} is
-gone (405): PATCH changes only the fields it sends.
+of the host's export files; shares/nfs.py changes only the lines that UNOS
+wrote into its own file (ADR-0261). Every mutation is audited (ADR-0157).
+PUT /shares/smb/{name} is gone (405): PATCH changes only the fields it sends.
 """
 
 import asyncio
@@ -214,13 +214,14 @@ async def delete_smb_share(
 # NFS Endpoints
 @router.get("/nfs", response_model=list[NfsExportInfo])
 async def list_nfs_exports(_=Depends(verify_token)):
-    """Every export of the host's export files, as exportfs reads them; managed: in UNOS's file."""
+    """Every export of the host's export files, as exportfs reads them; managed: a line UNOS wrote."""
     return await _call(nfs.list_exports)
 
 
 @router.get("/nfs-status", response_model=NfsServiceStatus)
 async def get_nfs_status(_=Depends(verify_token)):
-    """Whether the host has an NFS server (exportfs), and the lines where exportfs stops reading."""
+    """Whether the host has an NFS server (exportfs), the lines where exportfs stops reading, and
+    the exports of UNOS below folders that other accounts can change."""
     return await _call(nfs.service_status)
 
 
@@ -245,7 +246,8 @@ async def create_nfs_export(request: Request, export: NfsExportCreate, user=Depe
 
 @router.delete("/nfs", response_model=NfsExportDeleted)
 async def delete_nfs_export(request: Request, path: str, user=Depends(verify_token)):
-    """Delete an export of UNOS's own file (404 for none, 409 for one of another file)."""
+    """Delete an export that UNOS wrote (404 for none; 409 for any other entry, and while an export
+    file has a line that exportfs cannot read)."""
     result = await _call(nfs.delete_export, path)
     await log_action(
         AuditAction.SHARE_DELETED,

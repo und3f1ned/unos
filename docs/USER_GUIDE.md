@@ -430,7 +430,10 @@ sudo apt-get install nfs-kernel-server
      `apps` and everything below it, snapshot folders and the trash cannot be
      exported, and every folder above the exported one must be changeable by
      root only (see [What Can Be Shared](#what-can-be-shared)): otherwise the
-     message names the folder and the command to run on the NAS.
+     message names the folder and the command to run on the NAS. `exportfs`
+     follows symbolic links each time it runs, so if one of those folders
+     later becomes changeable by other accounts, the **NFS** tab names it and
+     the command too: those accounts could make the NAS export another folder.
    - **Client network** - One address or network of your local network, such
      as `192.168.1.0/24`, `192.168.1.20` or `fd00::/64`: private IPv4
      addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`),
@@ -445,13 +448,18 @@ UNOS writes the export with `ro` or `rw` and the options
 (for example `mp=/mnt/pools/data`): the folder is exported only while its
 pool is mounted. The pool must be mounted when the export is added. A folder
 that UNOS exports already cannot be added again; delete its export first. Nor
-can a folder that another export file exports, to whatever computers: the NFS
-server answers each computer from one export of a folder, so change that file
-on the NAS instead. UNOS also refuses to add an export while its own file
-ends inside an entry, with a backslash at the end of its last line or a quote
-left open. After a change a message names anything that the NFS server's
-`exportfs` reported, such as a missing NFS server or a problem in another
-export file: the change is saved either way.
+can a folder that another export exports, to whatever computers, in another
+export file or in a line written by hand into UNOS's own: the NFS server
+answers each computer from one export of a folder, so change that line on
+the NAS instead. UNOS also refuses to add an export while its own file ends
+inside an entry, with a backslash at the end of its last line or a quote left
+open.
+
+A change applies every export file (`exportfs -ra`), as the NFS server does
+when it starts: an export made with `exportfs` on the command line, which no
+file holds, ends. After a change a message names anything that `exportfs`
+reported, such as a missing NFS server or a folder of another export file
+that does not exist: the change is saved either way.
 
 #### What Clients Can Do
 
@@ -468,13 +476,15 @@ export file: the change is saved either way.
 
 The trash icon of an export added in UNOS deletes it: UNOS removes its line
 from its export file, and the computers lose access to the folder. The folder
-and its files are kept. Exports from other files have no trash icon: change
-them on the NAS.
+and its files are kept. Exports that UNOS did not add have no trash icon:
+those of other files, and lines of UNOS's own file that were written there by
+hand or changed by hand from the form UNOS writes. Change them on the NAS.
 
 If `exportfs` cannot read a line of an export file, the **NFS** tab names the
 file and the line: `exportfs` ignores that line and every line after it in
-the same file. Correct or remove the line on the NAS. While UNOS's own export
-file has such a line, no export can be added.
+the same file. Correct or remove the line on the NAS. Until then UNOS adds
+and deletes no export: the `exportfs` run that applies a change would stop
+exporting what follows the line, also exports written by hand.
 
 #### Mounting an Export
 

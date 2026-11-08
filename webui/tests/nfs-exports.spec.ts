@@ -8,6 +8,9 @@ import {
   fakeSmbApi,
   nfsClientNotLocal,
   nfsExportedAlready,
+  nfsFileProblem,
+  nfsFileUnreadable,
+  nfsUnsafeExport,
   type FakeNfsExport,
 } from './shares-fakes';
 
@@ -114,6 +117,40 @@ test.describe('NFS exports', () => {
     expect(fake.nfsExports).toEqual([OWNER_EXPORT]);
   });
 
+  test('exports that start on the same line of a file stay listed after a change', async ({
+    authenticatedPage: page,
+  }) => {
+    // A blank and a carriage return inside a line end an entry for exportfs: two exports can start
+    // on the same line of a file.
+    const first: FakeNfsExport = {
+      path: '/srv/a',
+      clients: [{ client: '10.0.0.1', options: ['rw'], access: 'write' }],
+      managed: false,
+      file: '/etc/exports',
+      line: 4,
+    };
+    const second: FakeNfsExport = {
+      ...first,
+      path: '/srv/b',
+      clients: [{ client: '10.0.0.2', options: ['ro'], access: 'read' }],
+    };
+    await fakeSmbApi(page, { nfsExports: [first, second] });
+    await openNfsTab(page);
+    const paths = exportList(page).locator(':scope > li > div > p.mono');
+    await expect(paths).toHaveText(['/srv/a', '/srv/b']);
+
+    // A change reloads the list: both exports of line 4 stay, each with its own clients.
+    const dialog = await openAddDialog(page);
+    await dialog.getByRole('textbox', { name: 'Folder' }).fill('projects');
+    await dialog.getByRole('textbox', { name: 'Client network' }).fill('192.168.1.0/24');
+    await dialog.getByRole('button', { name: 'Create export' }).click();
+    await expect(dialog).toBeHidden();
+
+    await expect(paths).toHaveText(['/srv/a', '/srv/b', `${POOLS}/tank/projects`]);
+    await expect(clientsOf(exportItem(page, '/srv/a'), '/srv/a')).toHaveText(['10.0.0.1 · Read & write (rw)']);
+    await expect(clientsOf(exportItem(page, '/srv/b'), '/srv/b')).toHaveText(['10.0.0.2 · Read only (ro)']);
+  });
+
   test('a whole volume can be exported, and a pool only with a folder inside it', async ({
     authenticatedPage: page,
   }) => {
@@ -171,18 +208,18 @@ test.describe('NFS exports', () => {
     expect(fake.writes.map((write) => write.method)).toEqual(['POST', 'POST']);
   });
 
-  test('a host without an NFS server, lines that exportfs cannot read and its warnings are shown', async ({
+  test('a host without an NFS server, an export below an unsafe folder and the warnings of exportfs are shown', async ({
     authenticatedPage: page,
   }) => {
-    const problem = '/etc/exports, line 5: unknown keyword "bogus"; exportfs reads no further in this file';
-    const fake = await fakeSmbApi(page, { nfsStatus: { server_missing: true, problems: [problem] } });
+    const shared = `${POOLS}/tank/shared`;
+    const unsafe = nfsUnsafeExport(`${shared}/docs`, shared, 'mode 0777', `'chmod 755 ${shared}'`);
+    const fake = await fakeSmbApi(page, { nfsStatus: { server_missing: true, problems: [unsafe] } });
     fake.nfsWarnings = [NFS_SERVER_MISSING];
     await openNfsTab(page);
 
     await expect(page.getByText('The NFS server is not installed on the host: no computer can mount the exports')).toBeVisible();
     await expect(page.getByText('Install the package nfs-kernel-server on the NAS.')).toBeVisible();
-    const unreadable = page.locator('.alert-error').filter({ hasText: 'exportfs cannot read these lines' });
-    await expect(unreadable).toContainText(problem);
+    await expect(page.locator('.alert-error').filter({ hasText: unsafe })).toBeVisible();
 
     // The export is written either way; what exportfs reported is a warning of the change.
     const dialog = await openAddDialog(page);
@@ -192,5 +229,44 @@ test.describe('NFS exports', () => {
     await expect(dialog).toBeHidden();
     await expect(page.getByText(`NFS export of ${POOLS}/tank/projects created`)).toBeVisible();
     await expect(page.getByText(NFS_SERVER_MISSING)).toBeVisible();
+  });
+
+  test('while a line of an export file cannot be read, no export is added or deleted', async ({
+    authenticatedPage: page,
+  }) => {
+    // exportfs, which applies a change, would read no further in /etc/exports and stop exporting
+    // what follows the line.
+    const exported = `${POOLS}/tank/media`;
+    const fake = await fakeSmbApi(page, {
+      nfsExports: [fakeNfsExport(exported, '192.168.1.0/24', 'read')],
+      nfsUnreadable: [{ file: '/etc/exports', line: 5, message: 'unknown keyword "bogus"' }],
+    });
+    await openNfsTab(page);
+    await expect(
+      page.locator('.alert-error').filter({ hasText: nfsFileProblem('/etc/exports', 5, 'unknown keyword "bogus"') }),
+    ).toBeVisible();
+
+    const dialog = await openAddDialog(page);
+    await dialog.getByRole('textbox', { name: 'Folder' }).fill('projects');
+    await dialog.getByRole('textbox', { name: 'Client network' }).fill('192.168.1.0/24');
+    await dialog.getByRole('button', { name: 'Create export' }).click();
+    await expect(dialog.locator('.alert-error').filter({ hasText: 'Export was not created' })).toContainText(
+      nfsFileUnreadable('/etc/exports', 5),
+    );
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+
+    await exportItem(page, exported).getByRole('button', { name: `Delete export ${exported}` }).click();
+    const confirm = page.getByRole('dialog', { name: 'Delete NFS export' });
+    await confirm.getByRole('button', { name: 'Delete export' }).click();
+    await expect(confirm.locator('.alert-error').filter({ hasText: 'Export was not deleted' })).toContainText(
+      nfsFileUnreadable('/etc/exports', 5),
+    );
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toBeHidden();
+
+    expect(fake.writes.map((write) => write.method)).toEqual(['POST', 'DELETE']);
+    await expect(exportItem(page, exported)).toHaveCount(1);
+    expect(fake.nfsExports.map((e) => e.path)).toEqual([exported]);
   });
 });

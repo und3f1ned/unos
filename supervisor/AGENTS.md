@@ -21,7 +21,9 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 - Commands are argv lists, values validated (ADR-0262); secrets go in `input=`, not argv (ADR-0125).
 - Call `host.run_on_host(...)` after `from .. import host`: tests replace the attribute
   `src.host.run_on_host`, and a name imported with `from ..host import run_on_host` escapes them.
-- A program new to the host joins `HOST_TOOLS` with its Debian package. Blocking work (host
+- A program new to the host joins `HOST_TOOLS` with its Debian package, or `OPTIONAL_HOST_TOOLS`
+  when `deploy/install.sh` does not install it: the startup check leaves those out, and the feature
+  that runs one says when the host lacks it (exportfs, ADR-0261). Blocking work (host
   commands, smartctl, bcrypt, Docker, e-mail) runs off the event loop with a timeout (ADR-0021).
   The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
   can run long runs under the host's `timeout` (ADR-0258).

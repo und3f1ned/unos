@@ -135,7 +135,7 @@ class NfsExportInfo(BaseModel):
 
     path: str
     clients: list[NfsExportClient]
-    managed: bool                                   # in UNOS's own file: the web UI can delete it
+    managed: bool                                   # a line of UNOS's own file as UNOS writes it: deletable
     file: str                                       # the export file, and the line where the entry starts
     line: int
     warnings: list[str] = []                        # only in answers to changes: what exportfs reported
@@ -148,4 +148,6 @@ class NfsExportDeleted(BaseModel):
 
 class NfsServiceStatus(BaseModel):
     server_missing: bool | None                     # the host has no exportfs (nfs-kernel-server); None: check failed
-    problems: list[str]                             # entries exportfs cannot read: it stops reading their files there
+    # Entries exportfs cannot read (it stops reading their files there, and UNOS changes no export
+    # until they are corrected), and exports of UNOS below folders that other accounts can change.
+    problems: list[str]

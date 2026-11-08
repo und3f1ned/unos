@@ -32,10 +32,11 @@ logger = logging.getLogger(__name__)
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
-# busctl, systemctl, ip, ethtool: ADR-0233), logs/router.py (journalctl, under
-# timeout: ADR-0257, ADR-0258) and shares/nfs.py (exportfs, under timeout:
-# ADR-0261). cat, od, test, mkdir, rmdir, rm, find, sync, sleep, timeout, hostname
-# and sh also run there but come from essential packages.
+# busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl, under
+# timeout: ADR-0257, ADR-0258). cat, od, test, mkdir, rmdir, rm, find, sync,
+# sleep, timeout, hostname and sh also run there but come from essential
+# packages. The startup check (main.check_host_tools) warns about the ones the
+# host lacks.
 HOST_TOOLS: dict[str, str] = {
     "btrfs": "btrfs-progs",
     "mkfs.btrfs": "btrfs-progs",
@@ -66,6 +67,14 @@ HOST_TOOLS: dict[str, str] = {
     "busctl": "systemd",
     "ethtool": "ethtool",
     "journalctl": "systemd",
+}
+
+# Programs of host services that deploy/install.sh does not install, with their
+# packages: a host without them is a normal installation, so the startup check
+# leaves them out, and the feature that runs one says when the host lacks it.
+# shares/nfs.py runs exportfs (under timeout), and the NFS tab names a missing
+# NFS server (ADR-0261).
+OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
 }
 

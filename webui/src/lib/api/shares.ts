@@ -133,7 +133,10 @@ export interface NfsExportClient {
 export interface NfsExport {
   path: string;
   clients: NfsExportClient[];
-  /** In the export file of UNOS: it can be deleted here. Others are changed on the NAS. */
+  /**
+   * A line of the export file of UNOS, exactly as UNOS writes it: it can be deleted here. Others,
+   * also lines written by hand into that file, are changed on the NAS.
+   */
   managed: boolean;
   /** The export file, and the line where the entry starts. */
   file: string;
@@ -158,7 +161,10 @@ export interface NfsExportDeleted {
 export interface NfsServiceStatus {
   /** The host has no exportfs (the package nfs-kernel-server); null: the check failed. */
   server_missing: boolean | null;
-  /** Lines that exportfs cannot read: it reads no further in their files. */
+  /**
+   * Lines that exportfs cannot read (it reads no further in their files, and UNOS changes no
+   * export until they are corrected), and exports of UNOS below folders that other accounts can change.
+   */
   problems: string[];
 }
 
