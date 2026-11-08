@@ -250,9 +250,8 @@ def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
     (failing health, logged errors, ...) still come with data.
     """
     try:
-        result = subprocess.run(
-            ["smartctl", "-n", "standby", "-j", "-a", device],
-            capture_output=True, text=True, timeout=SMARTCTL_TIMEOUT, check=False
+        result = host.run_in_container(
+            ["smartctl", "-n", "standby", "-j", "-a", device], timeout=SMARTCTL_TIMEOUT
         )
         if result.returncode & 0b11:  # bad command line, open failed or asleep
             return None
@@ -851,10 +850,7 @@ def _format_capacity(size: int) -> str:
 def parse_smart_data(device: str) -> SmartInfo:
     """Parse SMART data from smartctl."""
     try:
-        result = subprocess.run(
-            ["smartctl", "-j", "-a", device],
-            capture_output=True, text=True, timeout=30
-        )
+        result = host.run_in_container(["smartctl", "-j", "-a", device], timeout=SMARTCTL_TIMEOUT)
         data = json.loads(result.stdout)
     except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         raise HTTPException(500, f"Failed to get SMART data: {e}")
@@ -1048,7 +1044,8 @@ def start_smart_test(
     """Start a SMART self-test on a whole disk of the host (``sda`` or ``/dev/sda``).
 
     400 for another device or test type; 500 when the host's disks cannot
-    be listed or smartctl fails.
+    be listed or smartctl fails, and when it does not answer within
+    SMARTCTL_TIMEOUT: it is killed then (ADR-0290).
     """
     if test_type not in ["short", "long", "conveyance"]:
         raise HTTPException(400, "Invalid test type. Use: short, long, or conveyance")
@@ -1056,20 +1053,19 @@ def start_smart_test(
     device = storage_disks.whole_disk_device(device)
 
     try:
-        result = subprocess.run(
-            ["smartctl", "-t", test_type, device],
-            capture_output=True, text=True, timeout=30
-        )
-        
-        if result.returncode not in [0, 4]:  # 4 means test started
-            raise HTTPException(500, f"Failed to start test: {result.stderr}")
-
-        return SmartTestResult(
-            status="started",
-            message=f"{test_type.capitalize()} test started on {device}"
-        )
+        result = host.run_in_container(["smartctl", "-t", test_type, device], timeout=SMARTCTL_TIMEOUT)
     except subprocess.TimeoutExpired:
-        raise HTTPException(500, "Command timed out")
+        raise HTTPException(
+            500, f"smartctl did not answer within {SMARTCTL_TIMEOUT} seconds: {device} may not be responding"
+        )
+
+    if result.returncode not in [0, 4]:  # 4 means test started
+        raise HTTPException(500, f"Failed to start test: {result.stderr}")
+
+    return SmartTestResult(
+        status="started",
+        message=f"{test_type.capitalize()} test started on {device}"
+    )
 
 
 @router.get("/overview")
@@ -1147,11 +1143,12 @@ async def reset_device_stats(pool_name: str, _: dict = Depends(verify_token)):
     if not Path(pool_path).exists():
         raise HTTPException(404, f"Pool not found: {name}")
 
-    # Off the event loop, with a timeout: btrfs can block on a hung pool.
+    # Off the event loop, with a timeout: btrfs can block on a hung pool. It is
+    # killed then and not waited for (ADR-0290).
     try:
         result = await asyncio.to_thread(
-            subprocess.run, ["btrfs", "device", "stats", "--reset", pool_path],
-            capture_output=True, text=True, timeout=storage_pools.SCRUB_COMMAND_TIMEOUT,
+            host.run_in_container, ["btrfs", "device", "stats", "--reset", pool_path],
+            timeout=storage_pools.SCRUB_COMMAND_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
         raise HTTPException(

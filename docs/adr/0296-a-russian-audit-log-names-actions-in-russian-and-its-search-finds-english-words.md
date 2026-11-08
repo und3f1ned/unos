@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0288: A Russian Audit Log page names actions and resources in Russian, and its search still finds them by their English words
+# ADR-0296: A Russian Audit Log page names actions and resources in Russian, and its search still finds them by their English words
 
 ## Context
 

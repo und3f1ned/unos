@@ -1,3 +1,4 @@
+export { default as NfsExportFormModal } from './NfsExportFormModal.svelte';
 export { default as RepairPermissionsModal } from './RepairPermissionsModal.svelte';
 export { default as ShareAccessPicker } from './ShareAccessPicker.svelte';
 export { default as ShareCard } from './ShareCard.svelte';

@@ -780,7 +780,7 @@ AUDIT_PAGE = REPO / "webui" / "src" / "routes" / "audit" / "+page.svelte"
 
 
 def test_the_web_ui_names_every_action_by_words_the_search_finds():
-    """The Audit Log page shows an action by its name in the audit catalog (ADR-0287, ADR-0288):
+    """The Audit Log page shows an action by its name in the audit catalog (ADR-0287, ADR-0296):
     one for every AuditAction, in Russian and in English, where the name is the action with spaces
     for its underscores and a capital (ADR-0237), words that the search of the list finds in the
     action's entries."""

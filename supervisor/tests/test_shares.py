@@ -1,23 +1,20 @@
-"""SMB share list for storage/pools.py, NFS exports and the share validators.
+"""SMB share list for storage/pools.py and the share validators.
 
 The SMB share API (database rows, smb.conf rendered from them) is tested in
 test_share_api.py, test_share_apply.py and test_share_import.py; the
 injection tests of the release before slice 2 moved to test_share_api.py as
-API-level 400s.
+API-level 400s. NFS exports are tested in test_nfs.py.
 """
 
 import os
 import tempfile
-from types import SimpleNamespace
 
 import pytest
 from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
 from src.host import HostResult
-from src.shares import service, smb, smbconf, nfs
-from src.shares.schemas import NfsExportCreate
+from src.shares import service, smb, smbconf
 from src.security.validators import validate_share_name, validate_share_path, RESERVED_SMB_NAMES
 
 INITIAL_SMB_CONF = """[global]
@@ -106,205 +103,6 @@ class TestSmbListShares:
             f.write("[a]\n   path = /x\n   comment = one\u2028path = /\n")
         (share,) = smb.list_shares()
         assert share.path == "/x"
-
-
-class TestNfsRouter:
-    """Validation errors must surface as 400, not 500."""
-
-    @pytest.fixture
-    def client(self, tmp_path):
-        from src.auth.utils import verify_token
-        from src.main import app
-
-        base = tmp_path / "pools"
-        (base / "data").mkdir(parents=True)
-        settings = SimpleNamespace(pools_base_path=str(base))
-        app.dependency_overrides[verify_token] = lambda: SimpleNamespace(id=1, username="admin", is_admin=True)
-        with patch("src.security.validators.settings", settings):
-            with patch("src.host.run_on_host", return_value=HostResult(0, "", "")):
-                yield SimpleNamespace(client=TestClient(app), base=base)
-        app.dependency_overrides.pop(verify_token, None)
-
-    def test_nfs_bad_client_is_400(self, client, tmp_path):
-        exports = tmp_path / "exports"
-        exports.write_text("")
-        with patch("src.shares.nfs.settings", SimpleNamespace(nfs_exports_path=str(exports))):
-            response = client.client.post(
-                "/api/v1/shares/nfs",
-                json={"path": str(client.base / "data"), "clients": "* /etc", "options": "rw"},
-            )
-        assert response.status_code == 400
-        assert exports.read_text() == ""
-
-
-class TestNfsModule:
-    """Tests for NFS export management."""
-
-    @pytest.fixture
-    def temp_exports(self):
-        """Create temporary exports file."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("")
-            path = f.name
-        yield path
-        if os.path.exists(path):
-            os.unlink(path)
-
-    @pytest.fixture
-    def mock_settings(self, temp_exports, tmp_path):
-        """Mock settings with temp paths."""
-        mock_settings = MagicMock()
-        mock_settings.nfs_exports_path = temp_exports
-        mock_settings.pools_base_path = str(tmp_path)
-        with patch("src.shares.nfs.settings", mock_settings):
-            with patch("src.security.validators.settings", mock_settings):
-                yield mock_settings
-
-    @pytest.fixture
-    def mock_subprocess(self):
-        """Mock subprocess for exportfs."""
-        with patch("src.shares.nfs.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-            yield mock_run
-
-    def test_list_exports_empty(self, mock_settings, mock_subprocess):
-        """Test listing exports when none exist."""
-        exports = nfs.list_exports()
-        assert exports == []
-
-    def test_create_export_success(self, mock_settings, mock_subprocess, tmp_path):
-        """Test creating a new NFS export."""
-        export_path = str(tmp_path / "nfs_export")
-        os.makedirs(export_path)
-
-        export = NfsExportCreate(
-            path=export_path,
-            clients="192.168.1.0/24",
-            options="rw,sync,no_subtree_check"
-        )
-
-        result = nfs.create_export(export)
-
-        assert result.path == export_path
-        assert result.clients == "192.168.1.0/24"
-        mock_subprocess.assert_called()
-        with open(mock_settings.nfs_exports_path) as f:
-            assert f.read() == f"{export_path} 192.168.1.0/24(rw,sync,no_subtree_check)\n"
-
-    def test_create_export_duplicate(self, mock_settings, mock_subprocess, tmp_path):
-        """Test that duplicate exports are rejected."""
-        export_path = str(tmp_path / "nfs_export")
-        os.makedirs(export_path)
-
-        export = NfsExportCreate(path=export_path)
-        nfs.create_export(export)
-
-        with pytest.raises(ValueError, match="already exists"):
-            nfs.create_export(export)
-
-    def test_delete_export_success(self, mock_settings, mock_subprocess, tmp_path):
-        """Test deleting an NFS export."""
-        export_path = str(tmp_path / "nfs_export")
-        os.makedirs(export_path)
-
-        export = NfsExportCreate(path=export_path)
-        nfs.create_export(export)
-
-        nfs.delete_export(export_path)
-
-        exports = nfs.list_exports()
-        assert len([e for e in exports if e.path == export_path]) == 0
-
-    def test_delete_export_not_found(self, mock_settings, mock_subprocess):
-        """Test deleting a non-existent export."""
-        with pytest.raises(ValueError, match="not found"):
-            nfs.delete_export("/nonexistent/path")
-
-    def test_parse_exports(self, mock_settings, mock_subprocess):
-        """Test parsing exports file with multiple entries."""
-        exports_content = """/data/share1 192.168.1.0/24(rw,sync)
-/data/share2 *(ro,async)
-"""
-        with open(mock_settings.nfs_exports_path, "w") as f:
-            f.write(exports_content)
-
-        exports = nfs.list_exports()
-
-        assert len(exports) == 2
-
-        export1 = next(e for e in exports if e.path == "/data/share1")
-        assert export1.clients == "192.168.1.0/24"
-        assert export1.options == "rw,sync"
-
-        export2 = next(e for e in exports if e.path == "/data/share2")
-        assert export2.clients == "*"
-        assert export2.options == "ro,async"
-
-    @pytest.mark.parametrize(
-        "clients", ["*", "192.168.1.0/24", "10.0.0.1", "fe80::/64", "192.168.1.0/255.255.255.0",
-                    "nas.local", "*.example.com", "host?"],
-    )
-    def test_valid_clients_accepted(self, mock_settings, mock_subprocess, tmp_path, clients):
-        result = nfs.create_export(NfsExportCreate(path=str(tmp_path / "e"), clients=clients))
-        assert result.clients == clients
-
-    @pytest.mark.parametrize(
-        "clients",
-        ["* (rw) evil", "*(rw,no_root_squash)", "host\n/etc *(rw)", "a b", "", "host#x",
-         "a,b", "@netgroup", "10.0.0.0/33", "-host", "x" * 256],
-    )
-    def test_hostile_clients_rejected(self, mock_settings, mock_subprocess, tmp_path, clients):
-        with pytest.raises((ValueError, HTTPException)):
-            nfs.create_export(NfsExportCreate(path=str(tmp_path / "e"), clients=clients))
-        assert nfs.list_exports() == []
-
-    @pytest.mark.parametrize(
-        "options", ["rw,sync,no_subtree_check", "ro", "rw,anonuid=1000,anongid=100,fsid=1,sec=krb5:sys",
-                    "rw,no_root_squash,insecure", "rw,fsid=root"],
-    )
-    def test_valid_options_accepted(self, mock_settings, mock_subprocess, tmp_path, options):
-        assert nfs.create_export(NfsExportCreate(path=str(tmp_path / "e"), options=options)).options == options
-
-    @pytest.mark.parametrize(
-        "options",
-        ["rw)\n/ *(rw", "rw,nosuchopt", "", "rw,,sync", "anonuid=abc", "mp=/etc", "rw sync",
-         "rw)(", "sec=none", "rw\n", "refer=/x@host"],
-    )
-    def test_hostile_options_rejected(self, mock_settings, mock_subprocess, tmp_path, options):
-        with pytest.raises(ValueError):
-            nfs.create_export(NfsExportCreate(path=str(tmp_path / "e"), options=options))
-        assert nfs.list_exports() == []
-
-    @pytest.mark.parametrize(
-        "path_template", ["/etc", "{tmp}", "{tmp}/../x", "{tmp}/a b", "{tmp}/x\n/ *", "{tmp}/a#b", "{tmp}/a(b)", "x"],
-    )
-    def test_hostile_paths_rejected(self, mock_settings, mock_subprocess, tmp_path, path_template):
-        with pytest.raises((ValueError, HTTPException)):
-            nfs.create_export(NfsExportCreate(path=path_template.format(tmp=tmp_path)))
-        assert nfs.list_exports() == []
-
-    def test_export_through_symlink_rejected(self, mock_settings, mock_subprocess, tmp_path):
-        (tmp_path / "private").mkdir()
-        (tmp_path / "apps").mkdir()
-        os.symlink(tmp_path / "private", tmp_path / "apps" / "downloads")
-        for path in (tmp_path / "apps" / "downloads", tmp_path / "apps" / "downloads" / "sub"):
-            with pytest.raises(HTTPException) as exc:
-                nfs.create_export(NfsExportCreate(path=str(path)))
-            assert exc.value.status_code == 400
-        assert nfs.list_exports() == []
-        assert list((tmp_path / "private").iterdir()) == []
-
-    def test_export_dir_creation_does_not_follow_swapped_symlink(self, mock_settings, mock_subprocess, tmp_path):
-        """A component replaced by a symlink after validation must not be followed by mkdir."""
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        os.symlink(outside, tmp_path / "swapped")
-        swapped = str(tmp_path / "swapped" / "new")
-        with patch("src.shares.nfs.validate_pools_path", return_value=swapped):
-            with pytest.raises(ValueError, match="not a usable directory"):
-                nfs.create_export(NfsExportCreate(path=swapped))
-        assert list(outside.iterdir()) == []
-        assert nfs.list_exports() == []
 
 
 class TestShareSecurityValidation:
