@@ -21,8 +21,10 @@
 	$: badge = badges[state] as { variant: Variant; key: string } | undefined;
 </script>
 
-<!-- The hint is also in the text (sr-only): a title alone is out of reach of keyboard, touch and screen-reader users. -->
-<span class="inline-flex" title={hint || undefined}>
+<!-- The hint is also in the text (sr-only): a title alone is out of reach of keyboard, touch and screen-reader users.
+     Relative, so that the hint, placed absolutely, stays in the badge: in a list that scrolls on its own, such as
+     that of a share's dialog, it would make the dialog's overlay scroll on below the dialog (ADR-0301). -->
+<span class="relative inline-flex" title={hint || undefined}>
 	<Badge variant={badge?.variant ?? 'neutral'}>{badge ? $t(badge.key) : String(state)}</Badge>{#if hint}<span
 			class="sr-only">{` (${hint})`}</span
 		>{/if}

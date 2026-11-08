@@ -456,9 +456,10 @@
   $: units = [$t("files.unit.b"), $t("files.unit.kb"), $t("files.unit.mb"), $t("files.unit.gb"), $t("files.unit.tb")];
 </script>
 
-<!-- On a narrow screen the page has no padding of its own beside main's, its buttons wrap, and
-     the list leaves out the Modified column (ADR-0301). -->
-<div class="md:p-6 h-full flex flex-col">
+<!-- On a narrow screen the page has no padding of its own beside main's, its buttons wrap, the
+     list leaves out the Modified column, and the page grows with the list, so that main scrolls
+     it as a whole. From md the list fills the rest of the window and scrolls inside it (ADR-0301). -->
+<div class="md:p-6 md:h-full flex flex-col">
   <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
     <h1 class="text-2xl font-bold flex items-center gap-2">
       <FolderOpen class="w-7 h-7" />
@@ -588,33 +589,26 @@
     </div>
   {/if}
 
-  <!-- New Folder Dialog -->
+  <!-- New Folder: on a narrow screen the buttons wrap below the field (ADR-0301). -->
   {#if showNewFolder}
-    <div class="mb-4 flex items-center gap-2">
-      <input
-        type="text"
+    <div class="mb-4 flex flex-wrap items-center gap-2">
+      <Input
         bind:value={newFolderName}
         placeholder={$t("files.folderName")}
-        class="flex-1 px-3 py-2 bg-slate-800 rounded-lg border border-slate-700 focus:border-blue-500 focus:outline-none"
+        class="flex-1 min-w-[10rem]"
         on:keydown={(e) => e.key === "Enter" && handleCreateFolder()}
       />
-      <button
-        on:click={handleCreateFolder}
-        class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg"
-      >
-        {$t("files.create")}
-      </button>
-      <button
-        on:click={() => { showNewFolder = false; newFolderName = ""; }}
-        class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg"
-      >
-        {$t("common.cancel")}
-      </button>
+      <div class="flex gap-2">
+        <Button on:click={handleCreateFolder}>{$t("files.create")}</Button>
+        <Button variant="secondary" on:click={() => { showNewFolder = false; newFolderName = ""; }}>
+          {$t("common.cancel")}
+        </Button>
+      </div>
     </div>
   {/if}
 
   <!-- File List -->
-  <div class="flex-1 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+  <div class="md:flex-1 md:min-h-0 flex flex-col bg-surface-elevated rounded-xl border border-border overflow-hidden">
     <div class="grid {columnsClass} gap-4 px-4 py-2 bg-slate-900/50 text-sm text-slate-400 border-b border-slate-700">
       <div class="w-6"></div>
       <div>{$t("files.column.name")}</div>
@@ -624,8 +618,7 @@
 
     <div
       bind:this={listBox}
-      class="overflow-y-auto"
-      style="max-height: calc(100vh - 280px)"
+      class="md:flex-1 md:min-h-0 overflow-y-auto"
       role="region"
       aria-label={$t("files.contents")}
     >

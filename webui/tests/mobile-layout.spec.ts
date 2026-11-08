@@ -12,6 +12,8 @@ import { fakeNotificationsApi, type Channel } from './notifications-fakes';
 // a regular user's Account page, sign-in and first run fit the width of the screen, in English
 // and in Russian, whose texts are longer: neither the page nor a part of it scrolls sideways,
 // except a table in its own frame (the class table-frame), and nothing is cut off at the side.
+// What can be taller than the screen, a dialog or a long folder, shows its start as it opens and
+// its end once scrolled, also on a phone held sideways (667 x 375, still below md).
 // Below Tailwind's md breakpoint the sidebar folds into a menu behind a button of the header bar.
 // The data that the stand-in lacks (disks, btrfs, Docker, the host's network, journal and power)
 // comes from route fakes, with names and paths as long as a NAS has them. Nothing here changes
@@ -19,6 +21,10 @@ import { fakeNotificationsApi, type Channel } from './notifications-fakes';
 // specs run at the desktop size of playwright.config.ts, where the sidebar stays.
 
 const PHONE = { width: 375, height: 812 };
+/** The same phone held sideways: narrower than md, so with the phone's layout, and 375 px high. */
+const PHONE_SIDEWAYS = { width: 667, height: 375 };
+/** The window of the other specs (Playwright's Desktop Chrome). */
+const DESKTOP = { width: 1280, height: 720 };
 
 /**
  * What makes the page wider than the screen: the document scrolling sideways, an element that
@@ -74,6 +80,63 @@ async function tooWide(page: Page): Promise<string[]> {
       }
     }
     return found;
+  });
+}
+
+/**
+ * The share of an element's box that shows when it shows whole: all of it but the fraction of a
+ * pixel that the rounding of positions can leave cut off at an edge.
+ */
+const WHOLE = 0.99;
+
+/**
+ * Scroll `target` into view as a finger can, and expect it to show whole: each ancestor that
+ * scrolls (overflow auto or scroll), from the innermost one out, and then the document, scroll
+ * just far enough to show it with a margin of 2 px. Never an ancestor that cuts off its content
+ * (overflow hidden or clip): no swipe moves it, though a script can (scrollIntoView does). Whether
+ * the target then shows whole, toBeInViewport says: the IntersectionObserver that it asks leaves
+ * out what an ancestor cuts off. Again until it holds: a dialog can still grow once it is shown.
+ */
+async function expectReachable(target: Locator, message: string): Promise<void> {
+  await expect(async () => {
+    await target.evaluate((element) => {
+      const MARGIN = 2;
+      const scrollers: Element[] = [];
+      for (let box = element.parentElement; box; box = box.parentElement) {
+        const { overflowY } = getComputedStyle(box);
+        if (overflowY === 'auto' || overflowY === 'scroll') scrollers.push(box);
+      }
+      if (document.scrollingElement) scrollers.push(document.scrollingElement);
+      for (const box of scrollers) {
+        const frame = box.getBoundingClientRect();
+        const view =
+          box === document.scrollingElement
+            ? { top: 0, bottom: window.innerHeight }
+            : { top: frame.top + box.clientTop, bottom: frame.top + box.clientTop + box.clientHeight };
+        const { top, bottom } = element.getBoundingClientRect();
+        // Down until its bottom shows, but never past its top (an element taller than the view).
+        if (bottom > view.bottom - MARGIN) box.scrollTop += Math.min(bottom - view.bottom + MARGIN, top - view.top);
+        else if (top < view.top + MARGIN) box.scrollTop -= view.top - top + MARGIN;
+      }
+    });
+    await expect(target, message).toBeInViewport({ ratio: WHOLE, timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
+}
+
+/**
+ * How far the overlay of an open dialog (Modal's, or one with its classes) scrolls past the
+ * dialog. An element placed absolutely inside a part of the dialog that scrolls on its own, such
+ * as a text for screen readers, is placed in the overlay unless a box between them is positioned:
+ * it then makes the overlay scroll on below the dialog, into the void.
+ */
+async function overscroll(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const overlay = document.querySelector('.modal-overlay');
+    const dialog = overlay?.firstElementChild;
+    if (!(overlay instanceof HTMLElement) || !(dialog instanceof HTMLElement)) return 0;
+    const { paddingTop, paddingBottom } = getComputedStyle(overlay);
+    const needed = dialog.offsetHeight + parseFloat(paddingTop) + parseFloat(paddingBottom);
+    return overlay.scrollHeight - Math.max(overlay.clientHeight, needed);
   });
 }
 
@@ -170,7 +233,8 @@ function listing(path: string, parent: string | null, items: ReturnType<typeof e
   const total_size = items.reduce((sum, item) => sum + item.size, 0);
   return { path, parent, items, total_size, item_count: items.length };
 }
-const FILES: Record<string, ReturnType<typeof listing>> = {
+type Folders = Record<string, ReturnType<typeof listing>>;
+const FILES: Folders = {
   '': listing(POOLS, null, [entry(DATA, 'directory', 0)]),
   [DATA]: listing(DATA, POOLS, [
     entry(FAMILY, 'directory', 0),
@@ -179,6 +243,28 @@ const FILES: Record<string, ReturnType<typeof listing>> = {
     entry(`${DATA}/nas-configuration-backup-2026-11-07.tar.gz`, 'file', 734_003_200),
   ]),
 };
+// A folder longer than any screen: 40 photos.
+const PHOTOS = Array.from({ length: 40 }, (_, i) =>
+  entry(`${DATA}/IMG_20261107_${String(i + 1).padStart(4, '0')}.jpg`, 'file', 4_194_304),
+);
+const LONG_FOLDER: Folders = { '': FILES[''], [DATA]: listing(DATA, POOLS, PHOTOS) };
+
+/** Answer the Files page's listings from `folders`, by the path asked for ('' for the pools folder). */
+function fakeFiles(page: Page, folders: Folders): Promise<void> {
+  return page.route(
+    (url) => url.pathname === '/api/v1/files/list',
+    (route) => {
+      const request = route.request();
+      const answer = folders[new URL(request.url()).searchParams.get('path') ?? ''];
+      return request.method() === 'GET' && answer ? route.fulfill({ json: answer }) : route.abort();
+    },
+  );
+}
+/** The row of the File Browser's entry at `path`. */
+const fileRow = (page: Page, path: string) =>
+  page.locator('main div.grid').filter({ has: page.locator(`input[data-path="${path}"]`) });
+/** A double-click on its row opens a folder: here e2e_data. */
+const openData = (page: Page) => fileRow(page, DATA).dblclick();
 const TRASH = {
   items: [
     {
@@ -316,6 +402,31 @@ const SECURITY = {
   },
 };
 
+// A new secret of two-factor authentication as POST /auth/totp/setup answers it: pyotp's
+// random_base32() has 32 characters.
+const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+const TOTP_SETUP = { secret: TOTP_SECRET, qr_uri: `otpauth://totp/UNOS:admin?secret=${TOTP_SECRET}&issuer=UNOS` };
+
+// GET /security/login-history (LoginHistoryResponse of supervisor/src/security/schemas.py), with an
+// IPv6 address and a long user name.
+const LOGIN_HISTORY = {
+  attempts: [
+    {
+      id: 2, username: 'bob_the_family_photographer', ip_address: '2001:db8:1234:5678:9abc:def0:1234:5678',
+      user_agent: 'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0', success: false,
+      failure_reason: 'Incorrect username or password', timestamp: '2026-11-08T09:58:02Z',
+    },
+    {
+      id: 1, username: 'admin', ip_address: '192.168.1.50',
+      user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      success: true, failure_reason: null, timestamp: '2026-11-08T09:50:00Z',
+    },
+  ],
+  total: 2,
+  failed_count: 1,
+  success_count: 1,
+};
+
 const NO_SETTINGS = { email_config: null, telegram_config: null, webhook_config: null, discord_config: null, slack_config: null };
 const CHANNELS: Channel[] = [
   {
@@ -400,7 +511,24 @@ interface View {
   open?: (page: Page) => Promise<void>;
   /** Shown once the page has its data; names from the fakes, so that it holds in every language. */
   shows: (page: Page) => Locator;
+  /** Shown whole as the view opens, before any scrolling: a dialog's title. */
+  start?: (page: Page) => Locator;
+  /** At the end of the view, shown whole once scrolled to: a dialog's last button, a list's last entry. */
+  end?: (page: Page) => Locator;
 }
+
+/** The title and the last button of a dialog that is named one (role dialog), as Modal's are. */
+const dialogTitle = (page: Page) => page.getByRole('dialog').getByRole('heading', { name: /\S/ }).first();
+const dialogEnd = (page: Page) => page.getByRole('dialog').getByRole('button').last();
+
+const LONG_FOLDER_VIEW: View = {
+  name: 'Files: a long folder',
+  path: '/files',
+  fake: (page) => fakeFiles(page, LONG_FOLDER),
+  open: openData,
+  shows: (page) => fileRow(page, PHOTOS[0].path),
+  end: (page) => fileRow(page, PHOTOS[PHOTOS.length - 1].path),
+};
 
 const VIEWS: View[] = [
   {
@@ -451,20 +579,21 @@ const VIEWS: View[] = [
   {
     name: 'Files',
     path: '/files',
-    fake: (page) =>
-      page.route(
-        (url) => url.pathname === '/api/v1/files/list',
-        (route) => {
-          const request = route.request();
-          const path = new URL(request.url()).searchParams.get('path') ?? '';
-          const answer = FILES[path];
-          return request.method() === 'GET' && answer ? route.fulfill({ json: answer }) : route.abort();
-        },
-      ),
-    // A double-click on its row opens a folder.
-    open: (page) => page.locator('main div.grid').filter({ has: page.locator(`input[data-path="${DATA}"]`) }).dblclick(),
+    fake: (page) => fakeFiles(page, FILES),
+    open: openData,
     shows: (page) => page.getByText('Annual report 2026 - final version signed by both parties.pdf', { exact: true }),
   },
+  {
+    name: 'Files: New Folder',
+    path: '/files',
+    fake: (page) => fakeFiles(page, FILES),
+    open: async (page) => {
+      await openData(page);
+      await page.getByTitle(/^(New Folder|Новая папка)$/).click();
+    },
+    shows: (page) => page.getByPlaceholder(/^(Folder name|Имя папки)$/),
+  },
+  LONG_FOLDER_VIEW,
   {
     name: 'Trash',
     path: '/files/trash',
@@ -533,6 +662,13 @@ const VIEWS: View[] = [
     },
   },
   {
+    name: 'System: Security, the sign-in history',
+    path: '/system#security',
+    fake: (page) => serve(page, { ...SECURITY, '/api/v1/security/login-history': LOGIN_HISTORY }),
+    open: (page) => page.locator('main').getByRole('button', { name: /^(View History|Показать историю)$/ }).click(),
+    shows: (page) => page.getByText('2001:db8:1234:5678:9abc:def0:1234:5678'),
+  },
+  {
     name: 'System: Resource Monitor',
     path: '/system#monitor',
     fake: fakeStatsStream,
@@ -556,6 +692,22 @@ const VIEWS: View[] = [
     path: '/system#backup',
     fake: (page) => serve(page, BACKUPS),
     shows: (page) => page.getByText('unos_backup_20261107_020000.tar.gz.enc'),
+  },
+  {
+    name: 'System: Backup, a download that failed',
+    path: '/system#backup',
+    fake: async (page) => {
+      await serve(page, BACKUPS);
+      // As the server answers for a backup that has gone meanwhile.
+      await page.route(
+        (url) => url.pathname.startsWith('/api/v1/backup/download/'),
+        (route) => route.fulfill({ status: 404, json: { detail: 'Backup not found' } }),
+      );
+    },
+    // The error names the backup, whose long name has nowhere to break.
+    open: (page) =>
+      page.getByRole('button', { name: /^(Download|Скачать) unos_backup_20261107_020000\.tar\.gz\.enc$/ }).click(),
+    shows: (page) => page.getByText('Backup not found'),
   },
   {
     name: 'System: Scheduler',
@@ -601,13 +753,16 @@ const VIEWS: View[] = [
     shows: (page) => page.getByText('enx00e04c680a1b').first(),
   },
 
-  // The dialogs: they fit the screen and scroll on their own.
+  // The dialogs: they fit the width of the screen, and one taller than the screen scrolls, so
+  // that its title shows as it opens and its last button once scrolled to its end.
   {
     name: 'Dialog: create a pool',
     path: '/storage',
     fake: (page) => fakeStorageApi(page),
     open: (page) => page.getByRole('button', { name: /^(Create Pool|Создать пул)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: create a snapshot',
@@ -620,13 +775,18 @@ const VIEWS: View[] = [
       }),
     open: (page) => page.getByRole('button', { name: /^(Create Snapshot|Создать снимок)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: add a share',
     path: '/shares',
     fake: (page) => fakeSmbApi(page, { users: USERS, shares: SHARES }),
     open: (page) => page.getByRole('button', { name: /^(Add SMB share|Добавить общую папку SMB)$/ }).click(),
-    shows: (page) => page.getByRole('dialog'),
+    // Its list of users, each with the SMB state's badge.
+    shows: (page) => page.getByRole('dialog').getByText('bob_the_family_photographer'),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: create a container',
@@ -634,6 +794,8 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, DOCKER),
     open: (page) => page.getByRole('button', { name: /^(Create Container|Создать контейнер)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: a container',
@@ -641,6 +803,9 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, DOCKER),
     open: (page) => page.locator('tr', { hasText: 'e2e-immich-machine-learning' }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    // A drawer without buttons at its end: the container's image ends its Overview.
+    end: (page) => page.getByRole('dialog').locator('code').last(),
   },
   {
     name: 'Dialog: an app of the catalog',
@@ -648,6 +813,18 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
     open: (page) => page.getByRole('button', { name: /Immich/ }).first().click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // Its image, ghcr.io/blakeblackshear/frigate:stable, has no hyphen to break at.
+    name: 'Dialog: an app with a long image name',
+    path: '/apps',
+    fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
+    open: (page) => page.getByRole('button', { name: /Frigate NVR/ }).first().click(),
+    shows: (page) => page.getByRole('dialog').getByText('ghcr.io/blakeblackshear/frigate:stable'),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: add a user',
@@ -655,6 +832,8 @@ const VIEWS: View[] = [
     fake: (page) => fakeSmbApi(page, { users: USERS }),
     open: (page) => page.getByRole('button', { name: /^(Add user|Добавить пользователя)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: SMART data of a disk',
@@ -662,6 +841,9 @@ const VIEWS: View[] = [
     fake: (page) => fakeHealthApi(page),
     open: (page) => page.getByRole('button', { name: /\/dev\/e2e-sda$/ }).click(),
     shows: (page) => page.getByRole('dialog').getByText('Raw_Read_Error_Rate'),
+    start: dialogTitle,
+    // No buttons at its end: the table of attributes ends it, its first column at the left.
+    end: (page) => page.getByRole('dialog').getByRole('row').last().getByRole('cell').first(),
   },
   {
     name: 'Dialog: restore a backup',
@@ -669,6 +851,8 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, BACKUPS),
     open: (page) => page.getByRole('button', { name: /unos_backup_20261107_020000\.tar\.gz\.enc$/ }).first().click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'Dialog: a new task',
@@ -679,6 +863,8 @@ const VIEWS: View[] = [
     },
     open: (page) => page.getByRole('button', { name: /^(New Task|Новая задача)$/ }).click(),
     shows: (page) => page.locator('#task-name'),
+    start: (page) => page.getByRole('heading', { name: /^(Create Task|Новая задача)$/ }),
+    end: (page) => page.getByRole('button', { name: /^(Create Task|Создать задачу)$/ }),
   },
   {
     name: 'Dialog: a mail channel',
@@ -686,8 +872,90 @@ const VIEWS: View[] = [
     fake: (page) => fakeNotificationsApi(page, CHANNELS),
     open: (page) => page.getByRole('button', { name: /^(Add Email|Добавить эл\. почту)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  // The dialogs of System > Security. Each comes last in the page, so its button is the last of
+  // its name: the one that opened it has the same name.
+  {
+    name: 'Dialog: a firewall rule',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY),
+    open: async (page) => {
+      await page.locator('main').getByRole('button', { name: /^(Configure|Настроить)$/ }).click();
+      await page.locator('main').getByRole('button', { name: /^(Add Rule|Добавить правило)$/ }).click();
+    },
+    shows: (page) => page.getByRole('heading', { name: /^(Add Firewall Rule|Новое правило брандмауэра)$/ }),
+    start: (page) => page.getByRole('heading', { name: /^(Add Firewall Rule|Новое правило брандмауэра)$/ }),
+    end: (page) => page.getByRole('button', { name: /^(Add Rule|Добавить правило)$/ }).last(),
+  },
+  {
+    name: 'Dialog: a certificate',
+    path: '/system#security',
+    fake: (page) => serve(page, SECURITY),
+    open: async (page) => {
+      await page.locator('main').getByRole('button', { name: /^(Manage|Управление)$/ }).click();
+      await page
+        .locator('main')
+        .getByRole('button', { name: /^(Generate Self-Signed|Создать самоподписанный)$/ })
+        .click();
+    },
+    shows: (page) =>
+      page.getByRole('heading', { name: /^(Generate Self-Signed Certificate|Создание самоподписанного сертификата)$/ }),
+    start: (page) =>
+      page.getByRole('heading', { name: /^(Generate Self-Signed Certificate|Создание самоподписанного сертификата)$/ }),
+    end: (page) => page.getByRole('button', { name: /^(Generate|Создать)$/ }).last(),
+  },
+  {
+    name: 'Dialog: turn on two-factor authentication',
+    path: '/system#security',
+    fake: async (page) => {
+      await serve(page, { ...SECURITY, '/api/v1/auth/totp/status': { enabled: false } });
+      // The new secret, without making one on the stand-in.
+      await page.route(
+        (url) => url.pathname === '/api/v1/auth/totp/setup',
+        (route) => (route.request().method() === 'POST' ? route.fulfill({ json: TOTP_SETUP }) : route.abort()),
+      );
+    },
+    open: (page) => page.locator('main').getByRole('button', { name: /^(Enable|Включить)$/ }).click(),
+    shows: (page) => page.getByText(TOTP_SECRET),
+    start: (page) =>
+      page.getByRole('heading', { name: /^(Setup Two-Factor Authentication|Настройка двухфакторной аутентификации)$/ }),
+    end: (page) => page.getByRole('button', { name: /^(Enable 2FA|Включить 2FA)$/ }),
+  },
+  {
+    name: 'Dialog: turn off two-factor authentication',
+    path: '/system#security',
+    fake: (page) =>
+      serve(page, {
+        ...SECURITY,
+        '/api/v1/auth/totp/status': { enabled: true },
+        '/api/v1/auth/recovery-codes/status': { remaining: 10, generated: true },
+      }),
+    open: (page) => page.locator('main').getByRole('button', { name: /^(Disable|Выключить)$/ }).click(),
+    shows: (page) =>
+      page.getByRole('heading', { name: /^(Disable Two-Factor Authentication|Выключение двухфакторной аутентификации)$/ }),
+    start: (page) =>
+      page.getByRole('heading', { name: /^(Disable Two-Factor Authentication|Выключение двухфакторной аутентификации)$/ }),
+    end: (page) => page.getByRole('button', { name: /^(Disable 2FA|Выключить 2FA)$/ }),
   },
 ];
+
+/**
+ * Open `view` and check that it fits the window: nothing reaches out at the side (tooWide), an
+ * open dialog's overlay scrolls no further than the dialog, the view's start shows whole as it
+ * opens, and its end once scrolled to as a finger can.
+ */
+async function checkFits(page: Page, view: View): Promise<void> {
+  await view.fake?.(page);
+  await page.goto(view.path);
+  await view.open?.(page);
+  await expect(view.shows(page)).toBeVisible();
+  expect(await tooWide(page)).toEqual([]);
+  expect(await overscroll(page), 'px that the overlay scrolls past the dialog').toBeLessThanOrEqual(1);
+  if (view.start) await expect(view.start(page), 'shown whole as it opens').toBeInViewport({ ratio: WHOLE });
+  if (view.end) await expectReachable(view.end(page), 'shown whole once scrolled to');
+}
 
 for (const [language, locale] of [
   ['English', 'en-US'],
@@ -698,12 +966,8 @@ for (const [language, locale] of [
     test.use({ viewport: PHONE, locale });
 
     for (const view of VIEWS) {
-      test(`${view.name} fits the width of the screen`, async ({ authenticatedPage: page }) => {
-        await view.fake?.(page);
-        await page.goto(view.path);
-        await view.open?.(page);
-        await expect(view.shows(page)).toBeVisible();
-        expect(await tooWide(page)).toEqual([]);
+      test(`${view.name} fits the screen`, async ({ authenticatedPage: page }) => {
+        await checkFits(page, view);
       });
     }
 
@@ -764,6 +1028,20 @@ test.describe('The menu on a phone', () => {
     expect(await page.evaluate(() => (window as unknown as { clicksOnPage: number }).clicksOnPage)).toBe(0);
     await expect(page).toHaveURL('/');
 
+    // iOS Safari makes a tap a click only on an element that listens for clicks itself, or under
+    // an ancestor below the body that does: a listener on the window does not count. So the dimmed
+    // area beside the drawer listens itself, as Modal's backdrop does, and a click that stays on
+    // the element under the finger (one that does not bubble) closes the menu as well.
+    await menuButton(page).click();
+    await navLink(page, '/').focus();
+    await page.evaluate(
+      ({ x, y }) => document.elementFromPoint(x, y)?.dispatchEvent(new MouseEvent('click', { bubbles: false })),
+      { x: PHONE.width - 20, y: PHONE.height / 2 },
+    );
+    await expect(drawer).toBeHidden();
+    await expect(menuButton(page)).toHaveAttribute('aria-expanded', 'false');
+    await expect(menuButton(page)).toBeFocused();
+
     // The button closes it too.
     await menuButton(page).click();
     await expect(drawer).toBeVisible();
@@ -800,6 +1078,8 @@ test.describe('The menu on a phone', () => {
   });
 
   test('choosing a link opens its page and closes the menu', async ({ authenticatedPage: page }) => {
+    // System's General and Updates tabs, without asking the internet for a release.
+    await serve(page, { '/api/v1/system/info': SYSTEM_INFO, ...UPDATES });
     await menuButton(page).click();
     await navLink(page, '/storage').click();
     await expect(page).toHaveURL('/storage');
@@ -821,6 +1101,21 @@ test.describe('The menu on a phone', () => {
     await menuButton(page).click();
     await page.goBack();
     await expect(page).toHaveURL('/storage');
+    await expect(navLink(page, '/system')).toBeHidden();
+
+    // Back between two places of one page, here from System's #updates to #general, opens no
+    // other page, so SvelteKit's afterNavigate does not run: the menu closes all the same.
+    await page.goto('/system#general');
+    const checkForUpdates = page.locator('main').getByRole('link', { name: 'Check for Updates' });
+    await checkForUpdates.click();
+    await expect(page).toHaveURL('/system#updates');
+    await expect(checkForUpdates).toBeHidden();
+    await menuButton(page).click();
+    await expect(navLink(page, '/system')).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL('/system#general');
+    await expect(checkForUpdates).toBeVisible();
+    await expect(menuButton(page)).toHaveAttribute('aria-expanded', 'false');
     await expect(navLink(page, '/system')).toBeHidden();
   });
 
@@ -857,6 +1152,25 @@ test.describe('The menu on a phone', () => {
   });
 });
 
+// Held sideways a phone is still narrower than md, with only 375 px of height: a dialog taller
+// than that scrolls, a long folder too, and the menu reaches its last link and Logout.
+test.describe('On a phone held sideways', () => {
+  test.use({ viewport: PHONE_SIDEWAYS });
+
+  for (const view of VIEWS.filter((view) => view.end)) {
+    test(`${view.name} fits the screen`, async ({ authenticatedPage: page }) => {
+      await checkFits(page, view);
+    });
+  }
+
+  test('the menu reaches its last link and Logout', async ({ authenticatedPage: page }) => {
+    await menuButton(page).click();
+    await expect(navLink(page, '/')).toBeInViewport({ ratio: WHOLE });
+    await expectReachable(navLink(page, '/system'), 'the last link');
+    await expectReachable(page.locator('#layout-sidebar').getByRole('button', { name: 'Logout' }), 'Logout');
+  });
+});
+
 test.describe('From the md breakpoint up', () => {
   test.use({ viewport: { width: 768, height: 1024 } });
 
@@ -869,5 +1183,18 @@ test.describe('From the md breakpoint up', () => {
     await navLink(page, '/storage').click();
     await expect(page).toHaveURL('/storage');
     await expect(navLink(page, '/storage')).toBeVisible();
+  });
+
+  // From md the File Browser's list fills the rest of the window and scrolls inside it.
+  test(`${LONG_FOLDER_VIEW.name} fits the window`, async ({ authenticatedPage: page }) => {
+    await checkFits(page, LONG_FOLDER_VIEW);
+  });
+
+  test.describe('at the size of the other specs', () => {
+    test.use({ viewport: DESKTOP });
+
+    test(`${LONG_FOLDER_VIEW.name} fits the window`, async ({ authenticatedPage: page }) => {
+      await checkFits(page, LONG_FOLDER_VIEW);
+    });
   });
 });

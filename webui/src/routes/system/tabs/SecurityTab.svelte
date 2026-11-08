@@ -999,19 +999,20 @@
                   <Badge variant={attempt.success ? "success" : "error"}>
                     {attempt.success ? $t("account.history.success") : $t("account.history.failure")}
                   </Badge>
-                  <div>
+                  <!-- On a phone the details wrap, and a long name or IPv6 address breaks (ADR-0301). -->
+                  <div class="min-w-0">
                     <div class="flex items-center gap-2">
-                      <User class="w-4 h-4 text-content-secondary" />
-                      <span class="font-medium">{attempt.username}</span>
+                      <User class="w-4 h-4 text-content-secondary flex-shrink-0" />
+                      <span class="font-medium break-all">{attempt.username}</span>
                     </div>
-                    <div class="flex items-center gap-4 text-sm text-content-secondary">
+                    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-content-secondary">
                       <span class="flex items-center gap-1">
                         <Clock class="w-3 h-3" />
                         <time datetime={attempt.timestamp ?? undefined}>{formatTimestamp(attempt.timestamp)}</time>
                       </span>
                       {#if attempt.ip_address}
-                        <span class="flex items-center gap-1">
-                          <MapPin class="w-3 h-3" />
+                        <span class="flex items-center gap-1 min-w-0 break-all">
+                          <MapPin class="w-3 h-3 flex-shrink-0" />
                           {attempt.ip_address}
                         </span>
                       {/if}
@@ -1043,10 +1044,13 @@
   </div>
 </div>
 
+<!-- The dialogs below take Modal's overlay (ADR-0301): one taller than the window scrolls with
+     it, so that its title and buttons stay reachable; my-auto centers it while it fits. -->
+
 <!-- TOTP Setup Modal -->
 {#if showSetupModal && totpSetupData}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
+  <div class="modal-overlay items-start overflow-y-auto p-4">
+    <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto">
       <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
         <Lock class="w-5 h-5" />
         {$t("account.totp.setupTitle")}
@@ -1131,8 +1135,8 @@
 
 <!-- Disable 2FA Modal -->
 {#if showDisableModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
+  <div class="modal-overlay items-start overflow-y-auto p-4">
+    <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto">
       <h3 class="text-lg font-semibold mb-4 flex items-center gap-2 text-red-400">
         <AlertCircle class="w-5 h-5" />
         {$t("account.totp.disableTitle")}
@@ -1189,8 +1193,8 @@
 
 <!-- Add Firewall Rule Modal -->
 {#if showAddRuleModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
+  <div class="modal-overlay items-start overflow-y-auto p-4">
+    <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto">
       <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
         <Plus class="w-5 h-5" />
         {$t("account.firewall.addTitle")}
@@ -1299,8 +1303,8 @@
 
 <!-- Generate Self-Signed Certificate Modal -->
 {#if showGenCertModal}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full">
+  <div class="modal-overlay items-start overflow-y-auto p-4">
+    <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto">
       <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
         <FileKey class="w-5 h-5" />
         {$t("account.certs.generateTitle")}

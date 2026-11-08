@@ -298,7 +298,9 @@ do the tests of a translated area that check its pages in Russian, such as those
 `tests/dashboard.spec.ts` and `tests/files.spec.ts` (the language kept in the browser's
 `localStorage` as `unos-locale`). Its window is Playwright's Desktop Chrome, 1280 x 720;
 `tests/mobile-layout.spec.ts` sets a phone's 375 x 812 and checks that no page, tab or dialog
-scrolls sideways there, in both languages (ADR-0301).
+scrolls sideways there, in both languages, and that a dialog or a long folder taller than the
+window scrolls to its last button or entry, there and on a phone held sideways, 667 x 375
+(ADR-0301).
 
 The stand-in is not a NAS host: it has no disks or pools that UNOS manages, no Docker, no Samba,
 and not the host's network, journal or `/proc`. With `E2E_STAND_IN=1`, the specs that need those

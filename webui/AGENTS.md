@@ -19,9 +19,14 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `table-row`, `table-frame`.
 - Every page fits a 375 px phone (ADR-0301): below `md` the sidebar is the drawer of the header
   bar's menu button. The page never scrolls sideways: a table that can be wider than the screen
-  sits in a `table-frame` and scrolls inside it, rows of buttons wrap (`flex-wrap`), long names
-  and paths break. `tests/mobile-layout.spec.ts` walks every page, tab and main dialog at 375 x 812
-  in both languages: a new page, tab or dialog joins its `VIEWS`.
+  sits in a `table-frame` and scrolls inside it, rows of buttons and fields wrap (`flex-wrap`),
+  long names and paths break. A dialog is a `Modal`, or its overlay takes Modal's classes
+  (`modal-overlay items-start overflow-y-auto p-4`, `my-auto` on the panel), so that one taller
+  than the screen scrolls; no height comes from the window's (`calc(100vh - ...)`). A text for
+  screen readers (`sr-only`) in a part that scrolls on its own sits in a `relative` box there.
+  `tests/mobile-layout.spec.ts` walks every page, tab and main dialog at 375 x 812 in both
+  languages, and the dialogs at 667 x 375 too: a new page, tab or dialog joins its `VIEWS`, a
+  dialog with its `start` (title) and `end` (last button).
 - Older pages still have raw `<button>` elements and `slate-*` colours: markup you write or
   change uses the components and the tokens.
 

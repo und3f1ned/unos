@@ -285,10 +285,11 @@
   </div>
 </div>
 
-<!-- Restore Confirmation Modal -->
+<!-- Restore Confirmation Modal. Modal's overlay (ADR-0301): taller than the window, the dialog
+     scrolls with it, so that its buttons stay reachable; my-auto centers it while it fits. -->
 {#if showRestoreModal && restoreTarget}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4" role="dialog" aria-modal="true" aria-label={$t("backup.dialog.label")}>
+  <div class="modal-overlay items-start overflow-y-auto p-4">
+    <div class="bg-surface-elevated rounded-lg p-6 max-w-md w-full my-auto" role="dialog" aria-modal="true" aria-label={$t("backup.dialog.label")}>
       {#if restoreResult}
         <!-- Result view -->
         <div class="text-center">

@@ -160,7 +160,7 @@
 	// Below Tailwind's md breakpoint the sidebar's logo row is the header bar, and the rest of the
 	// sidebar is a drawer under it that the menu button opens (ADR-0301). Escape and a click
 	// outside it close it and give the focus back to the button; a link closes it, and the
-	// navigation moves the focus to the new page.
+	// navigation moves the focus to the new page. Back and Forward close it too.
 	// The button exists only below md, the same 768 px as the md: classes of the markup: from md
 	// up the sidebar is the one it was, its first button Logout.
 	const narrow = readable(false, (set) => {
@@ -191,6 +191,10 @@
 		closeMenu(true);
 	}
 
+	// A click beside the drawer lands on its backdrop, which closes the menu itself: iOS Safari
+	// makes a tap a click only on an element that listens for clicks, and the window does not
+	// count. The window still sees the clicks elsewhere outside the drawer, such as on the header
+	// bar.
 	function handleOutsideClick(event: MouseEvent) {
 		if (!menuOpen) return;
 		// The path as it was when the click happened: the button's icon that was clicked has been
@@ -212,9 +216,16 @@
 	afterNavigate(() => {
 		menuOpen = false;
 	});
+
+	// Back and Forward between two places of one page, such as System's #updates and #general,
+	// change the URL without a navigation of SvelteKit, so afterNavigate misses them. A closed
+	// drawer keeps no focus: it goes back to the button.
+	function handlePopState() {
+		if (menuOpen) closeMenu(sidebar.contains(document.activeElement));
+	}
 </script>
 
-<svelte:window on:keydown={handleMenuKeydown} on:click={handleOutsideClick} />
+<svelte:window on:keydown={handleMenuKeydown} on:click={handleOutsideClick} on:popstate={handlePopState} />
 
 {#if gate === 'public'}
 	{#if showSlot}
@@ -249,8 +260,13 @@
 			</div>
 
 			{#if menuOpen}
-				<!-- Covers the page beside the drawer: a click on it reaches handleOutsideClick only. -->
-				<div class="md:hidden fixed inset-x-0 top-14 bottom-0 z-30 bg-black/50" role="presentation"></div>
+				<!-- Covers the page beside the drawer, which a click on it never reaches; it listens
+				     for the click itself (see handleOutsideClick). -->
+				<div
+					class="md:hidden fixed inset-x-0 top-14 bottom-0 z-30 bg-black/50"
+					role="presentation"
+					on:click={() => closeMenu(true)}
+				></div>
 			{/if}
 
 			<div
