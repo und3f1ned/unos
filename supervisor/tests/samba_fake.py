@@ -407,4 +407,5 @@ def install_fake_samba_host(monkeypatch) -> FakeSambaHost:
     fake = FakeSambaHost()
     monkeypatch.setattr(host_module, "run_on_host", fake.run)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    monkeypatch.setattr(host_module, "run_in_container", _forbidden_subprocess)
     return fake

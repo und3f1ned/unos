@@ -652,13 +652,8 @@ def get_device_facts(paths: list[str]) -> dict[str, DeviceFacts]:
 def get_smart_data(device_path: str) -> SmartData:
     """Get SMART data for a device using smartctl (blocking: run it in a worker thread)."""
     try:
-        result = subprocess.run(
-            ["smartctl", "-j", "-a", device_path],
-            capture_output=True,
-            text=True,
-            timeout=SMARTCTL_TIMEOUT,
-            check=False,
-        )
+        # Killed at the timeout and not waited for (ADR-0261).
+        result = host.run_in_container(["smartctl", "-j", "-a", device_path], timeout=SMARTCTL_TIMEOUT)
     except subprocess.TimeoutExpired:
         return SmartData(
             device=device_path,

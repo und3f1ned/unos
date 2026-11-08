@@ -38,6 +38,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from croniter import croniter
 
+from .. import host
 from ..auth.utils import require_admin, verify_token
 from ..backup.router import (
     BACKUP_KEY_SIZE,
@@ -75,10 +76,14 @@ MAX_KEEP_COUNT = 1000
 # standby spins up first, which takes tens of seconds behind some USB
 # bridges. Nobody waits for a scheduled run, so this allows more than the
 # 30 s of the health API's test endpoint, like storage.disks.SMARTCTL_TIMEOUT.
+# Both commands are killed at their timeout and not waited for (ADR-0261).
 SMART_TEST_TIMEOUT = 60
 # Seconds `btrfs scrub start` may take: it returns once the scrub runs in the
 # background, unless the filesystem hangs (as storage.pools.SCRUB_COMMAND_TIMEOUT).
 SCRUB_START_TIMEOUT = 60
+# Seconds the `btrfs subvolume show` of a snapshot may take when old snapshots
+# are cleaned up: it reads the creation time, unless the filesystem hangs.
+SUBVOLUME_SHOW_TIMEOUT = 60
 
 TASKS_FILE = "/data/scheduled_tasks.json"
 RUNS_FILE = "/data/task_runs.json"
@@ -362,7 +367,7 @@ def _start_scrub(pool: Path) -> subprocess.CompletedProcess:
     output (a line saying that the scrub started) nowhere.
     """
     with tempfile.TemporaryFile() as stderr:
-        result = subprocess.run(
+        result = host.run_in_container(
             ["btrfs", "scrub", "start", str(pool)],
             stdout=subprocess.DEVNULL, stderr=stderr, timeout=SCRUB_START_TIMEOUT,
         )
@@ -493,7 +498,8 @@ def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
     """Delete the oldest ``auto_`` snapshots of a pool beyond ``keep_count``, by creation time.
 
     Each is deleted by its subvolume id after the snapshot router's checks
-    (delete_snapshot_by_id, ADR-0242); one that fails them is kept.
+    (delete_snapshot_by_id, ADR-0242); one that fails them is kept. When btrfs
+    does not answer, nothing is deleted, and the result says why.
     """
     pool = pool_path(pool_name)
     snapshots_dir = _snapshot_dir(pool)
@@ -504,8 +510,17 @@ def _cleanup_old_snapshots(pool_name: str, keep_count: int) -> str:
     auto_snapshots = []
     for snap in snapshots_dir.iterdir():
         if _real_dir(snap) and snap.name.startswith("auto_"):
-            # Get creation time from btrfs
-            result = _run(["btrfs", "subvolume", "show", str(snap)])
+            # Get creation time from btrfs; killed at the timeout and not
+            # waited for (ADR-0261).
+            try:
+                result = host.run_in_container(
+                    ["btrfs", "subvolume", "show", str(snap)], timeout=SUBVOLUME_SHOW_TIMEOUT
+                )
+            except subprocess.TimeoutExpired:
+                return (
+                    f"Old snapshots were not cleaned up: btrfs did not answer within "
+                    f"{SUBVOLUME_SHOW_TIMEOUT} seconds. The pool may not be responding."
+                )
             if result.returncode == 0:
                 created = None
                 for line in result.stdout.split("\n"):
@@ -591,8 +606,8 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             # would scrub that filesystem if it is btrfs.
             if not await asyncio.to_thread(_pool_is_mounted, pool):
                 return False, f"Pool {task.target_pool} is not mounted at {pool}"
-            # Without a timeout, a hung filesystem would block a worker thread
-            # for good and leave the run "running".
+            # Killed at its timeout and not waited for (ADR-0261): a hung
+            # filesystem neither holds a worker thread nor leaves the run "running".
             try:
                 result = await asyncio.to_thread(_start_scrub, pool)
             except subprocess.TimeoutExpired:
@@ -607,11 +622,11 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
         elif task.task_type == TaskType.SMART_TEST:
             # Accepts "sda" and "/dev/sda" (what the UI sends); checks the host's disks.
             device = await asyncio.to_thread(disk_device, task.target_disk)
-            # Without a timeout, a hung disk or USB bridge would block a worker
-            # thread for good and leave the run "running".
+            # Killed at its timeout and not waited for (ADR-0261): a hung disk
+            # or USB bridge neither holds a worker thread nor leaves the run "running".
             try:
                 result = await asyncio.to_thread(
-                    _run, ["smartctl", "-t", "short", device], timeout=SMART_TEST_TIMEOUT
+                    host.run_in_container, ["smartctl", "-t", "short", device], timeout=SMART_TEST_TIMEOUT
                 )
             except subprocess.TimeoutExpired:
                 return False, (

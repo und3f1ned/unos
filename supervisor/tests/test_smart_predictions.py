@@ -114,7 +114,7 @@ def placed(api) -> list[tuple[str, str]]:
 
 
 def smartctl_reports(reallocated: int):
-    """subprocess.run for the SMART monitor: sda reports ``reallocated`` sectors, nvme0n1 sleeps."""
+    """host.run_in_container for the SMART monitor: sda reports ``reallocated`` sectors, nvme0n1 sleeps."""
 
     def run(cmd, **kwargs):
         assert cmd[:-1] == ["smartctl", "-n", "standby", "-j", "-a"], cmd
@@ -214,7 +214,7 @@ def test_the_mark_goes_a_day_after_the_last_rise(api, disks, monkeypatch):
     assert predictions(api)[0]["status"] == "replace_soon"
 
     # Hourly passes of the monitor, and the disk reallocates no further sector.
-    monkeypatch.setattr(subprocess, "run", smartctl_reports(3))
+    monkeypatch.setattr("src.host.run_in_container", smartctl_reports(3))
     for _ in range(20):
         assert health_router._smart_monitor_pass() == []
     assert predictions(api)[0]["status"] == "replace_soon"
@@ -234,7 +234,7 @@ def test_a_rise_counts_until_it_leaves_the_kept_history(api, disks, monkeypatch)
     disks.write({"WD-1": snapshots({REALLOCATED: [0] + [3] * 719})})
     assert predictions(api)[0]["status"] == "monitor_closely"
 
-    monkeypatch.setattr(subprocess, "run", smartctl_reports(3))
+    monkeypatch.setattr("src.host.run_in_container", smartctl_reports(3))
     assert health_router._smart_monitor_pass() == []
 
     [prediction] = predictions(api)
@@ -243,7 +243,7 @@ def test_a_rise_counts_until_it_leaves_the_kept_history(api, disks, monkeypatch)
 
 
 def test_the_monitor_records_the_serial_lsblk_reports(disks, monkeypatch):
-    monkeypatch.setattr(subprocess, "run", smartctl_reports(0))
+    monkeypatch.setattr("src.host.run_in_container", smartctl_reports(0))
 
     health_router._smart_monitor_pass()
 
@@ -497,7 +497,7 @@ def test_the_other_history_endpoints_say_so_too(api, disks, path):
 def test_a_read_during_the_hourly_write_gets_the_whole_old_history(api, disks, monkeypatch):
     disks.write({"WD-1": snapshots(FAILING)})
     old = disks.history_file.read_text()
-    monkeypatch.setattr(subprocess, "run", smartctl_reports(3))
+    monkeypatch.setattr("src.host.run_in_container", smartctl_reports(3))
 
     with open(disks.history_file) as reader:
         assert health_router._smart_monitor_pass() == []
@@ -510,7 +510,7 @@ def test_a_read_during_the_hourly_write_gets_the_whole_old_history(api, disks, m
 
 def test_the_monitor_starts_a_new_history_when_the_file_cannot_be_read(disks, monkeypatch, caplog):
     disks.history_file.write_text("{")
-    monkeypatch.setattr(subprocess, "run", smartctl_reports(0))
+    monkeypatch.setattr("src.host.run_in_container", smartctl_reports(0))
 
     health_router._smart_monitor_pass()
 

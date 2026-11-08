@@ -58,7 +58,7 @@ def smart_disk(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(cmd, 0, _smartctl_json("WD-1", disk.reallocated), "")
 
     monkeypatch.setattr(host, "run_on_host", run_on_host)
-    monkeypatch.setattr(subprocess, "run", smartctl)
+    monkeypatch.setattr(host, "run_in_container", smartctl)
     return disk
 
 
@@ -392,7 +392,7 @@ class TestRaidStatusFile:
 
     @pytest.fixture
     def btrfs_reset(self, tmp_path, monkeypatch, admin_api):
-        """A pool folder for the reset endpoint, and a recording subprocess.run (after admin_api's fake host)."""
+        """A pool folder for the reset endpoint, and a recording host.run_in_container (after admin_api's fake host)."""
         monkeypatch.setattr(health_router.storage_pools.settings, "pools_base_path", str(tmp_path))
         (tmp_path / "data").mkdir()
         calls = []
@@ -408,7 +408,7 @@ class TestRaidStatusFile:
                 raise AssertionError("btrfs was run without a timeout")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr(health_router.subprocess, "run", run)
+        monkeypatch.setattr(health_router.host, "run_in_container", run)
         return SimpleNamespace(pool=tmp_path / "data", calls=calls)
 
     def test_the_stats_reset_runs_btrfs_off_the_event_loop_with_a_timeout(self, raid_file, btrfs_reset, admin_api):
@@ -421,7 +421,7 @@ class TestRaidStatusFile:
         def hang(cmd, **kwargs):
             raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
 
-        monkeypatch.setattr(health_router.subprocess, "run", hang)
+        monkeypatch.setattr(health_router.host, "run_in_container", hang)
         r = admin_api.post("/api/v1/health/raid/data/reset-stats")
 
         assert (r.status_code, r.json()["detail"]) == (

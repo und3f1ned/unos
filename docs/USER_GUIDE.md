@@ -144,7 +144,15 @@ For each pool, you can:
   the **Shares** page marks them **Not served** and **Pool not mounted**. They
   keep their access, and mounting the pool serves them again
 - **Add Devices** - Expand the pool
-- **Scrub** - Check data integrity
+- **Scrub** - (mounted pools) Check data integrity. The scrub runs in the
+  background, the pool shows its progress, and **Cancel Scrub** stops it.
+  Starting, following and cancelling a scrub wait at most 60 seconds for
+  btrfs: when it does not answer in that time, for example because a disk of
+  the pool stopped responding, UNOS stops it and the page says that it did
+  not answer and that the pool may not be responding, while the rest of UNOS
+  keeps working. A btrfs stuck on a disk can take until a reboot to end; until
+  then, asking again answers the same at once. A **BTRFS Scrub** task in
+  **System** → **Scheduler** fails the same way, and its history shows why
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no
@@ -181,6 +189,14 @@ the attribute's failure threshold) or **Failing** (at or below it). NVMe disks
 have no SMART attributes; the dialog lists their SMART/Health Information log
 instead (available spare, percentage used, media errors and the rest). The
 dialog shows the values the tab loaded.
+
+UNOS waits at most 30 seconds for the SMART data of a disk in Disk Health,
+and 60 seconds for a SMART test of a **SMART Test** task in **System** →
+**Scheduler**. A disk that does not answer in that time, for example a disk
+or a USB bridge that stopped responding, is listed with the health status
+**UNKNOWN**, and the task's run fails with the reason; UNOS stops smartctl
+and the rest of UNOS keeps working. A smartctl stuck on such a disk can take
+until a reboot to end; until then, asking again answers the same at once.
 
 #### Replace Soon
 
@@ -1068,9 +1084,12 @@ offered there. Its snapshots are named `auto_<date>_<time>`, in UTC.
 **Keep Count** sets how many of them are kept: after each new snapshot, the
 oldest snapshots of the pool whose names start with `auto_` are deleted
 beyond that number, ordered by the time btrfs made them. Snapshots with
-other names are never deleted. A run on a pool that is not mounted fails
-with `Pool <name> is not mounted at /mnt/pools/<name>`, which the task's
-history shows.
+other names are never deleted. When btrfs does not answer within 60 seconds
+while the old snapshots are looked at, none is deleted, and the run's output
+says `Old snapshots were not cleaned up: btrfs did not answer within 60
+seconds. The pool may not be responding.` A run on a pool that is not mounted
+fails with `Pool <name> is not mounted at /mnt/pools/<name>`, which the
+task's history shows.
 
 ### System Backup
 

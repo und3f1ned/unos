@@ -13,16 +13,25 @@ they cannot inject extra shell syntax.
 
 Set ``UNOS_HOST_EXEC=local`` to run commands directly (no nsenter), e.g. when
 the supervisor runs natively on the host during development.
+
+btrfs scrubs, error stats resets and smartctl run in the container itself,
+on the pools and disks that the privileged container sees:
+:func:`run_in_container` runs them, and at their timeout it kills them
+without waiting for them (ADR-0261).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import shlex
+import signal
 import subprocess
+import threading
 from dataclasses import dataclass
+from typing import IO, Any
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +180,114 @@ async def run_on_host_async(
     return await asyncio.to_thread(
         run_on_host, cmd, timeout=timeout, check=check, input=input, errors=errors
     )
+
+
+# The commands of run_in_container, by their argument lists: those running,
+# and those that were killed at their timeout and have not ended yet, each
+# with whether a run that was not started because of it has been logged.
+_runs = threading.Condition()
+_running: set[tuple[str, ...]] = set()
+_stuck: dict[tuple[str, ...], bool] = {}
+
+
+def run_in_container(
+    cmd: list[str],
+    *,
+    timeout: float,
+    stdout: int | IO[Any] = subprocess.PIPE,
+    stderr: int | IO[Any] = subprocess.PIPE,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``cmd`` in the supervisor's own container; at its timeout, kill it and return at once.
+
+    For btrfs and smartctl, which reach the host's pools and disks through
+    the privileged container (ADR-0261). ``stdout`` and ``stderr`` are
+    pipes, whose text is returned (bytes that are not valid in the
+    locale's encoding become U+FFFD), or what Popen takes, such as
+    ``subprocess.DEVNULL`` or a file. The command reads nothing.
+
+    The command runs in a session of its own. At ``timeout`` its process
+    group, the command and the processes it started, is killed with
+    SIGKILL, and :class:`subprocess.TimeoutExpired` is raised at once: a
+    daemon thread waits for the command to end. One that hangs in the
+    kernel, on a disk or a filesystem that stopped answering, ends only when
+    the kernel lets it go.
+
+    One run of a command (the same ``cmd``) at a time: a second run waits for
+    the first, at most ``timeout``. While a run that was killed has not
+    ended, the command is not started: TimeoutExpired is raised at once, and
+    logged once for each such run. So a pool or disk that hangs keeps at most
+    one process of each command.
+    """
+    _validate_cmd(cmd)
+    key = tuple(cmd)
+    with _runs:
+        if not _runs.wait_for(lambda: key not in _running, timeout) or key in _stuck:
+            if not _stuck.get(key):
+                logger.warning("Not started: %s: an earlier run of it has not ended", shlex.join(cmd))
+                if key in _stuck:
+                    _stuck[key] = True
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        _running.add(key)
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            errors="replace",
+            start_new_session=True,
+        )
+        try:
+            out, err = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_and_leave(process, key)
+            logger.warning(
+                "Killed %s: it did not answer within %s seconds", shlex.join(cmd), timeout
+            )
+            raise
+        except BaseException:
+            _kill_and_leave(process, key)
+            raise
+    finally:
+        with _runs:
+            _running.discard(key)
+            _runs.notify_all()
+    return subprocess.CompletedProcess(cmd, process.returncode, out, err)
+
+
+def _kill_and_leave(process: subprocess.Popen[str], key: tuple[str, ...]) -> None:
+    """Kill the process group of ``process`` and leave the wait for its end to a daemon thread."""
+    if process.returncode is not None:  # it ended and was waited for already
+        return
+    # Its process group id is its pid, which no other process can take until
+    # it is waited for.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    with _runs:
+        _stuck[key] = False
+    try:
+        threading.Thread(
+            target=_wait_for_killed,
+            args=(process, key),
+            name=f"unos-reap:{process.pid}",
+            daemon=True,
+        ).start()
+    except BaseException:
+        with _runs:
+            _stuck.pop(key, None)
+        raise
+
+
+def _wait_for_killed(process: subprocess.Popen[str], key: tuple[str, ...]) -> None:
+    try:
+        process.wait()
+    finally:
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
+        with _runs:
+            _stuck.pop(key, None)
 
 
 def read_host_file(path: str, *, timeout: float = 10) -> str:

@@ -25,6 +25,12 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   commands, smartctl, bcrypt, Docker, e-mail) runs off the event loop with a timeout (ADR-0021).
   The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
   can run long runs under the host's `timeout` (ADR-0258).
+- btrfs and smartctl that run in the container (scrubs, the stats reset, SMART tests and reads)
+  go through `host.run_in_container`: at its timeout it kills the command's process group and
+  leaves the wait to a daemon thread, so a command stuck in the kernel holds no worker thread;
+  it runs one run of a command at a time, and none while a killed run of it is still stuck
+  (ADR-0261). The fake hosts refuse it as they refuse `subprocess.run`. The Snapshots page's
+  `run_cmd` does not use it yet.
 
 ## Routers and roles (ADR-0030)
 

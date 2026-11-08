@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from src import host
 from src.notifications.schemas import (
     EmailConfig,
     NotificationChannel,
@@ -157,7 +158,7 @@ class TestSmartData:
         mock_result.returncode = 0
         mock_result.stdout = json.dumps(mock_smartctl_output)
 
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+        with patch("src.host.run_in_container", return_value=mock_result):
             result = disks.get_smart_data("/dev/sda")
 
         assert isinstance(result, SmartData)
@@ -177,7 +178,7 @@ class TestSmartData:
         mock_result.returncode = 0
         mock_result.stdout = json.dumps(smart_output)
 
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+        with patch("src.host.run_in_container", return_value=mock_result):
             result = disks.get_smart_data("/dev/sda")
 
         assert result.healthy is False
@@ -189,7 +190,7 @@ class TestSmartData:
         mock_result.stdout = "Not valid JSON"
         mock_result.stderr = "smartctl failed"
 
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+        with patch("src.host.run_in_container", return_value=mock_result):
             result = disks.get_smart_data("/dev/sda")
 
         assert result.healthy is False
@@ -616,10 +617,11 @@ class TestSmartOffTheEventLoop:
 
     @pytest.fixture
     def recorded_run(self, monkeypatch):
-        """subprocess.run stand-in: one data disk sda; records (program, on_event_loop, timeout).
+        """subprocess.run and host.run_in_container stand-in: one data disk sda; records
+        (program, on_event_loop, timeout).
 
         Host commands (src.host.run_on_host) are recorded by the program run
-        through nsenter.
+        through nsenter; smartctl runs in the container (host.run_in_container).
         """
         calls = []
 
@@ -633,6 +635,7 @@ class TestSmartOffTheEventLoop:
             return subprocess.CompletedProcess(cmd, 0, SMART_JSON, "")
 
         monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(host, "run_in_container", run)
         return calls
 
     async def test_monitor_round_runs_in_a_worker_thread(self, recorded_run, monkeypatch, tmp_path):
@@ -658,14 +661,14 @@ class TestSmartOffTheEventLoop:
             # smartctl -n standby: exit status bit 1 when the disk sleeps
             return subprocess.CompletedProcess(cmd, 2, '{"power_mode": "STANDBY"}', "")
 
-        monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(host, "run_in_container", run)
         assert health_router.collect_smart_snapshot("/dev/sda") is None
         assert commands == [["smartctl", "-n", "standby", "-j", "-a", "/dev/sda"]]
 
     def test_snapshot_of_a_failing_disk_is_kept(self, monkeypatch):
         # Exit status bit 3: "SMART status check returned DISK FAILING".
         monkeypatch.setattr(
-            subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 8, SMART_JSON, "")
+            host, "run_in_container", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 8, SMART_JSON, "")
         )
         snapshot = health_router.collect_smart_snapshot("/dev/sda")
         assert snapshot is not None and snapshot.serial == "WD-1"
@@ -679,14 +682,14 @@ class TestSmartOffTheEventLoop:
         assert recorded_run == [("lsblk", False, 30), ("smartctl", False, disks.SMARTCTL_TIMEOUT)]
 
     def test_storage_smart_endpoint_times_out(self, recorded_run, monkeypatch):
-        answering = subprocess.run
+        answering = host.run_in_container
 
         def hanging_smartctl(cmd, **kwargs):
             if cmd[0] == "smartctl":
                 raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
             return answering(cmd, **kwargs)
 
-        monkeypatch.setattr(subprocess, "run", hanging_smartctl)
+        monkeypatch.setattr(host, "run_in_container", hanging_smartctl)
         with admin_client() as api:
             response = api.get("/api/v1/storage/disks/sda/smart")
         assert response.status_code == 200
@@ -718,7 +721,7 @@ class TestScrubOffTheEventLoop:
                 return subprocess.CompletedProcess(cmd, 0, out, "")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(host, "run_in_container", run)
         return calls
 
     @pytest.mark.parametrize("method, first", [("post", "start"), ("get", "status"), ("delete", "cancel")])
@@ -735,7 +738,7 @@ class TestScrubOffTheEventLoop:
         def run(cmd, **kwargs):
             return subprocess.CompletedProcess(cmd, 1, "", "ERROR: not a btrfs filesystem")
 
-        monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(host, "run_in_container", run)
         with admin_client() as client:
             r = client.post("/api/v1/storage/pools/data/scrub")
         assert r.status_code == 500

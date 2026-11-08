@@ -20,6 +20,7 @@ from cryptography.exceptions import InvalidTag
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src import host as host_module
 from src.auth.utils import verify_token
 from src.main import app
 from src.scheduler.schemas import ScheduledTask
@@ -55,8 +56,10 @@ def env(tmp_path, monkeypatch):
     host.add_disk("nvme0n1", rota=False, serial="NV-1")
     host.add_disk("loop0", size=1_000_000)["type"] = "loop"
     with patch("src.security.validators.settings", SimpleNamespace(pools_base_path=str(base))):
-        # smartctl, btrfs and custom commands run in the container (subprocess.run).
-        with patch("src.scheduler.router.subprocess.run") as run:
+        # smartctl, btrfs and custom commands run in the container: SMART tests and scrub
+        # starts through host.run_in_container, the others through subprocess.run. One mock
+        # records them all.
+        with patch("src.scheduler.router.subprocess.run") as run, patch("src.host.run_in_container", run):
             run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             yield SimpleNamespace(client=TestClient(app), base=base, pool=base / "data",
                                   outside=tmp_path / "outside", run=run, tmp=tmp_path, host=host)
@@ -947,8 +950,8 @@ async def test_hanging_scrub_start_is_recorded_as_timed_out(env):
     )
 
 
-# The env fixture replaces subprocess.run with a mock; the next test runs a fake btrfs.
-_REAL_RUN = subprocess.run
+# The env fixture replaces host.run_in_container with a mock; the next test runs a fake btrfs.
+_REAL_RUN_IN_CONTAINER = host_module.run_in_container
 # What the fake btrfs does for "scrub start". Without -B, btrfs-progs forks the
 # process that runs the scrub and returns at once; that process keeps the
 # standard output and error of btrfs open (it closes none of them) until the
@@ -972,7 +975,7 @@ def test_a_scheduled_scrub_is_recorded_when_btrfs_returns(env, monkeypatch, btrf
     (bin_dir / "btrfs").write_text("#!/bin/sh\n" + FAKE_SCRUB_START[btrfs])
     (bin_dir / "btrfs").chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    env.run.side_effect = _REAL_RUN
+    env.run.side_effect = _REAL_RUN_IN_CONTAINER
     task = env.client.post("/api/v1/scheduler/tasks", json=_task(name="Scrub", task_type="scrub")).json()
     scrub = bin_dir / "btrfs.pid"
     try:
