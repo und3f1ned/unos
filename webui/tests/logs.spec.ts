@@ -474,7 +474,7 @@ test.describe('System Logs with a fake journal', () => {
     // The server's message stays in English, under a Russian title.
     api.fail(DID_NOT_ANSWER);
     await page.getByRole('button', { name: 'Сбросить фильтры' }).click();
-    await expect(page.getByText('Не удалось загрузить журналы')).toBeVisible();
+    await expect(page.getByText('Ошибка загрузки журналов')).toBeVisible();
     await expect(page.getByText(DID_NOT_ANSWER)).toBeVisible();
     await expect(page.getByText('System Logs')).toHaveCount(0);
   });

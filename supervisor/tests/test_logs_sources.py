@@ -827,9 +827,9 @@ def test_the_web_ui_names_each_source_in_english_as_the_server_does_and_in_russi
     the E2E fakes copy them, and in Russian. A source without them shows the server's texts."""
     labels = key_map(LOGS_TAB, "SOURCE_LABELS")
     descriptions = key_map(LOGS_TAB, "SOURCE_DESCRIPTIONS")
-    catalog = read_catalog("logs")
-
     assert list(labels) == list(descriptions) == list(logs.LOG_SOURCES)
+
+    catalog = read_catalog("logs")  # skips without node
     for name, source in logs.LOG_SOURCES.items():
         assert catalog["en"][labels[name]] == source.label
         assert catalog["en"][descriptions[name]] == source.description

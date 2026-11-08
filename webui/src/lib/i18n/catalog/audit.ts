@@ -40,8 +40,7 @@ export const en = {
 	'audit.field.browser': 'Browser',
 	'audit.showMore': 'Show more',
 
-	// An entry's severity (AuditSeverity of supervisor/src/audit/schemas.py).
-	'audit.severity.info': 'Info',
+	// An entry's severity (AuditSeverity of supervisor/src/audit/schemas.py) other than info.
 	'audit.severity.warning': 'Warning',
 	'audit.severity.critical': 'Critical',
 
@@ -132,7 +131,6 @@ export const ru: Translation<typeof en> = {
 	'audit.field.browser': 'Браузер',
 	'audit.showMore': 'Показать ещё',
 
-	'audit.severity.info': 'Информация',
 	'audit.severity.warning': 'Предупреждение',
 	'audit.severity.critical': 'Критично',
 

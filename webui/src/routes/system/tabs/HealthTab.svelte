@@ -150,7 +150,10 @@
 
   $: lastSelfTest = (disk: SmartInfo): string => {
     if (!disk.self_test_status && !disk.last_test_result) return $t("health.noSelfTest");
-    return [disk.self_test_status, disk.last_test_result].filter(Boolean).join(": ");
+    return [disk.self_test_status, disk.last_test_result]
+      .filter((part): part is string => Boolean(part))
+      .map(orUnknown)
+      .join(": ");
   };
 </script>
 

@@ -138,7 +138,7 @@ export const ru: Translation<typeof en> = {
 	'logs.time.last24Hours': 'За последние 24 часа',
 	'logs.time.last7Days': 'За последние 7 дней',
 
-	'logs.loadError': 'Не удалось загрузить журналы',
+	'logs.loadError': 'Ошибка загрузки журналов',
 	'logs.loadFailed': 'Не удалось загрузить журналы',
 	'logs.count': {
 		one: 'Показана {n} запись, сначала новые',

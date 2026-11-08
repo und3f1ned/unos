@@ -230,11 +230,20 @@
   }
 
   // The server gives UTC times with their offset; the browser shows them in its own time zone,
-  // in the language of the page (reactive, so that the list follows a change of the language).
+  // in the language of the page, as toLocaleString writes them. One formatter per language for
+  // every row (reactive, so that the list follows a change of the language).
+  $: dateFormat = new Intl.DateTimeFormat($intlLocale, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric"
+  });
   $: formatTimestamp = (ts: string): string => {
     if (!ts) return "";
     const date = new Date(ts);
-    return Number.isNaN(date.getTime()) ? ts : date.toLocaleString($intlLocale);
+    return Number.isNaN(date.getTime()) ? ts : dateFormat.format(date);
   };
 
   // Split a log message around case-insensitive matches of the search term.

@@ -105,8 +105,8 @@
 		network_config_changed: 'audit.action.networkConfigChanged',
 		other: 'audit.action.other'
 	};
-	const SEVERITIES: Record<AuditSeverity, { key: string; variant: 'info' | 'warning' | 'error' }> = {
-		info: { key: 'audit.severity.info', variant: 'info' },
+	// An info entry shows no severity.
+	const SEVERITIES: Record<Exclude<AuditSeverity, 'info'>, { key: string; variant: 'warning' | 'error' }> = {
 		warning: { key: 'audit.severity.warning', variant: 'warning' },
 		critical: { key: 'audit.severity.critical', variant: 'error' }
 	};

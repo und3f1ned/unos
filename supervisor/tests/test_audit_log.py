@@ -785,9 +785,9 @@ def test_the_web_ui_names_every_action_by_words_the_search_finds():
     for its underscores and a capital (ADR-0237), words that the search of the list finds in the
     action's entries."""
     actions = key_map(AUDIT_PAGE, "ACTION_NAMES")
-    catalog = read_catalog("audit")
-
     assert sorted(actions) == sorted(action.value for action in AuditAction)
+
+    catalog = read_catalog("audit")  # skips without node
     for action in AuditAction:
         english = catalog["en"][actions[action.value]]
         assert english == action.value.replace("_", " ").capitalize()
