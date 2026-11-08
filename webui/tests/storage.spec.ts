@@ -15,6 +15,10 @@ import {
   FAKE_POOLS,
   SWAPPED_DISKS,
   fakeStorageApi,
+  mountedElsewhere,
+  stillInUse,
+  usedByContainers,
+  type FakePool,
   type FakeStorageOptions,
   type RecordedWrite,
 } from './storage-fakes';
@@ -70,6 +74,16 @@ test.describe('Storage pools (fake data)', () => {
   /** A "Label: value" field of a pool card. */
   const field = (card: Locator, label: string) =>
     card.locator(`xpath=.//div[span[normalize-space(.)="${label}:"]]`);
+  /** A healthy pool, mounted and mounted at boot, as GET /storage/pools lists it. */
+  const mountedPoolNamed = (name: string): FakePool => ({
+    ...FAKE_POOLS[0],
+    name,
+    mountpoint: `/mnt/pools/${name}`,
+    raid_level: 'single',
+    mounted: true,
+    persistent: true,
+    health: 'healthy',
+  });
 
   test('shows pool health and mount state', async ({ authenticatedPage: page }) => {
     await fakeStorageApi(page);
@@ -224,6 +238,115 @@ test.describe('Storage pools (fake data)', () => {
       { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
       { method: 'POST', path: '/pools/e2e_data/mount', body: {} },
     ]);
+  });
+
+  // ADR-0035, ADR-0070, ADR-0269: Unmount is refused (409) while running apps keep data on the
+  // pool, also when the filesystem stays mounted in a container's mount namespace after the
+  // host's umount; the server then mounts the pool again. The texts are the server's
+  // (supervisor/tests/test_pool_persistence.py checks them).
+  test('an unmount refused while apps use the pool says why, and the pool stays mounted', async ({
+    authenticatedPage: page,
+  }) => {
+    const usedByApp = usedByContainers('e2e_data', ['transmission']);
+    const stillMounted = stillInUse('e2e_data', mountedElsewhere(1200, '/downloads'));
+    const refuse: Record<string, string> = { 'POST /pools/e2e_data/unmount': usedByApp };
+    const writes = await fakeStorageApi(page, { pools: [mountedPoolNamed('e2e_data')], refuse });
+    await page.goto('/storage');
+    const pool = poolCard(page, 'e2e_data');
+
+    await pool.getByRole('button', { name: 'Unmount', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Unmount Pool' });
+    const unmount = dialog.getByRole('button', { name: 'Unmount', exact: true });
+    const failed = dialog.locator('.alert', { hasText: 'Unmount failed' });
+    await unmount.click();
+    await expect(failed).toContainText(usedByApp);
+    await expect(dialog).toBeVisible();
+
+    refuse['POST /pools/e2e_data/unmount'] = stillMounted;
+    await unmount.click();
+    await expect(failed).toContainText(stillMounted);
+    await expect(failed).not.toContainText(usedByApp);
+
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(pool.locator('.badge', { hasText: /^Healthy$/ })).toBeVisible();
+    await expect(pool.locator('.badge', { hasText: /^Mounted at boot$/ })).toBeVisible();
+    await expect(pool.getByRole('button', { name: 'Unmount', exact: true })).toBeVisible();
+    expect(writes).toEqual([
+      { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
+      { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
+    ]);
+  });
+
+  // storage.forget-pool (ADR-0035): Remove Pool asks for the pool's name; the server unmounts the
+  // pool and drops its fstab entry and empty mountpoint, and since the disks keep the filesystem,
+  // the pool is listed again as an unmounted pool that can be mounted later.
+  test('remove pool asks for the name, and the pool is listed again as not mounted', async ({
+    authenticatedPage: page,
+  }) => {
+    const pools = [mountedPoolNamed('e2e_data')];
+    const writes = await fakeStorageApi(page, { pools });
+    await page.goto('/storage');
+    const pool = poolCard(page, 'e2e_data');
+
+    await pool.getByRole('button', { name: 'Remove pool e2e_data', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Remove Pool' });
+    await expect(dialog).toContainText(
+      'UNOS unmounts it and removes its /etc/fstab entry. The disks are not wiped: the btrfs ' +
+        'filesystem and its data stay on them, and the pool can be mounted again later.',
+    );
+    await expect(dialog).toContainText('Mount: /mnt/pools/e2e_data');
+    await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+
+    const remove = dialog.getByRole('button', { name: 'Remove Pool', exact: true });
+    const confirm = dialog.getByLabel('Type pool name to confirm');
+    await expect(remove).toBeDisabled();
+    await confirm.fill('e2e_dat');
+    await expect(remove).toBeDisabled();
+    await confirm.fill('E2E_DATA');
+    await expect(remove).toBeDisabled();
+    expect(writes).toEqual([]);
+
+    await confirm.fill('e2e_data');
+    await remove.click();
+    await expect(dialog).toBeHidden();
+    expect(writes).toEqual([{ method: 'DELETE', path: '/pools/e2e_data', body: null }]);
+    await expect(pool.locator('.badge', { hasText: /^Not mounted$/ })).toBeVisible();
+    await expect(pool.locator('.badge', { hasText: /^Mounted at boot$/ })).toHaveCount(0);
+    await expect(field(pool, 'Used')).toHaveText('Used: unknown (not mounted)');
+    await expect(pool.getByRole('button', { name: 'Mount', exact: true })).toBeVisible();
+
+    await pool.getByRole('button', { name: 'Mount', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Mount Pool' }).getByRole('button', { name: 'Mount', exact: true }).click();
+    await expect(pool.locator('.badge', { hasText: /^Mounted at boot$/ })).toBeVisible();
+    expect(writes).toEqual([
+      { method: 'DELETE', path: '/pools/e2e_data', body: null },
+      { method: 'POST', path: '/pools/e2e_data/mount', body: {} },
+    ]);
+  });
+
+  test('a removal refused while the pool is in use says why, and the pool stays', async ({
+    authenticatedPage: page,
+  }) => {
+    const stillMounted = stillInUse('e2e_data', mountedElsewhere(1200, '/downloads'));
+    const writes = await fakeStorageApi(page, {
+      pools: [mountedPoolNamed('e2e_data')],
+      refuse: { 'DELETE /pools/e2e_data': stillMounted },
+    });
+    await page.goto('/storage');
+    const pool = poolCard(page, 'e2e_data');
+
+    await pool.getByRole('button', { name: 'Remove pool e2e_data', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Remove Pool' });
+    await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+    await dialog.getByLabel('Type pool name to confirm').fill('e2e_data');
+    await dialog.getByRole('button', { name: 'Remove Pool', exact: true }).click();
+
+    await expect(dialog.locator('.alert', { hasText: 'Pool was not removed' })).toContainText(stillMounted);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(pool.locator('.badge', { hasText: /^Mounted at boot$/ })).toBeVisible();
+    expect(writes).toEqual([{ method: 'DELETE', path: '/pools/e2e_data', body: null }]);
   });
 
   test('create pool stays disabled until name and erase are confirmed', async ({ authenticatedPage: page }) => {

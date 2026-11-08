@@ -122,6 +122,7 @@ and this index, and `make check-fast` runs it.
 | [0241](0241-snapshots-of-volumes-and-volume-quotas-in-the-web-ui.md) | The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB | superseded by [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | 2026-11-07 |
 | [0242](0242-snapshot-commands-act-on-the-folders-that-were-opened.md) | Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id | accepted | 2026-11-07 |
 | [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | The Snapshots page offers mounted pools and their volumes, also a pool whose volumes cannot be read, and the Volumes dialog takes a quota in GiB | accepted | 2026-11-07 |
+| [0269](0269-an-unmount-also-unmounts-the-copies-that-services-keep-in-their-mount-namespaces.md) | An unmount also unmounts the copies of a pool's mount that services keep in mount namespaces of their own, and refuses every other user as before | accepted | 2026-11-08 |
 
 ## Shares
 

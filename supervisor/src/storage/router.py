@@ -128,9 +128,10 @@ async def get_pool_endpoint(name: str, _=Depends(verify_token)):
 @router.delete("/pools/{name}")
 @limiter.limit("5/minute")  # Rate limit pool deletion
 async def delete_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
-    """Forget a pool: unmount it on the host and drop its fstab entry.
+    """Forget a pool: unmount it on the host and drop its fstab entry and empty mountpoint.
 
-    The disks are not wiped; the filesystem can be mounted again later. As
+    The disks are not wiped; the filesystem is listed again as an unmounted
+    pool and can be mounted later. Refused with 409 as an unmount is. As
     after an unmount, its SMB shares stop being served (ADR-0248).
     """
     # Validate pool name
@@ -160,10 +161,13 @@ async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_toke
 async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
     """Unmount a pool on the host and remove its managed fstab entry.
 
-    409 while host processes or running containers use the pool, such as
-    smbd for an SMB client that has one of its shares open. Before it
-    answers, smb.conf no longer serves the pool's shares, and their open
-    connections are closed (ADR-0248).
+    The copies of its mount that services keep in mount namespaces of their
+    own are unmounted with it (ADR-0269). 409 while host processes or running
+    containers use the pool, such as smbd for an SMB client that has one of
+    its shares open, and when the mount namespace of another process has it
+    mounted elsewhere after the host's umount; the pool is then mounted
+    again. Before it answers, smb.conf no longer serves the pool's shares,
+    and their open connections are closed (ADR-0248).
     """
     validated_name = validate_pool_name(name)
 

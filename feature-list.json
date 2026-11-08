@@ -795,13 +795,15 @@
       ],
       "verified_by": [
         "supervisor/tests/test_pool_persistence.py",
+        "supervisor/tests/test_smb_integration.py",
         "webui/tests/storage.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0034"
+        "ADR-0034",
+        "ADR-0269"
       ],
-      "notes": "Device check: 2026-11-05 (Phase 0 deploy: unmount, mount and a reboot of that tree); the deployed tree changed since. Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-05 (Phase 0 deploy: unmount, mount and a reboot of that tree); the deployed tree changed since. On 2026-11-08 every unmount on the device answered 409 \"still in use outside the host ... so it was mounted again\", also with every app stopped: systemd services with sandboxing keep copies of the pool's mount in mount namespaces of their own, which the host's umount does not reach. Built (ADR-0269): after the host's umount, the copies (the pool's filesystem by MAJ:MIN at its mountpoint with the host mount's root) are unmounted with umount --namespace <pid>, never lazily; a namespace that has the pool mounted anywhere else (a container's bind mount), or another filesystem at its mountpoint together with a copy, is refused with 409 that names the process, and the pool is mounted again, as when a copy cannot be unmounted or the filesystem is still active after them. Tested in test_pool_persistence.py (the mount namespaces of the FakeHost: service copies, stacked copies, peers, an exited process, bind mounts, a busy or hanging umount, lsns failing; the endpoints and their smb.conf applies; the texts of storage-fakes.ts), test_smb_integration.py (the shares stop being served) and storage.spec.ts (Unmount and Mount, and the dialog that shows a refusal while the pool stays mounted). Open: the device check and the re-check after a reboot (ADR-0018). With transmission stopped, Unmount data on the Storage page answers 200 and shows Not mounted; on the host, findmnt lists nothing at /mnt/pools/data, /sys/fs/btrfs/<uuid> is gone, no /proc/*/mountinfo lists the pool's MAJ:MIN, the supervisor's log has \"Unmounted /mnt/pools/data in the mount namespaces of processes ..., which kept copies of its mount\", touch /mnt/pools/data/x as root fails with Operation not permitted, and /etc/fstab has no '# unos-pool:data' marker. Mount data: the marker and its entry are back, the pool is Healthy, and transmission starts. With transmission running, Unmount answers 409 that names transmission, and the pool stays mounted. After a reboot the pool is mounted before Docker starts, and transmission runs. Report the SD MiB of each step."
     },
     {
       "id": "storage.pool-health",
@@ -837,14 +839,17 @@
         "A pool that host processes or containers use is refused with 409"
       ],
       "verified_by": [
-        "supervisor/tests/test_pool_persistence.py"
+        "supervisor/tests/test_pool_persistence.py",
+        "supervisor/tests/test_smb_integration.py",
+        "webui/tests/storage.spec.ts"
       ],
       "passes": false,
       "adr": [
         "ADR-0035",
-        "ADR-0070"
+        "ADR-0070",
+        "ADR-0269"
       ],
-      "notes": "No E2E test. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built: Remove Pool unmounts through the code of Unmount, so the copies that services with sandboxing keep in their mount namespaces are unmounted with it, and a namespace that has the pool mounted anywhere else is refused with 409 (ADR-0269). storage.spec.ts runs the dialog with route fakes: it asks for the pool's name, sends DELETE only once the typed name matches, then lists the pool again as Not mounted with Mount, and a 409 is shown in the dialog while the pool stays. test_pool_persistence.py tests the server: the managed fstab entry and the empty mountpoint dropped, the disks untouched and the filesystem listed again, the refusals while containers, host processes or other mount namespaces use the pool; test_smb_integration.py its shares. Open: the device check and the re-check after a reboot (ADR-0018). With transmission stopped, Remove Pool data (typing data) answers 200; /etc/fstab has no '# unos-pool:data' marker, /mnt/pools/data is gone, no /proc/*/mountinfo lists the pool's MAJ:MIN, and the Storage page lists data as Not mounted; Mount data mounts it again with its data and marker. With transmission running, Remove Pool answers 409 that names transmission, and the fstab entry stays. Report the SD MiB of each step."
     },
     {
       "id": "storage.volumes",

@@ -151,10 +151,15 @@ For each pool, you can:
   it; the data on the disks is not touched. Unmounting is refused while a
   running app or container uses the pool, also through a Docker volume that
   binds a folder in it, or while files on it are open, for example by a
-  computer that has one of its SMB shares open. Once the pool is unmounted,
-  its SMB shares are no longer served: their open connections are closed, and
-  the **Shares** page marks them **Not served** and **Pool not mounted**. They
-  keep their access, and mounting the pool serves them again
+  computer that has one of its SMB shares open. System services that run in a
+  sandbox of their own keep a copy of the pool's mount there: UNOS unmounts
+  those copies too. When another process still has the pool mounted, for
+  example a container that Docker does not list, UNOS mounts the pool again
+  and the message names the process and where it has the pool mounted. Once
+  the pool is unmounted, its SMB shares are no longer served: their open
+  connections are closed, and the **Shares** page marks them **Not served** and
+  **Pool not mounted**. They keep their access, and mounting the pool serves
+  them again
 - **Add Devices** - Expand the pool
 - **Scrub** - Check data integrity
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
@@ -173,11 +178,12 @@ For each pool, you can:
   snapshots or other subvolumes, which must be deleted first. A pool mounted
   read-only lists its volumes but cannot create or delete them.
 - **Balance** - Redistribute data across devices
-- **Delete** - Unmount the pool and remove it from `/etc/fstab`. The disks are
-  not wiped: the data stays on them and the pool can be mounted again later.
-  Like Unmount, it is refused while the pool is in use, and its SMB shares are
-  no longer served; NFS exports of the pool are not checked: remove them
-  first.
+- **Remove** (the bin icon) - Asks you to type the pool's name, then unmounts
+  the pool, removes it from `/etc/fstab` and removes its empty mountpoint. The
+  disks are not wiped: the data stays on them, and the pool is listed again as
+  **Not mounted** and can be mounted later. Like Unmount, it is refused while
+  the pool is in use, and its SMB shares are no longer served; NFS exports of
+  the pool are not checked: remove them first.
 
 ### SMART Monitoring
 

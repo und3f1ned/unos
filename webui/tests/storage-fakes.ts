@@ -111,6 +111,23 @@ function unmountedPool(pool: FakePool): FakePool {
   };
 }
 
+// The 409s of an unmount or a removal of a pool in use, word for word as the server sends them
+// (_unmount_pool_target in supervisor/src/storage/pools.py; test_pool_persistence.py checks them).
+
+/** Running containers that Docker reports keep data on the pool. */
+export const usedByContainers = (pool: string, containers: string[]) =>
+  `Pool '${pool}' is used by running containers (${containers.join(', ')}). Stop them and try again.`;
+
+/**
+ * The filesystem stays mounted outside the host after the host's umount, for example in a
+ * container's mount namespace (ADR-0269), so the server mounted the pool again.
+ */
+export const stillInUse = (pool: string, reason: string) =>
+  `Pool '${pool}' is still in use outside the host (${reason}), so it was mounted again. Stop the apps and containers that use the pool and try again.`;
+
+/** The reason of stillInUse when the mount namespace of a process has the pool mounted elsewhere. */
+export const mountedElsewhere = (pid: number, at: string) => `process ${pid} has it mounted at ${at}`;
+
 export interface RecordedWrite {
   method: string;
   path: string;
@@ -130,12 +147,18 @@ export interface FakeStorageOptions {
   /** Answer POST /pools with this instead of creating the pool. */
   createPoolResponse?: { status: number; json: unknown };
   /**
-   * The pools GET /pools answers (default FAKE_POOLS, which nothing changes). A mount or an
-   * unmount changes its pool in this list as the server does.
+   * The pools GET /pools answers (default FAKE_POOLS, which nothing changes). A mount, an
+   * unmount or a removal (DELETE /pools/<name>) changes its pool in this list as the server
+   * does: a removed pool is listed again as an unmounted one, since its disks keep it.
    */
   pools?: FakePool[];
-  /** Called after a mount or an unmount of a pool of `pools` was answered. */
-  onPoolChange?: (name: string, change: 'mount' | 'unmount') => void;
+  /** Called after a mount, an unmount or a removal of a pool of `pools` was answered. */
+  onPoolChange?: (name: string, change: 'mount' | 'unmount' | 'remove') => void;
+  /**
+   * Requests refused with 409 and this detail, by method and path ("POST /pools/<name>/unmount",
+   * "DELETE /pools/<name>"): recorded, and nothing changes.
+   */
+  refuse?: Record<string, string>;
 }
 
 /** The 409 the supervisor sends when a path no longer holds the selected disk (pools.py). */
@@ -189,9 +212,11 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         }
         return route.fulfill({ json: { ...FAKE_POOLS[0], name: body?.name, devices: body?.devices ?? [] } });
       }
+      const refusal = options.refuse?.[`${method} ${path}`];
       if (method === 'POST') {
         const body = request.postDataJSON();
         writes.push({ method, path, body });
+        if (refusal) return route.fulfill({ status: 409, json: { detail: refusal } });
         const action = path.match(/^\/pools\/([^/]+)\/(mount|unmount)$/);
         const index = action ? pools.findIndex((p) => p.name === decodeURIComponent(action[1])) : -1;
         if (!action || index < 0) return route.fulfill({ json: {} });
@@ -201,6 +226,17 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
           options.onPoolChange?.(options.pools[index].name, change);
         }
         return route.fulfill({ json: pools[index] });
+      }
+      const removal = path.match(/^\/pools\/([^/]+)$/);
+      if (method === 'DELETE' && removal) {
+        writes.push({ method, path, body: request.postDataJSON() });
+        if (refusal) return route.fulfill({ status: 409, json: { detail: refusal } });
+        const index = pools.findIndex((p) => p.name === decodeURIComponent(removal[1]));
+        if (options.pools && index >= 0) {
+          options.pools[index] = unmountedPool(pools[index]);
+          options.onPoolChange?.(options.pools[index].name, 'remove');
+        }
+        return route.fulfill({ json: { status: 'deleted' } });
       }
       return route.abort();
     },

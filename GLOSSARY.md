@@ -65,6 +65,12 @@ be unmounted).
 **Pool root**: The top folder of a pool, which holds its apps, volumes and snapshots; it is never a
 share's folder (ADR-0145). Avoid: pools directory (that is `/mnt/pools`).
 
+**Mount copy**: A mount of a pool's filesystem at the pool's mountpoint, with the root of the
+host's mount, in the mount namespace of another process, such as a systemd service with
+sandboxing. The host's umount does not reach it, so an unmount of the pool unmounts it there too;
+any other mount of the pool in such a namespace, like a container's bind mount, keeps the pool
+mounted (ADR-0269). Avoid: stale mount (the copy exists while the pool is mounted too).
+
 **Volume**: A btrfs subvolume at the top of a pool, with an optional quota (ADR-0069).
 Avoid: subvolume (snapshots are subvolumes too), dataset.
 

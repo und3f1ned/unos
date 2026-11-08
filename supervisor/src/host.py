@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
-# storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
+# storage/disks.py (lsns and findmnt --task: the mount namespaces of other
+# processes, ADR-0269), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
@@ -41,6 +42,7 @@ HOST_TOOLS: dict[str, str] = {
     "mkfs.btrfs": "btrfs-progs",
     "chattr": "e2fsprogs",
     "findmnt": "util-linux",
+    "lsns": "util-linux",
     "lsblk": "util-linux",
     "blkid": "util-linux",
     "wipefs": "util-linux",

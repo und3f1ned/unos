@@ -737,6 +737,7 @@
 										on:click={() => openDeleteModal(pool)}
 									>
 										<Trash2 class="w-4 h-4 text-error" />
+										<span class="sr-only">Remove pool {pool.name}</span>
 									</Button>
 								</div>
 							</div>
