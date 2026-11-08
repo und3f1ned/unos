@@ -3046,15 +3046,21 @@
       "category": "deploy",
       "description": "The Dockerfiles pin their base images by digest",
       "steps": [
-        "Every FROM line names an image by digest, with the tag in a comment",
-        "Dependabot proposes the digest updates"
+        "Every FROM line names its image by tag and digest (name:tag@sha256:...)",
+        "Dependabot proposes the digest updates",
+        "A supervisor build on the dev device, after the linux/arm64 image of its base's tag has moved upstream, starts from the pinned base in its build cache: it pulls no base and does not run apt-get or pip again"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_dev_scripts.py"
       ],
       "passes": false,
       "adr": [
         "ADR-0015",
-        "ADR-0218"
+        "ADR-0218",
+        "ADR-0304"
       ],
-      "notes": "On 2026-11-07 the registry's python:3.11-slim index digest (sha256:65bd3d9f1d7f...) still equalled the base in the device's build cache, so that day's build reused it; until the pin, a newer base makes a build pull and rerun apt-get and pip on the SD card."
+      "notes": "The pins (ADR-0304) are the digests the dev device held on 2026-11-08: python:3.11-slim@sha256:65bd3d9f... in its build cache, the base of deploy-supervisor:latest, and caddy:2-alpine@sha256:f2b257f2..., the base of deploy-webui:latest; node and the Playwright image take the registry's digests of that day. That day the registry's python:3.11-slim named sha256:07d48240..., with the same linux/arm64 image (sha256:31afb5c0...) and only riscv64 rebuilt, so an unpinned build would still have reused the cache. Step 1: TestBaseImages in supervisor/tests/test_deploy_scripts.py. deploy.sh build-supervisor says before the build whether the pinned base is on the device (test_deploy_sh_build_supervisor_says_whether_its_pinned_base_is_on_the_device). Not yet checked: step 2 (the first Dependabot pull request that moves a digest: its cooldown counts from the tag's last push) and step 3 (a deploy once python:3.11-slim names an arm64 image other than sha256:31afb5c0...: build-supervisor says the base is on the device, every step of the build is CACHED, and the SD writes stay in single MiB)."
     },
     {
       "id": "deploy.tmpfs-for-small-boards",

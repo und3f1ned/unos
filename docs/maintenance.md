@@ -60,13 +60,20 @@ and proposes the changes, and the owner reviews them.
    `deploy.sh`, fixed with a test in `supervisor/tests/test_dev_scripts.py`.
 9. **Playwright.** Dependabot leaves it alone (ADR-0231). Move `@playwright/test` in
    `webui/package.json` and `webui/package-lock.json` to its newest release, together with the
-   tag of the image in `webui/Dockerfile.test`
-   (`test_image_has_the_playwright_version_of_package_lock` checks that they match), then
+   tag of the image in `webui/Dockerfile.test` and the digest that tag names (ADR-0304;
+   `test_image_has_the_playwright_version_of_package_lock` checks that they match), then
    `make setup` for the browsers (the network: the owner's machine) and `make e2e-local`.
 10. **Outdated majors and the dev dependencies.** `npm outdated` in `webui/` names the new major
     versions that Dependabot leaves out (ADR-0231), and `npm audit --audit-level=high` there
     covers the dev dependencies that the weekly audit skips. Each finding becomes, or updates, an
     entry of `feature-list.json` (such as `webui.toolchain-major-versions`).
+11. **The base images.** Every `FROM` line names its tag and a digest (ADR-0304). Dependabot
+    proposes a tag's newer digest only after the tag has not moved for its cooldown of 7 days,
+    which `python:3.11-slim` seldom does. Compare each pin with the digest its tag names now (for
+    example `docker buildx imagetools inspect python:3.11-slim`); a pin that is older and that no
+    open Dependabot pull request moves gets a pull request of its own. When the new digest's
+    linux/arm64 image differs, the dev device's next supervisor build pulls the base and runs
+    apt-get and pip again: say so in the pull request.
 
 ## After a session that went badly
 

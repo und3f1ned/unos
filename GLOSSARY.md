@@ -233,6 +233,10 @@ a `passes` flag: `feature-list.json` (ADR-0203). Avoid: backlog, roadmap.
 **Handoff**: A git-ignored document for one named next goal of the next session, written by the
 handoff skill (ADR-0204). Avoid: summary, progress report.
 
+**Base image**: The image that a Dockerfile's `FROM` line starts from, named by tag and digest
+(`python:3.11-slim@sha256:...`): the digest decides what is built, and only a commit that changes
+it moves the base (ADR-0304). Avoid: parent image.
+
 **Quality gate**: `make check`: the same steps as CI's test, lint and frontend jobs (ADR-0216).
 Avoid: CI (which also runs the audits and the Linux-only tests).
 

@@ -438,8 +438,9 @@ that this page has the commands of the lint and frontend jobs).
   affected package then (`supervisor/requirements.txt`, or `webui/package-lock.json`, e.g. with
   `npm update <package>`) rather than weakening the check.
 - `.github/dependabot.yml` proposes grouped updates every week for pip, npm, GitHub Actions and
-  the Docker base images, with a cooldown of a week and Conventional Commit prefixes. Nothing is
-  merged automatically. New major npm versions and Playwright are left out (ADR-0231).
+  the Docker base images (a newer digest of each pinned tag, ADR-0304), with a cooldown of a week
+  and Conventional Commit prefixes. Nothing is merged automatically. New major npm versions and
+  Playwright are left out (ADR-0231).
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
 
 ### Running the CI Checks Locally
@@ -602,9 +603,10 @@ The results are printed as a list; the HTML report is written to the
 The image is `mcr.microsoft.com/playwright:v<version>-noble`, which carries the
 browsers, and their system libraries, of exactly that Playwright version.
 `<version>` must be the `@playwright/test` version in
-`webui/package-lock.json`: when you update Playwright, change the `FROM` line
-of `webui/Dockerfile.test` with it (`supervisor/tests/test_deploy_scripts.py`
-checks that they match).
+`webui/package-lock.json`: when you update Playwright, change the tag and the
+digest of the `FROM` line of `webui/Dockerfile.test` with it
+(`supervisor/tests/test_deploy_scripts.py` checks that they match, and that the
+line names a digest: ADR-0304).
 
 ### What the Test Stack Has
 
