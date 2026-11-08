@@ -44,7 +44,8 @@ router = APIRouter(prefix="/shares", tags=["shares"])
 
 class SharePath(BaseModel):
     path: str
-    label: str
+    # The pool's name, or pool/volume: the web UI adds the kind in the page's language (ADR-0295).
+    name: str
     type: str  # "pool" or "volume"
     # The pool is one that UNOS manages (its fstab marker): only such folders can be SMB
     # shares and NFS exports (ADR-0294). A volume has its pool's value; false for every path when
@@ -108,7 +109,7 @@ def _available_paths() -> list[SharePath]:
             if pool.mountpoint:
                 available.append(SharePath(
                     path=pool.mountpoint,
-                    label=f"{pool.name} (Pool)",
+                    name=pool.name,
                     type="pool",
                     managed=pool.name in managed,
                 ))
@@ -118,7 +119,7 @@ def _available_paths() -> list[SharePath]:
                     for vol in volumes:
                         available.append(SharePath(
                             path=vol.path,
-                            label=f"{pool.name}/{vol.name} (Volume)",
+                            name=f"{pool.name}/{vol.name}",
                             type="volume",
                             managed=pool.name in managed,
                         ))

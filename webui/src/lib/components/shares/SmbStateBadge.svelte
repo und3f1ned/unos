@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { SmbAccountState } from '$lib/api/shares';
 	import { Badge } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 
 	/** The SMB state of a UNOS user. */
 	export let state: SmbAccountState;
@@ -9,19 +10,20 @@
 
 	type Variant = 'success' | 'warning' | 'neutral';
 
-	const badges: Record<SmbAccountState, { variant: Variant; label: string }> = {
-		active: { variant: 'success', label: 'Active' },
-		password_needed: { variant: 'warning', label: 'Password needed' },
-		off: { variant: 'neutral', label: 'Off' },
-		unavailable: { variant: 'neutral', label: 'Not available' }
+	// The server's states, each with the key of its label; a state without one is shown as it comes.
+	const badges: Record<SmbAccountState, { variant: Variant; key: string }> = {
+		active: { variant: 'success', key: 'shares.smbState.active' },
+		password_needed: { variant: 'warning', key: 'shares.smbState.passwordNeeded' },
+		off: { variant: 'neutral', key: 'shares.smbState.off' },
+		unavailable: { variant: 'neutral', key: 'shares.smbState.unavailable' }
 	};
 
-	$: badge = badges[state] ?? { variant: 'neutral', label: String(state) };
+	$: badge = badges[state] as { variant: Variant; key: string } | undefined;
 </script>
 
 <!-- The hint is also in the text (sr-only): a title alone is out of reach of keyboard, touch and screen-reader users. -->
 <span class="inline-flex" title={hint || undefined}>
-	<Badge variant={badge.variant}>{badge.label}</Badge>{#if hint}<span class="sr-only"
-			>{` (${hint})`}</span
+	<Badge variant={badge?.variant ?? 'neutral'}>{badge ? $t(badge.key) : String(state)}</Badge>{#if hint}<span
+			class="sr-only">{` (${hint})`}</span
 		>{/if}
 </span>

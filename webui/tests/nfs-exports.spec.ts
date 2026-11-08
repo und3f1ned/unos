@@ -270,3 +270,67 @@ test.describe('NFS exports', () => {
     expect(fake.nfsExports.map((e) => e.path)).toEqual([exported]);
   });
 });
+
+test.describe('In Russian', () => {
+  test('the NFS tab and the dialogs of an export come from the catalog', async ({ authenticatedPage: page }) => {
+    const fake = await fakeSmbApi(page, { nfsExports: [OWNER_EXPORT], nfsStatus: { server_missing: true } });
+    // The language chosen in this browser, as the Account page keeps it (tests/language.spec.ts).
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), 'unos-locale');
+    await page.goto('/shares');
+    await page.getByRole('tab', { name: 'NFS' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Экспорты NFS', exact: true })).toBeVisible();
+    await expect(
+      page.getByText('NFS-сервер не установлен на хосте: ни один компьютер не может смонтировать экспорты'),
+    ).toBeVisible();
+    await expect(page.getByText('Установите на NAS пакет nfs-kernel-server.')).toBeVisible();
+    // The access of each client in the words of the access levels; its options as exportfs writes them.
+    const list = page.getByRole('list', { name: 'Экспорты NFS', exact: true });
+    const owner = list.locator(':scope > li').filter({ hasText: OWNER_EXPORT.path });
+    await expect(owner.getByRole('list', { name: `Клиенты ${OWNER_EXPORT.path}` }).getByRole('listitem')).toHaveText([
+      '10.0.0.5 · Чтение и запись (rw,no_root_squash)',
+      '192.168.1.0/24 · Только чтение (ro)',
+    ]);
+    await expect(
+      owner.getByText('В /etc/exports, строка 2: добавлен не в UNOS, поэтому изменяйте его на NAS'),
+    ).toBeVisible();
+
+    await page.getByRole('button', { name: 'Добавить экспорт NFS' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Новый экспорт NFS' });
+    await expect(dialog.getByRole('combobox', { name: 'Расположение' })).toHaveText('tank (пул)');
+    await expect(dialog.getByRole('combobox', { name: 'Доступ' })).toHaveText('Только чтение');
+    // The page's own checks, before anything is sent.
+    const create = dialog.getByRole('button', { name: 'Создать экспорт' });
+    await create.click();
+    await expect(
+      dialog.getByText(
+        'Экспортируйте папку внутри пула или том: верхний уровень пула содержит данные приложений (apps/), тома и снимки',
+      ),
+    ).toBeVisible();
+    await expect(dialog.getByText('Введите адрес или сеть')).toBeVisible();
+    expect(fake.writes).toEqual([]);
+
+    await dialog.getByRole('textbox', { name: 'Папка' }).fill('projects');
+    const folder = `${POOLS}/tank/projects`;
+    await expect(dialog.getByText(`Экспортируемая папка: ${folder}`)).toBeVisible();
+    await dialog.getByRole('textbox', { name: 'Сеть клиентов' }).fill('192.168.1.0/24');
+    await create.click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText(`Экспорт NFS папки ${folder} создан`)).toBeVisible();
+
+    const created = list.locator(':scope > li').filter({ hasText: folder });
+    await created.getByRole('button', { name: `Удалить экспорт ${folder}` }).click();
+    const confirm = page.getByRole('dialog', { name: 'Удаление экспорта NFS' });
+    await expect(confirm).toContainText(
+      `Удалить экспорт папки ${folder}? Клиенты NFS потеряют доступ к ней. Папка и её файлы сохранятся.`,
+    );
+    await confirm.getByRole('button', { name: 'Удалить экспорт', exact: true }).click();
+    await expect(confirm).toBeHidden();
+    await expect(page.getByText(`Экспорт NFS папки ${folder} удалён`)).toBeVisible();
+    expect(fake.writes.map((write) => write.method)).toEqual(['POST', 'DELETE']);
+
+    // Nothing of the English page is left.
+    await expect(page.getByRole('heading', { name: 'NFS exports' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add NFS export' })).toHaveCount(0);
+  });
+});

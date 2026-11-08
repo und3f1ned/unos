@@ -56,8 +56,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   name, an id, a path); for a key that no catalog has, also in a map of keys; and for a catalog
   whose halves differ. A literal that is the same in every language (a command, a browser's name)
   gets `// i18n-ignore: <reason>` above its statement. The check cannot see a text that the code
-  puts together from data, a single lower-case word in a script, or a `.ts` module
-  (`$lib/components/shares/texts.ts`): translate those too. `scripts/i18n-untranslated.txt`
+  puts together from data, a single lower-case word in a script, or a `.ts` module: translate
+  those too. `scripts/i18n-untranslated.txt`
   lists the files not translated yet; a translated file leaves it. The empty list is not enough:
   the feature passes after a walk through every page in Russian (ADR-0287).
 

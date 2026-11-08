@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { User } from '$lib/api/auth';
 	import { Button, Select } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 	import SmbStateBadge from './SmbStateBadge.svelte';
 	import { accessKey, canBeGivenAccess, pickableUsers, type AccessChoice } from './access';
-	import { ADMINS_NOT_LISTED } from './texts';
 
 	/** Every UNOS user (GET /auth/users); administrators are not listed. */
 	export let users: User[] = [];
@@ -22,24 +22,27 @@
 
 	type Option = { value: AccessChoice; label: string; disabled?: boolean };
 
-	const options: Option[] = [
-		{ value: 'none', label: 'No access' },
-		{ value: 'read', label: 'Read only' },
-		{ value: 'write', label: 'Read & write' }
+	// Reactive: the labels follow the language of the page.
+	let options: Option[];
+	$: options = [
+		{ value: 'none', label: $t('shares.level.none') },
+		{ value: 'read', label: $t('shares.level.read') },
+		{ value: 'write', label: $t('shares.level.write') }
 	];
 
-	function reducedTo(saved: AccessChoice): Option[] {
-		return options.map((option) => ({
+	function reducedTo(all: Option[], saved: AccessChoice): Option[] {
+		return all.map((option) => ({
 			...option,
 			disabled: option.value !== 'none' && option.value !== saved
 		}));
 	}
 
 	// While access can only be removed: "No access" and the saved level, by saved level.
-	const reducedOptions: Record<AccessChoice, Option[]> = {
-		none: reducedTo('none'),
-		read: reducedTo('read'),
-		write: reducedTo('write')
+	let reducedOptions: Record<AccessChoice, Option[]>;
+	$: reducedOptions = {
+		none: reducedTo(options, 'none'),
+		read: reducedTo(options, 'read'),
+		write: reducedTo(options, 'write')
 	};
 
 	$: rows = pickableUsers(users);
@@ -66,9 +69,9 @@
 	function badgeHint(user: User): string {
 		switch (user.smb?.state) {
 			case 'password_needed':
-				return 'SMB is allowed, but the user has not turned it on yet: the access counts once SMB is on';
+				return $t('shares.access.passwordNeeded');
 			case 'off':
-				return 'SMB is off for this user: the access counts once SMB is allowed on the Users page and turned on';
+				return $t('shares.access.off');
 			default:
 				// 'unavailable': the reason is shown as text under the user's level.
 				return '';
@@ -77,14 +80,14 @@
 </script>
 
 <fieldset class="space-y-3 min-w-0">
-	<legend class="form-label">Access</legend>
+	<legend class="form-label">{$t('shares.access.title')}</legend>
 
 	{#if reduceOnly && reduceOnlyHint}
 		<p class="form-hint mt-0">{reduceOnlyHint}</p>
 	{/if}
 
 	{#if rows.length === 0}
-		<p class="text-sm text-muted">No users can be given access yet: add users on the Users page.</p>
+		<p class="text-sm text-muted">{$t('shares.access.noUsers')}</p>
 	{:else}
 		<div class="flex flex-wrap gap-2">
 			<Button
@@ -93,7 +96,7 @@
 				disabled={reduceOnly || selectable.length === 0}
 				on:click={() => setAll('read')}
 			>
-				Everyone: Read only
+				{$t('shares.access.everyoneRead')}
 			</Button>
 			<Button
 				variant="secondary"
@@ -101,7 +104,7 @@
 				disabled={reduceOnly || selectable.length === 0}
 				on:click={() => setAll('write')}
 			>
-				Everyone: Read &amp; write
+				{$t('shares.access.everyoneWrite')}
 			</Button>
 			<Button
 				variant="ghost"
@@ -109,7 +112,7 @@
 				disabled={selectable.length === 0 || (reduceOnly && !someAccess)}
 				on:click={() => setAll('none')}
 			>
-				Clear
+				{$t('shares.access.clear')}
 			</Button>
 		</div>
 
@@ -141,5 +144,5 @@
 		</ul>
 	{/if}
 
-	<p class="form-hint">{ADMINS_NOT_LISTED}</p>
+	<p class="form-hint">{$t('shares.access.adminsNotListed')}</p>
 </fieldset>

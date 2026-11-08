@@ -16,7 +16,7 @@ Apps keep their data in pool folders through Docker bind mounts (ADR-0039), and 
 - The rendered `[global]` pins `smb3 unix extensions = no` (Samba 4.22's default; `global_settings` in `supervisor/src/shares/smbconf.py`), and SMB1 is off (`server min protocol = SMB2_02`, ADR-0087).
 - With these settings no SMB client can create a symbolic link on the server. This was checked in the Samba 4.22.6 source: the only symlink creation in smbd is a request of the SMB1 Unix extensions, which is unreachable without SMB1; a reparse point set over SMB2 is only stored as an extended attribute of a regular file; the SMB3 POSIX extensions are processed only with `smb3 unix extensions = yes`; and SMB2 hard links stay inside one share.
 - So folders that apps use may be shared when they are folders or volumes of a managed pool (ADR-0145), and no rule against Docker bind sources inside shares is added.
-- The share form (`APPS_NOTE` in `webui/src/lib/components/shares/texts.ts`) and `docs/USER_GUIDE.md` say that SMB users with write access then change what the app sees.
+- The share form (`shares.form.appsNote` in `webui/src/lib/i18n/catalog/shares.ts`) and `docs/USER_GUIDE.md` say that SMB users with write access then change what the app sees.
 - Tests: `supervisor/tests/test_smbconf.py`, `supervisor/tests/test_smbconf_testparm.py`.
 
 ## Consequences

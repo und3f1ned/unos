@@ -738,6 +738,8 @@ test.describe('SMB shares page (fake data)', () => {
     };
     await repair.click();
     await expect(result.locator('.badge')).toHaveText('Incomplete');
+    // One error: the singular.
+    await expect(result.getByText(/^120 checked, 37 changed, 1 error$/)).toBeVisible();
     await expect(result.getByText(stopped)).toBeVisible();
     await expect(result).toContainText('photos/locked.jpg: Permission denied');
 
@@ -964,8 +966,8 @@ test.describe('SMB shares page (fake data)', () => {
   test('only locations of pools that UNOS manages are offered', async ({ authenticatedPage: page }) => {
     const notListed =
       'Pools marked "Not mounted at boot" on the Storage page are not listed: SMB shares need a pool that UNOS manages.';
-    const other = { path: `${POOLS}/other`, label: 'other (Pool)', type: 'pool' as const, managed: false };
-    const otherVolume = { path: `${POOLS}/other/media`, label: 'other/media (Volume)', type: 'volume' as const, managed: false };
+    const other = { path: `${POOLS}/other`, name: 'other', type: 'pool' as const, managed: false };
+    const otherVolume = { path: `${POOLS}/other/media`, name: 'other/media', type: 'volume' as const, managed: false };
     const fake = await fakeSmbApi(page, { users: fakeUsers(), paths: [other, otherVolume, ...FAKE_PATHS] });
     await page.goto('/shares');
 
@@ -1143,6 +1145,190 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(card.getByRole('listitem').filter({ hasText: 'macOS:' })).toHaveText(
       'macOS: Finder → Go → Connect to Server → smb://[::1]/docs',
     );
+  });
+});
+
+// ---- The Shares page in Russian (ADR-0287), with canned API answers ----
+
+test.describe('In Russian', () => {
+  // The language chosen in this browser, as the Account page keeps it (tests/language.spec.ts).
+  const LOCALE_KEY = 'unos-locale';
+
+  test('the SMB tab, its share cards and the dialog of a new share come from the catalog', async ({
+    authenticatedPage: page,
+  }) => {
+    const users = fakeUsers();
+    const fake = await fakeSmbApi(page, {
+      users,
+      shares: [
+        fakeShare('docs', {
+          browseable: false,
+          available: true,
+          permissions_ok: false,
+          access: accessOf(users, [
+            { user_id: 2, username: 'alice', level: 'write' },
+            { user_id: 3, username: 'bob', level: 'write' },
+            { user_id: 4, username: 'carol', level: 'read' },
+          ]),
+        }),
+        fakeShare('legacy', { path: `${POOLS}/tank`, served: false, path_problem: POOL_ROOT_MESSAGE }),
+      ],
+      status: { guest_shares: ['public'] },
+    });
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await page.goto('/shares');
+
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Общие папки');
+    // The names of the protocols are the same in every language.
+    await expect(page.getByRole('tablist', { name: 'Виды общего доступа' }).getByRole('tab')).toHaveText(['SMB', 'NFS']);
+    await expect(page.getByRole('heading', { name: 'Общие папки SMB' })).toBeVisible();
+    await expect(
+      page.getByText(
+        'Гостевой доступ включён для: public. Любой в вашей сети может читать эти общие папки без пароля, ' +
+          'и подпись подключений к этому серверу не требуется.',
+      ),
+    ).toBeVisible();
+
+    // A card: its badges, its access with the reasons of the entries that do not count yet, and
+    // the buttons, named for screen readers with the share's name.
+    const docs = shareCard(page, 'docs');
+    await expect(docs.locator('.badge')).toHaveText(['Скрыта', 'Нужно исправить права']);
+    const bobReason = 'SMB разрешён для bob, но ещё не включён';
+    const carolReason = 'SMB для carol выключен: разрешите его на странице «Пользователи»';
+    await expect(docs.locator('p', { hasText: 'Чтение и запись:' })).toHaveText(
+      `Чтение и запись: alice, bob (ещё не действует: ${bobReason}) · Чтение: carol (ещё не действует: ${carolReason})`,
+    );
+    await expect(docs.locator('.line-through').filter({ hasText: 'bob' })).toHaveAttribute('title', bobReason);
+    await expect(docs.getByText(/^Зачёркнутые пользователи пока не могут подключиться/)).toBeVisible();
+    await expect(docs.getByText(/^Подключение:/)).toContainText('smb://');
+    await expect(docs.getByRole('button', { name: 'Изменить общую папку docs' })).toBeVisible();
+    await expect(docs.getByRole('button', { name: 'Исправить права общей папки docs' })).toBeVisible();
+    await expect(docs.getByRole('button', { name: 'Удалить общую папку docs' })).toBeVisible();
+    // A share that is not served: the badge in Russian, the server's reason as the server words it.
+    const legacy = shareCard(page, 'legacy');
+    await expect(legacy.locator('.badge')).toHaveText(['Не раздаётся']);
+    await expect(legacy.getByText(POOL_ROOT_MESSAGE)).toBeVisible();
+    await expect(legacy).toContainText('Ни у одного пользователя нет доступа.');
+
+    await page.getByRole('button', { name: 'Добавить общую папку SMB' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Новая общая папка SMB' });
+    // The locations: the pool's or the volume's name from the server, its kind from the catalog.
+    const location = dialog.getByRole('combobox', { name: 'Расположение' });
+    await expect(location).toHaveText('tank (пул)');
+    await location.click();
+    await expect(dialog.getByRole('listbox', { name: 'Расположение' }).getByRole('option')).toHaveText([
+      'tank (пул)',
+      'tank/media (том)',
+    ]);
+    await location.click();
+
+    // The page's own checks, before anything is sent.
+    const create = dialog.getByRole('button', { name: 'Создать общую папку' });
+    await create.click();
+    await expect(dialog.getByText('Введите имя общей папки')).toBeVisible();
+    await expect(
+      dialog.getByText(
+        'Откройте доступ к папке внутри пула или к тому: верхний уровень пула содержит данные приложений (apps/), тома и снимки',
+      ),
+    ).toBeVisible();
+    const folder = dialog.getByLabel('Папка', { exact: true });
+    await folder.fill('apps');
+    await expect(
+      dialog.getByText('Данные приложений (tank/apps) нельзя сделать общими: там приложения хранят свои настройки'),
+    ).toBeVisible();
+    await folder.fill('Documents');
+    await expect(dialog.getByText(/^Общая папка:/)).toHaveText(`Общая папка: ${POOLS}/tank/Documents`);
+    expect(fake.writes).toEqual([]);
+
+    // The access picker: the levels, and the SMB state of each user who cannot connect yet.
+    const access = dialog.getByRole('group', { name: 'Доступ' });
+    await expect(access.getByRole('combobox')).toHaveText(['Нет доступа', 'Нет доступа', 'Нет доступа', 'Нет доступа']);
+    await expect(accessRow(access, 'bob').locator('.badge')).toHaveText('Нужен пароль');
+    await expect(accessRow(access, 'carol').locator('.badge')).toHaveText('Выключен');
+    await expect(accessRow(access, 'Dave.Smith').locator('.badge')).toHaveText('Недоступен');
+    await access.getByRole('button', { name: 'Всем: только чтение' }).click();
+    await expect(access.getByRole('combobox')).toHaveText([
+      'Только чтение',
+      'Только чтение',
+      'Только чтение',
+      'Нет доступа',
+    ]);
+    await expect(access.getByText('Администраторы не показаны: они не могут пользоваться SMB.')).toBeVisible();
+
+    const guest = dialog.getByLabel('Гости могут читать эту общую папку без пароля');
+    await guest.check();
+    await expect(
+      dialog.getByText('Любой в вашей сети может читать эту общую папку без пароля, и её имя видно всем в вашей сети.'),
+    ).toBeVisible();
+    await guest.uncheck();
+
+    await dialog.getByLabel(/^Имя/).fill('e2e_docs');
+    await create.click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes).toHaveLength(1);
+    await expect(page.getByText('Общая папка «e2e_docs» создана')).toBeVisible();
+
+    // Nothing of the English page is left.
+    await expect(page.getByRole('heading', { name: 'Shares', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add SMB share' })).toHaveCount(0);
+  });
+
+  test('Repair permissions and the deletion of a share come from the catalog', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, {
+      users: fakeUsers(),
+      shares: [fakeShare('docs', { available: true }), fakeShare('photos', { available: true })],
+    });
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await page.goto('/shares');
+
+    await shareCard(page, 'docs').getByRole('button', { name: 'Исправить права общей папки docs' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Исправление прав общей папки docs' });
+    await expect(dialog.getByText('Владельцы и содержимое файлов не меняются.')).toBeVisible();
+    await expect(
+      dialog.getByText('Это меняет права существующих файлов. Автоматически отменить это нельзя.'),
+    ).toBeVisible();
+
+    // The server's message, as repair.py words it.
+    const repaired = 'Permissions repaired, except for 1 entry that could not be changed.';
+    fake.repairAnswer = {
+      status: 200,
+      json: repairResult('docs', {
+        errors: 1,
+        error_samples: ['photos/locked.jpg: Permission denied'],
+        skipped: { other_filesystem: 2, snapshots: 0, symlink: 1, special: 0, hardlink: 0, private: 3, too_deep: 0, raced: 0 },
+        message: repaired,
+      }),
+    };
+    await dialog.getByRole('button', { name: 'Исправить права', exact: true }).click();
+    const result = dialog.getByRole('region', { name: 'Результат исправления' });
+    await expect(result.locator('.badge')).toHaveText('Готово');
+    await expect(result).toContainText('Последний запуск');
+    // The time of the run, day first on a 24-hour clock, as Russian writes it.
+    await expect(result.getByText('06.11.2026, 10:00:05', { exact: true })).toBeVisible();
+    await expect(result).toContainText('Проверено: 120, изменено: 37, ошибок: 1');
+    await expect(result).toContainText(
+      'Пропущено: другие тома и точки монтирования: 2, ссылки: 1, личные файлы и папки: 3',
+    );
+    // The server's message and samples of the errors are shown as they come.
+    await expect(result).toContainText('Ошибки:');
+    await expect(result).toContainText('photos/locked.jpg: Permission denied');
+    await expect(result.getByText(repaired)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await expect(dialog).toBeHidden();
+
+    await shareCard(page, 'docs').getByRole('button', { name: 'Удалить общую папку docs' }).click();
+    const confirm = page.getByRole('dialog', { name: 'Удаление общей папки' });
+    await expect(confirm).toContainText(
+      'Удалить общую папку docs? Папка и её файлы сохранятся. Открытые подключения к общей папке будут закрыты.',
+    );
+    await confirm.getByRole('button', { name: 'Удалить общую папку', exact: true }).click();
+    await expect(confirm).toBeHidden();
+    await expect(page.getByText('Общая папка «docs» удалена')).toBeVisible();
+    await expect(shareCard(page, 'docs')).toHaveCount(0);
+    expect(fake.writes.map((write) => write.method)).toEqual(['POST', 'DELETE']);
   });
 });
 

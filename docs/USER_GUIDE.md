@@ -77,9 +77,11 @@ browser's own format when the browser is set to that language, otherwise with th
 day first and a 24-hour clock.
 
 So far the navigation, the login and first-run setup pages, the **Account**
-page, the **Containers** page and the **App Store** are translated; the other
-pages are still in English. Messages from the server, such as the reason an
-action was refused, stay in English.
+page, the **Containers** page, the **App Store** and the **Shares** page (SMB
+shares and NFS exports, with their dialogs) are translated; the other pages are
+still in English. Messages from the server, such as the reason an action was
+refused, stay in English: on the **Shares** page also a share's import notes
+and the reason a share is not served.
 
 ---
 

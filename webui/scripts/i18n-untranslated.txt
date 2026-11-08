@@ -22,13 +22,6 @@ src/routes/storage/+page.svelte
 src/routes/snapshots/+page.svelte
 
 # shares
-src/routes/shares/+page.svelte
-src/lib/components/shares/NfsExportFormModal.svelte
-src/lib/components/shares/RepairPermissionsModal.svelte
-src/lib/components/shares/ShareAccessPicker.svelte
-src/lib/components/shares/ShareCard.svelte
-src/lib/components/shares/ShareFormModal.svelte
-src/lib/components/shares/SmbStateBadge.svelte
 
 # files
 src/routes/files/+page.svelte
