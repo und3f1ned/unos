@@ -76,9 +76,10 @@ Russian, and in English otherwise. Dates and times follow the language: in the
 browser's own format when the browser is set to that language, otherwise with the
 day first and a 24-hour clock.
 
-So far the navigation, the login and first-run setup pages and the **Account**
-page are translated; the other pages are still in English. Messages from the
-server, such as the reason an action was refused, stay in English.
+So far the navigation, the login and first-run setup pages, the **Account**
+page and the **App Store** are translated; the other pages are still in
+English. Messages from the server, such as the reason an action was refused,
+stay in English.
 
 ---
 
@@ -714,14 +715,21 @@ creation time.
 
 ## App Store
 
-The App Store provides one-click installation of popular applications.
+The App Store provides one-click installation of popular applications. It
+follows the language chosen on the **Account** page (see [Language](#language)),
+except what comes from the app catalog: the names and descriptions of the apps
+and of their settings, and their memory recommendations, are in English.
 
 ### Available Categories
 
+The list of categories filters the catalog, and each app's card and details
+name its category the same way. Some of them:
+
 - **Media** - Plex, Jellyfin, Emby
 - **Downloads** - qBittorrent, Transmission
-- **Productivity** - Nextcloud, Paperless
-- **Home Automation** - Home Assistant
+- **Productivity** - Nextcloud, Syncthing
+- **Documents** - Paperless-ngx, BookStack
+- **Smart Home** - Home Assistant
 - **Development** - Gitea, Code Server
 - **Monitoring** - Grafana, Uptime Kuma
 

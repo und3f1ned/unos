@@ -37,7 +37,8 @@
 		Cpu
 	} from 'lucide-svelte';
 	import { Button, Card, Badge, Alert, EmptyState } from '$lib/components/ui';
-	import { AppDetailModal, AppStorageWarning } from '$lib/components/apps';
+	import { AppCategory, AppDetailModal, AppStorageWarning } from '$lib/components/apps';
+	import { t } from '$lib/i18n';
 
 	let catalog: AppTemplate[] = [];
 	let installed: InstalledApp[] = [];
@@ -52,20 +53,24 @@
 	let selectedApp: AppTemplate | null = null;
 	let showDetailModal = false;
 
+	// The category list; AppCategory names each category.
 	const categories = [
-		{ value: '', label: 'All Apps', icon: LayoutGrid, count: 0 },
-		{ value: 'home_automation', label: 'Smart Home', icon: Home, count: 0 },
-		{ value: 'media', label: 'Media', icon: Film, count: 0 },
-		{ value: 'ai', label: 'AI & LLMs', icon: Cpu, count: 0 },
-		{ value: 'productivity', label: 'Productivity', icon: FileText, count: 0 },
-		{ value: 'download', label: 'Downloads', icon: DownloadIcon, count: 0 },
-		{ value: 'backup', label: 'Backup', icon: Database, count: 0 },
-		{ value: 'monitoring', label: 'Monitoring', icon: Activity, count: 0 },
-		{ value: 'network', label: 'Network', icon: Globe, count: 0 },
-		{ value: 'documents', label: 'Documents', icon: FileText, count: 0 },
-		{ value: 'development', label: 'Development', icon: Code, count: 0 },
-		{ value: 'security', label: 'Security', icon: Lock, count: 0 }
+		{ value: '', icon: LayoutGrid, count: 0 },
+		{ value: 'home_automation', icon: Home, count: 0 },
+		{ value: 'media', icon: Film, count: 0 },
+		{ value: 'ai', icon: Cpu, count: 0 },
+		{ value: 'productivity', icon: FileText, count: 0 },
+		{ value: 'download', icon: DownloadIcon, count: 0 },
+		{ value: 'backup', icon: Database, count: 0 },
+		{ value: 'monitoring', icon: Activity, count: 0 },
+		{ value: 'network', icon: Globe, count: 0 },
+		{ value: 'documents', icon: FileText, count: 0 },
+		{ value: 'development', icon: Code, count: 0 },
+		{ value: 'security', icon: Lock, count: 0 }
 	];
+
+	// The group of the apps that are given share folders (ADR-0274): a name, the same in every language.
+	const UNOS_SMB = 'unos-smb';
 
 	// Update category counts
 	$: categoriesWithCounts = categories.map((cat) => ({
@@ -123,19 +128,18 @@
 	) {
 		const { app, result } = event.detail;
 		notice = result.pool
-			? `${app.name} was installed. Its data is stored on the "${result.pool}" pool.`
-			: `${app.name} was installed.`;
+			? $t('apps.installedNoticePool', { name: app.name, pool: result.pool })
+			: $t('apps.installedNotice', { name: app.name });
 		await refresh();
 	}
 
 	async function handleUninstall(app: InstalledApp) {
-		if (!confirm(`Uninstall ${app.name}? This removes its container and keeps its data folders.`))
-			return;
+		if (!confirm($t('apps.installed.confirmUninstall', { name: app.name }))) return;
 		try {
 			await uninstallApp(app.container_id);
 			await refresh();
 		} catch (e: any) {
-			error = e.message || 'Uninstall failed';
+			error = e.message || $t('apps.installed.uninstallFailed');
 		}
 	}
 
@@ -144,7 +148,7 @@
 			await startApp(app.container_id);
 			await refresh();
 		} catch (e: any) {
-			error = e.message || 'Start failed';
+			error = e.message || $t('apps.installed.startFailed');
 		}
 	}
 
@@ -153,7 +157,7 @@
 			await stopApp(app.container_id);
 			await refresh();
 		} catch (e: any) {
-			error = e.message || 'Stop failed';
+			error = e.message || $t('apps.installed.stopFailed');
 		}
 	}
 
@@ -162,7 +166,7 @@
 			await restartApp(app.container_id);
 			await refresh();
 		} catch (e: any) {
-			error = e.message || 'Restart failed';
+			error = e.message || $t('apps.installed.restartFailed');
 		}
 	}
 
@@ -174,19 +178,20 @@
 		return installed.find((i) => i.template_id === appId);
 	}
 
+	/** The badge of the source of an app's image (AppSource), with the key of its label. */
 	function getSourceBadge(
 		source: string | undefined
-	): { variant: 'success' | 'info' | 'purple' | 'warning'; label: string } {
+	): { variant: 'success' | 'info' | 'purple' | 'warning'; key: string } {
 		switch (source?.toUpperCase()) {
 			case 'OFFICIAL':
-				return { variant: 'success', label: 'Official' };
+				return { variant: 'success', key: 'apps.source.official' };
 			case 'LINUXSERVER':
 			case 'LINUXSERVER.IO':
-				return { variant: 'purple', label: 'LinuxServer' };
+				return { variant: 'purple', key: 'apps.source.linuxserver' };
 			case 'VERIFIED':
-				return { variant: 'info', label: 'Verified' };
+				return { variant: 'info', key: 'apps.source.verified' };
 			default:
-				return { variant: 'warning', label: 'Community' };
+				return { variant: 'warning', key: 'apps.source.community' };
 		}
 	}
 
@@ -195,10 +200,6 @@
 			return `http://${window.location.hostname}:${app.web_port}`;
 		}
 		return null;
-	}
-
-	function formatCategory(category: string): string {
-		return category.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
 	}
 </script>
 
@@ -210,9 +211,9 @@
 				<Package class="w-5 h-5 text-info" />
 			</div>
 			<div>
-				<h1 class="page-title">App Store</h1>
+				<h1 class="page-title">{$t('apps.title')}</h1>
 				<p class="text-sm text-secondary">
-					{catalog.length} apps available, {installed.length} installed
+					{$t('apps.summary', { available: catalog.length, installed: installed.length })}
 				</p>
 			</div>
 		</div>
@@ -239,7 +240,7 @@
 		>
 			<span class="flex items-center gap-2">
 				<Grid3X3 class="w-4 h-4" />
-				Catalog
+				{$t('apps.tabs.catalog')}
 			</span>
 		</button>
 		<button
@@ -250,20 +251,20 @@
 		>
 			<span class="flex items-center gap-2">
 				<CheckCircle2 class="w-4 h-4" />
-				Installed ({installed.length})
+				{$t('apps.tabs.installed', { count: installed.length })}
 			</span>
 		</button>
 	</div>
 
 	{#if loading}
-		<p class="loading-text">Loading apps...</p>
+		<p class="loading-text">{$t('apps.loading')}</p>
 	{:else if activeTab === 'catalog'}
 		<!-- Featured Apps Section -->
 		{#if featuredApps.length > 0 && !searchQuery && !selectedCategory}
 			<Card>
 				<div class="flex items-center gap-2 mb-5">
 					<Sparkles class="w-5 h-5 text-yellow-400" />
-					<h2 class="text-lg font-semibold">Featured Apps</h2>
+					<h2 class="text-lg font-semibold">{$t('apps.featured')}</h2>
 				</div>
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					{#each featuredApps as app}
@@ -290,7 +291,7 @@
 											></div>
 										{/if}
 									</div>
-									<p class="text-sm text-secondary">{formatCategory(app.category)}</p>
+									<p class="text-sm text-secondary"><AppCategory category={app.category} /></p>
 								</div>
 							</div>
 							<p class="text-sm text-secondary line-clamp-2">{app.description}</p>
@@ -305,7 +306,7 @@
 			<!-- Category Sidebar -->
 			<div class="lg:w-56 flex-shrink-0">
 				<Card>
-					<h3 class="font-semibold mb-4">Categories</h3>
+					<h3 class="font-semibold mb-4">{$t('apps.categories')}</h3>
 					<nav class="space-y-1">
 						{#each categoriesWithCounts as cat}
 							{#if cat.count > 0 || cat.value === ''}
@@ -318,7 +319,7 @@
 								>
 									<span class="flex items-center gap-2.5">
 										<svelte:component this={cat.icon} class="w-4 h-4" />
-										{cat.label}
+										<AppCategory category={cat.value} />
 									</span>
 									<span
 										class="text-xs px-1.5 py-0.5 rounded {selectedCategory === cat.value
@@ -344,7 +345,7 @@
 						/>
 						<input
 							type="text"
-							placeholder="Search apps..."
+							placeholder={$t('apps.search')}
 							bind:value={searchQuery}
 							class="form-input pl-10"
 						/>
@@ -354,15 +355,15 @@
 				{#if filteredCatalog.length === 0}
 					<EmptyState
 						icon={Package}
-						title="No apps found"
-						description="Try adjusting your search or category filter"
+						title={$t('apps.noneFound')}
+						description={$t('apps.noneFoundHint')}
 					>
 						<Button
 							variant="secondary"
 							on:click={() => {
 								searchQuery = '';
 								selectedCategory = '';
-							}}>Clear Filters</Button
+							}}>{$t('apps.clearFilters')}</Button
 						>
 					</EmptyState>
 				{:else}
@@ -396,8 +397,8 @@
 											{/if}
 										</div>
 										<div class="flex items-center gap-2">
-											<Badge variant={source.variant} class="text-xs">{source.label}</Badge>
-											<span class="text-xs text-muted">{formatCategory(app.category)}</span>
+											<Badge variant={source.variant} class="text-xs">{$t(source.key)}</Badge>
+											<span class="text-xs text-muted"><AppCategory category={app.category} /></span>
 										</div>
 									</div>
 								</div>
@@ -405,7 +406,9 @@
 								<div class="flex items-center justify-between pt-3 border-t border-border">
 									{#if installedInfo}
 										<Badge variant={installedInfo.status === 'running' ? 'success' : 'neutral'}>
-											{installedInfo.status === 'running' ? 'Running' : 'Stopped'}
+											{installedInfo.status === 'running'
+												? $t('apps.state.running')
+												: $t('apps.state.stopped')}
 										</Badge>
 										<div class="flex items-center gap-1">
 											{#if getWebUrl(installedInfo)}
@@ -415,7 +418,7 @@
 													rel="noopener"
 													on:click|stopPropagation
 													class="p-1.5 rounded hover:bg-surface-muted text-info transition-colors"
-													title="Open"
+													title={$t('apps.open')}
 												>
 													<ExternalLink class="w-4 h-4" />
 												</a>
@@ -423,7 +426,7 @@
 										</div>
 									{:else}
 										<span class="text-xs text-muted mono">{app.version || ''}</span>
-										<Button variant="primary" size="sm" icon={Download}>Install</Button>
+										<Button variant="primary" size="sm" icon={Download}>{$t('apps.install')}</Button>
 									{/if}
 								</div>
 							</div>
@@ -437,11 +440,11 @@
 		{#if installed.length === 0}
 			<EmptyState
 				icon={Package}
-				title="No apps installed"
-				description="Install apps from the catalog to get started"
+				title={$t('apps.noneInstalled')}
+				description={$t('apps.noneInstalledHint')}
 			>
 				<Button variant="primary" on:click={() => (activeTab = 'catalog')} icon={Download}>
-					Browse Catalog
+					{$t('apps.browseCatalog')}
 				</Button>
 			</EmptyState>
 		{:else}
@@ -459,7 +462,7 @@
 								<div class="flex items-center gap-2 mb-1">
 									<h3 class="font-semibold text-lg">{app.name}</h3>
 									<Badge variant={app.status === 'running' ? 'success' : 'neutral'}>
-										{app.status === 'running' ? 'Running' : 'Stopped'}
+										{app.status === 'running' ? $t('apps.state.running') : $t('apps.state.stopped')}
 									</Badge>
 								</div>
 								<p class="text-sm text-secondary truncate">
@@ -467,18 +470,18 @@
 								</p>
 								{#if app.web_port}
 									<p class="text-xs text-muted mt-1">
-										Port: <span class="mono">{app.web_port}</span>
+										{$t('apps.installed.port')} <span class="mono">{app.web_port}</span>
 									</p>
 								{/if}
 								{#if app.pool}
 									<p class="text-xs text-muted mt-1">
-										Data on pool: <span class="mono">{app.pool}</span>
+										{$t('apps.installed.pool')} <span class="mono">{app.pool}</span>
 									</p>
 								{/if}
 								{#if app.runs_in_unos_smb}
 									<!-- Only such an app reads share folders, also after a Repair (ADR-0274). -->
 									<p class="text-xs text-muted mt-1">
-										Runs in the group <span class="mono">unos-smb</span>
+										{$t('apps.installed.inGroup')} <span class="mono">{UNOS_SMB}</span>
 									</p>
 								{/if}
 							</div>
@@ -491,7 +494,7 @@
 										class="btn btn-secondary btn-md"
 									>
 										<ExternalLink class="w-4 h-4" />
-										Open
+										{$t('apps.open')}
 									</a>
 								{/if}
 								{#if app.status === 'running'}
@@ -501,7 +504,7 @@
 										icon={Square}
 										on:click={() => handleStop(app)}
 									>
-										Stop
+										{$t('apps.installed.stop')}
 									</Button>
 									<Button
 										variant="secondary"
@@ -509,7 +512,7 @@
 										icon={RotateCw}
 										on:click={() => handleRestart(app)}
 									>
-										Restart
+										{$t('apps.installed.restart')}
 									</Button>
 								{:else}
 									<Button
@@ -518,7 +521,7 @@
 										icon={Play}
 										on:click={() => handleStart(app)}
 									>
-										Start
+										{$t('apps.installed.start')}
 									</Button>
 								{/if}
 								<Button
@@ -527,7 +530,7 @@
 									icon={Trash2}
 									on:click={() => handleUninstall(app)}
 								>
-									Uninstall
+									{$t('apps.installed.uninstall')}
 								</Button>
 							</div>
 						</div>

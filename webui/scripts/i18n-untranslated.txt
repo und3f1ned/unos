@@ -39,9 +39,6 @@ src/lib/components/containers/ContainerDetailDrawer.svelte
 src/lib/components/containers/ImageList.svelte
 
 # apps
-src/routes/apps/+page.svelte
-src/lib/components/apps/AppDetailModal.svelte
-src/lib/components/apps/AppStorageWarning.svelte
 
 # users
 src/routes/users/+page.svelte
