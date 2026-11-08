@@ -440,3 +440,172 @@ test.describe('Installed apps in the group unos-smb', () => {
     await expect(dialog.getByText('Set by UNOS: Syncthing runs outside the group unos-smb.')).toHaveCount(2);
   });
 });
+
+// A pool whose free space is no whole number of GB: the install form writes a pool's sizes in the
+// number format of the page's language, 1.5 GB in English and with a decimal comma in Russian.
+const SIZED_POOL = { name: 'e2e_data', path: '/mnt/pools/e2e_data', free_bytes: 1.5 * 2 ** 30, total_bytes: 2 ** 35 };
+
+// The source of an app's image and its category have one label each (ADR-0291): a linuxserver.io
+// image is LinuxServer on its card and LinuxServer.io in the details, and a category has the label
+// of the category list on the cards and in the details. The catalog is the stand-in's own; the
+// installed list and the pools are answered here (the stand-in has no Docker).
+test.describe('App details', () => {
+  test('name the source of the image and the category of the app, and the sizes of a pool', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/installed',
+      (route: Route) => route.fulfill({ json: [] }),
+    );
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/pools',
+      (route: Route) => route.fulfill({ json: [SIZED_POOL] }),
+    );
+    await page.goto('/apps');
+
+    const card = page.locator('div.card[role="button"]', { has: page.locator('h3', { hasText: /^Transmission$/ }) });
+    await expect(card.getByText('LinuxServer', { exact: true })).toBeVisible();
+    await expect(card.getByText('Downloads', { exact: true })).toBeVisible();
+    await expect(page.locator('main nav').getByRole('button', { name: /^Downloads \d+$/ })).toBeVisible();
+
+    await card.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Transmission', exact: true })).toBeVisible();
+    await expect(dialog.getByText('LinuxServer.io', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('Community', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText('📥 Downloads', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Storage pool' })).toHaveText('e2e_data — 1.5 GB free of 32 GB');
+  });
+});
+
+// The App Store in Russian (webui.translations, ADR-0287): the page, the details of an app and the
+// installed apps take their texts from the catalog apps.ts, with the categories, the sources of
+// the images, the states and the sizes of the pools; the names and the descriptions of the apps
+// stay as the server's catalog has them (ADR-0291). The installed list and the pools are answered
+// here (the stand-in has no Docker and no mounted pool), and nothing is started, stopped,
+// uninstalled or installed; the catalog is the stand-in's own.
+test.describe('The App Store in Russian', () => {
+  const POOL = SIZED_POOL;
+
+  function installed(name: string, templateId: string, status: string, pool: string | null) {
+    const config = `/mnt/pools/${pool ?? 'default'}/apps/${templateId}/config`;
+    return {
+      id: `${name}-id`,
+      template_id: templateId,
+      name,
+      container_id: `${name}-id`,
+      status,
+      web_port: null,
+      created_at: '2026-11-08T10:00:00Z',
+      pool,
+      volumes: [{ host: config, container: '/config', readonly: false }],
+      // An app of an older version keeps its data on the system disk.
+      data_outside_pools: pool ? [] : [config],
+      runs_in_unos_smb: false,
+    };
+  }
+
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    const apps = [
+      installed('e2e-jellyfin', 'jellyfin', 'running', POOL.name),
+      installed('e2e-syncthing', 'syncthing', 'exited', null),
+    ];
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/installed',
+      (route: Route) => route.fulfill({ json: apps }),
+    );
+    await page.route(
+      (url: URL) => url.pathname.startsWith('/api/v1/apps/installed/') || url.pathname === '/api/v1/apps/install',
+      (route: Route) => route.abort(),
+    );
+    await page.route(
+      (url: URL) => url.pathname === '/api/v1/apps/pools',
+      (route: Route) => route.fulfill({ json: [POOL] }),
+    );
+    // The language chosen in this browser, as the Account page keeps it (tests/language.spec.ts).
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), 'unos-locale');
+  });
+
+  test('the catalog, the details of an app and the installed apps', async ({ authenticatedPage: page }) => {
+    await page.goto('/apps');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+    const main = page.locator('main');
+    await expect(main.getByRole('heading', { name: 'Магазин приложений', level: 1 })).toBeVisible();
+    await expect(main.getByText(/^Доступно приложений: \d+, установлено: 2$/)).toBeVisible();
+    await expect(main.getByRole('button', { name: 'Каталог', exact: true })).toBeVisible();
+    await expect(main.getByRole('heading', { name: 'Рекомендуемые приложения' })).toBeVisible();
+    await expect(main.getByRole('heading', { name: 'Категории' })).toBeVisible();
+    await expect(main.locator('nav').getByRole('button', { name: /^Все приложения \d+$/ })).toBeVisible();
+    await expect(main.locator('nav').getByRole('button', { name: /^Умный дом \d+$/ })).toBeVisible();
+    await expect(main.getByPlaceholder('Поиск приложений...')).toBeVisible();
+
+    // The cards of the catalog: the state of an installed app, the source of the image, the category.
+    const card = (name: string) =>
+      main.locator('div.card[role="button"]', { has: page.locator('h3', { hasText: new RegExp(`^${name}$`) }) });
+    await expect(card('Jellyfin').getByText('Работает', { exact: true })).toBeVisible();
+    await expect(card('Jellyfin').getByText('Официальный', { exact: true })).toBeVisible();
+    await expect(card('Jellyfin').getByText('Медиа', { exact: true })).toBeVisible();
+    await expect(card('Transmission').getByText('Загрузки', { exact: true })).toBeVisible();
+    await expect(card('Transmission').getByRole('button', { name: 'Установить', exact: true })).toBeVisible();
+
+    // The details of an app that is not installed, with the pool for its data.
+    await card('Transmission').click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Transmission', exact: true })).toBeVisible();
+    await expect(dialog.getByText('📥 Загрузки', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('Документация', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Пул хранения' })).toHaveText(
+      'e2e_data — свободно 1,5 ГБ из 32 ГБ',
+    );
+    await expect(dialog.getByText('Данные приложения хранятся в этом пуле.')).toBeVisible();
+    await expect(dialog.getByRole('checkbox', { name: 'Запускать в группе unos-smb' })).not.toBeChecked();
+    await expect(dialog.getByText('Задайте обязательные переменные USER, PASS.')).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Расположение данных в пуле e2e_data' })).toBeVisible();
+    await expect(dialog.getByText('Образ Docker', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Рекомендуемые ресурсы' })).toBeVisible();
+    for (const tab of ['Обзор', 'Порты (3)', 'Тома (3)', 'Окружение (5)']) {
+      await expect(dialog.getByRole('button', { name: tab, exact: true })).toBeVisible();
+    }
+    await expect(dialog.getByRole('button', { name: 'Установить Transmission' })).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Install Transmission' })).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Окружение (5)', exact: true }).click();
+    await expect(dialog.getByLabel('USER')).toHaveAttribute('placeholder', 'Введите USER');
+    await expect(dialog.getByLabel('PASS')).toHaveAttribute('placeholder', 'Придумайте уникальное значение');
+    await expect(dialog.getByText('Обязательно', { exact: true })).toHaveCount(2);
+    await expect(
+      dialog.getByText('Задаётся UNOS: 70000 (unos-smb) с параметром «Запускать в группе unos-smb», иначе 1000.'),
+    ).toBeVisible();
+    await dialog.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // The installed apps: their states and actions, and the warning of an app on the system disk.
+    await main.getByRole('button', { name: 'Установленные (2)', exact: true }).click();
+    const installedCard = (name: string) => main.locator('.card', { has: page.locator('h3', { hasText: name }) });
+    const jellyfin = installedCard('e2e-jellyfin');
+    await expect(jellyfin.getByText('Работает', { exact: true })).toBeVisible();
+    await expect(jellyfin.getByText('Данные в пуле: e2e_data')).toBeVisible();
+    for (const action of ['Остановить', 'Перезапустить', 'Удалить']) {
+      await expect(jellyfin.getByRole('button', { name: action, exact: true })).toBeVisible();
+    }
+    const syncthing = installedCard('e2e-syncthing');
+    await expect(syncthing.getByText('Остановлено', { exact: true })).toBeVisible();
+    await expect(syncthing.getByRole('button', { name: 'Запустить', exact: true })).toBeVisible();
+    await expect(syncthing.getByText('Данные приложения находятся на системном диске')).toBeVisible();
+
+    let question = '';
+    page.once('dialog', (dialog) => {
+      question = dialog.message();
+      void dialog.dismiss();
+    });
+    await jellyfin.getByRole('button', { name: 'Удалить', exact: true }).click();
+    await expect
+      .poll(() => question)
+      .toBe('Удалить приложение e2e-jellyfin? Его контейнер будет удалён, а папки с данными останутся.');
+    await expect(jellyfin).toBeVisible();
+
+    // Nothing of the English page is left.
+    await expect(main.getByRole('heading', { name: 'App Store' })).toHaveCount(0);
+    await expect(main.getByRole('button', { name: /^Installed/ })).toHaveCount(0);
+  });
+});

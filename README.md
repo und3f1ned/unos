@@ -54,7 +54,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **70+ Curated Apps** - One-click installation of popular self-hosted applications
 - **Docker Management** - Full container lifecycle management (create, start, stop, logs)
 - **Image Management** - Pull, list, and remove Docker images
-- **App Categories** - Media, Downloads, Productivity, Monitoring, Home Automation, Network, AI, Security, and more
+- **App Categories** - Media, Downloads, Productivity, Monitoring, Smart Home, Network, AI & LLMs, Security, and more
 
 ### System Monitoring
 - **Real-time Dashboard** - Live CPU, memory, network, and disk I/O statistics via WebSocket
