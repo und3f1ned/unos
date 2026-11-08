@@ -130,7 +130,7 @@ def test_missing_host_tools_are_named_in_one_warning(monkeypatch, caplog):
 
 def test_optional_host_tools_are_left_out_of_the_startup_check(monkeypatch, caplog):
     # deploy/install.sh does not install the NFS server, so a host without exportfs is a normal
-    # installation: the NFS tab says when it is missing, not a warning at every start (ADR-0261).
+    # installation: the NFS tab says when it is missing, not a warning at every start (ADR-0291).
     checked = []
 
     def fake_missing(names, *, timeout):

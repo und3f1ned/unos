@@ -1,4 +1,4 @@
-"""NFS exports on the host: UNOS's own export file, and exportfs (ADR-0261, ADR-0262).
+"""NFS exports on the host: UNOS's own export file, and exportfs (ADR-0291, ADR-0292).
 
 exportfs reads the main export file (``settings.nfs_exports_path``, /etc/exports) and then every
 file ``*.exports`` of the directory beside it (/etc/exports.d), each on its own: an entry that it
@@ -17,7 +17,7 @@ in a file than a line that it cannot read, and stops exporting what follows: whi
 such a line, UNOS changes no export. What exportfs reports is a warning of the change, not an
 error: it exits with status 1 for a problem in any file, also in a line that UNOS did not write.
 
-An export that UNOS writes (ADR-0262) is an existing folder of a pool that UNOS manages, below
+An export that UNOS writes (ADR-0292) is an existing folder of a pool that UNOS manages, below
 folders that only root can change, for one address or network of the local network, read-only
 or read-write::
 
@@ -65,13 +65,13 @@ HEADER = (
     "# NFS exports of UNOS: Shares > NFS adds and deletes its lines here and keeps every\n"
     "# line that it did not write. exportfs reads this file after /etc/exports.\n"
 )
-# What UNOS writes after ro or rw, then mp=<the pool's mountpoint> (ADR-0262).
+# What UNOS writes after ro or rw, then mp=<the pool's mountpoint> (ADR-0292).
 FIXED_OPTIONS = ("sync", "no_subtree_check", "root_squash", "secure")
 EXPORTFS_TIMEOUT = 60
 KILL_AFTER = 5
 EXPORTFS_WAIT = EXPORTFS_TIMEOUT + KILL_AFTER + 10
 
-# The folders UNOS writes need no quoting or escaping in an export file (ADR-0262).
+# The folders UNOS writes need no quoting or escaping in an export file (ADR-0292).
 _EXPORT_PATH_PATTERN = re.compile(r"/[A-Za-z0-9._/-]+")
 # An address or network, IPv4 (also with a netmask) or IPv6: hex digits, '.', ':' and '/'.
 _CLIENT_PATTERN = re.compile(r"[0-9A-Fa-f.:/]{1,64}")
@@ -246,7 +246,7 @@ def _read_files() -> list[_File]:
 
 def _is_unos(file: _File, entry: exports.Entry, own: str) -> bool:
     """Whether ``entry`` of ``file`` is an export of UNOS: a line of its own file that is exactly as
-    UNOS writes it, alone on its line. UNOS changes no other line (ADR-0261): one written by hand
+    UNOS writes it, alone on its line. UNOS changes no other line (ADR-0291): one written by hand
     into its file, also one that looks like UNOS's, is the owner's."""
     if file.path != own or entry.first_line != entry.last_line or len(entry.clients) != 1:
         return False
@@ -323,7 +323,7 @@ def service_status() -> NfsServiceStatus:
 
 
 def _refuse_while_unreadable(files: Sequence[_File]) -> None:
-    """409 while an export file has a line that exportfs cannot read (ADR-0261): exportfs -ra, which
+    """409 while an export file has a line that exportfs cannot read (ADR-0291): exportfs -ra, which
     applies a change, reads no further in that file and stops exporting what follows the line, the
     owner's exports too, and a line added to UNOS's file after it would never be read."""
     for file in files:
@@ -354,7 +354,7 @@ def _apply() -> list[str]:
     return [warning]
 
 
-# --- an export that UNOS writes (ADR-0262) -----------------------------------------------------
+# --- an export that UNOS writes (ADR-0292) -----------------------------------------------------
 
 
 def _network(value: str) -> ipaddress.IPv4Network | ipaddress.IPv6Network | None:

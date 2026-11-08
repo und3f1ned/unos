@@ -13,28 +13,39 @@ they cannot inject extra shell syntax.
 
 Set ``UNOS_HOST_EXEC=local`` to run commands directly (no nsenter), e.g. when
 the supervisor runs natively on the host during development.
+
+btrfs scrubs, error stats resets and smartctl run in the container itself,
+on the pools and disks that the privileged container sees:
+:func:`run_in_container` runs them, and at their timeout it kills them
+without waiting for them (ADR-0290).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import shlex
+import signal
 import subprocess
+import threading
 from dataclasses import dataclass
+from typing import IO, Any
 
 logger = logging.getLogger(__name__)
 
 # Programs the supervisor runs on the host through this module, with the
 # Debian/Ubuntu package that installs them. Callers: storage/pools.py,
-# storage/disks.py, shares/smb.py, shares/accounts.py (SMB accounts: getent
+# storage/disks.py (lsns and findmnt --task: the mount namespaces of other
+# processes, ADR-0288), shares/smb.py, shares/accounts.py (SMB accounts: getent
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl, under
-# timeout: ADR-0257, ADR-0258). cat, od, test, mkdir, rmdir, rm, find, sync,
-# sleep, timeout, hostname and sh also run there but come from essential
+# timeout: ADR-0257, ADR-0258). cat, od (the export files: shares/nfs.py), test,
+# mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
+# scheduler/router.py, ADR-0266) and sh also run there but come from essential
 # packages. The startup check (main.check_host_tools) warns about the ones the
 # host lacks.
 HOST_TOOLS: dict[str, str] = {
@@ -42,6 +53,7 @@ HOST_TOOLS: dict[str, str] = {
     "mkfs.btrfs": "btrfs-progs",
     "chattr": "e2fsprogs",
     "findmnt": "util-linux",
+    "lsns": "util-linux",
     "lsblk": "util-linux",
     "blkid": "util-linux",
     "wipefs": "util-linux",
@@ -73,7 +85,7 @@ HOST_TOOLS: dict[str, str] = {
 # packages: a host without them is a normal installation, so the startup check
 # leaves them out, and the feature that runs one says when the host lacks it.
 # shares/nfs.py runs exportfs (under timeout), and the NFS tab names a missing
-# NFS server (ADR-0261).
+# NFS server (ADR-0291).
 OPTIONAL_HOST_TOOLS: dict[str, str] = {
     "exportfs": "nfs-kernel-server",
 }
@@ -184,6 +196,114 @@ async def run_on_host_async(
     )
 
 
+# The commands of run_in_container, by their argument lists: those running,
+# and those that were killed at their timeout and have not ended yet, each
+# with whether a run that was not started because of it has been logged.
+_runs = threading.Condition()
+_running: set[tuple[str, ...]] = set()
+_stuck: dict[tuple[str, ...], bool] = {}
+
+
+def run_in_container(
+    cmd: list[str],
+    *,
+    timeout: float,
+    stdout: int | IO[Any] = subprocess.PIPE,
+    stderr: int | IO[Any] = subprocess.PIPE,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``cmd`` in the supervisor's own container; at its timeout, kill it and return at once.
+
+    For btrfs and smartctl, which reach the host's pools and disks through
+    the privileged container (ADR-0290). ``stdout`` and ``stderr`` are
+    pipes, whose text is returned (bytes that are not valid in the
+    locale's encoding become U+FFFD), or what Popen takes, such as
+    ``subprocess.DEVNULL`` or a file. The command reads nothing.
+
+    The command runs in a session of its own. At ``timeout`` its process
+    group, the command and the processes it started, is killed with
+    SIGKILL, and :class:`subprocess.TimeoutExpired` is raised at once: a
+    daemon thread waits for the command to end. One that hangs in the
+    kernel, on a disk or a filesystem that stopped answering, ends only when
+    the kernel lets it go.
+
+    One run of a command (the same ``cmd``) at a time: a second run waits for
+    the first, at most ``timeout``. While a run that was killed has not
+    ended, the command is not started: TimeoutExpired is raised at once, and
+    logged once for each such run. So a pool or disk that hangs keeps at most
+    one process of each command.
+    """
+    _validate_cmd(cmd)
+    key = tuple(cmd)
+    with _runs:
+        if not _runs.wait_for(lambda: key not in _running, timeout) or key in _stuck:
+            if not _stuck.get(key):
+                logger.warning("Not started: %s: an earlier run of it has not ended", shlex.join(cmd))
+                if key in _stuck:
+                    _stuck[key] = True
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        _running.add(key)
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            errors="replace",
+            start_new_session=True,
+        )
+        try:
+            out, err = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_and_leave(process, key)
+            logger.warning(
+                "Killed %s: it did not answer within %s seconds", shlex.join(cmd), timeout
+            )
+            raise
+        except BaseException:
+            _kill_and_leave(process, key)
+            raise
+    finally:
+        with _runs:
+            _running.discard(key)
+            _runs.notify_all()
+    return subprocess.CompletedProcess(cmd, process.returncode, out, err)
+
+
+def _kill_and_leave(process: subprocess.Popen[str], key: tuple[str, ...]) -> None:
+    """Kill the process group of ``process`` and leave the wait for its end to a daemon thread."""
+    if process.returncode is not None:  # it ended and was waited for already
+        return
+    # Its process group id is its pid, which no other process can take until
+    # it is waited for.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    with _runs:
+        _stuck[key] = False
+    try:
+        threading.Thread(
+            target=_wait_for_killed,
+            args=(process, key),
+            name=f"unos-reap:{process.pid}",
+            daemon=True,
+        ).start()
+    except BaseException:
+        with _runs:
+            _stuck.pop(key, None)
+        raise
+
+
+def _wait_for_killed(process: subprocess.Popen[str], key: tuple[str, ...]) -> None:
+    try:
+        process.wait()
+    finally:
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
+        with _runs:
+            _stuck.pop(key, None)
+
+
 def read_host_file(path: str, *, timeout: float = 10) -> str:
     """Return the contents of an absolute path on the host filesystem."""
     if not path.startswith("/"):
@@ -274,3 +394,28 @@ def missing_host_binaries(names: list[str], *, timeout: float = 10) -> list[str]
         return None
     reported = set(result.stdout.splitlines())
     return [name for name in names if name in reported]
+
+
+def time_zone_name(*, timeout: float = 10) -> str | None:
+    """The name of the host's time zone, such as ``Europe/Berlin``, or None.
+
+    Read where /etc/localtime links to below a ``zoneinfo`` folder, as timedatectl reads
+    it (``timedatectl set-timezone`` writes that link); a zone of its ``posix/`` or
+    ``right/`` folder (time with leap seconds) counts as the zone itself, whose civil
+    time it shows. None when the host has no such link: no /etc/localtime (the host's clock
+    then shows UTC), a copied file instead of a link, or a link elsewhere. When the host
+    cannot be asked, raises what run_on_host raises (OSError, subprocess.TimeoutExpired), and
+    HostCommandError when the command fails with a message: readlink without -v reports
+    nothing, so the message is nsenter's, which could not enter the host's namespaces.
+    """
+    cmd = ["readlink", "/etc/localtime"]
+    # "replace": a target that is not UTF-8 names no zone, which the caller then reports.
+    result = run_on_host(cmd, timeout=timeout, errors="replace")
+    if not result.ok:
+        if result.stderr.strip():
+            raise HostCommandError(cmd, result.returncode, result.stderr)
+        return None
+    _, found, name = result.stdout.strip().rpartition("zoneinfo/")
+    for folder in ("posix/", "right/"):
+        name = name.removeprefix(folder)
+    return name if found and name else None

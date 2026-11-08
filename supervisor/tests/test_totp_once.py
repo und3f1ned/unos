@@ -10,6 +10,7 @@ depends on where the 30-second steps fall.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pyotp
 import pytest
@@ -161,6 +162,25 @@ class TestSmbSelfActivation:
 
 
 class TestSetupAndDisable:
+    def test_the_qr_code_carries_the_secret_of_the_setup(self, world, clock):
+        """The QR code of the setup holds qr_uri, the otpauth:// URI that authenticator apps read
+        (Key Uri Format): its secret is the one shown for manual entry and stored, and the codes
+        of an app that read it turn 2FA on."""
+        headers = world.headers("alice")
+        setup = world.client.post(f"{API}/auth/totp/setup", headers=headers).json()
+        uri = urlsplit(setup["qr_uri"])
+        query = parse_qs(uri.query, strict_parsing=True)
+
+        assert (uri.scheme, uri.netloc, unquote(uri.path)) == ("otpauth", "totp", "/UNOS:alice")
+        assert query["secret"] == [setup["secret"]]
+        assert query["issuer"] == ["UNOS"]
+        # What the app takes as given when they are left out: SHA-1, 6 digits, 30 seconds.
+        assert set(query) == {"secret", "issuer"}
+        assert world.user("alice").totp_secret == setup["secret"]
+        app = pyotp.parse_uri(setup["qr_uri"])
+        enabled = world.client.post(f"{API}/auth/totp/enable", json={"code": app.at(clock.now)}, headers=headers)
+        assert enabled.status_code == 200, enabled.text
+
     def test_the_setup_code_does_not_sign_in(self, world, clock):
         headers = world.headers("alice")
         secret = world.client.post(f"{API}/auth/totp/setup", headers=headers).json()["secret"]

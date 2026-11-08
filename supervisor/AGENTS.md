@@ -18,15 +18,21 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   `subprocess.run` reaches only the container: the system and security routers still work that
   way or call nsenter, and the logs router's `/files` and `/file/{filename}` read the container's
   `/var/log` (architecture.host-command-layer).
-- Commands are argv lists, values validated (ADR-0262); secrets go in `input=`, not argv (ADR-0125).
+- Commands are argv lists, values validated (ADR-0292); secrets go in `input=`, not argv (ADR-0125).
 - Call `host.run_on_host(...)` after `from .. import host`: tests replace the attribute
   `src.host.run_on_host`, and a name imported with `from ..host import run_on_host` escapes them.
 - A program new to the host joins `HOST_TOOLS` with its Debian package, or `OPTIONAL_HOST_TOOLS`
   when `deploy/install.sh` does not install it: the startup check leaves those out, and the feature
-  that runs one says when the host lacks it (exportfs, ADR-0261). Blocking work (host
+  that runs one says when the host lacks it (exportfs, ADR-0291). Blocking work (host
   commands, smartctl, bcrypt, Docker, e-mail) runs off the event loop with a timeout (ADR-0021).
   The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
   can run long runs under the host's `timeout` (ADR-0258).
+- btrfs and smartctl that run in the container (scrubs, the stats reset, SMART tests and reads)
+  go through `host.run_in_container`: at its timeout it kills the command's process group and
+  leaves the wait to a daemon thread, so a command stuck in the kernel holds no worker thread;
+  it runs one run of a command at a time, and none while a killed run of it is still stuck
+  (ADR-0290). The fake hosts refuse it as they refuse `subprocess.run`. The Snapshots page's
+  `run_cmd` does not use it yet.
 
 ## Routers and roles (ADR-0030)
 
@@ -56,7 +62,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 | `service.py` | `smb_lock()`, the import, apply, the share API's logic, the startup reconcile, the restore steps, `share_path_problem` |
 | `smbconf.py`, `smb.py` | smb.conf as text (pure); the file on the host, testparm, reload, close-share |
 | `router.py`, `schemas.py`, `interfaces.py`; `repair.py`, `repair_router.py` | the share API and the types the modules share; Repair permissions (ADR-0155) |
-| `exports.py`, `nfs.py` | NFS: export files as exportfs reads them (pure); UNOS's own export file on the host, exportfs and the export rules (ADR-0261, ADR-0262) |
+| `exports.py`, `nfs.py` | NFS: export files as exportfs reads them (pure); UNOS's own export file on the host, exportfs and the export rules (ADR-0291, ADR-0292) |
 
 The SMB flows of users (allow, turn on, password changes) are in `src/auth/router.py`. Rules:
 - UNOS alone writes smb.conf, rendered from the database (ADR-0074); every apply is staged,
@@ -83,5 +89,6 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
   skill).
 - After an edit of a file that tests read, run those tests: `test_deploy_scripts.py` (deploy/,
   `docs/INSTALL.md`, `docs/TESTING.md`, `scripts/test-cycle.sh`, the workflow, Dockerfiles, package
-  files), `test_authz.py`, `test_secret_bootstrap.py`, `test_request_limits.py`, `test_standin.py`,
+  files), `test_emergency.py` (`deploy/reset-admin.sh`, `docs/RECOVERY.md` and the links to it),
+  `test_authz.py`, `test_secret_bootstrap.py`, `test_request_limits.py`, `test_standin.py`,
   `test_smb_accounts.py`, `test_smb_models.py` and those of `make test-fast`.

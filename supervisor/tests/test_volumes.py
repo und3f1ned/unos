@@ -317,7 +317,7 @@ def add_share(host, name: str, path: str) -> None:
 
 
 def add_export(host, path: str, file: str = "/etc/exports") -> None:
-    """An NFS export in an export file of the host: /etc/exports, or the file of UNOS (ADR-0261)."""
+    """An NFS export in an export file of the host: /etc/exports, or the file of UNOS (ADR-0291)."""
     host.files[file] = host.files.get(file, "") + f"{path} 192.168.1.0/24(rw,sync,no_subtree_check)\n"
 
 
@@ -1308,7 +1308,7 @@ class TestVolumeInUse:
         [(locked, calls_before)] = asked
         assert locked
         # After the volume's id was checked; in between, only the rest of the check ran on the
-        # host: the NFS export files are read there (ADR-0261).
+        # host: the NFS export files are read there (ADR-0291).
         assert documents.calls[calls_before - 1][:4] == ["btrfs", "subvolume", "show", "-r"]
         assert documents.calls[calls_before] == [
             "/bin/sh", "-c", nfs._FILES_SCRIPT, "unos-nfs-files", "/etc/exports", "/etc/exports.d"]

@@ -45,7 +45,7 @@ LSBLK_COLUMNS = (
     "NAME,KNAME,PATH,PKNAME,TYPE,SIZE,ROTA,MODEL,SERIAL,WWN,"
     "FSTYPE,LABEL,UUID,PARTUUID,PTTYPE,MOUNTPOINTS,MAJ:MIN"
 )
-FINDMNT_COLUMNS = "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,VFS-OPTIONS,FS-OPTIONS"
+FINDMNT_COLUMNS = "TARGET,SOURCE,FSTYPE,UUID,MAJ:MIN,FSROOT,VFS-OPTIONS,FS-OPTIONS"
 
 SMARTCTL_TIMEOUT = 60
 
@@ -58,7 +58,7 @@ def _has_ro(options: str | None) -> bool:
 
 @dataclass(frozen=True)
 class HostMount:
-    """One entry of the host's mount table."""
+    """One entry of the host's mount table (or of another mount namespace's)."""
 
     target: str
     source: str | None  # device path without a btrfs "[/subvolume]" suffix
@@ -67,6 +67,9 @@ class HostMount:
     majmin: str | None
     vfs_options: str | None = None  # per-mount options ("rw,noatime")
     fs_options: str | None = None  # superblock options ("ro,space_cache=v2,...")
+    # The folder of the filesystem that the mount shows: "/" for its root, else a
+    # btrfs subvolume or the folder of a bind mount ("/apps/x").
+    fsroot: str | None = None
 
     @property
     def read_only(self) -> bool:
@@ -182,8 +185,40 @@ def host_mounts() -> list[HostMount]:
     the btrfs subvolume (subvol=) as they are named now, and whatever can
     write in a pool names them: bytes that are not UTF-8 become U+FFFD.
     """
+    return _findmnt([])
+
+
+def namespace_mounts(pid: int) -> list[HostMount]:
+    """The mount table of the mount namespace of the host's process ``pid``.
+
+    findmnt reads /proc/<pid>/mountinfo: the mountpoints are the ones that the
+    process sees. Raises RuntimeError if findmnt fails, for example because
+    the process has exited.
+    """
+    return _findmnt(["--task", str(pid)])
+
+
+def mount_namespace_pids() -> list[int]:
+    """One process of each mount namespace on the host other than the host's own, by PID.
+
+    lsns names the lowest PID of each namespace, so the host's (PID 1's) has
+    PID 1. Raises RuntimeError if lsns fails or does not print the expected
+    JSON. Older versions of lsns print the numbers as strings.
+    """
+    result = host.run_on_host(["lsns", "--json", "--type", "mnt", "--output", "NS,PID"], timeout=30)
+    if not result.ok:
+        raise RuntimeError(f"lsns failed: {result.stderr.strip() or result.returncode}")
+    try:
+        rows = json.loads(result.stdout)["namespaces"]
+        pids = {_to_int(row.get("pid")) for row in rows}
+    except (json.JSONDecodeError, TypeError, KeyError, AttributeError) as exc:
+        raise RuntimeError(f"lsns returned invalid JSON: {exc}") from exc
+    return sorted(pid for pid in pids if pid > 1)
+
+
+def _findmnt(options: list[str]) -> list[HostMount]:
     result = host.run_on_host(
-        ["findmnt", "-J", "-l", "-o", FINDMNT_COLUMNS], timeout=30, errors="replace"
+        ["findmnt", "-J", "-l", *options, "-o", FINDMNT_COLUMNS], timeout=30, errors="replace"
     )
     if not result.ok:
         raise RuntimeError(f"findmnt failed: {result.stderr.strip() or result.returncode}")
@@ -210,6 +245,7 @@ def host_mounts() -> list[HostMount]:
                         majmin=item.get("maj:min"),
                         vfs_options=item.get("vfs-options"),
                         fs_options=item.get("fs-options"),
+                        fsroot=item.get("fsroot"),
                     )
                 )
             visit(item.get("children"))
@@ -238,6 +274,20 @@ def _lsblk_tree() -> list[dict[str, Any]]:
         return json.loads(result.stdout).get("blockdevices") or []
     except (json.JSONDecodeError, AttributeError) as exc:
         raise RuntimeError(f"lsblk failed: invalid output ({exc})") from exc
+
+
+def labelled_devices(label: str) -> list[str]:
+    """Paths of the host's block devices whose filesystem has the label ``label``.
+
+    Every device lsblk lists counts, the boot and virtual devices included.
+    RuntimeError when lsblk fails.
+    """
+    return sorted({
+        node.get("path") or f"/dev/{node.get('name')}"
+        for top in _lsblk_tree()
+        for node in _walk(top)
+        if node.get("label") == label
+    })
 
 
 def _whole_disks(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -617,6 +667,39 @@ def whole_disk_device(target: str) -> str:
     return device
 
 
+def pool_device_problems(paths: list[str]) -> dict[str, str]:
+    """Why devices of a btrfs filesystem found on the disks must not be part of a pool.
+
+    Mount and Import mount such a filesystem and keep it in the host's fstab
+    (ADR-0283), so its members follow the rules of a pool's creation
+    (ADR-0035, pools._check_pool_devices): nothing on a boot or virtual
+    device (HIDDEN_DISK_PREFIXES: the SD card and the eMMC, which is never
+    written, ADR-0225; loop and RAM disks), and nothing on the system disk,
+    whose partitions and the devices built on them are never used for pools.
+    A device that lsblk does not list cannot be checked. Returns path ->
+    reason for each of ``paths`` that breaks a rule. RuntimeError when lsblk
+    fails.
+    """
+    state = _collect_host_state()
+    problems: dict[str, str] = {}
+    for path in paths:
+        # A device built on several disks (md, LVM) is below each of them.
+        tops = [top for top in state.tree if any(path in _node_paths(node) for node in _walk(top))]
+        if not tops:
+            problems[path] = f"lsblk does not list {path}"
+        for top in tops:
+            top_path = top.get("path") or f"/dev/{top.get('name')}"
+            on = "is" if path in _node_paths(top) else f"is on {top_path},"
+            if is_hidden_disk(top.get("name") or ""):
+                problems[path] = f"{path} {on} a boot or virtual device"
+                break
+            reason = _system_reason(list(_walk(top)), state)
+            if reason:
+                problems[path] = f"{path} {on} a system disk ({reason})"
+                break
+    return problems
+
+
 def get_device_facts(paths: list[str]) -> dict[str, DeviceFacts]:
     """Return fresh host facts for the given disk or partition paths.
 
@@ -652,13 +735,8 @@ def get_device_facts(paths: list[str]) -> dict[str, DeviceFacts]:
 def get_smart_data(device_path: str) -> SmartData:
     """Get SMART data for a device using smartctl (blocking: run it in a worker thread)."""
     try:
-        result = subprocess.run(
-            ["smartctl", "-j", "-a", device_path],
-            capture_output=True,
-            text=True,
-            timeout=SMARTCTL_TIMEOUT,
-            check=False,
-        )
+        # Killed at the timeout and not waited for (ADR-0290).
+        result = host.run_in_container(["smartctl", "-j", "-a", device_path], timeout=SMARTCTL_TIMEOUT)
     except subprocess.TimeoutExpired:
         return SmartData(
             device=device_path,

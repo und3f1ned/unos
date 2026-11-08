@@ -31,6 +31,14 @@ import { checkedLocalUrl, targetUrl } from './tests/target';
  * E2E_CHROMIUM_PATH: a Chromium binary to use instead of the build that
  * `npx playwright install chromium` downloads (make setup), on a machine that
  * cannot download it.
+ *
+ * E2E_FIRST_RUN=1: the run is the first-run setup of a new installation, the
+ * one project first-run (tests/first-run.spec.ts), which creates the
+ * administrator that the specs sign in as, E2E_ADMIN of tests/fixtures.ts,
+ * through the /setup page. scripts/standin/e2e.sh runs it on the new stand-in
+ * before it runs the specs (ADR-0261). An installation is set up once, so that
+ * test is never retried. Without E2E_FIRST_RUN no project runs that file: the
+ * compose test stack creates the account through the API.
  */
 
 const baseURL = targetUrl();
@@ -38,6 +46,12 @@ if (process.env.HTTP_URL) checkedLocalUrl('HTTP_URL', process.env.HTTP_URL);
 
 const isCI = !!process.env.CI;
 const chromium = process.env.E2E_CHROMIUM_PATH;
+const firstRun = process.env.E2E_FIRST_RUN === '1';
+const FIRST_RUN_SPEC = /[\\/]first-run\.spec\.ts$/;
+const browser = {
+  ...devices['Desktop Chrome'],
+  ...(chromium ? { launchOptions: { executablePath: chromium } } : {}),
+};
 
 export default defineConfig({
   testDir: './tests',
@@ -55,6 +69,10 @@ export default defineConfig({
     // stand-in's self-signed one: the test machine trusts neither. Also
     // applies to the `request` fixture.
     ignoreHTTPSErrors: true,
+    // The web UI starts in the browser's language when none was chosen in it (ADR-0287), and
+    // the specs find its elements by their English texts: an English browser on any machine.
+    // tests/language.spec.ts switches to Russian.
+    locale: 'en-US',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: isCI ? 'on-first-retry' : 'off',
@@ -63,15 +81,9 @@ export default defineConfig({
     navigationTimeout: 30000,
   },
 
-  projects: [
-    {
-      name: 'chromium',
-      use: {
-        ...devices['Desktop Chrome'],
-        ...(chromium ? { launchOptions: { executablePath: chromium } } : {}),
-      },
-    },
-  ],
+  projects: firstRun
+    ? [{ name: 'first-run', testMatch: FIRST_RUN_SPEC, retries: 0, use: browser }]
+    : [{ name: 'chromium', testIgnore: FIRST_RUN_SPEC, use: browser }],
 
   timeout: 90000,
   expect: {

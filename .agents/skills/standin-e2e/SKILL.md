@@ -14,8 +14,10 @@ is not localhost, 127.0.0.1, ::1 or webui (`webui/tests/target.ts`).
 (`scripts/standin/run_supervisor.py`, every data path in `.standin/`) behind a
 Caddy stand-in (`scripts/standin/front.mjs`) from a fresh data directory,
 creates the administrator the specs sign in as (`E2E_ADMIN` of
-`webui/tests/fixtures.ts`), runs Playwright with `E2E_STAND_IN=1`, stops
-everything and exits with Playwright's code. It is the way to run the specs
+`webui/tests/fixtures.ts`) through the `/setup` page with a first Playwright
+run of `webui/tests/first-run.spec.ts` (`E2E_FIRST_RUN=1`; when it fails,
+e2e.sh stops: `.standin/logs/first-run.log`), runs Playwright with
+`E2E_STAND_IN=1`, stops everything and exits with Playwright's code. It is the way to run the specs
 here: `webui/package.json` has no test scripts, and a bare
 `npx playwright test` finds no stand-in running.
 
@@ -31,6 +33,8 @@ here: `webui/package.json` has no test scripts, and a bare
 2. **Run the specs you changed.** `scripts/standin/e2e.sh tests/<name>.spec.ts`;
    Playwright's arguments pass through (`--grep <title>`, `--headed`).
    `E2E_SKIP_BUILD=1` serves the last build when only specs changed.
+   `tests/first-run.spec.ts` runs first in every run; named alone, it is the
+   whole run, without further arguments.
    Result: the run ends with `== Playwright exit code 0`.
 
 3. **Run the whole suite** before you hand over: `make e2e-local` (about

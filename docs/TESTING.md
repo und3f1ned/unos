@@ -10,7 +10,7 @@ template point here.
 
 | Level | Command | Where it runs | What it proves |
 |-------|---------|---------------|----------------|
-| 1. The gate | `make check` | this machine (CI is off, ADR-0230) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere), svelte-check and the production build |
+| 1. The gate | `make check` | this machine (CI is off, ADR-0230) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere), svelte-check, the check of the web UI's texts and the production build |
 | 2. E2E against the local stand-in | `make e2e-local` | this machine | the user flows of the web UI against the real supervisor and the built web UI |
 | 3. The dev device | `scripts/dev/` with the deploy-device and device-checks skills | the dev device | what only a real NAS host has: disks, btrfs, Samba, Docker, a reboot |
 
@@ -70,7 +70,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make test` | all backend tests (`supervisor/tests`); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options |
 | `make test-fast` | the convention tests: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
-| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check) and `npm run build` in `webui/` |
+| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
 | `make audit` | `pip-audit -r supervisor/requirements.txt` and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
 | `make setup` | `scripts/setup.sh` (needs the network) |
@@ -176,7 +176,10 @@ through `src/host.py`. Tests answer them with a fake host (ADR-0189): the in-mem
 `tests/test_pool_persistence.py`, or `FakeSambaHost` of `tests/samba_fake.py` for Samba;
 `install_fake_host` also blocks real subprocesses and Docker, and only counts the apply of smb.conf
 that the storage endpoints run after a pool change (`FakeHost.smb_applies`, ADR-0248), which
-`tests/test_smb_integration.py` runs with both fakes (`PoolsAndSambaHost`):
+`tests/test_smb_integration.py` runs with both fakes (`PoolsAndSambaHost`). btrfs scrubs and
+smartctl run in the container through `host.run_in_container`, which the fake hosts refuse as
+well: a test answers them by replacing that function, or `subprocess.Popen` to see a command that
+does not return, as `tests/test_command_timeouts.py` does (ADR-0290):
 
 ```python
 import pytest
@@ -253,6 +256,7 @@ testparm's message about exactly these two), but this test fails on them.
 ```bash
 make e2e-local                                            # every spec
 scripts/standin/e2e.sh tests/shares.spec.ts --grep Seeded # a part (Playwright's arguments)
+scripts/standin/e2e.sh tests/first-run.spec.ts            # the first-run setup alone
 scripts/standin/e2e.sh --help                             # what it does, its settings
 ```
 
@@ -261,9 +265,18 @@ directory under `.standin/` (git-ignored): the real supervisor through
 `scripts/standin/run_supervisor.py`, with every data path inside `.standin/`, and
 `scripts/standin/front.mjs` in place of Caddy (HTTPS with a self-signed certificate and the
 security headers of `webui/Caddyfile`). It creates the test administrator `admin` /
-`unos-e2e-pass` (`E2E_ADMIN` in `webui/tests/fixtures.ts`), runs Playwright with `BASE_URL` and
-`HTTP_URL` on localhost and `E2E_STAND_IN=1`, stops everything and exits with Playwright's exit
-code. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
+`unos-e2e-pass` (`E2E_ADMIN` in `webui/tests/fixtures.ts`) as the owner creates theirs: on the new
+stand-in, which has no account yet, a first Playwright run with `E2E_FIRST_RUN=1` runs
+`tests/first-run.spec.ts` alone (never retried), which goes through the `/setup` page; when it
+fails, e2e.sh stops (log: `.standin/logs/first-run.log`, ADR-0261). The run of the specs ignores
+that file, so arguments that name only it make this setup the whole run: e2e.sh prints its log
+and, when it passed, `== Playwright exit code 0`. Otherwise it then runs Playwright with
+`BASE_URL` and `HTTP_URL` on localhost and `E2E_STAND_IN=1`, stops everything and exits with
+Playwright's exit code. Playwright also gets the stand-in's pools folder (`E2E_POOLS_BASE`), and its state directory
+and Python (`E2E_STANDIN_STATE`, `E2E_STANDIN_PYTHON`), with which `tests/emergency-reset.spec.ts`
+runs the supervisor's emergency command line against the stand-in's data
+(`scripts/standin/emergency.py`, in place of `docker exec` into the supervisor's container); the
+compose test stack does not set them, and the spec skips there. The logs are in `.standin/logs/`, the HTML report in `webui/playwright-report/`
 (`npx playwright show-report` in `webui/`). The ports default to 46443 (HTTPS), 46080 (HTTP) and
 46180 (the supervisor); `E2E_HTTPS_PORT`, `E2E_HTTP_PORT` and `E2E_BACKEND_PORT` change them. The
 standin-e2e skill explains how to find the cause of a failure.
@@ -278,7 +291,9 @@ is set, and throws for a `BASE_URL` or `HTTP_URL` whose host is not `localhost`,
 (`ignoreHTTPSErrors`), because the certificates are self-signed or come from Caddy's local CA.
 `HTTP_URL` is the plain-HTTP address of the same server, for the redirect and health checks in
 `tests/https.spec.ts`. `E2E_CHROMIUM_PATH` points Playwright at another Chromium binary on a
-machine that cannot download Playwright's own.
+machine that cannot download Playwright's own. The browser runs in en-US (`locale`): without a
+language chosen in it, the web UI starts in the browser's language, and the specs find its
+elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0287).
 
 The stand-in is not a NAS host: it has no disks or pools that UNOS manages, no Docker, no Samba,
 and not the host's network, journal or `/proc`. With `E2E_STAND_IN=1`, the specs that need those
@@ -374,7 +389,8 @@ request against `main`; a new push to a pull request cancels the run for the pre
 3. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
-     error`) and `npm run build`, the build also when the check failed
+     error`), `npm run i18n` (the web UI's texts, ADR-0287) and `npm run build`, each also when
+     another one failed
    - `npm audit --omit=dev --audit-level=high`: high and critical
      vulnerabilities in the `dependencies` of `webui/package.json`
      (lucide-svelte with its peer svelte, and qrcode) and everything they

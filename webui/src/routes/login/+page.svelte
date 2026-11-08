@@ -6,6 +6,7 @@
   import { user, isLoggedIn } from "$lib/stores/auth";
   import { connectWebSocket } from "$lib/stores/stats";
   import { Button, Input } from "$lib/components/ui";
+  import { t } from "$lib/i18n";
   import { KeyRound, Server, ShieldCheck } from "lucide-svelte";
 
   let username = "";
@@ -55,7 +56,7 @@
       connectWebSocket();
       goto("/");
     } catch (e: any) {
-      error = e.message || "Login failed";
+      error = e.message || $t("login.failed");
       // Only a rejected password leads back to the password form. An invalid
       // or already used code ("Invalid 2FA code", "This two-factor code was
       // already used; wait for the next one", "Invalid recovery code"), too
@@ -88,7 +89,7 @@
   <div class="bg-slate-800 p-8 rounded-lg shadow-xl w-full max-w-md">
     <div class="flex items-center justify-center gap-2 mb-8">
       <Server class="w-10 h-10 text-blue-500" />
-      <span class="text-2xl font-bold">UNOS</span>
+      <span class="text-2xl font-bold">{$t("common.product")}</span>
     </div>
 
     <form on:submit|preventDefault={handleSubmit} class="space-y-4">
@@ -106,7 +107,7 @@
             for="username"
             class="block text-sm font-medium text-slate-400 mb-1"
           >
-            Username
+            {$t("common.username")}
           </label>
           <input
             type="text"
@@ -123,7 +124,7 @@
             for="password"
             class="block text-sm font-medium text-slate-400 mb-1"
           >
-            Password
+            {$t("common.password")}
           </label>
           <input
             type="password"
@@ -137,17 +138,17 @@
       {:else if useRecoveryCode}
         <div class="text-center mb-4">
           <KeyRound class="w-12 h-12 text-status-info mx-auto mb-2" />
-          <h2 class="text-lg font-semibold">Recovery Code</h2>
+          <h2 class="text-lg font-semibold">{$t("login.recoveryTitle")}</h2>
           <p class="text-sm text-secondary">
-            Enter one of your recovery codes. Each code works only once.
+            {$t("login.recoveryHint")}
           </p>
         </div>
 
         <Input
           id="recovery-code"
-          label="Recovery code"
+          label={$t("login.recoveryLabel")}
           bind:value={recoveryCode}
-          placeholder="XXXX-XXXX-XXXX"
+          placeholder={$t("login.recoveryPlaceholder")}
           autocomplete="off"
           maxlength={32}
           required
@@ -156,9 +157,9 @@
         <!-- TOTP Input -->
         <div class="text-center mb-4">
           <ShieldCheck class="w-12 h-12 text-blue-500 mx-auto mb-2" />
-          <h2 class="text-lg font-semibold">Two-Factor Authentication</h2>
+          <h2 class="text-lg font-semibold">{$t("login.totpTitle")}</h2>
           <p class="text-sm text-slate-400">
-            Enter the 6-digit code from your authenticator app
+            {$t("login.totpHint")}
           </p>
         </div>
 
@@ -167,7 +168,7 @@
             for="totp"
             class="block text-sm font-medium text-slate-400 mb-1"
           >
-            Authentication Code
+            {$t("login.totpLabel")}
           </label>
           <input
             type="text"
@@ -187,7 +188,7 @@
 
       {#if requiresTOTP}
         <Button variant="ghost" class="w-full" on:click={switchCode}>
-          {useRecoveryCode ? "Use a code from your authenticator app" : "Use a recovery code"}
+          {useRecoveryCode ? $t("login.useAppCode") : $t("login.useRecoveryCode")}
         </Button>
 
         <button
@@ -195,7 +196,7 @@
           on:click={resetForm}
           class="w-full text-sm text-slate-400 hover:text-slate-300"
         >
-          ← Back to login
+          {$t("login.back")}
         </button>
       {/if}
 
@@ -206,11 +207,11 @@
                rounded-lg font-medium transition-colors"
       >
         {#if loading}
-          Signing in...
+          {$t("login.signingIn")}
         {:else if requiresTOTP}
-          Verify
+          {$t("login.verify")}
         {:else}
-          Sign In
+          {$t("login.signIn")}
         {/if}
       </button>
     </form>

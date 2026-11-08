@@ -15,6 +15,8 @@ has a name SMB cannot use.
 
 import asyncio
 import errno
+import importlib
+import io
 import os
 import re
 import sqlite3
@@ -46,6 +48,9 @@ from src.storage import disks, pools
 
 from .samba_fake import FakeSambaHost
 from .audit_helpers import audit_entries
+
+# The package re-exports its APIRouter as ``router``; import the module itself.
+files_router = importlib.import_module("src.files.router")
 
 # The real functions, before any fixture replaces them (tests/conftest.py replaces the
 # mount check where /proc/self/mountinfo exists: the tests' pools are no mount points).
@@ -1623,6 +1628,29 @@ class TestFolderCreationOnThePoolMount:
         response = api.create(folder="sub/docs")
         assert (response.status_code, response.json()["detail"]) == (409, not_mounted(api))
         assert not api.pool.exists()
+
+
+class TestFileManagerInAShareFolder:
+    """Files' New Folder and Upload in the folder of a share that UNOS created (ADR-0273)."""
+
+    def test_new_folders_and_uploads_get_the_modes_that_samba_gives_entries_of_smb_users(self, api, monkeypatch):
+        monkeypatch.setattr(files_router, "BASE_PATH", str(api.base))
+        assert api.create(access=access((ALICE, "write"))).status_code == 200
+        docs = api.pool / "docs"
+
+        made = api.client.post("/api/v1/files/mkdir", json={"path": str(docs), "name": "projects"})
+        uploaded = api.client.post(
+            "/api/v1/files/upload",
+            params={"path": str(docs / "projects")},
+            files={"file": ("plan.txt", io.BytesIO(b"plan"), "application/octet-stream")},
+        )
+
+        assert (made.status_code, uploaded.status_code) == (200, 200), (made.text, uploaded.text)
+        for path, mode in ((docs / "projects", constants.SHARE_DIR_MODE), (docs / "projects" / "plan.txt", 0o660)):
+            st = os.stat(path)
+            assert (stat.S_IMODE(st.st_mode), st.st_gid) == (mode, os.getgid()), path
+        lines = section(api, "docs").splitlines()
+        assert "   force directory mode = 2770" in lines and "   force create mode = 0660" in lines
 
 
 class TestPoolRootMountCheck:

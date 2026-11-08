@@ -1,7 +1,7 @@
 """exports(5) as exportfs reads it (pure): what an export file exports, and where exportfs stops.
 
 A port of the reader of nfs-utils 2.8 (support/nfs/xio.c, getexportent and parseopts of
-support/nfs/exports.c), ADR-0261:
+support/nfs/exports.c), ADR-0291:
 
 * A backslash at the end of a line continues it: exportfs reads it as one space, also inside a
   word, and skips the blanks that start the next line.

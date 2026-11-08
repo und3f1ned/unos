@@ -5,9 +5,10 @@
 # containers (state, health, restarts), every container's log configuration (driver and
 # options, such as the max-size and max-file of a rotation set in the host's
 # /etc/docker/daemon.json, ADR-0178), the images, errors in the supervisor's log of the last 24
-# hours, smbd and nmbd, the API's health answer, the system disk's writes since boot (and its
+# hours, smbd (and nmbd where NetBIOS is on), the API's health answer, the system disk's writes since boot (and its
 # wear data where the card reports it), free RAM and the mounted pools. Exits 0 when
-# unos-supervisor and unos-webui run and are healthy, smbd and nmbd are active and the API
+# unos-supervisor and unos-webui run and are healthy, smbd is active (nmbd too, unless smb.conf
+# turns NetBIOS off: ADR-0275) and the API
 # answers; 1 otherwise ("check: problems").
 #
 # It runs one script on the device, with the root filesystem read-only (dev_remote_ro of
@@ -77,7 +78,14 @@ else
 fi
 
 echo "== samba"
-for s in smbd nmbd; do
+services=smbd
+# With NetBIOS off (disable netbios = yes, ADR-0275) nmbd has nothing to do and does not run.
+if grep -Eiq "^[[:space:]]*disable netbios[[:space:]]*=[[:space:]]*yes" /etc/samba/smb.conf 2> /dev/null; then
+    echo "nmbd: not needed (NetBIOS is off)"
+else
+    services="smbd nmbd"
+fi
+for s in $services; do
     st=$(systemctl is-active "$s" 2> /dev/null) || true
     echo "$s: ${st:-unknown}"
     [ "$st" = active ] || problem "$s is ${st:-unknown}"

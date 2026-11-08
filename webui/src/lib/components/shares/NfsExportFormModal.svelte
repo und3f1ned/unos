@@ -21,7 +21,7 @@
 	];
 	const nfsMessages = { poolRoot: NFS_POOL_ROOT_MESSAGE, apps: nfsAppsFolderMessage };
 
-	// The server refuses a folder of a pool that UNOS does not manage (ADR-0262).
+	// The server refuses a folder of a pool that UNOS does not manage (ADR-0292).
 	const locations = paths.filter((location) => location.managed);
 	let base = locations[0]?.path ?? '';
 	let folder = '';

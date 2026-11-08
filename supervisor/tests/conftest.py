@@ -1,6 +1,7 @@
 import pytest
 import os
 import secrets
+import sys
 import tempfile
 from unittest.mock import patch, MagicMock
 
@@ -32,6 +33,15 @@ def _test_pools_count_as_mounted(monkeypatch):
         from src.shares import service
 
         monkeypatch.setattr(service, "_pool_root_mount_problem", lambda root_fd, pool: None)
+
+
+@pytest.fixture(autouse=True)
+def _smart_history_not_read_yet(monkeypatch):
+    """The SMART monitor keeps its history in RAM from its first pass on (ADR-0269): every
+    test starts before that pass, so the SMART endpoints read the history file it writes."""
+    health_router = sys.modules.get("src.health.router")
+    if health_router is not None:
+        monkeypatch.setattr(health_router, "_smart_history", health_router._SmartHistoryState())
 
 
 @pytest.fixture(autouse=True)

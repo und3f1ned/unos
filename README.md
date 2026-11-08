@@ -47,7 +47,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Pool Scrubbing** - Data integrity verification with scheduled scrubs
 
 ### File Sharing
-- **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux
+- **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux; Windows and macOS list the NAS in their network browsers (WS-Discovery and Bonjour, NetBIOS off)
 - **NFS Exports** - Export a folder of a pool, or a volume, read-only or read-write to one network of your local network; exports written by hand on the NAS are kept and listed. Needs the host's NFS server (`nfs-kernel-server`), which the installer does not install
 - **Web File Browser** - Upload, download, copy, move, rename, and manage files via browser, with a trash that keeps deleted items for 30 days
 
@@ -190,6 +190,7 @@ anyone who can reach the page can create it.
 |----------|-------------|
 | [Installation Guide](docs/INSTALL.md) | Detailed installation instructions |
 | [User Guide](docs/USER_GUIDE.md) | How to use UNOS features |
+| [Recovery](docs/RECOVERY.md) | Reach the pools from another Linux machine; reset an administrator who cannot sign in |
 | [Changelog](CHANGELOG.md) | Version history and release notes |
 | [Contributing](CONTRIBUTING.md) | How work flows, from an issue to a pull request |
 | [AGENTS.md](AGENTS.md) | Commands, rules and conventions for developers and coding agents |
@@ -243,9 +244,11 @@ SMB accounts other user ids. The script prints how to remove them, and names
 the accounts whose Samba password it could not remove.
 `/etc/samba/smb.conf` stays, and Samba still serves the shares it lists,
 unless `install.sh` kept the file it replaced (`smb.conf.original`), which
-is then restored. If the supervisor replaced an existing smb.conf with its own
-(after a manual installation, for example), it kept that file, whose shares it
-imported, as `/etc/samba/smb.conf.unos-import-backup`.
+is then restored, with NetBIOS (nmbd) on again. The network discovery
+services avahi-daemon and wsdd2 keep running. If the supervisor replaced an
+existing smb.conf with its own (after a manual installation, for example), it
+kept that file, whose shares it imported, as
+`/etc/samba/smb.conf.unos-import-backup`.
 
 ## Contributing
 
@@ -255,7 +258,7 @@ needs, and how decisions are recorded in [docs/adr/](docs/adr/README.md).
 
 ```bash
 make setup   # once per checkout: Python venv, lint tools, npm packages, Playwright, git hooks
-make check   # the quality gate: the backend tests, lint, svelte-check and the build, as in CI
+make check   # the quality gate: the backend tests, lint, svelte-check, the web UI's texts and the build, as in CI
 ```
 
 Developers and coding agents follow [AGENTS.md](AGENTS.md) for the commands and

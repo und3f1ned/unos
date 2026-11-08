@@ -7,11 +7,13 @@ import signal
 import subprocess
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
+from src import host
 from src.notifications.schemas import (
     EmailConfig,
     NotificationChannel,
@@ -157,7 +159,7 @@ class TestSmartData:
         mock_result.returncode = 0
         mock_result.stdout = json.dumps(mock_smartctl_output)
 
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+        with patch("src.host.run_in_container", return_value=mock_result):
             result = disks.get_smart_data("/dev/sda")
 
         assert isinstance(result, SmartData)
@@ -177,7 +179,7 @@ class TestSmartData:
         mock_result.returncode = 0
         mock_result.stdout = json.dumps(smart_output)
 
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+        with patch("src.host.run_in_container", return_value=mock_result):
             result = disks.get_smart_data("/dev/sda")
 
         assert result.healthy is False
@@ -189,7 +191,7 @@ class TestSmartData:
         mock_result.stdout = "Not valid JSON"
         mock_result.stderr = "smartctl failed"
 
-        with patch("src.storage.disks.subprocess.run", return_value=mock_result):
+        with patch("src.host.run_in_container", return_value=mock_result):
             result = disks.get_smart_data("/dev/sda")
 
         assert result.healthy is False
@@ -616,10 +618,11 @@ class TestSmartOffTheEventLoop:
 
     @pytest.fixture
     def recorded_run(self, monkeypatch):
-        """subprocess.run stand-in: one data disk sda; records (program, on_event_loop, timeout).
+        """subprocess.run and host.run_in_container stand-in: one data disk sda; records
+        (program, on_event_loop, timeout).
 
         Host commands (src.host.run_on_host) are recorded by the program run
-        through nsenter.
+        through nsenter; smartctl runs in the container (host.run_in_container).
         """
         calls = []
 
@@ -633,6 +636,7 @@ class TestSmartOffTheEventLoop:
             return subprocess.CompletedProcess(cmd, 0, SMART_JSON, "")
 
         monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(host, "run_in_container", run)
         return calls
 
     async def test_monitor_round_runs_in_a_worker_thread(self, recorded_run, monkeypatch, tmp_path):
@@ -658,14 +662,14 @@ class TestSmartOffTheEventLoop:
             # smartctl -n standby: exit status bit 1 when the disk sleeps
             return subprocess.CompletedProcess(cmd, 2, '{"power_mode": "STANDBY"}', "")
 
-        monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(host, "run_in_container", run)
         assert health_router.collect_smart_snapshot("/dev/sda") is None
         assert commands == [["smartctl", "-n", "standby", "-j", "-a", "/dev/sda"]]
 
     def test_snapshot_of_a_failing_disk_is_kept(self, monkeypatch):
         # Exit status bit 3: "SMART status check returned DISK FAILING".
         monkeypatch.setattr(
-            subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 8, SMART_JSON, "")
+            host, "run_in_container", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 8, SMART_JSON, "")
         )
         snapshot = health_router.collect_smart_snapshot("/dev/sda")
         assert snapshot is not None and snapshot.serial == "WD-1"
@@ -679,14 +683,14 @@ class TestSmartOffTheEventLoop:
         assert recorded_run == [("lsblk", False, 30), ("smartctl", False, disks.SMARTCTL_TIMEOUT)]
 
     def test_storage_smart_endpoint_times_out(self, recorded_run, monkeypatch):
-        answering = subprocess.run
+        answering = host.run_in_container
 
         def hanging_smartctl(cmd, **kwargs):
             if cmd[0] == "smartctl":
                 raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
             return answering(cmd, **kwargs)
 
-        monkeypatch.setattr(subprocess, "run", hanging_smartctl)
+        monkeypatch.setattr(host, "run_in_container", hanging_smartctl)
         with admin_client() as api:
             response = api.get("/api/v1/storage/disks/sda/smart")
         assert response.status_code == 200
@@ -718,7 +722,7 @@ class TestScrubOffTheEventLoop:
                 return subprocess.CompletedProcess(cmd, 0, out, "")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(host, "run_in_container", run)
         return calls
 
     @pytest.mark.parametrize("method, first", [("post", "start"), ("get", "status"), ("delete", "cancel")])
@@ -735,7 +739,7 @@ class TestScrubOffTheEventLoop:
         def run(cmd, **kwargs):
             return subprocess.CompletedProcess(cmd, 1, "", "ERROR: not a btrfs filesystem")
 
-        monkeypatch.setattr(subprocess, "run", run)
+        monkeypatch.setattr(host, "run_in_container", run)
         with admin_client() as client:
             r = client.post("/api/v1/storage/pools/data/scrub")
         assert r.status_code == 500
@@ -746,6 +750,201 @@ class TestScrubOffTheEventLoop:
             r = client.get("/api/v1/storage/pools/bad name/scrub")
         assert r.status_code == 400
         assert scrub_run == []
+
+
+# What `btrfs scrub status <mountpoint>` prints (btrfs-progs 6, cmds/scrub.c):
+# the progress while the scrub runs, its result afterwards.
+SCRUB_HEADER = (
+    f"UUID:             {DATA_UUID}\n"
+    "Scrub started:    Fri Nov  6 10:00:00 2026\n"
+)
+SCRUB_OUTPUT = {
+    "never": f"UUID:             {DATA_UUID}\n\tno stats available\n",
+    "running": SCRUB_HEADER + (
+        "Status:           running\n"
+        "Duration:         0:01:04\n"
+        "Time left:        0:03:12\n"
+        "ETA:              Fri Nov  6 10:04:16 2026\n"
+        "Total to scrub:   4.00GiB\n"
+        "Bytes scrubbed:   1.00GiB  (25.00%)\n"
+        "Rate:             16.00MiB/s\n"
+        "Error summary:    no errors found\n"
+    ),
+    "finished": SCRUB_HEADER + (
+        "Status:           finished\n"
+        "Duration:         0:04:16\n"
+        "Total to scrub:   4.00GiB\n"
+        "Rate:             16.00MiB/s\n"
+        "Error summary:    no errors found\n"
+    ),
+    "errors": SCRUB_HEADER + (
+        "Status:           finished\n"
+        "Duration:         0:04:16\n"
+        "Total to scrub:   4.00GiB\n"
+        "Rate:             16.00MiB/s\n"
+        "Error summary:    read=1 csum=12\n"
+        "  Corrected:      10\n"
+        "  Uncorrectable:  3\n"
+        "  Unverified:     0\n"
+    ),
+    # Cancel Scrub: btrfs scrub cancel.
+    "aborted": SCRUB_HEADER + (
+        "Status:           aborted\n"
+        "Duration:         0:02:08\n"
+        "Total to scrub:   4.00GiB\n"
+        "Rate:             16.00MiB/s\n"
+        "Error summary:    csum=2\n"
+        "  Corrected:      2\n"
+        "  Uncorrectable:  0\n"
+        "  Unverified:     0\n"
+    ),
+    # Ended neither by finishing nor by a cancel, for example because the btrfs
+    # process that ran it was killed. A restart of the supervisor forgets the
+    # record instead (ADR-0171): "no stats available".
+    "interrupted": SCRUB_HEADER + (
+        "Status:           interrupted\n"
+        "Duration:         0:00:32\n"
+        "Total to scrub:   4.00GiB\n"
+        "Rate:             16.00MiB/s\n"
+        "Error summary:    no errors found\n"
+    ),
+}
+GIB = 1024**3
+STARTED = "Fri Nov  6 10:00:00 2026"
+
+
+class TestScrubStatus:
+    """What the Storage page shows of a scrub: btrfs's progress while it runs, its result after it.
+
+    The endpoints answer btrfs's status as printed (idle when no scrub is
+    recorded) and count every error of its error summary (ADR-0272).
+    """
+
+    @pytest.fixture
+    def btrfs_reports(self, monkeypatch):
+        """host.run_in_container as btrfs: ``scrub status`` prints SCRUB_OUTPUT[btrfs_reports.state]."""
+        reports = SimpleNamespace(state="never", commands=[])
+
+        def run(cmd, **kwargs):
+            reports.commands.append(cmd)
+            if cmd[:3] == ["btrfs", "scrub", "status"]:
+                return subprocess.CompletedProcess(cmd, 0, SCRUB_OUTPUT[reports.state], "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(host, "run_in_container", run)
+        return reports
+
+    @pytest.mark.parametrize(
+        "state, expected",
+        [
+            ("never", {"status": "idle", "duration": None, "bytes_scrubbed": None, "total_bytes": None,
+                       "rate": None, "errors": 0, "last_run": None}),
+            ("running", {"status": "running", "duration": 64, "bytes_scrubbed": GIB, "total_bytes": 4 * GIB,
+                         "rate": 16 * 1024**2, "errors": 0, "last_run": STARTED}),
+            ("finished", {"status": "finished", "duration": 256, "bytes_scrubbed": None,
+                          "total_bytes": 4 * GIB, "rate": 16 * 1024**2, "errors": 0, "last_run": STARTED}),
+            # Every error kind counts, not the first number of the line.
+            ("errors", {"status": "finished", "duration": 256, "bytes_scrubbed": None,
+                        "total_bytes": 4 * GIB, "rate": 16 * 1024**2, "errors": 13, "last_run": STARTED}),
+            ("aborted", {"status": "aborted", "duration": 128, "bytes_scrubbed": None,
+                         "total_bytes": 4 * GIB, "rate": 16 * 1024**2, "errors": 2, "last_run": STARTED}),
+            ("interrupted", {"status": "interrupted", "duration": 32, "bytes_scrubbed": None,
+                             "total_bytes": 4 * GIB, "rate": 16 * 1024**2, "errors": 0, "last_run": STARTED}),
+        ],
+    )
+    def test_the_status_is_what_btrfs_reports(self, btrfs_reports, state, expected):
+        btrfs_reports.state = state
+
+        with admin_client() as client:
+            response = client.get("/api/v1/storage/pools/data/scrub")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {"pool": "data", **expected}
+        mountpoint = os.path.join(pools.settings.pools_base_path, "data")
+        assert btrfs_reports.commands == [["btrfs", "scrub", "status", mountpoint]]
+
+    def test_start_answers_the_progress_btrfs_reports_then(self, btrfs_reports):
+        btrfs_reports.state = "running"
+
+        with admin_client() as client:
+            response = client.post("/api/v1/storage/pools/data/scrub")
+
+        assert response.status_code == 200, response.text
+        assert (response.json()["status"], response.json()["bytes_scrubbed"]) == ("running", GIB)
+        assert [cmd[:3] for cmd in btrfs_reports.commands] == [
+            ["btrfs", "scrub", "start"], ["btrfs", "scrub", "status"]]
+
+    def test_cancel_answers_the_cancelled_scrub(self, btrfs_reports):
+        btrfs_reports.state = "aborted"
+
+        with admin_client() as client:
+            response = client.delete("/api/v1/storage/pools/data/scrub")
+
+        assert response.status_code == 200, response.text
+        assert (response.json()["status"], response.json()["errors"]) == ("aborted", 2)
+        assert [cmd[:3] for cmd in btrfs_reports.commands] == [
+            ["btrfs", "scrub", "cancel"], ["btrfs", "scrub", "status"]]
+
+    def test_a_status_that_btrfs_cannot_report_is_an_error_not_idle(self, monkeypatch):
+        # Not "no scrub recorded": the page says that the status could not be read.
+        def run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, 1, "", f"ERROR: not a btrfs filesystem: {cmd[-1]}\n")
+
+        monkeypatch.setattr(host, "run_in_container", run)
+        with admin_client() as client:
+            response = client.get("/api/v1/storage/pools/data/scrub")
+
+        mountpoint = os.path.join(pools.settings.pools_base_path, "data")
+        assert (response.status_code, response.json()) == (
+            500, {"detail": f"Scrub status failed: ERROR: not a btrfs filesystem: {mountpoint}"})
+
+    @pytest.mark.parametrize(
+        "method, first, cancel_code, expected",
+        [
+            # btrfs started the scrub: it runs.
+            ("post", "start", 0, (200, "running")),
+            # btrfs cancelled it: the kernel stopped it.
+            ("delete", "cancel", 0, (200, "aborted")),
+            # It was not running: nothing tells how it ended.
+            ("delete", "cancel", 2, (500, None)),
+        ],
+    )
+    def test_a_start_or_cancel_whose_status_cannot_be_read(self, monkeypatch, method, first, cancel_code,
+                                                           expected):
+        commands = []
+
+        def run(cmd, **kwargs):
+            commands.append(cmd[:3])
+            if cmd[2] == "status":
+                return subprocess.CompletedProcess(cmd, 1, "", "ERROR: cannot read the scrub status\n")
+            if cmd[2] == "cancel" and cancel_code:
+                return subprocess.CompletedProcess(cmd, cancel_code, "", "ERROR: scrub cancel failed: not running\n")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(host, "run_in_container", run)
+        with admin_client() as client:
+            response = getattr(client, method)("/api/v1/storage/pools/data/scrub")
+
+        status = response.json().get("status") if response.status_code == 200 else None
+        assert (response.status_code, status) == expected, response.text
+        if response.status_code == 500:
+            assert response.json()["detail"] == "Scrub status failed: ERROR: cannot read the scrub status"
+        assert commands == [["btrfs", "scrub", first], ["btrfs", "scrub", "status"]]
+
+    def test_cancel_of_a_scrub_that_no_longer_runs_answers_its_status(self, monkeypatch):
+        # btrfs scrub cancel fails when the scrub ended meanwhile: not an error.
+        def run(cmd, **kwargs):
+            if cmd[:3] == ["btrfs", "scrub", "cancel"]:
+                return subprocess.CompletedProcess(
+                    cmd, 2, "", f"ERROR: scrub cancel failed on {cmd[-1]}: not running\n")
+            return subprocess.CompletedProcess(cmd, 0, SCRUB_OUTPUT["finished"], "")
+
+        monkeypatch.setattr(host, "run_in_container", run)
+        with admin_client() as client:
+            response = client.delete("/api/v1/storage/pools/data/scrub")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "finished"
 
 
 # What a fake btrfs does. Without -B, btrfs-progs forks the process that runs

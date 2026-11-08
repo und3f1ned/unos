@@ -1,6 +1,6 @@
 import type { APIRequestContext, Page } from '@playwright/test';
 import { E2E_ADMIN, test, expect } from './fixtures';
-import { ADMIN_REASON, fakeSmbApi, smbStatus, type FakeMySmb } from './shares-fakes';
+import { ADMIN_REASON, COMMON_PASSWORD_RULE, fakeSmbApi, smbStatus, type FakeMySmb } from './shares-fakes';
 
 // The "Network file access (SMB)" card of the Account page (System → Security).
 
@@ -333,6 +333,31 @@ test.describe('Change Password (fake answer)', () => {
     await shown.getByRole('button', { name: 'Dismiss' }).click();
     await expect(shown).toHaveCount(0);
   });
+
+  test('with SMB on, a common password is refused with the reason and nothing changes', async ({
+    authenticatedPage: page,
+  }) => {
+    // The server refuses a password of its list of common passwords for an account with SMB
+    // (ADR-0279), and its answer does not carry the password.
+    await fakeSmbApi(page, { mySmb: mySmb('active') });
+    const sent: unknown[] = [];
+    await page.route('**/api/v1/auth/change-password', (route) => {
+      sent.push(route.request().postDataJSON());
+      return route.fulfill({ status: 400, json: { detail: COMMON_PASSWORD_RULE } });
+    });
+    await openAccount(page);
+    await expect(smbCard(page).getByText('Active', { exact: true })).toBeVisible();
+
+    await page.fill('#currentPassword', E2E_ADMIN.password);
+    await page.fill('#newPassword', 'Iloveyou1');
+    await page.fill('#confirmPassword', 'Iloveyou1');
+    await page.getByRole('button', { name: 'Change Password' }).click();
+    await expect(page.getByText(COMMON_PASSWORD_RULE)).toBeVisible();
+    await expect(page.getByText('Password changed successfully')).toHaveCount(0);
+    // The form keeps what was typed, so that a better password can be entered.
+    await expect(page.locator('#newPassword')).toHaveValue('Iloveyou1');
+    expect(sent).toEqual([{ current_password: E2E_ADMIN.password, new_password: 'Iloveyou1' }]);
+  });
 });
 
 // ---- Turning SMB on where E2E_STAND_IN=1: the stand-in or the compose test stack, which have no Samba ----
@@ -386,5 +411,57 @@ test.describe('SMB activation on the Account page (stand-in)', () => {
     await card.getByRole('button', { name: 'Turn on SMB' }).click();
     await expect(card.getByText(/SMB accounts are not available: the host lacks/)).toBeVisible();
     await expect(card.getByRole('button', { name: 'Turn on SMB' })).toBeVisible();
+  });
+});
+
+test.describe('A common password on the Account page (stand-in)', () => {
+  test.skip(
+    process.env.E2E_STAND_IN !== '1',
+    'turns SMB on for a test user: only where E2E_STAND_IN=1, on the stand-in or the compose test stack, which have no Samba',
+  );
+
+  // The API takes a common UNOS password for a user without SMB; SMB does not (ADR-0279).
+  const user = { username: `e2e_acct_common_${Date.now().toString(36)}`, password: 'Password123' };
+  let adminToken = '';
+  let userId: number | undefined;
+  const asAdmin = () => ({ Authorization: `Bearer ${adminToken}` });
+
+  test.beforeAll(async ({ request }) => {
+    adminToken = await apiLogin(request, E2E_ADMIN);
+    const created = await request.post('/api/v1/auth/users', { headers: asAdmin(), data: user });
+    expect(created.ok(), `create ${user.username}: HTTP ${created.status()}`).toBeTruthy();
+    userId = (await created.json()).id;
+    const allowed = await request.post(`/api/v1/auth/users/${userId}/smb/enable`, {
+      headers: asAdmin(),
+      data: { username: user.username },
+    });
+    expect(allowed.status(), 'allow SMB').toBe(200);
+    expect((await allowed.json()).smb.state).toBe('password_needed');
+  });
+
+  test.afterAll(async ({ request }) => {
+    if (userId === undefined) return;
+    const name = encodeURIComponent(user.username);
+    await request.delete(`/api/v1/auth/users/${userId}?username=${name}`, { headers: asAdmin() });
+  });
+
+  test('turning SMB on with it is refused with the reason and how to go on', async ({ page, request }) => {
+    const token = await apiLogin(request, user);
+    await page.goto('/login');
+    await page.evaluate((value) => localStorage.setItem('token', value), token);
+    await openAccount(page);
+
+    const card = smbCard(page);
+    await expect(card.getByText(/^An administrator allowed SMB access/)).toBeVisible();
+    await card.getByLabel('Password', { exact: true }).fill(user.password);
+    await card.getByRole('button', { name: 'Turn on SMB' }).click();
+    const refused = card.locator('.alert', { hasText: 'SMB was not turned on' });
+    await expect(refused).toContainText(COMMON_PASSWORD_RULE);
+    await expect(refused).toContainText(
+      'Change your password above (Change Password) so that it meets this rule, then turn SMB on.',
+    );
+    // SMB stays off until the user has another password.
+    await expect(card.getByRole('button', { name: 'Turn on SMB' })).toBeVisible();
+    await expect(card.getByText(/^An administrator allowed SMB access/)).toBeVisible();
   });
 });

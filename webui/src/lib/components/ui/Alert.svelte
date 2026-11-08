@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { AlertCircle, CheckCircle, AlertTriangle, Info, X } from 'lucide-svelte';
 	import { createEventDispatcher } from 'svelte';
+	import { t } from '$lib/i18n';
 
 	export let variant: 'error' | 'warning' | 'success' | 'info' = 'info';
 	export let dismissible: boolean = false;
@@ -39,7 +40,7 @@
 				type="button"
 				class="flex-shrink-0 hover:opacity-70 transition-opacity"
 				on:click={() => dispatch('dismiss')}
-				aria-label="Dismiss"
+				aria-label={$t('ui.alert.dismiss')}
 			>
 				<X class="w-4 h-4" />
 			</button>

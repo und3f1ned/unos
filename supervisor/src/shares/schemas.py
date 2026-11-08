@@ -115,7 +115,7 @@ class SmbServiceStatus(BaseModel):
 
 
 class NfsExportCreate(BaseModel):
-    """An export that UNOS writes (ADR-0262): an existing folder for one client, read or write."""
+    """An export that UNOS writes (ADR-0292): an existing folder for one client, read or write."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -131,7 +131,7 @@ class NfsExportClient(BaseModel):
 
 
 class NfsExportInfo(BaseModel):
-    """One entry of an export file, as exportfs reads it (ADR-0261)."""
+    """One entry of an export file, as exportfs reads it (ADR-0291)."""
 
     path: str
     clients: list[NfsExportClient]

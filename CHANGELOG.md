@@ -223,6 +223,32 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- Network discovery: macOS (Bonjour, through avahi-daemon) and Windows
+  (WS-Discovery, through wsdd2) list the NAS, and NetBIOS is off; `install.sh`
+  sets them up.
+- Apps of linuxserver.io images can be installed to run in the group unos-smb,
+  so that they read and write the share folder they are given.
+- Storage: a btrfs pool that already exists on the host's disks can be
+  imported without formatting them.
+- An emergency runbook (`docs/RECOVERY.md`) that reaches a pool's data from
+  another Linux machine, and `deploy/reset-admin.sh`, which resets the
+  administrator's password and two-factor authentication from the host.
+- The web interface in Russian: Language on the Account page. The frame,
+  sign-in, setup and Account pages are translated; the other pages follow.
+- File manager: Delete moves items into a trash of their pool or volume
+  (`.unos-trash`); the Trash page restores them, deletes them for good or
+  empties the trash, and items deleted 30 days ago go by themselves. Delete for
+  good stays available in the dialog.
+- System → Notifications: channels for e-mail (STARTTLS or SMTPS, with the
+  server's certificate checked), Telegram and webhooks (generic, Discord,
+  Slack), each with a test, and the history of the latest 100 notifications.
+- System → Logs reads the host's journal, kernel messages and log files, newest
+  first, with filters and search.
+- Containers: an Images view that lists, pulls and removes the host's images.
+- Scheduler: a custom task records its command's output and exit status, and
+  schedules follow the host's time zone.
+- SMB: unmounting or forgetting a pool takes its shares out of smb.conf at once,
+  and the SMB status names a smb.conf that someone else replaced.
 - File manager: Rename. Select one item and choose Rename to edit its name in
   its row; a name that exists is refused, and nothing is ever replaced.
 - System → Disk Health opens each disk's SMART data: health, temperature,
@@ -360,6 +386,17 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- New folders and uploads of the file manager in a share folder get 2770 and
+  0660 with the group unos-smb, so the share's SMB users can change them at
+  once.
+- Samba keeps its own log file in RAM (`/run/samba`), logs failed sign-ins
+  through auth_audit to the journal, which System → Logs shows, and SMB
+  passwords on a list of common passwords are refused.
+- Sign-in works while the disk that holds `/data` is full: the login history
+  and the audit line are written best effort.
+- An API token's last use is stored at most once an hour, so automations do not
+  write to the system disk on every request.
+- Docker calls of the containers API run off the event loop with timeouts.
 - Scheduled backups are always encrypted (AES-256-GCM) with their task's
   passphrase and are named `auto_backup_<date>_<time>.tar.gz.enc`; a restore
   asks for the passphrase.
@@ -556,6 +593,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   which is restored.
 
 ### Fixed
+- Unmounting or removing a pool works on hosts whose sandboxed systemd
+  services keep copies of its mount in their own mount namespaces; before, it
+  was always refused and the pool was mounted again.
 - Editing a scheduled task keeps its last run and last status, and every field
   of the task form is named by its label.
 - Creating, restoring and deleting a snapshot act on the snapshot and the
