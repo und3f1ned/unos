@@ -9,7 +9,7 @@
     type SmartInfo
   } from "$lib/api/health";
   import { Alert, Badge, Button, Modal } from "$lib/components/ui";
-  import { t } from "$lib/i18n";
+  import { intlLocale, t } from "$lib/i18n";
   import { HardDrive, Thermometer, Check, X, AlertTriangle, RefreshCw } from "lucide-svelte";
 
   let disks: SmartInfo[] = [];
@@ -136,6 +136,28 @@
   // supervisor/src/health/router.py).
   $: orUnknown = (value: string): string => (value === "Unknown" ? $t("common.unknown") : value);
 
+  // A disk's capacity as the server writes it, "3.64 TB" or "931.51 GB" (_format_capacity of
+  // supervisor/src/health/router.py), by the unit: keys of the catalog.
+  const CAPACITY_UNITS: Record<string, string> = {
+    GB: "health.size.gb",
+    TB: "health.size.tb"
+  };
+
+  /** A capacity with its number in the format of the page and the unit of the catalog; another
+   *  text as it comes. */
+  $: capacityText = (capacity: string): string => {
+    const [number, unit, ...rest] = capacity.split(" ");
+    const known = Object.prototype.hasOwnProperty.call(CAPACITY_UNITS, unit);
+    if (rest.length > 0 || !known || !/^\d+(\.\d+)?$/.test(number)) return orUnknown(capacity);
+    const decimals = number.split(".")[1]?.length ?? 0;
+    const size = Number(number).toLocaleString($intlLocale, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+      useGrouping: false
+    });
+    return $t(CAPACITY_UNITS[unit], { size });
+  };
+
   $: orNotReported = (value: number | null, format: (value: number) => string = String): string =>
     value === null ? $t("health.notReported") : format(value);
 
@@ -198,7 +220,7 @@
               <HardDrive class="w-8 h-8 icon-storage" />
               <div>
                 <p class="font-semibold">{orUnknown(disk.model)}</p>
-                <p class="text-sm text-secondary"><span class="mono">{disk.device}</span> · {orUnknown(disk.capacity)}</p>
+                <p class="text-sm text-secondary"><span class="mono">{disk.device}</span> · {capacityText(disk.capacity)}</p>
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-4">
@@ -266,7 +288,7 @@
       </div>
       <div>
         <dt class="text-secondary">{$t("health.capacity")}</dt>
-        <dd>{orUnknown(openDisk.capacity)}</dd>
+        <dd>{capacityText(openDisk.capacity)}</dd>
       </div>
       <div>
         <dt class="text-secondary">{$t("health.lastSelfTest")}</dt>

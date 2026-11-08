@@ -30,6 +30,9 @@ export const en = {
 	'audit.loadError': 'Could not load the audit log',
 	'audit.noMatches': 'No entries match the filters',
 	'audit.noMatchesHint': 'Change or clear the filters to see more entries.',
+	// The same with a search: the English names are the words the search finds, and a Russian page
+	// says that it finds actions and resources by them only (ADR-0296).
+	'audit.noSearchMatchesHint': 'Change or clear the filters to see more entries.',
 	'audit.empty': 'No audit entries yet',
 	'audit.emptyHint': 'Sign-ins and changes by administrators appear here.',
 	'audit.timeline': 'Timeline',
@@ -90,6 +93,7 @@ export const en = {
 	'audit.resource.share': 'share',
 	'audit.resource.smb': 'smb',
 	'audit.resource.smbAccount': 'smb_account',
+	'audit.resource.nfsExport': 'nfs_export',
 	'audit.resource.apiToken': 'api_token',
 	'audit.resource.recoveryCodes': 'recovery_codes',
 	'audit.resource.auditLog': 'audit_log'
@@ -121,6 +125,8 @@ export const ru: Translation<typeof en> = {
 	'audit.loadError': 'Не удалось загрузить журнал аудита',
 	'audit.noMatches': 'Нет записей, подходящих под фильтры',
 	'audit.noMatchesHint': 'Измените или сбросьте фильтры, чтобы увидеть больше записей.',
+	'audit.noSearchMatchesHint':
+		'Измените или сбросьте фильтры, чтобы увидеть больше записей. Действия и ресурсы поиск находит только по английским словам, например login failed или user carol.',
 	'audit.empty': 'Записей аудита пока нет',
 	'audit.emptyHint': 'Здесь появятся входы и изменения, сделанные администраторами.',
 	'audit.timeline': 'Хронология',
@@ -177,6 +183,7 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.share': 'общая папка',
 	'audit.resource.smb': 'SMB',
 	'audit.resource.smbAccount': 'учётная запись SMB',
+	'audit.resource.nfsExport': 'экспорт NFS',
 	'audit.resource.apiToken': 'API-токен',
 	'audit.resource.recoveryCodes': 'коды восстановления',
 	'audit.resource.auditLog': 'журнал аудита'

@@ -416,4 +416,50 @@ test.describe('Audit log in Russian', () => {
     await page.getByRole('button', { name: 'Сбросить фильтры' }).click();
     await expect(page.getByRole('status')).toHaveText('Показано 100 из 101 записи');
   });
+
+  // ADR-0296 (proposed): the server's search finds an action by its English words, also on a
+  // Russian page, which says so when a search finds nothing. Against the real audit log.
+  test('the search finds an action by its English words and says so', async ({ authenticatedPage: page, request }) => {
+    const stranger = `e2e_ru_nobody_${RUN}`;
+    const failed = await request.post('/api/v1/auth/login', {
+      data: { username: stranger, password: 'e2e-Wrong-Password-1' },
+    });
+    expect(failed.status(), 'the failed sign-in').toBe(401);
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await page.goto('/audit');
+    const search = filter(page, 'Поиск');
+    const timeline = page.getByRole('region', { name: 'Хронология' });
+
+    // The name that the page shows finds nothing, and the page says which words the search takes.
+    await applyFilters(page, { search: 'Неудачный вход' }, () => search.fill('Неудачный вход'));
+    await expect(page.getByText('Нет записей, подходящих под фильтры', { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        'Измените или сбросьте фильтры, чтобы увидеть больше записей. Действия и ресурсы поиск находит только по английским словам, например login failed или user carol.',
+        { exact: true },
+      ),
+    ).toBeVisible();
+
+    // Filters without a search keep the hint of the English page.
+    await applyFilters(page, { username: stranger }, async () => {
+      await search.fill('');
+      await filter(page, 'Пользователь').fill(stranger);
+    });
+    await expect(timeline.getByRole('listitem')).toHaveCount(1);
+    await expect(timeline.getByRole('listitem')).toContainText('Неудачный вход');
+    await applyFilters(page, { username: stranger, start_date: '2000-01-01', end_date: '2000-01-01' }, async () => {
+      await filter(page, 'С').fill('2000-01-01');
+      await filter(page, 'По').fill('2000-01-01');
+    });
+    await expect(page.getByText('Нет записей, подходящих под фильтры', { exact: true })).toBeVisible();
+    await expect(
+      page.getByText('Измените или сбросьте фильтры, чтобы увидеть больше записей.', { exact: true }),
+    ).toBeVisible();
+
+    // The English words find the entry that the page names in Russian.
+    await page.getByRole('button', { name: 'Сбросить фильтры' }).click();
+    await applyFilters(page, { search: 'login failed' }, () => search.fill('login failed'));
+    await expect(timeline.getByRole('listitem').first()).toContainText('Неудачный вход');
+    await expect(timeline.getByRole('listitem').first()).toContainText(stranger);
+  });
 });

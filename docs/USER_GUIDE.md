@@ -1209,10 +1209,10 @@ regular users have no access to it.
   English page names it (`login failed`), the address, the resource as the
   English page shows it (`user carol`), the details or the browser. A Russian
   page names actions and resources in Russian, but the search finds them by
-  these English words only. **User** takes an exact user name, **Action** one
-  kind of entry, and **From** and **To** a range of days, each day included
-  whole. The list follows the filters as you change them; **Clear filters**
-  resets them.
+  these English words only, as the page says when a search finds nothing.
+  **User** takes an exact user name, **Action** one kind of entry, and **From**
+  and **To** a range of days, each day included whole. The list follows the
+  filters as you change them; **Clear filters** resets them.
 - The page shows the newest 100 matching entries; **Show more** adds 100 more.
 - **Export CSV** and **Export JSON** download every entry that matches the
   filters, newest first. In the CSV file, a `'` stands before what a

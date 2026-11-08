@@ -1,7 +1,8 @@
 import type { Translation } from '../translate';
 
-// System > Resource Monitor: src/routes/system/tabs/MonitorTab.svelte. The rates and sizes come
-// from formatBytes and formatBytesPerSecond of $lib/stores/stats.
+// System > Resource Monitor: src/routes/system/tabs/MonitorTab.svelte. It writes its sizes, rates
+// and percentages itself, the numbers in the format of the page: in English as formatBytes and
+// formatBytesPerSecond of $lib/stores/stats write them.
 
 export const en = {
 	'monitor.title': 'Resource Monitor',
@@ -20,7 +21,17 @@ export const en = {
 	'monitor.process.cpu': 'CPU',
 	'monitor.process.memory': 'Memory',
 	'monitor.process.user': 'User',
-	'monitor.megabytes': '{value} MB'
+	'monitor.percent': '{value}%',
+	// A size and a rate per second, one key for each power of 1024.
+	'monitor.size.b': '{value} B',
+	'monitor.size.kb': '{value} KB',
+	'monitor.size.mb': '{value} MB',
+	'monitor.size.gb': '{value} GB',
+	'monitor.size.tb': '{value} TB',
+	'monitor.rate.b': '{value} B/s',
+	'monitor.rate.kb': '{value} KB/s',
+	'monitor.rate.mb': '{value} MB/s',
+	'monitor.rate.gb': '{value} GB/s'
 };
 
 export const ru: Translation<typeof en> = {
@@ -40,5 +51,15 @@ export const ru: Translation<typeof en> = {
 	'monitor.process.cpu': 'ЦП',
 	'monitor.process.memory': 'Память',
 	'monitor.process.user': 'Пользователь',
-	'monitor.megabytes': '{value} МБ'
+	// A no-break space between the number and the sign, as Intl.NumberFormat writes a Russian percentage.
+	'monitor.percent': '{value}\u00a0%',
+	'monitor.size.b': '{value} Б',
+	'monitor.size.kb': '{value} КБ',
+	'monitor.size.mb': '{value} МБ',
+	'monitor.size.gb': '{value} ГБ',
+	'monitor.size.tb': '{value} ТБ',
+	'monitor.rate.b': '{value} Б/с',
+	'monitor.rate.kb': '{value} КБ/с',
+	'monitor.rate.mb': '{value} МБ/с',
+	'monitor.rate.gb': '{value} ГБ/с'
 };

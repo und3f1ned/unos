@@ -115,6 +115,7 @@
 		share: 'audit.resource.share',
 		smb: 'audit.resource.smb',
 		smb_account: 'audit.resource.smbAccount',
+		nfs_export: 'audit.resource.nfsExport',
 		api_token: 'audit.resource.apiToken',
 		recovery_codes: 'audit.resource.recoveryCodes',
 		audit_log: 'audit.resource.auditLog'
@@ -355,7 +356,7 @@
 				<EmptyState
 					icon={ScrollText}
 					title={$t('audit.noMatches')}
-					description={$t('audit.noMatchesHint')}
+					description={filters.search ? $t('audit.noSearchMatchesHint') : $t('audit.noMatchesHint')}
 				/>
 			{:else}
 				<EmptyState icon={ScrollText} title={$t('audit.empty')} description={$t('audit.emptyHint')} />

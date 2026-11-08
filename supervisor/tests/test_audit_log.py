@@ -7,6 +7,7 @@ GET /audit/logs, /logs/count and /logs/export take the same filters.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import csv
 import errno
@@ -794,3 +795,35 @@ def test_the_web_ui_names_every_action_by_words_the_search_finds():
         entry = AuditEntry(id="audit_1", timestamp="2026-11-08T10:00:00", action=action)
         assert audit_router.AuditFilter(search=english.casefold()).matches(entry), english
         assert catalog["ru"][actions[action.value]]
+
+
+def _recorded_resource_types() -> set[str]:
+    """The types of resource that the server's code writes into the audit log: every literal
+    ``resource_type="..."`` passed to a call in supervisor/src."""
+    found = set()
+    for module in (REPO / "supervisor" / "src").rglob("*.py"):
+        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.keyword) and node.arg == "resource_type" \
+                    and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                found.add(node.value.value)
+    return found
+
+
+def test_the_web_ui_names_every_resource_type_as_the_server_records_it():
+    """The Audit Log page shows an entry's resource as its type, by its name in the audit catalog,
+    and its id (ADR-0287, ADR-0296): a name for every type the server records, which in English is
+    the type as recorded, so that the search finds the resource as the English page shows it
+    (ADR-0237), and a Russian name."""
+    types = key_map(AUDIT_PAGE, "RESOURCE_TYPES")
+    recorded = _recorded_resource_types()
+    assert {"user", "share", "audit_log"} <= recorded  # the scan finds the server's calls
+    assert sorted(recorded - set(types)) == []
+
+    catalog = read_catalog("audit")  # skips without node
+    for resource_type, key in types.items():
+        english = catalog["en"][key]
+        assert english == resource_type
+        entry = AuditEntry(id="audit_1", timestamp="2026-11-08T10:00:00", action=AuditAction.OTHER,
+                           resource_type=resource_type, resource_id="carol")
+        assert audit_router.AuditFilter(search=f"{english} carol".casefold()).matches(entry), english
+        assert catalog["ru"][key]

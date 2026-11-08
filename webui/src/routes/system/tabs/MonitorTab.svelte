@@ -3,8 +3,6 @@
   import {
     stats,
     wsConnected,
-    formatBytes,
-    formatBytesPerSecond,
     type WebSocketStats,
     type CpuStats,
     type MemoryStats,
@@ -12,7 +10,7 @@
     type DiskIOStats,
     type ProcessInfo
   } from "$lib/stores/stats";
-  import { t } from "$lib/i18n";
+  import { intlLocale, t } from "$lib/i18n";
 
   // Local history for charts (built from WebSocket updates)
   let cpuHistory: number[] = [];
@@ -28,6 +26,30 @@
       memoryHistory = [...memoryHistory, $stats.memory.percent].slice(-MAX_HISTORY);
     }
   }
+
+  // The units of a size and of a rate, one for each power of 1024: keys of the catalog.
+  const SIZE_UNITS = ["monitor.size.b", "monitor.size.kb", "monitor.size.mb", "monitor.size.gb", "monitor.size.tb"];
+  const RATE_UNITS = ["monitor.rate.b", "monitor.rate.kb", "monitor.rate.mb", "monitor.rate.gb"];
+
+  // The numbers in the format of the page and the units of the catalog (webui/AGENTS.md, Data):
+  // a size or a rate in the largest unit that keeps it at 1 or more, with up to two decimals, as
+  // formatBytes and formatBytesPerSecond of $lib/stores/stats write it in English; a percentage
+  // with one decimal.
+  $: amount = (bytes: number, units: string[]): string => {
+    const power = bytes >= 1 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1) : 0;
+    const value = Number((bytes / 1024 ** power).toFixed(2));
+    return $t(units[power], {
+      value: value.toLocaleString($intlLocale, { maximumFractionDigits: 2, useGrouping: false })
+    });
+  };
+  $: percent = (value: number): string =>
+    $t("monitor.percent", {
+      value: value.toLocaleString($intlLocale, {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+        useGrouping: false
+      })
+    });
 
   function getPercentColor(p: number): string {
     return p < 70 ? "text-green-400" : p < 90 ? "text-yellow-400" : "text-red-400";
@@ -78,7 +100,7 @@
           <Cpu class="w-5 h-5 text-blue-400" />
           <span class="text-slate-400 text-sm">{$t("monitor.cpu")}</span>
         </div>
-        <p class="text-2xl font-bold {getPercentColor(currentStats.cpu.percent)}">{currentStats.cpu.percent.toFixed(1)}%</p>
+        <p class="text-2xl font-bold {getPercentColor(currentStats.cpu.percent)}">{percent(currentStats.cpu.percent)}</p>
         <div class="h-6 mt-2">
           <svg viewBox="0 0 100 30" class="w-full h-full">
             <path d={miniChart(cpuHistory)} fill="none" stroke="#3b82f6" stroke-width="1.5" />
@@ -92,8 +114,8 @@
           <MemoryStick class="w-5 h-5 text-purple-400" />
           <span class="text-slate-400 text-sm">{$t("monitor.memory")}</span>
         </div>
-        <p class="text-2xl font-bold {getPercentColor(currentStats.memory.percent)}">{currentStats.memory.percent.toFixed(1)}%</p>
-        <p class="text-xs text-slate-500">{formatBytes(currentStats.memory.used)} / {formatBytes(currentStats.memory.total)}</p>
+        <p class="text-2xl font-bold {getPercentColor(currentStats.memory.percent)}">{percent(currentStats.memory.percent)}</p>
+        <p class="text-xs text-slate-500">{amount(currentStats.memory.used, SIZE_UNITS)} / {amount(currentStats.memory.total, SIZE_UNITS)}</p>
       </div>
 
       <!-- Network -->
@@ -102,8 +124,8 @@
           <Network class="w-5 h-5 text-green-400" />
           <span class="text-slate-400 text-sm">{$t("monitor.network")}</span>
         </div>
-        <p class="text-sm">↓ <span class="text-green-400 font-semibold">{formatBytesPerSecond(currentStats.network.bytes_recv_rate)}</span></p>
-        <p class="text-sm">↑ <span class="text-orange-400 font-semibold">{formatBytesPerSecond(currentStats.network.bytes_sent_rate)}</span></p>
+        <p class="text-sm">↓ <span class="text-green-400 font-semibold">{amount(currentStats.network.bytes_recv_rate, RATE_UNITS)}</span></p>
+        <p class="text-sm">↑ <span class="text-orange-400 font-semibold">{amount(currentStats.network.bytes_sent_rate, RATE_UNITS)}</span></p>
       </div>
 
       <!-- Disk I/O -->
@@ -112,8 +134,8 @@
           <HardDrive class="w-5 h-5 text-yellow-400" />
           <span class="text-slate-400 text-sm">{$t("monitor.diskIo")}</span>
         </div>
-        <p class="text-sm">{$t("monitor.read")} <span class="text-green-400 font-semibold">{formatBytesPerSecond(currentStats.disk_io.read_rate)}</span></p>
-        <p class="text-sm">{$t("monitor.write")} <span class="text-red-400 font-semibold">{formatBytesPerSecond(currentStats.disk_io.write_rate)}</span></p>
+        <p class="text-sm">{$t("monitor.read")} <span class="text-green-400 font-semibold">{amount(currentStats.disk_io.read_rate, RATE_UNITS)}</span></p>
+        <p class="text-sm">{$t("monitor.write")} <span class="text-red-400 font-semibold">{amount(currentStats.disk_io.write_rate, RATE_UNITS)}</span></p>
       </div>
     </div>
 
@@ -153,8 +175,8 @@
           {#each currentStats.processes.slice(0, 8) as proc}
             <tr class="border-t border-slate-700/50">
               <td class="py-1.5 font-mono">{proc.name}</td>
-              <td class="py-1.5 text-right {getPercentColor(proc.cpu_percent)}">{proc.cpu_percent.toFixed(1)}%</td>
-              <td class="py-1.5 text-right">{$t("monitor.megabytes", { value: proc.memory_mb.toFixed(0) })}</td>
+              <td class="py-1.5 text-right {getPercentColor(proc.cpu_percent)}">{percent(proc.cpu_percent)}</td>
+              <td class="py-1.5 text-right">{$t("monitor.size.mb", { value: proc.memory_mb.toFixed(0) })}</td>
               <td class="py-1.5 text-slate-500">{proc.username}</td>
             </tr>
           {/each}

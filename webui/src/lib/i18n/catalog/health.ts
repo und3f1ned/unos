@@ -2,7 +2,7 @@ import type { Translation } from '../translate';
 
 // System > Disk Health: src/routes/system/tabs/HealthTab.svelte. smartctl's names (models,
 // attributes, self-test results) and the reasons of a failure prediction stay as the server
-// answers them.
+// answers them; a disk's capacity takes the number format and the unit of the page.
 
 export const en = {
 	'health.title': 'Disk Health',
@@ -32,6 +32,9 @@ export const en = {
 	'health.serial': 'Serial',
 	'health.firmware': 'Firmware',
 	'health.capacity': 'Capacity',
+	// A capacity by its unit, as the server writes it: {size} is the number.
+	'health.size.gb': '{size} GB',
+	'health.size.tb': '{size} TB',
 	'health.lastSelfTest': 'Last self-test',
 	'health.notReported': 'Not reported',
 	'health.noSelfTest': 'None recorded',
@@ -104,6 +107,8 @@ export const ru: Translation<typeof en> = {
 	'health.serial': 'Серийный номер',
 	'health.firmware': 'Прошивка',
 	'health.capacity': 'Ёмкость',
+	'health.size.gb': '{size} ГБ',
+	'health.size.tb': '{size} ТБ',
 	'health.lastSelfTest': 'Последняя самопроверка',
 	'health.notReported': 'Нет данных',
 	'health.noSelfTest': 'Не проводилась',

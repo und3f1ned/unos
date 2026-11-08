@@ -124,10 +124,14 @@ test.describe('Disk Health', () => {
 
     // The NVMe disk and the disk without SMART data are listed too.
     await expect(page.getByRole('list', { name: 'Disks' }).getByRole('listitem')).toHaveCount(FAKE_SMART_DISKS.length);
+    // The capacity as the server writes it.
+    await expect(disk(page, '/dev/e2e-sda')).toContainText('/dev/e2e-sda · 3.64 TB');
+    await expect(disk(page, '/dev/e2e-nvme0n1')).toContainText('/dev/e2e-nvme0n1 · 931.51 GB');
 
     await disk(page, '/dev/e2e-sda').getByRole('button', { name: 'SMART data of /dev/e2e-sda' }).click();
     const sata = page.getByRole('dialog', { name: 'E2E HDD 4TB (/dev/e2e-sda)' });
     await expect(field(sata, 'Overall health')).toHaveText('PASSED');
+    await expect(field(sata, 'Capacity')).toHaveText('3.64 TB');
     await expect(field(sata, 'Temperature')).toHaveText('34 °C');
     await expect(field(sata, 'Power-on hours')).toHaveText('51775 (5 years, 332 days)');
     await expect(field(sata, 'Power cycles')).toHaveText('120');
@@ -294,6 +298,9 @@ test.describe('Disk Health', () => {
     const disks = page.getByRole('list', { name: 'Диски' }).getByRole('listitem');
     await expect(disks).toHaveCount(FAKE_SMART_DISKS.length);
     const failing = disks.filter({ hasText: '/dev/e2e-sda' });
+    // The capacity in the Russian number format and unit.
+    await expect(failing).toContainText('/dev/e2e-sda · 3,64 ТБ');
+    await expect(disks.filter({ hasText: '/dev/e2e-nvme0n1' })).toContainText('/dev/e2e-nvme0n1 · 931,51 ГБ');
     await expect(failing.locator('.badge')).toHaveText('Пора заменить');
     await expect(failing).toContainText('ИСПРАВЕН');
     await expect(failing).not.toContainText('НЕИСПРАВЕН');
@@ -304,6 +311,7 @@ test.describe('Disk Health', () => {
     await failing.getByRole('button', { name: 'Данные SMART диска /dev/e2e-sda' }).click();
     const sata = page.getByRole('dialog', { name: 'E2E HDD 4TB (/dev/e2e-sda)' });
     await expect(field(sata, 'Общее состояние')).toHaveText('ИСПРАВЕН');
+    await expect(field(sata, 'Ёмкость')).toHaveText('3,64 ТБ');
     await expect(field(sata, 'Часы работы')).toHaveText('51775 (5 лет, 332 дня)');
     await expect(field(sata, 'Циклы включения')).toHaveText('120');
     await expect(field(sata, 'Последняя самопроверка')).toHaveText('Short offline: Completed without error');
