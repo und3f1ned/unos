@@ -242,7 +242,7 @@ def test_create_then_restore_roundtrip(env):
 
 
 def test_a_backup_of_the_database_in_the_write_ahead_log_restores_with_its_last_commits(env):
-    """The supervisor's database writes ahead (ADR-0304), and its pool keeps connections open,
+    """The supervisor's database writes ahead (ADR-0306), and its pool keeps connections open,
     so its last commits are in unos.db-wal, not yet in unos.db. A backup holds them, in one file
     with the rollback journal that a restore accepts, and the restore keeps the write-ahead log."""
     pool = sqlite3.connect(env.db_path)  # a connection of the app's pool
@@ -268,7 +268,7 @@ def test_a_backup_of_the_database_in_the_write_ahead_log_restores_with_its_last_
 
 
 def test_a_backup_with_pages_of_another_size_is_refused_before_anything_changes(env):
-    """SQLite's backup API cannot give a database in the write-ahead log (ADR-0304) another page
+    """SQLite's backup API cannot give a database in the write-ahead log (ADR-0306) another page
     size, so it failed after the copy kept before a restore, with "attempt to write a readonly
     database". Every UNOS database has the pages of the live one (4096 bytes)."""
     other = env.tmp / "pages-1024.db"

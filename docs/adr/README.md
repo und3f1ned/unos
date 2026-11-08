@@ -61,7 +61,7 @@ and this index, and `make check-fast` runs it.
 | [0021](0021-blocking-work-off-the-event-loop.md) | Blocking work runs off the event loop, with timeouts | accepted | 2026-11-05 |
 | [0022](0022-database-migrations-with-alembic.md) | Adopt Alembic for database migrations | proposed | 2026-11-05 |
 | [0023](0023-audit-quality-debt.md) | Pay down the audit's P2 quality and technical debt | proposed | 2026-11-05 |
-| [0304](0304-the-database-writes-ahead-with-synchronous-normal.md) | The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits | accepted | 2026-11-08 |
+| [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits | accepted | 2026-11-08 |
 
 ## Security
 
@@ -145,7 +145,7 @@ and this index, and `make check-fast` runs it.
 | [0075](0075-per-user-share-access-levels.md) | Each share grants each user none, read or write, and new users get no access | accepted | 2026-11-06 |
 | [0076](0076-no-group-principals-for-smb-yet.md) | Share access names individual users, not groups, for now | accepted | 2026-11-06 |
 | [0077](0077-smb-tables-through-create-all-without-migrations.md) | The SMB tables come from create_all, and existing tables are never altered | accepted | 2026-11-06 |
-| [0078](0078-accept-the-sqlite-power-cut-window.md) | SQLite's power-cut rollback window is accepted, and the startup reconcile repairs the host | superseded by [0304](0304-the-database-writes-ahead-with-synchronous-normal.md) | 2026-11-06 |
+| [0078](0078-accept-the-sqlite-power-cut-window.md) | SQLite's power-cut rollback window is accepted, and the startup reconcile repairs the host | superseded by [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | 2026-11-06 |
 | [0079](0079-sqlite-busy-timeout-and-unbounded-pool-overflow.md) | The SQLite engine waits 15 s for locks and has an unbounded pool overflow | accepted | 2026-11-06 |
 | [0080](0080-one-lock-for-every-smb-change.md) | One lock, smb_lock, serializes every change of SMB state | accepted | 2026-11-06 |
 | [0081](0081-reload-rows-after-taking-smb-lock.md) | SMB flows reload the user and the account after taking smb_lock | accepted | 2026-11-06 |
@@ -343,6 +343,7 @@ and this index, and `make check-fast` runs it.
 | [0179](0179-uninstall-removes-smb-accounts.md) | Uninstall removes the SMB host accounts | superseded by [0180](0180-uninstall-keeps-smb-host-accounts.md) | 2026-11-06 |
 | [0180](0180-uninstall-keeps-smb-host-accounts.md) | Uninstall keeps the SMB host accounts and removes only their exact passdb entries | accepted | 2026-11-06 |
 | [0181](0181-downgrade-guidance-for-the-smb-release.md) | Rolling back to the release before SMB accounts is documented, not engineered | superseded by [0207](0207-no-backward-compatibility.md) | 2026-11-06 |
+| [0305](0305-base-images-pinned-by-tag-and-digest.md) | The Dockerfiles pin each base image by tag and digest, and Dependabot moves the digest | accepted | 2026-11-08 |
 
 ## Device
 
@@ -370,6 +371,7 @@ and this index, and `make check-fast` runs it.
 | [0228](0228-docker-data-root-stays-on-the-sd-card.md) | Docker's data root stays on the dev device's SD card | accepted | 2026-11-07 |
 | [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | The dev device admits inbound IPv6 to its services only from the LAN | accepted | 2026-11-08 |
 | [0303](0303-the-dev-device-runs-its-nfs-server.md) | The dev device runs its NFS server | accepted | 2026-11-08 |
+| [0304](0304-the-scenario-checks-of-the-dev-device-are-scripts-that-remove-what-they-make.md) | The scenario checks of the dev device are scripts that remove what they make and report each step's SD writes | accepted | 2026-11-08 |
 
 ## Testing
 

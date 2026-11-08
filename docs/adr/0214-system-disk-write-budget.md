@@ -22,7 +22,7 @@ The dev device's system disk is `mmcblk1`, a 30 GB SD card by the audit's count,
 
 ## Consequences
 
-- The one exception that the owner accepted to the rule that a start that changes nothing writes nothing (ADR-0304, 2026-11-08): every start of the supervisor writes about 0.05 MiB, as its first connection to the database makes `unos.db-shm` again, while SQLite's write-ahead log saves about 0.1 MiB at every commit.
+- The one exception that the owner accepted to the rule that a start that changes nothing writes nothing (ADR-0306, 2026-11-08): every start of the supervisor writes about 0.05 MiB, as its first connection to the database makes `unos.db-shm` again, while SQLite's write-ahead log saves about 0.1 MiB at every commit.
 - Measured so far: the idle device wrote about 8 KiB per minute in an earlier measurement (kernel threads only) and 16 KiB per minute (32 sectors) on 2026-11-07; idle UNOS containers write nothing; the slice 1 deploy wrote 38 MiB, the slice 2 deploy 45 MiB of image layers plus 4 MiB for its checks; on 2026-11-07 a 46-minute session of device checks wrote 0.953 MiB, idle background included, and an API call with a cached login about 0.020 MiB. `PROGRESS.md` keeps the totals of the current phase (ADR-0204).
 - Device work takes more steps: builds are split between the workstation and the device, checks avoid containers, and tests run in RAM (ADR-0187).
 - Some writes remain outside UNOS's control, such as Samba's passdb at failed sign-ins (ADR-0194) and Docker's image layers at a deploy.

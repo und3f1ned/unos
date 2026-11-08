@@ -237,7 +237,7 @@ def test_whole_cycle(cycle):
 
     # 11. A second startup writes nothing and sends the reload message. The one write that a
     # start of the supervisor makes is SQLite's: its first connection makes unos.db-shm again,
-    # the exception of ADR-0304 to ADR-0214. This world's database has an engine of its own,
+    # the exception of ADR-0306 to ADR-0214. This world's database has an engine of its own,
     # with the rollback journal, so the startup here makes none.
     before = (c.conf.read_bytes(), c.conf.stat().st_mtime_ns, world.audit_file.read_bytes())
     commits = []

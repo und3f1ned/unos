@@ -171,7 +171,7 @@ async def lifespan(app: FastAPI):
             wol_reapply.cancel()
             await asyncio.gather(wol_reapply, return_exceptions=True)
         # Last, when nothing uses the database any more: its last commits go from unos.db-wal
-        # into unos.db (ADR-0304).
+        # into unos.db (ADR-0306).
         await checkpoint_db()
 
 

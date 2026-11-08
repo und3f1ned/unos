@@ -826,7 +826,7 @@ class TestWriteLock:
 
 class TestRollback:
     def test_host_ahead_of_a_rolled_back_database(self, world, tmp_path):
-        """The commit of an activation was lost to a power cut right after it (ADR-0304)."""
+        """The commit of an activation was lost to a power cut right after it (ADR-0306)."""
         world.make_allowed("alice")
         world.set_next_uid(70000)
         before = tmp_path / "before.db"

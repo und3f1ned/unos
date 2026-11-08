@@ -1,4 +1,4 @@
-"""What a small commit writes to unos.db's files (feature architecture.sqlite-write-cost, ADR-0304).
+"""What a small commit writes to unos.db's files (feature architecture.sqlite-write-cost, ADR-0306).
 
 unos.db is on the system disk, an SD card on many boards (ADR-0214). The app's engine keeps it in
 SQLite's write-ahead log with synchronous NORMAL: a small commit, such as the login history's row of

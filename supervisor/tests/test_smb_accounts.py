@@ -406,7 +406,7 @@ def _disk_full(statement: str) -> OperationalError:
 def flush_fails_after_the_revocation(world: "World", monkeypatch, name: str) -> list[list[str]]:
     """Session.flush raises (a full disk) at the first flush with pending changes after the
     revoke step removed the passdb entry of ``name``, before the commit: a full disk fails a
-    statement once SQLite's page cache spills into unos.db-wal (ADR-0304), and a lock held past
+    statement once SQLite's page cache spills into unos.db-wal (ADR-0306), and a lock held past
     the busy timeout fails the first write. Returns the classes of the objects that the failed
     flush had pending."""
     real = Session.flush
@@ -1855,7 +1855,7 @@ class TestCommitFailureAfterRevocation:
 
 class TestWriteFailureAfterRevocation:
     """A full disk fails the first write after the revoke step, before the commit (once
-    SQLite's page cache spills into unos.db-wal, ADR-0304): every write up to the commit gets
+    SQLite's page cache spills into unos.db-wal, ADR-0306): every write up to the commit gets
     the compensation of a failed commit (the row 'needed', the sessions ended, 503)."""
 
     @pytest.mark.parametrize("failure", ["delete_access", "flush"])

@@ -81,6 +81,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   Uvicorn 0.54, Pydantic 2.14, SQLAlchemy 2.1, cryptography 50, docker 7.2,
   requests 2.34); the web UI image installs exactly `package-lock.json`
   (`npm ci`).
+- The images start from base images pinned by tag and digest
+  (`python:3.11-slim`, `node:22-alpine`, `caddy:2-alpine`, and the Playwright
+  image of the test stack), so a build no longer takes whatever a tag names
+  that day. Newer digests come as pull requests, from Dependabot or from the
+  monthly maintenance pass.
 - `update.sh` no longer stashes local changes, which silently replaced a
   deployed change with the upstream code. Its backups (they contain the JWT
   secret) are readable by root only.

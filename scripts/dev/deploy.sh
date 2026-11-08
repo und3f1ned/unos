@@ -79,11 +79,24 @@ set -euo pipefail
 repo=$1
 cd "$repo/deploy"
 image=$(project)-supervisor
+# The bases of supervisor/Dockerfile, pinned by digest (ADR-0305). BuildKit keeps a base that it
+# pulled in its build cache, not as an image: buildx du describes those layers as "pulled from
+# <name>:<tag>@<digest>".
+pulled=$(docker buildx du --verbose 2> /dev/null | sed -n "s/^Description:[[:space:]]*pulled from //p") || true
 for base in $(awk '\''toupper($1) == "FROM" { print $2 }'\'' "$repo/supervisor/Dockerfile"); do
-    if ! docker image inspect "$base" > /dev/null 2>&1; then
-        echo "note: $base is not tagged on the device, so BuildKit asks the registry for it. If the tag" \
-             "moved upstream, this build pulls a new base and reruns apt-get and pip: hundreds of MB on" \
-             "the SD card. A changed supervisor/Dockerfile or requirements.txt does the same." >&2
+    if ! [[ $base =~ @sha256:[0-9a-f]{64}$ ]]; then
+        echo "supervisor/Dockerfile names the base $base without a digest (name:tag@sha256:<hex>, ADR-0305)" >&2
+        exit 1
+    fi
+    if docker image inspect "$base" > /dev/null 2>&1 || grep -qF "@${base#*@}" <<< "$pulled"; then
+        echo "base $base: on the device"
+    else
+        # BuildKit also finds a cached base by its layers: a new digest whose image for this
+        # platform did not change (another platform was rebuilt) is reused, and no layer of the
+        # cache then names it.
+        echo "note: no layers of the build cache come from the base $base, so this build pulls it" \
+             "and runs apt-get and pip again (hundreds of MB on the SD card) unless the image it names" \
+             "for the platform of this device is one the cache holds under another digest." >&2
     fi
 done
 if docker image inspect "$image:latest" > /dev/null 2>&1; then

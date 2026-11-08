@@ -387,7 +387,7 @@ class TestUpdateScript:
 
     def test_the_backup_of_a_stopped_supervisor_keeps_the_commits_of_its_log(self, sandbox):
         """A supervisor that stopped without its checkpoint (a crash, or a kill after docker
-        stop's grace period) left its last commits in unos.db-wal (ADR-0304): the copy of
+        stop's grace period) left its last commits in unos.db-wal (ADR-0306): the copy of
         unos.db alone lacked them, so the backup keeps unos.db-wal beside it."""
         data = sandbox / "stub" / "data"
         data.mkdir()
@@ -2009,7 +2009,9 @@ class TestTestRunner:
         dockerfile = (REPO_ROOT / "webui" / "Dockerfile.test").read_text()
 
         images = re.findall(
-            r"^FROM\s+mcr\.microsoft\.com/playwright:v([^\s-]+)(?:-\w+)?\s*$", dockerfile, re.MULTILINE
+            r"^FROM\s+mcr\.microsoft\.com/playwright:v([^\s@-]+)(?:-\w+)?@sha256:[0-9a-f]{64}\s*$",
+            dockerfile,
+            re.MULTILINE,
         )
 
         assert images == [version]
@@ -2237,6 +2239,88 @@ class TestBuildContexts:
         assert build == {"context": "../supervisor", "args": {"UNOS_VERSION": "${UNOS_VERSION:-unknown}"}}
 
 
+# A FROM line that names its image by tag and digest, `name:tag@sha256:<64 hex>`, with an
+# optional --platform and stage name (ADR-0305). The digest decides what a build starts from. The
+# tag is what Dependabot follows when it proposes a newer digest: for a digest without a tag it
+# would propose the digest of `latest`.
+PINNED_FROM = re.compile(
+    r"(?i:FROM)\s+(?:(?i:--platform)=\S+\s+)?[a-z0-9][a-z0-9._/-]*:\w[\w.-]{0,127}@sha256:[0-9a-f]{64}"
+    r"(?:\s+(?i:AS)\s+[\w.-]+)?"
+)
+# Any FROM line: the image it starts from and the stage it names.
+FROM_LINE = re.compile(r"(?i:FROM)\s+(?:(?i:--platform)=\S+\s+)?(?P<image>\S+)(?:\s+(?i:AS)\s+(?P<stage>\S+))?")
+# Folders that hold no Dockerfile of the repository: packages, environments and build output.
+NOT_SOURCES = {".git", ".venv", ".venv-lint", "node_modules", ".svelte-kit", "__pycache__", ".pytest_cache",
+               ".standin"}
+NOT_SOURCE_PATHS = {"tmp", "webui/build", "webui/test-results", "webui/playwright-report"}
+
+
+def _dockerfiles():
+    """Every Dockerfile of the repository (Dockerfile, Dockerfile.test, Containerfile and the like)."""
+    found = []
+    for folder, dirs, files in os.walk(REPO_ROOT):
+        here = Path(folder).relative_to(REPO_ROOT)
+        dirs[:] = sorted(d for d in dirs if d not in NOT_SOURCES and (here / d).as_posix() not in NOT_SOURCE_PATHS)
+        found += [Path(folder, name) for name in sorted(files)
+                  if "dockerfile" in name.lower() or "containerfile" in name.lower()]
+    return found
+
+
+def _unpinned_from_lines(text):
+    """The FROM lines of a Dockerfile that start from an image without its tag and digest. A line
+    that starts from `scratch` or from a stage that an earlier FROM line named pulls nothing."""
+    stages, unpinned = {"scratch"}, []
+    for line in text.splitlines():
+        if not re.match(r"\s*FROM\b", line, re.I):
+            continue
+        parsed = FROM_LINE.fullmatch(line.strip())
+        if not (parsed and parsed["image"].lower() in stages) and not PINNED_FROM.fullmatch(line.strip()):
+            unpinned.append(line.strip())
+        if parsed and parsed["stage"]:
+            stages.add(parsed["stage"].lower())
+    return unpinned
+
+
+class TestBaseImages:
+    """The images start from base images pinned by digest (ADR-0305)."""
+
+    def test_every_from_line_names_its_image_by_tag_and_digest(self):
+        dockerfiles = _dockerfiles()
+        names = {path.relative_to(REPO_ROOT).as_posix() for path in dockerfiles}
+        assert {"supervisor/Dockerfile", "supervisor/Dockerfile.test", "webui/Dockerfile",
+                "webui/Dockerfile.test"} <= names, names
+
+        unpinned = [f"{path.relative_to(REPO_ROOT).as_posix()}: {line}"
+                    for path in dockerfiles for line in _unpinned_from_lines(path.read_text())]
+
+        assert unpinned == []
+
+    @pytest.mark.parametrize(
+        "line",
+        ["FROM python:3.11-slim", "FROM python@sha256:" + "a" * 64, "from python:3.11-slim AS base",
+         "FROM python:3.11-slim@sha256:" + "a" * 63, "FROM ${BASE}", "FROM python:${TAG}@sha256:" + "a" * 64,
+         "FROM --platform=$BUILDPLATFORM node:22-alpine AS builder"],
+    )
+    def test_a_from_line_without_tag_and_digest_is_found(self, line):
+        assert _unpinned_from_lines(f"{line}\nRUN true\n") == [line]
+
+    def test_pinned_lines_scratch_and_earlier_stages_pass(self):
+        digest = "@sha256:" + "a" * 64
+        text = (f"FROM --platform=$BUILDPLATFORM node:22-alpine{digest} AS builder\nRUN true\n"
+                f"from\tcaddy:2-alpine{digest}\tas final\nFROM builder\nFROM Final AS again\nFROM scratch\n")
+
+        assert _unpinned_from_lines(text) == []
+
+    def test_the_supervisor_images_start_from_the_same_base(self):
+        # The test image runs the code on the base of the image it stands in for, and a new
+        # digest moves both (Dependabot's docker group in .github/dependabot.yml).
+        def bases(name):
+            return re.findall(r"^FROM (\S+)", (REPO_ROOT / "supervisor" / name).read_text(), re.M)
+
+        assert bases("Dockerfile")
+        assert bases("Dockerfile.test") == bases("Dockerfile")
+
+
 COMPOSE_FILES = ("docker-compose.yml", "docker-compose.test.yml")
 SUPERVISOR_HEALTH_URL = "http://127.0.0.1:8080/api/v1/health"
 
@@ -2396,7 +2480,7 @@ class TestHealthchecks:
         assert check["test"] == ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/api/v1/health"]
         # busybox wget: the image is Caddy on Alpine.
         stages = re.findall(r"^FROM (\S+)", (REPO_ROOT / "webui" / "Dockerfile").read_text(), re.M)
-        assert re.fullmatch(r"caddy:[\w.]+-alpine", stages[-1])
+        assert re.fullmatch(r"caddy:[\w.]+-alpine@sha256:[0-9a-f]{64}", stages[-1])
         # The http:// site answers the health route itself instead of
         # redirecting it to HTTPS.
         http_site = (REPO_ROOT / "webui" / "Caddyfile").read_text().split("\nhttp:// {\n", 1)[1]
@@ -2539,7 +2623,7 @@ class TestTemporaryFiles:
         stand-in for /var/tmp, which tempfile would take after it. Returns the
         result and the temporary directories the program tried to make (the
         audit event comes before the mkdir). wal: the database writes ahead, as
-        the supervisor's does (ADR-0304), and a connection of its pool stays
+        the supervisor's does (ADR-0306), and a connection of its pool stays
         open meanwhile with the row 'recent' committed to unos.db-wal."""
         text = (REPO_ROOT / "deploy" / "update.sh").read_text()
         program = re.search(r"\nbackup_database_online\(\) \{\n.*?<<'PY'\n(.*?)\nPY\n", text, re.S)
@@ -2697,7 +2781,9 @@ class TestContinuousIntegration:
 
     def test_node_is_supported_and_the_same_for_the_image_ci_and_npm(self):
         builder = re.findall(
-            r"^FROM node:(\d+)-alpine AS builder$", (REPO_ROOT / "webui" / "Dockerfile").read_text(), re.M
+            r"^FROM node:(\d+)-alpine@sha256:[0-9a-f]{64} AS builder$",
+            (REPO_ROOT / "webui" / "Dockerfile").read_text(),
+            re.M,
         )
         setup_node = [
             str(step["with"]["node-version"])

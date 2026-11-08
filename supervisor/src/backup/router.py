@@ -273,7 +273,7 @@ def _live_db_path() -> Path | None:
 def copy_database(src: Path, dest: Path) -> None:
     """Write a consistent copy of a (possibly in-use) SQLite database to ``dest``.
 
-    The live database writes ahead (ADR-0304): the backup API copies the commits still in its
+    The live database writes ahead (ADR-0306): the backup API copies the commits still in its
     -wal as well, and the header that marks the file for the write-ahead log. The copy is
     switched back to the rollback journal, so it is one file on its own, as _verify_database
     requires of a backup's unos.db.
@@ -345,7 +345,7 @@ def _page_size(path: Path) -> int | None:
 
 
 def _verify_page_size(restored: Path, db_path: Path) -> None:
-    """The live database writes ahead (ADR-0304), and SQLite's backup API cannot give such a
+    """The live database writes ahead (ADR-0306), and SQLite's backup API cannot give such a
     database another page size: a backup with pages of another size is refused before anything
     changes. A live database without a header yet takes any."""
     live = _page_size(db_path) if db_path.exists() else None

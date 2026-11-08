@@ -257,7 +257,7 @@ def device(tmp_path):
 def test_the_scripts_are_found():
     names = {p.relative_to(DEV).as_posix() for p in SHELL_SCRIPTS + PYTHON_SCRIPTS}
     assert {"env.sh", "ssh.sh", "askpass.sh", "sd.sh", "deploy.sh", "check.sh", "linux-tests.sh",
-            "ipv6-filter.sh", "bin/testparm", "api.py", "tree.py"} <= names
+            "ipv6-filter.sh", "scenario.sh", "bin/testparm", "api.py", "tree.py", "scenario.py"} <= names
 
 
 @pytest.mark.parametrize("bash", bashes())
@@ -286,7 +286,8 @@ def test_scripts_are_executable_except_env_sh(script):
 @pytest.mark.parametrize(
     "argv",
     [["deploy.sh", "--help"], ["sd.sh", "--help"], ["check.sh", "--help"], ["linux-tests.sh", "--help"],
-     ["ssh.sh", "--help"], ["api.py", "--help"], ["tree.py", "--help"], ["ipv6-filter.sh", "--help"]],
+     ["ssh.sh", "--help"], ["api.py", "--help"], ["tree.py", "--help"], ["ipv6-filter.sh", "--help"],
+     ["scenario.sh", "--help"], ["scenario.py", "--help"]],
     ids=lambda a: a[0],
 )
 def test_help_needs_no_dev_env(device, argv):
@@ -662,6 +663,35 @@ def test_a_second_holder_waits_and_gives_up(local_device):
     finally:
         first.terminate()
         first.wait(timeout=30)
+    assert wait_for(lambda: lock_is_free(local_device.lock))
+
+
+@pytest.mark.parametrize("sig", ["HUP", "TERM"], ids=lambda s: f"SIG{s}")
+def test_a_signal_to_the_holders_process_group_keeps_the_lock_until_the_holder_ends(local_device, sig):
+    """A closed terminal (SIGHUP) or a TERM sent to the holder's process group must not release
+    the lock while the holder still works: scenario.sh waits for its check to clean up. The
+    session that holds the lock ignores both, and the holder's exit releases it. (On the device
+    the lock's own commands never get the workstation's signal; here they run in the same group,
+    so timeout is the plain stand-in.)"""
+    device = local_device
+    device.stub("timeout", "#!/usr/bin/env bash\nshift\nexec \"$@\"\n")
+    holder = subprocess.Popen(
+        ["bash", "-c", ('. ./env.sh || exit 9; dev_lock "holder"; trap "stop=1" HUP TERM; echo held; '
+                        'bash -c "trap \\"\\" HUP TERM; sleep 2"; echo done')],
+        cwd=DEV, env=local_device.env(FAKE_SSH_MODE="local"), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL, text=True, start_new_session=True,
+    )
+    try:
+        assert holder.stdout.readline() == "held\n"
+        os.killpg(holder.pid, getattr(__import__("signal"), "SIG" + sig))
+        time.sleep(0.5)
+        assert not lock_is_free(local_device.lock), "the lock went with the signal"
+        out, err = holder.communicate(timeout=30)
+        assert out == "done\n", err
+    finally:
+        if holder.poll() is None:
+            os.killpg(holder.pid, 9)
+            holder.wait(timeout=30)
     assert wait_for(lambda: lock_is_free(local_device.lock))
 
 
@@ -1190,6 +1220,7 @@ class FakeApi:
         self.valid: set[str] = set()
         self.accept = True
         self.requests: list[tuple[str, str, str | None]] = []
+        self.bodies: list[tuple[str | None, bytes]] = []  # the Content-Type and body of each request
         fake = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -1208,6 +1239,7 @@ class FakeApi:
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 bearer = self.headers.get("Authorization")
                 fake.requests.append((self.command, self.path, bearer))
+                fake.bodies.append((self.headers.get("Content-Type"), body))
                 if (self.command, self.path) == ("POST", "/api/v1/auth/login"):
                     if json.loads(body) != {"username": "admin", "password": fake.password}:
                         return self.reply(401, {"detail": "Invalid credentials"})
@@ -1324,6 +1356,30 @@ def test_the_relay_never_reads_a_cache_that_is_not_its_own_private_file(relay, p
     assert cache.read_text() == "token-1"
     if planted == "symlink":
         assert target.read_text() == token
+
+
+def test_the_relay_uploads_a_file_as_a_form_also_after_a_new_login(relay):
+    """upload() sends the file's bytes as the form field "file" of multipart/form-data, as the
+    web UI does (the scenario checks upload this way, ADR-0304); a 401 brings one new login and
+    the same form again."""
+    client, fake, cache = relay
+    content = b"bytes \x00\xff\r\n--not-a-boundary\n"
+    for login in (1, 2):
+        answer = client.upload("/files/upload", {"path": "/mnt/pools/data/x y"}, "a.txt", content)
+        assert answer.status_code == 200 and fake.logins == login
+        method, path, bearer = fake.requests[-1]
+        assert (method, path) == ("POST", "/api/v1/files/upload?path=%2Fmnt%2Fpools%2Fdata%2Fx+y")
+        ctype, body = fake.bodies[-1]
+        assert ctype.startswith("multipart/form-data; boundary=unos-")
+        boundary = ctype.split("boundary=", 1)[1]
+        assert body == (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n"
+                        "Content-Type: application/octet-stream\r\n\r\n").encode() + content + f"\r\n--{boundary}--\r\n".encode()
+        assert boundary.encode() not in content
+        fake.valid.clear()  # the next upload meets a 401 first
+    assert [b for t, b in fake.bodies if t and t.startswith("multipart/")][-2] == fake.bodies[-1][1]
+    for bad in ("../a", "a/b", 'a"b', "a\nb", ""):
+        with pytest.raises(ValueError):
+            client.upload("/files/upload", {"path": "/x"}, bad, b"")
 
 
 def test_the_relay_writes_the_token_through_no_link(relay):
@@ -1647,8 +1703,8 @@ def test_the_device_checks_skill_says_which_scripts_lock_and_report_sd_writes():
     until the skill says so too."""
     locking = scripts_calling(r"^\s*dev_lock\b")
     reporting = scripts_calling(r"\bdev_sd_report(_from)?\b")
-    assert locking == ["deploy.sh", "ipv6-filter.sh", "linux-tests.sh"]
-    assert reporting == ["check.sh", "deploy.sh", "ipv6-filter.sh", "linux-tests.sh", "sd.sh"]
+    assert locking == ["deploy.sh", "ipv6-filter.sh", "linux-tests.sh", "scenario.sh"]
+    assert reporting == ["check.sh", "deploy.sh", "ipv6-filter.sh", "linux-tests.sh", "scenario.sh", "sd.sh"]
     text = (SKILLS / "device-checks" / "SKILL.md").read_text()
     assert scripts_named(text, "take the device lock") == locking
     assert scripts_named(text, "print `SD writes") == reporting
@@ -1679,6 +1735,90 @@ def test_the_supervisor_build_gets_the_version_of_the_workstations_tree():
     assert "UNOS_VERSION=${2:-unknown} env -u JWT_SECRET docker compose build supervisor" in text
     # Only a plain version reaches the device's shell.
     assert "*[!A-Za-z0-9._+-]*) version=unknown" in text
+
+
+# docker for deploy.sh build-supervisor on the device: the compose project, the images named in
+# FAKE_IMAGES (separated by spaces), the build cache's records in FAKE_BUILD_CACHE (the text of
+# `docker buildx du --verbose`), the build and the checks of its result. It logs every call to
+# FAKE_SSH_LOG/docker and fails on any other.
+STUB_DOCKER_BUILD = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import json, os, sys
+    args = sys.argv[1:]
+    with open(os.path.join(os.environ["FAKE_SSH_LOG"], "docker"), "a") as log:
+        log.write(" ".join(args) + "\\n")
+    if args == ["compose", "config", "--format", "json"]:
+        print(json.dumps({"name": "deploy"}))
+    elif args == ["buildx", "du", "--verbose"]:
+        sys.stdout.write(os.environ.get("FAKE_BUILD_CACHE", ""))
+    elif args[:2] == ["image", "inspect"] and len(args) == 3:
+        sys.exit(0 if args[2] in os.environ.get("FAKE_IMAGES", "").split() else 1)
+    elif args == ["compose", "build", "supervisor"]:
+        print("built")
+    elif args == ["tag", "deploy-supervisor:latest", "deploy-supervisor:rollback"]:
+        pass
+    elif args == ["compose", "config", "--quiet"]:
+        pass
+    elif args[:3] == ["image", "inspect", "-f"] and args[4:] == ["deploy-supervisor:latest"]:
+        print("PYTHONDONTWRITEBYTECODE=1" if ".Config.Env" in args[3] else "deploy-supervisor:latest sha256:1")
+    else:
+        sys.exit(f"the docker stub does not know {args}")
+    """
+)
+
+
+def test_deploy_sh_build_supervisor_says_whether_its_pinned_base_is_on_the_device(trees):
+    """supervisor/Dockerfile pins its base by digest (ADR-0305). Before the build,
+    build-supervisor says whether the device has that base: as an image, or as the layers that
+    BuildKit pulled into its build cache, which `docker buildx du --verbose` describes as "pulled
+    from <name>:<tag>@<digest>". When it has neither, the build pulls the base and runs apt-get and
+    pip again, hundreds of MB on the SD card (ADR-0214), unless the image the digest names for the
+    device's platform is one the cache holds under another digest: the note says both. A base
+    without a whole digest is refused before anything on the device changes."""
+    device, repo, checkout = trees
+    pinned = "python:3.11-slim@sha256:" + "6" * 64
+    other = "python:3.11-slim@sha256:" + "0" * 64
+    device.stub("docker", STUB_DOCKER_BUILD)
+    device.stub("python3", '#!/bin/sh\nexec @PYTHON@ "$@"\n')
+
+    def cache(*bases: str) -> str:
+        return "".join(f"ID:           layer{n}\nDescription:  pulled from docker.io/library/{base}\n"
+                       f"Type:         regular\n\n" for n, base in enumerate(bases))
+
+    def build(dockerfile: str, **fake: str) -> subprocess.CompletedProcess:
+        for root in (repo, checkout):
+            make_tree(root, {"supervisor/Dockerfile": dockerfile, "supervisor/src/main.py": "same\n"})
+        (device.log / "docker").unlink(missing_ok=True)
+        env = device.env(FAKE_SSH_MODE="local", UNOS_DEV_REPO=str(checkout), UNOS_DEV_PYTHON=sys.executable, **fake)
+        result = subprocess.run([str(repo / "scripts" / "dev" / "deploy.sh"), "build-supervisor"], cwd=repo,
+                                env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        assert wait_for(lambda: lock_is_free(device.lock))
+        return result
+
+    def calls() -> list[str]:
+        return (device.log / "docker").read_text().splitlines()
+
+    for fake in ({"FAKE_BUILD_CACHE": cache(other, pinned)}, {"FAKE_IMAGES": pinned}):
+        result = build(f"FROM {pinned}\nWORKDIR /app\n", **fake)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"base {pinned}: on the device" in result.stdout, fake
+        assert "note:" not in result.stderr and "compose build supervisor" in calls(), fake
+
+    result = build(f"FROM {pinned}\nWORKDIR /app\n", FAKE_BUILD_CACHE=cache(other), FAKE_IMAGES="deploy-supervisor:latest")
+    assert result.returncode == 0, result.stdout + result.stderr
+    note = " ".join(result.stderr.split())
+    assert f"note: no layers of the build cache come from the base {pinned}" in note
+    assert "pulls it and runs apt-get and pip again" in note and "unless" in note
+    made = calls()
+    assert made.index("tag deploy-supervisor:latest deploy-supervisor:rollback") < made.index("compose build supervisor")
+
+    for unpinned in ("python:3.11-slim", "python:3.11-slim@sha256:", "python:3.11-slim@sha256:" + "6" * 63):
+        result = build(f"FROM {unpinned}\nWORKDIR /app\n", FAKE_BUILD_CACHE=cache(pinned),
+                       FAKE_IMAGES="deploy-supervisor:latest")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert f"names the base {unpinned} without a digest" in result.stderr
+        assert not [call for call in calls() if call.startswith(("tag ", "compose build"))], unpinned
 
 
 # --- the inbound IPv6 filter of the device (ADR-0301) ---------------------------------------

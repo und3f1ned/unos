@@ -68,9 +68,12 @@ A pass takes one entry of `feature-list.json` from `passes: false` to `passes: t
 
 8. **Check a host-level entry on the device.** For an entry whose steps make a host-level change
    (GLOSSARY.md): the owner starts the deploy with /deploy-device (the model cannot load
-   that skill), then run the device-checks skill for the entry's steps; the re-check after a reboot waits for the owner's
-   reboot. Report the SD MiB of every step. Result: for each host-level step, a command and its
-   result from the device, before and after the reboot.
+   that skill), then run the entry's check, which the table below names: a scenario check
+   (`scripts/dev/scenario.sh <area>`, ADR-0304), which changes the device and so runs when the
+   owner asks for it, or, where the table says by hand, the device-checks skill for the steps
+   that the entry's notes give. The re-check after a reboot waits for the owner's reboot and
+   runs the same check again. Report the SD MiB of every step. Result: for each host-level
+   step, a command and its result from the device, before and after the reboot.
 
 9. **Update the entry.** Set `passes: true` only when steps 6 and 7 hold, and step 8 for a
    host-level entry; list the tests that assert the steps in `verified_by`, and leave the
@@ -86,6 +89,32 @@ A pass takes one entry of `feature-list.json` from `passes: false` to `passes: t
 11. **Commit when the owner asks**, in Conventional Commits in English with the trailer
     `Feature: <id>` (ADR-0209). Result: `git log -1 --format='%(trailers:key=Feature,valueonly)'`
     prints the id, and the commit-msg hook accepted the message.
+
+## Device checks of host-level entries
+
+The check of each host-level entry (GLOSSARY.md): every such entry of `feature-list.json` is in
+one row, and the pass that makes an entry host-level adds it. `supervisor/tests/test_dev_scenarios.py`
+fails for an entry whose notes name the reboot rule of ADR-0018 and that is in no row, and for an
+id that the ledger does not have; a row may also name entries that are not host-level but that its
+check covers. A scenario check prints PASS or FAIL for each step with its SD MiB, removes what it
+made and compares the device with how it found it (`scripts/dev/scenario.py --help` lists its
+steps). What a scenario check leaves out of an entry is in parentheses and is checked by hand.
+When a check by hand is repeated, it becomes a step or an area of `scripts/dev/scenario.py`.
+
+Each scenario check removes what it makes, so its run after a reboot shows that the entry's
+scenario works after the reboot, not that something made before the reboot is still there: where
+an entry's steps say so ("survives a reboot", "after a reboot the items are still listed"), that
+part is checked by hand, with the steps of the entry's notes.
+
+| Check | Entries |
+| --- | --- |
+| `scripts/dev/scenario.sh files` | `files.protects-volumes-and-mounts` (not a bind mount below a folder), `files.delete-to-trash` (not Empty trash, the 30-day expiry, the listing after a reboot, a snapshot's 409 or a trash that another user made), `files.rename` (not the names it refuses), `files.browse-and-download`, `files.upload`, `files.organize` |
+| `scripts/dev/scenario.sh volumes` | `storage.volumes` (not a pool mounted read-only, nor a volume that an app, a Docker volume or an NFS export uses) |
+| `scripts/dev/scenario.sh smart` | `storage.smart` (not the Scheduler's SMART test task), `storage.commands-time-out-cleanly` (the SMART answers that its device check names; not the scrub, the stats reset, the Scheduler's Run now or the supervisor's log, and no command times out on purpose), `storage.disk-list` (the disks listed without the system disk; not their model, serial and badges, nor the page's error) |
+| `scripts/dev/scenario.sh backups` | `backup.restore` (its refusals of a missing backup and of a missing or wrong passphrase; not a restore, its 507 or a second restore), `backup.create-and-download` (not the download) |
+| `scripts/dev/scenario.sh smb` | `shares.smb-accounts`, `shares.smb-share` (not the list of offered folders, nor the 409 below a pool root that others can write, which the device's pool root of mode 755 cannot show), `shares.per-user-access`, `shares.guest-off-by-default`, `shares.smb-conf-and-status` (not a supervisor restart, foreign sections or the status panel's alerts), `shares.edit-and-delete` (not the access that a share that is not served gets only with a new folder), `shares.password-follows-unos`, `shares.samba-runtime-writes`, `files.group-writable-entries-in-shares` |
+| `scripts/dev/scenario.sh all` | `device.scenario-checks-in-repo` |
+| `by hand`: the steps of the entry's notes, with the device-checks skill | `security.https-local-ca`, `security.host-firewall`, `storage.create-pool`, `storage.mount-and-unmount`, `storage.pool-health`, `storage.forget-pool`, `storage.snapshots`, `storage.scrub`, `storage.import-existing-pool`, `shares.read-only-guest-share`, `shares.smb-conf-import`, `shares.repair-permissions`, `shares.self-activation`, `shares.restore-keeps-smb-with-proof`, `shares.acl-aware-parent-check`, `shares.smb-discovery`, `shares.reapply-on-pool-unmount`, `shares.smb-auth-audit-logging`, `shares.nfs-exports`, `shares.nfs-exports-parser`, `apps.install-on-a-pool`, `apps.transmission-login`, `apps.manage-installed`, `apps.containers-and-images`, `apps.docker-calls-off-event-loop`, `apps.smb-group-option`, `system.temperatures`, `system.network`, `system.hostname-and-time-zone`, `system.power`, `system.ups-monitoring`, `system.logs-viewer`, `system.scheduler-time-zone`, `system.health-details-and-metrics`, `system.network-disable-confirmation`, `deploy.install-script`, `deploy.update-script`, `deploy.uninstall-script`, `deploy.health-checks-and-start-order`, `device.ipv6-inbound-filter`, `device.key-only-ssh` |
 
 ## Gotchas
 

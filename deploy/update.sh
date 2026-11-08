@@ -267,7 +267,7 @@ check_for_updates() {
 # SQLite's online backup API, run in the supervisor container: a consistent
 # copy of the live database while the supervisor keeps running (a plain copy
 # of a database in use can be torn). The live database writes ahead
-# (ADR-0304): the copy gets the commits still in unos.db-wal and goes back to
+# (ADR-0306): the copy gets the commits still in unos.db-wal and goes back to
 # the rollback journal, one file on its own. The checked copy is written to
 # stdout.
 backup_database_online() {
@@ -319,7 +319,7 @@ write_backup() (
         # Not running: nothing uses the database, so plain copies of its files
         # are consistent. A supervisor that stopped without its checkpoint (a
         # crash, or a kill after docker stop's grace period) left its last
-        # commits in unos.db-wal (ADR-0304), which goes beside unos.db.
+        # commits in unos.db-wal (ADR-0306), which goes beside unos.db.
         docker cp unos-supervisor:/data/unos.db "$1/unos.db" &&
             docker cp unos-supervisor:/data - | gzip > "$1/data.tar.gz" &&
             copy_database_log "$1"

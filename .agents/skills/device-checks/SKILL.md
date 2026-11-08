@@ -1,25 +1,26 @@
 ---
 name: device-checks
-description: Check the UNOS dev device without changing it (health, API answers, Samba's real testparm, the backend tests on Linux in the device's RAM) and report the SD-card writes of each check. Use to verify a deployed change, behaviour the local stand-in cannot provide, or Linux-only tests before a merge (ADR-0230).
+description: Check the UNOS dev device (health, API answers, Samba's real testparm, the backend tests on Linux in the device's RAM, read-only; and, when the owner asks, the scenario check of an area, which makes temporary things and removes them) and report the SD-card writes of each check. Use to verify a deployed change, behaviour the local stand-in cannot provide, Linux-only tests before a merge (ADR-0230), or the host-level steps of an entry before and after a reboot (ADR-0018).
 ---
 
-# Read-only checks on the dev device
+# Checks on the dev device
 
 The device runs from an SD card that wears with every write, and its eMMC keeps the vendor's
 firmware and is never written (ADR-0214, ADR-0225). Run every check from
 the repository root, through `scripts/dev`:
 
-- `check.sh`, the API relay of `api.py`, the testparm shim `bin/testparm` and `linux-tests.sh`
-  run on the device in a private mount namespace with the root filesystem read-only and
-  noatime (ADR-0221), and keep scratch files in RAM (`/dev/shm`). A command you give `ssh.sh`
-  runs as it is.
-- Only `deploy.sh` (every step), `linux-tests.sh` and `ipv6-filter.sh` (install and remove) take
-  the device lock (ADR-0210); a second run waits. `check.sh`, `api.py`, `ssh.sh`, `sd.sh` and
-  the testparm shim take none.
-- `check.sh`, `linux-tests.sh`, `deploy.sh`, `ipv6-filter.sh` (install and remove) and
-  `sd.sh measure` print `SD writes <label>: <MiB> MiB (<sectors> sectors)`. `ssh.sh`, `api.py`
-  and the testparm shim print nothing of the kind: run them under
-  `scripts/dev/sd.sh measure <label> -- <command>`, as the steps below do.
+- `check.sh`, the API relay of `api.py`, the testparm shim `bin/testparm`, `linux-tests.sh`
+  and the commands of the scenario checks (but pdbedit) run on the device in a private mount
+  namespace with the root filesystem read-only and noatime (ADR-0221), and keep scratch files
+  in RAM (`/dev/shm`). A command you give `ssh.sh` runs as it is.
+- Only `deploy.sh` (every step), `linux-tests.sh`, `ipv6-filter.sh` (install and remove) and
+  `scenario.sh` take the device lock (ADR-0210); a second run waits. `check.sh`, `api.py`,
+  `ssh.sh`, `sd.sh` and the testparm shim take none.
+- `check.sh`, `linux-tests.sh`, `deploy.sh`, `ipv6-filter.sh` (install and remove), `scenario.sh`
+  (for each check, and each step's MiB in its line) and `sd.sh measure` print
+  `SD writes <label>: <MiB> MiB (<sectors> sectors)`. `ssh.sh`, `api.py` and the testparm shim
+  print nothing of the kind: run them under `scripts/dev/sd.sh measure <label> -- <command>`, as
+  the steps below do.
 
 Settings come from `dev.env` (mode 600, ADR-0212); in a git worktree without one, the scripts
 use the main checkout's. Output shows secrets as `<redacted>`.
@@ -56,7 +57,19 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    `SD writes linux-tests.sh` at or near 0 MiB. After a reboot of the device the RAM rootfs is
    gone: the script prints the owner action that makes it again.
 
-6. **Report.** For each check: the command, its result and the MiB of its `SD writes` line
+6. **Run a scenario check, when the owner asked for one.** `scripts/dev/scenario.sh <area>`
+   (`files`, `volumes`, `smart`, `backups`, `smb`, or `all`; `--pool <name>` where several pools
+   are mounted), the checks of the host-level entries that the feature-pass skill's table names
+   (ADR-0304). They change the device: they make a temporary user, share, volume and folders
+   named `unoscheck<6 hex digits>`, and two backups, through the API, and remove them again.
+   `all` takes several minutes: run it in the background, or with a timeout long enough, since a
+   check that is killed cannot clean up, and read its whole output (not `| head`: a check whose
+   output closes stops its steps). Result: a PASS line for every step, each with its SD
+   MiB, `scenario <area>: OK`, and its own `SD writes scenario <area>` line. A FAIL ends the steps
+   of its check; the lines after it say what the clean-up removed and whether the device is as
+   the check found it.
+
+7. **Report.** For each check: the command, its result and the MiB of its `SD writes` line
    from this session's output. Result: every check has its number, and no number in the
    report is without its command.
 
@@ -78,3 +91,26 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   users. Use the standin-e2e skill.
 - `check.sh`, `api.py` and the testparm shim take no lock: avoid them while a deploy restarts
   the containers (`check.sh` shows the lock's holder).
+- A scenario check that cannot start because the device "holds leftovers of an earlier check"
+  names them: a run that lost its connection could not remove them. Ask the owner, then remove
+  them in this order under `scripts/dev/sd.sh measure clean -- ...`, and run the check again:
+  shares, `scripts/dev/api.py DELETE /shares/smb/<name>`; users,
+  `scripts/dev/api.py DELETE /auth/users/<id> --param username=<name>` (the id from
+  `GET /auth/users`); volumes, `scripts/dev/api.py DELETE /storage/pools/<pool>/volumes/<name>`;
+  a subvolume `<folder>/nest/sub` that the files check made, which no API route removes,
+  `scripts/dev/ssh.sh 'btrfs subvolume delete /mnt/pools/<pool>/<folder>/nest/sub'`; items of
+  the trash, `echo '["<path from GET /files/trash>"]' | scripts/dev/api.py DELETE /files/trash -`;
+  folders, `echo '["/mnt/pools/<pool>/<folder>"]' | scripts/dev/api.py DELETE /files/delete - --param permanent=true`
+  (the `-` before `--param`). A marked host account or Samba account `unoscheck<6 hex digits>`
+  that stayed after its user was deleted (the delete's warning names a failed userdel or pdbedit)
+  is the host's: removing it, `scripts/dev/ssh.sh 'pdbedit -x -u <name>; userdel <name>'`, is an
+  owner action. A backup is not named `unoscheck`: only the run that made it names one whose
+  answer it lost (`FAIL  clean up: delete the check's backups`), and
+  `scripts/dev/api.py DELETE /backup/<name>` removes it.
+- The smb check needs smbclient and stdbuf on the device (its first steps say which is
+  missing): installing a package is an owner action (ADR-0211).
+- The scenario checks write to the SD card, and each step's line says how much: the API's
+  database and audit log at every change, smb.conf at every share change, `/etc/passwd` and
+  `/etc/shadow` when the smb check's account is made and deleted, passdb.tdb then and at its
+  password change and its one wrong password (ADR-0159), the backups check's two backups, and
+  about 0.02 MiB of container logs per API call (ADR-0304).

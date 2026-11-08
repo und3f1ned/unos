@@ -6,7 +6,7 @@ decided-by: owner
 supersedes: [ADR-0078]
 ---
 
-# ADR-0304: The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits
+# ADR-0306: The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits
 
 ## Context
 

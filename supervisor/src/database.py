@@ -17,7 +17,7 @@ settings = get_settings()
 BUSY_TIMEOUT_SECONDS = 15
 
 # unos.db is on the system disk, an SD card on many boards (ADR-0214), and uses SQLite's
-# write-ahead log (ADR-0304): a commit appends the pages it changed to unos.db-wal, and only
+# write-ahead log (ADR-0306): a commit appends the pages it changed to unos.db-wal, and only
 # the one that starts the log again (the first after a start or after a checkpoint) syncs it;
 # a checkpoint, when the log reaches 1000 pages and when the supervisor stops
 # (checkpoint_db), copies the pages into unos.db and syncs both files. With SQLite's default,
@@ -50,7 +50,7 @@ def engine_options(db_path: str) -> dict:
 
 def write_ahead(dbapi_connection, connection_record) -> None:
     """Every new connection of the app's engine to a database file: the write-ahead log and
-    synchronous NORMAL (ADR-0304).
+    synchronous NORMAL (ADR-0306).
 
     The journal mode is kept in the file, so the first connection switches unos.db over and
     the others, the emergency command line's (src/emergency.py) included, find it so; the
@@ -111,7 +111,7 @@ async def init_db():
 async def checkpoint_db():
     """At the end of the lifespan: copy unos.db-wal into unos.db, sync both and empty the log
     (PRAGMA wal_checkpoint(TRUNCATE)), so a stopped supervisor leaves every commit in unos.db
-    (ADR-0304).
+    (ADR-0306).
 
     The pool stays open, as SQLite deletes unos.db-wal and unos.db-shm when the last
     connection closes: kept, the next start makes no file, also on a full /data, and SQLite

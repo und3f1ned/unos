@@ -35,18 +35,22 @@ significant step. Features and their state live in `feature-list.json`, decision
   `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
   `AGENTS.md` or `.claude/settings.json` is a stop.
 - Next, in this order:
-  1. `device.scenario-checks-in-repo`: the device checks of slices 1 and 2 as scripts in
-     `scripts/dev/`, each reporting its SD writes.
-  2. The owner's reboot of the device, then the re-check of the host-level entries with those
-     scripts (ADR-0018).
+  1. `device.scenario-checks-in-repo` (ADR-0304) is merged (#79). Its scenario checks,
+     `scripts/dev/scenario.sh files|volumes|smart|backups|smb|all`, passed their first run on the
+     device on 2026-11-08 (Log).
+  2. The owner's reboot of the device, then the re-check of the host-level entries:
+     `scripts/dev/scenario.sh all` again, and the checks by hand that the feature-pass skill's
+     table lists (ADR-0018).
   3. `deploy.digest-pinned-base-images` and `architecture.sqlite-write-cost` (the SD card). The
-     database's write-ahead log (ADR-0304) is pushed on the branch `architecture.sqlite-write-cost`;
-     it waits for the owner's pull request, a deploy of the supervisor and the measurement of a
-     sign-in and of a start with `scripts/dev/sd.sh measure`.
+     pins are merged (#80, ADR-0305); the entry passes after a deploy that shows the supervisor
+     build reusing its cached base once the tag's arm64 image has moved upstream. The database's
+     write-ahead log (ADR-0306) is pushed on the branch `architecture.sqlite-write-cost`; it waits
+     for the owner's pull request, a deploy of the supervisor and the measurement of a sign-in and
+     of a start with `scripts/dev/sd.sh measure`.
 
 ## Dev device
 
-State on 2026-11-08, 11:00 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-08, 17:20 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -62,19 +66,30 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   owner's call (ADR-0211).
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest, deploy-webui:latest, lscr.io/linuxserver/transmission,
-  alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base).
-  The slice-2 rollback images and files were deleted on 2026-11-07.
+  alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base:
+  Caddy 2.10.2 of January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files
+  were deleted on 2026-11-07.
+- Docker 29.1.5 with the containerd image store. The supervisor's base, python:3.11-slim
+  `sha256:65bd3d9f...` (Python 3.11.18), is in BuildKit's build cache, not an image: the pins of
+  ADR-0305 are these two digests.
 - The audit log is `/data/audit/audit.jsonl` (ADR-0224); the old `/data/audit_log.json` was
   deleted.
 - Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220).
   The share DATA is served from /mnt/pools/data/shared (root:unos-smb 2770); no account has
   access to it yet. The regular account `test` stays for checks of a regular user's view.
+- Scenario checks (ADR-0304): the first run of `scripts/dev/scenario.sh all`, on 2026-11-08 at
+  about 17:15 UTC, passed and left none of its users, shares, volumes, folders or backups; the
+  pool's trash `/mnt/pools/data/.unos-trash` (made at 00:05 UTC that night) is empty. Its short
+  self-test of sda completed without error, as the two before it; sda's SMART status: PASSED.
 - Network: global IPv6 from a Hurricane Electric tunnel prefix. Since 2026-11-08 the services
   answer over IPv6 only the LAN (link-local, unique-local and the LAN's global prefix), and the
   BitTorrent port 51413 everyone: the table `ip6 unos_ipv6_inbound`, loaded at boot by
   `unos-ipv6-inbound.service` (ADR-0301, `scripts/dev/ipv6-filter.sh status`). IPv4 is not
   filtered on the device. Samba admits only private, unique-local and link-local addresses.
   smbd runs unconfined by AppArmor (ADR-0162). The NFS server runs (ADR-0303), with no export.
+- SD writes on 2026-11-08: the scenario checks 5.946 MiB (files 0.418, volumes 0.938, smart
+  0.098, backups 0.512, smb 3.980, of which the smb check's account took 0.957 to make and 0.785
+  to delete); 18.2 MiB in the 5.8 hours since that morning's boot, by 17:18 UTC.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -89,9 +104,13 @@ Open owner actions:
    Developer settings, Tokens).
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
-3. The reboot of the device for the re-check of ADR-0018, once `device.scenario-checks-in-repo`
-   is done; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh` is made again.
+3. The reboot of the device for the re-check of ADR-0018: then `scripts/dev/scenario.sh all`
+   again (its first run passed on 2026-11-08, ADR-0304) and the checks by hand of the
+   feature-pass skill's table; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh` is made
+   again.
 4. Who gets access to the share DATA (an SMB account for a regular user).
+5. The pull request of `architecture.sqlite-write-cost`, whose branch is pushed (ADR-0208), and
+   then a deploy of the supervisor for its SD measurements (Log).
 
 ## Log
 
@@ -104,7 +123,7 @@ Open owner actions:
   makes ext4 commit its own journal. With the write-ahead log and synchronous NORMAL the same
   commit, in the middle of the log, appends 3 pages (12,360 bytes) to `unos.db-wal`, changes 3
   pages of `unos.db-shm` and syncs nothing.
-- The owner chose "WAL + NORMAL" out of three options, with its costs (ADR-0304, superseding
+- The owner chose "WAL + NORMAL" out of three options, with its costs (ADR-0306, superseding
   ADR-0078): a power cut can roll back the commits of its last seconds, security changes among
   them; the first connection after every start makes `unos.db-shm` again, about 0.05 MiB, which
   ADR-0214 now names as its one accepted exception ("Yes, an exception"). Synchronous FULL for
@@ -140,11 +159,113 @@ Open owner actions:
   ran its database in the log, its restores kept copies with the rollback journal, and its stop
   left an empty `unos.db-wal` and `unos.db-shm` beside `unos.db`. (A run beside `make check`
   failed from its 386th test on: that build replaced `webui/build` while the stand-in served it.)
+- Committed as da7bb46, which names the decision ADR-0304. main took ADR-0304 for the scenario
+  checks (#79) and ADR-0305 for the base images (#80) first, so the merge of main renumbered this
+  branch's ADR to ADR-0306 (the adr skill). After the merge `make check` passed (5976 backend
+  tests, 121 skipped, 1 xfailed), and `make e2e-local` alone (669 passed, 16 skipped).
 - Not deployed. After the owner's deploy of the supervisor (no Dockerfile or requirement
   changed), twice: `scripts/dev/api.py --forget-token`, then
   `scripts/dev/sd.sh measure sign-in -- scripts/dev/api.py GET /auth/me` (the second sign-in is
   in the middle of the log), against the 0.156 to 0.168 MiB of before; and the writes of a
   supervisor start against the exception's 0.05 MiB.
+
+### 2026-11-08: the base images pinned by tag and digest
+
+- `deploy.digest-pinned-base-images`, on its branch (ADR-0305): every `FROM` line names
+  `name:tag@sha256:...`. The pins are what the dev device holds: python:3.11-slim
+  `sha256:65bd3d9f...` in BuildKit's build cache and caddy:2-alpine `sha256:f2b257f2...`;
+  node:22-alpine and the Playwright image take the registry's digests of the day. Read on the
+  device in its read-only namespace: the first layers of deploy-supervisor:latest and
+  deploy-webui:latest are those bases'; each read wrote 0 to 0.023 MiB. The registry's
+  python:3.11-slim had moved to `sha256:07d48240...` that morning, but only for riscv64: its
+  linux/arm64 image is still the cached one, which BuildKit would have reused.
+- The tag stays in the `FROM` line instead of a comment, as the entry first said: dependabot-core
+  reads the tag only there, and for a digest without a tag proposes the digest of `latest`. Its
+  cooldown counts from the tag's last push, and its experiment
+  `docker_digest_only_update_suppression` can stop digest-only pull requests, so the monthly pass
+  compares the pins as well (`docs/maintenance.md`, item 11).
+- `deploy.sh build-supervisor` refuses a base without a whole digest and says before the build
+  whether a layer of the build cache comes from the pinned digest; run by hand on the device,
+  read-only, that check found `65bd3d9f...` and not `07d48240...` (0.016 MiB).
+- Tests: `TestBaseImages`, the digest in the three tests that read `FROM` lines, and
+  build-supervisor's base check against a docker stub; each failed before the change. `make
+  check` and `make e2e-local` passed. A fresh-context review found the false claim that the
+  07d48240 move would have cost the device a rebuild, a note of build-supervisor that said "pulls
+  it" where BuildKit reuses an unchanged arm64 image, Dependabot's cooldown, a digest without
+  hex that passed the check, and a test blind to the order of the refusal: all fixed. Kept by
+  design: the `FROM` check of the test treats a line that starts with `from` as an instruction,
+  also inside a heredoc, and build-supervisor reads the second word of a `FROM` line.
+- Committed as dbb8df7, which names the decision ADR-0304. main took ADR-0304 for the scenario
+  checks first (#79), so the merge of main renumbered this branch's ADR to ADR-0305 (the adr
+  skill).
+- Next, the owner's: the pull request. Step 3 of the entry needs a deploy after python:3.11-slim
+  names an arm64 image other than `sha256:31afb5c0...`: build-supervisor then says "base
+  python:3.11-slim@sha256:65bd3d9f...: on the device" and shows every step CACHED, with the SD
+  writes in single MiB. Step 2 waits for Dependabot's first digest pull request. The pinned Caddy
+  2.10.2 is older than the registry's caddy:2-alpine (`sha256:78bd3502...`): moving it needs that
+  image pulled onto the device first (an owner action) before build-webui.
+
+### 2026-11-08: the scenario checks of the dev device, in the repository
+
+- Built `device.scenario-checks-in-repo` (ADR-0304) in its worktree:
+  `scripts/dev/scenario.sh [--pool NAME] files|volumes|smart|backups|smb|all` holds the device
+  lock, runs `scripts/dev/scenario.py` once per area and prints `SD writes scenario <area>`.
+  Each check reads the device's state, makes a temporary user, share, volume and folders named
+  `unoscheck<6 hex digits>` and two backups through the API, prints PASS or FAIL with each
+  step's SD MiB, removes what it made (also after a FAIL, a lost answer or a signal) and compares
+  the device with the state it read. The smb check runs the slice-2 flows of ADR-0185 with
+  smbclient on the device, one session held open while the API lowers and removes the access and
+  changes the password. `scripts/dev/api.py`'s relay now uploads files. The feature-pass skill's
+  table names the check of each host-level entry, and what each scenario check leaves out.
+- Tests: `supervisor/tests/test_dev_scenarios.py` (81, in `make test-fast`) runs every area
+  against a stand-in of the device in memory, with a 500 at each API call before and after the
+  call changed something, and checks that every call is a route of the supervisor with a body its
+  model accepts; `make check`: 5953 backend tests passed (121 Linux-only skipped, 1 xfailed),
+  svelte-check without errors, the build passed.
+- This worktree's `supervisor/.venv`, `.venv-lint` and `webui/node_modules` were copied from
+  `../unos-shares.nfs-exports-pass` with their stamps; the venv holds the pins of before #25, as
+  the main checkout's, so `setup.sh --check` reports it outdated (Open owner actions, 2).
+  `make smoke` passed before the change.
+- The first fresh-context review found 4 major and 6 minor problems and some nits, all fixed:
+  writing to a closed terminal stopped the clean-up; the quota step read a field that the API's
+  list of volumes does not have (now the quota group's limit is read with btrfs); backups are not
+  named `unoscheck`, and their clean-up, like the user's and the share's, was registered after
+  the call that made them (now before, and a backup whose answer was lost is named, never
+  deleted); the skill's table missed `shares.nfs-exports`, `device.ipv6-inbound-filter` and
+  `device.key-only-ssh` and hid what the checks leave out; the clean-up caught fewer errors than
+  a step; the docs understated the SD writes; an unreadable log counted as clean; several steps
+  took any failure, and the anonymous attempt was no null session and required signing on the
+  client; the advice for leftovers was incomplete; digests in the output, an interrupted check
+  without its SD line, untested helpers, and `scenario.py` running without the lock.
+- A second fresh-context review of the fixes found no major problem and 6 minor ones and 4 nits,
+  all fixed: a HUP or TERM to the process group ended the session that holds the device lock while
+  a check still cleaned up (`dev_lock` of `scripts/dev/env.sh` now starts it with both ignored and
+  ends it with SIGKILL at the release, for every script that takes the lock); a Ctrl-C during the
+  SD measurement let the next check start; a lost output let the steps go on unseen and turned
+  the exit status into 120; with a guest share the null session's refusal was expected; the
+  "partition" refused was no partition on the device; any 409 naming a quota passed as quotas
+  being off; a signal during the clean-up was dropped instead of waiting; `client ipc signing`
+  was left to its default; and the leftover advice, the ADR's wording and the lock's check of
+  its holder.
+- Left out by design, in the skill's table: a restore, a supervisor restart, a pool mounted
+  read-only, a bind mount below a folder, guest shares, Empty trash, scrubs, the Scheduler's
+  tasks, and what survives a reboot (each check removes what it makes): by hand.
+- Committed as 2c15597 and pushed to its branch at the owner's word; the pull request is the
+  owner's. With the owner's go for the rest of the feature ("bypass all permissions"), the first
+  run of `scripts/dev/scenario.sh all` on the device (the pool `data`, at about 17:15 UTC)
+  passed every step, and each check left the device as it found it: files 16 steps, 0.418 MiB on
+  the SD card; volumes 7, 0.938 MiB; smart 5, 0.098 MiB; backups 8, 0.512 MiB; smb 27,
+  3.980 MiB, of which 0.957 MiB made the account and 0.785 MiB deleted it; 5.946 MiB in all.
+  Samba answered as ADR-0103 and ADR-0104 expect: NT_STATUS_NETWORK_NAME_DELETED for the
+  session's next write once its access was lowered and for its tree connect once the access was
+  removed, NT_STATUS_ACCESS_DENIED for a connect without access and for the null session,
+  NT_STATUS_CONNECTION_DISCONNECTED for the open session at the password change, and
+  NT_STATUS_LOGON_FAILURE for the replaced and for a wrong password; the replaced one left
+  passdb.tdb as it was (ADR-0278). Quotas are off on `data`, so the volumes check saw the
+  refusal; sda has no partition, so the smart check refused the system disk and an absent name
+  only, and its short self-test of sda completed without error. `scripts/dev/check.sh` before
+  and after: OK, no ERROR line in the supervisor's log. No step failed: the scripts needed no fix.
+  Open: the same run after the owner's reboot (ADR-0018), then `passes`.
 
 ### 2026-11-08: the NFS server on the dev device, and `shares.nfs-exports` on it
 

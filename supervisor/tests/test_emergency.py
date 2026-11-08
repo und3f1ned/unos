@@ -880,7 +880,7 @@ class TestRunbook:
         assert "### 1. Find the Pool" in text
 
     def test_reads_a_copy_of_the_database_with_its_write_ahead_log(self):
-        """unos.db uses SQLite's write-ahead log (ADR-0304). On the read-only mount SQLite
+        """unos.db uses SQLite's write-ahead log (ADR-0306). On the read-only mount SQLite
         cannot open it without unos.db-wal and unos.db-shm beside it ("attempt to write a
         readonly database"), and unos.db alone, read as immutable, lacks what a NAS that died
         left in unos.db-wal: the runbook copies the database's files to this machine and reads

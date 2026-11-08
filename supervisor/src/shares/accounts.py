@@ -1413,7 +1413,7 @@ async def revocation_guard(
     A write can fail before the commit, not only at it (an autoflush, or a
     DELETE of delete_access_of_user): a lock held past the busy timeout
     (ADR-0079) fails the first write, and a full disk fails a statement once
-    SQLite's page cache spills into unos.db-wal (ADR-0304). Whichever write
+    SQLite's page cache spills into unos.db-wal (ADR-0306). Whichever write
     fails, the transaction is rolled back; when the revoke step had removed the
     passdb entry, the row is set to 'needed' and the account's sessions end, as
     for a failed disallow (ADR-0104). The answer is 503. An HTTPException raised in the
