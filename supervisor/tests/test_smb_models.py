@@ -440,7 +440,7 @@ class TestConstants:
         assert share_root_mode_ok(stat.S_IFDIR | constants.SHARE_DIR_MODE, constants.SMB_GROUP_GID)
 
     def test_the_user_of_apps_in_the_group_is_no_one_elses(self):
-        """The user of the apps that run in unos-smb (ADR-0261) owns what they write in share folders."""
+        """The user of the apps that run in unos-smb (ADR-0274) owns what they write in share folders."""
         assert constants.SMB_APP_UID == 80000
         # No SMB account, and no account made with useradd (UID_MAX 60000 in
         # login.defs), below SUB_UID_MIN (100000), and in the block that

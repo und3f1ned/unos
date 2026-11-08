@@ -6,6 +6,8 @@
 	export let size: 'sm' | 'md' = 'md';
 	export let variant: Variant | 'auto' = 'auto';
 	export let showLabel: boolean = false;
+	/** What the bar measures, for screen readers (ADR-0197). */
+	export let label: string | undefined = undefined;
 
 	$: percent = max > 0 ? Math.min(100, (value / max) * 100) : 0;
 
@@ -30,6 +32,7 @@
 			class="progress-bar-fill {fillClasses[actualVariant]}"
 			style="width: {percent}%"
 			role="progressbar"
+			aria-label={label}
 			aria-valuenow={value}
 			aria-valuemin="0"
 			aria-valuemax={max}

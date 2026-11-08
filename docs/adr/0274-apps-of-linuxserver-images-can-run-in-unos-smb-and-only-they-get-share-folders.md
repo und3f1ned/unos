@@ -3,14 +3,14 @@ status: accepted
 date: 2026-11-08
 area: apps
 decided-by: agent
-supersedes: [ADR-0160]
+supersedes: [ADR-0273]
 ---
 
-# ADR-0261: Apps of linuxserver.io images can be installed to run in the group unos-smb, and only such an app is given a share's folder
+# ADR-0274: Apps of linuxserver.io images can be installed to run in the group unos-smb, and only such an app is given a share's folder
 
 ## Context
 
-ADR-0160 left the File Manager and apps without group access to share folders. Share folders
+ADR-0160 left the File Manager and apps without group access to share folders; ADR-0273 gave the File Manager's new folders and uploads in a share folder the modes 2770 and 0660, and left apps without it. Share folders
 belong to root and the group unos-smb with mode 2770 (ADR-0150), so apps that run as PUID/PGID
 1000 cannot use them, and the ledger entry `apps.smb-group-option` asks for an install option
 that sets PGID 70000. Nothing kept a share's folder out of an app either: a volume override
@@ -19,6 +19,7 @@ its mode, and an administrator could type 70000 as PGID in the Environment tab.
 
 ## Decision
 
+- The File Manager's rule of ADR-0273 stays: in a share folder, New Folder makes a folder 2770 and an upload a file 0660 of the group unos-smb, through the descriptor of the new entry; elsewhere the file manager creates entries as before.
 - `AppInstallRequest.run_in_unos_smb` (`supervisor/src/apps/schemas.py`), the checkbox "Run in
   the group unos-smb" of `webui/src/lib/components/apps/AppDetailModal.svelte`, adds
   `PUID=80000` (`SMB_APP_UID` of `supervisor/src/shares/constants.py`), `PGID=70000`

@@ -36,7 +36,7 @@ Volume host paths:
 - linuxserver.io templates declare PUID and PGID (1000), which UNOS alone
   sets. Such an app with a pool folder outside {pool}/apps can be installed
   to run in the group unos-smb, which sets PUID, PGID and UMASK
-  (AppTemplate.can_run_in_unos_smb, ADR-0261). Only those apps are given a
+  (AppTemplate.can_run_in_unos_smb, ADR-0274). Only those apps are given a
   share's folder.
 
 Mark passwords, tokens and keys with secret=True and never ship a default

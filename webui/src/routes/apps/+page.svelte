@@ -476,7 +476,7 @@
 									</p>
 								{/if}
 								{#if app.runs_in_unos_smb}
-									<!-- Only such an app reads share folders, also after a Repair (ADR-0261). -->
+									<!-- Only such an app reads share folders, also after a Repair (ADR-0274). -->
 									<p class="text-xs text-muted mt-1">
 										Runs in the group <span class="mono">unos-smb</span>
 									</p>

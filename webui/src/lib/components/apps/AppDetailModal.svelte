@@ -53,7 +53,7 @@
 	let portValues: Record<number, string> = {};
 	let volumeOverrides: Record<string, string> = {};
 	let envValues: Record<string, string> = {};
-	// Run the app in the group unos-smb, the only way to give it a share's folder (ADR-0261).
+	// Run the app in the group unos-smb, the only way to give it a share's folder (ADR-0274).
 	let runInUnosSmb = false;
 
 	// Storage pools, reloaded every time the modal opens
@@ -680,7 +680,7 @@
 					{#each app.environment as env}
 						<div class="card-nested">
 							{#if isSetByUnos(env.name)}
-								<!-- The server sets PUID and PGID; the install option decides them (ADR-0261). -->
+								<!-- The server sets PUID and PGID; the install option decides them (ADR-0274). -->
 								<Input
 									class="font-mono text-sm"
 									label={env.name}

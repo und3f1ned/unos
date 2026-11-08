@@ -242,7 +242,7 @@ test.describe('Installed apps', () => {
   });
 });
 
-// Install > Run in the group unos-smb (ADR-0261). The stand-in has no Docker
+// Install > Run in the group unos-smb (ADR-0274). The stand-in has no Docker
 // and no mounted pool, so the pools, the installed list and the install are
 // answered here; the catalog is the stand-in's own. The refusal is the
 // supervisor's text (supervisor/src/apps/router.py), word for word.
@@ -374,7 +374,7 @@ test.describe('Install in the group unos-smb', () => {
   });
 });
 
-// Installed > the group unos-smb (ADR-0261): the server says from the container's
+// Installed > the group unos-smb (ADR-0274): the server says from the container's
 // environment whether an app runs in the group, and the page shows it instead of
 // the template's PUID and PGID. The installed list is faked: the stand-in has no Docker.
 test.describe('Installed apps in the group unos-smb', () => {

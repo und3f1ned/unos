@@ -130,7 +130,7 @@ def anon_api():
 def shares(tmp_path_factory):
     """The database of the install route, with the shares a test adds: none by default.
 
-    An install reads the folders of every share from it (ADR-0261). It lives
+    An install reads the folders of every share from it (ADR-0274). It lives
     outside tmp_path, whose tree some tests compare before and after.
     ``shares(name, folder)`` adds a share row as it is stored, folder as given.
     """
@@ -1366,7 +1366,7 @@ class TestNestedFolders:
 
 
 # ---------------------------------------------------------------------------
-# Running in the group unos-smb, and the folders of shares (ADR-0261)
+# Running in the group unos-smb, and the folders of shares (ADR-0274)
 # ---------------------------------------------------------------------------
 
 LOGIN = TRANSMISSION["env_overrides"]
@@ -2095,7 +2095,7 @@ class TestInstalledApps:
 
     def test_the_list_says_which_apps_run_in_the_group(self, api, pools, installed):
         # The page cannot show the template's PGID as the one an app runs with
-        # (ADR-0261): the container's environment says it.
+        # (ADR-0274): the container's environment says it.
         installed(
             _container(
                 "transmission",

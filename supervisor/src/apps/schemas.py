@@ -110,7 +110,7 @@ class AppTemplate(BaseModel):
     @computed_field  # type: ignore[misc]
     @property
     def can_run_in_unos_smb(self) -> bool:
-        """True if the app can be installed to run in the group unos-smb (ADR-0261).
+        """True if the app can be installed to run in the group unos-smb (ADR-0274).
 
         linuxserver.io images take the user and group of their processes
         from PUID and PGID and the umask of their services from UMASK. Other
@@ -153,7 +153,7 @@ class InstalledApp(BaseModel):
     # start such an app.
     data_outside_pools: list[str] = []
     # The app runs in the group unos-smb: its container's PGID is 70000
-    # (ADR-0261). Only such an app is given a share's folder.
+    # (ADR-0274). Only such an app is given a share's folder.
     runs_in_unos_smb: bool = False
 
 
@@ -174,11 +174,11 @@ class AppInstallRequest(BaseModel):
     # Container path -> host path; host paths must be inside a mounted pool.
     volume_overrides: dict[str, str] = {}
     # Values of the template's variables; PUID and PGID are not among them
-    # (ADR-0261).
+    # (ADR-0274).
     env_overrides: dict[str, str] = {}
     # Run the app in the group unos-smb (PUID 80000, PGID 70000, UMASK 007),
     # the only way to give it a share's folder; only for templates with
-    # can_run_in_unos_smb (ADR-0261).
+    # can_run_in_unos_smb (ADR-0274).
     run_in_unos_smb: bool = False
 
 

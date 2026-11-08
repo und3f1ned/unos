@@ -237,17 +237,30 @@ async def _scrub(func: Callable[[str], ScrubStatus], name: str) -> ScrubStatus:
 
 @router.post("/pools/{name}/scrub", response_model=ScrubStatus)
 async def start_scrub_endpoint(name: str, _=Depends(verify_token)):
-    """Start a scrub on a pool."""
+    """Start a scrub on a pool; answers once btrfs runs it, with its status then (ADR-0071).
+
+    500 with btrfs's error when it does not start, or when btrfs does not
+    answer within SCRUB_COMMAND_TIMEOUT. A scrub that started is answered
+    running when its status cannot be read yet (ADR-0272).
+    """
     return await _scrub(pools.start_scrub, name)
 
 
 @router.get("/pools/{name}/scrub", response_model=ScrubStatus)
 async def get_scrub_status_endpoint(name: str, _=Depends(verify_token)):
-    """Get scrub status for a pool."""
+    """The pool's scrub as btrfs reports it: its progress while it runs, then its result (ADR-0272).
+
+    idle when no scrub is recorded; 500 with btrfs's error when it cannot
+    report the status, or does not answer within SCRUB_COMMAND_TIMEOUT.
+    """
     return await _scrub(pools.get_scrub_status, name)
 
 
 @router.delete("/pools/{name}/scrub", response_model=ScrubStatus)
 async def cancel_scrub_endpoint(name: str, _=Depends(verify_token)):
-    """Cancel a running scrub on a pool."""
+    """Cancel a running scrub; answers its status after btrfs's cancel (aborted once it stopped).
+
+    A scrub that no longer runs is no error: the answer is its status. A
+    cancelled scrub whose status cannot be read is answered aborted (ADR-0272).
+    """
     return await _scrub(pools.cancel_scrub, name)

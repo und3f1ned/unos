@@ -60,13 +60,13 @@ PLACEHOLDER_SECRETS = frozenset(
 # Docker's own rule for container names.
 _CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]+$")
 
-# Added to the environment of an app that runs in the group unos-smb (ADR-0261):
+# Added to the environment of an app that runs in the group unos-smb (ADR-0274):
 # a user that no other app has, the group unos-smb, and the umask that gives
 # new entries the modes Samba gives them in a share (2770 and 0660), so that
 # SMB users can change what the app creates and nobody else can read it.
 UNOS_SMB_ENVIRONMENT = {"PUID": str(SMB_APP_UID), "PGID": str(SMB_GROUP_GID), "UMASK": "007"}
 # The user and group of an app's processes: UNOS's to set, never an
-# env_overrides value (ADR-0261).
+# env_overrides value (ADR-0274).
 _SET_BY_UNOS = ("PUID", "PGID")
 # Folders below the pools base that keep files of shares outside their
 # folders: snapshots (copies as they were) and the trash (what was deleted,
@@ -157,7 +157,7 @@ def _list_installed() -> list[InstalledApp]:
 
 
 def _runs_in_unos_smb(container: Any) -> bool:
-    """True if the container runs with the PGID that the install option sets (ADR-0261).
+    """True if the container runs with the PGID that the install option sets (ADR-0274).
 
     Read from the environment Docker keeps for the container; only this
     answer leaves it, never a value.
@@ -482,7 +482,7 @@ def _check_share_folders(
     *,
     run_in_unos_smb: bool,
 ) -> None:
-    """Refuse a pool folder that would give the app the files of a share (ADR-0261).
+    """Refuse a pool folder that would give the app the files of a share (ADR-0274).
 
     A share's folder belongs to root and the group unos-smb with mode 2770
     (ADR-0150), but an image that runs as root inside its container reads and
@@ -767,7 +767,7 @@ def _build_environment(
 ) -> dict[str, str]:
     # PGID decides whether the app's processes are in the group unos-smb, and
     # PUID whose they are: root (0), an SMB account or the apps in the group.
-    # Only the install option changes them (ADR-0261).
+    # Only the install option changes them (ADR-0274).
     set_by_unos = [name for name in _SET_BY_UNOS if name in overrides]
     if set_by_unos:
         raise HTTPException(

@@ -7,7 +7,7 @@ import { api } from "./client";
 export const POOL_PLACEHOLDER = "{pool}";
 
 /**
- * PUID and PGID of an app installed to run in the group unos-smb (ADR-0261): the user of
+ * PUID and PGID of an app installed to run in the group unos-smb (ADR-0274): the user of
  * such apps, which no other app has (SMB_APP_UID of supervisor/src/shares/constants.py),
  * and the group id of unos-smb (SMB_GROUP_GID). The server sets both; UMASK becomes 007.
  */

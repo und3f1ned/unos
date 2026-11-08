@@ -21,7 +21,7 @@ SMB_GROUP_GID = 70000
 SMB_UID_MIN = 70000
 SMB_UID_MAX = 79999
 
-# User id of the apps that run in the group unos-smb (ADR-0261): what they
+# User id of the apps that run in the group unos-smb (ADR-0274): what they
 # write in share folders belongs to it, and so may a share's folder, which
 # their images give to their user when they start. No SMB account and no app
 # outside the group has it.
