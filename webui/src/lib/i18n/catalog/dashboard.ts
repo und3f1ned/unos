@@ -1,0 +1,189 @@
+import type { Translation } from '../translate';
+
+// The dashboard: src/routes/+page.svelte and its widgets in src/lib/components/widgets/. What
+// the server sends as text (a notification's title and message, a disk's risk factors) stays
+// as it comes.
+
+export const en = {
+	'dashboard.osUptime': '{os} • Uptime: {uptime}',
+	'dashboard.uptime.days': '{days}d {hours}h',
+	'dashboard.uptime.hours': '{hours}h {minutes}m',
+	'dashboard.uptime.minutes': '{minutes}m',
+	'dashboard.liveStatsForbidden': 'Live stats are not available for this account',
+	'dashboard.disconnected': 'WebSocket disconnected',
+	'dashboard.updated': 'Updated {time}',
+	'dashboard.notification': 'Notification',
+
+	'dashboard.replace.title': 'Replace soon',
+	'dashboard.replace.disk': '(serial {serial}): {reasons}',
+	'dashboard.replace.diskHealth': 'Disk Health',
+	'dashboard.replace.checkFailed': 'Could not check the disks for a predicted failure',
+	'dashboard.replace.loadFailed': 'Could not load the failure predictions',
+
+	'dashboard.user.signedInAs': 'Signed in as {name}',
+	'dashboard.user.managed': 'Storage, shares, containers and apps are managed by an administrator.',
+	'dashboard.user.account': 'You can change your password, two-factor authentication and review your sign-ins under',
+	'dashboard.user.accountLink': 'Account',
+
+	'dashboard.stats.cpu': 'CPU',
+	'dashboard.stats.memory': 'Memory',
+	'dashboard.stats.network': 'Network',
+	'dashboard.stats.temperature': 'Temperature',
+	'dashboard.stats.none': 'N/A',
+	'dashboard.celsius': '{value}°C',
+
+	// The units of a size, from bytes up, and of a rate (ADR-0288).
+	'dashboard.unit.b': 'B',
+	'dashboard.unit.kb': 'KB',
+	'dashboard.unit.mb': 'MB',
+	'dashboard.unit.gb': 'GB',
+	'dashboard.unit.tb': 'TB',
+	'dashboard.rate': '{size}/s',
+
+	'dashboard.manage': 'Manage →',
+
+	'dashboard.storage.title': 'Storage Pools',
+	'dashboard.storage.none': 'No storage pools configured',
+	'dashboard.storage.inaccessible': 'Data not accessible',
+	'dashboard.storage.total': 'Total Storage',
+	'dashboard.storage.pools': { one: '{n} pool', other: '{n} pools' },
+	'dashboard.storage.attention': { one: '{n} needs attention', other: '{n} need attention' },
+	'dashboard.storage.missing': { one: '{n} device missing', other: '{n} devices missing' },
+	'dashboard.storage.errors': { one: '{n} device error', other: '{n} device errors' },
+	'dashboard.storage.forcedReadOnly': 'forced read-only',
+	'dashboard.storage.readOnly': 'read-only',
+	// A pool's health, as GET /storage/pools reports it; "unknown" is common.unknown.
+	'dashboard.health.healthy': 'Healthy',
+	'dashboard.health.degraded': 'Degraded',
+	'dashboard.health.unmounted': 'Not mounted',
+	'dashboard.health.error': 'Error',
+
+	'dashboard.containers.title': 'Containers',
+	'dashboard.containers.running': 'Running',
+	'dashboard.containers.stopped': 'Stopped',
+	'dashboard.containers.runningCount': '{n} running',
+	'dashboard.containers.stoppedCount': '{n} stopped',
+	'dashboard.containers.none': 'No containers found',
+	'dashboard.containers.create': 'Create your first container',
+	'dashboard.containers.open': 'Open',
+	'dashboard.containers.viewAll': 'View all {n} containers →',
+	// A container's state, as Docker names it (ContainerState of supervisor/src/containers/schemas.py).
+	'dashboard.containers.state.running': 'running',
+	'dashboard.containers.state.exited': 'exited',
+	'dashboard.containers.state.stopped': 'stopped',
+	'dashboard.containers.state.paused': 'paused',
+	'dashboard.containers.state.restarting': 'restarting',
+	'dashboard.containers.state.created': 'created',
+	'dashboard.containers.state.dead': 'dead',
+
+	'dashboard.actions.title': 'Quick Actions',
+	'dashboard.actions.files': 'File Browser',
+	'dashboard.actions.shares': 'Manage Shares',
+	'dashboard.actions.apps': 'App Store',
+	'dashboard.actions.settings': 'Settings',
+
+	'dashboard.activity.title': 'Recent Activity',
+	'dashboard.activity.viewAll': 'View all',
+	'dashboard.activity.none': 'No recent activity',
+	'dashboard.activity.justNow': 'just now',
+	'dashboard.activity.minutesAgo': '{n}m ago',
+	'dashboard.activity.hoursAgo': '{n}h ago',
+	'dashboard.activity.daysAgo': '{n}d ago'
+};
+
+export const ru: Translation<typeof en> = {
+	'dashboard.osUptime': '{os} • Время работы: {uptime}',
+	'dashboard.uptime.days': '{days} дн. {hours} ч',
+	'dashboard.uptime.hours': '{hours} ч {minutes} мин',
+	'dashboard.uptime.minutes': '{minutes} мин',
+	'dashboard.liveStatsForbidden': 'Статистика в реальном времени недоступна для этой учётной записи',
+	'dashboard.disconnected': 'WebSocket отключён',
+	'dashboard.updated': 'Обновлено {time}',
+	'dashboard.notification': 'Уведомление',
+
+	'dashboard.replace.title': 'Заменить в ближайшее время',
+	'dashboard.replace.disk': '(серийный номер {serial}): {reasons}',
+	'dashboard.replace.diskHealth': 'Состояние дисков',
+	'dashboard.replace.checkFailed': 'Не удалось проверить прогноз отказа дисков',
+	'dashboard.replace.loadFailed': 'Не удалось загрузить прогнозы отказов',
+
+	'dashboard.user.signedInAs': 'Вы вошли как {name}',
+	'dashboard.user.managed': 'Хранилищем, общими папками, контейнерами и приложениями управляет администратор.',
+	'dashboard.user.account':
+		'Сменить пароль, настроить двухфакторную аутентификацию и просмотреть историю входов можно на странице',
+	'dashboard.user.accountLink': 'Учётная запись',
+
+	'dashboard.stats.cpu': 'Процессор',
+	'dashboard.stats.memory': 'Память',
+	'dashboard.stats.network': 'Сеть',
+	'dashboard.stats.temperature': 'Температура',
+	'dashboard.stats.none': 'Н/Д',
+	'dashboard.celsius': '{value} °C',
+
+	'dashboard.unit.b': 'Б',
+	'dashboard.unit.kb': 'КБ',
+	'dashboard.unit.mb': 'МБ',
+	'dashboard.unit.gb': 'ГБ',
+	'dashboard.unit.tb': 'ТБ',
+	'dashboard.rate': '{size}/с',
+
+	'dashboard.manage': 'Управление →',
+
+	'dashboard.storage.title': 'Пулы хранения',
+	'dashboard.storage.none': 'Пулы хранения не настроены',
+	'dashboard.storage.inaccessible': 'Данные недоступны',
+	'dashboard.storage.total': 'Общий объём',
+	'dashboard.storage.pools': { one: '{n} пул', few: '{n} пула', many: '{n} пулов' },
+	'dashboard.storage.attention': {
+		one: '{n} требует внимания',
+		few: '{n} требуют внимания',
+		many: '{n} требуют внимания'
+	},
+	'dashboard.storage.missing': {
+		one: '{n} устройство отсутствует',
+		few: '{n} устройства отсутствуют',
+		many: '{n} устройств отсутствуют'
+	},
+	'dashboard.storage.errors': {
+		one: '{n} ошибка устройств',
+		few: '{n} ошибки устройств',
+		many: '{n} ошибок устройств'
+	},
+	'dashboard.storage.forcedReadOnly': 'принудительно только для чтения',
+	'dashboard.storage.readOnly': 'только для чтения',
+	'dashboard.health.healthy': 'Исправен',
+	'dashboard.health.degraded': 'Деградирован',
+	'dashboard.health.unmounted': 'Не смонтирован',
+	'dashboard.health.error': 'Ошибка',
+
+	'dashboard.containers.title': 'Контейнеры',
+	'dashboard.containers.running': 'Работают',
+	'dashboard.containers.stopped': 'Остановлены',
+	'dashboard.containers.runningCount': 'Работают: {n}',
+	'dashboard.containers.stoppedCount': 'Остановлены: {n}',
+	'dashboard.containers.none': 'Контейнеры не найдены',
+	'dashboard.containers.create': 'Создайте первый контейнер',
+	'dashboard.containers.open': 'Открыть',
+	'dashboard.containers.viewAll': 'Показать все контейнеры ({n}) →',
+	'dashboard.containers.state.running': 'работает',
+	'dashboard.containers.state.exited': 'остановлен',
+	'dashboard.containers.state.stopped': 'остановлен',
+	'dashboard.containers.state.paused': 'приостановлен',
+	'dashboard.containers.state.restarting': 'перезапускается',
+	'dashboard.containers.state.created': 'создан',
+	'dashboard.containers.state.dead': 'неисправен',
+
+	'dashboard.actions.title': 'Быстрые действия',
+	'dashboard.actions.files': 'Файловый менеджер',
+	'dashboard.actions.shares': 'Общие папки',
+	'dashboard.actions.apps': 'Магазин приложений',
+	'dashboard.actions.settings': 'Настройки',
+
+	'dashboard.activity.title': 'Последние события',
+	'dashboard.activity.viewAll': 'Показать все',
+	'dashboard.activity.none': 'Нет недавних событий',
+	'dashboard.activity.justNow': 'только что',
+	'dashboard.activity.minutesAgo': '{n} мин назад',
+	'dashboard.activity.hoursAgo': '{n} ч назад',
+	'dashboard.activity.daysAgo': '{n} дн. назад'
+};

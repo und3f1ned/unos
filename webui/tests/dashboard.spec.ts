@@ -1,6 +1,8 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { createAccount, deleteAccount, type Account } from './accounts';
 import { fakeStorageApi } from './storage-fakes';
+import { TEST_MESSAGE, TEST_TITLE } from './notifications-fakes';
 import {
   HEALTHY_HDD_2,
   MONITOR_CLOSELY,
@@ -16,6 +18,29 @@ async function refresh(page: Page) {
   const button = page.getByRole('button', { name: 'Refresh', exact: true });
   await button.click();
   await expect(button).toBeEnabled();
+}
+
+/** Show the web UI in Russian from the next page load on: the choice that the Account page keeps (ADR-0287). */
+async function chooseRussian(page: Page) {
+  await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+}
+
+// Two containers as GET /api/v1/containers lists them (supervisor/src/containers/docker.py): the
+// stand-in has no Docker.
+const CONTAINERS = [
+  { id: '0d1f2e3c4b5a', name: 'e2e-web', image: 'nginx:1.27', status: 'Up 2 hours', state: 'running',
+    created: '2026-11-01T10:00:00Z', ports: [], labels: {} },
+  { id: '1a2b3c4d5e6f', name: 'e2e-db', image: 'postgres:16', status: 'Exited (0) 3 hours ago', state: 'exited',
+    created: '2026-11-01T10:00:00Z', ports: [], labels: {} },
+];
+
+/** A test notification in the history of GET /api/v1/notifications/logs, sent `minutes` ago. */
+function notificationLog(minutes: number) {
+  const sent = new Date(Date.now() - minutes * 60_000).toISOString();
+  return {
+    id: 'e2e-log-1', event: { type: 'info', title: TEST_TITLE, message: TEST_MESSAGE, timestamp: sent },
+    channel: 'email', channel_name: 'E2E mail', sent_at: sent, success: true, error: null,
+  };
 }
 
 test.describe('Dashboard', () => {
@@ -138,5 +163,119 @@ test.describe('Dashboard', () => {
     await refresh(page);
     await expect(page.getByRole('heading', { name: 'Storage Pools' })).toBeVisible();
     await expect(warning).toHaveCount(0);
+  });
+
+  // webui.translations (ADR-0287): the dashboard and its widgets in Russian, with what the code puts
+  // together at run time (counts in their plural forms, sizes, times) and the server's words through
+  // maps; the server's own texts, such as the reasons of a prediction, stay English.
+  test('shows the dashboard in Russian', async ({ authenticatedPage: page }) => {
+    await fakeStorageApi(page);
+    await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
+    await page.route(
+      (url) => url.pathname === '/api/v1/containers',
+      (route) => (route.request().method() === 'GET' ? route.fulfill({ json: CONTAINERS }) : route.abort()),
+    );
+    await page.route(
+      (url) => url.pathname === '/api/v1/notifications/logs',
+      (route) => (route.request().method() === 'GET' ? route.fulfill({ json: [notificationLog(5)] }) : route.abort()),
+    );
+    await chooseRussian(page);
+    await page.goto('/');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+    const main = page.locator('main');
+
+    // The live stats, the time of their last update on a 24-hour clock, and the uptime. A regular
+    // expression of getByText meets the text with the white space of the markup around it.
+    for (const label of ['Процессор', 'Память', 'Сеть', 'Температура']) {
+      await expect(main.getByText(label, { exact: true })).toBeVisible();
+    }
+    await expect(main.getByText(/^\s*Обновлено \d{2}:\d{2}:\d{2}\s*$/)).toBeVisible();
+    await expect(main.getByText(/ • Время работы: (\d+ дн\. \d+ ч|\d+ ч \d+ мин|\d+ мин)\s*$/)).toBeVisible();
+
+    // The pools: their health through a map, their problems counted in Russian.
+    const storage = main.locator('.card', { has: page.getByRole('heading', { name: 'Пулы хранения' }) });
+    const pool = (name: string) =>
+      storage.locator('.space-y-3 > div').filter({ has: page.locator('span', { hasText: new RegExp(`^${name}$`) }) });
+    await expect(pool('e2e_tank').locator('.badge')).toHaveText('Не смонтирован');
+    await expect(pool('e2e_tank').getByText('Данные недоступны', { exact: true })).toBeVisible();
+    await expect(pool('e2e_media').locator('.badge')).toHaveText('Деградирован');
+    await expect(pool('e2e_media').locator('p')).toHaveText('1 устройство отсутствует • 2 ошибки устройств');
+    await expect(pool('e2e_media')).toContainText('465.7 ГБ / 1.8 ТБ');
+    await expect(pool('e2e_frozen').locator('.badge')).toHaveText('Ошибка');
+    await expect(pool('e2e_frozen').locator('p')).toHaveText('принудительно только для чтения');
+    await expect(pool('e2e_unread').locator('.badge')).toHaveText('Неизвестно');
+    await expect(pool('e2e_archive').locator('.badge')).toHaveText('Исправен');
+    await expect(pool('e2e_archive').locator('p')).toHaveText('только для чтения');
+    await expect(pool('e2e_vault').locator('p')).toHaveText('3 ошибки устройств • только для чтения');
+    await expect(storage.getByText('Общий объём', { exact: true })).toBeVisible();
+    await expect(storage.getByText('1.9 ТБ / 11.8 ТБ (16.2%)', { exact: true })).toBeVisible();
+
+    // A disk to replace soon: the words of the page in Russian, the reasons as the server gives them.
+    const alert = main.locator('.alert', { has: page.getByText('Заменить в ближайшее время', { exact: true }) });
+    await expect(alert.getByRole('listitem')).toHaveText([
+      '/dev/e2e-sda (серийный номер E2E-HDD-1): Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly',
+    ]);
+    await expect(alert.getByRole('link', { name: 'Состояние дисков' })).toHaveAttribute('href', '/system#health');
+
+    // The containers: Docker's states through a map.
+    const containers = main.locator('.card', { has: page.getByRole('heading', { name: 'Контейнеры' }) });
+    await expect(containers.getByText('Работают', { exact: true })).toBeVisible();
+    await expect(containers.getByText('Остановлены', { exact: true })).toBeVisible();
+    const state = (name: string) =>
+      containers.getByRole('link').filter({ hasText: name }).locator('.badge');
+    await expect(state('e2e-web')).toHaveText('работает');
+    await expect(state('e2e-db')).toHaveText('остановлен');
+
+    // The quick actions and the recent activity, with the time of a notification.
+    await expect(main.getByRole('heading', { name: 'Быстрые действия' })).toBeVisible();
+    for (const action of ['Файловый менеджер', 'Общие папки', 'Магазин приложений', 'Настройки']) {
+      await expect(main.getByRole('button', { name: action, exact: true })).toBeVisible();
+    }
+    const activity = main.locator('.card', { has: page.getByRole('heading', { name: 'Последние события' }) });
+    await expect(activity.getByRole('link', { name: 'Показать все', exact: true })).toHaveAttribute(
+      'href',
+      '/system#notifications',
+    );
+    await expect(activity.getByText(TEST_TITLE, { exact: true })).toBeVisible();
+    await expect(activity.getByText('5 мин назад', { exact: true })).toBeVisible();
+
+    // Nothing of the English dashboard is left.
+    for (const heading of ['Storage Pools', 'Containers', 'Quick Actions', 'Recent Activity']) {
+      await expect(main.getByRole('heading', { name: heading })).toHaveCount(0);
+    }
+    await expect(main.getByText('Replace soon')).toHaveCount(0);
+  });
+
+  test.describe('a regular user', () => {
+    const USER = { username: `e2e_dash_${Date.now().toString(36)}`, password: 'e2e-Dashboard-Password-1' };
+    let account: Account | undefined;
+
+    test.beforeAll(async ({ request }) => {
+      account = await createAccount(request, USER);
+    });
+
+    test.afterAll(async ({ request }) => {
+      await deleteAccount(request, account, USER.username);
+    });
+
+    test('sees the dashboard in Russian', async ({ page }) => {
+      await page.goto('/login');
+      await chooseRussian(page);
+      await page.reload();
+      await page.getByLabel('Имя пользователя').fill(USER.username);
+      await page.getByLabel('Пароль').fill(USER.password);
+      await page.getByRole('button', { name: 'Войти' }).click();
+      await expect(page).toHaveURL('/');
+
+      const main = page.locator('main');
+      await expect(main.getByText(`Вы вошли как ${USER.username}`, { exact: true })).toBeVisible();
+      await expect(main.getByText('Хранилищем, общими папками, контейнерами и приложениями управляет администратор.'))
+        .toBeVisible();
+      await expect(main.getByRole('link', { name: 'Учётная запись', exact: true })).toHaveAttribute(
+        'href',
+        '/system#security',
+      );
+      await expect(main.getByText('Signed in as')).toHaveCount(0);
+    });
   });
 });
