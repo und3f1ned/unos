@@ -11,10 +11,12 @@ significant step. Features and their state live in `feature-list.json`, decision
   of the host, the Images view, the scheduler's command output and the host's time zone, smb.conf
   re-applied when a pool goes, sign-in with a full system disk and API token fixes, and tests that
   prove the first-run setup, two-factor sign-in, the disk list, mounts, forget and scrub.
-- The third batch is in main except NFS exports and the storage commands' timeouts (in review):
-  group-writable files in shares, apps in the SMB group, network discovery, Samba's logs and
-  sign-in audit, importing a pool, the emergency runbook (#53 to #58), and the fix of unmounting
-  (#60). The Russian web UI's shell is in main (#59); the pages are being translated.
+- Done in the night of 2026-11-08 (#32 to #73): three feature batches, the fix of unmounting, NFS
+  exports, the command timeouts and the whole web UI in Russian (Language on the Account page).
+  The dev device runs main ebb1856. In progress: `webui.mobile-layout`.
+- On the device, nfs-kernel-server is installed but nfs-server and rpcbind are stopped and
+  disabled, because inbound IPv6 is not filtered (ADR-0227); `systemctl enable --now nfs-server`
+  turns NFS on. avahi-daemon and wsdd2 run (network discovery).
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
@@ -81,6 +83,16 @@ Open owner actions:
 5. Whether the services are used from outside over IPv6 (`device.ipv6-inbound-filter`).
 
 ## Log
+
+### 2026-11-08: NFS, the command timeouts and the Russian web UI, on the dev device
+
+- Merged: NFS exports on the host (#65), the command timeouts (#62), and the web UI's translation
+  into Russian in nine branches (#59, #63, #64, #66 to #73): 1782 keys in English and Russian, and
+  no text outside the catalogs. Deployed main ebb1856: the supervisor 12.4 MiB, the web UI 18.6
+  MiB, up 5.5 MiB; 41.2 MiB in all.
+- NFS on the device (nfs-kernel-server installed, 27 MiB): an export written to UNOS's own file,
+  listed by exportfs and by the workstation's showmount, and deleted again; then nfs-server and
+  rpcbind stopped and disabled, as inbound IPv6 is not filtered.
 
 ### 2026-11-08: the third feature batch and unmounting, on the dev device
 
