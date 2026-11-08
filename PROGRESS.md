@@ -36,18 +36,20 @@ significant step. Features and their state live in `feature-list.json`, decision
   `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
   `AGENTS.md` or `.claude/settings.json` is a stop.
 - Next, in this order:
-  1. The owner's reboot of the device, then the re-check of the host-level entries:
-     `scripts/dev/scenario.sh all` again, and the checks by hand that the feature-pass skill's
-     table lists (ADR-0018). The scenario checks (#79, ADR-0304) passed twice before it on
-     2026-11-08, the second time after the deploy of main 78769b4 (Log).
-  2. `architecture.sqlite-write-cost` (the SD card), pushed on its branch, then its own deploy.
+  1. `architecture.sqlite-write-cost` (the SD card), pushed on its branch, then its own deploy.
      `deploy.digest-pinned-base-images` (#80, ADR-0305) is deployed and its supervisor build
      reused the cached base; the entry passes once a build shows that after the tag's arm64 image
      has moved upstream, and Dependabot has proposed a digest.
+  2. The host-level entries still open (the feature-pass skill's table): after the re-check of
+     2026-11-08 after a reboot (Log), 14 more pass; the others need a device check first or, as
+     `storage.pool-health` and `deploy.health-checks-and-start-order`, a step the re-check could
+     not show.
+  3. `test_samba_takes_the_logging_lines` fails against the device's testparm: its expectations
+     of testparm's output are wrong (Log, the deploy of main 78769b4).
 
 ## Dev device
 
-State on 2026-11-08, 22:35 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-08, 23:10 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -59,8 +61,9 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   ADR-0305 pins (the supervisor's runtime files are those of ebb1856, the web UI's those of
   36a6c1b). The device checkout `/opt/unos` equals main's tree; the deploy's backup and rollback
   copies are in the main checkout's `tmp/dev/`. Rebooted from the API twice that morning, for the
-  reboot checks of the IPv6 filter. Docker lists 11 dangling images, the old builds' layers:
-  pruning them is the owner's call (ADR-0211).
+  reboot checks of the IPv6 filter, and by the owner at about 22:57 UTC for the re-check of
+  ADR-0018 (the boot of 22:59:48 UTC; it answered again at 23:00). Docker lists 11 dangling
+  images, the old builds' layers: pruning them is the owner's call (ADR-0211).
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest (`97728ea0...`, the one before it as `:rollback`),
   deploy-webui:latest (`d77b0aa7...`, likewise), lscr.io/linuxserver/transmission, alpine (the
@@ -77,11 +80,11 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   The share DATA is served from /mnt/pools/data/shared (root:unos-smb 2770); no account has
   access to it yet. The regular account `test` stays for checks of a regular user's view.
 - Scenario checks (ADR-0304): `scripts/dev/scenario.sh all` passed on 2026-11-08 at about 17:15
-  UTC and again at 22:33 UTC, after the deploy, and left none of its users, shares, volumes,
-  folders or backups; the pool's trash `/mnt/pools/data/.unos-trash` (made at 00:05 UTC that
-  night) is empty. The first run's short self-test of sda completed without error, as the two
-  before it; sda's SMART status: PASSED. The RAM rootfs of `scripts/dev/linux-tests.sh` is gone
-  since the morning's reboots (Open owner actions, 3).
+  UTC, at 22:33 UTC after the deploy and at 23:03 UTC after the reboot, and left none of its
+  users, shares, volumes, folders or backups; the pool's trash `/mnt/pools/data/.unos-trash`
+  (made at 00:05 UTC that night) is empty. The first run's short self-test of sda completed
+  without error, as the two before it; sda's SMART status: PASSED. The RAM rootfs of
+  `scripts/dev/linux-tests.sh` is gone since the reboots of that day (Open owner actions, 3).
 - Network: global IPv6 from a Hurricane Electric tunnel prefix. Since 2026-11-08 the services
   answer over IPv6 only the LAN (link-local, unique-local and the LAN's global prefix), and the
   BitTorrent port 51413 everyone: the table `ip6 unos_ipv6_inbound`, loaded at boot by
@@ -91,8 +94,10 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
 - SD writes on 2026-11-08: the deploy of main 78769b4 31.836 MiB (sync 1.527, build-supervisor
   6.094, build-webui 18.539, up 5.676, backup 0); the scenario checks 5.946 MiB at 17:15 UTC
   (files 0.418, volumes 0.938, smart 0.098, backups 0.512, smb 3.980, of which the smb check's
-  account took 0.957 to make and 0.785 to delete) and 5.259 MiB at 22:33 UTC (0.426, 0.641,
-  0.125, 0.430 and 3.637); 60.1 MiB in the 11.1 hours since that morning's boot, by 22:34 UTC.
+  account took 0.957 to make and 0.785 to delete), 5.259 MiB at 22:33 UTC (0.426, 0.641,
+  0.125, 0.430 and 3.637) and 5.393 MiB at 23:03 UTC (0.441, 0.734, 0.105, 0.449 and 3.664);
+  60.1 MiB in the 11.1 hours since that morning's boot, by 22:34 UTC; the boot of 22:59:48 UTC
+  9.7 MiB by 23:00:29.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -107,13 +112,44 @@ Open owner actions:
    Developer settings, Tokens).
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
-3. The reboot of the device for the re-check of ADR-0018: then `scripts/dev/scenario.sh all`
-   again (it passed twice on 2026-11-08, ADR-0304) and the checks by hand of the feature-pass
-   skill's table; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh`, gone since the
-   morning's reboots, is made again (a container: the command that `linux-tests.sh` prints).
+3. The RAM rootfs of `scripts/dev/linux-tests.sh`, gone since the reboots of 2026-11-08: making
+   it creates a container (the command that `linux-tests.sh` prints).
 4. Who gets access to the share DATA (an SMB account for a regular user).
+5. Whether the web UI must wait for the supervisor at boot too: after a reboot dockerd starts
+   both containers at once (`deploy.health-checks-and-start-order`, step 2; Log, 2026-11-08).
 
 ## Log
+
+### 2026-11-08: the re-check of the host-level entries after a reboot (ADR-0018)
+
+- The owner rebooted the device at about 22:57 UTC; it answered again at 23:00 (the boot of
+  22:59:48 UTC). Read before the reboot and again after it: the API's pools, shares, Samba
+  status, NFS exports, users, installed apps, RAID monitor, `health/full` and Prometheus metrics;
+  the sha256 of `/etc/fstab`, `smb.conf`, the export file and the IPv6 filter's rules; the modes
+  of the import backup and of the share DATA's folder; 8 services, the pool's mount and the
+  containers; the HTTPS headers, the redirect and the answers without a token. After the reboot
+  all of it was the same but for times, memory and load, and `check.sh` was OK once the web UI
+  turned healthy, a minute after the boot. Each read wrote 0 to 0.031 MiB.
+- `scripts/dev/scenario.sh all`, 23:02 to 23:05 UTC: every step of the five areas passed again,
+  with the NT_STATUS answers of the runs before; files 0.441 MiB, volumes 0.734, smart 0.105,
+  backups 0.449 and smb 3.664, 5.393 MiB in all. By hand: Delete and Delete for good of a folder
+  with a bind mount below it answered 409 and deleted nothing (the mount and both folders were
+  removed afterwards); the boot's restart of the supervisor changed no file (smb.conf
+  byte-identical, fstab, the export file and the import backup untouched, no apply in its log).
+- 14 entries pass, each with its re-check in its notes: `device.scenario-checks-in-repo`,
+  `files.protects-volumes-and-mounts`, `shares.smb-accounts`, `shares.smb-share`,
+  `shares.per-user-access`, `shares.guest-off-by-default`, `shares.smb-conf-and-status`,
+  `shares.edit-and-delete`, `shares.password-follows-unos`, `security.https-local-ca`,
+  `shares.smb-conf-import`, `apps.install-on-a-pool`, `apps.transmission-login` and
+  `system.health-details-and-metrics`.
+- Not passed: `storage.pool-health`, whose step 4 (a degraded RAID1 test pool) needs spare disks
+  and was never checked on the device; `deploy.health-checks-and-start-order`: at boot dockerd's
+  restart policy starts both containers at once, the web UI 34 ms before the supervisor, and the
+  web UI's first health check failed before it turned healthy, so step 2 holds for
+  `docker compose up` only (Open owner actions, 5).
+- The boot wrote 9.7 MiB by 23:00:29 UTC. Docker records that boot's container starts as
+  22:56:57, before the clock was set. The RAM rootfs of `scripts/dev/linux-tests.sh` is gone
+  again (Open owner actions, 3).
 
 ### 2026-11-08: the deploy of main 78769b4
 
