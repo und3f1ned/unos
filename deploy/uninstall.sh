@@ -169,7 +169,7 @@ remove_samba_passwords() {
         messagebus sshd ssh polkitd avahi avahi-autoipd dnsmasq ntp
         ntpsec tss uuidd tcpdump lpadmin bluetooth i2c gpio spi
         docker sambashare postfix postdrop mysql postgres redis nginx
-        statd rpc unbound usbmux pulse rtkit geoclue colord saned
+        statd rpc unbound usbmux pulse rtkit geoclue colord saned wsdd2
         unos unos-smb
     )
     local name _password uid gid gecos _rest usable word
@@ -328,12 +328,21 @@ print_smb_leftovers() {
         echo "  systemctl restart smbd"
     fi
     echo ""
-    # install.sh set them up (ADR-0261); like samba, the packages stay.
+    # install.sh set them up (ADR-0261); like samba, the packages stay, and so
+    # do the files that keep them to IPv4 (none of them in /etc/unos, which
+    # remove_files removes: avahi-daemon would not start without its file).
     echo "Network discovery: avahi-daemon and wsdd2 (where install.sh could install"
     echo "it) keep running, so Windows and macOS still list this server while Samba"
-    echo "runs. wsdd2 answers over IPv4 only, as"
-    echo "/etc/systemd/system/wsdd2.service.d/unos.conf says. To stop it:"
+    echo "runs, over IPv4 only, as UNOS set them up:"
+    echo "  /etc/systemd/system/wsdd2.service.d/unos.conf runs wsdd2 -4"
+    echo "  /etc/systemd/system/avahi-daemon.service.d/unos.conf makes avahi-daemon"
+    echo "  read /etc/avahi/avahi-daemon.unos.conf, without IPv6"
+    echo "To stop wsdd2, run:"
     echo "  systemctl disable --now wsdd2"
+    echo "To give avahi-daemon its own settings back (/etc/avahi/avahi-daemon.conf),"
+    echo "remove the drop-in and /etc/avahi/avahi-daemon.unos.conf, then run:"
+    echo "  systemctl daemon-reload"
+    echo "  systemctl restart avahi-daemon"
     echo ""
 }
 

@@ -8,7 +8,7 @@ const SOURCES = [
   { name: 'journal', label: 'System Journal', description: "Everything in the host's systemd journal" },
   { name: 'dmesg', label: 'Kernel', description: "The kernel's messages since the host started" },
   { name: 'docker', label: 'Docker', description: 'The Docker daemon' },
-  { name: 'samba', label: 'Samba', description: 'The SMB file server: smbd and nmbd' },
+  { name: 'samba', label: 'Samba', description: 'The SMB file server: smbd, and nmbd where NetBIOS is on' },
   {
     name: 'auth',
     label: 'Authentication',

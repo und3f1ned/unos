@@ -122,8 +122,8 @@ reconcile.
 
 **Network discovery**: How computers on the LAN find the NAS without its address: Windows through
 WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd registers with
-avahi-daemon); NetBIOS is off (ADR-0261). Avoid: network browsing (a share's "Show in network
-browsing" lists the share among the NAS's shares), NetBIOS browsing.
+avahi-daemon), both over IPv4 only; NetBIOS is off (ADR-0261). Avoid: network browsing (a share's
+"Show in network browsing" lists the share among the NAS's shares), NetBIOS browsing.
 
 ## Users and access
 

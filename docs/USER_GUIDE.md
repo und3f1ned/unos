@@ -371,11 +371,13 @@ Computers on your local network find the NAS without its address:
 - **macOS** lists it in the Finder sidebar, under **Locations**. Click it,
   then **Connect As** and sign in with your UNOS username and password.
 
-The NAS appears under its server name. NetBIOS, the old way of finding
-Windows servers, is off: computers that know only NetBIOS (Windows XP, some
-older TVs and media players) do not list the NAS; connect them by address as
-below. On a NAS installed on Debian 11, Windows does not list it either
-([Network Discovery](INSTALL.md#network-discovery)).
+The NAS appears under its server name, and is announced with its IPv4
+address, which both connect to. NetBIOS, the old way of finding Windows
+servers, is off: computers that know only NetBIOS (some older TVs and media
+players) do not list the NAS; connect them by address as below. Computers
+that speak only SMB1, such as Windows XP, cannot use the NAS at all: it
+speaks SMB2 and later. On a NAS installed on Debian 11, Windows does not list
+it either ([Network Discovery](INSTALL.md#network-discovery)).
 
 **Show in network browsing** of a share is another matter: it decides whether
 the share appears in the NAS's list of shares.
@@ -990,7 +992,8 @@ first. The buttons above the filters choose what it lists:
 - **System Journal**: everything in the journal
 - **Kernel**: the kernel's messages since the host started
 - **Docker**: the Docker daemon
-- **Samba**: the SMB file server, smbd and nmbd
+- **Samba**: the SMB file server, smbd, and nmbd where NetBIOS is on (UNOS
+  turns NetBIOS off, so nmbd's entries are from before)
 - **Authentication**: sign-ins, sudo and the other messages of the syslog
   facilities auth and authpriv, which hosts with rsyslog also write to
   `/var/log/auth.log`

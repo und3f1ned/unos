@@ -147,7 +147,7 @@ sudo apt update
 sudo apt install -y \
     curl wget git ca-certificates gnupg lsb-release \
     btrfs-progs smartmontools lm-sensors \
-    samba samba-common-bin avahi-daemon \
+    samba samba-common-bin \
     hdparm parted mdadm nvme-cli \
     ethtool net-tools iproute2
 ```
@@ -205,9 +205,35 @@ known placeholder such as `change-me-in-production`.
 sudo systemctl enable --now smbd
 sudo systemctl disable --now nmbd
 
-# wsdd2 answers over IPv4 only; its drop-in comes before the package, whose
-# installation starts it
-sudo mkdir -p /etc/systemd/system/wsdd2.service.d
+# avahi-daemon and wsdd2 answer over IPv4 only. Their settings come before the
+# packages, whose installation starts them.
+sudo mkdir -p /etc/avahi /etc/systemd/system/avahi-daemon.service.d /etc/systemd/system/wsdd2.service.d
+sudo tee /etc/avahi/avahi-daemon.unos.conf > /dev/null << 'EOF'
+# UNOS: avahi-daemon reads this file instead of avahi-daemon.conf (the drop-in
+# /etc/systemd/system/avahi-daemon.service.d/unos.conf): Debian's settings,
+# without IPv6, so that this server is announced with its IPv4 addresses only
+# (docs/INSTALL.md, Network Discovery). install.sh writes it again when it runs.
+[server]
+use-ipv4=yes
+use-ipv6=no
+ratelimit-interval-usec=1000000
+ratelimit-burst=1000
+
+[wide-area]
+enable-wide-area=yes
+
+[publish]
+publish-hinfo=no
+publish-workstation=no
+publish-aaaa-on-ipv4=no
+EOF
+sudo tee /etc/systemd/system/avahi-daemon.service.d/unos.conf > /dev/null << 'EOF'
+# UNOS: avahi-daemon announces this server over IPv4 only (docs/INSTALL.md,
+# Network Discovery).
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/avahi-daemon -s -f /etc/avahi/avahi-daemon.unos.conf
+EOF
 sudo tee /etc/systemd/system/wsdd2.service.d/unos.conf > /dev/null << 'EOF'
 # UNOS: wsdd2 answers over IPv4 only (docs/INSTALL.md, Network Discovery).
 [Service]
@@ -215,13 +241,20 @@ ExecStart=
 ExecStart=/usr/sbin/wsdd2 -4
 EOF
 sudo systemctl daemon-reload
+
+# Without libnss-mdns, which avahi-daemon recommends: it would change how this
+# host resolves names that end in .local
+sudo apt install -y --no-install-recommends avahi-daemon
+sudo systemctl enable avahi-daemon
+sudo systemctl restart avahi-daemon
 sudo apt install -y wsdd2
-sudo systemctl enable --now avahi-daemon wsdd2
+sudo systemctl enable wsdd2
+sudo systemctl restart wsdd2
 ```
 
 These are the steps of `install.sh`; [Network Discovery](#network-discovery)
-explains them. Debian 11 has no `wsdd2` package: there, leave out
-`apt install -y wsdd2` and enable `avahi-daemon` alone.
+explains them. Debian 11 has no `wsdd2` package, and Ubuntu has it in
+`universe`: without it, leave out the last three commands.
 
 `install.sh` also writes an initial `/etc/samba/smb.conf`, the one UNOS
 generates while there is no share; a manual installation needs nothing more
@@ -447,17 +480,38 @@ NAS instead:
 | Service | For | What it answers |
 |---------|-----|-----------------|
 | `wsdd2` | Windows | WS-Discovery (UDP 3702 and TCP 3702), and LLMNR for the server's name (UDP and TCP 5355), over IPv4 only |
-| `avahi-daemon` | macOS | Bonjour (mDNS, UDP 5353): smbd registers its `_smb._tcp` service with it (`multicast dns register = yes`) |
+| `avahi-daemon` | macOS | Bonjour (mDNS, UDP 5353), over IPv4 only: smbd registers its `_smb._tcp` service with it (`multicast dns register = yes`), and it answers for the server's name (`<name>.local`) with the server's IPv4 addresses |
 
-wsdd2 answers over IPv4 only, as its drop-in
-`/etc/systemd/system/wsdd2.service.d/unos.conf` sets (`wsdd2 -4`): over IPv6
-it would open its TCP ports on every interface, IPv6 tunnels included, whose
-global addresses the host may not filter.
+Both answer over IPv4 only, as `install.sh` sets them up:
 
-- **Debian 11** has no `wsdd2` package: `install.sh` warns and goes on, and
-  Windows reaches the NAS only by its address (`\\192.168.1.10\<share>`).
-- **Clients that know only NetBIOS** (Windows XP, some older TVs and media
-  players) do not list the NAS: connect them by address.
+- wsdd2 runs as `wsdd2 -4` (the drop-in
+  `/etc/systemd/system/wsdd2.service.d/unos.conf`): over IPv6 it would open
+  its TCP ports on every interface, IPv6 tunnels included, whose global
+  addresses the host may not filter.
+- avahi-daemon reads `/etc/avahi/avahi-daemon.unos.conf` instead of
+  `/etc/avahi/avahi-daemon.conf` (the drop-in
+  `/etc/systemd/system/avahi-daemon.service.d/unos.conf`): Debian's settings
+  with `use-ipv6=no` and `publish-aaaa-on-ipv4=no`. With IPv6, it would
+  announce the server's global IPv6 addresses, which computers such as Macs
+  prefer to IPv4; SMB refuses clients that connect from a global address, so
+  the NAS would be listed but would not open. Settings made in
+  `/etc/avahi/avahi-daemon.conf` no longer apply, and `install.sh` writes
+  UNOS's file again when it runs.
+
+avahi-daemon comes without libnss-mdns, which it recommends: the server
+resolves names that end in `.local` through DNS, as before.
+
+Limits, and what to check:
+
+- **Debian 11** has no `wsdd2` package, and Ubuntu has it in `universe`:
+  without it, `install.sh` warns and goes on, and Windows reaches the NAS only
+  by its address (`\\192.168.1.10\<share>`). When a package exists but does
+  not install (another apt holds its lock, a mirror fails), `install.sh` shows
+  apt's error and stops: run it again.
+- **Clients that know only NetBIOS** (some older TVs and media players) do
+  not list the NAS: connect them by address. Clients that speak only SMB1,
+  such as Windows XP, cannot connect at all: the NAS speaks SMB2 and later.
+- **A network with IPv6 only:** neither service announces the NAS there.
 - **The NAS is not listed:** check that the services run
   (`sudo systemctl status smbd wsdd2 avahi-daemon`), and that a firewall on the
   server lets these ports in from your local network.

@@ -44,6 +44,9 @@ RESERVED_ACCOUNT_NAMES = frozenset(
         "ntpsec", "tss", "uuidd", "tcpdump", "lpadmin", "bluetooth", "i2c", "gpio", "spi",
         "docker", "sambashare", "postfix", "postdrop", "mysql", "postgres", "redis", "nginx",
         "statd", "rpc", "unbound", "usbmux", "pulse", "rtkit", "geoclue", "colord", "saned",
+        # wsdd2.service, which install.sh sets up, runs as the dynamic user wsdd2: a static
+        # account of that name, with its primary group, would take its place (ADR-0261).
+        "wsdd2",
         # UNOS
         "unos", "unos-smb",
     }

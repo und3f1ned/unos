@@ -2719,7 +2719,7 @@ async def _remove_access_of_unserved(db: AsyncSession) -> list[str]:
 
 
 async def _reload_now(run: _Run, marker_set: bool) -> None:
-    """Step 5 of _reconcile: a reload message to smbd and nmbd (no disk write); after it, pending closes.
+    """Step 5 of _reconcile: a reload message to smbd (no disk write); after it, pending closes.
 
     After a full reload, the shares closed while it was pending become pending
     closes again (they are closed here with the import marker set, else at the
