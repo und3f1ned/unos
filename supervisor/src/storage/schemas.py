@@ -97,13 +97,13 @@ class PoolInfo(BaseModel):
     forced_read_only: bool = False
 
 
-# Why a btrfs filesystem cannot be mounted as a pool under its label (ADR-0261): it has
+# Why a btrfs filesystem cannot be mounted as a pool under its label (ADR-0273): it has
 # none, it is not a valid pool name, or another btrfs filesystem of the host has it too.
 LabelProblem = Literal["missing", "invalid", "duplicate"]
 
 
 class ImportableFilesystem(BaseModel):
-    """A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0261)."""
+    """A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0273)."""
 
     uuid: str
     label: str | None = None  # as btrfs prints it; None without a label
@@ -144,10 +144,14 @@ class VolumeInfo(BaseModel):
 
 class ScrubStatus(BaseModel):
     pool: str
-    status: str  # "running", "finished", "aborted", "idle"
+    # As btrfs scrub status prints it: "running", "finished", "aborted" (cancelled),
+    # "interrupted" (ended neither by finishing nor by a cancel, for example because the btrfs
+    # process that ran it was killed); "idle": no scrub recorded, also after a restart of the
+    # supervisor, which forgets the last one (ADR-0171).
+    status: str
     duration: float | None = None  # seconds
     bytes_scrubbed: int | None = None
     total_bytes: int | None = None
     rate: int | None = None  # bytes per second
-    errors: int = 0
-    last_run: str | None = None  # datetime string of last scrub
+    errors: int = 0  # the sum of the error summary: read, super, verify and csum errors (ADR-0272)
+    last_run: str | None = None  # when the scrub started, as btrfs prints it

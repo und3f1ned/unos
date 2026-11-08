@@ -76,11 +76,11 @@ export interface Pool {
 
 /**
  * Why a btrfs filesystem cannot be mounted as a pool under its label: it has none, it is not a
- * valid pool name, or another btrfs filesystem of the host has it too (ADR-0261).
+ * valid pool name, or another btrfs filesystem of the host has it too (ADR-0273).
  */
 export type LabelProblem = 'missing' | 'invalid' | 'duplicate';
 
-/** A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0261). */
+/** A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0273). */
 export interface ImportableFilesystem {
   uuid: string;
   /** As btrfs prints it; null without a label. */
@@ -188,14 +188,22 @@ export function quotaBytes(gib: string): number | null {
   return bytes >= 1 && bytes <= MAX_QUOTA_GIB * GIB ? bytes : null;
 }
 
+/** A pool's scrub as `btrfs scrub status` reports it (ADR-0272). */
 export interface ScrubStatus {
   pool: string;
-  status: 'running' | 'finished' | 'aborted' | 'idle';
+  /**
+   * idle: no scrub recorded (a restart of the supervisor forgets the last one, ADR-0171);
+   * aborted: cancelled; interrupted: ended neither by finishing nor by a cancel, for example
+   * because the btrfs process that ran it was killed.
+   */
+  status: 'running' | 'finished' | 'aborted' | 'interrupted' | 'idle';
   duration: number | null;
   bytes_scrubbed: number | null;
   total_bytes: number | null;
   rate: number | null;
+  /** Every error of btrfs's error summary (read, super, verify and csum). */
   errors: number;
+  /** When the scrub started, as btrfs prints it. */
   last_run: string | null;
 }
 
@@ -234,7 +242,7 @@ export async function unmountPool(name: string): Promise<Pool> {
   return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
 }
 
-/** The btrfs filesystems on the host's disks that can be imported as pools (ADR-0261). */
+/** The btrfs filesystems on the host's disks that can be imported as pools (ADR-0273). */
 export async function getImportableFilesystems(): Promise<ImportableFilesystem[]> {
   return api.get<ImportableFilesystem[]>('/storage/filesystems/importable');
 }

@@ -63,7 +63,12 @@
 	let pools: Pool[] = [];
 	let loading = true;
 	let error = '';
-	// btrfs filesystems on the host's disks that are not pools yet (ADR-0261).
+	// Why the disk list or the pool list could not be loaded (ADR-0271). A disk list
+	// that could not be loaded again is not offered either: it may no longer match the host.
+	let disksError = '';
+	let poolsError = '';
+	// btrfs filesystems on the host's disks that are not pools yet (ADR-0273), with the
+	// reason when they could not be searched.
 	let importable: ImportableFilesystem[] = [];
 	let importableError = '';
 
@@ -71,7 +76,6 @@
 	let showCreateModal = false;
 	let saving = false;
 	let disksLoading = false;
-	let disksError = '';
 	let createError = '';
 	let poolForm = {
 		name: '',
@@ -100,6 +104,8 @@
 
 	// Scrub state
 	let scrubStatuses: Record<string, ScrubStatus> = {};
+	// Why a pool's scrub status could not be read: shown instead of the last one (ADR-0272).
+	let scrubErrors: Record<string, string> = {};
 	let scrubPollingIntervals: Record<string, ReturnType<typeof setInterval>> = {};
 	let startingScrub: Record<string, boolean> = {};
 
@@ -118,17 +124,29 @@
 	async function loadData(showSpinner = true) {
 		if (showSpinner) loading = true;
 		error = '';
-		// With its own error: the disks and the pools are shown without it.
+		// Each list on its own: one that cannot be loaded says why in its card instead
+		// of looking empty, and the other ones are still shown (ADR-0271). The filesystems
+		// found on the disks have their own error as well (loadImportable).
 		const found = loadImportable();
-		try {
-			[disks, pools] = await Promise.all([getDisks(), getPools()]);
-			await loadScrubStatuses();
-		} catch (e) {
-			error = messageOf(e);
-		} finally {
-			await found;
-			loading = false;
+		const [diskList, poolList] = await Promise.allSettled([getDisks(), getPools()]);
+		if (diskList.status === 'fulfilled') {
+			disks = diskList.value;
+			disksError = '';
+		} else {
+			// For example 500 "lsblk failed: ..." when the host's disks cannot be listed.
+			disks = [];
+			disksError = messageOf(diskList.reason);
 		}
+		if (poolList.status === 'fulfilled') {
+			pools = poolList.value;
+			poolsError = '';
+		} else {
+			pools = [];
+			poolsError = messageOf(poolList.reason);
+		}
+		await loadScrubStatuses();
+		await found;
+		loading = false;
 	}
 
 	async function loadImportable() {
@@ -145,34 +163,52 @@
 		// Scrubbing needs a mounted filesystem.
 		for (const pool of pools.filter((p) => p.mounted)) {
 			try {
-				const status = await getScrubStatus(pool.name);
-				scrubStatuses[pool.name] = status;
-				scrubStatuses = scrubStatuses;
-				if (status.status === 'running') {
-					startScrubPolling(pool.name);
-				}
-			} catch {
-				// Ignore errors
+				showScrubStatus(pool.name, await getScrubStatus(pool.name));
+			} catch (e) {
+				showScrubError(pool.name, e);
 			}
 		}
+	}
+
+	/** Show a pool's scrub as btrfs reports it, and ask again every 2 seconds while it runs. */
+	function showScrubStatus(poolName: string, status: ScrubStatus) {
+		delete scrubErrors[poolName];
+		scrubErrors = scrubErrors;
+		scrubStatuses[poolName] = status;
+		scrubStatuses = scrubStatuses;
+		if (status.status === 'running') {
+			startScrubPolling(poolName);
+		} else {
+			stopScrubPolling(poolName);
+		}
+	}
+
+	/**
+	 * The status could not be read (e.g. btrfs did not answer): say why instead of the last
+	 * one, and stop asking. The last one still decides the button, so that a scrub that was
+	 * running can be cancelled.
+	 */
+	function showScrubError(poolName: string, e: unknown) {
+		stopScrubPolling(poolName);
+		scrubErrors[poolName] = messageOf(e);
+		scrubErrors = scrubErrors;
 	}
 
 	function startScrubPolling(poolName: string) {
 		if (scrubPollingIntervals[poolName]) return;
 		scrubPollingIntervals[poolName] = setInterval(async () => {
 			try {
-				const status = await getScrubStatus(poolName);
-				scrubStatuses[poolName] = status;
-				scrubStatuses = scrubStatuses;
-				if (status.status !== 'running') {
-					clearInterval(scrubPollingIntervals[poolName]);
-					delete scrubPollingIntervals[poolName];
-				}
-			} catch {
-				clearInterval(scrubPollingIntervals[poolName]);
-				delete scrubPollingIntervals[poolName];
+				showScrubStatus(poolName, await getScrubStatus(poolName));
+			} catch (e) {
+				showScrubError(poolName, e);
 			}
 		}, 2000);
+	}
+
+	function stopScrubPolling(poolName: string) {
+		if (!scrubPollingIntervals[poolName]) return;
+		clearInterval(scrubPollingIntervals[poolName]);
+		delete scrubPollingIntervals[poolName];
 	}
 
 	async function handleStartScrub(poolName: string) {
@@ -180,10 +216,7 @@
 		startingScrub = startingScrub;
 		error = '';
 		try {
-			const status = await startScrub(poolName);
-			scrubStatuses[poolName] = status;
-			scrubStatuses = scrubStatuses;
-			startScrubPolling(poolName);
+			showScrubStatus(poolName, await startScrub(poolName));
 		} catch (e) {
 			error = messageOf(e);
 		} finally {
@@ -194,17 +227,39 @@
 
 	async function handleCancelScrub(poolName: string) {
 		try {
-			const status = await cancelScrub(poolName);
-			scrubStatuses[poolName] = status;
-			scrubStatuses = scrubStatuses;
-			if (scrubPollingIntervals[poolName]) {
-				clearInterval(scrubPollingIntervals[poolName]);
-				delete scrubPollingIntervals[poolName];
-			}
+			// btrfs can still report the scrub as running for a moment: then it is followed
+			// until it stopped (ADR-0272).
+			showScrubStatus(poolName, await cancelScrub(poolName));
 		} catch (e) {
 			error = messageOf(e);
 		}
 	}
+
+	/** The result of a pool's last scrub, as btrfs reports it (ADR-0272). */
+	function scrubResult(status: ScrubStatus): { text: string; tone: 'success' | 'warning' | 'error' } {
+		const found = `${status.errors} error(s)`;
+		if (status.status === 'finished') {
+			return status.errors > 0
+				? { text: `Last scrub: ${found}`, tone: 'error' }
+				: { text: 'Last scrub: No errors', tone: 'success' };
+		}
+		const stopped =
+			status.status === 'aborted'
+				? 'cancelled before it finished'
+				: status.status === 'interrupted'
+					? 'interrupted before it finished'
+					: status.status;
+		return {
+			text: `Last scrub: ${stopped}${status.errors > 0 ? `, ${found} found` : ''}`,
+			tone: status.errors > 0 ? 'error' : 'warning'
+		};
+	}
+
+	const scrubResultStyles = {
+		success: { icon: CheckCircle, class: 'text-success' },
+		warning: { icon: AlertTriangle, class: 'text-warning' },
+		error: { icon: XCircle, class: 'text-error' }
+	};
 
 	function formatDuration(seconds: number): string {
 		const hours = Math.floor(seconds / 3600);
@@ -330,6 +385,7 @@
 			disks = await getDisks();
 		} catch (e) {
 			// Do not offer the old list: it may no longer match the host.
+			disks = [];
 			disksError = messageOf(e);
 		} finally {
 			disksLoading = false;
@@ -430,7 +486,7 @@
 		}
 	}
 
-	// ---- Import a pool found on the disks (ADR-0261) ----
+	// ---- Import a pool found on the disks (ADR-0273) ----
 
 	// The filesystem the Import dialog is open for.
 	let importTarget: ImportableFilesystem | null = null;
@@ -684,7 +740,9 @@
 				Physical Disks
 			</h2>
 
-			{#if disks.length === 0}
+			{#if disksError}
+				<Alert variant="error" title="Could not load the disks">{disksError}</Alert>
+			{:else if disks.length === 0}
 				<p class="text-muted">No disks found</p>
 			{:else}
 				<div class="overflow-x-auto">
@@ -742,7 +800,7 @@
 			{/if}
 		</Card>
 
-		<!-- btrfs filesystems on the host's disks that are not pools yet (ADR-0261). A filesystem
+		<!-- btrfs filesystems on the host's disks that are not pools yet (ADR-0273). A filesystem
 		     whose label is a pool name is a pool below, and its Mount imports it. -->
 		{#if importable.length > 0 || importableError}
 			<Card>
@@ -805,7 +863,9 @@
 				</Alert>
 			{/if}
 
-			{#if pools.length === 0}
+			{#if poolsError}
+				<Alert variant="error" title="Could not load the pools">{poolsError}</Alert>
+			{:else if pools.length === 0}
 				<p class="text-muted">No pools configured</p>
 			{:else}
 				<div class="space-y-4">
@@ -879,6 +939,7 @@
 										on:click={() => openDeleteModal(pool)}
 									>
 										<Trash2 class="w-4 h-4 text-error" />
+										<span class="sr-only">Remove pool {pool.name}</span>
 									</Button>
 								</div>
 							</div>
@@ -961,8 +1022,12 @@
 								</Alert>
 							{/if}
 
-							<!-- Scrub Status -->
-							{#if pool.mounted && scrubStatus}
+							<!-- Scrub Status: progress while it runs, then the result (ADR-0272) -->
+							{#if pool.mounted && scrubErrors[pool.name]}
+								<Alert variant="warning" title="Could not read the scrub status" class="mt-3">
+									{scrubErrors[pool.name]}
+								</Alert>
+							{:else if pool.mounted && scrubStatus && scrubStatus.status !== 'idle'}
 								<div class="mt-3 pt-3 border-t border-border">
 									{#if scrubStatus.status === 'running'}
 										<div class="space-y-2">
@@ -981,6 +1046,7 @@
 												<ProgressBar
 													value={getScrubProgress(scrubStatus)}
 													variant="info"
+													label="Scrub progress"
 												/>
 												<div class="flex justify-between text-xs text-secondary">
 													<span
@@ -995,20 +1061,13 @@
 												</div>
 											{/if}
 										</div>
-									{:else if scrubStatus.status === 'finished' || scrubStatus.status === 'aborted'}
+									{:else}
+										{@const result = scrubResult(scrubStatus)}
+										{@const style = scrubResultStyles[result.tone]}
 										<div class="flex items-center justify-between text-sm">
-											<span
-												class="flex items-center gap-2 {scrubStatus.errors > 0
-													? 'text-error'
-													: 'text-success'}"
-											>
-												{#if scrubStatus.errors > 0}
-													<XCircle class="w-4 h-4" />
-													Last scrub: {scrubStatus.errors} error(s)
-												{:else}
-													<CheckCircle class="w-4 h-4" />
-													Last scrub: No errors
-												{/if}
+											<span class="flex items-center gap-2 {style.class}">
+												<svelte:component this={style.icon} class="w-4 h-4" />
+												{result.text}
 											</span>
 											<span class="text-xs text-muted">
 												{#if scrubStatus.last_run}
@@ -1188,7 +1247,7 @@
 				Mount <strong class="text-content">"{poolAction.pool.name}"</strong> at
 				<span class="mono">/mnt/pools/{poolAction.pool.name}</span>?
 			</p>
-			<!-- Also how a pool found on the disks is imported (ADR-0261). -->
+			<!-- Also how a pool found on the disks is imported (ADR-0273). -->
 			<p class="text-sm text-secondary">
 				The disks are not formatted: the data on them is kept. UNOS also adds an /etc/fstab entry
 				so the pool is mounted again after a reboot.
@@ -1229,7 +1288,7 @@
 	</svelte:fragment>
 </Modal>
 
-<!-- Import Pool Modal (ADR-0261) -->
+<!-- Import Pool Modal (ADR-0273) -->
 <Modal
 	open={importTarget !== null}
 	title="Import Pool"

@@ -2,17 +2,17 @@ import type { Page } from '@playwright/test';
 
 // Canned /api/v1/storage responses for UI tests that must never format,
 // mount or unmount a real disk. fakeStorageApi() answers every storage request
-// of the page itself: unknown requests are aborted and writes are only
-// recorded, so nothing reaches the supervisor. The device paths do not exist
-// on any machine.
+// of the page itself: unknown requests are aborted and writes are recorded and
+// change only the fake's own pools, so nothing reaches the supervisor. The
+// device paths do not exist on any machine.
 
 export const FAKE_DISKS = [
   {
     name: 'e2e-sd0', path: '/dev/e2e-sd0', model: 'Boot card', serial: 'E2E0', wwn: null, size: 64e9,
-    rotational: false, mountpoint: null, type: 'disk', fstype: null, label: null, pttype: 'dos',
+    rotational: false, mountpoint: '/', type: 'disk', fstype: null, label: null, pttype: 'dos',
     partitions: [{ name: 'e2e-sd0p1', path: '/dev/e2e-sd0p1', size: 63e9, fstype: 'ext4', label: null, mountpoints: ['/'] }],
     mountpoints: ['/'], has_data: true, is_system: true, in_use: true,
-    in_use_reason: 'Holds the root filesystem', pool: null,
+    in_use_reason: 'Mounted at /', pool: null,
   },
   {
     name: 'e2e-hd1', path: '/dev/e2e-hd1', model: 'E2E Disk', serial: 'E2E1', wwn: '0x5000e2e000000001', size: 4e12,
@@ -33,9 +33,26 @@ export const SWAPPED_DISKS = [
   { ...FAKE_DISKS[1], name: 'e2e-hd2', path: '/dev/e2e-hd2' },
 ];
 
+export interface FakePool {
+  name: string;
+  uuid: string;
+  devices: string[];
+  total_size: number;
+  used_size: number;
+  mountpoint: string | null;
+  raid_level: string | null;
+  mounted: boolean;
+  persistent: boolean;
+  health: string;
+  missing_devices: number;
+  device_errors: number;
+  read_only: boolean;
+  forced_read_only: boolean;
+}
+
 // As GET /storage/pools reports them: raid_level is only known for mounted
 // pools, and device_errors only counts on mounted ones.
-export const FAKE_POOLS = [
+export const FAKE_POOLS: readonly FakePool[] = [
   {
     name: 'e2e_tank', uuid: '00000000-0000-4000-8000-0000000000e1', devices: ['/dev/e2e-hd1'],
     total_size: 4e12, used_size: 0, mountpoint: null, raid_level: null,
@@ -79,32 +96,37 @@ export const FAKE_POOLS = [
   },
 ];
 
-/** A pool as GET /storage/pools reports it. */
-export type FakePool = (typeof FAKE_POOLS)[number];
+/** A mounted, healthy pool on one disk: Scrub, Volumes, Unmount and Remove Pool are offered. */
+export const HEALTHY_POOL: FakePool = {
+  name: 'e2e_data', uuid: '00000000-0000-4000-8000-0000000000e7', devices: ['/dev/e2e-hd9'],
+  total_size: 4e12, used_size: 1e12, mountpoint: '/mnt/pools/e2e_data', raid_level: 'single',
+  mounted: true, persistent: true, health: 'healthy', missing_devices: 0, device_errors: 0, read_only: false,
+  forced_read_only: false,
+};
 
 // btrfs filesystems on the fake host's disks that cannot be mounted as a pool under their label,
-// as GET /storage/filesystems/importable reports them (ADR-0261). fakeStorageApi offers none
+// as GET /storage/filesystems/importable reports them (ADR-0273). fakeStorageApi offers none
 // unless a test passes them.
 export const FAKE_IMPORTABLE = [
   {
     // The disk of another system: a filesystem without a label.
     uuid: '00000000-0000-4000-8000-0000000000f1', label: null as string | null, label_problem: 'missing',
-    devices: ['/dev/e2e-hd9'], total_devices: 1, missing_devices: 0, size: 4e12, used: 7e11,
+    devices: ['/dev/e2e-hd10'], total_devices: 1, missing_devices: 0, size: 4e12, used: 7e11,
   },
   {
     // A label that another system allowed, but that is no pool name.
     uuid: '00000000-0000-4000-8000-0000000000f2', label: 'My Media', label_problem: 'invalid',
-    devices: ['/dev/e2e-hd10'], total_devices: 1, missing_devices: 0, size: 2e12, used: 5e11,
+    devices: ['/dev/e2e-hd11'], total_devices: 1, missing_devices: 0, size: 2e12, used: 5e11,
   },
   {
     // A mirror whose second disk is not connected.
     uuid: '00000000-0000-4000-8000-0000000000f3', label: null, label_problem: 'missing',
-    devices: ['/dev/e2e-hd11'], total_devices: 2, missing_devices: 1, size: 1e12, used: 1e11,
+    devices: ['/dev/e2e-hd12'], total_devices: 2, missing_devices: 1, size: 1e12, used: 1e11,
   },
   {
     // The pool e2e_tank of another host: FAKE_POOLS[0] has its label too.
     uuid: '00000000-0000-4000-8000-0000000000f4', label: 'e2e_tank', label_problem: 'duplicate',
-    devices: ['/dev/e2e-hd12'], total_devices: 1, missing_devices: 0, size: 4e12, used: 1e12,
+    devices: ['/dev/e2e-hd13'], total_devices: 1, missing_devices: 0, size: 4e12, used: 1e12,
   },
 ];
 
@@ -120,32 +142,23 @@ function importedPool(fs: FakeImportable, name: string): FakePool {
   };
 }
 
-/** A pool after POST /pools/<name>/mount, as the server reports it (the profile only once mounted). */
-function mountedPool(pool: FakePool): FakePool {
-  return {
-    ...pool,
-    mountpoint: `/mnt/pools/${pool.name}`,
-    raid_level: pool.raid_level ?? 'single',
-    mounted: true,
-    persistent: true,
-    health: pool.missing_devices > 0 ? 'degraded' : 'healthy',
-    read_only: false,
-    forced_read_only: false,
-  };
+/** A scrub as GET /storage/pools/{name}/scrub reports what `btrfs scrub status` printed. */
+export interface FakeScrubStatus {
+  pool: string;
+  status: string;
+  duration: number | null;
+  bytes_scrubbed: number | null;
+  total_bytes: number | null;
+  rate: number | null;
+  errors: number;
+  last_run: string | null;
 }
 
-/** A pool after POST /pools/<name>/unmount, as the server reports it. */
-function unmountedPool(pool: FakePool): FakePool {
+/** No scrub recorded (btrfs: "no stats available"). */
+export function noScrub(pool: string): FakeScrubStatus {
   return {
-    ...pool,
-    mountpoint: null,
-    raid_level: null,
-    mounted: false,
-    persistent: false,
-    health: 'unmounted',
-    device_errors: 0,
-    read_only: false,
-    forced_read_only: false,
+    pool, status: 'idle', duration: null, bytes_scrubbed: null, total_bytes: null, rate: null, errors: 0,
+    last_run: null,
   };
 }
 
@@ -162,21 +175,39 @@ interface DiskIdentity {
   size: number;
 }
 
+export interface FakeResponse {
+  status: number;
+  json: unknown;
+}
+
 export interface FakeStorageOptions {
   /** The disks the fake host has at the time of each request (default FAKE_DISKS). */
   disks?: () => readonly DiskIdentity[];
+  /** The pools of the fake host before the first request (default FAKE_POOLS). */
+  pools?: readonly FakePool[];
   /** Answer POST /pools with this instead of creating the pool. */
   createPoolResponse?: { status: number; json: unknown };
   /**
-   * The pools GET /pools answers (default FAKE_POOLS, which nothing changes). A mount or an
-   * unmount changes its pool in this list as the server does.
+   * Answer a mount, unmount or delete of a pool with this instead (for example the
+   * supervisor's 409 for a pool in use): the pools stay as they are. Undefined: done.
    */
-  pools?: FakePool[];
-  /** Called after a mount or an unmount of a pool of `pools` was answered. */
-  onPoolChange?: (name: string, change: 'mount' | 'unmount') => void;
+  poolActionResponse?: (write: RecordedWrite) => FakeResponse | undefined;
+  /**
+   * Called when a mount, an unmount or a delete of a pool is done, before it is answered: the
+   * server applies smb.conf before it answers, and the shares of a pool that is no longer
+   * mounted are not served (ADR-0248; setPoolMounted of shares-fakes.ts does that in the SMB
+   * fake). Not called for an answer of poolActionResponse.
+   */
+  onPoolChange?: (name: string, change: 'mount' | 'unmount' | 'delete') => void;
+  /**
+   * What btrfs reports for a pool's scrub after a request with this method
+   * (default: no scrub recorded). The server answers GET with the status, and
+   * POST (start) and DELETE (cancel) with the status after its btrfs command.
+   */
+  scrubStatus?: (pool: string, method: string) => FakeScrubStatus;
   /**
    * The filesystems GET /filesystems/importable answers (default none). An import takes its
-   * filesystem off this list (a copy) and adds the new pool to `pools`, if given.
+   * filesystem off this list (a copy) and adds the new pool to the fake's pools.
    */
   importable?: readonly FakeImportable[];
   /** Answer GET /filesystems/importable with this instead. */
@@ -199,10 +230,35 @@ function changedDiskDetail(selected: DiskIdentity, now: DiskIdentity | undefined
   );
 }
 
-/** Serve FAKE_DISKS / FAKE_POOLS; returns the list of write requests made. */
+/**
+ * A pool that was not mounted, as GET /storage/pools/{name} reports it once UNOS mounted it
+ * (storage/pools.py get_pool): btrfs keeps the device error counters on the disks. One with
+ * missing devices is not mounted (409).
+ */
+function mountedPool(pool: FakePool, raidLevel: string, deviceErrors: number): FakePool {
+  return {
+    ...pool, mounted: true, persistent: true, mountpoint: `/mnt/pools/${pool.name}`, raid_level: raidLevel,
+    health: deviceErrors > 0 ? 'error' : 'healthy', device_errors: deviceErrors, read_only: false,
+    forced_read_only: false,
+  };
+}
+
+/** A pool that is not mounted at its mountpoint and has no managed fstab entry. */
+function unmountedPool(pool: FakePool): FakePool {
+  return {
+    ...pool, mounted: false, persistent: false, mountpoint: null, raid_level: null, health: 'unmounted',
+    device_errors: 0, read_only: false, forced_read_only: false,
+  };
+}
+
+/** Serve the disks and pools; returns the list of write requests made. */
 export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {}): Promise<RecordedWrite[]> {
   const disks = options.disks ?? (() => FAKE_DISKS);
-  const pools = options.pools ?? FAKE_POOLS;
+  const pools = (options.pools ?? FAKE_POOLS).map((pool) => ({ ...pool }));
+  // What btrfs reports once a pool is mounted: its profile and its device error counters.
+  const profiles = new Map(pools.map((pool) => [pool.name, pool.raid_level ?? 'single']));
+  const deviceErrors = new Map(pools.map((pool) => [pool.name, pool.device_errors]));
+  const scrubStatus = options.scrubStatus ?? ((pool: string) => noScrub(pool));
   const importable = [...(options.importable ?? [])];
   const writes: RecordedWrite[] = [];
   await page.route(
@@ -215,13 +271,12 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
       if (method === 'GET' && path === '/disks') return route.fulfill({ json: disks() });
       if (method === 'GET' && path === '/pools') return route.fulfill({ json: pools });
       const scrub = path.match(/^\/pools\/([^/]+)\/scrub$/);
-      if (method === 'GET' && scrub) {
-        return route.fulfill({
-          json: {
-            pool: decodeURIComponent(scrub[1]), status: 'idle', duration: null, bytes_scrubbed: null,
-            total_bytes: null, rate: null, errors: 0, last_run: null,
-          },
-        });
+      if (scrub && ['GET', 'POST', 'DELETE'].includes(method)) {
+        const name = decodeURIComponent(scrub[1]);
+        // btrfs answers only for a mounted filesystem; the fake does not invent its errors.
+        if (!pools.some((p) => p.name === name && p.mounted)) return route.abort();
+        if (method !== 'GET') writes.push({ method, path, body: method === 'POST' ? request.postDataJSON() : null });
+        return route.fulfill({ json: scrubStatus(name, method) });
       }
       if (method === 'GET' && path === '/filesystems/importable') {
         return route.fulfill(options.importableResponse ?? { json: importable });
@@ -239,7 +294,7 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         }
         const [fs] = importable.splice(index, 1);
         const pool = importedPool(fs, body?.name);
-        options.pools?.push(pool);
+        pools.push(pool);
         return route.fulfill({ json: pool });
       }
       if (method === 'POST' && path === '/pools') {
@@ -256,18 +311,32 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         }
         return route.fulfill({ json: { ...FAKE_POOLS[0], name: body?.name, devices: body?.devices ?? [] } });
       }
-      if (method === 'POST') {
-        const body = request.postDataJSON();
-        writes.push({ method, path, body });
-        const action = path.match(/^\/pools\/([^/]+)\/(mount|unmount)$/);
-        const index = action ? pools.findIndex((p) => p.name === decodeURIComponent(action[1])) : -1;
-        if (!action || index < 0) return route.fulfill({ json: {} });
-        if (options.pools) {
-          const change = action[2] as 'mount' | 'unmount';
-          options.pools[index] = change === 'mount' ? mountedPool(pools[index]) : unmountedPool(pools[index]);
-          options.onPoolChange?.(options.pools[index].name, change);
+      const action = path.match(/^\/pools\/([^/]+)(?:\/(mount|unmount))?$/);
+      if (action && ((method === 'POST' && action[2]) || (method === 'DELETE' && !action[2]))) {
+        const write = { method, path, body: method === 'POST' ? request.postDataJSON() : null };
+        writes.push(write);
+        const answer = options.poolActionResponse?.(write);
+        if (answer) return route.fulfill(answer);
+        const name = decodeURIComponent(action[1]);
+        const index = pools.findIndex((p) => p.name === name);
+        // The supervisor forgets a pool whose disks are gone too (storage/pools.py delete_pool).
+        if (index < 0 && method === 'DELETE') return route.fulfill({ json: { status: 'deleted' } });
+        if (index < 0) return route.fulfill({ status: 404, json: { detail: `Pool '${name}' not found` } });
+        const pool = pools[index];
+        if (action[2] === 'mount' && !pool.mounted && pool.missing_devices > 0) {
+          const detail =
+            `Pool '${name}' is missing ${pool.missing_devices} device(s) and cannot be mounted. ` +
+            'Reconnect the missing disk(s) and try again.';
+          return route.fulfill({ status: 409, json: { detail } });
         }
-        return route.fulfill({ json: pools[index] });
+        // Mounting a mounted pool changes nothing; removing a pool keeps its filesystem: it is
+        // listed again as a pool that is not mounted.
+        if (action[2] !== 'mount') pools[index] = unmountedPool(pool);
+        else if (!pool.mounted) {
+          pools[index] = mountedPool(pool, profiles.get(pool.name) ?? 'single', deviceErrors.get(pool.name) ?? 0);
+        }
+        options.onPoolChange?.(name, method === 'DELETE' ? 'delete' : (action[2] as 'mount' | 'unmount'));
+        return route.fulfill({ json: method === 'DELETE' ? { status: 'deleted' } : pools[index] });
       }
       return route.abort();
     },

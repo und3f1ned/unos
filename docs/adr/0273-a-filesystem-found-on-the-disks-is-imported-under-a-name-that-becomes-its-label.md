@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0261: A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label
+# ADR-0273: A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label
 
 ## Context
 

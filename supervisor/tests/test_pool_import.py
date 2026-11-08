@@ -1,4 +1,4 @@
-"""Importing a btrfs filesystem found on the host's disks as a pool (ADR-0261).
+"""Importing a btrfs filesystem found on the host's disks as a pool (ADR-0273).
 
 ``GET /api/v1/storage/filesystems/importable`` lists the btrfs filesystems that
 cannot be mounted as a pool under their label; ``POST

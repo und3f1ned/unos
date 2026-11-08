@@ -36,7 +36,7 @@ intact and can be mounted again.
 A pool is only mounted at its top level, where its volumes and share folders
 are: a mount that shows another subvolume (the filesystem's default one was
 changed) is undone. A btrfs filesystem found on the host's disks becomes a
-pool without being formatted (ADR-0261): Mount imports one whose label is a
+pool without being formatted (ADR-0273): Mount imports one whose label is a
 pool name, :func:`import_pool` any other, under a name that becomes its label.
 """
 
@@ -1015,7 +1015,7 @@ def _check_top_level(name: str, target: str) -> None:
     subvolume: the top level, unless ``btrfs subvolume set-default`` changed
     it, as on some filesystems made elsewhere. A pool's volumes are the
     subvolumes below its top level, and share folders need the top level
-    too (_mounted_pool_target): PoolConflictError (HTTP 409, ADR-0261).
+    too (_mounted_pool_target): PoolConflictError (HTTP 409, ADR-0273).
     """
     subvolume = _mounted_subvolume_id(target)
     if subvolume != _TOP_LEVEL_SUBVOLUME:
@@ -1028,7 +1028,7 @@ def _check_top_level(name: str, target: str) -> None:
 
 
 def _set_label(target: str, label: str) -> None:
-    """Give the btrfs filesystem mounted at ``target`` the label ``label`` (an import, ADR-0261).
+    """Give the btrfs filesystem mounted at ``target`` the label ``label`` (an import, ADR-0273).
 
     Through the mount, so that the kernel changes it: given a device instead,
     btrfs-progs writes the superblocks itself, also those of a filesystem
@@ -1299,7 +1299,7 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
 
 
 # --------------------------------------------------------------------------
-# Importing a filesystem found on the host's disks (ADR-0261)
+# Importing a filesystem found on the host's disks (ADR-0273)
 # --------------------------------------------------------------------------
 
 
@@ -1325,7 +1325,7 @@ def _pool_labels(filesystems: list[BtrfsFilesystem], mounts: list[disks.HostMoun
 
 
 def importable_filesystems() -> list[ImportableFilesystem]:
-    """The btrfs filesystems of the host that can be imported as pools (ADR-0261).
+    """The btrfs filesystems of the host that can be imported as pools (ADR-0273).
 
     Those that are neither the host's system filesystem nor mounted on the
     host, and that cannot be mounted as a pool under their label
@@ -1440,7 +1440,7 @@ def _check_import(uuid: str, name: str) -> BtrfsFilesystem:
 def import_pool(uuid: str, name: str) -> PoolInfo:
     """Import the btrfs filesystem ``uuid`` found on the host's disks as the pool ``name``.
 
-    Nothing is formatted (ADR-0261). The filesystem is mounted by UUID at
+    Nothing is formatted (ADR-0273). The filesystem is mounted by UUID at
     the pool's mountpoint, must show its top level there, gets ``name`` as
     its label through the mount and is kept in the host's fstab like every
     managed pool (ADR-0034); then udev reads its devices again, so that
@@ -2161,11 +2161,19 @@ def start_scrub(pool_name: str) -> ScrubStatus:
     if result.returncode != 0:
         raise RuntimeError(f"Scrub start failed: {error}")
 
-    return get_scrub_status(pool_name)
+    try:
+        return get_scrub_status(pool_name)
+    except RuntimeError as exc:
+        # btrfs started it: the scrub runs, and its progress is read at the next request.
+        logger.warning("Started the scrub of %s, but could not read its status: %s", pool_name, exc)
+        return ScrubStatus(pool=pool_name, status="running")
 
 
 def get_scrub_status(pool_name: str) -> ScrubStatus:
-    """Get the scrub status for a pool."""
+    """The pool's scrub as ``btrfs scrub status`` reports it (ADR-0272).
+
+    idle when no scrub is recorded; RuntimeError when btrfs cannot report it.
+    """
     mountpoint = os.path.join(settings.pools_base_path, pool_name)
 
     result = subprocess.run(
@@ -2191,11 +2199,16 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
         if status_match:
             status = status_match.group(1).lower()
 
-    # Check if no scrub has been run
-    if "no stats available" in output.lower() or result.returncode != 0:
+    # No scrub recorded.
+    if "no stats available" in output.lower():
         return ScrubStatus(
             pool=pool_name,
             status="idle",
+        )
+    # Not "idle": btrfs could not report the status (ADR-0272).
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Scrub status failed: {result.stderr.strip() or f'exit status {result.returncode}'}"
         )
 
     # Parse duration (format: 0:05:30 or similar)
@@ -2230,17 +2243,13 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
         unit = rate_match.group(2).lower()
         rate = _parse_size_to_bytes(value, unit)
 
-    # Parse errors
+    # "Error summary:    read=1 csum=12", or "no errors found": every kind counts (ADR-0272).
     error_match = re.search(r"Error summary:\s*(.+?)(?:\n|$)", output)
     if error_match:
         error_text = error_match.group(1).strip()
         if "no errors" not in error_text.lower():
-            # Try to extract number of errors
-            num_match = re.search(r"(\d+)", error_text)
-            if num_match:
-                errors = int(num_match.group(1))
-            else:
-                errors = 1  # Some error occurred
+            counts = [int(count) for count in re.findall(r"\w+=(\d+)", error_text)]
+            errors = sum(counts) if counts else 1  # some error, in a form not known here
 
     return ScrubStatus(
         pool=pool_name,
@@ -2268,7 +2277,14 @@ def cancel_scrub(pool_name: str) -> ScrubStatus:
     if result.returncode != 0 and "not running" not in result.stderr.lower():
         raise RuntimeError(f"Scrub cancel failed: {result.stderr}")
 
-    return get_scrub_status(pool_name)
+    try:
+        return get_scrub_status(pool_name)
+    except RuntimeError as exc:
+        if result.returncode != 0:
+            raise  # it was not running: nothing tells how it ended
+        # btrfs cancelled it, and the kernel has stopped it.
+        logger.warning("Cancelled the scrub of %s, but could not read its status: %s", pool_name, exc)
+        return ScrubStatus(pool=pool_name, status="aborted")
 
 
 def _parse_size_to_bytes(value: float, unit: str) -> int:
