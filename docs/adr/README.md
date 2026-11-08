@@ -342,7 +342,7 @@ and this index, and `make check-fast` runs it.
 | [0179](0179-uninstall-removes-smb-accounts.md) | Uninstall removes the SMB host accounts | superseded by [0180](0180-uninstall-keeps-smb-host-accounts.md) | 2026-11-06 |
 | [0180](0180-uninstall-keeps-smb-host-accounts.md) | Uninstall keeps the SMB host accounts and removes only their exact passdb entries | accepted | 2026-11-06 |
 | [0181](0181-downgrade-guidance-for-the-smb-release.md) | Rolling back to the release before SMB accounts is documented, not engineered | superseded by [0207](0207-no-backward-compatibility.md) | 2026-11-06 |
-| [0304](0304-base-images-pinned-by-tag-and-digest.md) | The Dockerfiles pin each base image by tag and digest, and Dependabot moves the digest | accepted | 2026-11-08 |
+| [0305](0305-base-images-pinned-by-tag-and-digest.md) | The Dockerfiles pin each base image by tag and digest, and Dependabot moves the digest | accepted | 2026-11-08 |
 
 ## Device
 
@@ -370,6 +370,7 @@ and this index, and `make check-fast` runs it.
 | [0228](0228-docker-data-root-stays-on-the-sd-card.md) | Docker's data root stays on the dev device's SD card | accepted | 2026-11-07 |
 | [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | The dev device admits inbound IPv6 to its services only from the LAN | accepted | 2026-11-08 |
 | [0303](0303-the-dev-device-runs-its-nfs-server.md) | The dev device runs its NFS server | accepted | 2026-11-08 |
+| [0304](0304-the-scenario-checks-of-the-dev-device-are-scripts-that-remove-what-they-make.md) | The scenario checks of the dev device are scripts that remove what they make and report each step's SD writes | accepted | 2026-11-08 |
 
 ## Testing
 

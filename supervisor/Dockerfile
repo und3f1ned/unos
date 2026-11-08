@@ -1,4 +1,4 @@
-# The base by tag and digest (ADR-0304): the digest decides what the build starts from, and
+# The base by tag and digest (ADR-0305): the digest decides what the build starts from, and
 # Dependabot follows the tag when it proposes a newer digest. A new digest whose linux/arm64
 # image changed makes the dev device pull the base and run apt-get and pip again, hundreds of
 # MB on its SD card (ADR-0214). supervisor/Dockerfile.test starts from the same base.

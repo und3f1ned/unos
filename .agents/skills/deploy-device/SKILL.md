@@ -81,7 +81,7 @@ lists the rolled-back files as differing from the working tree.
   device's checkout by hand.
 - A supervisor build reruns apt-get and pip on the device when `supervisor/requirements.txt`
   changed, or the base's digest in `supervisor/Dockerfile` names a linux/arm64 image new to the
-  device (ADR-0304): hundreds of MB on the SD card. The step's note says before the build when no
+  device (ADR-0305): hundreds of MB on the SD card. The step's note says before the build when no
   layer of the build cache comes from the pinned digest. Tell the owner before such a build.
 - Every container created (docker run, docker create) writes about 2 MB, and a pulled image is
   written whole: they are owner actions, and the guard hook refuses them over SSH (ADR-0211).

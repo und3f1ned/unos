@@ -68,7 +68,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make check-fast` | `lint` and `test-fast`: the pre-commit hook and the Stop hook |
 | `make lint` | `ruff check --select F,E9 supervisor scripts .claude/hooks` (pyflakes findings and syntax errors in the supervisor and in the repository's own tooling), `bash -n` on every shell script of `deploy/`, `scripts/` and `.claude/hooks/`, and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
 | `make test` | all backend tests (`supervisor/tests`); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options |
-| `make test-fast` | the convention tests: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_standin.py` |
+| `make test-fast` | the convention tests: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_dev_scenarios.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
 | `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
@@ -368,11 +368,20 @@ secrets from the git-ignored `dev.env` (ADR-0212):
 - `scripts/dev/sd.sh measure <label> -- <command>`: how many MiB a command wrote to the SD card.
 - `scripts/dev/ipv6-filter.sh install|status|remove`: the device's inbound IPv6 filter
   (ADR-0301); `status` only reads, `install` and `remove` run on the owner's request.
+- `scripts/dev/scenario.sh [--pool NAME] AREA...`: the scenario checks (ADR-0304) of `files`,
+  `volumes`, `smart`, `backups` and `smb` (`all`: every area), on the owner's request. Each runs
+  its area's user scenario through the API and on the host with a temporary user, share,
+  volume and folders named `unoscheck<6 hex digits>` and two backups, prints PASS or FAIL and the
+  SD MiB of each step, removes what it made, also after a FAIL or Ctrl-C, and compares the
+  device with how it found it. The feature-pass skill names the check of each host-level entry;
+  after a reboot (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table
+  lists. `supervisor/tests/test_dev_scenarios.py` runs them against a stand-in of the device in
+  memory.
 
-`deploy.sh`, `linux-tests.sh` and `ipv6-filter.sh` (install, remove) hold the device lock, so that
-one agent at a time deploys or tests there (ADR-0210), and keep their scratch data in RAM.
-`deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh` (install, remove), `check.sh` and `sd.sh` print
-the SD writes of their run; `ssh.sh`, `api.py` and `bin/testparm`
+`deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh` (install, remove) and `scenario.sh` hold the
+device lock, so that one agent at a time deploys or tests there (ADR-0210), and keep their scratch
+data in RAM. `deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh` (install, remove), `scenario.sh`,
+`check.sh` and `sd.sh` print the SD writes of their run; `ssh.sh`, `api.py` and `bin/testparm`
 take no lock and print no SD writes, so a check made with them runs under `sd.sh measure`. The
 deploy-device and device-checks skills (`.agents/skills/`) give the steps and what to report.
 Neither runs E2E specs on the device.
@@ -438,7 +447,7 @@ that this page has the commands of the lint and frontend jobs).
   affected package then (`supervisor/requirements.txt`, or `webui/package-lock.json`, e.g. with
   `npm update <package>`) rather than weakening the check.
 - `.github/dependabot.yml` proposes grouped updates every week for pip, npm, GitHub Actions and
-  the Docker base images (a newer digest of each pinned tag, ADR-0304), with a cooldown of a week
+  the Docker base images (a newer digest of each pinned tag, ADR-0305), with a cooldown of a week
   and Conventional Commit prefixes. Nothing is merged automatically. New major npm versions and
   Playwright are left out (ADR-0231).
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
@@ -606,7 +615,7 @@ browsers, and their system libraries, of exactly that Playwright version.
 `webui/package-lock.json`: when you update Playwright, change the tag and the
 digest of the `FROM` line of `webui/Dockerfile.test` with it
 (`supervisor/tests/test_deploy_scripts.py` checks that they match, and that the
-line names a digest: ADR-0304).
+line names a digest: ADR-0305).
 
 ### What the Test Stack Has
 

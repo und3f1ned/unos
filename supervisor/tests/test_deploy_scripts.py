@@ -2206,7 +2206,7 @@ class TestBuildContexts:
 
 
 # A FROM line that names its image by tag and digest, `name:tag@sha256:<64 hex>`, with an
-# optional --platform and stage name (ADR-0304). The digest decides what a build starts from. The
+# optional --platform and stage name (ADR-0305). The digest decides what a build starts from. The
 # tag is what Dependabot follows when it proposes a newer digest: for a digest without a tag it
 # would propose the digest of `latest`.
 PINNED_FROM = re.compile(
@@ -2248,7 +2248,7 @@ def _unpinned_from_lines(text):
 
 
 class TestBaseImages:
-    """The images start from base images pinned by digest (ADR-0304)."""
+    """The images start from base images pinned by digest (ADR-0305)."""
 
     def test_every_from_line_names_its_image_by_tag_and_digest(self):
         dockerfiles = _dockerfiles()

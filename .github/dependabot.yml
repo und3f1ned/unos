@@ -57,7 +57,7 @@ updates:
       actions:
         patterns: ["*"]
 
-  # The base images. Every FROM line names a tag and its digest (ADR-0304): Dependabot proposes
+  # The base images. Every FROM line names a tag and its digest (ADR-0305): Dependabot proposes
   # the tag's newer digest once the tag has not moved for the cooldown, and the monthly pass of
   # docs/maintenance.md moves the pins it leaves. Python and Node.js move only on purpose: the
   # Python version is also set in CI and the venvs, and Node.js's major version in CI and

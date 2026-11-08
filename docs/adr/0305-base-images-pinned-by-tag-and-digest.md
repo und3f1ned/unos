@@ -5,7 +5,7 @@ area: deploy
 decided-by: agent
 ---
 
-# ADR-0304: The Dockerfiles pin each base image by tag and digest, and Dependabot moves the digest
+# ADR-0305: The Dockerfiles pin each base image by tag and digest, and Dependabot moves the digest
 
 ## Context
 

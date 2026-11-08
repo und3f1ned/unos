@@ -1,4 +1,4 @@
-# Each base by tag and digest (ADR-0304): the digest decides what the build starts
+# Each base by tag and digest (ADR-0305): the digest decides what the build starts
 # from, and Dependabot follows the tag when it proposes a newer digest.
 #
 # A supported Node.js release, the same major version as the frontend job of

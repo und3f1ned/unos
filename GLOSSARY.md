@@ -235,7 +235,7 @@ handoff skill (ADR-0204). Avoid: summary, progress report.
 
 **Base image**: The image that a Dockerfile's `FROM` line starts from, named by tag and digest
 (`python:3.11-slim@sha256:...`): the digest decides what is built, and only a commit that changes
-it moves the base (ADR-0304). Avoid: parent image.
+it moves the base (ADR-0305). Avoid: parent image.
 
 **Quality gate**: `make check`: the same steps as CI's test, lint and frontend jobs (ADR-0216).
 Avoid: CI (which also runs the audits and the Linux-only tests).
@@ -259,8 +259,14 @@ commands it does not know (ADR-0189). Avoid: mock.
 **Linux test runner**: The backend tests run in the dev device's RAM, for the tests that only run
 on Linux (ADR-0187). Avoid: CI.
 
-**Device lock**: The lock on the dev device that deploy steps and Linux test runs hold, so that one
-agent at a time changes or loads the device (ADR-0210). Avoid: deploy lock.
+**Device lock**: The lock on the dev device that deploy steps, Linux test runs and scenario checks
+hold, so that one agent at a time changes or loads the device (ADR-0210). Avoid: deploy lock.
+
+**Scenario check**: A check of one area's user scenario on the dev device,
+`scripts/dev/scenario.sh <area>`: through the API and on the host, with a temporary user, share,
+volume, folders or backups that it removes again, PASS or FAIL and the SD writes of each step,
+and a comparison with how it found the device (ADR-0304). The feature-pass skill names the
+scenario check of each host-level entry. Avoid: smoke test, E2E test.
 
 **Device backup**: A copy of the dev device's fstab, smb.conf and data volume on the workstation
 (`tmp/dev/backup`), which a deploy takes before it starts the containers; it holds the device's

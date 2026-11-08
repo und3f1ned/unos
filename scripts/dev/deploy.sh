@@ -79,13 +79,13 @@ set -euo pipefail
 repo=$1
 cd "$repo/deploy"
 image=$(project)-supervisor
-# The bases of supervisor/Dockerfile, pinned by digest (ADR-0304). BuildKit keeps a base that it
+# The bases of supervisor/Dockerfile, pinned by digest (ADR-0305). BuildKit keeps a base that it
 # pulled in its build cache, not as an image: buildx du describes those layers as "pulled from
 # <name>:<tag>@<digest>".
 pulled=$(docker buildx du --verbose 2> /dev/null | sed -n "s/^Description:[[:space:]]*pulled from //p") || true
 for base in $(awk '\''toupper($1) == "FROM" { print $2 }'\'' "$repo/supervisor/Dockerfile"); do
     if ! [[ $base =~ @sha256:[0-9a-f]{64}$ ]]; then
-        echo "supervisor/Dockerfile names the base $base without a digest (name:tag@sha256:<hex>, ADR-0304)" >&2
+        echo "supervisor/Dockerfile names the base $base without a digest (name:tag@sha256:<hex>, ADR-0305)" >&2
         exit 1
     fi
     if docker image inspect "$base" > /dev/null 2>&1 || grep -qF "@${base#*@}" <<< "$pulled"; then
