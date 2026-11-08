@@ -15,7 +15,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   exports, the command timeouts and the whole web UI in Russian (Language on the Account page).
   That morning: the dev device's inbound IPv6 filter (#75, ADR-0301), the web UI on a phone
   (#76, ADR-0302), and the device's NFS server with the device check of `shares.nfs-exports`
-  (ADR-0303). The dev device runs main 36a6c1b.
+  (ADR-0303). That evening: the scenario checks of the dev device (#79, ADR-0304) and the base
+  images pinned by digest (#80, ADR-0305). The dev device runs main 78769b4.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery).
@@ -35,20 +36,18 @@ significant step. Features and their state live in `feature-list.json`, decision
   `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
   `AGENTS.md` or `.claude/settings.json` is a stop.
 - Next, in this order:
-  1. `device.scenario-checks-in-repo` (ADR-0304) is pushed on its branch; the pull request is the
-     owner's. Its scenario checks, `scripts/dev/scenario.sh files|volumes|smart|backups|smb|all`,
-     passed their first run on the device on 2026-11-08 (Log).
-  2. The owner's reboot of the device, then the re-check of the host-level entries:
+  1. The owner's reboot of the device, then the re-check of the host-level entries:
      `scripts/dev/scenario.sh all` again, and the checks by hand that the feature-pass skill's
-     table lists (ADR-0018).
-  3. `deploy.digest-pinned-base-images` and `architecture.sqlite-write-cost` (the SD card). The
-     pins are pushed on the branch `deploy.digest-pinned-base-images` (ADR-0305) and wait for the
-     owner's pull request; the entry passes after a deploy that shows the supervisor build reusing
-     its cached base once the tag's arm64 image has moved upstream.
+     table lists (ADR-0018). The scenario checks (#79, ADR-0304) passed twice before it on
+     2026-11-08, the second time after the deploy of main 78769b4 (Log).
+  2. `architecture.sqlite-write-cost` (the SD card), pushed on its branch, then its own deploy.
+     `deploy.digest-pinned-base-images` (#80, ADR-0305) is deployed and its supervisor build
+     reused the cached base; the entry passes once a build shows that after the tag's arm64 image
+     has moved upstream, and Dependabot has proposed a digest.
 
 ## Dev device
 
-State on 2026-11-08, 17:20 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-08, 22:35 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -56,38 +55,44 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 36a6c1b: the web UI with the phone layout, deployed on 2026-11-08 at about 11:00
-  UTC, and the supervisor built from ebb1856 in the night (no supervisor file changed since). The
-  device checkout `/opt/unos` equals main's tree; the deploy's backup and rollback copies are in
-  the main checkout's `tmp/dev/`. Rebooted from the API twice that morning, for the reboot checks of
-  the IPv6 filter. Docker lists 9 dangling images, the old builds' layers: pruning them is the
-  owner's call (ADR-0211).
+- Runs main 78769b4, deployed on 2026-11-08 at 22:29 UTC: both images built from the bases that
+  ADR-0305 pins (the supervisor's runtime files are those of ebb1856, the web UI's those of
+  36a6c1b). The device checkout `/opt/unos` equals main's tree; the deploy's backup and rollback
+  copies are in the main checkout's `tmp/dev/`. Rebooted from the API twice that morning, for the
+  reboot checks of the IPv6 filter. Docker lists 11 dangling images, the old builds' layers:
+  pruning them is the owner's call (ADR-0211).
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
-  Images: deploy-supervisor:latest, deploy-webui:latest, lscr.io/linuxserver/transmission,
-  alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base:
-  Caddy 2.10.2 of January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files
-  were deleted on 2026-11-07.
+  Images: deploy-supervisor:latest (`97728ea0...`, the one before it as `:rollback`),
+  deploy-webui:latest (`d77b0aa7...`, likewise), lscr.io/linuxserver/transmission, alpine (the
+  final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base: Caddy 2.10.2 of
+  January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files were deleted on
+  2026-11-07.
 - Docker 29.1.5 with the containerd image store. The supervisor's base, python:3.11-slim
   `sha256:65bd3d9f...` (Python 3.11.18), is in BuildKit's build cache, not an image: the pins of
-  ADR-0305 are these two digests.
+  ADR-0305 are these two digests. The supervisor build of 22:28 UTC started from it, every step
+  of it CACHED.
 - The audit log is `/data/audit/audit.jsonl` (ADR-0224); the old `/data/audit_log.json` was
   deleted.
 - Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220).
   The share DATA is served from /mnt/pools/data/shared (root:unos-smb 2770); no account has
   access to it yet. The regular account `test` stays for checks of a regular user's view.
-- Scenario checks (ADR-0304): the first run of `scripts/dev/scenario.sh all`, on 2026-11-08 at
-  about 17:15 UTC, passed and left none of its users, shares, volumes, folders or backups; the
-  pool's trash `/mnt/pools/data/.unos-trash` (made at 00:05 UTC that night) is empty. Its short
-  self-test of sda completed without error, as the two before it; sda's SMART status: PASSED.
+- Scenario checks (ADR-0304): `scripts/dev/scenario.sh all` passed on 2026-11-08 at about 17:15
+  UTC and again at 22:33 UTC, after the deploy, and left none of its users, shares, volumes,
+  folders or backups; the pool's trash `/mnt/pools/data/.unos-trash` (made at 00:05 UTC that
+  night) is empty. The first run's short self-test of sda completed without error, as the two
+  before it; sda's SMART status: PASSED. The RAM rootfs of `scripts/dev/linux-tests.sh` is gone
+  since the morning's reboots (Open owner actions, 3).
 - Network: global IPv6 from a Hurricane Electric tunnel prefix. Since 2026-11-08 the services
   answer over IPv6 only the LAN (link-local, unique-local and the LAN's global prefix), and the
   BitTorrent port 51413 everyone: the table `ip6 unos_ipv6_inbound`, loaded at boot by
   `unos-ipv6-inbound.service` (ADR-0301, `scripts/dev/ipv6-filter.sh status`). IPv4 is not
   filtered on the device. Samba admits only private, unique-local and link-local addresses.
   smbd runs unconfined by AppArmor (ADR-0162). The NFS server runs (ADR-0303), with no export.
-- SD writes on 2026-11-08: the scenario checks 5.946 MiB (files 0.418, volumes 0.938, smart
-  0.098, backups 0.512, smb 3.980, of which the smb check's account took 0.957 to make and 0.785
-  to delete); 18.2 MiB in the 5.8 hours since that morning's boot, by 17:18 UTC.
+- SD writes on 2026-11-08: the deploy of main 78769b4 31.836 MiB (sync 1.527, build-supervisor
+  6.094, build-webui 18.539, up 5.676, backup 0); the scenario checks 5.946 MiB at 17:15 UTC
+  (files 0.418, volumes 0.938, smart 0.098, backups 0.512, smb 3.980, of which the smb check's
+  account took 0.957 to make and 0.785 to delete) and 5.259 MiB at 22:33 UTC (0.426, 0.641,
+  0.125, 0.430 and 3.637); 60.1 MiB in the 11.1 hours since that morning's boot, by 22:34 UTC.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -103,13 +108,49 @@ Open owner actions:
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
 3. The reboot of the device for the re-check of ADR-0018: then `scripts/dev/scenario.sh all`
-   again (its first run passed on 2026-11-08, ADR-0304) and the checks by hand of the
-   feature-pass skill's table; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh` is made
-   again.
+   again (it passed twice on 2026-11-08, ADR-0304) and the checks by hand of the feature-pass
+   skill's table; afterwards the RAM rootfs of `scripts/dev/linux-tests.sh`, gone since the
+   morning's reboots, is made again (a container: the command that `linux-tests.sh` prints).
 4. Who gets access to the share DATA (an SMB account for a regular user).
-5. The pull request of `device.scenario-checks-in-repo`, whose branch is pushed (ADR-0208).
 
 ## Log
+
+### 2026-11-08: the deploy of main 78769b4
+
+- At the owner's request ("Yes, deploy" and "do it all yourself", in translation) deployed main
+  78769b4, with #79 (`device.scenario-checks-in-repo`) and #80
+  (`deploy.digest-pinned-base-images`), from the worktree of the scenario checks: `make check`
+  passed on it (5964 backend tests, 121 Linux-only skipped, 1 xfailed; svelte-check without
+  errors; the build), and `make smoke`. `scripts/dev/deploy.sh status`: of the runtime files only
+  `supervisor/Dockerfile` and `webui/Dockerfile` differed, besides 28 docs, tests and tools.
+- Read on the device before the builds, as build-supervisor does: python:3.11-slim
+  `sha256:65bd3d9f...` is no image, and the build cache holds layers pulled from it;
+  caddy:2-alpine `sha256:f2b257f2...` is an image (0.129 MiB, with `docker buildx du`).
+- SD writes: backup 0 MiB; sync 1.527 MiB (30 files, 1043.5 KiB); build-supervisor 6.094 MiB:
+  `base python:3.11-slim@sha256:65bd3d9f...: on the device`, then `COPY requirements.txt`,
+  `pip install` and `COPY src/` CACHED, nothing pulled, deploy-supervisor:latest `97728ea0...`;
+  build-webui 18.539 MiB (18.555 MiB that morning): the final stage from the pinned Caddy on the
+  device with `--pull=false`, nothing downloaded, deploy-webui:latest `d77b0aa7...`; up
+  5.676 MiB: both containers recreated, healthy after 7 s, post-up check OK (the pins of
+  `supervisor/requirements.txt` installed, Caddy v2.10.2, the content security policy of
+  `/srv/index.html`); 31.836 MiB in all.
+- After it: `scripts/dev/check.sh` OK (no ERROR line in the supervisor's log, the IPv6 filter
+  loaded); `GET /system/stats` answered 200 (0.027 MiB); `scripts/dev/scenario.sh all` passed
+  every step of the five areas again, 22:32 to 22:35 UTC, with the NT_STATUS answers of the run
+  at 17:15 UTC: files 0.426 MiB, volumes 0.641, smart 0.125, backups 0.430 and smb 3.637,
+  5.259 MiB in all. The pool holds no `unoscheck` name and its trash is empty.
+- `tests/test_smbconf_testparm.py` against the device's testparm: 10 passed, and
+  `test_samba_takes_the_logging_lines` failed (0 MiB). It expects `log level = ...auth_audit:2`
+  and `debug timestamp = no` in testparm's output, and Samba 4.22.6's testparm prints no
+  `log level` line and the second as `timestamp logs = No`. The rendered lines are those of
+  a641c0e, this deploy changed no Samba code, and at the device check of
+  `shares.smb-auth-audit-logging` the journal held a failed sign-in that auth_audit logged: the
+  test's expectations are wrong, a fix of its own.
+- `scripts/dev/linux-tests.sh`: the RAM rootfs is gone since the morning's reboots, and making it
+  again creates a container, an owner action (Open owner actions, 3).
+- `deploy.digest-pinned-base-images` keeps `passes` false: its supervisor build reused the
+  cached base, and step 3 asks for that once the tag's arm64 image has moved upstream (that
+  morning only riscv64 had moved), step 2 for Dependabot's first digest pull request.
 
 ### 2026-11-08: the base images pinned by tag and digest
 
