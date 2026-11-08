@@ -42,6 +42,11 @@ export const en = {
 	'containers.state.exited': 'exited',
 	'containers.state.dead': 'dead',
 
+	// A port's protocol, as Docker names it: in the form of a new container and the drawer's ports.
+	'containers.protocol.tcp': 'TCP',
+	'containers.protocol.udp': 'UDP',
+	'containers.protocol.sctp': 'SCTP',
+
 	'containers.action.start': 'Start',
 	'containers.action.stop': 'Stop',
 	'containers.action.restart': 'Restart',
@@ -64,8 +69,6 @@ export const en = {
 	'containers.create.ports': 'Port Mappings',
 	'containers.create.hostPort': 'Host',
 	'containers.create.containerPort': 'Container',
-	'containers.create.tcp': 'TCP',
-	'containers.create.udp': 'UDP',
 	'containers.create.add': 'Add',
 	'containers.create.environment': 'Environment Variables',
 	'containers.create.envKey': 'KEY',
@@ -169,6 +172,10 @@ export const ru: Translation<typeof en> = {
 	'containers.state.exited': 'остановлен',
 	'containers.state.dead': 'неисправен',
 
+	'containers.protocol.tcp': 'TCP',
+	'containers.protocol.udp': 'UDP',
+	'containers.protocol.sctp': 'SCTP',
+
 	'containers.action.start': 'Запустить',
 	'containers.action.stop': 'Остановить',
 	'containers.action.restart': 'Перезапустить',
@@ -191,8 +198,6 @@ export const ru: Translation<typeof en> = {
 	'containers.create.ports': 'Проброс портов',
 	'containers.create.hostPort': 'Хост',
 	'containers.create.containerPort': 'Контейнер',
-	'containers.create.tcp': 'TCP',
-	'containers.create.udp': 'UDP',
 	'containers.create.add': 'Добавить',
 	'containers.create.environment': 'Переменные окружения',
 	'containers.create.envKey': 'КЛЮЧ',
@@ -253,7 +258,7 @@ export const ru: Translation<typeof en> = {
 	'containers.images.removeQuestion': 'Удалить образ',
 	'containers.images.otherTags': 'Вместе с ним удаляются и другие его теги:',
 	'containers.images.removeNote':
-		'Образ, который использует контейнер, не удаляется. Чтобы использовать образ позже, скачайте его снова.',
+		'Образ, который используется контейнером, не удаляется. Чтобы использовать образ позже, скачайте его снова.',
 	'containers.images.notRemoved': 'Образ не удалён',
 	'containers.images.remove': 'Удалить образ'
 };

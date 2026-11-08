@@ -447,9 +447,16 @@ test.describe('Images', () => {
 test.describe('In Russian', () => {
   // The language chosen in this browser, as the Account page keeps it (ADR-0287).
   const LOCALE_KEY = 'unos-locale';
+  // A date in Russian: the day first and a 24-hour clock, not the en-US browser's own format.
+  const RUSSIAN_DATE = /^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/;
 
   test('the page, the drawer and the Images tab come from the catalog', async ({ authenticatedPage: page }) => {
-    await fakeContainersApi(page);
+    // e2e-web publishes a TCP and a UDP port, for the drawer's Network tab.
+    const ports = [
+      { host_port: 8080, container_port: 80, protocol: 'tcp' },
+      { host_port: 5353, container_port: 53, protocol: 'udp' },
+    ];
+    await fakeContainersApi(page, { containers: [{ ...WEB, ports }, DB, CACHE] });
     await fakeLogSockets(page, [LINE_1]);
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
     await page.goto('/containers');
@@ -457,16 +464,25 @@ test.describe('In Russian', () => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('Контейнеры');
     await expect(page.getByRole('tab')).toHaveText(['Контейнеры', 'Образы']);
-    await expect(page.locator('#docker-panel-containers thead th')).toHaveText([
-      '', 'Имя', 'Образ', 'Состояние', 'Порты', 'Действия',
-    ]);
+    const panel = page.locator('#docker-panel-containers');
+    await expect(panel.locator('thead th')).toHaveText(['', 'Имя', 'Образ', 'Состояние', 'Порты', 'Действия']);
     // A state is the server's word, shown through its key; the buttons are named by their titles.
     const web = rowOf(page, 'e2e-web');
     await expect(web.getByText('работает', { exact: true })).toBeVisible();
     await expect(rowOf(page, 'e2e-db').getByText('остановлен', { exact: true })).toBeVisible();
     await expect(rowOf(page, 'e2e-cache').getByText('приостановлен', { exact: true })).toBeVisible();
-    await expect(page.locator('#docker-panel-containers').getByText('running', { exact: true })).toHaveCount(0);
+    await expect(panel.getByText('running', { exact: true })).toHaveCount(0);
     await expect(web.getByRole('button', { name: 'Остановить' })).toBeVisible();
+
+    // The cards show the states through their keys too. A card is a button that opens the drawer.
+    await page.getByRole('button', { name: 'Карточки' }).click();
+    const card = (name: string) => panel.getByRole('button').filter({ hasText: name });
+    await expect(card('e2e-web').getByText('работает', { exact: true })).toBeVisible();
+    await expect(card('e2e-db').getByText('остановлен', { exact: true })).toBeVisible();
+    await expect(card('e2e-cache').getByText('приостановлен', { exact: true })).toBeVisible();
+    await expect(panel.getByText('running', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Таблица' }).click();
+    await expect(web).toBeVisible();
 
     // The form of a new container.
     await page.getByRole('button', { name: 'Создать контейнер' }).click();
@@ -476,15 +492,21 @@ test.describe('In Russian', () => {
     await form.getByRole('button', { name: 'Отмена' }).click();
     await expect(form).toBeHidden();
 
-    // The drawer: its tabs, the status (Docker's word) in the page's language, the date day
-    // first, and the state of the log.
+    // The drawer: its tabs, the state in its header and the status (Docker's words) in the
+    // page's language, the date day first, the ports' protocols, and the state of the log.
     await web.getByText('e2e-web').click();
     const drawer = page.getByRole('dialog', { name: 'e2e-web' });
     await expect(drawer.getByRole('button', { name: 'Сведения' })).toBeVisible();
+    await expect(drawer.locator('.badge')).toHaveText(['работает']);
     await expect(drawer.locator('.card-nested').filter({ hasText: 'Статус' })).toContainText('работает');
     await expect(drawer.locator('.card-nested').filter({ hasText: 'Создан' }).locator('div').last()).toHaveText(
-      /^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/,
+      RUSSIAN_DATE,
     );
+    await expect(drawer.getByText('running', { exact: true })).toHaveCount(0);
+    await drawer.getByRole('button', { name: 'Сеть' }).click();
+    await expect(drawer.getByText('Проброс портов', { exact: true })).toBeVisible();
+    // The header's state, then a badge per port with its protocol (Docker's tcp and udp).
+    await expect(drawer.locator('.badge')).toHaveText(['работает', 'TCP', 'UDP']);
     await drawer.getByRole('button', { name: 'Журнал' }).click();
     await expect(
       drawer.getByText('В реальном времени: новые строки появляются, как только контейнер их записывает'),
@@ -493,16 +515,21 @@ test.describe('In Russian', () => {
     await page.keyboard.press('Escape');
     await expect(drawer).toBeHidden();
 
-    // The Images tab and the removal of an image with two tags.
+    // The Images tab, an image's date day first, and the removal of an image with two tags.
     await page.getByRole('tab', { name: 'Образы' }).click();
     const table = page.getByRole('table', { name: 'Образы' });
     await expect(table.getByRole('columnheader')).toHaveText(['Образ', 'ID', 'Размер', 'Создан', 'Действия']);
+    // The fourth cell of a row is its date (Создан).
+    await expect(table.locator('tbody tr').filter({ hasText: 'alpine:3.19' }).locator('td').nth(3)).toHaveText(
+      RUSSIAN_DATE,
+    );
     await expect(page.getByLabel('Образ', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Скачать' })).toBeVisible();
     await page.getByRole('button', { name: 'Удалить образ alpine:3.19' }).click();
     const dialog = page.getByRole('dialog', { name: 'Удаление образа' });
     await expect(dialog).toContainText(
-      `Удалить образ alpine:3.19 (${ALPINE_OLD.id})? Вместе с ним удаляются и другие его теги: alpine:3.`,
+      `Удалить образ alpine:3.19 (${ALPINE_OLD.id})? Вместе с ним удаляются и другие его теги: alpine:3. ` +
+        'Образ, который используется контейнером, не удаляется. Чтобы использовать образ позже, скачайте его снова.',
     );
     await dialog.getByRole('button', { name: 'Отмена' }).click();
     await expect(dialog).toBeHidden();

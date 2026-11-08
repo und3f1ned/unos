@@ -56,9 +56,9 @@
 		remove: 'containers.drawer.removeFailed'
 	};
 
-	// A container's state and status as the server answers them (Docker's State.Status): keys of
-	// the catalog, by value. The Containers page (src/routes/containers/+page.svelte) has the same
-	// map.
+	// Docker's words that the server passes on: keys of the catalog, by value. A container's
+	// state and status (State.Status; the Containers page, src/routes/containers/+page.svelte,
+	// has the same map) and a port's protocol.
 	const STATES: Record<string, string> = {
 		created: 'containers.state.created',
 		running: 'containers.state.running',
@@ -68,10 +68,15 @@
 		exited: 'containers.state.exited',
 		dead: 'containers.state.dead'
 	};
+	const PROTOCOLS: Record<string, string> = {
+		tcp: 'containers.protocol.tcp',
+		udp: 'containers.protocol.udp',
+		sctp: 'containers.protocol.sctp'
+	};
 
-	/** A state in the language of the page; a state without a key as it comes. */
-	$: stateLabel = (state: string): string =>
-		Object.prototype.hasOwnProperty.call(STATES, state) ? $t(STATES[state]) : state;
+	/** The label of `value` in the language of the page; a value without one as it comes. */
+	$: labelOf = (labels: Record<string, string>, value: string): string =>
+		Object.prototype.hasOwnProperty.call(labels, value) ? $t(labels[value]) : value;
 
 	let activeTab: 'overview' | 'logs' | 'network' = 'overview';
 	let logs = '';
@@ -249,7 +254,7 @@
 				</div>
 			</div>
 			<div class="flex items-center gap-3">
-				<Badge variant={getStateVariant(container.state)}>{stateLabel(container.state)}</Badge>
+				<Badge variant={getStateVariant(container.state)}>{labelOf(STATES, container.state)}</Badge>
 				{#if getWebUrl(container)}
 					<a
 						href={getWebUrl(container)}
@@ -372,7 +377,7 @@
 					<div class="grid grid-cols-2 gap-4">
 						<div class="card-nested p-4">
 							<div class="text-secondary text-sm font-medium mb-2">{$t('containers.drawer.status')}</div>
-							<div class="font-medium text-lg">{stateLabel(container.status)}</div>
+							<div class="font-medium text-lg">{labelOf(STATES, container.status)}</div>
 						</div>
 						<div class="card-nested p-4">
 							<div class="text-secondary text-sm font-medium mb-2">{$t('containers.drawer.created')}</div>
@@ -472,7 +477,7 @@
 											</div>
 										</div>
 									</div>
-									<Badge variant="info">{port.protocol.toUpperCase()}</Badge>
+									<Badge variant="info">{labelOf(PROTOCOLS, port.protocol)}</Badge>
 								</div>
 							{/each}
 						</div>

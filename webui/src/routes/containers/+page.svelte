@@ -743,8 +743,8 @@
 					class="form-input w-24"
 				/>
 				<select bind:value={portMapping.protocol} class="form-select w-24">
-					<option value="tcp">{$t('containers.create.tcp')}</option>
-					<option value="udp">{$t('containers.create.udp')}</option>
+					<option value="tcp">{$t('containers.protocol.tcp')}</option>
+					<option value="udp">{$t('containers.protocol.udp')}</option>
 				</select>
 				<Button variant="secondary" size="sm" on:click={addPort} type="button"
 					>{$t('containers.create.add')}</Button
