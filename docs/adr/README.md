@@ -122,6 +122,9 @@ and this index, and `make check-fast` runs it.
 | [0241](0241-snapshots-of-volumes-and-volume-quotas-in-the-web-ui.md) | The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB | superseded by [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | 2026-11-07 |
 | [0242](0242-snapshot-commands-act-on-the-folders-that-were-opened.md) | Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id | accepted | 2026-11-07 |
 | [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | The Snapshots page offers mounted pools and their volumes, also a pool whose volumes cannot be read, and the Volumes dialog takes a quota in GiB | accepted | 2026-11-07 |
+| [0269](0269-the-smart-history-is-kept-in-ram-and-written-when-it-changes.md) | The SMART monitor keeps its history in RAM and writes it only when a pass changes it, and at shutdown | accepted | 2026-11-07 |
+| [0270](0270-smart-trends-report-every-tracked-disk.md) | GET /health/smart/trends reports every tracked disk, and trends read each counter from the snapshots that hold it | accepted | 2026-11-07 |
+| [0272](0272-scrub-results-name-cancelled-scrubs-and-count-every-error.md) | A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports | accepted | 2026-11-07 |
 
 ## Shares
 
@@ -295,6 +298,7 @@ and this index, and `make check-fast` runs it.
 | [0175](0175-deferred-ui-scheduler-and-tooling-items.md) | Fix the deferred UI, scheduler, container and tooling items | proposed | 2026-11-06 |
 | [0196](0196-windows-hint-uses-ipv6-literal-net.md) | The Windows connection hint uses the ipv6-literal.net form for IPv6 hosts | accepted | 2026-11-07 |
 | [0197](0197-accessible-dialogs-lists-and-hints.md) | Dialogs, lists and hints in the web UI work with keyboard and screen readers | accepted | 2026-11-07 |
+| [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
 
 ## Deploy
 

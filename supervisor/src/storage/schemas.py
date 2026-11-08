@@ -120,10 +120,14 @@ class VolumeInfo(BaseModel):
 
 class ScrubStatus(BaseModel):
     pool: str
-    status: str  # "running", "finished", "aborted", "idle"
+    # As btrfs scrub status prints it: "running", "finished", "aborted" (cancelled),
+    # "interrupted" (ended neither by finishing nor by a cancel, for example because the btrfs
+    # process that ran it was killed); "idle": no scrub recorded, also after a restart of the
+    # supervisor, which forgets the last one (ADR-0171).
+    status: str
     duration: float | None = None  # seconds
     bytes_scrubbed: int | None = None
     total_bytes: int | None = None
     rate: int | None = None  # bytes per second
-    errors: int = 0
-    last_run: str | None = None  # datetime string of last scrub
+    errors: int = 0  # the sum of the error summary: read, super, verify and csum errors (ADR-0272)
+    last_run: str | None = None  # when the scrub started, as btrfs prints it

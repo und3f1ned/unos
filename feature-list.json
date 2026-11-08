@@ -751,14 +751,15 @@
       ],
       "verified_by": [
         "supervisor/tests/test_disk_safety.py",
-        "webui/tests/storage.spec.ts",
-        "webui/tests/health.spec.ts"
+        "supervisor/tests/test_storage.py",
+        "webui/tests/storage.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0035"
+        "ADR-0035",
+        "ADR-0271"
       ],
-      "notes": "Device check: 2026-11-06 (slice 1 deploy; also on 2026-11-05 after a reboot of the Phase 0 tree). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Proven here, 2026-11-07. Step 1: test_disk_safety.py TestDisksEndpoint (test_lists_every_whole_disk_with_model_size_and_serial: GET /api/v1/storage/disks lists every whole disk with model, size and serial, without the boot SD card and zram) and TestListDisks (hidden boot and virtual devices, a system disk on NVMe, a root shown as /dev/root, old lsblk); storage.spec.ts 'every disk is listed with its model, serial and size, and what uses it' (each row's device, model and serial, size, HDD or SSD, contents, mountpoints and status, on route fakes with the supervisor's texts). Step 2: TestDisksEndpoint test_each_disk_says_what_uses_it_and_which_pool_it_belongs_to (system, in use with its reason, holding data, the pool of a disk and of both members of a mounted pool) and TestListDisks (swap, md, wipefs signatures, a failed probe counts as data); the same spec shows the System, In use, Pool, Has data and Free badges with the reasons. Step 3: test_a_disk_list_that_cannot_be_read_answers_500_with_the_reason (500 'lsblk failed: <reason>') and the specs 'a disk list that cannot be loaded says why, and the pools are still shown' and 'a pool list that cannot be loaded says why, and the disks are still shown' (ADR-0271: each card says why instead of 'No disks found'). The steps only read the host (lsblk, findmnt, swapon and wipefs --no-act through supervisor/src/host.py), so they make no host-level change and need no reboot check; the device check was done on 2026-11-06. A sanity check after the next deploy: Storage on the device lists /dev/sda with its model, serial and size and the badge of the pool data's disk, and the SD card is not listed. Reviewed in a fresh context twice (ADR-0017), 2026-11-07 and 2026-11-08: no finding left open for this entry."
     },
     {
       "id": "storage.create-pool",
@@ -801,7 +802,7 @@
       "adr": [
         "ADR-0034"
       ],
-      "notes": "Device check: 2026-11-05 (Phase 0 deploy: unmount, mount and a reboot of that tree); the deployed tree changed since. Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Built and proven here on 2026-11-07: storage.spec.ts 'Pool unmount, mount and removal (fake data)' on route fakes that change their pools as the supervisor does: Unmount asks first (Cancel sends nothing), POST /pools/<name>/unmount, then the card shows Not mounted, no fstab badge and no Scrub, Volumes or Unmount; Mount sends POST /mount and the card shows Healthy, Mounted at boot and its mountpoint again; the 409s of a pool that running apps or host processes use are shown in the dialog and the pool stays mounted. test_pool_persistence.py pins those 409 texts at the API (TestPoolEndpoints test_a_pool_that_running_apps_use_answers_which_ones, test_a_pool_that_host_processes_use_answers_409) and proves the host side on the fake host: the guard chattr +i, the managed entry removed and written again, the startup reconcile (TestUnmountAndDelete, TestMountPool, TestReconcile, TestAppChecksBeforeStart, TestLifespanRunsReconcile). Device check: 2026-11-05 on the Phase 0 tree; the deployed tree changed since. Open, on the device after a deploy, on a test pool: unmount it from the page, then GET /api/v1/storage/pools shows mounted false and persistent false, /etc/fstab has no '# unos-pool:<name>' line, lsattr -d /mnt/pools/<name> shows the i flag and touch /mnt/pools/<name>/x as root fails with 'Operation not permitted'; Mount brings the managed entry back and health healthy; with transmission running on the pool data, Unmount answers 409 naming transmission; and after the owner's reboot (ADR-0018) the pool data is mounted at /mnt/pools/data before docker.service starts (systemd-analyze critical-chain docker.service lists mnt-pools-data.mount) and transmission runs."
     },
     {
       "id": "storage.pool-health",
@@ -837,14 +838,15 @@
         "A pool that host processes or containers use is refused with 409"
       ],
       "verified_by": [
-        "supervisor/tests/test_pool_persistence.py"
+        "supervisor/tests/test_pool_persistence.py",
+        "webui/tests/storage.spec.ts"
       ],
       "passes": false,
       "adr": [
         "ADR-0035",
         "ADR-0070"
       ],
-      "notes": "No E2E test. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built and proven here on 2026-11-07: storage.spec.ts 'remove pool asks for its name, and the disks keep the pool to mount later' (the trash button 'Remove pool <name>', Continue, Remove Pool disabled until the exact name is typed, DELETE /pools/<name>, then the pool listed again as Not mounted with Mount) and 'a pool in use is not removed, and the dialog says why' (the 409 in the dialog, the pool still mounted). test_pool_persistence.py: test_delete_forgets_the_pool_but_keeps_the_data (umount, the managed entry dropped, chattr -i and rmdir of the mountpoint, no mkfs or wipefs, listed again as unmounted and mountable), test_delete_keeps_a_non_empty_directory_guarded, test_delete_is_non_destructive, and the 409s at the API for containers and host processes (TestPoolEndpoints). The API takes no typed name: only the page asks for it (ADR-0035). Open, on the device on a test pool of spare disks, not the pool data: Remove Pool, then /etc/fstab has no '# unos-pool:<name>' line, /mnt/pools/<name> is gone, btrfs filesystem show still lists the filesystem and Storage shows it as Not mounted; Mount brings it back; with a container using the pool, Remove Pool answers 409 naming it; and after the owner's reboot (ADR-0018) a removed pool is not mounted."
     },
     {
       "id": "storage.volumes",
@@ -911,9 +913,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0071"
+        "ADR-0071",
+        "ADR-0272"
       ],
-      "notes": "No E2E test starts a scrub. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Built and proven here on 2026-11-07. Step 1: test_storage.py TestScrubStart (the request answers once btrfs returns, the scrub process still running), TestScrubOffTheEventLoop (worker threads, timeouts). Step 2: TestScrubStatus (btrfs-progs 6 output parsed: progress while it runs, finished, every error of the error summary summed, aborted, interrupted, never scrubbed) and storage.spec.ts 'Scrub (fake data)': Start Scrub, the progress bar 'Scrub progress' with bytes, percent, rate and duration, updated every 2 seconds, then 'Last scrub: No errors' with the start time; 'Last scrub: 13 error(s)' and the interrupted result (ADR-0272). Step 3: TestScrubStatus test_cancel_answers_the_cancelled_scrub and the spec 'cancel stops a running scrub, and the result says it was cancelled' (DELETE, followed while btrfs still reports running, then 'Last scrub: cancelled before it finished'). A status btrfs cannot report answers 500, not idle (test_a_status_that_btrfs_cannot_report_is_an_error_not_idle), and the card then says 'Could not read the scrub status' instead of a stale progress and still offers Cancel Scrub (spec 'a scrub status that cannot be read says why instead of a stale progress'); a start or cancel that btrfs did is answered running or aborted when the status read after it fails (test_a_start_or_cancel_whose_status_cannot_be_read). Step 4: test_scheduler_validation.py test_scrub_task, test_scrub_of_an_unmounted_pool_fails_without_btrfs, test_a_scheduled_scrub_is_recorded_when_btrfs_returns. Step 5: storage.spec.ts 'shows pool health and mount state' and the unmount spec (no Scrub on a pool that is not mounted). The 409 of the API for an unmounted pool is storage.scrub-needs-mounted-pool. Open, on the device, on the pool data: Scrub on the Storage page shows the progress moving and a result at the end ('Last scrub: No errors' on a healthy pool), Cancel Scrub on a second run shows 'Last scrub: cancelled before it finished', a scheduled scrub task's Run now is recorded as success, the API answers other requests meanwhile, and the SD writes of the run are measured (the scrub status lives in the /var/lib/btrfs tmpfs, ADR-0171); and the re-check after the owner's reboot (ADR-0018), after which the pool shows no last scrub result: the restart forgot it (ADR-0171)."
     },
     {
       "id": "storage.smart",
@@ -951,13 +954,18 @@
         "GET /api/v1/health/smart/trends and /smart/predictions report the trend and a failure estimate per disk"
       ],
       "verified_by": [
-        "supervisor/tests/test_health_monitor.py"
+        "supervisor/tests/test_health_monitor.py",
+        "supervisor/tests/test_smart_predictions.py",
+        "supervisor/tests/test_health_smart.py",
+        "supervisor/tests/test_storage.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0043"
+        "ADR-0043",
+        "ADR-0269",
+        "ADR-0270"
       ],
-      "notes": "Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Proven here, 2026-11-07. Step 1: test_health_monitor.py TestSmartHistoryWrites test_every_pass_is_recorded_in_ram_where_the_endpoints_read_it (each pass adds the disk's counters, temperature and path, as /smart/history, /smart-monitor/status and /smart/trends report), test_health_smart.py test_the_monitor_checks_the_same_disks (every awake whole disk of Disk Health) and test_storage.py test_monitor_round_runs_in_a_worker_thread. The history is written only when a pass changes it and at shutdown (ADR-0269, ADR-0214): TestSmartHistoryWrites proves that passes that change nothing and a start that changes nothing write nothing, that a new disk, a counter, a path or an lsblk serial writes it at once, that a failed write is tried again and the alert still sent, and that the snapshots in RAM are written at shutdown. Step 2: TestSmartAlertChannels (a rise of the reallocated or of the pending sectors reaches every enabled e-mail and Telegram channel once, not a disabled one, with the title, message and recommendation) and TestSmartTrendAlerts (one alert per rise, again for a further rise, none after a snapshot without the counters, again for a rise after a drop, ADR-0270); TestSmartHistoryWrites test_a_pass_that_ends_after_the_shutdown_keeps_nothing_and_alerts_at_the_next_start (ADR-0269; an alert still being sent when the supervisor stops is cut off, as before); test_storage.py TestAlertsOffTheEventLoop (delivery off the event loop, bounded). Step 3: TestSmartTrendsEndpoint (GET /api/v1/health/smart/trends lists every tracked disk with its data points and rising counters, steady and removed disks included, the disks without a serial or with an empty one by path, the window of the last 24 values, ADR-0270) and test_smart_predictions.py (GET /smart/predictions: the failure estimate of each connected disk, ADR-0235). Only the ATA counters are recorded, so NVMe disks have none, and sleeping disks are skipped (smartctl -n standby). No host-level change. A sanity check after the next deploy: GET /api/v1/health/smart/trends lists the device's disks with data_points growing by one per hour, and /data/smart_history.json keeps its mtime across hourly passes (stat), so the hourly SD writes of the old monitor are gone (scripts/dev/sd.sh measure over a pass). Reviewed in a fresh context twice (ADR-0017), 2026-11-07 and 2026-11-08; the findings were fixed except two, recorded in ADR-0269 and ADR-0270: an alert still being sent when the supervisor stops is cut off and not sent again (the monitor writes before it sends, as before), and a history that an older monitor stored under an empty serial is not continued under 'unknown'."
     },
     {
       "id": "storage.smart-replace-soon",

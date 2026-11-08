@@ -109,10 +109,26 @@ UNOS uses BTRFS for storage management. A **storage pool** combines one or more 
 
 ### Viewing Disks
 
-Go to **Storage** to see:
-- All available disks
-- Disk model, size, and serial number
-- Current mount status
+**Storage** → **Physical Disks** lists every whole disk of the host, the
+system disk included, but not SD cards and eMMC (the boot medium of ARM
+boards), flash, RAM, loop, optical and floppy devices. For each disk it
+shows the device, the model and serial number, the size, HDD or SSD, what
+it holds (a filesystem with its label, a partition table and its
+partitions), where it is mounted, and its status:
+
+- **System**: it holds the host's root filesystem, `/boot` or active swap,
+  or the host boots from it;
+- **In use**: it is mounted, a member of a mounted pool, or used by an md
+  RAID array, LVM or LUKS;
+- **Pool "name"**: it belongs to a pool that is not mounted;
+- **Has data**: it holds a filesystem, a partition table or another
+  signature;
+- **Free**: it is empty.
+
+The reason, such as "Mounted at /srv/backup", is shown below the badge.
+When the disks cannot be listed, for example because `lsblk` fails on the
+host, the card says so with the reason instead of the list; the pools are
+still shown, and the other way round.
 
 ### Creating a Storage Pool
 
@@ -148,15 +164,33 @@ UNOS mounts the new pool at `/mnt/pools/<name>` and adds it to the host's
 For each pool, you can:
 - **View Details** - Space usage, devices, status
 - **Mount / Unmount** - Mount the pool (and mount it at every boot), or unmount
-  it; the data on the disks is not touched. Unmounting is refused while a
-  running app or container uses the pool, also through a Docker volume that
-  binds a folder in it, or while files on it are open, for example by a
-  computer that has one of its SMB shares open. Once the pool is unmounted,
-  its SMB shares are no longer served: their open connections are closed, and
-  the **Shares** page marks them **Not served** and **Pool not mounted**. They
-  keep their access, and mounting the pool serves them again
+  it after confirming; the data on the disks is not touched. An unmounted
+  pool shows **Not mounted**, its fstab entry is removed, and its empty
+  mountpoint is write-protected, so that nothing lands on the system disk
+  there. Unmounting is refused while a running app or container uses the
+  pool, also through a Docker volume that binds a folder in it, or while
+  files on it are open, for example by a computer that has one of its SMB
+  shares open; the dialog names the containers or the reason. Once the pool
+  is unmounted, its SMB shares are no longer served: their open connections
+  are closed, and the **Shares** page marks them **Not served** and **Pool
+  not mounted**. They keep their access, and mounting the pool serves them
+  again
 - **Add Devices** - Expand the pool
-- **Scrub** - Check data integrity
+- **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
+  the pool shows its progress (bytes, percent, rate and duration), updated
+  every 2 seconds, and **Cancel Scrub** stops it. At the end it shows the
+  result with the time the scrub started: **Last scrub: No errors**, the
+  number of errors btrfs counted (read, super, verify and checksum errors),
+  or that the scrub was cancelled or interrupted before it finished, with
+  the errors found until then; start a scrub again to check the whole pool.
+  Interrupted means that the scrub ended neither by finishing nor by a
+  cancel, for example because the btrfs process that ran it was killed.
+  When UNOS restarts, for example with the host, it forgets the result of
+  the last scrub: the pool then shows none, also when the restart stopped a
+  scrub. When btrfs cannot report the status, the pool says so with the
+  reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
+  scheduled scrub of a pool that is not mounted fails without scrubbing
+  anything
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no
@@ -173,11 +207,13 @@ For each pool, you can:
   snapshots or other subvolumes, which must be deleted first. A pool mounted
   read-only lists its volumes but cannot create or delete them.
 - **Balance** - Redistribute data across devices
-- **Delete** - Unmount the pool and remove it from `/etc/fstab`. The disks are
-  not wiped: the data stays on them and the pool can be mounted again later.
-  Like Unmount, it is refused while the pool is in use, and its SMB shares are
-  no longer served; NFS exports of the pool are not checked: remove them
-  first.
+- **Remove pool** (the trash button) - After **Continue**, type the pool's
+  name to enable **Remove Pool**. UNOS unmounts the pool, removes it from
+  `/etc/fstab` and deletes its empty mountpoint. The disks are not wiped: the
+  data stays on them, and the pool is listed again as **Not mounted**, ready
+  to be mounted later. Like Unmount, it is refused while the pool is in use,
+  and the dialog says why. As after an unmount, its SMB shares are no longer
+  served; NFS exports of the pool are not checked: remove them first.
 
 ### SMART Monitoring
 
@@ -198,8 +234,12 @@ dialog shows the values the tab loaded.
 
 Every hour UNOS records, for each disk that is awake, the SMART counters of
 failing sectors and errors, and keeps the last 720 records of each disk (30
-days for a disk that never sleeps). From 24 records on (a day), it scores how
-the counters rise:
+days for a disk that never sleeps). The records are kept in memory and saved
+to the system disk only when a disk's counters, path or serial number
+change, when a disk is recorded for the first time, and when UNOS stops: an
+hour in which nothing changed writes nothing. After a power cut, the records
+since the last change are lost; the counters themselves are not. From 24
+records on (a day), it scores how the counters rise:
 
 - each of the reallocated, current pending and offline uncorrectable sector
   counts that rose within the kept records adds 30 points, and 20 more if it
@@ -234,8 +274,18 @@ The score follows rises, not levels: a disk that arrives with many
 reallocated sectors gets no mark, so check the SMART data of a used disk
 yourself. NVMe disks get no score, as the hourly records hold no NVMe
 counters: **SMART data** shows their health log, and their health turns
-**FAILED** when the disk reports a critical warning. A rising counter also
-sends an alert (see [Notifications](#notifications)).
+**FAILED** when the disk reports a critical warning.
+
+A counter that rose since the disk's previous record sends an alert to every
+enabled e-mail and Telegram channel (see [Notifications](#notifications)):
+"Disk Health Warning: <path>" with the counter, its old and new value and a
+recommendation; a warning, or an error when a sector count rose by more than
+10 (other counters: by more than 100). The same rise is not alerted again an
+hour later, and a count that falls and rises again is alerted again. Disks
+without a serial number are told apart by their path.
+`GET /api/v1/health/smart/trends` lists every recorded disk, removed disks
+included, with its number of records and the counters that rose over its
+last 24 records.
 
 ---
 
@@ -276,7 +326,7 @@ A share is a folder inside a pool, or a volume. UNOS refuses:
 A share marked **Not served** breaks one of these rules, for example a share
 of a whole pool imported from the host's existing smb.conf. Nobody can open it
 until you give it a new folder with **Edit**; it cannot be given access until
-then. The shares of a pool that was unmounted or deleted on the **Storage**
+then. The shares of a pool that was unmounted or removed on the **Storage**
 page are marked **Not served** and **Pool not mounted** in the same way: they
 keep their access, and mounting the pool serves them again.
 
