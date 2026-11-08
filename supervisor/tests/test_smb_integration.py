@@ -36,6 +36,8 @@ from .test_pool_persistence import BASE_FSTAB, install_fake_host, wait_for_app_s
 from .test_smb_accounts import World, _wait_for_lock_waiter
 
 API = "/api/v1"
+# A btrfs filesystem of another system, without a label (ADR-0283).
+FOREIGN_UUID = "7d4f2c1a-5678-4e9f-8a0b-1c2d3e4f5a6b"
 TEST_PW = "Test-pass-2026"
 NEW_TEST_PW = "Test-new-pass-2026"
 
@@ -587,6 +589,43 @@ def test_forgetting_a_pool_stops_serving_its_shares(pool_cycle):
     assert c.client.post(f"{API}/storage/pools/data/mount", headers=c.admin).status_code == 200
     assert "   valid users = alice" in section(c.conf.read_text(), "docs")
     assert served_state(docs_info(c)) == (True, None, True, True, [True])
+
+
+def test_an_import_under_the_name_of_a_removed_pool_would_serve_its_shares_and_is_refused(
+    pool_cycle, monkeypatch
+):
+    """ADR-0283: Remove Pool keeps the shares of 'data' with their access (ADR-0248). The disk of
+    another system that takes the pool's place is not imported as 'data': alice could then open
+    whatever that disk keeps in docs/, which nobody decided to share. Under another name it is
+    imported, and the shares of 'data' stay not served."""
+    c = pool_cycle
+    # smb.list_shares, which the storage code asks, reads the rows of this cycle's database.
+    monkeypatch.setattr(smb.settings, "db_path", str(c.world.path))
+    assert c.client.delete(f"{API}/storage/pools/data", headers=c.admin).status_code == 200
+    c.pool_host.filesystems = [fs for fs in c.pool_host.filesystems if fs["uuid"] != DATA_UUID]
+    c.pool_host.add_disk("sdb", serial="ST-1")
+    c.pool_host.add_btrfs(None, FOREIGN_UUID, ["/dev/sdb"])
+    importable = c.client.get(f"{API}/storage/filesystems/importable", headers=c.admin)
+    assert [fs["uuid"] for fs in importable.json()] == [FOREIGN_UUID]
+
+    refused = c.client.post(f"{API}/storage/filesystems/{FOREIGN_UUID}/import", json={"name": "data"},
+                            headers=c.admin)
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == (
+        "The name 'data' still belongs to an earlier pool: SMB shares (DATA, docs) use it, and their "
+        "data is on that pool's disks. Imported under this name, this filesystem would take that "
+        "pool's place for them. Choose another name, or remove them first."
+    )
+    assert not c.pool_host.mounted(pools.pool_mountpoint("data"))
+    assert "[docs]" not in c.conf.read_text()
+    assert served_state(docs_info(c)) == (False, UNMANAGED, False, False, [False])
+
+    imported = c.client.post(f"{API}/storage/filesystems/{FOREIGN_UUID}/import", json={"name": "archive"},
+                             headers=c.admin)
+    assert imported.status_code == 200, imported.text
+    assert "[docs]" not in c.conf.read_text()
+    assert served_state(docs_info(c)) == (False, UNMANAGED, False, False, [False])
 
 
 def test_a_pool_change_that_changes_no_share_writes_nothing(pool_cycle):

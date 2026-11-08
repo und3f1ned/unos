@@ -241,6 +241,9 @@ class TestRouteMatrix:
             ("POST", f"{API}/files/trash/restore"),
             ("DELETE", f"{API}/files/trash"),
             ("POST", f"{API}/files/trash/empty"),
+            # Importing a pool found on the disks (ADR-0283): administrator-only with the storage router.
+            ("GET", f"{API}/storage/filesystems/importable"),
+            ("POST", f"{API}/storage/filesystems/{{uuid}}/import"),
         } <= operations
 
     def test_websocket_routes_are_known(self):

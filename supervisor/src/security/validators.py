@@ -30,6 +30,10 @@ settings = get_settings()
 # file or command line.
 HOSTNAME_PATTERN = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\Z')
 POOL_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}\Z')
+# A filesystem UUID as btrfs and blkid print it.
+FILESYSTEM_UUID_PATTERN = re.compile(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z'
+)
 VOLUME_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}\Z')
 SHARE_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}\Z')
 DISK_NAME_PATTERN = re.compile(r'^[a-z]{2,4}[0-9]*\Z')  # sda, sdb1, nvme0n1, etc.
@@ -188,6 +192,21 @@ def validate_pool_name(name: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid pool name")
 
     return name
+
+
+def validate_filesystem_uuid(uuid: str) -> str:
+    """
+    Validate the UUID of a filesystem, as btrfs prints it.
+
+    Returns:
+        The UUID in lower case
+
+    Raises:
+        HTTPException: 400 if it is not one
+    """
+    if not isinstance(uuid, str) or not FILESYSTEM_UUID_PATTERN.fullmatch(uuid):
+        raise HTTPException(status_code=400, detail="Invalid filesystem UUID")
+    return uuid.lower()
 
 
 def validate_volume_name(name: str) -> str:
