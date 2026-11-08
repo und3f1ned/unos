@@ -76,12 +76,13 @@ Russian, and in English otherwise. Dates and times follow the language: in the
 browser's own format when the browser is set to that language, otherwise with the
 day first and a 24-hour clock.
 
-So far the navigation, the login and first-run setup pages, the **Dashboard**,
-the **File Browser** with its **Trash**, the **Account** page, the
-**Containers** page and the **App Store** are translated; the other pages are
-still in English. Messages from the server, such as the reason an action was
-refused or a disk's risk factors, stay in English, and so do the titles and
-messages of notifications.
+All pages are translated except **Storage** and **Shares**, which are still in
+English. Messages from the server, such as the reason an action was refused,
+stay in English, and so do the titles and messages of notifications, the
+server's records (the log entries, the details of the audit log, smartctl's
+names, and the risk factors and the advice of a failure prediction) and the
+values that ip and ss print in the tables of the **Network** tab, such as a
+connection's state (ESTAB) or an interface's link type (ether).
 
 ---
 
@@ -1204,11 +1205,13 @@ regular users have no access to it.
   or **Critical** for its severity, its details, the user, the address it came
   from, the resource it concerns and the browser.
 - **Search** finds a text, in any case, in the user name, the action as the
-  page names it (`login failed`), the address, the resource as the page shows
-  it (`user carol`), the details or the browser. **User** takes an exact user
-  name, **Action** one kind of entry, and **From** and **To** a range of days,
-  each day included whole. The list follows the filters as you change them;
-  **Clear filters** resets them.
+  English page names it (`login failed`), the address, the resource as the
+  English page shows it (`user carol`), the details or the browser. A Russian
+  page names actions and resources in Russian, but the search finds them by
+  these English words only, as the page says when a search finds nothing.
+  **User** takes an exact user name, **Action** one kind of entry, and **From**
+  and **To** a range of days, each day included whole. The list follows the
+  filters as you change them; **Clear filters** resets them.
 - The page shows the newest 100 matching entries; **Show more** adds 100 more.
 - **Export CSV** and **Export JSON** download every entry that matches the
   filters, newest first. In the CSV file, a `'` stands before what a
