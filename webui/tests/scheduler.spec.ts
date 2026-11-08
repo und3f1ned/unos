@@ -801,3 +801,98 @@ test.describe('Scheduler: a backup task with a Keep Count', () => {
     await expect(page.getByText(/^auto_backup_\d{8}_\d{6}(_\d+)?\.tar\.gz\.enc$/)).toHaveCount(3);
   });
 });
+
+// The tab in Russian (feature webui.translations, ADR-0287), with the scheduler and storage APIs
+// faked as above: its texts, the labels of the server's values (task types, frequencies, the
+// status of a run), the schedules, a count's plural form, the units of a duration and the dates
+// follow the language; the server's error stays as it comes. The dates below are in UTC.
+test.describe('Scheduler: in Russian', () => {
+  test.use({ timezoneId: 'UTC' });
+
+  // A monthly task besides the daily snapshot task and the weekly SMART task, for its schedule.
+  const MONTHLY_TASK = {
+    ...SNAPSHOT_TASK,
+    id: 'task_e2e_monthly',
+    name: 'E2E monthly scrub',
+    task_type: 'scrub',
+    frequency: 'monthly',
+    hour: 4,
+    minute: 30,
+    day_of_month: 12,
+    keep_count: null,
+    last_run: null,
+    last_status: null,
+  };
+
+  test('the tab, the task form and the run history are in Russian', async ({ authenticatedPage: page }) => {
+    await fakeSnapshotTasksApi(page, [SNAPSHOT_TASK, SMART_TASK, MONTHLY_TASK], [FAILED_SNAPSHOT_RUN]);
+    const row = (name: string) => page.locator('div.justify-between', { hasText: name });
+
+    // In English, the schedules read as before the catalogs.
+    await page.goto('/system#scheduler');
+    await expect(row(SNAPSHOT_TASK.name).getByText(/BTRFS Snapshot\s+on e2e_tank\s+• Daily at 02:00/)).toBeVisible();
+    await expect(row(SMART_TASK.name).getByText(/SMART Test\s+on \/dev\/e2e-gone\s+• Sundays at 03:00/))
+      .toBeVisible();
+    await expect(row(MONTHLY_TASK.name).getByText(/BTRFS Scrub\s+on e2e_tank\s+• Day 12 at 04:30/)).toBeVisible();
+
+    // As the Language card of the Account page leaves it.
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Задачи по расписанию', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'История', exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        `Расписания идут по часам часового пояса NAS, ${NAS_ZONE}. ` +
+          'Следующие запуски и время в истории показаны в часовом поясе вашего браузера.',
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(row(SNAPSHOT_TASK.name).getByText(/Снимок BTRFS\s+на e2e_tank\s+• Ежедневно в 02:00/)).toBeVisible();
+    await expect(row(SMART_TASK.name).getByText(/Тест SMART\s+на \/dev\/e2e-gone\s+• По воскресеньям в 03:00/))
+      .toBeVisible();
+    await expect(
+      row(MONTHLY_TASK.name).getByText(/Проверка целостности BTRFS \(scrub\)\s+на e2e_tank\s+• Ежемесячно, 12-го в 04:30/),
+    ).toBeVisible();
+    // The next run, 03:00 in Berlin, in UTC and in the Russian format.
+    await expect(row(SNAPSHOT_TASK.name).getByText('Следующий запуск', { exact: true })).toBeVisible();
+    await expect(row(SNAPSHOT_TASK.name).getByText('08.11.2026, 02:00:00', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scheduled Tasks' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Новая задача', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Новая задача', exact: true })).toBeVisible();
+    await expect(field(page, 'Название задачи')).toHaveAttribute('placeholder', 'Ежедневный снимок');
+    await expect(field(page, 'Тип задачи').locator('option')).toHaveText([
+      'Снимок BTRFS',
+      'Проверка целостности BTRFS (scrub)',
+      'Тест SMART',
+      'Резервная копия системы',
+      'Пользовательская команда',
+    ]);
+    await expect(field(page, 'Периодичность').locator('option')).toHaveText([
+      'Ежечасно',
+      'Ежедневно',
+      'Еженедельно',
+      'Ежемесячно',
+      'Своё расписание (cron)',
+    ]);
+    await expect(field(page, 'Час')).toHaveAccessibleDescription(`По часам часового пояса NAS, ${NAS_ZONE}.`);
+    // The minimum length of a passphrase takes the plural form of its count.
+    await field(page, 'Тип задачи').selectOption('backup');
+    await expect(page.getByText('Обязательна, не менее 8 символов.', { exact: false })).toBeVisible();
+    await field(page, 'Парольная фраза').fill('7 chars');
+    await expect(page.getByText('Используйте не менее 8 символов', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Создать задачу', exact: true })).toBeDisabled();
+    await page.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Новая задача', exact: true })).toHaveCount(0);
+
+    await row(SNAPSHOT_TASK.name).getByTitle('Показать историю').click();
+    await expect(page.getByRole('heading', { name: `История запусков: ${SNAPSHOT_TASK.name}`, exact: true }))
+      .toBeVisible();
+    await expect(page.getByText('ошибка', { exact: true })).toBeVisible();
+    await expect(page.getByText('07.11.2026, 01:00:01', { exact: true })).toBeVisible();
+    await expect(page.getByText('11 мс', { exact: true })).toBeVisible();
+    await expect(page.getByText(FAILED_SNAPSHOT_RUN.error, { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await expect(page.getByRole('heading', { name: /^История запусков/ })).toHaveCount(0);
+  });
+});

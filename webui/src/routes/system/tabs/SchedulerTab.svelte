@@ -17,6 +17,7 @@
   } from "$lib/api/scheduler";
   import { getPools, getDisks, type Pool, type Disk } from "$lib/api/storage";
   import { Input } from "$lib/components/ui";
+  import { intlLocale, t } from "$lib/i18n";
   import {
     Calendar,
     Clock,
@@ -67,6 +68,8 @@
 
   // At least as long as the server asks (MIN_PASSPHRASE_LENGTH in scheduler/router.py).
   const MIN_PASSPHRASE_LENGTH = 8;
+  // The placeholder of a custom task's command: a path, the same in every language.
+  const COMMAND_EXAMPLE = "/usr/local/bin/my-script.sh";
 
   // A backup task being edited keeps its passphrase when the device has its
   // key. A new one, a task made a backup task, and a backup task without a key
@@ -80,31 +83,41 @@
     formData.task_type === "backup" &&
     (passphraseTooShort || passphraseMismatch || (!passphrase && !keepsPassphrase));
 
-  const TASK_TYPES: { value: TaskType; label: string; icon: typeof Database }[] = [
-    { value: "snapshot", label: "BTRFS Snapshot", icon: Database },
-    { value: "scrub", label: "BTRFS Scrub", icon: Search },
-    { value: "smart_test", label: "SMART Test", icon: HardDrive },
-    { value: "backup", label: "System Backup", icon: Archive },
-    { value: "custom", label: "Custom Command", icon: Terminal },
+  // The task types, frequencies and days of the week, as the server names them, with the keys of
+  // their labels in the catalog.
+  const TASK_TYPES: { value: TaskType; key: string; icon: typeof Database }[] = [
+    { value: "snapshot", key: "scheduler.type.snapshot", icon: Database },
+    { value: "scrub", key: "scheduler.type.scrub", icon: Search },
+    { value: "smart_test", key: "scheduler.type.smartTest", icon: HardDrive },
+    { value: "backup", key: "scheduler.type.backup", icon: Archive },
+    { value: "custom", key: "scheduler.type.custom", icon: Terminal },
   ];
 
-  const FREQUENCIES: { value: ScheduleFrequency; label: string }[] = [
-    { value: "hourly", label: "Hourly" },
-    { value: "daily", label: "Daily" },
-    { value: "weekly", label: "Weekly" },
-    { value: "monthly", label: "Monthly" },
-    { value: "custom", label: "Custom (Cron)" },
+  const FREQUENCIES: { value: ScheduleFrequency; key: string }[] = [
+    { value: "hourly", key: "scheduler.frequency.hourly" },
+    { value: "daily", key: "scheduler.frequency.daily" },
+    { value: "weekly", key: "scheduler.frequency.weekly" },
+    { value: "monthly", key: "scheduler.frequency.monthly" },
+    { value: "custom", key: "scheduler.frequency.custom" },
   ];
 
+  // As cron numbers them; `schedule` is the key of a weekly schedule on that day.
   const DAYS_OF_WEEK = [
-    { value: 0, label: "Sunday" },
-    { value: 1, label: "Monday" },
-    { value: 2, label: "Tuesday" },
-    { value: 3, label: "Wednesday" },
-    { value: 4, label: "Thursday" },
-    { value: 5, label: "Friday" },
-    { value: 6, label: "Saturday" },
+    { value: 0, key: "scheduler.day.sunday", schedule: "scheduler.schedule.sundays" },
+    { value: 1, key: "scheduler.day.monday", schedule: "scheduler.schedule.mondays" },
+    { value: 2, key: "scheduler.day.tuesday", schedule: "scheduler.schedule.tuesdays" },
+    { value: 3, key: "scheduler.day.wednesday", schedule: "scheduler.schedule.wednesdays" },
+    { value: 4, key: "scheduler.day.thursday", schedule: "scheduler.schedule.thursdays" },
+    { value: 5, key: "scheduler.day.friday", schedule: "scheduler.schedule.fridays" },
+    { value: 6, key: "scheduler.day.saturday", schedule: "scheduler.schedule.saturdays" },
   ];
+
+  // The status of a run (TaskRun.status), by value.
+  const RUN_STATUSES: Record<string, string> = {
+    success: "scheduler.runs.success",
+    failed: "scheduler.runs.failed",
+    running: "scheduler.runs.running",
+  };
 
   function getDefaultFormData(): Partial<ScheduledTask> {
     return {
@@ -164,11 +177,11 @@
       if (taskId) {
         runs = await getTaskRunsForTask(taskId);
         historyTaskId = taskId;
-        historyTaskName = taskName || "Task";
+        historyTaskName = taskName || "";
       } else {
         runs = await getTaskRuns();
         historyTaskId = null;
-        historyTaskName = "All Tasks";
+        historyTaskName = "";
       }
     } catch (e) {
       console.error("Failed to load history:", e);
@@ -222,7 +235,7 @@
 
   async function handleSaveTask() {
     if (!formData.name?.trim()) {
-      alert("Task name is required");
+      alert($t("scheduler.form.nameRequired"));
       return;
     }
 
@@ -256,21 +269,21 @@
       await loadTasks();
     } catch (e: any) {
       console.error("Failed to save task:", e);
-      alert(e.message || "Failed to save task");
+      alert(e.message || $t("scheduler.form.saveFailed"));
     }
     saving = false;
   }
 
   async function handleDeleteTask(task: ScheduledTask) {
     if (!task.id) return;
-    if (!confirm(`Delete task "${task.name}"?`)) return;
+    if (!confirm($t("scheduler.task.confirmDelete", { name: task.name }))) return;
 
     try {
       await deleteTask(task.id);
       await loadTasks();
     } catch (e: any) {
       console.error("Failed to delete task:", e);
-      alert(e.message || "Failed to delete task");
+      alert(e.message || $t("scheduler.task.deleteFailed"));
     }
   }
 
@@ -282,7 +295,7 @@
       await loadTasks();
     } catch (e: any) {
       console.error("Failed to toggle task:", e);
-      alert(e.message || "Failed to toggle task");
+      alert(e.message || $t("scheduler.task.toggleFailed"));
     }
   }
 
@@ -296,44 +309,45 @@
       setTimeout(() => loadTasks(), 1000);
     } catch (e: any) {
       console.error("Failed to run task:", e);
-      alert(e.message || "Failed to run task");
+      alert(e.message || $t("scheduler.task.runFailed"));
     }
     runningTaskId = null;
   }
 
-  function getTaskTypeLabel(type: TaskType): string {
-    return TASK_TYPES.find((t) => t.value === type)?.label || type;
-  }
+  // The functions below that give texts are reactive, so that the list and the history follow a
+  // change of the language.
+
+  // A type without a label as it comes.
+  $: getTaskTypeLabel = (type: TaskType): string => {
+    const known = TASK_TYPES.find((option) => option.value === type);
+    return known ? $t(known.key) : type;
+  };
 
   function getTaskTypeIcon(type: TaskType) {
-    return TASK_TYPES.find((t) => t.value === type)?.icon || Terminal;
+    return TASK_TYPES.find((option) => option.value === type)?.icon || Terminal;
   }
 
-  function getFrequencyLabel(freq: ScheduleFrequency): string {
-    return FREQUENCIES.find((f) => f.value === freq)?.label || freq;
-  }
-
-  function formatSchedule(task: ScheduledTask): string {
+  // On the clock of the NAS's time zone. A weekly or monthly task without its day runs on the
+  // server's default, Sunday or the 1st (get_cron_expression of scheduler/router.py).
+  $: formatSchedule = (task: ScheduledTask): string => {
     if (task.frequency === "custom" && task.cron_expression) {
       return task.cron_expression;
     }
 
-    const time = `${String(task.hour).padStart(2, "0")}:${String(task.minute).padStart(2, "0")}`;
+    const minute = String(task.minute).padStart(2, "0");
+    const time = `${String(task.hour).padStart(2, "0")}:${minute}`;
+    const weekday = DAYS_OF_WEEK.find((d) => d.value === (task.day_of_week ?? 0));
 
-    switch (task.frequency) {
-      case "hourly":
-        return `Every hour at :${String(task.minute).padStart(2, "0")}`;
-      case "daily":
-        return `Daily at ${time}`;
-      case "weekly":
-        const day = DAYS_OF_WEEK.find((d) => d.value === task.day_of_week)?.label || "";
-        return `${day}s at ${time}`;
-      case "monthly":
-        return `Day ${task.day_of_month} at ${time}`;
-      default:
-        return task.frequency;
-    }
-  }
+    if (task.frequency === "hourly") return $t("scheduler.schedule.hourly", { minute });
+    if (task.frequency === "daily") return $t("scheduler.schedule.daily", { time });
+    if (task.frequency === "weekly" && weekday) return $t(weekday.schedule, { time });
+    if (task.frequency === "monthly") return $t("scheduler.schedule.monthly", { day: task.day_of_month ?? 1, time });
+    return task.frequency;
+  };
+
+  // A status without a label as it comes.
+  $: getStatusLabel = (status: string): string =>
+    Object.prototype.hasOwnProperty.call(RUN_STATUSES, status) ? $t(RUN_STATUSES[status]) : status;
 
   function getStatusColor(status?: string): string {
     switch (status) {
@@ -348,28 +362,32 @@
     }
   }
 
-  function formatDuration(start: string, end?: string): string {
-    if (!end) return "Running...";
+  $: formatDuration = (start: string, end?: string): string => {
+    if (!end) return $t("scheduler.runs.inProgress");
     const ms = new Date(end).getTime() - new Date(start).getTime();
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
-  }
+    if (ms < 1000) return $t("scheduler.runs.milliseconds", { ms });
+    if (ms < 60000) {
+      // One decimal, with the decimal separator of the page's language.
+      const seconds = (ms / 1000).toLocaleString($intlLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      return $t("scheduler.runs.seconds", { seconds });
+    }
+    return $t("scheduler.runs.minutes", { minutes: Math.floor(ms / 60000), seconds: Math.floor((ms % 60000) / 1000) });
+  };
 </script>
 
 <div class="space-y-4">
   <!-- Header -->
   <div class="flex items-center justify-between">
-    <h2 class="text-xl font-bold">Scheduled Tasks</h2>
+    <h2 class="text-xl font-bold">{$t("scheduler.title")}</h2>
     <div class="flex gap-2">
       <button
         on:click={() => openHistoryModal()}
         class="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm"
       >
         <History class="w-4 h-4" />
-        History
+        {$t("scheduler.history")}
       </button>
-      <button on:click={loadTasks} class="p-2 bg-slate-700 rounded-lg hover:bg-slate-600" title="Refresh">
+      <button on:click={loadTasks} class="p-2 bg-slate-700 rounded-lg hover:bg-slate-600" title={$t("common.refresh")}>
         <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" />
       </button>
       <button
@@ -377,15 +395,12 @@
         class="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm"
       >
         <Plus class="w-4 h-4" />
-        New Task
+        {$t("scheduler.newTask")}
       </button>
     </div>
   </div>
   {#if timeZone}
-    <p class="text-sm text-content-secondary">
-      The schedules follow the clock of the NAS's time zone, {timeZone}. Next runs and the times of the
-      history are shown in your browser's time zone.
-    </p>
+    <p class="text-sm text-content-secondary">{$t("scheduler.timeZone", { zone: timeZone })}</p>
   {/if}
 
   <!-- Task List -->
@@ -397,8 +412,8 @@
     {:else if tasks.length === 0}
       <div class="text-center py-8 text-slate-400">
         <Calendar class="w-10 h-10 mx-auto mb-2 opacity-50" />
-        <p>No scheduled tasks</p>
-        <p class="text-sm mt-1">Create a task to automate snapshots, scrubs, and more</p>
+        <p>{$t("scheduler.empty")}</p>
+        <p class="text-sm mt-1">{$t("scheduler.emptyHint")}</p>
       </div>
     {:else}
       <div class="space-y-2">
@@ -412,7 +427,7 @@
                 class="p-1.5 rounded hover:bg-slate-600 transition-colors {task.enabled
                   ? 'text-green-400'
                   : 'text-slate-500'}"
-                title={task.enabled ? "Disable task" : "Enable task"}
+                title={task.enabled ? $t("scheduler.task.disable") : $t("scheduler.task.enable")}
               >
                 {#if task.enabled}
                   <Play class="w-5 h-5" />
@@ -439,9 +454,9 @@
                 <p class="text-xs text-slate-400 truncate">
                   {getTaskTypeLabel(task.task_type)}
                   {#if task.target_pool}
-                    on {task.target_pool}
+                    {$t("scheduler.task.on", { target: task.target_pool })}
                   {:else if task.target_disk}
-                    on {task.target_disk}
+                    {$t("scheduler.task.on", { target: task.target_disk })}
                   {/if}
                   &bull; {formatSchedule(task)}
                 </p>
@@ -452,9 +467,9 @@
                 <div class="hidden sm:flex flex-col items-end text-xs text-slate-500">
                   <span class="flex items-center gap-1">
                     <Clock class="w-3 h-3" />
-                    Next run
+                    {$t("scheduler.task.nextRun")}
                   </span>
-                  <span>{new Date(task.next_run).toLocaleString()}</span>
+                  <span>{new Date(task.next_run).toLocaleString($intlLocale)}</span>
                 </div>
               {/if}
             </div>
@@ -465,7 +480,7 @@
                 on:click={() => handleRunNow(task)}
                 disabled={runningTaskId === task.id}
                 class="p-2 text-yellow-400 hover:bg-slate-600 rounded disabled:opacity-50"
-                title="Run now"
+                title={$t("scheduler.task.runNow")}
               >
                 {#if runningTaskId === task.id}
                   <RefreshCw class="w-4 h-4 animate-spin" />
@@ -476,21 +491,21 @@
               <button
                 on:click={() => openHistoryModal(task.id, task.name)}
                 class="p-2 text-slate-400 hover:bg-slate-600 rounded"
-                title="View history"
+                title={$t("scheduler.task.viewHistory")}
               >
                 <History class="w-4 h-4" />
               </button>
               <button
                 on:click={() => openEditModal(task)}
                 class="p-2 text-blue-400 hover:bg-slate-600 rounded"
-                title="Edit"
+                title={$t("scheduler.task.edit")}
               >
                 <Edit3 class="w-4 h-4" />
               </button>
               <button
                 on:click={() => handleDeleteTask(task)}
                 class="p-2 text-red-400 hover:bg-slate-600 rounded"
-                title="Delete"
+                title={$t("scheduler.task.delete")}
               >
                 <Trash2 class="w-4 h-4" />
               </button>
@@ -508,7 +523,7 @@
     <div class="bg-slate-800 rounded-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
       <!-- Modal Header -->
       <div class="flex items-center justify-between p-4 border-b border-slate-700">
-        <h3 class="text-lg font-bold">{editingTask ? "Edit Task" : "Create Task"}</h3>
+        <h3 class="text-lg font-bold">{editingTask ? $t("scheduler.form.editTitle") : $t("scheduler.form.createTitle")}</h3>
         <button on:click={closeTaskModal} class="p-1 hover:bg-slate-700 rounded">
           <X class="w-5 h-5" />
         </button>
@@ -518,26 +533,26 @@
       <div class="p-4 space-y-4">
         <!-- Task Name -->
         <div>
-          <label for="task-name" class="form-label">Task Name</label>
+          <label for="task-name" class="form-label">{$t("scheduler.form.name")}</label>
           <input
             id="task-name"
             type="text"
             bind:value={formData.name}
-            placeholder="Daily snapshot"
+            placeholder={$t("scheduler.form.namePlaceholder")}
             class="form-input"
           />
         </div>
 
         <!-- Task Type -->
         <div>
-          <label for="task-type" class="form-label">Task Type</label>
+          <label for="task-type" class="form-label">{$t("scheduler.form.type")}</label>
           <select
             id="task-type"
             bind:value={formData.task_type}
             class="form-input"
           >
             {#each TASK_TYPES as type}
-              <option value={type.value}>{type.label}</option>
+              <option value={type.value}>{$t(type.key)}</option>
             {/each}
           </select>
         </div>
@@ -545,9 +560,9 @@
         <!-- Pool Selection (for snapshot/scrub) -->
         {#if formData.task_type === "snapshot" || formData.task_type === "scrub"}
           <div>
-            <label for="task-target-pool" class="form-label">Target Pool</label>
+            <label for="task-target-pool" class="form-label">{$t("scheduler.form.pool")}</label>
             {#if pools.length === 0}
-              <p class="text-sm text-yellow-400">No pools available. Create a pool first.</p>
+              <p class="text-sm text-yellow-400">{$t("scheduler.form.noPools")}</p>
             {:else}
               <select
                 id="task-target-pool"
@@ -565,9 +580,9 @@
         <!-- Disk Selection (for smart_test) -->
         {#if formData.task_type === "smart_test"}
           <div>
-            <label for="task-target-disk" class="form-label">Target Disk</label>
+            <label for="task-target-disk" class="form-label">{$t("scheduler.form.disk")}</label>
             {#if disks.length === 0 && !storedDisk}
-              <p class="text-sm text-yellow-400">No disks available.</p>
+              <p class="text-sm text-yellow-400">{$t("scheduler.form.noDisks")}</p>
             {:else}
               <!-- Made again when the extra option goes (the disk list arrived and has
                    the disk): Svelte selects the bound value when it changes, not when
@@ -579,7 +594,7 @@
                   class="form-input"
                 >
                   {#if storedDisk}
-                    <option value={storedDisk}>{storedDisk}{disksLoaded ? " (not connected)" : ""}</option>
+                    <option value={storedDisk}>{disksLoaded ? $t("scheduler.form.notConnected", { disk: storedDisk }) : storedDisk}</option>
                   {/if}
                   {#each disks as disk}
                     <option value={disk.path}>{disk.path} - {disk.model || disk.name}</option>
@@ -593,27 +608,23 @@
         <!-- Custom Command -->
         {#if formData.task_type === "custom"}
           <div>
-            <label for="task-command" class="form-label">Command</label>
+            <label for="task-command" class="form-label">{$t("scheduler.form.command")}</label>
             <input
               id="task-command"
               type="text"
               bind:value={formData.command}
-              placeholder="/usr/local/bin/my-script.sh"
+              placeholder={COMMAND_EXAMPLE}
               aria-describedby="task-command-hint"
               class="form-input font-mono text-sm"
             />
-            <p id="task-command-hint" class="text-xs text-content-muted mt-1">
-              Runs with /bin/sh as root in the supervisor's container. Each run records its output (the
-              last 16 KiB) and its exit status. A command still running after 24 hours is stopped, and the
-              processes it leaves running end with it.
-            </p>
+            <p id="task-command-hint" class="text-xs text-content-muted mt-1">{$t("scheduler.form.commandHint")}</p>
           </div>
         {/if}
 
         <!-- Keep Count (for snapshot/backup) -->
         {#if formData.task_type === "snapshot" || formData.task_type === "backup"}
           <div>
-            <label for="task-keep-count" class="form-label">Keep Count</label>
+            <label for="task-keep-count" class="form-label">{$t("scheduler.form.keepCount")}</label>
             <input
               id="task-keep-count"
               type="number"
@@ -622,7 +633,9 @@
               max="100"
               class="form-input"
             />
-            <p class="text-xs text-slate-500 mt-1">Number of {formData.task_type}s to retain</p>
+            <p class="text-xs text-slate-500 mt-1">
+              {formData.task_type === "backup" ? $t("scheduler.form.keepBackups") : $t("scheduler.form.keepSnapshots")}
+            </p>
           </div>
         {/if}
 
@@ -631,22 +644,22 @@
           <Input
             id="task-passphrase"
             type="password"
-            label="Passphrase"
+            label={$t("scheduler.form.passphrase")}
             autocomplete="new-password"
             bind:value={passphrase}
-            error={passphraseTooShort ? `Use at least ${MIN_PASSPHRASE_LENGTH} characters` : ""}
+            error={passphraseTooShort ? $t("scheduler.form.passphraseTooShort", { n: MIN_PASSPHRASE_LENGTH }) : ""}
             hint={keepsPassphrase
-              ? "Leave empty to keep the current passphrase. A new one applies to the backups made from now on."
-              : `Required, at least ${MIN_PASSPHRASE_LENGTH} characters. The backups are encrypted with it (AES-256-GCM). Keep it safe: a backup cannot be restored without it.`}
+              ? $t("scheduler.form.passphraseKept")
+              : $t("scheduler.form.passphraseNeeded", { n: MIN_PASSPHRASE_LENGTH })}
           />
           <Input
             id="task-passphrase-confirm"
             type="password"
-            label="Confirm Passphrase"
+            label={$t("scheduler.form.confirmPassphrase")}
             autocomplete="new-password"
             bind:value={passphraseConfirm}
-            error={passphraseConfirm && passphraseMismatch ? "The passphrases do not match" : ""}
-            hint="Type the passphrase again."
+            error={passphraseConfirm && passphraseMismatch ? $t("scheduler.form.passphraseMismatch") : ""}
+            hint={$t("scheduler.form.typeAgain")}
           />
         {/if}
 
@@ -654,14 +667,14 @@
 
         <!-- Schedule Frequency -->
         <div>
-          <label for="task-frequency" class="form-label">Frequency</label>
+          <label for="task-frequency" class="form-label">{$t("scheduler.form.frequency")}</label>
           <select
             id="task-frequency"
             bind:value={formData.frequency}
             class="form-input"
           >
             {#each FREQUENCIES as freq}
-              <option value={freq.value}>{freq.label}</option>
+              <option value={freq.value}>{$t(freq.key)}</option>
             {/each}
           </select>
         </div>
@@ -669,7 +682,7 @@
         <!-- Custom Cron Expression -->
         {#if formData.frequency === "custom"}
           <div>
-            <label for="task-cron-expression" class="form-label">Cron Expression</label>
+            <label for="task-cron-expression" class="form-label">{$t("scheduler.form.cron")}</label>
             <input
               id="task-cron-expression"
               type="text"
@@ -678,14 +691,14 @@
               aria-describedby={timeZoneHint}
               class="form-input font-mono"
             />
-            <p class="text-xs text-slate-500 mt-1">Format: minute hour day_of_month month day_of_week</p>
+            <p class="text-xs text-slate-500 mt-1">{$t("scheduler.form.cronFormat")}</p>
           </div>
         {:else}
           <!-- Time Selection -->
           <div class="grid grid-cols-2 gap-4">
             {#if formData.frequency !== "hourly"}
               <div>
-                <label for="task-hour" class="form-label">Hour</label>
+                <label for="task-hour" class="form-label">{$t("scheduler.form.hour")}</label>
                 <select
                   id="task-hour"
                   aria-describedby={timeZoneHint}
@@ -699,7 +712,7 @@
               </div>
             {/if}
             <div>
-              <label for="task-minute" class="form-label">Minute</label>
+              <label for="task-minute" class="form-label">{$t("scheduler.form.minute")}</label>
               <select
                 id="task-minute"
                 aria-describedby={timeZoneHint}
@@ -716,7 +729,7 @@
           <!-- Day Selection -->
           {#if formData.frequency === "weekly"}
             <div>
-              <label for="task-day-of-week" class="form-label">Day of Week</label>
+              <label for="task-day-of-week" class="form-label">{$t("scheduler.form.dayOfWeek")}</label>
               <select
                 id="task-day-of-week"
                 aria-describedby={timeZoneHint}
@@ -724,7 +737,7 @@
                 class="form-input"
               >
                 {#each DAYS_OF_WEEK as day}
-                  <option value={day.value}>{day.label}</option>
+                  <option value={day.value}>{$t(day.key)}</option>
                 {/each}
               </select>
             </div>
@@ -732,7 +745,7 @@
 
           {#if formData.frequency === "monthly"}
             <div>
-              <label for="task-day-of-month" class="form-label">Day of Month</label>
+              <label for="task-day-of-month" class="form-label">{$t("scheduler.form.dayOfMonth")}</label>
               <select
                 id="task-day-of-month"
                 aria-describedby={timeZoneHint}
@@ -747,9 +760,7 @@
           {/if}
         {/if}
         {#if timeZone}
-          <p id="task-time-zone-hint" class="text-xs text-content-muted">
-            On the clock of the NAS's time zone, {timeZone}.
-          </p>
+          <p id="task-time-zone-hint" class="text-xs text-content-muted">{$t("scheduler.form.onTheClock", { zone: timeZone })}</p>
         {/if}
 
         <!-- Enabled Toggle -->
@@ -760,14 +771,14 @@
             bind:checked={formData.enabled}
             class="w-4 h-4 rounded bg-slate-900 border-slate-600 text-blue-500 focus:ring-blue-500"
           />
-          <label for="task-enabled" class="text-sm">Enable task</label>
+          <label for="task-enabled" class="text-sm">{$t("scheduler.task.enable")}</label>
         </div>
       </div>
 
       <!-- Modal Footer -->
       <div class="flex gap-3 p-4 border-t border-slate-700">
         <button on:click={closeTaskModal} class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg">
-          Cancel
+          {$t("common.cancel")}
         </button>
         <button
           on:click={handleSaveTask}
@@ -776,9 +787,9 @@
         >
           {#if saving}
             <RefreshCw class="w-4 h-4 animate-spin" />
-            Saving...
+            {$t("scheduler.form.saving")}
           {:else}
-            {editingTask ? "Save Changes" : "Create Task"}
+            {editingTask ? $t("scheduler.form.save") : $t("scheduler.form.create")}
           {/if}
         </button>
       </div>
@@ -792,7 +803,11 @@
     <div class="bg-slate-800 rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
       <!-- Modal Header -->
       <div class="flex items-center justify-between p-4 border-b border-slate-700">
-        <h3 class="text-lg font-bold">Run History: {historyTaskName}</h3>
+        <h3 class="text-lg font-bold">
+          {$t("scheduler.runs.title", {
+            name: historyTaskId ? historyTaskName || $t("scheduler.runs.task") : $t("scheduler.runs.allTasks"),
+          })}
+        </h3>
         <button on:click={closeHistoryModal} class="p-1 hover:bg-slate-700 rounded">
           <X class="w-5 h-5" />
         </button>
@@ -803,7 +818,7 @@
         {#if runs.length === 0}
           <div class="text-center py-8 text-slate-400">
             <History class="w-10 h-10 mx-auto mb-2 opacity-50" />
-            <p>No run history</p>
+            <p>{$t("scheduler.runs.empty")}</p>
           </div>
         {:else}
           <div class="space-y-2">
@@ -824,15 +839,15 @@
                       : run.status === 'failed'
                         ? 'bg-red-500/20 text-red-400'
                         : 'bg-yellow-500/20 text-yellow-400'}">
-                      {run.status}
+                      {getStatusLabel(run.status)}
                     </span>
                   </div>
                   <span class="text-xs text-slate-500">{formatDuration(run.started_at, run.finished_at)}</span>
                 </div>
                 <div class="flex flex-wrap gap-x-3 text-xs text-content-secondary">
-                  <span>{new Date(run.started_at).toLocaleString()}</span>
+                  <span>{new Date(run.started_at).toLocaleString($intlLocale)}</span>
                   {#if typeof run.exit_code === "number"}
-                    <span>Exit status {run.exit_code}</span>
+                    <span>{$t("scheduler.runs.exitStatus", { code: run.exit_code })}</span>
                   {/if}
                 </div>
                 {#if run.error}
@@ -842,7 +857,7 @@
                 {/if}
                 {#if run.output}
                   <details class="mt-2">
-                    <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-400">View output</summary>
+                    <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-400">{$t("scheduler.runs.output")}</summary>
                     <div class="mt-1 p-2 bg-slate-900 rounded text-xs text-slate-300 font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
                       {run.output}
                     </div>
@@ -857,7 +872,7 @@
       <!-- Modal Footer -->
       <div class="p-4 border-t border-slate-700">
         <button on:click={closeHistoryModal} class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg">
-          Close
+          {$t("scheduler.runs.close")}
         </button>
       </div>
     </div>

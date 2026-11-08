@@ -3,11 +3,13 @@
   import { ArrowUpCircle, ExternalLink, Package, RefreshCw, Terminal } from "lucide-svelte";
   import { checkForUpdates, getCurrentVersion, type CurrentVersion, type UpdateCheck } from "$lib/api/updates";
   import { Alert, Badge, Button, Card } from "$lib/components/ui";
+  import { intlLocale, t } from "$lib/i18n";
 
   // What works until the in-app updater does (ADR-0234, ADR-0173): the
   // version the supervisor image was built with, the latest release, and the
   // update script on the host. The tab has no Install Update or Rollback.
 
+  // i18n-ignore: a command, the same in every language
   const UPDATE_COMMAND = "sudo /opt/unos/deploy/update.sh";
 
   let current: CurrentVersion | null = null;
@@ -48,57 +50,56 @@
     }
   }
 
-  function formatDate(date: string): string {
-    return new Date(date).toLocaleDateString();
-  }
+  // Reactive, so that the date follows a change of the language.
+  $: formatDate = (date: string): string => new Date(date).toLocaleDateString($intlLocale);
 
   $: release = check?.release_info ?? null;
 </script>
 
 <div class="space-y-6">
-  <h2 class="text-xl font-bold">Software Updates</h2>
+  <h2 class="text-xl font-bold">{$t("updates.title")}</h2>
 
   <Card>
     <h3 class="section-title mb-4">
       <Package class="w-5 h-5" />
-      Current version
+      {$t("updates.current.title")}
     </h3>
     {#if currentError}
-      <Alert variant="error" title="The current version could not be read">{currentError}</Alert>
+      <Alert variant="error" title={$t("updates.current.error")}>{currentError}</Alert>
     {:else if current}
       <p class="text-sm flex flex-wrap items-center gap-2">
-        <span class="text-secondary">Version:</span>
+        <span class="text-secondary">{$t("updates.current.version")}</span>
         <span class="mono">{current.version}</span>
         {#if current.is_development}
-          <Badge variant="warning">dev</Badge>
+          <Badge variant="warning">{$t("updates.current.dev")}</Badge>
         {/if}
       </p>
     {:else}
-      <p class="text-sm text-muted">Loading...</p>
+      <p class="text-sm text-muted">{$t("common.loading")}</p>
     {/if}
   </Card>
 
   <Card>
     <h3 class="section-title mb-4">
       <ArrowUpCircle class="w-5 h-5" />
-      Latest release
+      {$t("updates.latest.title")}
     </h3>
     <div class="space-y-4">
       {#if checking && !check && !checkError}
-        <p class="text-sm text-muted">Checking GitHub for releases...</p>
+        <p class="text-sm text-muted">{$t("updates.latest.checking")}</p>
       {:else if checkError}
         <div role="alert">
-          <Alert variant="error" title="Could not check for updates">{checkError}</Alert>
+          <Alert variant="error" title={$t("updates.latest.checkFailed")}>{checkError}</Alert>
         </div>
       {:else if check && !release}
-        <p class="text-sm">No release is published yet.</p>
+        <p class="text-sm">{$t("updates.latest.none")}</p>
       {:else if check && release}
         {#if check.update_available}
-          <Alert variant="info" title="Update available: {release.tag_name}">
-            <p>You run {check.current_version}. Update with the script below.</p>
+          <Alert variant="info" title={$t("updates.latest.available", { tag: release.tag_name })}>
+            <p>{$t("updates.latest.youRun", { version: check.current_version })}</p>
           </Alert>
         {:else}
-          <p class="text-sm">You run the latest release, {release.tag_name}.</p>
+          <p class="text-sm">{$t("updates.latest.upToDate", { tag: release.tag_name })}</p>
         {/if}
         <div class="card-nested p-4 space-y-2">
           <div class="flex flex-wrap items-center justify-between gap-2">
@@ -109,13 +110,13 @@
               rel="noopener noreferrer"
               class="flex items-center gap-1 text-sm text-status-info hover:underline"
             >
-              View on GitHub <ExternalLink class="w-3 h-3" />
+              {$t("updates.latest.github")} <ExternalLink class="w-3 h-3" />
             </a>
           </div>
           <p class="text-xs text-muted flex flex-wrap items-center gap-2">
-            Published {formatDate(release.published_at)}
+            {$t("updates.latest.published", { date: formatDate(release.published_at) })}
             {#if release.prerelease}
-              <Badge variant="warning">Pre-release</Badge>
+              <Badge variant="warning">{$t("updates.latest.prerelease")}</Badge>
             {/if}
           </p>
           {#if release.body}
@@ -125,7 +126,7 @@
       {/if}
       <div class="flex flex-wrap items-center gap-4">
         <Button variant="secondary" size="sm" icon={RefreshCw} loading={checking} on:click={runCheck}>
-          Check again
+          {$t("updates.latest.checkAgain")}
         </Button>
         <label class="flex items-center gap-2 text-sm">
           <input
@@ -135,7 +136,7 @@
             disabled={checking}
             class="w-4 h-4 rounded"
           />
-          Include pre-releases
+          {$t("updates.latest.includePrereleases")}
         </label>
       </div>
     </div>
@@ -144,16 +145,12 @@
   <Card>
     <h3 class="section-title mb-4">
       <Terminal class="w-5 h-5" />
-      How to update
+      {$t("updates.how.title")}
     </h3>
     <div class="space-y-3 text-sm">
-      <p>UNOS is updated on the host, with its update script. Run it there as root:</p>
+      <p>{$t("updates.how.run")}</p>
       <p class="card-nested p-3"><code class="mono">{UPDATE_COMMAND}</code></p>
-      <p class="text-secondary">
-        It backs up the database and the data volume, builds the new version while UNOS keeps running,
-        and starts the previous version again if the new one does not answer. The web interface cannot
-        install or roll back updates yet.
-      </p>
+      <p class="text-secondary">{$t("updates.how.details")}</p>
     </div>
   </Card>
 </div>

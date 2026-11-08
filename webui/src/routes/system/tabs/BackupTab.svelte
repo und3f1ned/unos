@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { ApiError } from "$lib/api/client";
   import { Alert, Input } from "$lib/components/ui";
+  import { intlLocale, t } from "$lib/i18n";
   import { listBackups, createBackup, deleteBackup, downloadBackup, uploadBackup, restoreBackup, formatBytes, type BackupInfo } from "$lib/api/backup";
   import { Archive, Plus, Trash2, RefreshCw, Clock, Download, Upload, RotateCcw, AlertTriangle, CheckCircle, Lock } from "lucide-svelte";
 
@@ -21,6 +22,17 @@
   // The last failed action, shown above the list until it is dismissed.
   let error: { title: string; message: string } | null = null;
   let errorBox: HTMLDivElement | undefined;
+
+  // The items of a restore that the server names ("restored" of POST /backup/restore): keys of
+  // the catalog, by item.
+  const RESTORED_ITEMS: Record<string, string> = {
+    database: "backup.dialog.items.database",
+    smb_config: "backup.dialog.items.smbConfig"
+  };
+
+  /** The label of a restored item in the language of the page; an item without one as it comes. */
+  $: itemLabel = (item: string): string =>
+    Object.prototype.hasOwnProperty.call(RESTORED_ITEMS, item) ? $t(RESTORED_ITEMS[item]) : item;
 
   // A 401 has already ended the session and the sign-in page is on its way.
   function sessionEnded(e: unknown): boolean {
@@ -51,7 +63,7 @@
       const result = await listBackups();
       backups = result.backups;
     } catch (e) {
-      showError("Could not load the backups", e);
+      showError($t("backup.loadFailed"), e);
     }
     loading = false;
   }
@@ -63,19 +75,19 @@
       await createBackup();
       await loadBackups();
     } catch (e) {
-      showError("Could not create a backup", e);
+      showError($t("backup.createFailed"), e);
     }
     creating = false;
   }
 
   async function handleDelete(filename: string) {
-    if (!confirm("Delete backup " + filename + "?")) return;
+    if (!confirm($t("backup.confirmDelete", { name: filename }))) return;
     error = null;
     try {
       await deleteBackup(filename);
       await loadBackups();
     } catch (e) {
-      showError(`Could not delete ${filename}`, e);
+      showError($t("backup.deleteFailed", { name: filename }), e);
     }
   }
 
@@ -84,7 +96,7 @@
     try {
       await downloadBackup(filename);
     } catch (e) {
-      showError(`Could not download ${filename}`, e);
+      showError($t("backup.downloadFailed", { name: filename }), e);
     }
   }
 
@@ -103,7 +115,7 @@
       await uploadBackup(file);
       await loadBackups();
     } catch (e) {
-      showError(`Could not upload ${file.name}`, e);
+      showError($t("backup.uploadFailed", { name: file.name }), e);
     }
     uploading = false;
     target.value = "";
@@ -142,7 +154,7 @@
     } catch (e) {
       // Restore failures are shown in the dialog.
       if (!sessionEnded(e)) {
-        restoreResult = { success: false, message: errorMessage(e) || "Failed to restore backup" };
+        restoreResult = { success: false, message: errorMessage(e) || $t("backup.dialog.failedFallback") };
       }
     }
     restoring = null;
@@ -151,7 +163,7 @@
 
 <div class="space-y-4">
   <div class="flex items-center justify-between">
-    <h2 class="text-xl font-bold">Backup and Restore</h2>
+    <h2 class="text-xl font-bold">{$t("backup.title")}</h2>
     <div class="flex gap-2">
       <!-- Encrypted backups (.tar.gz.enc) are checked with their passphrase when restored. -->
       <input
@@ -171,7 +183,7 @@
         {:else}
           <Upload class="w-4 h-4" />
         {/if}
-        Upload Backup
+        {$t("backup.upload")}
       </button>
       <button
         on:click={handleCreate}
@@ -183,7 +195,7 @@
         {:else}
           <Plus class="w-4 h-4" />
         {/if}
-        Create Backup
+        {$t("backup.create")}
       </button>
     </div>
   </div>
@@ -205,8 +217,8 @@
     {:else if backups.length === 0}
       <div class="text-center py-8 text-slate-400">
         <Archive class="w-10 h-10 mx-auto mb-2 opacity-50" />
-        <p>No backups yet</p>
-        <p class="text-sm mt-1">Create a backup to save your UNOS configuration</p>
+        <p>{$t("backup.empty")}</p>
+        <p class="text-sm mt-1">{$t("backup.emptyHint")}</p>
       </div>
     {:else}
       <div class="space-y-2">
@@ -218,14 +230,16 @@
                 <p class="font-medium text-sm">{backup.filename}</p>
                 <p class="text-xs text-slate-400 flex items-center gap-2">
                   <Clock class="w-3 h-3" />
-                  {new Date(backup.created).toLocaleString()}
+                  {new Date(backup.created).toLocaleString($intlLocale)}
                   <span class="text-slate-500">|</span>
                   {formatBytes(backup.size)}
                   <span class="text-slate-500">|</span>
-                  v{backup.version}
+                  {backup.version === "unknown"
+                    ? $t("backup.versionUnknown")
+                    : $t("backup.version", { version: backup.version })}
                   {#if backup.encrypted}
                     <span class="text-slate-500">|</span>
-                    <span class="flex items-center gap-1"><Lock class="w-3 h-3" />encrypted</span>
+                    <span class="flex items-center gap-1"><Lock class="w-3 h-3" />{$t("backup.encrypted")}</span>
                   {/if}
                 </p>
               </div>
@@ -234,24 +248,24 @@
               <button
                 on:click={() => openRestoreModal(backup)}
                 class="p-2 text-green-400 hover:bg-slate-600 rounded"
-                title="Restore"
-                aria-label="Restore {backup.filename}"
+                title={$t("backup.restore")}
+                aria-label={$t("backup.restoreOne", { name: backup.filename })}
               >
                 <RotateCcw class="w-4 h-4" />
               </button>
               <button
                 on:click={() => handleDownload(backup.filename)}
                 class="p-2 text-blue-400 hover:bg-slate-600 rounded"
-                title="Download"
-                aria-label="Download {backup.filename}"
+                title={$t("backup.download")}
+                aria-label={$t("backup.downloadOne", { name: backup.filename })}
               >
                 <Download class="w-4 h-4" />
               </button>
               <button
                 on:click={() => handleDelete(backup.filename)}
                 class="p-2 text-red-400 hover:bg-slate-600 rounded"
-                title="Delete"
-                aria-label="Delete {backup.filename}"
+                title={$t("backup.delete")}
+                aria-label={$t("backup.deleteOne", { name: backup.filename })}
               >
                 <Trash2 class="w-4 h-4" />
               </button>
@@ -266,34 +280,34 @@
 <!-- Restore Confirmation Modal -->
 {#if showRestoreModal && restoreTarget}
   <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4" role="dialog" aria-modal="true" aria-label="Restore backup">
+    <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4" role="dialog" aria-modal="true" aria-label={$t("backup.dialog.label")}>
       {#if restoreResult}
         <!-- Result view -->
         <div class="text-center">
           {#if restoreResult.success}
             <CheckCircle class="w-12 h-12 text-green-500 mx-auto mb-4" />
-            <h3 class="text-lg font-bold mb-2">Restore Complete</h3>
+            <h3 class="text-lg font-bold mb-2">{$t("backup.dialog.complete")}</h3>
             <p class="text-slate-400 text-sm mb-4">{restoreResult.message}</p>
             {#if restoreResult.restored && restoreResult.restored.length > 0}
               <div class="bg-slate-700 rounded p-3 mb-4 text-left">
-                <p class="text-xs text-slate-400 mb-2">Restored items:</p>
+                <p class="text-xs text-slate-400 mb-2">{$t("backup.dialog.restored")}</p>
                 <ul class="text-sm space-y-1">
                   {#each restoreResult.restored as item}
-                    <li class="text-green-400">- {item}</li>
+                    <li class="text-green-400">- {itemLabel(item)}</li>
                   {/each}
                 </ul>
               </div>
             {/if}
           {:else}
             <AlertTriangle class="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h3 class="text-lg font-bold mb-2">Restore Failed</h3>
+            <h3 class="text-lg font-bold mb-2">{$t("backup.dialog.failed")}</h3>
             <p class="text-red-400 text-sm mb-4">{restoreResult.message}</p>
           {/if}
           <button
             on:click={closeRestoreModal}
             class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg"
           >
-            Close
+            {$t("backup.dialog.close")}
           </button>
         </div>
       {:else}
@@ -301,18 +315,18 @@
         <div class="flex items-start gap-3 mb-4">
           <AlertTriangle class="w-6 h-6 text-yellow-500 flex-shrink-0 mt-1" />
           <div>
-            <h3 class="text-lg font-bold">Restore Backup</h3>
+            <h3 class="text-lg font-bold">{$t("backup.dialog.title")}</h3>
             <p class="text-slate-400 text-sm mt-1">
-              This will restore configuration from <span class="text-white font-medium">{restoreTarget.filename}</span>
+              {$t("backup.dialog.from")} <span class="text-white font-medium">{restoreTarget.filename}</span>
             </p>
           </div>
         </div>
 
         <div class="bg-slate-700 rounded p-3 mb-4">
-          <p class="text-yellow-400 text-sm">Warning: This will overwrite current settings including:</p>
+          <p class="text-yellow-400 text-sm">{$t("backup.dialog.warning")}</p>
           <ul class="text-sm text-slate-300 mt-2 space-y-1">
-            <li>- Database (user accounts with their passwords, two-factor authentication, API tokens and the login history)</li>
-            <li>- SMB share configuration</li>
+            <li>{$t("backup.dialog.database")}</li>
+            <li>{$t("backup.dialog.shares")}</li>
           </ul>
         </div>
 
@@ -321,7 +335,7 @@
             class="mb-4"
             id="restorePassphrase"
             type="password"
-            label="Passphrase of the encrypted backup"
+            label={$t("backup.dialog.passphrase")}
             autocomplete="off"
             required
             bind:value={restorePassphrase}
@@ -330,7 +344,7 @@
 
         <div class="mb-4">
           <label for="restoreConfirmName" class="block text-sm text-slate-400 mb-2">
-            Type the backup filename to confirm:
+            {$t("backup.dialog.confirm")}
           </label>
           <input
             type="text"
@@ -346,7 +360,7 @@
             on:click={closeRestoreModal}
             class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg"
           >
-            Cancel
+            {$t("common.cancel")}
           </button>
           <button
             on:click={handleRestore}
@@ -357,10 +371,10 @@
           >
             {#if restoring}
               <RefreshCw class="w-4 h-4 animate-spin" />
-              Restoring...
+              {$t("backup.dialog.restoring")}
             {:else}
               <RotateCcw class="w-4 h-4" />
-              Restore
+              {$t("backup.restore")}
             {/if}
           </button>
         </div>
