@@ -122,10 +122,14 @@ export async function emptyTrash(): Promise<{ deleted: number }> {
   return api.post("/files/trash/empty");
 }
 
-export function formatSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
+/**
+ * `bytes` in the largest unit that keeps it at 1 or more, with one decimal at most: "1.5 MB".
+ * `units` names bytes, KB, MB, GB and TB in the language of the page: files.unit.* of the catalogs
+ * (ADR-0297).
+ */
+export function formatSize(bytes: number, units: readonly string[]): string {
+  if (bytes === 0) return `0 ${units[0]}`;
   const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + units[i];
 }

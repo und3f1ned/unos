@@ -3,6 +3,11 @@ import { readFile } from 'node:fs/promises';
 import type { Locator, Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
 
+/** Show the web UI in Russian from the next page load on: the choice that the Account page keeps (ADR-0287). */
+async function chooseRussian(page: Page) {
+  await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+}
+
 test.describe('File Browser', () => {
   test('should navigate to files page', async ({ authenticatedPage: page }) => {
     await page.click('a[href="/files"]');
@@ -63,6 +68,29 @@ test.describe('File Browser', () => {
     await page.goto('/files');
     await page.waitForTimeout(2000);
     await expect(page.locator('h1:has-text("File")')).toBeVisible();
+  });
+
+  // webui.translations (ADR-0287): Files and its trash in Russian.
+  test('shows Files and the trash in Russian', async ({ authenticatedPage: page }) => {
+    await chooseRussian(page);
+    await page.goto('/files');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+    await expect(page.getByRole('heading', { name: 'Файловый менеджер', level: 1 })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Пулы', exact: true })).toBeVisible();
+    await expect(page.getByTitle('Новая папка')).toBeVisible();
+    const toolbar = page.getByRole('toolbar', { name: 'Выбранные элементы' });
+    await expect(toolbar).toContainText('Выбрано: 0');
+    await expect(toolbar.getByRole('button')).toHaveText(['Скачать', 'Копировать', 'Переместить', 'Переименовать', 'Удалить']);
+    for (const column of ['Имя', 'Размер', 'Изменён']) {
+      await expect(page.getByText(column, { exact: true })).toBeVisible();
+    }
+
+    await page.locator('main').getByRole('link', { name: 'Корзина', exact: true }).click();
+    await expect(page).toHaveURL('/files/trash');
+    await expect(page.getByRole('heading', { name: 'Корзина', level: 1 })).toBeVisible();
+    await expect(page.getByText('удаляются навсегда через 30 дней после удаления')).toBeVisible();
+    await expect(page.locator('main').getByRole('link', { name: 'Файлы', exact: true })).toHaveAttribute('href', '/files');
+    await expect(page.getByRole('heading', { name: 'Trash' })).toHaveCount(0);
   });
 });
 
@@ -636,6 +664,60 @@ test.describe('File Browser operations', () => {
     await expect(page.getByRole('button', { name: 'Empty trash' })).toBeDisabled();
     expect(await trashItems(page)).toEqual([]);
     expect(await listNames(page, dir)).toEqual([]);
+  });
+
+  // webui.translations (ADR-0287): what the code puts together at run time, in Russian: counts in
+  // their plural forms, sizes in Russian units, dates and times as Russian writes them.
+  test('Files and the trash count, size and date their items in Russian', async ({ authenticatedPage: page }) => {
+    const dir = scratch!.path;
+    for (const name of ['a.txt', 'b.txt']) await putFile(page, dir, name, Buffer.from('alpha'));
+    await chooseRussian(page);
+    const select = (name: string) => page.getByRole('checkbox', { name: `Выбрать ${name}`, exact: true });
+    const entry = (name: string) => page.locator('main div.grid').filter({ has: select(name) });
+    await page.goto('/files');
+    for (const name of [scratch!.pool.name, scratch!.name]) {
+      await entry(name).dblclick();
+      await expect(crumb(page, name)).toBeVisible();
+    }
+    await expect(entry('a.txt')).toContainText('5 Б');
+    await expect(entry('a.txt')).toContainText(/\d{2}\.\d{2}\.\d{4}/);
+    await expect(page.getByText('Элементов: 2', { exact: true })).toBeVisible();
+
+    const toolbar = page.getByRole('toolbar', { name: 'Выбранные элементы' });
+    await select('a.txt').check();
+    await select('b.txt').check();
+    await expect(toolbar).toContainText('Выбрано: 2');
+    await toolbar.getByRole('button', { name: 'Удалить', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Удалить 2 элемента', exact: true });
+    await expect(dialog).toContainText('Переместить 2 выбранных элемента в корзину?');
+    await dialog.getByRole('button', { name: 'Переместить в корзину', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(entry('a.txt')).toHaveCount(0);
+
+    // Each checkbox of the trash says where and when its item was deleted from.
+    await page.locator('main').getByRole('link', { name: 'Корзина', exact: true }).click();
+    const deleted = (name: string) =>
+      page.getByRole('checkbox', {
+        name: new RegExp(`^Выбрать ${literally(name)}, удалён из ${literally(dir)} \\d{2}\\.\\d{2}\\.\\d{4}, \\d{2}:\\d{2}:\\d{2}$`),
+      });
+    await deleted('a.txt').check();
+    await deleted('b.txt').check();
+    await expect(toolbar).toContainText('Выбрано: 2');
+    await toolbar.getByRole('button', { name: 'Восстановить', exact: true }).click();
+    await expect(page.getByText('2 элемента восстановлены туда, откуда были удалены.', { exact: true })).toBeVisible();
+    expect(await listNames(page, dir)).toEqual(['a.txt', 'b.txt']);
+
+    const moved = await page.request.delete('/api/v1/files/delete', { headers: auth(), data: [`${dir}/a.txt`] });
+    expect(moved.ok(), `move a.txt to the trash: HTTP ${moved.status()}`).toBeTruthy();
+    await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+    await deleted('a.txt').check();
+    await toolbar.getByRole('button', { name: 'Удалить навсегда', exact: true }).click();
+    const forGood = page.getByRole('dialog', { name: 'Удалить навсегда', exact: true });
+    await expect(forGood).toContainText('Удалить навсегда 1 выбранный элемент? Это нельзя отменить.');
+    await forGood.getByRole('button', { name: 'Удалить навсегда', exact: true }).click();
+    await expect(page.getByText('1 элемент удалён навсегда.', { exact: true })).toBeVisible();
+    expect(await listNames(page, dir)).toEqual(['b.txt']);
+    expect(await trashedFrom(page, dir)).toEqual([]);
   });
 
   test('copies the selected items into the folder that is opened', async ({ authenticatedPage: page }) => {
