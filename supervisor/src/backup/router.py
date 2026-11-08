@@ -271,12 +271,19 @@ def _live_db_path() -> Path | None:
 
 
 def copy_database(src: Path, dest: Path) -> None:
-    """Write a consistent copy of a (possibly in-use) SQLite database to ``dest``."""
+    """Write a consistent copy of a (possibly in-use) SQLite database to ``dest``.
+
+    The live database writes ahead (ADR-0304): the backup API copies the commits still in its
+    -wal as well, and the header that marks the file for the write-ahead log. The copy is
+    switched back to the rollback journal, so it is one file on its own, as _verify_database
+    requires of a backup's unos.db.
+    """
     source = sqlite3.connect(str(src), timeout=30)
     try:
         target = sqlite3.connect(str(dest))
         try:
             source.backup(target)
+            target.execute("PRAGMA journal_mode = DELETE")
         finally:
             target.close()
     finally:
@@ -325,6 +332,28 @@ def _verify_database(path: Path) -> None:
         raise BackupValidationError(f"unos.db in the backup cannot be read: {e}") from e
     finally:
         conn.close()
+
+
+def _page_size(path: Path) -> int | None:
+    """The page size in the header of the SQLite database ``path``; None for a file without one."""
+    with open(path, "rb") as f:
+        header = f.read(18)
+    if len(header) < 18 or not header.startswith(b"SQLite format 3\x00"):
+        return None
+    size = int.from_bytes(header[16:18], "big")
+    return 65536 if size == 1 else size
+
+
+def _verify_page_size(restored: Path, db_path: Path) -> None:
+    """The live database writes ahead (ADR-0304), and SQLite's backup API cannot give such a
+    database another page size: a backup with pages of another size is refused before anything
+    changes. A live database without a header yet takes any."""
+    live = _page_size(db_path) if db_path.exists() else None
+    size = _page_size(restored)
+    if live is not None and size != live:
+        raise BackupValidationError(
+            f"unos.db in the backup has pages of {size} bytes, and the database here pages of {live} bytes"
+        )
 
 
 def _keep_copy_of_database(db_path: Path) -> Path | None:
@@ -843,6 +872,7 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
                 db_file = None
             else:
                 _verify_database(db_file)
+                _verify_page_size(db_file, db_path)
 
         archive_conf = None
         if "smb.conf" in members:

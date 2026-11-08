@@ -409,6 +409,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   and the audit line are written best effort.
 - An API token's last use is stored at most once an hour, so automations do not
   write to the system disk on every request.
+- The database `/data/unos.db` uses SQLite's write-ahead log with synchronous
+  NORMAL: a small change, such as a sign-in's login-history row, appends its
+  pages to `unos.db-wal`, mostly without a sync, where it created, synced and
+  deleted a rollback journal and synced the database each time. A power cut can
+  roll back the changes of the last 35 seconds, or of up to about 155 seconds
+  while the log grows. The supervisor copies the log into `unos.db` when it
+  stops, backups stay one file (`update.sh` keeps `unos.db-wal` beside the copy
+  of a supervisor that was not running), a backup whose database has pages of
+  another size is refused, and `docs/RECOVERY.md` reads a copy of the
+  database's files. A `unos.db` put back by hand needs the `unos.db-wal` and
+  `unos.db-shm` beside it deleted first (`docs/INSTALL.md`).
 - Docker calls of the containers API run off the event loop with timeouts.
 - Scheduled backups are always encrypted (AES-256-GCM) with their task's
   passphrase and are named `auto_backup_<date>_<time>.tar.gz.enc`; a restore

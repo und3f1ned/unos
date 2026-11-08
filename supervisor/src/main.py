@@ -32,7 +32,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from . import host
-from .database import init_db
+from .database import checkpoint_db, init_db
 from .config import get_settings
 from .auth.utils import require_admin
 from .request_limits import MAX_REQUEST_BODY, RequestBodyLimitMiddleware
@@ -170,6 +170,9 @@ async def lifespan(app: FastAPI):
         if wol_reapply is not None:
             wol_reapply.cancel()
             await asyncio.gather(wol_reapply, return_exceptions=True)
+        # Last, when nothing uses the database any more: its last commits go from unos.db-wal
+        # into unos.db (ADR-0304).
+        await checkpoint_db()
 
 
 app = FastAPI(

@@ -39,7 +39,10 @@ significant step. Features and their state live in `feature-list.json`, decision
      `scripts/dev/`, each reporting its SD writes.
   2. The owner's reboot of the device, then the re-check of the host-level entries with those
      scripts (ADR-0018).
-  3. `deploy.digest-pinned-base-images` and `architecture.sqlite-write-cost` (the SD card).
+  3. `deploy.digest-pinned-base-images` and `architecture.sqlite-write-cost` (the SD card). The
+     database's write-ahead log (ADR-0304) is pushed on the branch `architecture.sqlite-write-cost`;
+     it waits for the owner's pull request, a deploy of the supervisor and the measurement of a
+     sign-in and of a start with `scripts/dev/sd.sh measure`.
 
 ## Dev device
 
@@ -91,6 +94,57 @@ Open owner actions:
 4. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-08: the database uses SQLite's write-ahead log (`architecture.sqlite-write-cost`)
+
+- The cause of a sign-in's 0.156 to 0.168 MiB on the SD card: `unos.db` kept SQLite's defaults,
+  the rollback journal with synchronous FULL. Counted with a VFS that counts SQLite's own file
+  operations, one login-history row's commit created, synced twice and deleted
+  `unos.db-journal`, synced its folder, and wrote and synced 4 pages of `unos.db`; every sync
+  makes ext4 commit its own journal. With the write-ahead log and synchronous NORMAL the same
+  commit, in the middle of the log, appends 3 pages (12,360 bytes) to `unos.db-wal`, changes 3
+  pages of `unos.db-shm` and syncs nothing.
+- The owner chose "WAL + NORMAL" out of three options, with its costs (ADR-0304, superseding
+  ADR-0078): a power cut can roll back the commits of its last seconds, security changes among
+  them; the first connection after every start makes `unos.db-shm` again, about 0.05 MiB, which
+  ADR-0214 now names as its one accepted exception ("Yes, an exception"). Synchronous FULL for
+  security changes only was offered and not chosen.
+- Backups stay one file with the rollback journal (a copy of a database in the log came out
+  marked for the log, and the restore refused it with 400); `update.sh` keeps `unos.db-wal`
+  beside its copy of a supervisor that was not running; a restore refuses a backup with pages of
+  another size before it changes anything (it failed with 500 after the copy kept before a
+  restore); at the stop a checkpoint copies the log into `unos.db` and keeps `unos.db-wal` and
+  `unos.db-shm`; a switch to the log that SQLite refuses leaves the connection in the rollback
+  journal with FULL, which reads as before (ADR-0251); `docs/RECOVERY.md` copies the database's
+  files as root and reads the copy, and `docs/INSTALL.md` says to delete `unos.db-wal` and
+  `unos.db-shm` before a `unos.db` is put back by hand.
+- Tests first: 12 new tests. Eight failed on the code before (the engine in `delete` and 2, pages
+  0 to 3 of `unos.db` written by a sign-in, no log, both backup copies marked for the log, the
+  restore's 400 and 500, the runbook's command on the mount), the backup of a stopped supervisor
+  failed before its fix, and the others caught their named mutations (no checkpoint at the stop,
+  or closing the pool there; no warning; a refused switch that raises, or sets NORMAL).
+- Reviewed in a fresh context (ADR-0017): no blocker, 2 major and 8 minor findings and 3 nits,
+  all fixed but one recorded. Fixed: a start on a full `/data` after a clean stop could not read
+  the database, as closing the pool deleted `unos.db-shm` (now the stop's checkpoint keeps it);
+  the runbook's `unos.db*` was expanded by the user's shell, which cannot enter Docker's folders
+  (now root's shell does); "syncs nothing" (the commit that starts the log again syncs it once);
+  the power-cut window, up to about 155 seconds while the log grows, not 120; the log's size
+  after a restore; NORMAL on the rollback journal after a refused switch; `update.sh`'s copy of a
+  stopped supervisor; a test docstring's reason, and the rule for a `unos.db` put back by hand;
+  ADR-0214's new line, moved from its Decision to its Consequences (the owner asked that ADR-0214
+  name the exception; its decision text is unchanged); the restore test's check of the file's
+  header; `make e2e-local`. Recorded: the in-app updater copies `unos.db` with `shutil.copy2`,
+  wrong in the log; it starts nothing today (`system.in-app-updater`).
+- `make check` passed (5874 backend tests, 121 skipped, 1 xfailed; svelte-check without errors,
+  the build), and `make e2e-local` alone (669 passed, 16 skipped): the stand-in's real supervisor
+  ran its database in the log, its restores kept copies with the rollback journal, and its stop
+  left an empty `unos.db-wal` and `unos.db-shm` beside `unos.db`. (A run beside `make check`
+  failed from its 386th test on: that build replaced `webui/build` while the stand-in served it.)
+- Not deployed. After the owner's deploy of the supervisor (no Dockerfile or requirement
+  changed), twice: `scripts/dev/api.py --forget-token`, then
+  `scripts/dev/sd.sh measure sign-in -- scripts/dev/api.py GET /auth/me` (the second sign-in is
+  in the middle of the log), against the 0.156 to 0.168 MiB of before; and the writes of a
+  supervisor start against the exception's 0.05 MiB.
 
 ### 2026-11-08: the NFS server on the dev device, and `shares.nfs-exports` on it
 

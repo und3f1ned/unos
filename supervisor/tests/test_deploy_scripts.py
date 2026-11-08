@@ -76,9 +76,12 @@ DOCKER_STUB = textwrap.dedent(
       done
     }
     case "$1" in
+      # stopped: the supervisor's container exists but does not run; its /data is $STUB_DIR/data.
+      cp)
+        if [ "$3" = - ]; then tar -C "$STUB_DIR" -cf - data; else cp "$STUB_DIR/${2#unos-supervisor:/}" "$3"; fi ;;
       inspect)
         case "$3" in
-          '{{.State.Running}}') echo true ;;
+          '{{.State.Running}}') if has stopped; then echo false; else echo true; fi ;;
           '{{.Config.Image}}') echo "deploy-${4#unos-}" ;;
           '{{.Image}}') echo "sha256:running-${4#unos-}" ;;
           *) echo "UNOS_HOSTNAME=unos" ;;
@@ -381,6 +384,37 @@ class TestUpdateScript:
         assert sorted(p.name for p in backup.iterdir()) == ["data.tar.gz", "unos.db"]
         assert (backup.stat().st_mode & 0o777) == 0o700
         assert (sandbox / "install" / "VERSION").read_text() == "2\n"
+
+    def test_the_backup_of_a_stopped_supervisor_keeps_the_commits_of_its_log(self, sandbox):
+        """A supervisor that stopped without its checkpoint (a crash, or a kill after docker
+        stop's grace period) left its last commits in unos.db-wal (ADR-0304): the copy of
+        unos.db alone lacked them, so the backup keeps unos.db-wal beside it."""
+        data = sandbox / "stub" / "data"
+        data.mkdir()
+        run = (
+            "import os, sqlite3, sys\n"
+            "c = sqlite3.connect(sys.argv[1])\n"
+            "c.execute('PRAGMA journal_mode=WAL')\n"
+            "c.execute('CREATE TABLE users (name TEXT)')\n"
+            "c.execute(\"INSERT INTO users VALUES ('admin')\")\n"
+            "c.commit()\n"
+            "os._exit(0)\n"  # the supervisor's end without its checkpoint
+        )
+        subprocess.run([sys.executable, "-c", run, str(data / "unos.db")], check=True, timeout=60)
+        assert (data / "unos.db-wal").stat().st_size > 0
+
+        result, calls = _run_update(sandbox, "stopped")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "docker cp unos-supervisor:/data/unos.db" in " ".join(calls)
+        backup = next((sandbox / "backups").iterdir())
+        assert sorted(p.name for p in backup.iterdir()) == ["data.tar.gz", "unos.db", "unos.db-wal"]
+        copies = sandbox / "copies"
+        copies.mkdir()
+        for name in ("unos.db", "unos.db-wal"):
+            shutil.copy(backup / name, copies / name)
+        with contextlib.closing(sqlite3.connect(copies / "unos.db")) as conn:
+            assert conn.execute("SELECT name FROM users").fetchall() == [("admin",)]
 
     def test_the_new_images_carry_the_version_of_the_new_checkout(self, sandbox):
         # System > Updates shows the version the supervisor image was built with (ADR-0234).
@@ -2499,12 +2533,14 @@ class TestTemporaryFiles:
         assert f"at most {size / 1024**3:g} GiB" in " ".join(paragraphs[0].split())
 
     @staticmethod
-    def _run_online_backup(tmp_path, tmpdir_writable):
+    def _run_online_backup(tmp_path, tmpdir_writable, wal=False):
         """update.sh's backup_database_online, its Python program run as there
         (python -, the container's environment): TMPDIR is the tmpfs, TEMP a
         stand-in for /var/tmp, which tempfile would take after it. Returns the
         result and the temporary directories the program tried to make (the
-        audit event comes before the mkdir)."""
+        audit event comes before the mkdir). wal: the database writes ahead, as
+        the supervisor's does (ADR-0304), and a connection of its pool stays
+        open meanwhile with the row 'recent' committed to unos.db-wal."""
         text = (REPO_ROOT / "deploy" / "update.sh").read_text()
         program = re.search(r"\nbackup_database_online\(\) \{\n.*?<<'PY'\n(.*?)\nPY\n", text, re.S)
         assert program, "backup_database_online in update.sh"
@@ -2536,13 +2572,20 @@ class TestTemporaryFiles:
         )
         env = {key: value for key, value in os.environ.items() if key not in ("TMPDIR", "TEMP", "TMP")}
         env.update(UNOS_DB_PATH=str(db), TMPDIR=str(tmpdir), TEMP=str(var_tmp), PYTHONDONTWRITEBYTECODE="1")
+        pool = sqlite3.connect(db) if wal else None
         try:
+            if pool is not None:
+                assert pool.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+                pool.execute("INSERT INTO users VALUES ('recent')")
+                pool.commit()
             result = subprocess.run(
                 [sys.executable, "-"], input=hook.encode() + program.group(1).encode(),
                 capture_output=True, env=env, cwd=tmp_path, timeout=60,
             )
         finally:
             tmpdir.chmod(0o700)
+            if pool is not None:
+                pool.close()
         made = [line.split(" ", 1)[1] for line in result.stderr.decode().splitlines() if line.startswith("mkdtemp ")]
         return result, made, tmpdir, var_tmp
 
@@ -2555,6 +2598,25 @@ class TestTemporaryFiles:
         copy.write_bytes(result.stdout)
         with contextlib.closing(sqlite3.connect(copy)) as conn:
             assert conn.execute("SELECT name FROM users").fetchall() == [("admin",)]
+        assert os.listdir(tmpdir) == [] and os.listdir(var_tmp) == []
+
+    def test_the_database_copy_of_update_sh_stands_alone_with_the_last_commits(self, tmp_path):
+        """The backup's unos.db holds the commits still in unos.db-wal, in one file with the
+        rollback journal, which SQLite reads alone: a file marked for the write-ahead log makes
+        unos.db-wal and unos.db-shm wherever it is read, and cannot be read where SQLite may not
+        write. (Put back by hand, any copy needs the live unos.db-wal and unos.db-shm deleted
+        first: SQLite applies a log it finds beside a database, whatever the file's header says,
+        docs/INSTALL.md.)"""
+        result, made, tmpdir, var_tmp = self._run_online_backup(tmp_path, tmpdir_writable=True, wal=True)
+
+        assert result.returncode == 0, result.stderr.decode()
+        copies = tmp_path / "copies"
+        copies.mkdir()
+        (copies / "unos.db").write_bytes(result.stdout)
+        assert (result.stdout[18], result.stdout[19]) == (1, 1)  # the rollback journal
+        with contextlib.closing(sqlite3.connect(copies / "unos.db")) as conn:
+            assert conn.execute("SELECT name FROM users").fetchall() == [("admin",), ("recent",)]
+        assert os.listdir(copies) == ["unos.db"]
         assert os.listdir(tmpdir) == [] and os.listdir(var_tmp) == []
 
     def test_the_database_copy_of_update_sh_is_never_made_elsewhere(self, tmp_path):

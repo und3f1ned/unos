@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0304
 ---
 
 # ADR-0078: SQLite's power-cut rollback window is accepted, and the startup reconcile repairs the host
 
 ## Context
+
+Superseded by ADR-0304: unos.db uses SQLite's write-ahead log with synchronous NORMAL, and the window it accepts covers the commits of the last 35 seconds, or of up to about 155 seconds while the log grows.
 
 `unos.db` uses SQLite's defaults: the rollback journal (DELETE mode) with `synchronous=FULL`; the code sets no journal PRAGMA. SQLite does not fsync the directory after it deletes the journal, and the device's root filesystem commits its own journal every 120 seconds, so a commit followed closely by a power cut can roll back. An SMB flow changes the host (accounts, passdb, smb.conf) around its commits, so after such a rollback the host can be ahead of the database.
 

@@ -48,8 +48,8 @@ def the_write_fails(engine: Engine, monkeypatch) -> str:
 
 def the_commit_fails(engine: Engine, monkeypatch) -> str:
     """From now on the statements of ``engine`` run, and SQLite's COMMIT fails at the end of
-    the transaction with "database or disk is full", as when the journal or the database file
-    cannot be written to its end. The session must then be rolled back before it reads again.
+    the transaction with "database or disk is full", as when unos.db-wal cannot be written to
+    its end (ADR-0304). The session must then be rolled back before it reads again.
     Returns SQLite's message."""
     def disk_full(dbapi_connection) -> None:
         raise sqlite3.OperationalError(DB_FULL)

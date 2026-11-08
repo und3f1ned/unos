@@ -266,7 +266,10 @@ check_for_updates() {
 
 # SQLite's online backup API, run in the supervisor container: a consistent
 # copy of the live database while the supervisor keeps running (a plain copy
-# of a database in use can be torn). The checked copy is written to stdout.
+# of a database in use can be torn). The live database writes ahead
+# (ADR-0304): the copy gets the commits still in unos.db-wal and goes back to
+# the rollback journal, one file on its own. The checked copy is written to
+# stdout.
 backup_database_online() {
     docker exec -i unos-supervisor python - <<'PY'
 import os
@@ -287,6 +290,7 @@ with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or "/tmp") as tmp:
         target = sqlite3.connect(copy)
         try:
             source.backup(target)
+            target.execute("PRAGMA journal_mode = DELETE")
             if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 sys.exit("The copy of the database failed its integrity check")
         finally:
@@ -312,11 +316,23 @@ write_backup() (
                 > "$1/data.tar.gz" || [ $? -eq 1 ]; } &&
             gzip -t "$1/data.tar.gz"
     else
-        # Not running: nothing uses the database, so a plain copy is consistent.
+        # Not running: nothing uses the database, so plain copies of its files
+        # are consistent. A supervisor that stopped without its checkpoint (a
+        # crash, or a kill after docker stop's grace period) left its last
+        # commits in unos.db-wal (ADR-0304), which goes beside unos.db.
         docker cp unos-supervisor:/data/unos.db "$1/unos.db" &&
-            docker cp unos-supervisor:/data - | gzip > "$1/data.tar.gz"
+            docker cp unos-supervisor:/data - | gzip > "$1/data.tar.gz" &&
+            copy_database_log "$1"
     fi
 )
+
+# unos.db-wal from the archive of the data volume in $1 into $1, beside the
+# copy of unos.db, when the archive has one: SQLite reads the two together.
+copy_database_log() {
+    if tar -tzf "$1/data.tar.gz" data/unos.db-wal > /dev/null 2>&1; then
+        tar -xzf "$1/data.tar.gz" -C "$1" --strip-components=1 data/unos.db-wal
+    fi
+}
 
 backup_data() {
     log_info "Backing up the database and the data volume..."
