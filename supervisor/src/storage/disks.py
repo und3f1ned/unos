@@ -276,6 +276,20 @@ def _lsblk_tree() -> list[dict[str, Any]]:
         raise RuntimeError(f"lsblk failed: invalid output ({exc})") from exc
 
 
+def labelled_devices(label: str) -> list[str]:
+    """Paths of the host's block devices whose filesystem has the label ``label``.
+
+    Every device lsblk lists counts, the boot and virtual devices included.
+    RuntimeError when lsblk fails.
+    """
+    return sorted({
+        node.get("path") or f"/dev/{node.get('name')}"
+        for top in _lsblk_tree()
+        for node in _walk(top)
+        if node.get("label") == label
+    })
+
+
 def _whole_disks(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The whole disks among the top-level devices of an lsblk tree.
 
@@ -651,6 +665,39 @@ def whole_disk_device(target: str) -> str:
             ),
         )
     return device
+
+
+def pool_device_problems(paths: list[str]) -> dict[str, str]:
+    """Why devices of a btrfs filesystem found on the disks must not be part of a pool.
+
+    Mount and Import mount such a filesystem and keep it in the host's fstab
+    (ADR-0283), so its members follow the rules of a pool's creation
+    (ADR-0035, pools._check_pool_devices): nothing on a boot or virtual
+    device (HIDDEN_DISK_PREFIXES: the SD card and the eMMC, which is never
+    written, ADR-0225; loop and RAM disks), and nothing on the system disk,
+    whose partitions and the devices built on them are never used for pools.
+    A device that lsblk does not list cannot be checked. Returns path ->
+    reason for each of ``paths`` that breaks a rule. RuntimeError when lsblk
+    fails.
+    """
+    state = _collect_host_state()
+    problems: dict[str, str] = {}
+    for path in paths:
+        # A device built on several disks (md, LVM) is below each of them.
+        tops = [top for top in state.tree if any(path in _node_paths(node) for node in _walk(top))]
+        if not tops:
+            problems[path] = f"lsblk does not list {path}"
+        for top in tops:
+            top_path = top.get("path") or f"/dev/{top.get('name')}"
+            on = "is" if path in _node_paths(top) else f"is on {top_path},"
+            if is_hidden_disk(top.get("name") or ""):
+                problems[path] = f"{path} {on} a boot or virtual device"
+                break
+            reason = _system_reason(list(_walk(top)), state)
+            if reason:
+                problems[path] = f"{path} {on} a system disk ({reason})"
+                break
+    return problems
 
 
 def get_device_facts(paths: list[str]) -> dict[str, DeviceFacts]:

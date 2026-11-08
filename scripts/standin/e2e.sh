@@ -23,8 +23,11 @@
 #    here is the whole run, and step 4 is left out.
 # 4. Runs Playwright in webui/ with BASE_URL and HTTP_URL on localhost,
 #    E2E_STAND_IN=1 (the specs skip, with the reason, what the stand-in cannot
-#    provide: disks, Docker, the host's network, journal and /proc) and
-#    E2E_POOLS_BASE (the stand-in's pools folder).
+#    provide: disks, Docker, the host's network, journal and /proc),
+#    E2E_POOLS_BASE (the stand-in's pools folder), and E2E_STANDIN_STATE and
+#    E2E_STANDIN_PYTHON (its state directory and Python, with which
+#    scripts/standin/emergency.py runs the supervisor's emergency command line
+#    against the stand-in's data).
 # 5. Stops the stand-in and exits with Playwright's exit code.
 #
 # Logs: .standin/logs/ (build, supervisor, front, first-run, playwright); the
@@ -244,7 +247,8 @@ if [ -n "$first_run_only" ]; then
 fi
 echo "== created the test administrator; running Playwright (log: .standin/logs/playwright.log)"
 
-E2E_STAND_IN=1 E2E_POOLS_BASE="$state/pools" BASE_URL="$base_url" HTTP_URL="$http_url" PLAYWRIGHT_HTML_OPEN=never \
+E2E_STAND_IN=1 E2E_POOLS_BASE="$state/pools" E2E_STANDIN_STATE="$state" E2E_STANDIN_PYTHON="$PYTHON" \
+  BASE_URL="$base_url" HTTP_URL="$http_url" PLAYWRIGHT_HTML_OPEN=never \
   "$webui/node_modules/.bin/playwright" test "$@" 2>&1 | tee "$logs/playwright.log"
 rc=${PIPESTATUS[0]}
 echo "== Playwright exit code $rc (logs: .standin/logs, report: webui/playwright-report)"

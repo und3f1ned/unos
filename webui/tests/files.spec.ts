@@ -96,6 +96,18 @@ async function putFile(page: Page, dir: string, name: string, content: Buffer) {
   expect(response.ok(), `upload ${name}: HTTP ${response.status()}`).toBeTruthy();
 }
 
+/** How the server describes `path` (GET /api/v1/files/info): its permissions as ls shows them, such as drwxr-xr-x. */
+async function infoOf(page: Page, path: string): Promise<Entry & { permissions: string; group: string }> {
+  const response = await page.request.get(`/api/v1/files/info?path=${encodeURIComponent(path)}`, {
+    headers: auth(),
+  });
+  expect(response.ok(), `info ${path}: HTTP ${response.status()}`).toBeTruthy();
+  return response.json();
+}
+
+/** What the group of an entry may do, from its permissions: drwxr-x--- gives r-x. */
+const groupPart = (permissions: string) => permissions.slice(4, 7);
+
 async function makeFolder(page: Page, dir: string, name: string): Promise<string> {
   const response = await page.request.post('/api/v1/files/mkdir', {
     headers: auth(),
@@ -926,6 +938,34 @@ test.describe('File Browser operations', () => {
     await page.getByRole('button', { name: 'Create', exact: true }).click();
     await expect(row(page, 'made-here')).toBeVisible();
     expect(await listNames(page, scratch!.path)).toEqual(['made-here']);
+  });
+
+  test('outside share folders, a new folder and an upload give the group no write access', async ({
+    authenticatedPage: page,
+  }) => {
+    // Only a share folder (setgid, the group unos-smb, mode 2770) gives them group write (ADR-0273).
+    // The scratch folder is an ordinary one: its new entries keep what the umask leaves, and its group.
+    const dir = (await openScratch(page)).path;
+    await page.getByTitle('New Folder').click();
+    await page.getByPlaceholder('Folder name').fill('made-here');
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(row(page, 'made-here')).toBeVisible();
+    const answered = page.waitForResponse((response) => isApi('/files/upload')(response.request()));
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'upload.bin',
+      mimeType: 'application/octet-stream',
+      buffer: randomBytes(1024),
+    });
+    expect((await answered).status()).toBe(200);
+    await expect(row(page, 'upload.bin')).toBeVisible();
+
+    const folder = await infoOf(page, dir);
+    for (const [name, type] of [['made-here', 'directory'], ['upload.bin', 'file']] as const) {
+      const entry = await infoOf(page, `${dir}/${name}`);
+      expect(entry.type, name).toBe(type);
+      expect(groupPart(entry.permissions), `${name}: ${entry.permissions}`).not.toContain('w');
+      expect(entry.group, name).toBe(folder.group);
+    }
   });
 
   test('renames a file and a folder in the open folder', async ({ authenticatedPage: page }) => {

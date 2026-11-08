@@ -97,6 +97,31 @@ class PoolInfo(BaseModel):
     forced_read_only: bool = False
 
 
+# Why a btrfs filesystem is not the pool its label names (ADR-0283): it has none, it is
+# not a valid pool name, or another btrfs filesystem of the host has it too, and the pool
+# of that name is the other one (mounted or managed under it) or neither.
+LabelProblem = Literal["missing", "invalid", "duplicate"]
+
+
+class ImportableFilesystem(BaseModel):
+    """A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0283)."""
+
+    uuid: str
+    label: str | None = None  # as btrfs prints it; None without a label
+    label_problem: LabelProblem
+    devices: list[str]  # the members that are present
+    total_devices: int
+    missing_devices: int = 0
+    size: int  # bytes, of the members that are present
+    used: int  # bytes used, as btrfs filesystem show reports them
+
+
+class PoolImport(BaseModel):
+    """Body of POST /storage/filesystems/{uuid}/import: the pool's name, which becomes its label."""
+
+    name: str
+
+
 # btrfs stores a quota limit as an unsigned 64-bit number and reads (u64)-1
 # as "no limit", so the largest limit is one less.
 MAX_VOLUME_QUOTA = (1 << 64) - 2
@@ -120,10 +145,14 @@ class VolumeInfo(BaseModel):
 
 class ScrubStatus(BaseModel):
     pool: str
-    status: str  # "running", "finished", "aborted", "idle"
+    # As btrfs scrub status prints it: "running", "finished", "aborted" (cancelled),
+    # "interrupted" (ended neither by finishing nor by a cancel, for example because the btrfs
+    # process that ran it was killed); "idle": no scrub recorded, also after a restart of the
+    # supervisor, which forgets the last one (ADR-0171).
+    status: str
     duration: float | None = None  # seconds
     bytes_scrubbed: int | None = None
     total_bytes: int | None = None
     rate: int | None = None  # bytes per second
-    errors: int = 0
-    last_run: str | None = None  # datetime string of last scrub
+    errors: int = 0  # the sum of the error summary: read, super, verify and csum errors (ADR-0272)
+    last_run: str | None = None  # when the scrub started, as btrfs prints it

@@ -109,10 +109,26 @@ UNOS uses BTRFS for storage management. A **storage pool** combines one or more 
 
 ### Viewing Disks
 
-Go to **Storage** to see:
-- All available disks
-- Disk model, size, and serial number
-- Current mount status
+**Storage** → **Physical Disks** lists every whole disk of the host, the
+system disk included, but not SD cards and eMMC (the boot medium of ARM
+boards), flash, RAM, loop, optical and floppy devices. For each disk it
+shows the device, the model and serial number, the size, HDD or SSD, what
+it holds (a filesystem with its label, a partition table and its
+partitions), where it is mounted, and its status:
+
+- **System**: it holds the host's root filesystem, `/boot` or active swap,
+  or the host boots from it;
+- **In use**: it is mounted, a member of a mounted pool, or used by an md
+  RAID array, LVM or LUKS;
+- **Pool "name"**: it belongs to a pool that is not mounted;
+- **Has data**: it holds a filesystem, a partition table or another
+  signature;
+- **Free**: it is empty.
+
+The reason, such as "Mounted at /srv/backup", is shown below the badge.
+When the disks cannot be listed, for example because `lsblk` fails on the
+host, the card says so with the reason instead of the list; the pools are
+still shown, and the other way round.
 
 ### Creating a Storage Pool
 
@@ -143,26 +159,87 @@ Go to **Storage** to see:
 UNOS mounts the new pool at `/mnt/pools/<name>` and adds it to the host's
 `/etc/fstab`, so it is mounted again after a reboot.
 
+### Importing an Existing Pool
+
+Disks that already hold a btrfs filesystem, from an earlier UNOS installation or
+from another system, become a pool without being formatted:
+
+- A filesystem whose label is a valid pool name (letters, digits, `-` and `_`,
+  up to 63 characters, starting with a letter or digit) that no other
+  filesystem has is listed under **Storage Pools** as **Not mounted**. Click
+  **Mount**: UNOS mounts it at `/mnt/pools/<label>` by its UUID and adds it to
+  the host's `/etc/fstab`, so it is mounted again after a reboot. This is how
+  the pools of an earlier installation come back.
+- Any other btrfs filesystem, one without a label, with a label that is not a
+  pool name, or with the label of another filesystem, is listed under **Found
+  on the disks** with its UUID, disks, size and why it is not a pool yet. Of
+  two filesystems with one label, the one mounted as that pool, or else the
+  one that UNOS mounts at every boot under that name, stays the pool; when
+  neither is, both are listed under **Found on the disks** and neither under
+  **Storage Pools**. Click **Import**, enter a pool name and click
+  **Import**: UNOS mounts it at `/mnt/pools/<name>` by its UUID, makes the
+  name the filesystem's label and adds it to `/etc/fstab`. The name cannot be
+  the name of a pool or the label of another filesystem of the host. Nor can
+  it be the name of a removed pool whose SMB shares, NFS exports or apps are
+  still there, because the imported disks would serve them: the message names
+  them, so choose another name or delete them first.
+
+A btrfs filesystem on the SD card or the eMMC, on a loop or RAM disk, or on
+the system disk is neither listed nor mounted: it never becomes a pool, as no
+pool is created on those devices.
+
+The data stays on the disks either way; an import changes only the label, so a
+system that mounted the filesystem by its old label needs the new one. Nothing
+is imported, and nothing is changed, while the filesystem is mounted on the
+host, while one of its disks is missing (**Found on the disks** says how many
+are; reconnect them first), or when it mounts a subvolume other than its top
+level by default, because its default subvolume was changed with
+`btrfs subvolume set-default`. To make the top level the default again, mount
+the filesystem anywhere on the host, run
+`btrfs subvolume set-default 5 <that mountpoint>`, unmount it and try again.
+An import starts no apps. When the host's disks cannot be searched, **Found on
+the disks** says why. btrfs on top of md RAID, LVM or LUKS is found only once
+the host has assembled or opened it.
+
 ### Pool Operations
 
 For each pool, you can:
 - **View Details** - Space usage, devices, status
 - **Mount / Unmount** - Mount the pool (and mount it at every boot), or unmount
-  it; the data on the disks is not touched. Unmounting is refused while a
-  running app or container uses the pool, also through a Docker volume that
-  binds a folder in it, or while files on it are open, for example by a
-  computer that has one of its SMB shares open. System services that run in a
-  sandbox of their own keep a copy of the pool's mount there: UNOS unmounts
-  those copies too. When another process still has the pool mounted, for
-  example a container that binds the whole `/mnt/pools` or `/mnt` folder, or
-  one that Docker does not list, UNOS mounts the pool again and the message
-  names the process and where it has the pool mounted. Once
-  the pool is unmounted, its SMB shares are no longer served: their open
-  connections are closed, and the **Shares** page marks them **Not served** and
-  **Pool not mounted**. They keep their access, and mounting the pool serves
-  them again
+  it after confirming; the data on the disks is not touched. Mounting is
+  refused when the pool's filesystem mounts a subvolume other than its top
+  level by default (see [Importing an Existing Pool](#importing-an-existing-pool)).
+  An unmounted pool shows **Not mounted**, its fstab entry is removed, and its
+  empty mountpoint is write-protected, so that nothing lands on the system
+  disk there. Unmounting is refused while a running app or container uses the
+  pool, also through a Docker volume that binds a folder in it, or while
+  files on it are open, for example by a computer that has one of its SMB
+  shares open; the dialog names the containers or the reason. System services
+  that run in a sandbox of their own keep a copy of the pool's mount there:
+  UNOS unmounts those copies too. When another process still has the pool
+  mounted, for example a container that binds the whole `/mnt/pools` or `/mnt`
+  folder, or one that Docker does not list, UNOS mounts the pool again and the
+  message names the process and where it has the pool mounted. Once the pool
+  is unmounted, its SMB shares are no longer served: their open connections
+  are closed, and the **Shares** page marks them **Not served** and **Pool
+  not mounted**. They keep their access, and mounting the pool serves them
+  again
 - **Add Devices** - Expand the pool
-- **Scrub** - Check data integrity
+- **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
+  the pool shows its progress (bytes, percent, rate and duration), updated
+  every 2 seconds, and **Cancel Scrub** stops it. At the end it shows the
+  result with the time the scrub started: **Last scrub: No errors**, the
+  number of errors btrfs counted (read, super, verify and checksum errors),
+  or that the scrub was cancelled or interrupted before it finished, with
+  the errors found until then; start a scrub again to check the whole pool.
+  Interrupted means that the scrub ended neither by finishing nor by a
+  cancel, for example because the btrfs process that ran it was killed.
+  When UNOS restarts, for example with the host, it forgets the result of
+  the last scrub: the pool then shows none, also when the restart stopped a
+  scrub. When btrfs cannot report the status, the pool says so with the
+  reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
+  scheduled scrub of a pool that is not mounted fails without scrubbing
+  anything
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
   subvolumes in the pool's top folder (`/mnt/pools/<pool>/<name>`) that can be
   shared on their own. **Quota in GiB** is optional: leave it empty for no
@@ -179,12 +256,13 @@ For each pool, you can:
   snapshots or other subvolumes, which must be deleted first. A pool mounted
   read-only lists its volumes but cannot create or delete them.
 - **Balance** - Redistribute data across devices
-- **Remove** (the bin icon) - Asks you to type the pool's name, then unmounts
-  the pool, removes it from `/etc/fstab` and removes its empty mountpoint. The
-  disks are not wiped: the data stays on them, and the pool is listed again as
-  **Not mounted** and can be mounted later. Like Unmount, it is refused while
-  the pool is in use, and its SMB shares are no longer served; NFS exports of
-  the pool are not checked: remove them first.
+- **Remove pool** (the trash button) - After **Continue**, type the pool's
+  name to enable **Remove Pool**. UNOS unmounts the pool, removes it from
+  `/etc/fstab` and deletes its empty mountpoint. The disks are not wiped: the
+  data stays on them, and the pool is listed again as **Not mounted**, ready
+  to be mounted later. Like Unmount, it is refused while the pool is in use,
+  and the dialog says why. As after an unmount, its SMB shares are no longer
+  served; NFS exports of the pool are not checked: remove them first.
 
 ### SMART Monitoring
 
@@ -205,8 +283,12 @@ dialog shows the values the tab loaded.
 
 Every hour UNOS records, for each disk that is awake, the SMART counters of
 failing sectors and errors, and keeps the last 720 records of each disk (30
-days for a disk that never sleeps). From 24 records on (a day), it scores how
-the counters rise:
+days for a disk that never sleeps). The records are kept in memory and saved
+to the system disk only when a disk's counters, path or serial number
+change, when a disk is recorded for the first time, and when UNOS stops: an
+hour in which nothing changed writes nothing. After a power cut, the records
+since the last change are lost; the counters themselves are not. From 24
+records on (a day), it scores how the counters rise:
 
 - each of the reallocated, current pending and offline uncorrectable sector
   counts that rose within the kept records adds 30 points, and 20 more if it
@@ -241,8 +323,18 @@ The score follows rises, not levels: a disk that arrives with many
 reallocated sectors gets no mark, so check the SMART data of a used disk
 yourself. NVMe disks get no score, as the hourly records hold no NVMe
 counters: **SMART data** shows their health log, and their health turns
-**FAILED** when the disk reports a critical warning. A rising counter also
-sends an alert (see [Notifications](#notifications)).
+**FAILED** when the disk reports a critical warning.
+
+A counter that rose since the disk's previous record sends an alert to every
+enabled e-mail and Telegram channel (see [Notifications](#notifications)):
+"Disk Health Warning: <path>" with the counter, its old and new value and a
+recommendation; a warning, or an error when a sector count rose by more than
+10 (other counters: by more than 100). The same rise is not alerted again an
+hour later, and a count that falls and rises again is alerted again. Disks
+without a serial number are told apart by their path.
+`GET /api/v1/health/smart/trends` lists every recorded disk, removed disks
+included, with its number of records and the counters that rose over its
+last 24 records.
 
 ---
 
@@ -283,7 +375,7 @@ A share is a folder inside a pool, or a volume. UNOS refuses:
 A share marked **Not served** breaks one of these rules, for example a share
 of a whole pool imported from the host's existing smb.conf. Nobody can open it
 until you give it a new folder with **Edit**; it cannot be given access until
-then. The shares of a pool that was unmounted or deleted on the **Storage**
+then. The shares of a pool that was unmounted or removed on the **Storage**
 page are marked **Not served** and **Pool not mounted** in the same way: they
 keep their access, and mounting the pool serves them again.
 
@@ -321,7 +413,8 @@ every served share below such a folder until the command has run.
 
 Folders that apps use (downloads, media) can be shared. SMB users with write
 access then change what the app sees: they can add, change, rename or delete
-its files there.
+its files there. Apps get a share's folder only when they run in the group
+`unos-smb` (see [Share Folders for Apps](#share-folders-for-apps)).
 
 #### Guest Shares
 
@@ -349,17 +442,20 @@ files everyone on your network may read, and keep them few.
 #### Repair Permissions
 
 UNOS creates share folders with the group `unos-smb` and the mode 2770, and
-files created over SMB get that group and the mode 660. Files that did not
-come in over SMB (from an app, from the File Browser, or already in the folder
-when the share was created) keep their permissions until you press **Repair
-permissions** on the share. A share marked **Permissions need repair** needs
-it. Repairing:
+files created over SMB get that group and the mode 660. In such a folder,
+folders made with **New Folder** in the File Browser get the mode 2770 and
+uploaded files 660 as well (see [File Browser](#file-browser)). Files that
+came in another way (from an app, copied or moved in the File Browser, or
+already in the folder when the share was created) keep their permissions
+until you press **Repair permissions** on the share. A share marked
+**Permissions need repair** needs it. Repairing:
 - gives every file and folder of the share the group `unos-smb` and group
   read and write access (folders 2770, files 660, or 770 for files their
   owner may run);
 - **removes the access that the group and other permissions gave every
   other account**, including apps that run as their own user (for example
-  PUID 1000): they can no longer read the folder;
+  PUID 1000): they can no longer read the folder, unless they run in the
+  group `unos-smb` (see [Share Folders for Apps](#share-folders-for-apps));
 - does not change ACL entries (set with `setfacl`; `ls -l` shows a `+`): the
   users and groups named in them keep their access, and can get more (up to
   what their entry gives), because the group permissions that Repair sets
@@ -379,6 +475,27 @@ it. Repairing:
 It changes the permissions of existing files and cannot be undone
 automatically. It is refused while a folder above the share's folder can be
 changed by other accounts (see [What Can Be Shared](#what-can-be-shared)).
+
+#### Finding the NAS
+
+Computers on your local network find the NAS without its address:
+
+- **Windows** lists it in File Explorer, under **Network**, on a network that
+  Windows treats as private (network discovery on). Opening it there asks for
+  your UNOS username and password and lists your shares.
+- **macOS** lists it in the Finder sidebar, under **Locations**. Click it,
+  then **Connect As** and sign in with your UNOS username and password.
+
+The NAS appears under its server name, and is announced with its IPv4
+address, which both connect to. NetBIOS, the old way of finding Windows
+servers, is off: computers that know only NetBIOS (some older TVs and media
+players) do not list the NAS; connect them by address as below. Computers
+that speak only SMB1, such as Windows XP, cannot use the NAS at all: it
+speaks SMB2 and later. On a NAS installed on Debian 11, Windows does not list
+it either ([Network Discovery](INSTALL.md#network-discovery)).
+
+**Show in network browsing** of a share is another matter: it decides whether
+the share appears in the NAS's list of shares.
 
 #### Accessing Shares
 
@@ -475,6 +592,19 @@ in your storage pools from the web interface. It starts in the pools directory
   the item. After a rename, or Escape in the name field, the focus is on the
   item's checkbox, unless Tab or a click took it to another control. Screen
   readers announce error messages.
+
+In a folder with the permissions of share folders, the group `unos-smb` and
+the mode 2770 (a share's folder that UNOS created or repaired, and the
+folders in it that SMB users, **Repair permissions** or the File Browser
+made; see [Repair Permissions](#repair-permissions)), **New Folder** gives the
+new folder the mode 2770 and **Upload** gives the file the mode 660, also a
+file that replaces one, both in the group `unos-smb`: the users with **Read &
+write** access to the share can change them, and add files to the new
+folder, over SMB at once. Elsewhere new folders get the mode 755 (2755 in a
+folder with the setgid bit) and uploaded files 644, which let other accounts
+read them but not change them. **Copy** and **Move** keep the permissions of
+the items, also into a share: run **Repair permissions** on the share
+afterwards.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
@@ -593,15 +723,59 @@ The App Store provides one-click installation of popular applications.
 4. Choose the **Storage pool** for the app's data (apps that keep data need a
    mounted pool; create or mount one on the **Storage** page first) and
    configure settings if prompted
-5. Wait for installation to complete
+5. To give the app a share's folder, tick **Run in the group unos-smb** and
+   enter the share's folder on the **Volumes** tab (see
+   [Share Folders for Apps](#share-folders-for-apps))
+6. Wait for installation to complete
 
 Starting or restarting an app from UNOS fails while its data folders are not
 on a mounted pool.
 
+### Share Folders for Apps
+
+An app can use a share's folder only if it runs in the group `unos-smb`. The
+apps of linuxserver.io images offer **Run in the group unos-smb** when they
+are installed, unless all their folders hold their own data (such as
+Prowlarr's `/config`): it sets the app's `PUID` to 80000, a user that no other
+app has, its `PGID` to 70000 (`unos-smb`) and its `UMASK` to 007, so what the
+app creates gets the same permissions as what SMB users create (folders 2770,
+files 660). Such an app reads and changes every file in the share folders you
+give it, and SMB users with write access to the share can change what the app
+writes there. If the app can be reached from the internet, whoever takes it
+over gets those files too. Apps of other images, such as Jellyfin, Plex and
+File Browser, cannot run in the group: UNOS sets the user and the group
+through `PUID` and `PGID`, which those images do not take. `PUID` and `PGID`
+cannot be changed on the **Environment** tab.
+
+An install is refused when it would give an app:
+
+- a share's folder, a folder inside one or a folder that holds one, while the
+  app does not run in the group;
+- a folder inside a share's folder, also in the group: give the app the
+  share's whole folder;
+- a share's folder for the app's own data, the folders under `apps/` such as
+  `/config`;
+- a writable folder that holds a share's folder, also in the group. A
+  read-only one may hold shares when the app runs in the group, as Duplicati's
+  view of the whole pool does;
+- a snapshot folder (`.snapshots`) or the trash (`.unos-trash`), or a folder
+  in one, also in the group: they keep the files of shares as they were, and
+  what was deleted from them.
+
+A linuxserver.io app may give the share's folder to its user (80000) when it
+starts; the folder keeps the group `unos-smb` and its permissions, and
+**Repair permissions** does not change its owner.
+
+A folder that an app already uses (downloads, media) can still be shared on
+the **Shares** page. After **Repair permissions**, an app that runs as its own
+user outside the group (PUID and PGID 1000) can no longer read it: uninstall
+the app (its data is kept) and install it again in the group.
+
 ### Managing Installed Apps
 
-Go to **App Store** → **Installed** to see the installed apps with their state
-and the pool that holds their data, and to act on them:
+Go to **App Store** → **Installed** to see the installed apps with their state,
+the pool that holds their data and, for the apps that run in the group
+`unos-smb`, **Runs in the group unos-smb**, and to act on them:
 
 - **Start**, **Stop** and **Restart** an app; its card shows the new state. A
   start or restart is refused while the app's data folders are not on a mounted
@@ -669,9 +843,17 @@ one of two ways:
 
 Then give the user access to shares on the **Shares** page.
 
-SMB passwords need at least 8 characters. A user whose UNOS password is
-shorter (scripts that use the API can set shorter ones) first changes it
-under **Change Password**, then turns SMB on. A two-factor code works only once:
+SMB passwords need at least 8 characters, and they must not be common
+passwords: UNOS refuses about 1450 passwords that attackers try first, such as
+`Password123`, `qwertyuiop` or `Summer2024!`, in any letter case, with "SMB
+passwords must not be common passwords: this one is on the list of passwords
+that attackers try first". This holds when SMB is turned on with a password
+(by the user or in the **Users** page, also when a user is created with SMB)
+and when a user with SMB on changes the password; users without SMB may
+keep a shorter or common UNOS password (the web UI asks only for 8
+characters, and scripts that use the API can set shorter ones). A user whose
+UNOS password breaks these rules first changes it under **Change Password**,
+then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 
@@ -709,16 +891,21 @@ From then on the old password no longer signs in, and the new one does.
 Sessions that were open before stay signed in until they end (see
 [First Login](#first-login)).
 
-Admins can reset any user's password via **Users** page.
+Admins can reset any user's password via **Users** page. When no administrator
+can sign in, root on the NAS resets an administrator's password (see
+[Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)).
 
 When SMB is on for the user, the SMB password changes too, and the user's open
 SMB connections are ended: the computers sign in again with the new password.
-Update the saved password on every computer and app that connects over SMB
-(mapped drives, media players, sync apps, `cifs` credential files): Samba
-writes each failed sign-in of an SMB account to the system disk, and SMB has
-no limit on sign-in attempts, so a device that keeps trying the old password
-keeps writing. If open SMB connections could not be ended, **Change
-Password** shows a warning that stays until you dismiss it.
+The new password must then follow the SMB rules (at least 8 characters, not a
+common password; see [SMB Access](#smb-access)). Update the saved password on
+every computer and app that connects over SMB (mapped drives, media players,
+sync apps, `cifs` credential files). Samba remembers each account's two
+previous passwords: a device that keeps trying one of them is refused without
+a write to the system disk, but every other wrong password of an SMB account
+is written to the system disk, and SMB has no limit on sign-in attempts. If
+open SMB connections could not be ended, **Change Password** shows a warning
+that stays until you dismiss it.
 
 ### Two-Factor Authentication (2FA)
 
@@ -781,7 +968,11 @@ a recovery code.
 Turning 2FA off deletes the recovery codes, and after turning it on again you
 generate new ones. Turning 2FA off needs a code from the authenticator app:
 with recovery codes alone you can sign in and generate new codes, but not turn
-2FA off, and an administrator cannot reset it for you.
+2FA off, and an administrator cannot reset it for you. For an administrator
+who lost both the app and the recovery codes, root on the NAS sets a new
+password and turns 2FA off (see
+[Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication));
+a regular user who lost both has no way back into the account yet.
 
 Scripts send the code as `recovery_code` in place of `totp_code` to
 `POST /api/v1/auth/login`; `POST /api/v1/auth/recovery-codes/generate`
@@ -880,8 +1071,11 @@ regular users have no access to it.
   appears only in the login history), users created, changed and deleted, the
   SMB access of users, shares created, changed, deleted and repaired, shares
   imported from smb.conf and the corrections of the SMB check at startup (by
-  the user `system`), API tokens created and deleted, new recovery codes, and
-  the clearing of the log. Storage, snapshots, containers, apps, backups,
+  the user `system`), API tokens created and deleted, new recovery codes, the
+  reset of an administrator on the NAS's command line (`password_change` and
+  `totp_disabled` by the user `root`, see
+  [Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)),
+  and the clearing of the log. Storage, snapshots, containers, apps, backups,
   restarts and shutdowns, scheduled tasks, the network and system settings
   write no entries yet, and neither do a user's own password and two-factor
   changes, although **Action** lists such actions (feature-list entry
@@ -1023,7 +1217,8 @@ first. The buttons above the filters choose what it lists:
 - **System Journal**: everything in the journal
 - **Kernel**: the kernel's messages since the host started
 - **Docker**: the Docker daemon
-- **Samba**: the SMB file server, smbd and nmbd
+- **Samba**: the SMB file server, smbd, and nmbd where NetBIOS is on (UNOS
+  turns NetBIOS off, so nmbd's entries are from before)
 - **Authentication**: sign-ins, sudo and the other messages of the syslog
   facilities auth and authpriv, which hosts with rsyslog also write to
   `/var/log/auth.log`
@@ -1050,6 +1245,16 @@ answer is still coming. When the journal cannot be read, the tab shows why
 instead of the list. A search through a large journal can take long: after
 30 seconds UNOS stops journalctl on the host and the tab reports that it did
 not answer; a shorter time range helps.
+
+**Failed SMB sign-ins**: Samba logs each failed SMB sign-in as a line of the
+level Notice, which the source **Samba** lists. Search for `Auth:` to list
+only these lines.
+Each one names the account the computer tried (`user [WORKGROUP]\[alice]`),
+the reason (`status [NT_STATUS_WRONG_PASSWORD]` for a wrong password,
+`[NT_STATUS_NO_SUCH_USER]` for a name without SMB) and the computer
+(`remote host [ipv4:192.168.1.50:50122]`, its address and port). To see what
+one computer keeps trying, search for its part, such as
+`remote host [ipv4:192.168.1.50:`. Successful sign-ins are not logged.
 
 The output of the UNOS containers themselves is not in the journal: run
 `docker logs unos-supervisor` or `docker logs unos-webui` on the host. Log
@@ -1330,11 +1535,13 @@ notification.
 2. ✅ Enable two-factor authentication (2FA), and keep its recovery codes
    somewhere safe
 3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
-   no limit on login attempts and no two-factor authentication, and UNOS does
-   not refuse common passwords
+   no limit on login attempts and no two-factor authentication. UNOS refuses
+   common passwords for SMB, but not every password that is easy to guess
 4. ✅ After a password change, update the saved password on every computer
    and app that connects over SMB: Samba writes each failed sign-in to the
-   system disk
+   system disk, unless the password is one of the account's two previous
+   ones. **System** → **Logs**, source **Samba**, shows the computers whose
+   sign-ins fail (see [Logs](#logs))
 5. ✅ Use a regular account, not an administrator, for your files
 6. ✅ Keep guest shares few (guests can only read)
 7. ✅ Keep UNOS updated
@@ -1371,7 +1578,8 @@ Follow the 3-2-1 rule:
 If you encounter issues:
 
 1. Check **System** → **System Logs** for errors (administrators)
-2. Review [Troubleshooting](INSTALL.md#troubleshooting)
+2. Review [Troubleshooting](INSTALL.md#troubleshooting); when the NAS does not
+   boot or nobody can sign in, see [Recovery](RECOVERY.md)
 3. Search [GitHub Issues](https://github.com/und3f1ned/unos/issues)
 4. Ask in [Discussions](https://github.com/und3f1ned/unos/discussions)
 

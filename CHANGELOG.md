@@ -223,6 +223,20 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- File manager: Delete moves items into a trash of their pool or volume
+  (`.unos-trash`); the Trash page restores them, deletes them for good or
+  empties the trash, and items deleted 30 days ago go by themselves. Delete for
+  good stays available in the dialog.
+- System → Notifications: channels for e-mail (STARTTLS or SMTPS, with the
+  server's certificate checked), Telegram and webhooks (generic, Discord,
+  Slack), each with a test, and the history of the latest 100 notifications.
+- System → Logs reads the host's journal, kernel messages and log files, newest
+  first, with filters and search.
+- Containers: an Images view that lists, pulls and removes the host's images.
+- Scheduler: a custom task records its command's output and exit status, and
+  schedules follow the host's time zone.
+- SMB: unmounting or forgetting a pool takes its shares out of smb.conf at once,
+  and the SMB status names a smb.conf that someone else replaced.
 - File manager: Rename. Select one item and choose Rename to edit its name in
   its row; a name that exists is refused, and nothing is ever replaced.
 - System → Disk Health opens each disk's SMART data: health, temperature,
@@ -360,6 +374,11 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- Sign-in works while the disk that holds `/data` is full: the login history
+  and the audit line are written best effort.
+- An API token's last use is stored at most once an hour, so automations do not
+  write to the system disk on every request.
+- Docker calls of the containers API run off the event loop with timeouts.
 - Scheduled backups are always encrypted (AES-256-GCM) with their task's
   passphrase and are named `auto_backup_<date>_<time>.tar.gz.enc`; a restore
   asks for the passphrase.
@@ -817,6 +836,9 @@ manager, encrypted backup uploads, health checks, CI checks).
 
 ### Known issues
 - Not working yet, each with an entry in `feature-list.json`:
+  - Unmounting a pool is refused on hosts whose systemd services keep copies of
+    its mount in their own mount namespaces, as on the dev device; the pool is
+    mounted again (`storage.mount-and-unmount`).
   - NFS exports are written inside the supervisor container and do not reach
     the host (`shares.nfs-exports`).
   - The UPS state is never read, because the supervisor image has no NUT client,

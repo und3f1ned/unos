@@ -10,6 +10,7 @@ from slowapi.util import get_remote_address
 from ..auth.utils import verify_token
 from ..security.validators import (
     sanitize_error_message,
+    validate_filesystem_uuid,
     validate_pool_name,
     validate_volume_name,
 )
@@ -17,7 +18,9 @@ from ..shares import service as shares_service
 from . import disks, pools
 from .schemas import (
     DiskInfo,
+    ImportableFilesystem,
     PoolCreate,
+    PoolImport,
     PoolInfo,
     ScrubStatus,
     SmartData,
@@ -93,7 +96,12 @@ async def get_disk_smart(name: str, _=Depends(verify_token)):
 
 @router.get("/pools", response_model=list[PoolInfo])
 async def list_pools_endpoint(_=Depends(verify_token)):
-    """List all storage pools."""
+    """List the storage pools (ADR-0283).
+
+    Of several filesystems with one label, only the one mounted or managed
+    under it is a pool. A pool found on the disks that is on a boot or
+    virtual device or on the system disk is left out: Mount refuses it.
+    """
     return await _call(pools.list_pools)
 
 
@@ -141,15 +149,59 @@ async def delete_pool_endpoint(request: Request, name: str, _=Depends(verify_tok
     return {"status": "deleted"}
 
 
+@router.get("/filesystems/importable", response_model=list[ImportableFilesystem])
+async def list_importable_filesystems_endpoint(_=Depends(verify_token)):
+    """The btrfs filesystems on the host's disks that can be imported as pools (ADR-0283).
+
+    Those that are neither the host's system filesystem nor mounted on the
+    host, that are not the pool their label names (``label_problem``): they
+    have none, it is not a valid pool name, or another btrfs filesystem has
+    it too and the pool of that name is the other one or neither; and that
+    are on no boot or virtual device and not on the system disk. The pools
+    are listed by GET /pools, and Mount imports them. 500 when btrfs, the
+    host's mount table, its fstab or lsblk cannot be read.
+    """
+    return await _call(pools.importable_filesystems)
+
+
+@router.post("/filesystems/{uuid}/import", response_model=PoolInfo)
+@limiter.limit("10/minute")
+async def import_filesystem_endpoint(
+    request: Request, uuid: str, body: PoolImport, _=Depends(verify_token)
+):
+    """Import a filesystem of GET /filesystems/importable as the pool ``name`` (ADR-0283).
+
+    Its disks are not formatted: it is mounted by UUID at /mnt/pools/<name>,
+    gets the name as its label through the mount and keeps a managed fstab
+    entry, like every managed pool. 400 for an invalid UUID or name; 404 when
+    no btrfs filesystem has the UUID; 409, and nothing is changed, when the
+    filesystem holds the host's system, is on a boot or virtual device or on
+    the system disk, is mounted, misses devices, is the pool its label names
+    or is managed under another name, when another filesystem of the host has
+    the name as its label or UNOS manages a pool of that name, when SMB
+    shares, NFS exports or containers of an earlier pool still use the name,
+    when the mountpoint is in use or holds files, and when the filesystem
+    mounts another subvolume than its top level by default; 503 when Docker
+    does not answer. Then smb.conf is applied again (ADR-0248).
+    """
+    validated_uuid = validate_filesystem_uuid(uuid)
+    validated_name = validate_pool_name(body.name)
+
+    return await _change_pools(pools.import_pool, validated_uuid, validated_name)
+
+
 @router.post("/pools/{name}/mount", response_model=PoolInfo)
 @limiter.limit("10/minute")
 async def mount_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
-    409 when the mountpoint directory holds files (they would be hidden).
-    The pool's apps that could not start without it are started in the
-    background; the response does not wait for them. Its SMB shares are
-    served again before it answers (ADR-0248).
+    This imports a pool found on the host's disks, too (ADR-0283). 409 when
+    the mountpoint directory holds files (they would be hidden), when the
+    filesystem is on a boot or virtual device or on the system disk, and when
+    it mounts another subvolume than its top level by default: it is
+    unmounted again. The pool's apps that could not start without it
+    are started in the background; the response does not wait for them. Its
+    SMB shares are served again before it answers (ADR-0248).
     """
     validated_name = validate_pool_name(name)
 
@@ -162,7 +214,7 @@ async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_to
     """Unmount a pool on the host and remove its managed fstab entry.
 
     The copies of its mount that services keep in mount namespaces of their
-    own, whose root is the host's, are unmounted with it (ADR-0269). 409
+    own, whose root is the host's, are unmounted with it (ADR-0287). 409
     while host processes or running containers use the pool, such as smbd
     for an SMB client that has one of its shares open, and when the mount
     namespace of another process still has it mounted after the host's
@@ -243,17 +295,30 @@ async def _scrub(func: Callable[[str], ScrubStatus], name: str) -> ScrubStatus:
 
 @router.post("/pools/{name}/scrub", response_model=ScrubStatus)
 async def start_scrub_endpoint(name: str, _=Depends(verify_token)):
-    """Start a scrub on a pool."""
+    """Start a scrub on a pool; answers once btrfs runs it, with its status then (ADR-0071).
+
+    500 with btrfs's error when it does not start, or when btrfs does not
+    answer within SCRUB_COMMAND_TIMEOUT. A scrub that started is answered
+    running when its status cannot be read yet (ADR-0272).
+    """
     return await _scrub(pools.start_scrub, name)
 
 
 @router.get("/pools/{name}/scrub", response_model=ScrubStatus)
 async def get_scrub_status_endpoint(name: str, _=Depends(verify_token)):
-    """Get scrub status for a pool."""
+    """The pool's scrub as btrfs reports it: its progress while it runs, then its result (ADR-0272).
+
+    idle when no scrub is recorded; 500 with btrfs's error when it cannot
+    report the status, or does not answer within SCRUB_COMMAND_TIMEOUT.
+    """
     return await _scrub(pools.get_scrub_status, name)
 
 
 @router.delete("/pools/{name}/scrub", response_model=ScrubStatus)
 async def cancel_scrub_endpoint(name: str, _=Depends(verify_token)):
-    """Cancel a running scrub on a pool."""
+    """Cancel a running scrub; answers its status after btrfs's cancel (aborted once it stopped).
+
+    A scrub that no longer runs is no error: the answer is its status. A
+    cancelled scrub whose status cannot be read is answered aborted (ADR-0272).
+    """
     return await _scrub(pools.cancel_scrub, name)
