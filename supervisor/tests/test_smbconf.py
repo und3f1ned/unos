@@ -43,6 +43,9 @@ GLOBAL_WITHOUT_GUESTS = """[global]
    log level = 1
    logging = syslog@1
    dns proxy = no
+   disable netbios = yes
+   smb ports = 445
+   multicast dns register = yes
 """
 
 GLOBAL_WITH_GUESTS = (
@@ -98,6 +101,16 @@ class TestGlobal:
         assert "   logging = syslog@1\n" in text
         assert "   server string = UNOS NAS\n" in text  # install.sh recognizes a UNOS file by it
         assert "log file" not in text and "max log size" not in text
+
+    @pytest.mark.parametrize("guest", [False, True])
+    def test_netbios_is_off_and_smbd_announces_itself_over_bonjour(self, guest):
+        # Windows finds the NAS through wsdd2 and macOS through the _smb._tcp service that
+        # smbd registers with avahi-daemon (ADR-0275): nmbd answers nothing, and smbd
+        # listens on 445 only, not on the NetBIOS session port 139.
+        text = smbconf.render_global(guest)
+        assert "   disable netbios = yes\n" in text
+        assert "   smb ports = 445\n" in text
+        assert "   multicast dns register = yes\n" in text
 
     def test_config_without_shares(self):
         assert smbconf.render_config([]) == HEADER + "\n" + GLOBAL_WITHOUT_GUESTS

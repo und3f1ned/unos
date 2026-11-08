@@ -463,6 +463,10 @@ class TestConstants:
 
     @pytest.mark.parametrize("name", [
         "root", "nobody", "www-data", "docker", "sambashare", "unos", "unos-smb", "systemd-network", "systemd-x",
+        # wsdd2.service runs as the dynamic user named after it (DynamicUser=true). A static
+        # account of that name takes its place: an SMB host account wsdd2 would give the
+        # network-facing daemon the group unos-smb and with it the share folders (ADR-0275).
+        "wsdd2",
     ])
     def test_reserved_names(self, name):
         assert linux_name_problem(name) == f"'{name}' is reserved for the system"

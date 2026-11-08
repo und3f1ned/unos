@@ -128,6 +128,11 @@ passwords and smb.conf in line with the database (ADR-0138). Avoid: sync, repair
 the group unos-smb and removes other accounts' access (ADR-0155). Avoid: fix permissions, chmod,
 reconcile.
 
+**Network discovery**: How computers on the LAN find the NAS without its address: Windows through
+WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd registers with
+avahi-daemon), both over IPv4 only; NetBIOS is off (ADR-0275). Avoid: network browsing (a share's
+"Show in network browsing" lists the share among the NAS's shares), NetBIOS browsing.
+
 ## Users and access
 
 **UNOS user**: An account that people sign in to the web UI with: an administrator or a regular

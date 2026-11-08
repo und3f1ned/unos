@@ -143,6 +143,11 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
         ("log level", "1"),
         ("logging", "syslog@1"),
         ("dns proxy", "no"),
+        # NetBIOS is off: Windows finds the NAS through wsdd2 and macOS through the
+        # _smb._tcp service that smbd registers with avahi-daemon (ADR-0275).
+        ("disable netbios", "yes"),
+        ("smb ports", "445"),
+        ("multicast dns register", "yes"),
     ]
 
 

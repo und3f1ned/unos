@@ -1472,10 +1472,18 @@
         "The macOS Finder sidebar lists the NAS",
         "NetBIOS can then be turned off"
       ],
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_smb_models.py",
+        "supervisor/tests/test_smbconf_testparm.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0158"
-      ]
+        "ADR-0158",
+        "ADR-0275"
+      ],
+      "notes": "Built (ADR-0275): the rendered [global] turns NetBIOS off (disable netbios = yes, smb ports = 445) and keeps smbd's Bonjour registration on (multicast dns register = yes). install.sh: start_samba enables and restarts smbd and turns nmbd off (systemctl disable --now nmbd); configure_discovery writes /etc/avahi/avahi-daemon.unos.conf (Debian's avahi-daemon settings with use-ipv6=no and publish-aaaa-on-ipv4=no), the drop-in avahi-daemon.service.d/unos.conf (avahi-daemon -s -f that file) and the drop-in wsdd2.service.d/unos.conf (wsdd2 -4), reloads systemd, installs avahi-daemon with --no-install-recommends (no libnss-mdns, which would change the host's name resolution) and enables and restarts it, then wsdd2 the same way when apt-cache show finds the package. Without one (Debian 11, Ubuntu without universe) it warns and the installation goes on; a package that exists but does not install stops it, with apt-get's error. Both services answer over IPv4 only: a Mac would otherwise connect from a global IPv6 address, which hosts allow refuses, and wsdd2's TCP ports would listen on tunnels (ADR-0227). wsdd2 is a reserved account name: wsdd2.service runs as the dynamic user wsdd2, which a static account of that name would replace. uninstall.sh enables nmbd again when it restores smb.conf.original and keeps avahi-daemon, wsdd2 and UNOS's files of both, none of them in /etc/unos. docs/INSTALL.md (Step 5, Network Discovery) and docs/USER_GUIDE.md (Finding the NAS) describe it. Tests: test_smbconf.py (TestGlobal: the three lines in both [global] variants); test_deploy_scripts.py (TestInstallScript: smbd without nmbd on a first installation and a rerun; neither avahi-daemon nor wsdd2 among install_dependencies' packages, avahi-daemon without what it recommends; avahi-daemon's settings and drop-in and wsdd2's drop-in written and loaded before the packages are installed; a missing wsdd2 package lets the installation go on, a package that fails to install stops it with apt-get's error; the order of main; TestUninstallScript: nmbd enabled again with the restored file, the completion; TestInstallGuide: the manual installation's packages, commands and files are those of install.sh); test_smb_models.py (wsdd2 is reserved). Not built: scripts/dev/check.sh still expects nmbd to be active and checks neither wsdd2 nor avahi-daemon (device.check-network-discovery). Open: steps 1 to 3 need the dev device and a Windows and a macOS computer on its LAN. On the device, in this order: deploy the branch while nmbd still runs, since check.sh needs it until device.check-network-discovery is done (smbd reloads the new smb.conf; nmbd keeps running until it is stopped); then the owner's actions (ADR-0211): the commands of docs/INSTALL.md Step 5 after the nmbd line (the three files, systemctl daemon-reload, avahi-daemon without recommends, wsdd2, enabling and restarting both), systemctl disable --now nmbd, and systemctl restart smbd (smb ports applies only at a restart). From then on, until device.check-network-discovery, check.sh reports nmbd inactive: its only expected problem. The device check, once device.check-network-discovery lets check.sh answer OK, and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214): test_smbconf_testparm.py passes with scripts/dev/bin/testparm; systemctl is-active smbd wsdd2 avahi-daemon answers active for each, and nmbd is inactive and disabled; ss -tulpn lists no socket on UDP 137 or 138 or TCP 139, smbd on TCP 445, wsdd2 on UDP and TCP 3702 (and on 5355 where systemd-resolved does not hold it) and avahi-daemon on UDP 5353, with IPv4 sockets only; on a Windows computer of the LAN, File Explorer's Network view lists the NAS, and opening it there asks for a UNOS SMB account and then lists the shares it may use (steps 1 and 3); on a macOS computer of the LAN, dns-sd -G v4v6 <name>.local answers IPv4 addresses only, the Finder sidebar lists the NAS under Locations, once, and connecting from there with a UNOS SMB account lists its shares, also from a Mac with a global IPv6 address where the LAN gives it one (steps 2 and 3)."
     },
     {
       "id": "shares.smb-bind-interfaces",
@@ -3410,6 +3418,21 @@
         "ADR-0227",
         "ADR-0095"
       ]
+    },
+    {
+      "id": "device.check-network-discovery",
+      "category": "device",
+      "description": "scripts/dev/check.sh checks the SMB services that UNOS runs: smbd, wsdd2 and avahi-daemon, with nmbd off",
+      "steps": [
+        "check.sh reports a problem unless smbd, wsdd2 and avahi-daemon are active",
+        "check.sh reports a problem while nmbd is active or enabled",
+        "The deploy-device and device-checks skills get check: OK on the dev device once the owner has set up network discovery and turned nmbd off"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0275"
+      ],
+      "notes": "Found by the review of shares.smb-discovery: check.sh loops over smbd and nmbd and marks the device unhealthy unless both are active, so once nmbd is off (ADR-0275) the deploy-device skill stops at its step 3, deploy.sh all ends with check.sh's failure, and every device check reports the device unhealthy. scripts/dev/ was off limits for that branch. The new check.sh passes on the dev device only after the owner's setup of shares.smb-discovery (avahi-daemon and wsdd2 installed and running, nmbd off): it lands between that setup and the device check of shares.smb-discovery."
     },
     {
       "id": "apps.compose-stacks",
