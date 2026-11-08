@@ -18,6 +18,10 @@
   local changes and other branches, backs up, waits for health and rolls back on failure
   (ADR-0049); `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb
   entries (ADR-0180). There are no upgrade paths from older UNOS versions (ADR-0207).
+- `reset-admin.sh` also runs as root on a user's host: it runs the emergency command line,
+  `python -m src.emergency reset-admin`, in the supervisor container, with the new password on
+  standard input (ADR-0261, `docs/RECOVERY.md`); `supervisor/tests/test_emergency.py` runs it
+  with a fake docker.
 - `supervisor/tests/test_deploy_scripts.py` runs these scripts against fakes, parses the compose
   files and keeps `docs/INSTALL.md` and `docs/TESTING.md` in step with them; `test_authz.py`,
   `test_secret_bootstrap.py` and `test_standin.py` read them too. Run those tests after an edit

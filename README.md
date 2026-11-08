@@ -190,6 +190,7 @@ anyone who can reach the page can create it.
 |----------|-------------|
 | [Installation Guide](docs/INSTALL.md) | Detailed installation instructions |
 | [User Guide](docs/USER_GUIDE.md) | How to use UNOS features |
+| [Recovery](docs/RECOVERY.md) | Reach the pools from another Linux machine; reset an administrator who cannot sign in |
 | [Changelog](CHANGELOG.md) | Version history and release notes |
 | [Contributing](CONTRIBUTING.md) | How work flows, from an issue to a pull request |
 | [AGENTS.md](AGENTS.md) | Commands, rules and conventions for developers and coding agents |

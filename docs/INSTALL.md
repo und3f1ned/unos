@@ -292,7 +292,9 @@ Account**. You are then signed in as the first administrator; the setup page is
 refused once any account exists.
 
 **Do this right after installing:** until the first account exists, anyone
-who can reach the web interface can create it.
+who can reach the web interface can create it. When no administrator can sign
+in later, root on the server resets one (see
+[The NAS Does Not Boot, or Nobody Can Sign In](#the-nas-does-not-boot-or-nobody-can-sign-in)).
 
 ### 3. Add Users (Optional)
 
@@ -422,6 +424,18 @@ docker logs unos-webui
 `JWT secret from UNOS_JWT_SECRET is a published placeholder value` in the
 supervisor log: remove the `JWT_SECRET=` line from `/etc/unos/secrets.env`
 (and from `/opt/unos/deploy/.env`, if present) and restart UNOS.
+
+### The NAS Does Not Boot, or Nobody Can Sign In
+
+The [Recovery](RECOVERY.md) guide covers both:
+
+- When the server does not boot, a pool's files are still on its disks: another
+  Linux machine with btrfs mounts the pool read-only, also with a disk missing,
+  and copies them.
+- When no administrator can sign in, because the password is forgotten or the
+  authenticator app and its recovery codes are lost, root on the server sets a
+  new password and turns two-factor authentication off:
+  `sudo /opt/unos/deploy/reset-admin.sh`.
 
 ### Can't Access Web Interface
 

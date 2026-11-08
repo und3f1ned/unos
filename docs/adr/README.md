@@ -102,6 +102,7 @@ and this index, and `make check-fast` runs it.
 | [0251](0251-a-sign-in-answers-while-data-is-full-and-its-lost-records-go-to-the-log.md) | A sign-in answers while /data is full, and the records it cannot write go to the supervisor's log | accepted | 2026-11-07 |
 | [0252](0252-an-api-tokens-last-use-is-committed-at-most-once-an-hour.md) | An API token's last use is committed at most once an hour | accepted | 2026-11-07 |
 | [0253](0253-only-a-session-token-manages-api-tokens-and-their-number-and-names-are-bounded.md) | Only a session token manages API tokens, and their number, names and permissions are bounded | accepted | 2026-11-07 |
+| [0261](0261-root-on-the-host-resets-an-administrators-password-and-two-factor-authentication.md) | Only root on the host resets an administrator's password and two-factor authentication, with the emergency command line | accepted | 2026-11-08 |
 
 ## Storage
 
@@ -120,6 +121,7 @@ and this index, and `make check-fast` runs it.
 | [0241](0241-snapshots-of-volumes-and-volume-quotas-in-the-web-ui.md) | The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB | superseded by [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | 2026-11-07 |
 | [0242](0242-snapshot-commands-act-on-the-folders-that-were-opened.md) | Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id | accepted | 2026-11-07 |
 | [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | The Snapshots page offers mounted pools and their volumes, also a pool whose volumes cannot be read, and the Volumes dialog takes a quota in GiB | accepted | 2026-11-07 |
+| [0262](0262-the-recovery-runbook-reads-a-pool-from-another-linux-machine-without-writing-to-it.md) | The recovery runbook reads a pool from another Linux machine without writing to it, degraded when a disk is missing | accepted | 2026-11-08 |
 
 ## Shares
 
