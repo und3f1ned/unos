@@ -18,8 +18,13 @@
 		quotaBytes,
 		MAX_QUOTA_GIB,
 		VOLUME_NAME_PATTERN,
+		getImportableFilesystems,
+		importFilesystem,
+		suggestedPoolName,
+		POOL_NAME_PATTERN,
 		type DeviceIdentity,
 		type Disk,
+		type ImportableFilesystem,
 		type Pool,
 		type RaidLevel,
 		type ScrubStatus,
@@ -38,7 +43,8 @@
 		Loader2,
 		Plug,
 		Unplug,
-		Layers
+		Layers,
+		HardDriveDownload
 	} from 'lucide-svelte';
 	import {
 		Button,
@@ -57,6 +63,9 @@
 	let pools: Pool[] = [];
 	let loading = true;
 	let error = '';
+	// btrfs filesystems on the host's disks that are not pools yet (ADR-0261).
+	let importable: ImportableFilesystem[] = [];
+	let importableError = '';
 
 	// Create Pool Modal state
 	let showCreateModal = false;
@@ -109,13 +118,26 @@
 	async function loadData(showSpinner = true) {
 		if (showSpinner) loading = true;
 		error = '';
+		// With its own error: the disks and the pools are shown without it.
+		const found = loadImportable();
 		try {
 			[disks, pools] = await Promise.all([getDisks(), getPools()]);
 			await loadScrubStatuses();
 		} catch (e) {
 			error = messageOf(e);
 		} finally {
+			await found;
 			loading = false;
+		}
+	}
+
+	async function loadImportable() {
+		try {
+			importable = await getImportableFilesystems();
+			importableError = '';
+		} catch (e) {
+			importable = [];
+			importableError = messageOf(e);
 		}
 	}
 
@@ -408,6 +430,78 @@
 		}
 	}
 
+	// ---- Import a pool found on the disks (ADR-0261) ----
+
+	// The filesystem the Import dialog is open for.
+	let importTarget: ImportableFilesystem | null = null;
+	let importName = '';
+	let importing = false;
+	let importError = '';
+
+	$: importNameValid = POOL_NAME_PATTERN.test(importName);
+	$: importNameTaken = pools.some((p) => p.name === importName);
+	$: importNameError = !importName
+		? ''
+		: !importNameValid
+			? "Use letters, numbers, '-' and '_' (up to 63), starting with a letter or number"
+			: importNameTaken
+				? `A pool named "${importName}" exists already. Choose another name.`
+				: '';
+	$: canImport = importTarget !== null && importNameValid && !importNameTaken && !importing;
+
+	function describeFilesystem(fs: ImportableFilesystem): string {
+		return fs.label === null ? 'No label' : `Label "${fs.label}"`;
+	}
+
+	/** Why the filesystem is not a pool yet: the API mounts a pool under its label. */
+	function labelHint(fs: ImportableFilesystem): string {
+		if (fs.label_problem === 'duplicate') {
+			return `Another btrfs filesystem is labelled "${fs.label}" too: import this one under another name.`;
+		}
+		if (fs.label_problem === 'invalid') {
+			return 'Its label is not a valid pool name: choose one for the pool.';
+		}
+		return 'It has no label: choose a name for the pool.';
+	}
+
+	function missingDevicesText(fs: ImportableFilesystem): string {
+		const one = fs.missing_devices === 1;
+		return (
+			`${fs.missing_devices} of its ${fs.total_devices} devices ${one ? 'is' : 'are'} missing. ` +
+			`Reconnect ${one ? 'it' : 'them'} to import the filesystem.`
+		);
+	}
+
+	function openImport(fs: ImportableFilesystem) {
+		importTarget = fs;
+		importName = suggestedPoolName(fs.label);
+		importError = '';
+	}
+
+	function closeImport() {
+		if (importing) return;
+		importTarget = null;
+		importError = '';
+	}
+
+	async function handleImport() {
+		if (!importTarget || !canImport) return;
+		importing = true;
+		importError = '';
+		try {
+			await importFilesystem(importTarget.uuid, importName);
+			importing = false;
+			closeImport();
+			await loadData(false);
+		} catch (e) {
+			// 409, and nothing was changed: the filesystem is in use or misses devices, the name
+			// is taken, or the filesystem mounts another subvolume than its top level by default
+			importError = messageOf(e);
+		} finally {
+			importing = false;
+		}
+	}
+
 	// ---- Volumes ----
 
 	// The mounted pool whose volumes (btrfs subvolumes) the dialog shows.
@@ -647,6 +741,54 @@
 				</div>
 			{/if}
 		</Card>
+
+		<!-- btrfs filesystems on the host's disks that are not pools yet (ADR-0261). A filesystem
+		     whose label is a pool name is a pool below, and its Mount imports it. -->
+		{#if importable.length > 0 || importableError}
+			<Card>
+				<section aria-labelledby="found-on-the-disks">
+					<h2 id="found-on-the-disks" class="section-title mb-4">
+						<HardDriveDownload class="w-5 h-5" />
+						Found on the disks
+					</h2>
+					{#if importableError}
+						<Alert variant="error" title="Could not look for pools to import">{importableError}</Alert>
+					{:else}
+						<p class="text-sm text-secondary mb-4">
+							btrfs filesystems on the host's disks that are not pools yet. Importing one keeps its
+							data: the disks are not formatted.
+						</p>
+						<ul class="space-y-3">
+							{#each importable as fs (fs.uuid)}
+								<li class="card-nested flex flex-wrap items-start justify-between gap-3">
+									<div class="min-w-0 space-y-1">
+										<p class="font-semibold">{describeFilesystem(fs)}</p>
+										<p class="mono-xs text-muted break-all">UUID {fs.uuid}</p>
+										<p class="text-sm text-secondary">
+											<span class="mono-xs">{fs.devices.join(', ')}</span> · {formatBytes(fs.size)}, {formatBytes(
+												fs.used
+											)} used
+										</p>
+										<p class="text-xs text-muted">{labelHint(fs)}</p>
+										{#if fs.missing_devices > 0}
+											<p class="text-sm text-warning">{missingDevicesText(fs)}</p>
+										{/if}
+									</div>
+									<Button
+										size="sm"
+										icon={HardDriveDownload}
+										disabled={fs.missing_devices > 0}
+										on:click={() => openImport(fs)}
+									>
+										Import<span class="sr-only"> the filesystem {fs.uuid}</span>
+									</Button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
+			</Card>
+		{/if}
 
 		<!-- Pools Section -->
 		<Card>
@@ -1046,8 +1188,10 @@
 				Mount <strong class="text-content">"{poolAction.pool.name}"</strong> at
 				<span class="mono">/mnt/pools/{poolAction.pool.name}</span>?
 			</p>
+			<!-- Also how a pool found on the disks is imported (ADR-0261). -->
 			<p class="text-sm text-secondary">
-				UNOS also adds an /etc/fstab entry so the pool is mounted again after a reboot.
+				The disks are not formatted: the data on them is kept. UNOS also adds an /etc/fstab entry
+				so the pool is mounted again after a reboot.
 			</p>
 		{:else}
 			<p>
@@ -1081,6 +1225,55 @@
 			on:click={confirmPoolAction}
 		>
 			{poolAction?.kind === 'mount' ? 'Mount' : 'Unmount'}
+		</Button>
+	</svelte:fragment>
+</Modal>
+
+<!-- Import Pool Modal (ADR-0261) -->
+<Modal
+	open={importTarget !== null}
+	title="Import Pool"
+	size="md"
+	closable={!importing}
+	on:close={closeImport}
+>
+	{#if importTarget}
+		<form on:submit|preventDefault={handleImport} class="space-y-4">
+			<p>
+				Import the btrfs filesystem <span class="mono-xs break-all">{importTarget.uuid}</span>
+				({importTarget.label === null ? 'no label' : `label "${importTarget.label}"`}) on
+				<span class="mono-xs">{importTarget.devices.join(', ')}</span> as a pool.
+			</p>
+			<Alert variant="info" title="The disks are not formatted">
+				The data on them is kept. UNOS gives the filesystem the pool name as its label, mounts it at
+				<span class="mono-xs">/mnt/pools/{importName || '<name>'}</span> by its UUID and adds an
+				/etc/fstab entry, so the pool is mounted again after a reboot.
+			</Alert>
+			<Input
+				label="Pool name"
+				bind:value={importName}
+				placeholder="backup"
+				autocomplete="off"
+				error={importNameError}
+			/>
+			{#if importError}
+				<Alert variant="error" title="Pool was not imported">{importError}</Alert>
+			{/if}
+		</form>
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={importing} on:click={closeImport}>
+			Cancel
+		</Button>
+		<Button
+			class="flex-1"
+			icon={HardDriveDownload}
+			loading={importing}
+			disabled={!canImport}
+			on:click={handleImport}
+		>
+			Import
 		</Button>
 	</svelte:fragment>
 </Modal>

@@ -82,6 +82,44 @@ export const FAKE_POOLS = [
 /** A pool as GET /storage/pools reports it. */
 export type FakePool = (typeof FAKE_POOLS)[number];
 
+// btrfs filesystems on the fake host's disks that cannot be mounted as a pool under their label,
+// as GET /storage/filesystems/importable reports them (ADR-0261). fakeStorageApi offers none
+// unless a test passes them.
+export const FAKE_IMPORTABLE = [
+  {
+    // The disk of another system: a filesystem without a label.
+    uuid: '00000000-0000-4000-8000-0000000000f1', label: null as string | null, label_problem: 'missing',
+    devices: ['/dev/e2e-hd9'], total_devices: 1, missing_devices: 0, size: 4e12, used: 7e11,
+  },
+  {
+    // A label that another system allowed, but that is no pool name.
+    uuid: '00000000-0000-4000-8000-0000000000f2', label: 'My Media', label_problem: 'invalid',
+    devices: ['/dev/e2e-hd10'], total_devices: 1, missing_devices: 0, size: 2e12, used: 5e11,
+  },
+  {
+    // A mirror whose second disk is not connected.
+    uuid: '00000000-0000-4000-8000-0000000000f3', label: null, label_problem: 'missing',
+    devices: ['/dev/e2e-hd11'], total_devices: 2, missing_devices: 1, size: 1e12, used: 1e11,
+  },
+  {
+    // The pool e2e_tank of another host: FAKE_POOLS[0] has its label too.
+    uuid: '00000000-0000-4000-8000-0000000000f4', label: 'e2e_tank', label_problem: 'duplicate',
+    devices: ['/dev/e2e-hd12'], total_devices: 1, missing_devices: 0, size: 4e12, used: 1e12,
+  },
+];
+
+/** A filesystem as GET /storage/filesystems/importable reports it. */
+export type FakeImportable = (typeof FAKE_IMPORTABLE)[number];
+
+/** The pool that POST /filesystems/<uuid>/import makes of a filesystem, as the server reports it. */
+function importedPool(fs: FakeImportable, name: string): FakePool {
+  return {
+    name, uuid: fs.uuid, devices: [...fs.devices], total_size: fs.size, used_size: fs.used,
+    mountpoint: `/mnt/pools/${name}`, raid_level: 'single', mounted: true, persistent: true,
+    health: 'healthy', missing_devices: 0, device_errors: 0, read_only: false, forced_read_only: false,
+  };
+}
+
 /** A pool after POST /pools/<name>/mount, as the server reports it (the profile only once mounted). */
 function mountedPool(pool: FakePool): FakePool {
   return {
@@ -136,6 +174,15 @@ export interface FakeStorageOptions {
   pools?: FakePool[];
   /** Called after a mount or an unmount of a pool of `pools` was answered. */
   onPoolChange?: (name: string, change: 'mount' | 'unmount') => void;
+  /**
+   * The filesystems GET /filesystems/importable answers (default none). An import takes its
+   * filesystem off this list (a copy) and adds the new pool to `pools`, if given.
+   */
+  importable?: readonly FakeImportable[];
+  /** Answer GET /filesystems/importable with this instead. */
+  importableResponse?: { status: number; json: unknown };
+  /** Answer POST /filesystems/<uuid>/import with this instead of importing. */
+  importResponse?: { status: number; json: unknown };
 }
 
 /** The 409 the supervisor sends when a path no longer holds the selected disk (pools.py). */
@@ -156,6 +203,7 @@ function changedDiskDetail(selected: DiskIdentity, now: DiskIdentity | undefined
 export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {}): Promise<RecordedWrite[]> {
   const disks = options.disks ?? (() => FAKE_DISKS);
   const pools = options.pools ?? FAKE_POOLS;
+  const importable = [...(options.importable ?? [])];
   const writes: RecordedWrite[] = [];
   await page.route(
     (url) => url.pathname.startsWith('/api/v1/storage/'),
@@ -174,6 +222,25 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
             total_bytes: null, rate: null, errors: 0, last_run: null,
           },
         });
+      }
+      if (method === 'GET' && path === '/filesystems/importable') {
+        return route.fulfill(options.importableResponse ?? { json: importable });
+      }
+      const imported = path.match(/^\/filesystems\/([^/]+)\/import$/);
+      if (method === 'POST' && imported) {
+        const body = request.postDataJSON();
+        writes.push({ method, path, body });
+        if (options.importResponse) return route.fulfill(options.importResponse);
+        const uuid = decodeURIComponent(imported[1]);
+        const index = importable.findIndex((fs) => fs.uuid === uuid);
+        if (index < 0) {
+          const detail = `No btrfs filesystem with UUID ${uuid} is on the host's disks. Attach them and reload the page.`;
+          return route.fulfill({ status: 404, json: { detail } });
+        }
+        const [fs] = importable.splice(index, 1);
+        const pool = importedPool(fs, body?.name);
+        options.pools?.push(pool);
+        return route.fulfill({ json: pool });
       }
       if (method === 'POST' && path === '/pools') {
         const body = request.postDataJSON();

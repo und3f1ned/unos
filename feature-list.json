@@ -3441,7 +3441,17 @@
         "Attach the disks of an existing btrfs filesystem: the Storage page offers to import it",
         "After the import the pool is mounted by UUID, survives a reboot and keeps its data"
       ],
-      "passes": false
+      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_pool_import.py",
+        "supervisor/tests/test_pool_persistence.py",
+        "webui/tests/storage.spec.ts"
+      ],
+      "adr": [
+        "ADR-0034",
+        "ADR-0261"
+      ],
+      "notes": "Built 2026-11-08 (ADR-0261). A btrfs filesystem whose label is a pool name that no other filesystem has is listed with the pools, and Mount imports it (its dialog says the disks are not formatted). Any other btrfs filesystem that is neither the host's system filesystem nor mounted is listed by GET /api/v1/storage/filesystems/importable and under Found on the disks; POST /api/v1/storage/filesystems/{uuid}/import mounts it by UUID at /mnt/pools/<name>, checks that the mount shows the top level, sets the name as its label through the mount, has udev read its devices again and writes the managed fstab entry. A refused import (409) changes nothing, and Mount, Import and Create undo a mount that shows another subvolume than the top level. Asserted on fakes: step 1 by test_pool_import.py (what is offered) and storage.spec.ts (Pool import: the offer, the dialog, the refusals, Mount of a found pool); step 2 by test_pool_import.py (the fstab entry by UUID, the mount from it after a reboot, the used bytes kept, no mkfs) and test_pool_persistence.py (TestMountPool). Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step; it needs a spare disk, which the dev device does not have. On it, a btrfs filesystem without a label (mkfs.btrfs without -L) holding a few files, not mounted: Storage lists it under Found on the disks with its UUID and size; Import as importtest mounts it at /mnt/pools/importtest by UUID (findmnt), /etc/fstab holds the marker and the UUID entry, btrfs filesystem show and lsblk show the label importtest, and the files are there; after a reboot it is mounted again with the files; Remove Pool keeps them on the disk. Then the same disk labelled with a pool name is listed as Not mounted and Mount imports it, and after btrfs subvolume set-default of another subvolume Mount answers 409 and leaves it unmounted and its fstab unchanged."
     }
   ]
 }

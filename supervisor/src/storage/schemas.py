@@ -97,6 +97,30 @@ class PoolInfo(BaseModel):
     forced_read_only: bool = False
 
 
+# Why a btrfs filesystem cannot be mounted as a pool under its label (ADR-0261): it has
+# none, it is not a valid pool name, or another btrfs filesystem of the host has it too.
+LabelProblem = Literal["missing", "invalid", "duplicate"]
+
+
+class ImportableFilesystem(BaseModel):
+    """A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0261)."""
+
+    uuid: str
+    label: str | None = None  # as btrfs prints it; None without a label
+    label_problem: LabelProblem
+    devices: list[str]  # the members that are present
+    total_devices: int
+    missing_devices: int = 0
+    size: int  # bytes, of the members that are present
+    used: int  # bytes used, as btrfs filesystem show reports them
+
+
+class PoolImport(BaseModel):
+    """Body of POST /storage/filesystems/{uuid}/import: the pool's name, which becomes its label."""
+
+    name: str
+
+
 # btrfs stores a quota limit as an unsigned 64-bit number and reads (u64)-1
 # as "no limit", so the largest limit is one less.
 MAX_VOLUME_QUOTA = (1 << 64) - 2

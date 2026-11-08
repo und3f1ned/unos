@@ -240,6 +240,20 @@ def _lsblk_tree() -> list[dict[str, Any]]:
         raise RuntimeError(f"lsblk failed: invalid output ({exc})") from exc
 
 
+def labelled_devices(label: str) -> list[str]:
+    """Paths of the host's block devices whose filesystem has the label ``label``.
+
+    Every device lsblk lists counts, the boot and virtual devices included.
+    RuntimeError when lsblk fails.
+    """
+    return sorted({
+        node.get("path") or f"/dev/{node.get('name')}"
+        for top in _lsblk_tree()
+        for node in _walk(top)
+        if node.get("label") == label
+    })
+
+
 def _whole_disks(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The whole disks among the top-level devices of an lsblk tree.
 

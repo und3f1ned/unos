@@ -131,12 +131,46 @@ Go to **Storage** to see:
 UNOS mounts the new pool at `/mnt/pools/<name>` and adds it to the host's
 `/etc/fstab`, so it is mounted again after a reboot.
 
+### Importing an Existing Pool
+
+Disks that already hold a btrfs filesystem, from an earlier UNOS installation or
+from another system, become a pool without being formatted:
+
+- A filesystem whose label is a valid pool name (letters, digits, `-` and `_`,
+  up to 63 characters, starting with a letter or digit) that no other
+  filesystem has is listed under **Storage Pools** as **Not mounted**. Click
+  **Mount**: UNOS mounts it at `/mnt/pools/<label>` by its UUID and adds it to
+  the host's `/etc/fstab`, so it is mounted again after a reboot. This is how
+  the pools of an earlier installation come back.
+- Any other btrfs filesystem, one without a label, with a label that is not a
+  pool name, or with the label of another filesystem, is listed under **Found
+  on the disks** with its UUID, disks, size and why it is not a pool yet. Click
+  **Import**, enter a pool name and click **Import**: UNOS mounts it at
+  `/mnt/pools/<name>` by its UUID, makes the name the filesystem's label and
+  adds it to `/etc/fstab`. The name cannot be the name of a pool or the label
+  of another filesystem of the host.
+
+The data stays on the disks either way; an import changes only the label, so a
+system that mounted the filesystem by its old label needs the new one. Nothing
+is imported, and nothing is changed, while the filesystem is mounted on the
+host, while one of its disks is missing (**Found on the disks** says how many
+are; reconnect them first), or when it mounts a subvolume other than its top
+level by default, because its default subvolume was changed with
+`btrfs subvolume set-default`. To make the top level the default again, mount
+the filesystem anywhere on the host, run
+`btrfs subvolume set-default 5 <that mountpoint>`, unmount it and try again.
+An import starts no apps. When the host's disks cannot be searched, **Found on
+the disks** says why. btrfs on top of md RAID, LVM or LUKS is found only once
+the host has assembled or opened it.
+
 ### Pool Operations
 
 For each pool, you can:
 - **View Details** - Space usage, devices, status
 - **Mount / Unmount** - Mount the pool (and mount it at every boot), or unmount
-  it; the data on the disks is not touched. Unmounting is refused while a
+  it; the data on the disks is not touched. Mounting is refused when the pool's
+  filesystem mounts a subvolume other than its top level by default (see
+  [Importing an Existing Pool](#importing-an-existing-pool)). Unmounting is refused while a
   running app or container uses the pool, also through a Docker volume that
   binds a folder in it, or while files on it are open, for example by a
   computer that has one of its SMB shares open. Once the pool is unmounted,

@@ -55,6 +55,10 @@ Avoid: array, volume, RAID.
 Only managed pools can hold shares (ADR-0034, ADR-0148). Avoid: mounted pool (a managed pool can
 be unmounted).
 
+**Pool import**: Making a btrfs filesystem found on the host's disks a managed pool without
+formatting it: Mount for one whose label is a pool name, Import, under a name that becomes its
+label, for any other (ADR-0261). Avoid: Import alone (the smb.conf import), adoption.
+
 **Pool root**: The top folder of a pool, which holds its apps, volumes and snapshots; it is never a
 share's folder (ADR-0145). Avoid: pools directory (that is `/mnt/pools`).
 

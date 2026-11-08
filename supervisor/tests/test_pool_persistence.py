@@ -237,9 +237,12 @@ class FakeHost:
         self.node(parent).setdefault("children", []).append(holder)
         return holder
 
-    def add_btrfs(self, label, uuid, devices, *, missing=0, used=1_048_576, profile="single"):
+    def add_btrfs(self, label, uuid, devices, *, missing=0, used=1_048_576, profile="single",
+                  default_subvolume=5):
+        """A btrfs filesystem; ``default_subvolume`` is the one a mount without subvol= shows
+        (5, the top level, unless ``btrfs subvolume set-default`` changed it)."""
         fs = {"label": label, "uuid": uuid, "devices": list(devices), "missing": missing,
-              "used": used, "profile": profile}
+              "used": used, "profile": profile, "default_subvolume": default_subvolume}
         self.filesystems.append(fs)
         return fs
 
@@ -407,11 +410,17 @@ class FakeHost:
             return self._result(stdout=self._btrfs_show())
         if sub == ["device", "scan"]:
             return self._result()
+        if sub == ["filesystem", "label"]:
+            return self._btrfs_label(cmd)
         target = cmd[-1]
         mount = next((m for m in self.mounts if m["target"] == target and m["fstype"] == "btrfs"), None)
         fs = next((f for f in self.filesystems if mount and f["uuid"] == mount["uuid"]), None)
         if fs is None:
             return self._result(1, stderr=f"ERROR: '{target}' is not a mounted btrfs device")
+        if sub == ["inspect-internal", "rootid"]:
+            # The subvolume a mount without subvol= shows: the filesystem's default one.
+            assert len(cmd) == 4, cmd
+            return self._result(stdout=f"{fs['default_subvolume']}\n")
         if sub == ["filesystem", "usage"]:
             size = sum(self._node_by_path(d)["size"] for d in fs["devices"])
             data = "RAID1" if fs["profile"] == "raid1" else fs["profile"]
@@ -432,6 +441,23 @@ class FakeHost:
                 lines.append(f"[{device}].generation_errs  0")
             return self._result(stdout="\n".join(lines) + "\n")
         raise AssertionError(f"unexpected btrfs command: {cmd}")
+
+    def _btrfs_label(self, cmd):
+        """``btrfs filesystem label <mountpoint> <label>``: the kernel sets it on the mounted filesystem.
+
+        Only through a mount: given a device, btrfs-progs writes the superblocks
+        itself, which UNOS never has it do (ADR-0261).
+        """
+        assert len(cmd) == 5, cmd
+        target, label = cmd[3], cmd[4]
+        mount = next((m for m in self.mounts if m["target"] == target and m["fstype"] == "btrfs"), None)
+        assert mount is not None, f"label set through {target}, which is not a btrfs mount: {cmd}"
+        if "ro" in f"{mount['vfs-options']},{mount['fs-options']}".split(","):
+            return self._result(1, stderr="ERROR: unable to set label for "
+                                f"{target}: Read-only file system")
+        self.changes.append(cmd)
+        next(f for f in self.filesystems if f["uuid"] == mount["uuid"])["label"] = label
+        return self._result()
 
     def _btrfs_show(self):
         chunks = []
@@ -809,6 +835,36 @@ class TestMountPool:
     def test_unknown_pool(self, fake_host):
         with pytest.raises(pools.PoolNotFoundError):
             pools.mount_pool("nope")
+
+    def test_refuses_a_filesystem_that_mounts_another_subvolume_by_default(self, data_pool):
+        # Made elsewhere, with 'btrfs subvolume set-default': a mount without subvol=
+        # shows subvolume 256, and volumes and share folders need the top level (ADR-0261).
+        data_pool.fs_by_label("data")["default_subvolume"] = 256
+        with pytest.raises(pools.PoolConflictError) as excinfo:
+            pools.mount_pool("data")
+        assert str(excinfo.value).startswith(
+            "Pool 'data' was not mounted: its filesystem mounts subvolume 256 by default, not its top level"
+        )
+        assert "btrfs subvolume set-default 5" in str(excinfo.value)
+        assert data_pool.changes == [
+            ["mkdir", "-p", "/mnt/pools/data"],
+            ["chattr", "+i", "/mnt/pools/data"],
+            ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}", "/mnt/pools/data"],
+            ["umount", "/mnt/pools/data"],
+        ]
+        assert not data_pool.mounted("/mnt/pools/data")
+        assert data_pool.fstab == BASE_FSTAB
+        assert "/mnt/pools/data" in data_pool.immutable  # still guarded: the mount was on top
+
+    def test_a_stale_entry_comes_back_when_the_mount_shows_another_subvolume(self, data_pool):
+        data_pool.files["/etc/fstab"] = BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
+        data_pool.files["/etc/fstab.unos-backup"] = BASE_FSTAB
+        data_pool.fs_by_label("data")["default_subvolume"] = 256
+        with pytest.raises(pools.PoolConflictError, match="subvolume 256"):
+            pools.mount_pool("data")
+        # Replaced before the mount (test_stale_entry_is_replaced_before_mounting), put back after it.
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", OLD_UUID)
+        assert not data_pool.mounted("/mnt/pools/data")
 
     def test_failed_mount_leaves_fstab_alone_and_guard_in_place(self, data_pool):
         data_pool.fail[("mount",)] = (32, "mount: /mnt/pools/data: wrong fs type")
