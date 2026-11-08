@@ -2,8 +2,8 @@ import type { Translation } from '../translate';
 
 // The Snapshots page: src/routes/snapshots/+page.svelte. The server's messages stay in English
 // (ADR-0287). A sentence with a name, a path or a link inside is translated in parts around them,
-// and names on the disk (.snapshots, snap_, restore_, auto_) stay as they are; the <date> and
-// <time> of a name's pattern are words (ADR-0288).
+// and names on the disk (.snapshots, snap_, restore_, auto_) are constants of the page, in no text
+// here; the <date>_<time> that follows a prefix in a name's pattern is words (ADR-0288).
 
 export const en = {
 	'snapshots.title': 'Snapshots',
@@ -31,9 +31,9 @@ export const en = {
 	'snapshots.actions': 'Actions',
 	'snapshots.restoreOne': 'Restore snapshot {name}',
 	'snapshots.deleteOne': 'Delete snapshot {name}',
-	// The patterns of the names that UNOS gives to scheduled snapshots and to restored copies.
-	'snapshots.autoName': 'auto_<date>_<time>',
-	'snapshots.restoreName': 'restore_<date>_<time>',
+	// After the prefix of a name that UNOS gives, in the pattern of the names of scheduled
+	// snapshots (auto_) and of restored copies (restore_).
+	'snapshots.dateTime': '<date>_<time>',
 
 	// About Snapshots: before the .snapshots folder, after it, ..., before auto_<date>_<time>;
 	// then before the prefixes snap_, restore_ and auto_, between the last two, and after them.
@@ -107,8 +107,7 @@ export const ru: Translation<typeof en> = {
 	'snapshots.actions': 'Действия',
 	'snapshots.restoreOne': 'Восстановить снимок {name}',
 	'snapshots.deleteOne': 'Удалить снимок {name}',
-	'snapshots.autoName': 'auto_<дата>_<время>',
-	'snapshots.restoreName': 'restore_<дата>_<время>',
+	'snapshots.dateTime': '<дата>_<время>',
 
 	'snapshots.about.title': 'О снимках',
 	'snapshots.about.kept':

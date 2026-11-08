@@ -14,7 +14,9 @@
 	import { intlLocale, t } from '$lib/i18n';
 
 	// Names on the disk, the same in every language (ADR-0288): the folder of a pool or a volume
-	// that holds its snapshots, and the prefixes of the names that UNOS gives.
+	// that holds its snapshots, and the prefixes of the names that UNOS gives, which a name's
+	// pattern puts before its translated <date>_<time>. They are the server's
+	// (supervisor/tests/test_snapshots.py), and no text of the catalog holds one.
 	// i18n-ignore: the name of a folder on the disk
 	const SNAPSHOTS_FOLDER = '.snapshots';
 	const SNAP_PREFIX = 'snap_';
@@ -333,7 +335,7 @@
 			{$t('snapshots.about.volumes')}
 			{$t('snapshots.about.restore')}
 			{$t('snapshots.about.scheduled')}
-			<span class="mono-xs">{$t('snapshots.autoName')}</span>. {$t('snapshots.about.names')}
+			<span class="mono-xs">{AUTO_PREFIX}{$t('snapshots.dateTime')}</span>. {$t('snapshots.about.names')}
 			<span class="mono-xs">{SNAP_PREFIX}</span>,
 			<span class="mono-xs">{RESTORE_PREFIX}</span>
 			{$t('snapshots.about.and')}
@@ -387,7 +389,7 @@
 			<p class="text-sm">
 				{$t('snapshots.restore.before')}
 				<span class="font-semibold break-all">{snapshotToRestore.name}</span>{$t('snapshots.restore.copy')}
-				<span class="mono-xs">{$t('snapshots.restoreName')}</span>
+				<span class="mono-xs">{RESTORE_PREFIX}{$t('snapshots.dateTime')}</span>
 				{$t('snapshots.restore.madeIn')}
 				<span class="mono-xs break-all">{snapshotToRestore.subvolume}</span>{$t('snapshots.restore.after')}
 			</p>

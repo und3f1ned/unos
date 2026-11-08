@@ -19,6 +19,10 @@ from fastapi import HTTPException
 from src import host as host_module
 from src.snapshots.schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore
 from src.snapshots.router import (
+    AUTO_SNAPSHOT_PREFIX,
+    RESTORE_PREFIX,
+    SNAPSHOT_DIR_NAME,
+    SNAPSHOT_PREFIX,
     run_cmd,
     list_snapshots,
     create_snapshot,
@@ -36,6 +40,7 @@ from .test_pool_persistence import (
 )
 from .test_volumes import FakeSubvolumes
 
+REPO = Path(__file__).resolve().parents[2]
 SUBVOLUMES = "/api/v1/snapshots/subvolumes"
 # What `btrfs subvolume show` prints when no other time is set (the fixture btrfs).
 CREATED = "2025-01-24 12:00:00 +0000"
@@ -1284,3 +1289,35 @@ class TestRestoreSnapshot:
             await restore_snapshot(SnapshotRestore(snapshot_path=str(snap)), {})
 
         assert exc_info.value.status_code == 500
+
+
+# A string literal of a catalog of the web UI, in single or in double quotes.
+TS_STRING = re.compile(r"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"")
+
+
+def catalog_strings(path: Path) -> list[str]:
+    """The string literals of a catalog of the web UI, its keys and its texts, without its comments."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    code = "\n".join(line for line in lines if not line.lstrip().startswith("//"))
+    return [single or double for single, double in TS_STRING.findall(code)]
+
+
+class TestTheWebUI:
+    def test_the_page_names_the_folder_and_the_copies_as_the_server_does_in_every_language(self):
+        # Names on the disk are the same in every language (ADR-0288): the Snapshots page has
+        # them as constants, the server's, and no text of its catalog holds one, so that no
+        # translation can change what the page says a folder or a copy is called.
+        page = (REPO / "webui" / "src" / "routes" / "snapshots" / "+page.svelte").read_text(encoding="utf-8")
+        catalog = REPO / "webui" / "src" / "lib" / "i18n" / "catalog" / "snapshots.ts"
+        names = {
+            "SNAPSHOTS_FOLDER": SNAPSHOT_DIR_NAME,
+            "SNAP_PREFIX": SNAPSHOT_PREFIX,
+            "RESTORE_PREFIX": RESTORE_PREFIX,
+            "AUTO_PREFIX": AUTO_SNAPSHOT_PREFIX,
+        }
+
+        for constant, name in names.items():
+            assert f"const {constant} = '{name}';" in page
+        texts = catalog_strings(catalog)
+        assert {"Restore Snapshot", "Восстановление снимка"} <= set(texts)
+        assert [text for text in texts if any(name in text for name in names.values())] == []
