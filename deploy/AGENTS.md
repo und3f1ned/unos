@@ -55,8 +55,11 @@ vendor's firmware and is never written, so every write counts (ADR-0214, ADR-022
   600: they hold the JWT secret, the password hashes and the database; only `rollback` reads
   them). Restoring the volume or fstab is an owner action.
 - The web UI's static files are built on the workstation, and the device builds only the image's
-  final stage (`deploy.sh build-webui`, ADR-0184). A supervisor build after a change to its
-  Dockerfile or requirements reruns apt-get and pip on the device: tell the owner first.
+  final stage (`deploy.sh build-webui`, ADR-0184). The Dockerfiles pin their base images by tag
+  and digest (ADR-0305). A supervisor build after a change to its requirements, or to its base's
+  digest when the image that digest names for linux/arm64 is new to the device, reruns apt-get
+  and pip there: tell the owner first. `deploy.sh build-supervisor` says before the build
+  whether the device has the pinned base.
 - Checks start no container (ADR-0183), keep scratch data in `/dev/shm` and call the API through
   `scripts/dev/api.py`, which runs on the device against `https://127.0.0.1/api/v1` (the device's
   web ports do not answer the workstation, ADR-0198) and keeps its token in the device's RAM

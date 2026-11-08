@@ -1737,6 +1737,90 @@ def test_the_supervisor_build_gets_the_version_of_the_workstations_tree():
     assert "*[!A-Za-z0-9._+-]*) version=unknown" in text
 
 
+# docker for deploy.sh build-supervisor on the device: the compose project, the images named in
+# FAKE_IMAGES (separated by spaces), the build cache's records in FAKE_BUILD_CACHE (the text of
+# `docker buildx du --verbose`), the build and the checks of its result. It logs every call to
+# FAKE_SSH_LOG/docker and fails on any other.
+STUB_DOCKER_BUILD = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import json, os, sys
+    args = sys.argv[1:]
+    with open(os.path.join(os.environ["FAKE_SSH_LOG"], "docker"), "a") as log:
+        log.write(" ".join(args) + "\\n")
+    if args == ["compose", "config", "--format", "json"]:
+        print(json.dumps({"name": "deploy"}))
+    elif args == ["buildx", "du", "--verbose"]:
+        sys.stdout.write(os.environ.get("FAKE_BUILD_CACHE", ""))
+    elif args[:2] == ["image", "inspect"] and len(args) == 3:
+        sys.exit(0 if args[2] in os.environ.get("FAKE_IMAGES", "").split() else 1)
+    elif args == ["compose", "build", "supervisor"]:
+        print("built")
+    elif args == ["tag", "deploy-supervisor:latest", "deploy-supervisor:rollback"]:
+        pass
+    elif args == ["compose", "config", "--quiet"]:
+        pass
+    elif args[:3] == ["image", "inspect", "-f"] and args[4:] == ["deploy-supervisor:latest"]:
+        print("PYTHONDONTWRITEBYTECODE=1" if ".Config.Env" in args[3] else "deploy-supervisor:latest sha256:1")
+    else:
+        sys.exit(f"the docker stub does not know {args}")
+    """
+)
+
+
+def test_deploy_sh_build_supervisor_says_whether_its_pinned_base_is_on_the_device(trees):
+    """supervisor/Dockerfile pins its base by digest (ADR-0305). Before the build,
+    build-supervisor says whether the device has that base: as an image, or as the layers that
+    BuildKit pulled into its build cache, which `docker buildx du --verbose` describes as "pulled
+    from <name>:<tag>@<digest>". When it has neither, the build pulls the base and runs apt-get and
+    pip again, hundreds of MB on the SD card (ADR-0214), unless the image the digest names for the
+    device's platform is one the cache holds under another digest: the note says both. A base
+    without a whole digest is refused before anything on the device changes."""
+    device, repo, checkout = trees
+    pinned = "python:3.11-slim@sha256:" + "6" * 64
+    other = "python:3.11-slim@sha256:" + "0" * 64
+    device.stub("docker", STUB_DOCKER_BUILD)
+    device.stub("python3", '#!/bin/sh\nexec @PYTHON@ "$@"\n')
+
+    def cache(*bases: str) -> str:
+        return "".join(f"ID:           layer{n}\nDescription:  pulled from docker.io/library/{base}\n"
+                       f"Type:         regular\n\n" for n, base in enumerate(bases))
+
+    def build(dockerfile: str, **fake: str) -> subprocess.CompletedProcess:
+        for root in (repo, checkout):
+            make_tree(root, {"supervisor/Dockerfile": dockerfile, "supervisor/src/main.py": "same\n"})
+        (device.log / "docker").unlink(missing_ok=True)
+        env = device.env(FAKE_SSH_MODE="local", UNOS_DEV_REPO=str(checkout), UNOS_DEV_PYTHON=sys.executable, **fake)
+        result = subprocess.run([str(repo / "scripts" / "dev" / "deploy.sh"), "build-supervisor"], cwd=repo,
+                                env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+        assert wait_for(lambda: lock_is_free(device.lock))
+        return result
+
+    def calls() -> list[str]:
+        return (device.log / "docker").read_text().splitlines()
+
+    for fake in ({"FAKE_BUILD_CACHE": cache(other, pinned)}, {"FAKE_IMAGES": pinned}):
+        result = build(f"FROM {pinned}\nWORKDIR /app\n", **fake)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"base {pinned}: on the device" in result.stdout, fake
+        assert "note:" not in result.stderr and "compose build supervisor" in calls(), fake
+
+    result = build(f"FROM {pinned}\nWORKDIR /app\n", FAKE_BUILD_CACHE=cache(other), FAKE_IMAGES="deploy-supervisor:latest")
+    assert result.returncode == 0, result.stdout + result.stderr
+    note = " ".join(result.stderr.split())
+    assert f"note: no layers of the build cache come from the base {pinned}" in note
+    assert "pulls it and runs apt-get and pip again" in note and "unless" in note
+    made = calls()
+    assert made.index("tag deploy-supervisor:latest deploy-supervisor:rollback") < made.index("compose build supervisor")
+
+    for unpinned in ("python:3.11-slim", "python:3.11-slim@sha256:", "python:3.11-slim@sha256:" + "6" * 63):
+        result = build(f"FROM {unpinned}\nWORKDIR /app\n", FAKE_BUILD_CACHE=cache(pinned),
+                       FAKE_IMAGES="deploy-supervisor:latest")
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert f"names the base {unpinned} without a digest" in result.stderr
+        assert not [call for call in calls() if call.startswith(("tag ", "compose build"))], unpinned
+
+
 # --- the inbound IPv6 filter of the device (ADR-0301) ---------------------------------------
 
 FILTER_RULES = DEV / "device" / "ipv6-inbound.nft"

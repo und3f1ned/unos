@@ -79,10 +79,10 @@ lists the rolled-back files as differing from the working tree.
   until the scripts ran them in a private mount namespace with `/` read-only and noatime
   (`dev_remote_ro` in `scripts/dev/env.sh`, ADR-0221). Use the scripts; do not explore the
   device's checkout by hand.
-- A supervisor build reruns apt-get and pip on the device when `supervisor/Dockerfile` or
-  `supervisor/requirements.txt` changed, or when its base image moved upstream (the step says
-  when the base is not tagged on the device): hundreds of MB on the SD card. Tell the owner
-  before such a build.
+- A supervisor build reruns apt-get and pip on the device when `supervisor/requirements.txt`
+  changed, or the base's digest in `supervisor/Dockerfile` names a linux/arm64 image new to the
+  device (ADR-0305): hundreds of MB on the SD card. The step's note says before the build when no
+  layer of the build cache comes from the pinned digest. Tell the owner before such a build.
 - Every container created (docker run, docker create) writes about 2 MB, and a pulled image is
   written whole: they are owner actions, and the guard hook refuses them over SSH (ADR-0211).
 - `tmp/dev/backup` holds the device's JWT secret, password hashes and database: never show,

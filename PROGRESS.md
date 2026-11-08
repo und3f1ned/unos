@@ -41,7 +41,10 @@ significant step. Features and their state live in `feature-list.json`, decision
   2. The owner's reboot of the device, then the re-check of the host-level entries:
      `scripts/dev/scenario.sh all` again, and the checks by hand that the feature-pass skill's
      table lists (ADR-0018).
-  3. `deploy.digest-pinned-base-images` and `architecture.sqlite-write-cost` (the SD card).
+  3. `deploy.digest-pinned-base-images` and `architecture.sqlite-write-cost` (the SD card). The
+     pins are pushed on the branch `deploy.digest-pinned-base-images` (ADR-0305) and wait for the
+     owner's pull request; the entry passes after a deploy that shows the supervisor build reusing
+     its cached base once the tag's arm64 image has moved upstream.
 
 ## Dev device
 
@@ -61,8 +64,12 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   owner's call (ADR-0211).
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest, deploy-webui:latest, lscr.io/linuxserver/transmission,
-  alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base).
-  The slice-2 rollback images and files were deleted on 2026-11-07.
+  alpine (the final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base:
+  Caddy 2.10.2 of January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files
+  were deleted on 2026-11-07.
+- Docker 29.1.5 with the containerd image store. The supervisor's base, python:3.11-slim
+  `sha256:65bd3d9f...` (Python 3.11.18), is in BuildKit's build cache, not an image: the pins of
+  ADR-0305 are these two digests.
 - The audit log is `/data/audit/audit.jsonl` (ADR-0224); the old `/data/audit_log.json` was
   deleted.
 - Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220).
@@ -103,6 +110,42 @@ Open owner actions:
 5. The pull request of `device.scenario-checks-in-repo`, whose branch is pushed (ADR-0208).
 
 ## Log
+
+### 2026-11-08: the base images pinned by tag and digest
+
+- `deploy.digest-pinned-base-images`, on its branch (ADR-0305): every `FROM` line names
+  `name:tag@sha256:...`. The pins are what the dev device holds: python:3.11-slim
+  `sha256:65bd3d9f...` in BuildKit's build cache and caddy:2-alpine `sha256:f2b257f2...`;
+  node:22-alpine and the Playwright image take the registry's digests of the day. Read on the
+  device in its read-only namespace: the first layers of deploy-supervisor:latest and
+  deploy-webui:latest are those bases'; each read wrote 0 to 0.023 MiB. The registry's
+  python:3.11-slim had moved to `sha256:07d48240...` that morning, but only for riscv64: its
+  linux/arm64 image is still the cached one, which BuildKit would have reused.
+- The tag stays in the `FROM` line instead of a comment, as the entry first said: dependabot-core
+  reads the tag only there, and for a digest without a tag proposes the digest of `latest`. Its
+  cooldown counts from the tag's last push, and its experiment
+  `docker_digest_only_update_suppression` can stop digest-only pull requests, so the monthly pass
+  compares the pins as well (`docs/maintenance.md`, item 11).
+- `deploy.sh build-supervisor` refuses a base without a whole digest and says before the build
+  whether a layer of the build cache comes from the pinned digest; run by hand on the device,
+  read-only, that check found `65bd3d9f...` and not `07d48240...` (0.016 MiB).
+- Tests: `TestBaseImages`, the digest in the three tests that read `FROM` lines, and
+  build-supervisor's base check against a docker stub; each failed before the change. `make
+  check` and `make e2e-local` passed. A fresh-context review found the false claim that the
+  07d48240 move would have cost the device a rebuild, a note of build-supervisor that said "pulls
+  it" where BuildKit reuses an unchanged arm64 image, Dependabot's cooldown, a digest without
+  hex that passed the check, and a test blind to the order of the refusal: all fixed. Kept by
+  design: the `FROM` check of the test treats a line that starts with `from` as an instruction,
+  also inside a heredoc, and build-supervisor reads the second word of a `FROM` line.
+- Committed as dbb8df7, which names the decision ADR-0304. main took ADR-0304 for the scenario
+  checks first (#79), so the merge of main renumbered this branch's ADR to ADR-0305 (the adr
+  skill).
+- Next, the owner's: the pull request. Step 3 of the entry needs a deploy after python:3.11-slim
+  names an arm64 image other than `sha256:31afb5c0...`: build-supervisor then says "base
+  python:3.11-slim@sha256:65bd3d9f...: on the device" and shows every step CACHED, with the SD
+  writes in single MiB. Step 2 waits for Dependabot's first digest pull request. The pinned Caddy
+  2.10.2 is older than the registry's caddy:2-alpine (`sha256:78bd3502...`): moving it needs that
+  image pulled onto the device first (an owner action) before build-webui.
 
 ### 2026-11-08: the scenario checks of the dev device, in the repository
 
