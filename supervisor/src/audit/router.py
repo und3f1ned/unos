@@ -5,17 +5,22 @@ rewritten, and nothing is fsynced (the kernel writes appends out together, spari
 disk; ADR-0214). Before an append would grow the file past MAX_FILE_BYTES, it becomes
 AUDIT_FILE.1 and the older files move one number up; KEEP_ROTATED old files are kept. Readers go
 through the old files and then the current one, and skip every line that is not a valid entry.
+Two processes write the log, the supervisor and the emergency command line beside it
+(src/emergency.py, ADR-0261), so its lock holds across processes too (_log_lock, ADR-0263).
 
 Listing, counting and exporting take the same filters (AuditFilter, ADR-0237), and the CSV
 export holds no cell that a spreadsheet reads as a formula (_spreadsheet_text).
 """
 import asyncio
 import csv
+import fcntl
 import io
 import logging
 import os
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,7 +53,8 @@ MAX_DETAILS_CHARS = 1024
 # Longest text the search of the listing takes.
 MAX_SEARCH_CHARS = 256
 
-# Appends, rotations, reads and clearing take this lock: a reader never sees a rotation halfway.
+# Appends, rotations, reads and clearing take the log's lock (_log_lock), which holds this lock
+# between the threads of a process: a reader never sees a rotation halfway.
 _lock = threading.Lock()
 # (file, skipped lines) already reported, so that one damaged line is logged once, not per read.
 _reported_damage: set[tuple[str, int]] = set()
@@ -56,6 +62,26 @@ _reported_damage: set[tuple[str, int]] = set()
 
 def _bounded(value: Optional[str], limit: int) -> Optional[str]:
     return value[:limit] if isinstance(value, str) else value
+
+
+@contextmanager
+def _log_lock() -> Iterator[None]:
+    """Hold the log for an append, a rotation, a read or a clearing (blocking: off the event loop).
+
+    _lock keeps out the other threads of this process, and an exclusive flock of AUDIT_FILE.lock
+    the other processes: the supervisor and the emergency command line, which root runs in its
+    container (ADR-0261, ADR-0263). The lock file stays empty; closing it ends the flock, also
+    when the process dies.
+    """
+    with _lock:
+        lock_file = Path(f"{AUDIT_FILE}.lock")
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_file, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
 
 
 def _rotated(number: int) -> Path:
@@ -83,8 +109,7 @@ def _append_line(line: str) -> None:
     """Append one entry's line to the log; the only writer of entries (runs in a worker thread)."""
     data = line.encode("utf-8")
     current = Path(AUDIT_FILE)
-    with _lock:
-        current.parent.mkdir(parents=True, exist_ok=True)
+    with _log_lock():
         try:
             size = current.stat().st_size
         except FileNotFoundError:
@@ -133,7 +158,7 @@ def _read_all() -> list[AuditEntry]:
 
 def load_audit_log() -> list[AuditEntry]:
     """Every valid entry of the log, oldest first (blocking: call it off the event loop)."""
-    with _lock:
+    with _log_lock():
         return _read_all()
 
 
@@ -158,7 +183,7 @@ def _clear(before_date: Optional[str]) -> int:
     failure leaves every entry that was to be kept, and no file grows past MAX_FILE_BYTES.
     """
     removed = 0
-    with _lock:
+    with _log_lock():
         for path in _files_oldest_first():
             # A staged file left by a power failure during an earlier clearing.
             path.with_name(path.name + ".new").unlink(missing_ok=True)

@@ -25,7 +25,29 @@ You need:
 
 ### 1. Find the Pool
 
-Attach the pool's disks, then:
+A desktop may mount a disk read-write as soon as it is attached, and that mount already writes to
+it: btrfs replays its log, ext4 its journal. Stop that before you attach a disk of the NAS. GNOME,
+the desktop of Ubuntu's live system and of Debian's GNOME one, does it; turn it off as the
+desktop's user (without `sudo`):
+
+```bash
+gsettings set org.gnome.desktop.media-handling automount false
+```
+
+Another desktop has such a setting among those for removable drives and media; a system without
+a desktop mounts nothing by itself. If the desktop is to mount the disk for the copies, attach
+that disk first.
+
+Attach the pool's disks, then check that nothing mounted them:
+
+```bash
+lsblk -f
+```
+
+The pool's disks show `btrfs` as FSTYPE and the pool's name as LABEL, and must have no mount point
+(MOUNTPOINTS, or MOUNTPOINT on older systems). When one of them has one, unmount it at once with
+`sudo umount` and that mount point: the desktop mounted it read-write, and a read-only mount
+beside it would not stop the writes. Then:
 
 ```bash
 sudo btrfs device scan
@@ -96,8 +118,9 @@ copies. Snapshot names are `snap_<date>_<time>` (made on the Snapshots page), `a
 (made by a scheduled task) or the name given when it was made; the dates and times are in UTC.
 
 **Which folders are shares.** A share is a folder of a pool or of a volume. When the NAS's system
-disk still reads, it names them: attach it too, and mount its root partition read-only, here
-`/dev/sdd2` (`lsblk -f` lists the partitions; ext4 replays its journal unless `noload` is given):
+disk still reads, it names them: attach it too, check with `lsblk -f` that nothing mounted it, as
+in [step 1](#1-find-the-pool), and mount its root partition read-only, here `/dev/sdd2` (`lsblk -f`
+lists the partitions; ext4 replays its journal unless `noload` is given):
 
 ```bash
 sudo mkdir -p /mnt/nas-system
@@ -125,8 +148,9 @@ This machine has no names for those ids, and only root reads the share folders: 
 sudo rsync -a --info=progress2 /mnt/recovery/media/ /media/backup/media/
 ```
 
-`-a` keeps the owners, modes and times. On a disk that cannot keep Linux owners (exFAT, NTFS),
-use `sudo rsync -rt --info=progress2` instead. Files of a snapshot are copied the same way, from
+`/media/backup` stands for the folder where the disk for the copies is mounted. `-a` keeps the
+owners, modes and times. On a disk that cannot keep Linux owners (exFAT, NTFS), use
+`sudo rsync -rt --info=progress2` instead. Files of a snapshot are copied the same way, from
 `/mnt/recovery/.snapshots/<name>/`.
 
 ### 5. Unmount
@@ -196,16 +220,33 @@ Afterwards:
 
 The reset does not end the sessions that were signed in before: they stay valid until they
 expire, 24 hours after their sign-in by default (UNOS cannot end a session on the server yet,
-feature-list entry `auth.session-revocation`), and the account's API tokens keep working. When
-someone else may know the old password, sign every session out by having the supervisor generate
-a new signing secret, then delete the API tokens you do not know
-([API Tokens](USER_GUIDE.md#api-tokens)):
+feature-list entry `auth.session-revocation`), and the account's API tokens keep working.
 
-```bash
-sudo docker exec unos-supervisor rm /data/jwt_secret
-sudo docker restart unos-supervisor
-```
+### When Someone Else May Know the Old Password
 
-When `JWT_SECRET` is set in `/etc/unos/secrets.env`, the supervisor uses that value instead: set a
-new one there ([Step 4](INSTALL.md#step-4-prepare-the-secrets-file)) and run
-`sudo systemctl restart unos`.
+Whoever knew it may have signed in, with every right of an administrator, and what they did
+stays after the reset. Then, in this order:
+
+1. Sign every session out, by having the supervisor generate a new signing secret:
+
+   ```bash
+   sudo docker exec unos-supervisor rm /data/jwt_secret
+   sudo docker restart unos-supervisor
+   ```
+
+   When `JWT_SECRET` is set in `/etc/unos/secrets.env`, the supervisor uses that value instead:
+   set a new one there ([Step 4](INSTALL.md#step-4-prepare-the-secrets-file)) and run
+   `sudo systemctl restart unos`.
+2. Sign in with the new password and delete the API tokens you do not know
+   ([API Tokens](USER_GUIDE.md#api-tokens)): the new secret does not end them.
+3. On the **Users** page, delete every account you do not know, administrators included:
+   deleting an account deletes its API tokens too.
+4. On the **Audit Log** page, set **User** to the administrator's name and look at what was done
+   in its name: **User created**, **User updated** (`password changed`: a password set;
+   `is_admin=True`: made an administrator), **User deleted**, and the API tokens created
+   (`Created API token: <name>`). Set a new password on the **Users** page for every account whose
+   password it set, and for every other administrator when you cannot tell. Only an account's own
+   user sees its API tokens: each of those users deletes the tokens they do not know.
+5. The audit log does not record everything yet ([Audit Log](USER_GUIDE.md#audit-log)): look
+   through the scheduled tasks, the apps and containers, the shares and their access, and the
+   notification channels too.

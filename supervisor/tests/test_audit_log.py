@@ -14,6 +14,9 @@ import io
 import json
 import os
 import re
+import subprocess
+import sys
+import textwrap
 import threading
 import time
 from datetime import datetime
@@ -366,6 +369,135 @@ class TestLock:
         # stays. A file read mid-shift would be missed or read twice; behind the lock it is not.
         assert seen == [count]
         assert len(audit_router.load_audit_log()) == count
+
+
+# A process of its own that writes the log, as the emergency command line does beside the
+# supervisor (ADR-0261): it appends an entry that does not fit, and so rotates the log, or it
+# clears the log before a date. Before its first rename it stops: it creates the file PAUSED and
+# goes on once the file GO exists.
+OTHER_PROCESS = textwrap.dedent(
+    """
+    import os, sys, time
+    import src.audit.router as audit
+
+    log_file, limit, paused, go, operation, argument = sys.argv[1:]
+    audit.AUDIT_FILE, audit.MAX_FILE_BYTES = log_file, int(limit)
+    rename = os.replace
+
+    def stopping_rename(source, target):
+        if not os.path.exists(paused):
+            open(paused, "x").close()
+            deadline = time.monotonic() + 60
+            while not os.path.exists(go) and time.monotonic() < deadline:
+                time.sleep(0.01)
+        rename(source, target)
+
+    os.replace = stopping_rename
+    if operation == "append":
+        audit._append_line(argument)
+    else:
+        audit._clear(argument)
+    """
+)
+SUPERVISOR = Path(__file__).resolve().parents[1]
+
+
+def entry_line(name: str, second: int) -> str:
+    """An entry of about 290 bytes, at 2026-11-07T00:00:<second>."""
+    return json.dumps({"id": name, "timestamp": f"2026-11-07T00:00:{second:02d}", "action": "other",
+                       "details": f"{name} " + "x" * 200}) + "\n"
+
+
+class TestOtherProcesses:
+    """The emergency command line writes the log from a process of its own while the supervisor
+    runs (ADR-0261): appends, rotations, reads and clearing exclude each other across processes
+    as they do across threads (ADR-0263)."""
+
+    LIMIT = 1000  # three entries of entry_line fit in a file
+
+    @pytest.fixture
+    def log_file(self, tmp_path, monkeypatch) -> Path:
+        """A log of nine entries in three full files: audit.jsonl.2, audit.jsonl.1 and the
+        current one, seeded-0 to seeded-8 a second apart. The next entry rotates it."""
+        path = tmp_path / "audit" / "audit.jsonl"
+        monkeypatch.setattr(audit_router, "AUDIT_FILE", str(path))
+        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", self.LIMIT)
+        assert audit_router.KEEP_ROTATED == 4
+        for n in range(9):
+            audit_router._append_line(entry_line(f"seeded-{n}", n))
+        assert [len(audit_entries(f)) for f in files_oldest_first(path, 4)] == [0, 0, 3, 3, 3]
+        return path
+
+    def while_another_process_stops(self, tmp_path, log_file, operation, argument, ours):
+        """Run ``ours`` in a thread of this process while another process that is in the middle
+        of `operation` (append or clear) stops before its first rename: whether ``ours`` ended
+        before the other process went on, what it returned, and what the other process wrote
+        to its error output."""
+        paused, go = tmp_path / "paused", tmp_path / "go"
+        other = subprocess.Popen(
+            [sys.executable, "-c", OTHER_PROCESS, str(log_file), str(self.LIMIT), str(paused), str(go),
+             operation, argument],
+            cwd=SUPERVISOR, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        result: dict = {}
+        try:
+            deadline = time.monotonic() + 60
+            while not paused.exists():
+                if other.poll() is not None or time.monotonic() > deadline:
+                    pytest.fail(f"the other process did not stop at its first rename: {other.communicate()[1]}")
+                time.sleep(0.01)
+
+            def run() -> None:
+                try:
+                    result["value"] = ours()
+                except BaseException as exc:  # pragma: no cover - the failure is the assertion
+                    result["error"] = exc
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            thread.join(0.5)
+            ended_meanwhile = not thread.is_alive()
+        finally:
+            go.touch()
+        thread.join(60)
+        errors = other.communicate(timeout=60)[1]
+        assert not thread.is_alive()
+        assert (other.returncode, result.get("error")) == (0, None), errors
+        return ended_meanwhile, result.get("value")
+
+    @pytest.mark.parametrize("ours", ["append", "read", "clear"])
+    def test_an_append_a_read_or_a_clearing_waits_for_the_rotation_of_another_process(self, tmp_path, log_file, ours):
+        work = {
+            "append": lambda: audit_router._append_line(entry_line("ours", 30)),
+            "read": lambda: [e.id for e in audit_router.load_audit_log()],
+            "clear": lambda: audit_router._clear(None),
+        }[ours]
+
+        ended_meanwhile, value = self.while_another_process_stops(
+            tmp_path, log_file, "append", entry_line("other", 20), work)
+
+        assert not ended_meanwhile
+        seeded = [f"seeded-{n}" for n in range(9)]
+        listed = [e.id for e in audit_router.load_audit_log()]
+        if ours == "append":
+            # Every file moved one number up, none was lost, and this entry came after.
+            assert listed == seeded + ["other", "ours"]
+            assert [len(audit_entries(f)) for f in files_oldest_first(log_file, 4)] == [0, 3, 3, 3, 2]
+        elif ours == "read":
+            assert value == seeded + ["other"] == listed  # the whole rotation, not half of it
+        else:
+            assert (value, listed) == (10, [])
+
+    def test_an_append_waits_for_another_process_that_clears_the_log(self, tmp_path, log_file):
+        # The current file holds seeded-6 to seeded-8: clearing before seeded-7 rewrites it.
+        before = audit_entries(log_file)[1]["timestamp"]
+
+        ended_meanwhile, _ = self.while_another_process_stops(
+            tmp_path, log_file, "clear", before, lambda: audit_router._append_line(entry_line("ours", 30)))
+
+        assert not ended_meanwhile
+        assert [e.id for e in audit_router.load_audit_log()] == ["seeded-7", "seeded-8", "ours"]
 
 
 # ==================== The API (ADR-0237; feature-list.json: security.audit-log) ====================

@@ -25,6 +25,8 @@ import secrets
 import subprocess
 import sys
 import textwrap
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,16 +38,26 @@ from sqlalchemy.orm import Session
 
 from src import emergency
 from src.audit import router as audit_router
+from src.audit.schemas import AuditAction
 from src.auth import utils as auth_utils
 from src.auth.models import User
 from src.auth.schemas import MAX_PASSWORD_BYTES
 from src.auth.utils import verify_password
-from src.config import Settings, get_settings
+from src.config import JWT_SECRET_FILENAME, Settings, get_settings
+from src.apps.catalog import APPS_DATA_PATH
+from src.apps.schemas import POOL_PLACEHOLDER
 from src.database import Base
 from src.files.router import TRASH
 from src.main import app
+from src.shares.constants import SHARE_DIR_MODE, SMB_GROUP_GID, SMB_GROUP_NAME, SMB_UID_MIN
 from src.shares.models import SmbShare
-from src.snapshots.router import SNAPSHOT_DIR_NAME
+from src.snapshots.router import (
+    AUTO_SNAPSHOT_PREFIX,
+    RESTORE_PREFIX,
+    SNAPSHOT_DIR_NAME,
+    SNAPSHOT_PREFIX,
+    utc_stamp,
+)
 from src.storage.pools import PROFILE_MAP
 
 from .audit_helpers import audit_entries
@@ -436,6 +448,9 @@ class TestSafety:
             pytest.param(lambda w: w.set_totp("admin", SECRET), id="two-factor-turned-on"),
             pytest.param(lambda w: change_user(w, "admin", is_admin=False), id="demoted"),
             pytest.param(lambda w: w.replace_user("admin", "mallory", ALICE_PW), id="id-given-to-another-user"),
+            # Only the name tells this one apart: an administrator without 2FA, with the same id.
+            pytest.param(lambda w: (w.replace_user("admin", "mallory", ALICE_PW),
+                                    change_user(w, "mallory", is_admin=True)), id="id-given-to-another-administrator"),
         ],
     )
     def test_an_administrator_changed_while_the_password_is_typed_is_not_reset(self, world, run, terminal, change):
@@ -668,6 +683,64 @@ class TestResetAdminScript:
             assert listed.stdout.startswith("100755 "), "git must keep deploy/reset-admin.sh executable"
 
 
+class TestBesideTheSupervisor:
+    """The command writes the audit log from a process of its own while the supervisor runs, so
+    it takes the log's lock across processes as the supervisor does (ADR-0263)."""
+
+    @staticmethod
+    def _line(name: str) -> str:
+        return json.dumps({"id": name, "timestamp": "2026-11-08T00:00:00", "action": "other",
+                           "details": f"{name} " + "x" * 200}) + "\n"
+
+    def test_the_command_waits_for_a_rotation_of_the_supervisor_and_no_entry_is_lost(self, world, monkeypatch):
+        world.set_totp("admin", SECRET)
+        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", 1000)
+        for n in range(3):
+            audit_router._append_line(self._line(f"seeded-{n}"))  # a full file: the next entry rotates it
+        # The supervisor appends an entry and stops in the rotation, before its first rename.
+        go, stopped = threading.Event(), threading.Event()
+        rename = os.replace
+
+        def stopping_rename(source, target):
+            if not stopped.is_set():
+                stopped.set()
+                go.wait(60)
+            rename(source, target)
+
+        monkeypatch.setattr(audit_router.os, "replace", stopping_rename)
+        supervisor = threading.Thread(target=audit_router._append_line, args=(self._line("supervisor"),))
+        supervisor.start()
+        command = None
+        try:
+            assert stopped.wait(30)
+            command = subprocess.Popen(
+                [sys.executable, "-c", SHIM, "reset-admin", "admin"], cwd=SUPERVISOR,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                env={**os.environ, "TEST_AUDIT_FILE": str(world.audit_file), "UNOS_DB_PATH": str(world.path),
+                     "UNOS_JWT_SECRET": secrets.token_hex(32), "PYTHONDONTWRITEBYTECODE": "1"},
+            )
+            command.stdin.write(f"{NEW_PW}\n")
+            command.stdin.flush()  # communicate() closes it
+            # The command stores the new password, then writes its audit entries.
+            deadline = time.monotonic() + 60
+            while world.user("admin").totp_enabled and command.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            time.sleep(0.5)
+            waited = command.poll() is None
+        finally:
+            go.set()
+            supervisor.join(30)
+        out, err = command.communicate(timeout=60)
+
+        assert command.returncode == 0, err
+        assert world.user("admin").totp_enabled is False
+        assert waited, "the command wrote the audit log during a rotation of the supervisor"
+        entries = audit_router.load_audit_log()
+        assert [e.id for e in entries[:4]] == ["seeded-0", "seeded-1", "seeded-2", "supervisor"]
+        assert [(e.username, e.action.value) for e in entries[4:]] == [
+            ("root", "password_change"), ("root", "totp_disabled")]
+
+
 # --- scripts/standin/emergency.py: the command against the local stand-in's data ----------------
 
 def _load_standin():
@@ -741,7 +814,21 @@ def _code_lines(text: str) -> list[str]:
     return lines
 
 
+def _flat(text: str) -> str:
+    """The text with every run of white space, line breaks included, as one space."""
+    return " ".join(text.split())
+
+
+def _action_label(action: AuditAction) -> str:
+    """An action as the Audit Log page shows it (actionLabel of webui/src/lib/api/audit.ts)."""
+    return action.value.replace("_", " ").capitalize()
+
+
 MOUNT = re.compile(r"(?<![\w-])mount(?![\w-])")
+# A desktop mounts a disk read-write as soon as it is attached, which replays the log and writes:
+# this keeps GNOME, the desktop of the Debian and Ubuntu live systems, from doing it.
+AUTOMOUNT_OFF = "gsettings set org.gnome.desktop.media-handling automount false"
+AFTER_THE_RESET = "### When Someone Else May Know the Old Password"
 # The options that keep a read-only mount from replaying the filesystem's log, which writes:
 # btrfs's (rescue=nologreplay, before Linux 5.9 nologreplay) and ext4's (noload).
 NO_LOG_REPLAY = {"rescue=nologreplay", "nologreplay", "noload"}
@@ -772,6 +859,25 @@ class TestRunbook:
         assert any("degraded" in line for line in mounts), "no mount for a pool with a missing disk"
         assert any("rescue=nologreplay" in line for line in mounts), "no btrfs mount without the log replay"
 
+    def test_nothing_mounts_a_disk_of_the_nas_before_its_read_only_mount(self):
+        text = _runbook()
+        lines = _code_lines(text)
+        attach = text.index("Attach the pool's disks")
+        pool_mount = text.index("sudo mount -o ro,")
+        shares = text.index("**Which folders are shares.**")
+        system_mount = text.index("sudo mount -o ro,noload")
+
+        # The desktop's automounting is off before a disk is attached, and lsblk -f shows that
+        # nothing mounted the pool's disks before the read-only mount; one that a desktop mounted
+        # anyway is unmounted at once.
+        assert AUTOMOUNT_OFF in lines and text.index(AUTOMOUNT_OFF) < attach
+        assert "lsblk -f" in lines and attach < text.index("\nlsblk -f\n") < pool_mount
+        checked = _flat(text[attach:pool_mount])
+        assert "no mount point" in checked and "unmount it at once" in checked and "`sudo umount`" in checked
+        # The old system disk too, before its read-only mount.
+        assert "nothing mounted it, as in [step 1](#1-find-the-pool)" in _flat(text[shares:system_mount])
+        assert "### 1. Find the Pool" in text
+
     def test_no_command_writes_to_the_pool(self):
         writes = re.compile(
             r"mkfs|wipefs|--repair|btrfs\s+(?:rescue|scrub|balance|device\s+(?:add|remove|delete|replace))"
@@ -788,17 +894,25 @@ class TestRunbook:
 
     def test_names_the_places_that_the_code_uses(self):
         text = _runbook()
+        flat = _flat(text)
         compose = yaml.safe_load((REPO / "deploy" / "docker-compose.yml").read_text())
+        apps = APPS_DATA_PATH.removeprefix(f"{POOL_PLACEHOLDER}/")
 
         assert "btrfs device scan" in text and "btrfs filesystem show" in text and "Label" in text
-        assert f"/{SNAPSHOT_DIR_NAME}" in text and "restore_<date>_<time>" in text
+        assert f"/{SNAPSHOT_DIR_NAME}" in text
+        # Snapshots and restored copies: a prefix, then the date and time of utc_stamp().
+        assert re.fullmatch(r"[0-9]{8}_[0-9]{6}", utc_stamp())
+        for prefix in (SNAPSHOT_PREFIX, AUTO_SNAPSHOT_PREFIX, RESTORE_PREFIX):
+            assert f"`{prefix}<date>_<time>" in text
         assert f"`{TRASH}`" in text
         assert Settings.model_fields["pools_base_path"].default == "/mnt/pools" and "/mnt/pools/<pool>" in text
-        assert "apps/<app>" in text
+        assert apps != APPS_DATA_PATH and f"`{apps}/<app>/`" in text
         assert f"`{SmbShare.__tablename__}`" in text and "/etc/samba/smb.conf" in text
         # The data volume: compose names it after the folder of the compose file, deploy/.
         assert "unos-data" in compose["volumes"] and "deploy_unos-data" in text
-        assert "70000" in text and "2770" in text
+        # The owners and the mode of the share folders, and the user ids of the SMB accounts.
+        assert f"the group {SMB_GROUP_GID} (`{SMB_GROUP_NAME}` on the NAS), with mode {SHARE_DIR_MODE:o}," in flat
+        assert f"the user ids of the SMB accounts, from {SMB_UID_MIN} on" in flat
 
     def test_gives_the_reset_command_of_the_script_and_its_rules(self):
         text = _runbook()
@@ -813,3 +927,25 @@ class TestRunbook:
             assert f"`{action}`" in text
         assert f"`{emergency.AUDIT_USER}`" in text
         assert "auth.session-revocation" in text
+
+    def test_says_how_to_shut_out_whoever_knew_the_old_password(self):
+        # Whoever signed in with the old password had every right of an administrator: the
+        # sessions, the account's API tokens, and the accounts it made or changed.
+        section = _flat(_runbook().split(AFTER_THE_RESET, 1)[1])
+        auth_router_source = (SUPERVISOR / "src" / "auth" / "router.py").read_text()
+        secret = Path(Settings.model_fields["db_path"].default).parent / JWT_SECRET_FILENAME
+
+        assert f"sudo docker exec unos-supervisor rm {secret}" in section
+        assert "delete the API tokens you do not know" in section
+        assert "On the **Users** page, delete every account you do not know" in section
+        assert "deleting an account deletes its API tokens too" in section
+        assert User.api_tokens.property.cascade.delete
+        for action in (AuditAction.USER_CREATED, AuditAction.USER_UPDATED, AuditAction.USER_DELETED):
+            assert f"**{_action_label(action)}**" in section
+        # The details of those entries, as the auth router writes them.
+        for details, written in (("`password changed`", '"password changed'), ("`is_admin=True`", '"is_admin='),
+                                 ("`Created API token: <name>`", '"Created API token: {')):
+            assert details in section and written in auth_router_source
+        assert "Set a new password on the **Users** page for every account whose password it set" in section
+        # What the audit log does not record yet.
+        assert "The audit log does not record everything yet ([Audit Log](USER_GUIDE.md#audit-log))" in section

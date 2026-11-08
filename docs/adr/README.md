@@ -81,6 +81,7 @@ and this index, and `make check-fast` runs it.
 | [0224](0224-append-only-audit-log-in-json-lines.md) | The audit log is append-only JSON lines with size-based rotation | accepted | 2026-11-07 |
 | [0236](0236-audit-log-filtered-alike-and-shown-on-an-administrator-page.md) | The audit log is listed, counted and exported with one set of filters and shown on an administrator page | superseded by [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | 2026-11-07 |
 | [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page | accepted | 2026-11-07 |
+| [0263](0263-the-audit-logs-lock-holds-across-processes.md) | The audit log's lock holds across processes, through a file lock that the emergency command line takes too | accepted | 2026-11-08 |
 
 ## Auth
 
