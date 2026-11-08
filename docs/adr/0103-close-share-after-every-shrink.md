@@ -17,7 +17,7 @@ Samba checks a user's access to a share when the client connects to it (a tree c
 - Additions close nothing: a new principal, read raised to write, guest access turned on.
 - A name passed to smbcontrol must fullmatch the share-name rule (ADR-0038); other names, for example from a hand-edited file, are skipped with a warning (`_close_share` in `supervisor/src/shares/smb.py`).
 - `close-denied-share` is never used. A failed close stays pending and is retried at the next apply (ADR-0090).
-- The Shares page (`ACCESS_CHANGE_NOTE` in `webui/src/lib/components/shares/texts.ts`) and `docs/USER_GUIDE.md` say that removing or lowering access, or turning guest access off, disconnects the open connections to that share, that clients reconnect, and that adding access disconnects nobody.
+- The Shares page (`shares.form.accessChangeNote` in `webui/src/lib/i18n/catalog/shares.ts`) and `docs/USER_GUIDE.md` say that removing or lowering access, or turning guest access off, disconnects the open connections to that share, that clients reconnect, and that adding access disconnects nobody.
 - Tests: `supervisor/tests/test_smbconf.py` (`TestShrunkShares`), `supervisor/tests/test_share_apply.py` (`TestClosedShares`, `TestReloadAndClose`).
 
 ## Consequences

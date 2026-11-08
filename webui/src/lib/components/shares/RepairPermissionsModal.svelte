@@ -4,6 +4,7 @@
 	import { ApiError } from '$lib/api/client';
 	import { getRepairResult, repairSharePermissions, type RepairResult } from '$lib/api/shares';
 	import { Alert, Badge, Button, Modal } from '$lib/components/ui';
+	import { intlLocale, t } from '$lib/i18n';
 
 	/** The share whose folder is repaired. The dialog is open while mounted. */
 	export let name: string;
@@ -15,24 +16,25 @@
 	let error = '';
 	let lastError = '';
 
-	const stateBadges: Record<
-		RepairResult['state'],
-		{ variant: 'success' | 'warning' | 'error'; label: string }
-	> = {
-		done: { variant: 'success', label: 'Done' },
-		incomplete: { variant: 'warning', label: 'Incomplete' },
-		failed: { variant: 'error', label: 'Failed' }
+	type BadgeVariant = 'success' | 'warning' | 'error';
+
+	// The states of a run, each with the key of its label; a state without one is shown as it comes.
+	const stateBadges: Record<RepairResult['state'], { variant: BadgeVariant; key: string }> = {
+		done: { variant: 'success', key: 'shares.repair.state.done' },
+		incomplete: { variant: 'warning', key: 'shares.repair.state.incomplete' },
+		failed: { variant: 'error', key: 'shares.repair.state.failed' }
 	};
 
-	const skippedLabels: Record<string, string> = {
-		other_filesystem: 'other volumes and mounts',
-		snapshots: 'snapshots',
-		symlink: 'links',
-		special: 'special files',
-		hardlink: 'hard-linked files',
-		private: 'private files and folders',
-		too_deep: 'too deep',
-		raced: 'changed while running'
+	// What a run skipped, by the keys of RepairResult.skipped; a key without one is shown as it comes.
+	const skippedKeys: Record<string, string> = {
+		other_filesystem: 'shares.repair.skip.otherFilesystem',
+		snapshots: 'shares.repair.skip.snapshots',
+		symlink: 'shares.repair.skip.symlink',
+		special: 'shares.repair.skip.special',
+		hardlink: 'shares.repair.skip.hardlink',
+		private: 'shares.repair.skip.private',
+		too_deep: 'shares.repair.skip.tooDeep',
+		raced: 'shares.repair.skip.raced'
 	};
 
 	onMount(async () => {
@@ -67,51 +69,60 @@
 		if (!running) dispatch('close');
 	}
 
-	function formatTime(value: string): string {
+	function formatTime(value: string, locale: string): string {
 		const date = new Date(value);
-		return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+		return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale);
 	}
 
 	$: skippedCounts = result
 		? Object.entries(result.skipped)
 				.filter(([, count]) => count > 0)
-				.map(([key, count]) => `${skippedLabels[key] ?? key}: ${count}`)
+				.map(([key, count]) => `${skippedKeys[key] ? $t(skippedKeys[key]) : key}: ${count}`)
 		: [];
 </script>
 
-<Modal open title="Repair permissions of {name}" size="lg" closable={!running} on:close={close}>
+<Modal
+	open
+	title={$t('shares.repair.title', { name })}
+	size="lg"
+	closable={!running}
+	on:close={close}
+>
 	<div class="space-y-3 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1">
 		<!-- The outcome first: after a run it is what the user is waiting for. -->
 		{#if lastError}
-			<Alert variant="error" title="The last result could not be read">{lastError}</Alert>
+			<Alert variant="error" title={$t('shares.repair.lastError')}>{lastError}</Alert>
 		{/if}
 
 		{#if error}
-			<Alert variant="error" title="Permissions were not repaired">{error}</Alert>
+			<Alert variant="error" title={$t('shares.repair.failed')}>{error}</Alert>
 		{/if}
 
 		{#if running}
-			<p class="text-sm text-secondary">Repairing... This can take a few minutes.</p>
+			<p class="text-sm text-secondary">{$t('shares.repair.running')}</p>
 		{/if}
 
 		{#if result}
-			{@const badge = stateBadges[result.state] ?? { variant: 'warning', label: result.state }}
-			<section class="card-nested space-y-2 text-sm" aria-label="Repair result">
+			{@const badge = stateBadges[result.state]}
+			<section class="card-nested space-y-2 text-sm" aria-label={$t('shares.repair.result')}>
 				<div class="flex flex-wrap items-center gap-2">
-					<span class="font-medium">Last run</span>
-					<Badge variant={badge.variant}>{badge.label}</Badge>
-					<span class="text-xs text-muted">{formatTime(result.finished_at)}</span>
+					<span class="font-medium">{$t('shares.repair.lastRun')}</span>
+					<Badge variant={badge?.variant ?? 'warning'}>{badge ? $t(badge.key) : result.state}</Badge>
+					<span class="text-xs text-muted">{formatTime(result.finished_at, $intlLocale)}</span>
 				</div>
 				<p>
-					{result.visited} checked, {result.changed} changed, {result.errors}
-					{result.errors === 1 ? 'error' : 'errors'}
+					{$t('shares.repair.counts', {
+						visited: result.visited,
+						changed: result.changed,
+						n: result.errors
+					})}
 				</p>
 				{#if skippedCounts.length > 0}
-					<p>Skipped: {skippedCounts.join(', ')}</p>
+					<p>{$t('shares.repair.skipped', { list: skippedCounts.join(', ') })}</p>
 				{/if}
 				{#if result.skipped_paths.length > 0}
 					<div>
-						<p>Skipped volumes and mount points:</p>
+						<p>{$t('shares.repair.skippedPaths')}</p>
 						<ul class="ml-5 list-disc">
 							{#each result.skipped_paths as path}
 								<li class="mono-xs break-all">{path}</li>
@@ -121,7 +132,7 @@
 				{/if}
 				{#if result.error_samples.length > 0}
 					<div>
-						<p>Errors:</p>
+						<p>{$t('shares.repair.errors')}</p>
 						<ul class="ml-5 list-disc">
 							{#each result.error_samples as sample}
 								<li class="mono-xs break-all">{sample}</li>
@@ -139,37 +150,24 @@
 			</section>
 		{/if}
 
-		<p class="text-sm">
-			Repair sets up the existing files and folders of this share for SMB users, as UNOS does for
-			new share folders:
-		</p>
+		<p class="text-sm">{$t('shares.repair.intro')}</p>
 		<ul class="list-disc ml-5 text-sm space-y-1">
-			<li>
-				They get the group unos-smb, which can read and write them. Folders also keep new files in
-				the group.
-			</li>
-			<li>
-				Other accounts lose access, including apps that run as their own user (for example a
-				download or media app). Repair does not change ACL entries (set with setfacl): users and
-				groups named there keep their access and can get more, and on such files the group
-				unos-smb gets only what the ACL gives the owning group.
-			</li>
-			<li>Owners and file contents do not change.</li>
-			<li>Private files and folders (only their owner can use them) are left alone.</li>
-			<li>Snapshots, other volumes, mount points and links are skipped.</li>
-			<li>
-				It can take minutes on a large share, and stops after 4 minutes: run it again to continue.
-			</li>
+			<li>{$t('shares.repair.group')}</li>
+			<li>{$t('shares.repair.others')}</li>
+			<li>{$t('shares.repair.owners')}</li>
+			<li>{$t('shares.repair.private')}</li>
+			<li>{$t('shares.repair.skips')}</li>
+			<li>{$t('shares.repair.duration')}</li>
 		</ul>
-		<Alert variant="warning">
-			This changes the permissions of existing files. It cannot be undone automatically.
-		</Alert>
+		<Alert variant="warning">{$t('shares.repair.warning')}</Alert>
 	</div>
 
 	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={running} on:click={close}>Close</Button>
+		<Button variant="secondary" class="flex-1" disabled={running} on:click={close}>
+			{$t('shares.repair.close')}
+		</Button>
 		<Button variant="warning" class="flex-1" icon={Wrench} loading={running} on:click={repair}>
-			Repair permissions
+			{$t('shares.repair.run')}
 		</Button>
 	</svelte:fragment>
 </Modal>

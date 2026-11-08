@@ -58,18 +58,3 @@ export function sameAccess(a: ShareAccessEntry[], b: ShareAccessEntry[]): boolea
 		)
 	);
 }
-
-/** Why an access entry does not count yet (it is not in smb.conf). */
-export function notEffectiveReason(entry: ShareAccess, served: boolean): string {
-	if (!served) return 'The share is not served';
-	switch (entry.smb_state) {
-		case 'password_needed':
-			return `SMB is allowed for ${entry.username}, but not turned on yet`;
-		case 'off':
-			return `SMB is off for ${entry.username}: allow it on the Users page`;
-		case 'unavailable':
-			return `${entry.username} cannot use SMB`;
-		default:
-			return `${entry.username} cannot connect yet`;
-	}
-}

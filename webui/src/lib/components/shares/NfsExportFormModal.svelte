@@ -7,19 +7,25 @@
 		type ShareAccessLevel
 	} from '$lib/api/shares';
 	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
 	import { folderParts, folderProblem, joinSharePath } from './paths';
-	import { NFS_NOTE, NFS_POOL_ROOT_MESSAGE, NFS_UNMANAGED_POOLS_NOTE, nfsAppsFolderMessage } from './texts';
 
 	/** Pools and volumes (GET /shares/paths); only those of pools that UNOS manages are offered. */
 	export let paths: SharePath[] = [];
 
 	const dispatch = createEventDispatcher<{ close: void; saved: { exp: NfsExport } }>();
 
-	const accessOptions: { value: ShareAccessLevel; label: string }[] = [
-		{ value: 'read', label: 'Read only' },
-		{ value: 'write', label: 'Read & write' }
+	// Reactive: the labels follow the language of the page.
+	let accessOptions: { value: ShareAccessLevel; label: string }[];
+	$: accessOptions = [
+		{ value: 'read', label: $t('shares.level.read') },
+		{ value: 'write', label: $t('shares.level.write') }
 	];
-	const nfsMessages = { poolRoot: NFS_POOL_ROOT_MESSAGE, apps: nfsAppsFolderMessage };
+	// The folders that are never exported, as the server words them (supervisor/src/shares/nfs.py).
+	$: nfsMessages = {
+		poolRoot: $t('shares.nfs.form.poolRoot'),
+		apps: (pool: string) => $t('shares.nfs.form.appsFolder', { pool })
+	};
 
 	// The server refuses a folder of a pool that UNOS does not manage (ADR-0293).
 	const locations = paths.filter((location) => location.managed);
@@ -32,14 +38,18 @@
 	let attempted = false;
 	let error = '';
 
-	$: locationOptions = locations.map((p) => ({ value: p.path, label: p.label }));
+	// A pool's or a volume's name, and its kind in the page's language.
+	$: locationOptions = locations.map((p) => ({
+		value: p.path,
+		label: $t(p.type === 'volume' ? 'shares.location.volume' : 'shares.location.pool', { name: p.name })
+	}));
 	$: location = locations.find((p) => p.path === base);
 	$: parts = folderParts(folder);
 	$: finalPath = base ? joinSharePath(base, parts) : '';
-	$: problem = !base ? 'Choose a pool or volume' : folderProblem(location, parts, nfsMessages);
+	$: problem = !base ? $t('shares.location.choose') : folderProblem(location, parts, nfsMessages);
 	// A missing folder is shown once the user tried to save; "apps" at once.
 	$: folderError = problem && (attempted || parts.length > 0) ? problem : '';
-	$: clientError = attempted && !client.trim() ? 'Enter an address or network' : '';
+	$: clientError = attempted && !client.trim() ? $t('shares.nfs.form.clientRequired') : '';
 
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
@@ -68,68 +78,73 @@
 	}
 </script>
 
-<Modal open title="Add NFS export" size="md" closable={!saving} on:close={close}>
+<Modal open title={$t('shares.nfs.form.title')} size="md" closable={!saving} on:close={close}>
 	<form on:submit|preventDefault={submit} class="space-y-4">
 		<div class="space-y-3">
 			{#if paths.length === 0}
-				<Alert variant="warning">No pool or volume is mounted. Mount a pool on the Storage page first.</Alert>
+				<Alert variant="warning">{$t('shares.location.noneMounted')}</Alert>
 			{:else if locations.length === 0}
 				<Alert variant="warning">
-					<p>No pool that UNOS manages is mounted.</p>
-					<p class="mt-1">{NFS_UNMANAGED_POOLS_NOTE}</p>
+					<p>{$t('shares.location.noneManaged')}</p>
+					<p class="mt-1">{$t('shares.nfs.form.unmanagedPools')}</p>
 				</Alert>
 			{:else}
 				<Select
 					id="nfs-location"
-					label="Location"
+					label={$t('shares.location.label')}
 					bind:value={base}
 					options={locationOptions}
-					placeholder="Choose a pool or volume"
-					hint={locations.length < paths.length ? NFS_UNMANAGED_POOLS_NOTE : ''}
+					placeholder={$t('shares.location.choose')}
+					hint={locations.length < paths.length ? $t('shares.nfs.form.unmanagedPools') : ''}
 				/>
 			{/if}
 			<Input
 				id="nfs-folder"
-				label="Folder"
+				label={$t('shares.location.folder')}
 				bind:value={folder}
-				placeholder="media"
+				placeholder={$t('shares.nfs.form.folderPlaceholder')}
 				autocomplete="off"
 				maxlength={4096}
 				error={folderError}
-				hint={location?.type === 'volume'
-					? 'An existing folder inside the volume. Leave empty to export the whole volume'
-					: 'An existing folder inside the pool, for example one made in Files'}
+				hint={location?.type === 'volume' ? $t('shares.nfs.form.volumeHint') : $t('shares.nfs.form.poolHint')}
 			/>
 			{#if finalPath && !problem}
 				<p class="text-sm text-secondary">
-					Exported folder: <span class="mono break-all">{finalPath}</span>
+					{$t('shares.nfs.form.exportedFolder')} <span class="mono break-all">{finalPath}</span>
 				</p>
 			{/if}
 		</div>
 
 		<Input
 			id="nfs-client"
-			label="Client network"
+			label={$t('shares.nfs.form.client')}
 			bind:value={client}
 			placeholder="192.168.1.0/24"
 			autocomplete="off"
 			spellcheck={false}
 			maxlength={64}
 			error={clientError}
-			hint="One address or network of your local network, such as 192.168.1.0/24, 192.168.1.20 or fd00::/64"
+			hint={$t('shares.nfs.form.clientHint')}
 		/>
 
-		<Select id="nfs-access" label="Access" bind:value={access} options={accessOptions} />
+		<Select
+			id="nfs-access"
+			label={$t('shares.access.title')}
+			bind:value={access}
+			options={accessOptions}
+		/>
 
-		<p class="form-hint">{NFS_NOTE}</p>
+		<p class="form-hint">{$t('shares.nfs.note')}</p>
 	</form>
 
 	{#if error}
-		<Alert variant="error" title="Export was not created">{error}</Alert>
+		<Alert variant="error" title={$t('shares.nfs.form.notCreated')}>{error}</Alert>
 	{/if}
 
 	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={saving} on:click={close}>Cancel</Button>
-		<Button class="flex-1" loading={saving} on:click={submit}>Create export</Button>
+		<Button variant="secondary" class="flex-1" disabled={saving} on:click={close}>
+			{$t('common.cancel')}
+		</Button>
+		<Button class="flex-1" loading={saving} on:click={submit}>{$t('shares.nfs.form.create')}</Button>
 	</svelte:fragment>
 </Modal>

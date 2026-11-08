@@ -26,8 +26,9 @@
 		ShareCard,
 		ShareFormModal
 	} from '$lib/components/shares';
-	import { NETWORK_NOTE, NFS_NOTE } from '$lib/components/shares/texts';
+	import { t } from '$lib/i18n';
 
+	// i18n-ignore: the names of the protocols, the same in every language
 	const tabs = [
 		{ id: 'smb', label: 'SMB' },
 		{ id: 'nfs', label: 'NFS' }
@@ -190,7 +191,12 @@
 	async function handleSaved(event: CustomEvent<{ share: SmbShare; created: boolean }>) {
 		const { share, created } = event.detail;
 		form = null;
-		showOutcome(created ? `Share "${share.name}" created` : `Share "${share.name}" saved`, share.warnings);
+		showOutcome(
+			created
+				? $t('shares.smb.created', { name: share.name })
+				: $t('shares.smb.saved', { name: share.name }),
+			share.warnings
+		);
 		await reloadSmb();
 	}
 
@@ -214,7 +220,7 @@
 			const result = await deleteSmbShare(name);
 			deleting = false;
 			closeDelete();
-			showOutcome(`Share "${name}" deleted`, result.warnings);
+			showOutcome($t('shares.smb.deleted', { name }), result.warnings);
 			await reloadSmb();
 		} catch (e) {
 			deleteError = messageOf(e);
@@ -256,15 +262,15 @@
 
 	/** What a client may do, in the words of the SMB access levels. */
 	function nfsAccessLabel(client: NfsExportClient): string {
-		if (client.access === 'write') return 'Read & write';
-		if (client.access === 'read') return 'Read only';
-		return 'Per security flavor';
+		if (client.access === 'write') return $t('shares.level.write');
+		if (client.access === 'read') return $t('shares.level.read');
+		return $t('shares.nfs.perFlavor');
 	}
 
 	async function handleNfsSaved(event: CustomEvent<{ exp: NfsExport }>) {
 		const { exp } = event.detail;
 		nfsFormOpen = false;
-		showOutcome(`NFS export of ${exp.path} created`, exp.warnings);
+		showOutcome($t('shares.nfs.created', { path: exp.path }), exp.warnings);
 		await loadNfs();
 	}
 
@@ -286,7 +292,7 @@
 			const result = await deleteNfsExport(path);
 			nfsDeleting = false;
 			exportToDelete = null;
-			showOutcome(`NFS export of ${path} deleted`, result.warnings);
+			showOutcome($t('shares.nfs.deleted', { path }), result.warnings);
 			await loadNfs();
 		} catch (e) {
 			nfsDeleteError = messageOf(e);
@@ -298,19 +304,23 @@
 
 <div class="page-container">
 	<div class="page-header">
-		<h1 class="page-title">Shares</h1>
+		<h1 class="page-title">{$t('shares.title')}</h1>
 		{#if activeTab === 'smb'}
 			<Button icon={Plus} disabled={loading || paths.length === 0} on:click={openCreate}>
-				Add SMB share
+				{$t('shares.smb.add')}
 			</Button>
 		{:else}
 			<Button icon={Plus} disabled={loading || paths.length === 0} on:click={() => (nfsFormOpen = true)}>
-				Add NFS export
+				{$t('shares.nfs.add')}
 			</Button>
 		{/if}
 	</div>
 
-	<div class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit" role="tablist" aria-label="Share types">
+	<div
+		class="flex gap-1 p-1 bg-surface-elevated rounded-lg w-fit"
+		role="tablist"
+		aria-label={$t('shares.tabs.label')}
+	>
 		{#each tabs as tab (tab.id)}
 			<button
 				type="button"
@@ -339,11 +349,9 @@
 		class="space-y-6"
 	>
 		{#if !loading && pathsError}
-			<Alert variant="error" title="The pools and volumes could not be read">{pathsError}</Alert>
+			<Alert variant="error" title={$t('shares.pathsError')}>{pathsError}</Alert>
 		{:else if !loading && paths.length === 0}
-			<Alert variant="warning">
-				No storage pools available. Create a storage pool first before adding shares.
-			</Alert>
+			<Alert variant="warning">{$t('shares.noPools')}</Alert>
 		{/if}
 
 		{#if notice}
@@ -361,7 +369,7 @@
 		{/if}
 
 		{#if loading}
-			<p class="loading-text">Loading...</p>
+			<p class="loading-text">{$t('common.loading')}</p>
 		{:else if activeTab === 'smb'}
 			{#if status}
 				{#if status.problems.length > 0}
@@ -373,21 +381,21 @@
 				{/if}
 				{#if status.samba_tools_missing && status.samba_tools_missing.length > 0}
 					<Alert variant="warning">
-						<p>Samba is not installed on the host: shares and SMB accounts cannot be used</p>
-						<p class="text-sm mt-1">Missing: {status.samba_tools_missing.join(', ')}</p>
+						<p>{$t('shares.status.sambaMissing')}</p>
+						<p class="text-sm mt-1">
+							{$t('shares.status.missing', { tools: status.samba_tools_missing.join(', ') })}
+						</p>
 					</Alert>
 				{/if}
 				{#if status.guest_shares.length > 0}
 					<Alert variant="warning">
-						Guest access is on for: {status.guest_shares.join(', ')}. Anyone on your network can read
-						these shares without a password, and connections to this server are not required to be
-						signed.
+						{$t('shares.status.guestShares', { shares: status.guest_shares.join(', ') })}
 					</Alert>
 				{/if}
 				{#if status.import_report.length > 0}
 					<Alert
 						variant="info"
-						title="Shares imported from the previous smb.conf"
+						title={$t('shares.status.imported')}
 						dismissible
 						on:dismiss={dismissImportReport}
 					>
@@ -398,33 +406,29 @@
 				{/if}
 				{#if status.unmanaged_samba_users.length > 0}
 					<Alert variant="info">
-						These Samba accounts were not created by UNOS and cannot use UNOS shares: {status.unmanaged_samba_users.join(
-							', '
-						)}
+						{$t('shares.status.unmanagedUsers', { users: status.unmanaged_samba_users.join(', ') })}
 					</Alert>
 				{/if}
 				{#if status.active_smb_users === 0}
-					<Alert variant="info">
-						Nobody can connect yet: allow SMB on the Users page, then grant access here.
-					</Alert>
+					<Alert variant="info">{$t('shares.status.nobody')}</Alert>
 				{/if}
 			{:else if statusError}
-				<Alert variant="error" title="The SMB status could not be read">{statusError}</Alert>
+				<Alert variant="error" title={$t('shares.status.error')}>{statusError}</Alert>
 			{/if}
 
 			<Card>
 				<h2 class="section-title mb-4">
 					<FolderOpen class="w-5 h-5" />
-					SMB shares
+					{$t('shares.smb.title')}
 				</h2>
 
 				{#if sharesError}
-					<Alert variant="error" title="The shares could not be loaded">{sharesError}</Alert>
+					<Alert variant="error" title={$t('shares.smb.loadError')}>{sharesError}</Alert>
 				{:else if shares.length === 0}
 					<EmptyState
 						icon={FolderOpen}
-						title="No SMB shares yet"
-						description="Share a folder of a pool, or a volume, with the users you choose."
+						title={$t('shares.smb.empty')}
+						description={$t('shares.smb.emptyHint')}
 					/>
 				{:else}
 					<div class="space-y-4">
@@ -442,14 +446,14 @@
 					</div>
 				{/if}
 
-				<p class="form-hint mt-4">{NETWORK_NOTE}</p>
+				<p class="form-hint mt-4">{$t('shares.smb.networkNote')}</p>
 			</Card>
 		{:else}
 			{#if nfsStatus}
 				{#if nfsStatus.server_missing}
 					<Alert variant="warning">
-						<p>The NFS server is not installed on the host: no computer can mount the exports</p>
-						<p class="text-sm mt-1">Install the package nfs-kernel-server on the NAS.</p>
+						<p>{$t('shares.nfs.serverMissing')}</p>
+						<p class="text-sm mt-1">{$t('shares.nfs.installServer')}</p>
 					</Alert>
 				{/if}
 				{#if nfsStatus.problems.length > 0}
@@ -462,32 +466,32 @@
 					</Alert>
 				{/if}
 			{:else if nfsStatusError}
-				<Alert variant="error" title="The NFS status could not be read">{nfsStatusError}</Alert>
+				<Alert variant="error" title={$t('shares.nfs.statusError')}>{nfsStatusError}</Alert>
 			{/if}
 
 			<Card>
 				<h2 class="section-title mb-4">
 					<Network class="w-5 h-5" />
-					NFS exports
+					{$t('shares.nfs.title')}
 				</h2>
 
 				{#if nfsError}
-					<Alert variant="error" title="The NFS exports could not be loaded">{nfsError}</Alert>
+					<Alert variant="error" title={$t('shares.nfs.loadError')}>{nfsError}</Alert>
 				{:else if nfsExports.length === 0}
 					<EmptyState
 						icon={Network}
-						title="No NFS exports yet"
-						description="Export a folder of a pool, or a volume, to the computers of a network."
+						title={$t('shares.nfs.empty')}
+						description={$t('shares.nfs.emptyHint')}
 					/>
 				{:else}
-					<ul class="space-y-2" aria-label="NFS exports">
+					<ul class="space-y-2" aria-label={$t('shares.nfs.title')}>
 						<!-- Not keyed: two exports can start on the same line of a file, and nothing
 						     else of an entry is unique. -->
 						{#each nfsExports as exp}
 							<li class="card-nested flex items-start justify-between gap-2">
 								<div class="min-w-0 space-y-1">
 									<p class="mono break-all">{exp.path}</p>
-									<ul class="space-y-0.5" aria-label="Clients of {exp.path}">
+									<ul class="space-y-0.5" aria-label={$t('shares.nfs.clientsOf', { path: exp.path })}>
 										{#each exp.clients as client}
 											<li class="text-sm">
 												<span class="mono break-all">{client.client}</span>
@@ -500,14 +504,14 @@
 									</ul>
 									{#if !exp.managed}
 										<p class="text-xs text-muted">
-											In {exp.file}, line {exp.line}: not added in UNOS, so change it on the NAS
+											{$t('shares.nfs.notAddedInUnos', { file: exp.file, line: exp.line })}
 										</p>
 									{/if}
 								</div>
 								{#if exp.managed}
 									<Button variant="ghost" size="icon-sm" on:click={() => openNfsDelete(exp)}>
 										<Trash2 class="w-4 h-4 text-error" />
-										<span class="sr-only">Delete export {exp.path}</span>
+										<span class="sr-only">{$t('shares.nfs.deleteOne', { path: exp.path })}</span>
 									</Button>
 								{/if}
 							</li>
@@ -515,7 +519,7 @@
 					</ul>
 				{/if}
 
-				<p class="form-hint mt-4">{NFS_NOTE}</p>
+				<p class="form-hint mt-4">{$t('shares.nfs.note')}</p>
 			</Card>
 		{/if}
 	</div>
@@ -536,28 +540,29 @@
 
 <Modal
 	open={shareToDelete !== null}
-	title="Delete share"
+	title={$t('shares.smb.deleteTitle')}
 	size="md"
 	danger
 	closable={!deleting}
 	on:close={closeDelete}
 >
 	{#if shareToDelete}
+		<!-- In parts around the share's name: ADR-0296. -->
 		<p>
-			Delete share <strong class="text-content">{shareToDelete.name}</strong>? The folder and its
-			files are kept. Open connections to the share are closed.
+			{$t('shares.smb.deleteBefore')}
+			<strong class="text-content">{shareToDelete.name}</strong>{$t('shares.smb.deleteAfter')}
 		</p>
 		{#if deleteError}
-			<Alert variant="error" title="Share was not deleted">{deleteError}</Alert>
+			<Alert variant="error" title={$t('shares.smb.notDeleted')}>{deleteError}</Alert>
 		{/if}
 	{/if}
 
 	<svelte:fragment slot="footer">
 		<Button variant="secondary" class="flex-1" disabled={deleting} on:click={closeDelete}>
-			Cancel
+			{$t('common.cancel')}
 		</Button>
 		<Button variant="danger" class="flex-1" loading={deleting} on:click={confirmDelete}>
-			Delete share
+			{$t('shares.smb.delete')}
 		</Button>
 	</svelte:fragment>
 </Modal>
@@ -568,28 +573,29 @@
 
 <Modal
 	open={exportToDelete !== null}
-	title="Delete NFS export"
+	title={$t('shares.nfs.deleteTitle')}
 	size="md"
 	danger
 	closable={!nfsDeleting}
 	on:close={closeNfsDelete}
 >
 	{#if exportToDelete}
+		<!-- In parts around the folder's path: ADR-0296. -->
 		<p>
-			Delete the export of <span class="mono break-all">{exportToDelete.path}</span>? NFS clients
-			lose access to it. The folder and its files are kept.
+			{$t('shares.nfs.deleteBefore')}
+			<span class="mono break-all">{exportToDelete.path}</span>{$t('shares.nfs.deleteAfter')}
 		</p>
 		{#if nfsDeleteError}
-			<Alert variant="error" title="Export was not deleted">{nfsDeleteError}</Alert>
+			<Alert variant="error" title={$t('shares.nfs.notDeleted')}>{nfsDeleteError}</Alert>
 		{/if}
 	{/if}
 
 	<svelte:fragment slot="footer">
 		<Button variant="secondary" class="flex-1" disabled={nfsDeleting} on:click={closeNfsDelete}>
-			Cancel
+			{$t('common.cancel')}
 		</Button>
 		<Button variant="danger" class="flex-1" loading={nfsDeleting} on:click={confirmNfsDelete}>
-			Delete export
+			{$t('shares.nfs.delete')}
 		</Button>
 	</svelte:fragment>
 </Modal>
