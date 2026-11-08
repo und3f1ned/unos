@@ -35,6 +35,21 @@ const EXT4 = 'EXT4-fs warning (device sda1): ext4_dx_add_entry:2379: Directory i
 const USB_DEVICE = 'usb 1-1: new high-speed USB device number 2 using xhci-hcd';
 const USB_ERROR = 'usb 1-1: device descriptor read/64, error -71';
 
+// What smbd logs for a failed SMB sign-in through its class auth_audit (Samba's auth/auth_log.c):
+// a notice, without Samba's header line (ADR-0277), naming the account the client gave and the
+// client's address (supervisor/tests/test_logs_sources.py, TestFailedSmbSignIns).
+function failedSignIn(account: string, address: string, status = 'NT_STATUS_WRONG_PASSWORD'): string {
+  return (
+    `Auth: [SMB2,(null)] user [WORKGROUP]\\[${account}] at [Sun, 08 Nov 2026 09:58:02.123456 UTC] ` +
+    `with [NTLMv2] status [${status}] workstation [LAPTOP-7] remote host [ipv4:${address}:50122] ` +
+    `mapped to [WORKGROUP]\\[${account}]. local host [ipv4:192.168.1.10:445] `
+  );
+}
+const SMBD_STARTED = 'smbd version 4.22.6-Debian-4.22.6+dfsg-0+deb13u1 started.';
+const ALICE_FAILED = failedSignIn('alice', '192.168.1.50');
+const BOB_FAILED = failedSignIn('bob', '192.168.1.77');
+const UNKNOWN_FAILED = failedSignIn('mallory', '192.168.1.50', 'NT_STATUS_NO_SUCH_USER');
+
 // What GET /api/v1/logs/entries answers for each source without filters: the newest entries
 // first, as journalctl --reverse prints them, with the times in UTC and their offset.
 const ANSWERS: Record<string, Entry[]> = {
@@ -48,6 +63,13 @@ const ANSWERS: Record<string, Entry[]> = {
     entry('dmesg', '2026-11-07T09:50:00+00:00', 'warning', 'kernel', EXT4),
     entry('dmesg', '2026-11-07T08:20:00+00:00', 'info', 'kernel', USB_DEVICE),
     entry('dmesg', '2026-11-07T08:10:00+00:00', 'err', 'kernel', USB_ERROR),
+  ],
+  samba: [
+    entry('samba', '2026-11-08T09:59:30+00:00', 'notice', 'smbd', UNKNOWN_FAILED),
+    entry('samba', '2026-11-08T09:58:02+00:00', 'notice', 'smbd', ALICE_FAILED),
+    entry('samba', '2026-11-08T09:57:30+00:00', 'notice', 'smbd', BOB_FAILED),
+    entry('samba', '2026-11-08T09:57:00+00:00', 'notice', 'smbd', ALICE_FAILED),
+    entry('samba', '2026-11-08T08:00:00+00:00', 'notice', 'smbd', SMBD_STARTED),
   ],
 };
 
@@ -287,6 +309,39 @@ test.describe('System Logs with a fake journal', () => {
     await page.waitForTimeout(300);
     await expect(cells(page, 4)).toHaveText([OOM, EXT4, USB_DEVICE, USB_ERROR]);
     await expect(page.getByText('Showing 4 log entries, newest first')).toBeVisible();
+  });
+
+  test('failed SMB sign-ins: Samba lists them, and a search shows the client that keeps failing', async ({
+    authenticatedPage: page,
+  }) => {
+    const api = await fakeLogsApi(page);
+    await page.goto('/system#logs');
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+
+    // The source Samba: each failed sign-in is a notice of smbd with the account and the client.
+    await page.getByRole('button', { name: 'Samba', exact: true }).click();
+    await expect(page.getByText('The SMB file server: smbd and nmbd')).toBeVisible();
+    await expect(cells(page, 4)).toHaveText([UNKNOWN_FAILED, ALICE_FAILED, BOB_FAILED, ALICE_FAILED, SMBD_STARTED]);
+    await expect(cells(page, 2)).toHaveText(['notice', 'notice', 'notice', 'notice', 'notice']);
+    await expect(cells(page, 3)).toHaveText(['smbd', 'smbd', 'smbd', 'smbd', 'smbd']);
+
+    // Only the failed sign-ins: Samba's lines start with "Auth:".
+    const box = page.getByPlaceholder('Search in logs');
+    await box.fill('Auth:');
+    await box.press('Enter');
+    await expect(cells(page, 4)).toHaveText([UNKNOWN_FAILED, ALICE_FAILED, BOB_FAILED, ALICE_FAILED]);
+    let last = api.requests[api.requests.length - 1];
+    expect([last.get('source'), last.get('search')]).toEqual(['samba', 'Auth:']);
+
+    // One client's address: its failures, newest first, with the accounts it tried.
+    const client = 'remote host [ipv4:192.168.1.50:';
+    await box.fill(client);
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await expect(cells(page, 4)).toHaveText([UNKNOWN_FAILED, ALICE_FAILED, ALICE_FAILED]);
+    await expect(page.locator('main table mark')).toHaveText([client, client, client]);
+    await expect(page.getByText('Showing 3 log entries, newest first')).toBeVisible();
+    last = api.requests[api.requests.length - 1];
+    expect([last.get('source'), last.get('search')]).toEqual(['samba', client]);
   });
 
   test('a search asks the server: the matches it lists are highlighted, and no match says so', async ({

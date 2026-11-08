@@ -40,8 +40,11 @@ GLOBAL_WITHOUT_GUESTS = """[global]
    pam password change = no
    obey pam restrictions = no
    cache directory = /run/samba
-   log level = 1
-   logging = syslog@1
+   log file = /run/samba/log.samba
+   max log size = 100
+   log level = 1 auth_audit:2
+   logging = syslog@2
+   debug timestamp = no
    dns proxy = no
    disable netbios = yes
    smb ports = 445
@@ -74,7 +77,7 @@ def section(name, body):
     return f"[{name}]\n{body}{FIXED}"
 
 
-# --- [global] (ADR-0087) -------------------------------------------------------------------
+# --- [global] (ADR-0281) -------------------------------------------------------------------
 
 
 class TestGlobal:
@@ -98,9 +101,42 @@ class TestGlobal:
         assert "   smb3 unix extensions = no\n" in text
         assert "   invalid users = root\n" in text
         assert "   cache directory = /run/samba\n" in text
-        assert "   logging = syslog@1\n" in text
         assert "   server string = UNOS NAS\n" in text  # install.sh recognizes a UNOS file by it
-        assert "log file" not in text and "max log size" not in text
+
+    @pytest.mark.parametrize("guest", [False, True])
+    def test_samba_writes_its_own_log_file_into_ram(self, guest):
+        """smbd, nmbd and the smbd of each client share one log file in /run/samba, a tmpfs, on every
+        host (ADR-0277): no file of their own on the system disk, no file per client name or address
+        (%m) that a client could multiply, and Samba renames the file to .old past 100 KiB."""
+        settings = dict(smbconf.global_settings(guest))
+
+        assert settings["log file"] == "/run/samba/log.samba"
+        assert settings["log file"].startswith(smb.CACHE_DIRECTORY + "/")
+        assert "%" not in settings["log file"]
+        assert settings["max log size"] == "100"
+
+    @pytest.mark.parametrize("guest", [False, True])
+    def test_failed_sign_ins_reach_syslog_and_successful_ones_do_not(self, guest):
+        """Samba logs a failed sign-in in its class auth_audit at level 2 and a successful one at level 3
+        (auth/auth_log.c). A message reaches syslog when its level is at most the level of its class in
+        "log level" and at most the level of the syslog backend in "logging" (ADR-0277)."""
+        settings = dict(smbconf.global_settings(guest))
+        levels: dict[str, int] = {}
+        for item in settings["log level"].split():
+            name, _, level = item.rpartition(":")
+            levels[name or "all"] = int(level)
+        backends = {name: int(level) for name, _, level in (b.partition("@") for b in settings["logging"].split())}
+        auth_failure, auth_success = 2, 3
+
+        assert levels == {"all": 1, "auth_audit": 2}
+        assert backends == {"syslog": 2}  # no file backend: the journal holds Samba's messages
+        assert auth_failure <= levels["auth_audit"] < auth_success
+        assert auth_failure <= backends["syslog"]
+        # The other classes stay at level 1: syslog@2 lets nothing else through than syslog@1 did.
+        assert levels["all"] == 1
+        # Without Samba's header line ([date, level] file:line(function)) each message is one entry
+        # of the journal, which has its own time.
+        assert settings["debug timestamp"] == "no"
 
     @pytest.mark.parametrize("guest", [False, True])
     def test_netbios_is_off_and_smbd_announces_itself_over_bonjour(self, guest):

@@ -338,8 +338,11 @@ configure_samba() {
    pam password change = no
    obey pam restrictions = no
    cache directory = /run/samba
-   log level = 1
-   logging = syslog@1
+   log file = /run/samba/log.samba
+   max log size = 100
+   log level = 1 auth_audit:2
+   logging = syslog@2
+   debug timestamp = no
    dns proxy = no
    disable netbios = yes
    smb ports = 445

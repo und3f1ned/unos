@@ -69,8 +69,8 @@ LOG_SOURCES: dict[str, Source] = {
     # implies this boot only.
     "dmesg": Source("Kernel", "The kernel's messages since the host started", ("--dmesg",)),
     "docker": Source("Docker", "The Docker daemon", ("--unit=docker.service",)),
-    # Samba logs to syslog (ADR-0094). nmbd runs only where NetBIOS is on; UNOS turns it off
-    # (ADR-0275), and the journal keeps what nmbd logged before.
+    # Samba logs to syslog, failed SMB sign-ins among its messages (ADR-0277). nmbd runs only
+    # where NetBIOS is on; UNOS turns it off (ADR-0275), and the journal keeps what nmbd logged before.
     "samba": Source(
         "Samba",
         "The SMB file server: smbd, and nmbd where NetBIOS is on",

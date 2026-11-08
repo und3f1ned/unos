@@ -519,6 +519,57 @@ class TestConstants:
         assert smb_password_problem(password) == problem
         assert password not in problem  # the message never carries the password
 
+    @pytest.mark.parametrize("password", [
+        "password", "Password1", "PASSWORD123", "P@ssw0rd", "12345678", "1234567890", "11111111",
+        "qwertyuiop", "1q2w3e4r", "Iloveyou", "sunshine", "Summer2024!", "Welcome@123", "abcd1234",
+    ])
+    def test_a_common_password_is_refused_with_the_reason_in_any_case(self, password):
+        """shares.smb-login-protection, step 2 (ADR-0279)."""
+        assert smb_password_problem(password) == (
+            "SMB passwords must not be common passwords: this one is on the list of passwords that attackers "
+            "try first"
+        )
+        assert smb_password_problem(password) == constants.COMMON_PASSWORD_RULE
+        # The web UI shows its hint to change the password after every "SMB passwords must ..." answer.
+        assert constants.COMMON_PASSWORD_RULE.startswith("SMB passwords must")
+
+    @pytest.mark.parametrize("password", ["password-for-the-nas", "Sunshine on 7 hills", "qwertyuiop[]", " password"])
+    def test_a_password_that_only_contains_a_common_one_is_taken(self, password):
+        assert smb_password_problem(password) is None
+
+    def test_the_other_rules_come_first(self):
+        assert smb_password_problem("letmein") == "SMB passwords must have at least 8 characters"
+        assert smb_password_problem("password\t") == (
+            "SMB passwords must not contain control characters such as tabs or line breaks"
+        )
+
+    def test_a_password_that_goes_back_to_samba_is_not_checked_against_the_list(self):
+        """``restoring``: the password Samba held before a change that failed goes back to it (ADR-0124),
+        also a common one that an account got before the list; the other rules still apply (ADR-0279)."""
+        assert smb_password_problem("Password123") == constants.COMMON_PASSWORD_RULE
+        assert smb_password_problem("Password123", restoring=True) is None
+        assert smb_password_problem("letmein", restoring=True) == "SMB passwords must have at least 8 characters"
+        assert smb_password_problem("password\n", restoring=True) == (
+            "SMB passwords must not contain control characters such as tabs or line breaks"
+        )
+
+    def test_the_list_of_common_passwords(self):
+        """common_passwords.txt: a comment header, then one password per line, in lower case (casefolded),
+        sorted and unique, each one that the other rules would take; it ships with the code (src/)."""
+        path = SUPERVISOR / "src" / "shares" / "common_passwords.txt"
+        lines = path.read_text(encoding="utf-8").split("\n")
+        header = [line for line in lines if line.startswith("#")]
+        entries = [line for line in lines if line and not line.startswith("#")]
+
+        assert lines[: len(header)] == header and header, "the comment header comes first"
+        assert lines[-1] == "" and "" not in lines[len(header):-1]
+        assert "GNU General Public License" in " ".join(header) and "ADR-0279" in " ".join(header)
+        assert entries == sorted(set(entries)), "sorted, without duplicates"
+        assert [e for e in entries if e != e.casefold() or e != e.strip() or not e.isprintable()] == []
+        assert [e for e in entries if len(e) < constants.SMB_PASSWORD_MIN_CHARS] == []
+        assert len(entries) >= 500
+        assert constants.common_passwords() == frozenset(entries)
+
     @pytest.mark.parametrize("mode, gid, ok", [
         pytest.param(stat.S_IFDIR | 0o2770, 70000, True, id="2770-unos-smb"),
         pytest.param(stat.S_IFDIR | 0o2770, 20000, False, id="other-group"),

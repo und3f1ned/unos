@@ -9,9 +9,11 @@ systemd never allocates (65536-524287).
 
 from __future__ import annotations
 
+import functools
 import re
 import stat
 import unicodedata
+from pathlib import Path
 
 # Host group of every SMB account UNOS creates; share folders belong to it.
 SMB_GROUP_NAME = "unos-smb"
@@ -68,6 +70,13 @@ SID_LIKE_RULE = "Names that start with 's-' and a digit are reserved: Samba read
 
 SMB_PASSWORD_MIN_CHARS = 8
 SMB_PASSWORD_MAX_BYTES = 72
+# SMB has no second factor and no login limit (ADR-0280): passwords on the list of
+# common_passwords.txt are refused (ADR-0279). The web UI shows its hint to change the
+# password after every answer that starts with "SMB passwords must".
+COMMON_PASSWORD_RULE = (
+    "SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first"
+)
+_COMMON_PASSWORDS_FILE = Path(__file__).with_name("common_passwords.txt")
 
 SHARE_DIR_MODE = 0o2770   # share folders: group rwx + setgid, nothing for others
 SHARE_FILE_MODE = 0o660   # files created over SMB
@@ -88,8 +97,21 @@ def is_valid_linux_name(name: object) -> bool:
     return linux_name_problem(name) is None
 
 
-def smb_password_problem(password: str) -> str | None:
-    """Why ``password`` cannot be given to Samba (smbpasswd reads it as a line on stdin), or None."""
+@functools.cache
+def common_passwords() -> frozenset[str]:
+    """The lines of common_passwords.txt that are not comments: casefolded passwords (ADR-0279)."""
+    lines = _COMMON_PASSWORDS_FILE.read_text(encoding="utf-8").split("\n")
+    return frozenset(line for line in lines if line and not line.startswith("#"))
+
+
+def smb_password_problem(password: str, *, restoring: bool = False) -> str | None:
+    """Why ``password`` cannot be given to Samba (smbpasswd reads it as a line on stdin), or None.
+
+    The rules of ADR-0279, in this order: at least 8 characters, at most 72 bytes of valid UTF-8,
+    no control characters, and not a common password (compared ignoring case). ``restoring``: the
+    password that Samba held before a change that failed goes back to it (ADR-0124); the list
+    applies only to new passwords, and an account may have got its password before the list.
+    """
     if len(password) < SMB_PASSWORD_MIN_CHARS:
         return f"SMB passwords must have at least {SMB_PASSWORD_MIN_CHARS} characters"
     try:
@@ -100,6 +122,8 @@ def smb_password_problem(password: str) -> str | None:
         return f"SMB passwords must not be longer than {SMB_PASSWORD_MAX_BYTES} bytes (UTF-8)"
     if any(unicodedata.category(c) in ("Cc", "Cs") for c in password):
         return "SMB passwords must not contain control characters such as tabs or line breaks"
+    if not restoring and password.casefold() in common_passwords():
+        return COMMON_PASSWORD_RULE
     return None
 
 
