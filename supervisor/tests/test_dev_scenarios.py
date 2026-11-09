@@ -11,7 +11,7 @@ deletion (ADR-0104), and a failed sign-in that changes passdb.tdb only while a l
 failures, and then not for one of the two passwords that the history holds (ADR-0278, ADR-0310).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
-* every area (files, volumes, smart, backups, smb, smbconf) passes against the fake, prints a
+* every area (files, volumes, smart, backups, smb, smbconf, scrub) passes against the fake, prints a
   PASS line with its SD MiB for each step and a summary, and leaves the device as it found it;
 * the smbconf check (ADR-0309) shows what an smb.conf edited by hand does: the Shares page names
   the file before an apply, the apply copies it byte for byte to smb.conf.unos-replaced, a share
@@ -269,6 +269,15 @@ class FakeNas:
         # change of SMB state waits for smb_lock, which it holds from before the first request.
         self.last_apply_ok: bool | None = True
         self.reconcile_pending = False
+        # The pool's scrub as btrfs reports it: its last record, and of a running scrub the
+        # requests left until btrfs records it (ADR-0313) and until it ends; the Scheduler.
+        self.scrub = {"status": "finished", "last_run": "Mon Nov  9 09:00:00 2026", "errors": 0, "duration": 19}
+        self.scrub_unrecorded = 0
+        self.scrub_left = 0
+        self.scrubs = 0
+        self.pool_used = 1  # bytes of data in the pool data
+        self.tasks: dict[str, dict] = {}
+        self.runs: list[dict] = []
 
     # --- what the tests compare
 
@@ -285,6 +294,8 @@ class FakeNas:
             "/etc/samba": dict(self.samba),
             "the hand edit's copies": dict(self.saved),
             "the copy's problem": self.replaced_problem,
+            "a scrub runs": self.scrub["status"] == "running",
+            "the Scheduler's tasks": copy.deepcopy(self.tasks),
         }
 
     # --- the model
@@ -436,12 +447,14 @@ class FakeNas:
         return handler(method, parts[1:], body, params, upload)
 
     def api_storage(self, method, parts, body, params, upload):
+        if parts[:1] == ["pools"] and parts[2:] == ["scrub"]:
+            return self.api_scrub(method, parts[1])
         if parts == ["disks"] and self.partitions:
             return [{"name": DISK, "path": f"/dev/{DISK}", "size": 640, "rotational": True, "type": "disk",
                      "partitions": [{"name": p, "path": f"/dev/{p}", "size": 1} for p in self.partitions]}]
         if parts == ["pools"]:
             return [{"name": "data", "mountpoint": ROOT, "mounted": True, "persistent": True, "read_only": False,
-                     "devices": ["/dev/sda"], "total_size": 1, "used_size": 1}]
+                     "devices": ["/dev/sda"], "total_size": max(1, self.pool_used), "used_size": self.pool_used}]
         if parts == ["disks"]:
             return [{"name": DISK, "path": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "size": 640, "rotational": True,
                      "type": "disk", "partitions": [], "is_system": False}]
@@ -475,6 +488,90 @@ class FakeNas:
             self.trash = {t: o for t, o in self.trash.items() if not t.startswith(path + "/")}
             return {"status": "deleted"}
         raise AssertionError(f"the fake does not know {method} /storage/{'/'.join(parts)}")
+
+    def scrub_answer(self) -> dict:
+        s = self.scrub
+        if s["status"] == "running" and self.scrub_unrecorded:
+            # Not recorded yet: btrfs prints the time left of a scrub that runs (ADR-0313).
+            return {"pool": "data", "status": "idle" if "unrecorded-is-idle" in self.bugs else "running",
+                    "duration": None, "bytes_scrubbed": 0, "total_bytes": scenario.GIB, "rate": 0, "errors": 0, "last_run": None}
+        scrubbed = (3 - self.scrub_left) * scenario.GIB // 4 if s["status"] == "running" else None
+        return {"pool": "data", "status": s["status"], "duration": s.get("duration"), "bytes_scrubbed": scrubbed,
+                "total_bytes": scenario.GIB, "rate": scenario.GIB // 19, "errors": s.get("errors", 0), "last_run": s.get("last_run")}
+
+    def start_scrub(self) -> None:
+        if self.scrub["status"] == "running":
+            raise Refused(500, "Scrub start failed: ERROR: Scrub is already running.")
+        self.scrubs += 1
+        self.scrub = {"status": "running", "last_run": f"Mon Nov  9 10:{self.scrubs:02d}:00 2026", "errors": 0}
+        self.scrub_unrecorded, self.scrub_left = 2, 3
+
+    def api_scrub(self, method, name):
+        if name != "data":
+            folder = f"/mnt/pools/{name}"
+            if method == "POST" and folder in self.fs and "no-mount-check" in self.bugs:
+                raise Refused(500, f"Scrub start failed: ERROR: not a btrfs filesystem: {folder}")
+            if method == "POST" and folder in self.fs:
+                raise Refused(409, f"Pool {name} is not mounted at {folder}")
+            raise Refused(404, f"Pool {name} not found")
+        if method == "POST":
+            self.start_scrub()
+            answer = self.scrub_answer()
+            return {**answer, "status": "idle" if "start-answers-idle" in self.bugs else "running"}
+        if method == "DELETE":
+            if self.scrub["status"] == "running" and "cancel-keeps-running" not in self.bugs:
+                if self.scrub_unrecorded:
+                    # Cancelled before btrfs recorded it: no record, and the answer says aborted
+                    # (ADR-0313).
+                    self.scrub = {"status": "idle", "last_run": None, "errors": 0}
+                    self.scrub_unrecorded = 0
+                    return {**self.scrub_answer(), "status": "aborted"}
+                self.scrub = {**self.scrub, "status": "aborted", "duration": 2, "errors": 0}
+            return self.scrub_answer()
+        answer = self.scrub_answer()
+        if self.scrub["status"] == "running":  # each request is a moment later
+            if self.scrub_unrecorded:
+                self.scrub_unrecorded -= 1
+            else:
+                self.scrub_left -= 1
+                if self.scrub_left <= 0:
+                    self.scrub = {**self.scrub, "status": "finished", "duration": 19,
+                                  "errors": 2 if "scrub-errors" in self.bugs else 0}
+        return answer
+
+    def api_scheduler(self, method, parts, body, params, upload):
+        if parts == ["tasks"] and method == "GET":
+            return list(copy.deepcopy(self.tasks).values())
+        if parts == ["tasks"] and method == "POST":
+            task_id = f"task_{len(self.tasks) + len(self.runs) + 1}"
+            self.tasks[task_id] = {**body, "id": task_id}
+            return self.tasks[task_id]
+        if parts[:1] == ["tasks"] and parts[2:] == ["run"]:
+            task = self.tasks[parts[1]]
+            run = {"id": f"run_{len(self.runs) + 1}", "task_id": task["id"], "task_name": task["name"],
+                   "started_at": "2026-11-09T10:00:00+00:00", "finished_at": "2026-11-09T10:00:01+00:00",
+                   "status": "success", "output": "Scrub started", "error": None, "exit_code": None}
+            try:
+                if task["target_pool"] != "data":  # the one start, with its mount check (ADR-0311)
+                    folder = f"/mnt/pools/{task['target_pool']}"
+                    if "no-mount-check" in self.bugs:
+                        raise Refused(500, f"ERROR: not a btrfs filesystem: {folder}")
+                    raise Refused(409, f"Pool {task['target_pool']} is not mounted at {folder}")
+                self.start_scrub()
+            except Refused as e:
+                run.update(status="failed", output=None, error=e.detail)
+            self.runs.append(run)
+            return {"status": "started", "task_id": task["id"]}
+        if parts[:1] == ["runs"]:
+            return [r for r in self.runs if r["task_id"] == parts[1]]
+        if parts[:1] == ["tasks"] and method == "DELETE":
+            if parts[1] not in self.tasks:
+                raise Refused(404, "Task not found")
+            del self.tasks[parts[1]]
+            if "runs-go-with-the-task" in self.bugs:
+                self.runs = [r for r in self.runs if r["task_id"] != parts[1]]
+            return {"status": "deleted"}
+        raise Refused(404, "Not Found")
 
     def api_health(self, method, parts, body, params, upload):
         if parts == ["disks"]:
@@ -849,6 +946,20 @@ class FakeNas:
         node = self.fs.get(path)
         return "missing" if node is None else ("link" if node.kind == "link" else "folder")
 
+    def pool_folders(self, action="list", name=""):
+        """REMOTE_POOL_FOLDER: a folder of a check below /mnt/pools, made or removed."""
+        self.device_call("pool_folders")
+        path = f"/mnt/pools/{name}"
+        if action == "make":
+            assert re.fullmatch(r"unoscheck[0-9a-f]{6}", name), name
+            if path in self.fs:
+                raise scenario.Failed(f"the device answered status 1: mkdir: {path}: File exists")
+            self.fs[path] = Node("dir", 0o755)
+        elif action == "remove":
+            assert re.fullmatch(r"unoscheck[0-9a-f]{6}", name), name
+            self.fs.pop(path, None)
+        return sorted(p.rsplit("/", 1)[1] for p in self.fs if os.path.dirname(p) == "/mnt/pools")
+
     def restart_supervisor(self):
         """docker restart unos-supervisor: the copy's problem goes with the process, and the API
         answers before the startup reconcile has applied (reconcile)."""
@@ -863,6 +974,14 @@ class FakeNas:
 @pytest.fixture
 def nas():
     return FakeNas()
+
+
+@pytest.fixture(autouse=True)
+def _scrubs_without_pauses(monkeypatch):
+    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds: the fake's
+    scrubs are recorded and end after a few requests."""
+    monkeypatch.setattr(scenario, "SCRUB_POLL", 0)
+    monkeypatch.setattr(scenario, "SCRUB_WAIT", 2)
 
 
 def run_check(area: str, nas: FakeNas, **kw) -> tuple[int, str]:
@@ -1235,6 +1354,98 @@ def test_a_check_refuses_to_start_beside_leftovers_of_an_earlier_one(nas, area):
     assert not [c for c in nas.calls if c[0] != "GET"]
 
 
+def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(nas):
+    """ADR-0314: the steps of storage.scrub and storage.scrub-needs-mounted-pool that were checked by
+    hand on 2026-11-09, with Start Scrub's answer of ADR-0313."""
+    status, output = run_check("scrub", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("refused with 409", "a scheduled scrub of it fails with the same text",
+                  "'Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c'", "its last scrub finished",
+                  "its progress moving", "GiB scrubbed while it ran",
+                  "Start Scrub of data answers running, and so does the status right after it (ADR-0313): running, "
+                  "then running", "until it ends, finished without errors", "the status says it was cancelled: "
+                  "aborted, then aborted", "Run now", "Scrub started, then running", "the scheduled scrub of data ends",
+                  "its run stays in the Scheduler's history"):
+        assert words in text, words
+    assert nas.scrubs == 3 and [r["output"] or r["error"] for r in nas.runs] == [
+        "Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c", "Scrub started"]
+
+
+def test_on_a_pool_with_much_data_the_scrub_check_cancels_its_scrubs(nas):
+    nas.pool_used = 100 * scenario.GIB
+    status, output = run_check("scrub", nas)
+    assert status == 0, output
+    assert re.search(r"^SKIP  \d+\. btrfs reports the scrub of data until it ends: 100 GiB used: it is cancelled "
+                     r"instead", output, re.M), output
+    assert re.search(r"^PASS  \d+\. Cancel Scrub stops the scheduled scrub of data once btrfs has recorded it",
+                     output, re.M), output
+    assert nas.scrubs == 2 and nas.scrub["status"] == "aborted"
+
+
+@pytest.mark.parametrize("leftover", ["a task", "a folder"])
+def test_the_scrub_check_does_not_start_beside_leftovers_of_an_earlier_one(nas, leftover):
+    if leftover == "a task":
+        nas.tasks["task_9"] = {"id": "task_9", "name": "unoscheck0a1b2c", "task_type": "scrub", "target_pool": "data"}
+    else:
+        nas.fs["/mnt/pools/unoscheck0a1b2c"] = Node("dir", 0o755)
+    before = nas.snapshot()
+    status, output = run_check("scrub", nas)
+    assert status == 1
+    assert re.search(r"^FAIL  2\. the device holds nothing of an earlier check: .*unoscheck0a1b2c", output, re.M), output
+    assert nas.snapshot() == before
+    assert not [c for c in nas.calls if c[0] != "GET"]
+
+
+def test_the_scrub_check_does_not_start_beside_a_scrub_that_runs(nas):
+    nas.start_scrub()
+    status, output = run_check("scrub", nas)
+    assert status == 1
+    assert re.search(r"^FAIL  1\. .*: a scrub of data runs: wait for its end, or cancel it", output, re.M), output
+    assert nas.scrubs == 1 and not [c for c in nas.calls if c[0] != "GET"]
+
+
+@pytest.mark.parametrize("action, name, code", [
+    ("make", "unoscheck1a2b3c", 0),
+    ("make", "data", 2),
+    ("make", "unoscheckxyz123", 2),
+    ("make", "../unoscheck1a2b3c", 2),
+    ("make", "unoscheck1a2b3c/x", 2),
+    ("remove", "data", 2),
+    ("list", "", 0),
+])
+def test_the_pool_folder_helper_touches_only_a_scenario_check_s_folder(tmp_path, action, name, code):
+    """REMOTE_POOL_FOLDER, which runs without the read-only namespace: it makes and removes only a
+    folder named unoscheck and six hex digits right below the pools' base (ADR-0314)."""
+    base = tmp_path / "pools"
+    (base / "data").mkdir(parents=True)
+    env = {"PATH": "/usr/bin:/bin", "UNOS_DEV_POOLS": str(base)}
+    result = subprocess.run(["bash", "-s", "--", action, name], input=scenario.REMOTE_POOL_FOLDER, env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == code, result.stderr
+    assert sorted(p.name for p in base.iterdir()) == (["data", name] if action == "make" and code == 0 else ["data"])
+    assert not (tmp_path / "unoscheck1a2b3c").exists()
+    if code == 0:
+        assert result.stdout.split() == sorted(p.name for p in base.iterdir())
+
+
+def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_point(tmp_path):
+    base = tmp_path / "pools"
+    for name in ("unoscheck1a2b3c", "unoscheck2b3c4d", "unoscheck3c4d5e"):
+        (base / name).mkdir(parents=True)
+    (base / "unoscheck2b3c4d" / "kept").write_text("x")
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "mountpoint").write_text(f'#!/usr/bin/env bash\n[ "$3" = "{base}/unoscheck3c4d5e" ]\n')
+    (stubs / "mountpoint").chmod(0o755)
+    env = {"PATH": f"{stubs}:/usr/bin:/bin", "UNOS_DEV_POOLS": str(base)}
+    codes = [subprocess.run(["bash", "-s", "--", "remove", name], input=scenario.REMOTE_POOL_FOLDER, env=env,
+                            capture_output=True, text=True).returncode
+             for name in ("unoscheck1a2b3c", "unoscheck2b3c4d", "unoscheck3c4d5e")]
+    assert codes == [0, 1, 0]
+    assert sorted(p.name for p in base.iterdir()) == ["unoscheck2b3c4d", "unoscheck3c4d5e"]
+
+
 # --- the defects the checks exist for -------------------------------------------------------
 
 
@@ -1254,6 +1465,12 @@ def test_a_check_refuses_to_start_beside_leftovers_of_an_earlier_one(nas, area):
     ("smbconf", "no-replaced-copy", "byte for byte"),
     ("smbconf", "access-without-folder", "access without a new folder is refused"),
     ("smbconf", "restart-writes", "a restart of the supervisor writes no file"),
+    ("scrub", "no-mount-check", "is refused with 409"),
+    ("scrub", "start-answers-idle", "Start Scrub answered idle"),
+    ("scrub", "unrecorded-is-idle", "the status right after the start is idle"),
+    ("scrub", "scrub-errors", "it found 2 errors"),
+    ("scrub", "cancel-keeps-running", "the scrub ended finished"),
+    ("scrub", "runs-go-with-the-task", "its run is gone"),
 ])
 def test_the_checks_fail_on_the_defects_they_exist_for(nas, area, bug, words):
     before = nas.snapshot()

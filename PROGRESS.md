@@ -56,9 +56,9 @@ significant step. Features and their state live in `feature-list.json`, decision
      `storage.scrub-needs-mounted-pool` on the checks around the reboot of 18:41 UTC (Log); the
      others need a device check first or, as `storage.pool-health`, a step the re-check could
      not show.
-  3. The scrub steps checked by hand on 2026-11-09 become an area of `scripts/dev/scenario.py`
-     (ADR-0304), with Start Scrub's answer; `storage.scrub` passes again after the fix of the
-     scrub's status after a start and its device check before and after a reboot.
+  3. `storage.scrub` passes again once `scripts/dev/scenario.sh scrub` (ADR-0314) passes on the
+     device with the fix of the scrub's status after a start (ADR-0313) deployed, before and
+     after a reboot.
 
 ## Dev device
 
@@ -190,6 +190,43 @@ Open owner actions:
 3. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-09: the scrub steps checked by hand become the scenario check scrub (ADR-0314)
+
+- At the owner's word to work on through the features ("I allow everything", in translation),
+  and as the review of that day's device record asked: `scripts/dev/scenario.sh scrub` runs the
+  steps of `storage.scrub` and `storage.scrub-needs-mounted-pool` that a script of the session had
+  checked by hand. Its first step names the pool's last scrub; a folder
+  `<base>/unoscheck<6 hex digits>` with nothing mounted on it gets 409, and a scheduled scrub of
+  that folder fails with the same text (ADR-0311); Start Scrub answers running, and so does the
+  status right after it (ADR-0313); the scrub ends finished without errors, its bytes scrubbed
+  growing on the way; a second scrub is cancelled once btrfs has recorded it and ends aborted; a
+  disabled scheduled scrub task's Run now says "Scrub started", and its scrub ends finished; the
+  task is deleted, its run stays in the Scheduler's history. On a pool with more than 32 GiB of
+  data the scrubs are cancelled, each once btrfs has recorded it, instead of waited for.
+  `REMOTE_POOL_FOLDER` makes and removes the folder on the root filesystem, only for a name of a
+  check, and removes only an empty folder that is no mount point.
+- The feature-pass skill's table names the new check for both entries, which leave the row of
+  checks by hand; AGENTS.md, `deploy/AGENTS.md`, `docs/TESTING.md`, GLOSSARY.md and the
+  device-checks skill name the area, the Scheduler task among what the checks make, and how to
+  remove a leftover task or folder.
+- `supervisor/tests/test_dev_scenarios.py`: the fake NAS records a scrub a few requests after its
+  start, leaves no record for a cancel before that, and has the Scheduler's tasks and runs; the
+  check passes on it, every call that fails in turn leaves the fake as it was, and the check fails
+  on the defects it exists for: no mount check, Start Scrub answering idle, a status that reads
+  idle before btrfs records the scrub, errors found, a cancel that leaves the scrub running, and
+  runs deleted with their task. Without the wait for btrfs's record, the large pool's last cancel
+  fails on the fake. The helper is tested against a temporary base.
+- A fresh-context review found nothing that blocks. Fixed from it: the large pool's last cancel
+  waited for no record, the leftover recipe lacked the folder and the task, the table did not say
+  what the check leaves out of `storage.scrub`, the start's status accepted "finished", the
+  listing of the base ran outside the read-only namespace, and the step that claimed one helper
+  showed none (the scheduled scrub of the folder shows it now); the progress and the last scrub
+  are now steps' facts; the ADR names the clean-up's cancel of another scrub, the smallest pool,
+  the rate that the wait needs and the Scheduler's last 100 runs.
+- `make check` passed on the tree merged with main 0b29a40 (6065 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build). The check runs on the device with the next
+  deploy.
 
 ### 2026-11-09: the logs API has one entry endpoint for every source
 
