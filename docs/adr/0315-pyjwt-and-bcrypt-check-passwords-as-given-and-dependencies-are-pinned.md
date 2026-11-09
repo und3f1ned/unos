@@ -12,9 +12,10 @@ supersedes: [ADR-0026]
 
 ADR-0026 replaced python-jose and passlib with PyJWT and bcrypt and pinned the dependencies; for
 the hashes that the passlib code made before Phase 0, which cut longer passwords to bcrypt's 72
-bytes, `verify_password` cut every password the same way. UNOS has no installation with such hashes
-(ADR-0207): the dev device's passwords were set again since (ADR-0226), and the cut let a password
-longer than 72 bytes sign in with any ending after its 72nd byte. Working on through the features
+bytes, `verify_password` cut every password the same way. UNOS has no installation to keep
+working (ADR-0207): on the dev device the administrator's password was set through the API after
+the 72-byte limit came, and only its regular account `test` kept its password of Phase 0
+(ADR-0226). The cut let a password of 72 bytes sign in with anything after its 72nd byte. Working on through the features
 under the owner's delegation ("work on through the features, ask no questions; I allow
 everything", in translation, 2026-11-09), the agent removed the cut
 (`auth.no-legacy-password-truncation`).
@@ -26,7 +27,7 @@ everything", in translation, 2026-11-09), the agent removed the cut
 - New passwords longer than 72 bytes (UTF-8) get 422 (`MAX_PASSWORD_BYTES` in
   `supervisor/src/auth/schemas.py`). `verify_password` checks a password as given: one longer than
   72 bytes matches no hash and fails like a wrong password, also at the sign-in, whose request
-  takes passwords of up to 1024 characters (ADR-0062).
+  takes passwords of up to 1024 characters (ADR-0065).
 - The runtime dependencies are pinned to exact versions in `supervisor/requirements.txt`; test and
   development tools live in `supervisor/requirements-dev.txt`, and the production image installs
   only `requirements.txt` (`supervisor/Dockerfile`). The web UI image installs exactly what
@@ -38,8 +39,10 @@ everything", in translation, 2026-11-09), the agent removed the cut
 
 ## Consequences
 
-- A hash that the passlib code made of a password longer than 72 bytes no longer signs in; the
-  emergency command line sets a new password (ADR-0284).
+- A hash that the passlib code made of a password longer than 72 bytes no longer signs in: an
+  administrator sets a new password for a regular account on the Users page, and the emergency
+  command line one for an administrator (ADR-0284). Whether the dev device's account `test` is
+  such a one only the owner can tell, who knows its password.
 - An update is a deliberate change of a pin, checked by the tests: pip-audit fails on a vulnerable
   pin (ADR-0190), and Dependabot proposes updates every week (ADR-0218).
 
