@@ -723,6 +723,7 @@ class TestScrubOffTheEventLoop:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr(host, "run_in_container", run)
+        monkeypatch.setattr(pools, "_btrfs_mounted_at", lambda path: True)  # a test's pool is a plain folder
         return calls
 
     @pytest.mark.parametrize("method, first", [("post", "start"), ("get", "status"), ("delete", "cancel")])
@@ -740,6 +741,7 @@ class TestScrubOffTheEventLoop:
             return subprocess.CompletedProcess(cmd, 1, "", "ERROR: not a btrfs filesystem")
 
         monkeypatch.setattr(host, "run_in_container", run)
+        monkeypatch.setattr(pools, "_btrfs_mounted_at", lambda path: True)
         with admin_client() as client:
             r = client.post("/api/v1/storage/pools/data/scrub")
         assert r.status_code == 500
@@ -750,6 +752,37 @@ class TestScrubOffTheEventLoop:
             r = client.get("/api/v1/storage/pools/bad name/scrub")
         assert r.status_code == 400
         assert scrub_run == []
+
+
+class TestScrubNeedsAMountedPool:
+    """storage.scrub-needs-mounted-pool: not mounted, a pool's path is a folder on the root
+    filesystem, and btrfs would scrub that filesystem if it is btrfs (ADR-0071)."""
+
+    def test_a_pool_that_is_not_mounted_answers_409_and_runs_no_btrfs(self, fake_host, monkeypatch):
+        """The host's mount table has another pool, not this one: its folder is on the root filesystem."""
+        monkeypatch.setattr(pools.settings, "pools_base_path", "/mnt/pools")
+        fake_host.add_disk("sda")
+        fake_host.add_disk("sdb")
+        fake_host.add_btrfs("data", DATA_UUID, ["/dev/sda"])
+        fake_host.add_btrfs("media", MEDIA_UUID, ["/dev/sdb"])
+        fake_host.mount_pool("media")
+        calls = []
+        monkeypatch.setattr(host, "run_in_container", lambda cmd, **kwargs: calls.append(cmd))
+        with admin_client() as client:
+            r = client.post("/api/v1/storage/pools/data/scrub")
+        assert (r.status_code, r.json()) == (409, {"detail": "Pool data is not mounted at /mnt/pools/data"})
+        assert calls == []
+
+    def test_only_a_btrfs_filesystem_mounted_at_the_path_counts(self, fake_host):
+        fake_host.add_disk("sda")
+        fake_host.add_disk("sdb")
+        fake_host.add_btrfs("data", DATA_UUID, ["/dev/sda"])
+        assert not pools._btrfs_mounted_at("/mnt/pools/data")  # not mounted: a folder of the root filesystem
+        fake_host.mount_pool("data")
+        assert pools._btrfs_mounted_at("/mnt/pools/data")
+        assert not pools._btrfs_mounted_at("/mnt/pools")  # the parent of a mount is not the mount
+        fake_host.add_mount("/mnt/pools/stick", "/dev/sdb", "ext4")  # another filesystem, mounted by hand
+        assert not pools._btrfs_mounted_at("/mnt/pools/stick")
 
 
 # What `btrfs scrub status <mountpoint>` prints (btrfs-progs 6, cmds/scrub.c):
@@ -819,6 +852,11 @@ class TestScrubStatus:
     The endpoints answer btrfs's status as printed (idle when no scrub is
     recorded) and count every error of its error summary (ADR-0272).
     """
+
+    @pytest.fixture(autouse=True)
+    def _mounted(self, monkeypatch):
+        """A test's pool is a plain folder: count it as mounted (pools.scrub_start)."""
+        monkeypatch.setattr(pools, "_btrfs_mounted_at", lambda path: True)
 
     @pytest.fixture
     def btrfs_reports(self, monkeypatch):
@@ -971,6 +1009,11 @@ class TestScrubStart:
     whole API with it) waited for the whole scrub, and with the timeout it
     answered 500 after it while the scrub ran.
     """
+
+    @pytest.fixture(autouse=True)
+    def _mounted(self, monkeypatch):
+        """A test's pool is a plain folder: count it as mounted (pools.scrub_start)."""
+        monkeypatch.setattr(pools, "_btrfs_mounted_at", lambda path: True)
 
     @pytest.mark.parametrize("btrfs", FAKE_BTRFS)
     def test_start_answers_when_btrfs_returns(self, tmp_path, monkeypatch, btrfs):

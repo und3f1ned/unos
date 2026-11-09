@@ -49,12 +49,15 @@ significant step. Features and their state live in `feature-list.json`, decision
      2026-11-08 after a reboot (Log), 12 more passed, `deploy.health-checks-and-start-order`
      after the reboot of 2026-11-09 (ADR-0307; Log), and `shares.smb-conf-and-status` and
      `shares.edit-and-delete` with the steps checked by hand before and after the reboot of
-     12:22 UTC that day (Log); the others need a device check first or, as
+     12:22 UTC that day (Log), and `files.group-writable-entries-in-shares` on the scenario
+     checks around that reboot (Log); `shares.samba-runtime-writes` waits for the smb check to
+     compare passdb.tdb at a wrong password (ADR-0310); the others
+     need a device check first or, as
      `storage.pool-health`, a step the re-check could not show.
 
 ## Dev device
 
-State on 2026-11-09, 12:25 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-09, 14:30 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -98,10 +101,11 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   UTC, at 22:33 UTC after the deploy and at 23:03 UTC after the reboot, and on 2026-11-09 at
   07:43 UTC after the deploy of main 12483dd, and left none of its users, shares, volumes,
   folders or backups; `scripts/dev/scenario.sh smbconf` (ADR-0309) passed at 13:22 UTC that
-  day and, after its review's fixes, at 13:46 UTC, and left the device as it found it. The pool's
-  trash
-  `/mnt/pools/data/.unos-trash` (made at 00:05 UTC that night) is empty. The first run's short
-  self-test of sda completed without error, as the two before it; sda's SMART status: PASSED.
+  day and, after its review's fixes, at 13:46 UTC, and left the device as it found it, and
+  `scripts/dev/scenario.sh all` (six areas) at 13:58 UTC, after the reboot of 12:22 UTC. The
+  pool's trash `/mnt/pools/data/.unos-trash` (made at 00:05 UTC that night) is empty. The first
+  run's short self-test of sda completed without error, as the two before it; sda's SMART status:
+  PASSED.
   The RAM rootfs of `scripts/dev/linux-tests.sh` (560 MiB in `/dev/shm`), made again after the
   boot of 2026-11-09, 07:17 UTC, is gone since the reboot of 12:22 UTC; every reboot removes it,
   and `linux-tests.sh` prints the owner action that makes it again.
@@ -144,6 +148,10 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   0.184, the Delete 0.207, the restart of the supervisor 1.277; the user's delete 0.137); after
   the review's fixes, with the regular user `test` instead of a new one, 2.391 MiB (the create
   0.242, the PATCHes 0.176 and 0.191, the Delete 0.207, the restart 1.305).
+  `scripts/dev/scenario.sh all` at 13:58 UTC 6.994 MiB (files 0.434, volumes 0.594, smart 0.098,
+  backups 0.500, smb 2.973, smbconf 2.395); the audit log's search 0.027; the measurement of
+  passdb.tdb's writes at 14:24 UTC 1.496 MiB (a temporary account with SMB made, five failed
+  sign-ins, a password change, the account deleted).
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -179,7 +187,80 @@ Open owner actions:
   stand-in (69 passed, 15 skipped for what the stand-in lacks). Not host-level.
   `CHANGELOG.md` names the rename. `supervisor/tests/mocks/mock_data.py` keeps an `uptime` of its
   own: nothing imports it, and `testing.remove-dead-mock-layer` removes that layer.
-- REVIEW_AND_CHECK
+- A fresh-context review found one blocker, fixed: the ledger's notes quoted a Russian text,
+  where the repository's text is English (ADR-0200). Fixed from it as well: the notes' "today"
+  sentence, a lower bound in `api.spec.ts` so that a duration cannot pass for a time, and the
+  changelog's line. `make e2e-local` passed (670 passed, 16 skipped; 11.7 minutes).
+- `make check` passed on the tree merged with main cfed052 (6031 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build).
+
+### 2026-11-09: a scrub of a pool that is not mounted answers 409, through one helper
+
+- `storage.scrub-needs-mounted-pool`, at the owner's word to work on through the features ("I
+  allow everything", in translation). The Storage page's Start Scrub ran `btrfs scrub start` on
+  `<pools base>/<pool>` whether or not the pool was mounted there; not mounted, that path is a
+  folder on the root filesystem, and btrfs would scrub that filesystem if it is btrfs. The
+  Scheduler's scrub tasks checked the mount, in a helper of their own, and only whether anything
+  was mounted at the path. Now `scrub_start` of `supervisor/src/storage/pools.py` is the one start
+  of a scrub (ADR-0311, which supersedes ADR-0071 and closes its open item): it asks the host's
+  mount table for a btrfs filesystem mounted at the pool's path, answers 409 without any btrfs
+  otherwise ("Pool data is not mounted at ..."), and starts btrfs killed at its timeout
+  (ADR-0290). The Storage page's start and the Scheduler's scrub tasks both call it.
+- Tests first (ADR-0186): `test_storage.py` (TestScrubNeedsAMountedPool: the 409 and no btrfs
+  with another pool mounted, and what counts as mounted on the fake host's mount table) and
+  `test_scheduler_validation.py` (both starts go through `scrub_start`) failed on the old code;
+  a check that took a mount at the parent or of another type failed them too. The tests of the
+  scrub endpoints and of the scheduled scrubs count their test pools, plain folders, as mounted.
+- A host-level change (GLOSSARY.md): the entry keeps `passes: false` until the device check and
+  the re-check after a reboot (ADR-0018), with the next deploy.
+- Found, and not part of this change: the status and the cancel of a scrub (GET and DELETE of the
+  same path) still run btrfs on an unmounted pool's folder (ADR-0311, Consequences).
+- A fresh-context review found nothing that blocks; fixed from it: no ADR recorded the decision
+  (ADR-0311 does, superseding ADR-0071, whose open item this closes); the check asked only
+  whether anything was mounted, in the container, so another filesystem mounted by hand or an
+  unmounted btrfs subvolume passed it (it asks the host's mount table for btrfs now); the planned
+  device check could not see "no btrfs run" and tested only a missing folder (it uses a folder
+  with nothing mounted, and the 409's text); the notes claimed too much; `test_command_timeouts.py`
+  left `verified_by`. Left: the Scheduler's snapshots keep their own mount check in the container.
+- `make check` passed (6030 backend tests, 121 skipped, 1 xfailed; svelte-check without errors,
+  the build).
+
+### 2026-11-09: an SMB entry passes on the scenario checks, and passdb.tdb's writes measured
+
+- At the owner's word to work on through the features ("I allow everything", in translation),
+  `scripts/dev/scenario.sh all` ran at 13:58 UTC after the reboot of 12:22 UTC, with the runtime
+  files of main 12483dd: every step of the six areas passed (78), 6.994 MiB. With the run of
+  07:43 UTC, before that reboot and after the deploy of 12483dd, it is the device check and the
+  re-check after a reboot (ADR-0018) of the entries that the scenario checks cover.
+- `files.group-writable-entries-in-shares` passes: its open steps, an upload's 0660 in a share's
+  folder and an SMB user's change there, are the smb check's steps 10 and 11, and its step 3 the
+  files check's steps 3 and 4 (755 and 644 root:root outside share folders); the feature-pass
+  skill's table names the smb check for it, and it had not been passed after these runs.
+- `shares.samba-runtime-writes` stays open. Its step 2, that a failed sign-in writes nothing to
+  passdb.tdb, looked out of reach: ADR-0159 and ADR-0278 took every wrong password but an
+  account's two previous ones to write passdb.tdb once. The smb check's step 21 showed 0.000 MiB
+  for a password the account never had, and a measurement at 14:24 UTC with a temporary account
+  (bad lockout attempt 0, password history 3; 1.496 MiB in all) found that four sign-ins with
+  passwords it never had and one with its replaced password each left passdb.tdb's modification
+  time as it was, at 0.000 to 0.016 MiB each; the account was deleted again. ADR-0310 records it
+  and supersedes ADR-0159: passdb.tdb stays on the system disk, as nothing writes it while no
+  lockout counts failures; `docs/USER_GUIDE.md` no longer says that wrong passwords are written to
+  the system disk. But step 21 does not look at passdb.tdb, so its pass at 07:43 UTC, before the
+  reboot, shows nothing of step 2, and the measurement came after the reboot only: the entry
+  passes once the smb check compares passdb.tdb's modification time at its wrong password and
+  reads the lockout policy, before and after a reboot. `GET /audit/logs` with the search
+  "password history" answered one entry, "Set Samba's password history to 3 (it was 0)" of
+  2026-11-08 04:02 UTC: every start since read the policy without setting it.
+- Fresh-context reviews (ADR-0017). The first found that the narrowing of step 2 that this change
+  first made (by ADR-0310 then) rested on a claim the run contradicted: the measurement replaced
+  it, and the ADR records the measurement. The second found that step 2 had no evidence from
+  before the reboot, as step 21 does not compare passdb.tdb: the entry stays open; and that the
+  ADR stated Samba's reason as fact, named not every statement it contradicts, and promised no
+  write at all where the journal entry stays: fixed. Both entries' notes and this record carry
+  the rest of their findings; the two entries are in one change as one run of the scenario
+  checks shows both.
+- `make check` passed on the tree merged with main a050256 (6027 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build), before these fixes of text.
 
 ### 2026-11-09: check.sh checks network discovery, and nmbd is disabled on the device
 
