@@ -692,7 +692,11 @@ way: during the build the checkout returns to the previous revision, and after
 UNOS was stopped the previous version is started again. After a closed SSH
 session the messages are in `/var/lib/unos/backups/update-interrupted.log`.
 The rollback restores the program, not the data; the backup is listed in the
-error message.
+error message. To put the backup's `unos.db` back by hand, stop UNOS and delete
+`unos.db-wal` and `unos.db-shm` in the data volume first: SQLite would apply
+that newer log to the older database. The backup of a supervisor that was not
+running can hold its own `unos.db-wal`, which goes back together with
+`unos.db`.
 
 ### Manual Upgrade
 

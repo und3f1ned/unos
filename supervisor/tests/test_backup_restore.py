@@ -241,6 +241,79 @@ def test_create_then_restore_roundtrip(env):
     assert _usernames(env.db_path) == {"admin"}
 
 
+def test_a_backup_of_the_database_in_the_write_ahead_log_restores_with_its_last_commits(env):
+    """The supervisor's database writes ahead (ADR-0306), and its pool keeps connections open,
+    so its last commits are in unos.db-wal, not yet in unos.db. A backup holds them, in one file
+    with the rollback journal that a restore accepts, and the restore keeps the write-ahead log."""
+    pool = sqlite3.connect(env.db_path)  # a connection of the app's pool
+    try:
+        assert pool.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        pool.execute("INSERT INTO users (username, hashed_password, is_admin) VALUES ('recent', 'x', 0)")
+        pool.commit()
+        response = env.client.post("/api/v1/backup/create", json={"include_shares": False, "include_pools": False,
+                                                                   "include_network": False})
+        assert response.status_code == 200, response.text
+        name = response.json()["backup"]["filename"]
+        pool.execute("DELETE FROM users WHERE username = 'recent'")
+        pool.commit()
+
+        response = _restore(env, name)
+
+        assert response.status_code == 200, response.text
+        assert {row[0] for row in pool.execute("SELECT username FROM users")} == {"admin", "recent"}
+        header = env.db_path.read_bytes()[:100]
+        assert (header[18], header[19]) == (2, 2)  # the file is still marked for the log
+    finally:
+        pool.close()
+
+
+def test_a_backup_with_pages_of_another_size_is_refused_before_anything_changes(env):
+    """SQLite's backup API cannot give a database in the write-ahead log (ADR-0306) another page
+    size, so it failed after the copy kept before a restore, with "attempt to write a readonly
+    database". Every UNOS database has the pages of the live one (4096 bytes)."""
+    other = env.tmp / "pages-1024.db"
+    with closing(sqlite3.connect(other)) as conn:
+        conn.execute("PRAGMA page_size = 1024")
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, "
+                     "hashed_password TEXT NOT NULL, is_admin BOOLEAN)")
+        conn.execute("INSERT INTO users (username, hashed_password, is_admin) VALUES ('admin2', 'hash', 1)")
+        conn.commit()
+        assert conn.execute("PRAGMA page_size").fetchone() == (1024,)
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", other.read_bytes())])
+    with closing(sqlite3.connect(env.db_path)) as pool:
+        assert pool.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+
+        response = _restore(env, name)
+
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == (
+            "unos.db in the backup has pages of 1024 bytes, and the database here pages of 4096 bytes"
+        )
+        _assert_untouched(env)
+
+
+def test_a_copy_of_a_database_in_the_write_ahead_log_is_one_file_with_the_rollback_journal(tmp_path):
+    """copy_database, of every backup, the scheduler's backup task and the copy kept before a
+    restore: the commits still in unos.db-wal are in the copy, which stands alone (a file
+    marked for the write-ahead log would need its -wal beside it, and the restore refuses it)."""
+    live = tmp_path / "unos.db"
+    _make_db(live, users=[("admin", 1)], wal=True)
+    copies = tmp_path / "copies"
+    copies.mkdir()
+    with closing(sqlite3.connect(live)) as pool:
+        pool.execute("INSERT INTO users (username, hashed_password, is_admin) VALUES ('recent', 'x', 0)")
+        pool.commit()
+        assert (tmp_path / "unos.db-wal").stat().st_size > 0
+
+        backup_router.copy_database(live, copies / "unos.db")
+
+    assert os.listdir(copies) == ["unos.db"]
+    header = (copies / "unos.db").read_bytes()[:100]
+    assert (header[18], header[19]) == (1, 1)  # the rollback journal, as _verify_database requires
+    assert _usernames(copies / "unos.db") == {"admin", "recent"}
+    assert os.listdir(copies) == ["unos.db"]  # reading it made no -wal or -shm
+
+
 def test_encrypted_backup(env):
     plain = _tar_gz([_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
     (env.backup_dir / "secret.tar.gz.enc").write_bytes(backup_router.encrypt_file(plain, "correct horse"))

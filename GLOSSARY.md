@@ -35,6 +35,11 @@ stand-in runs and the web UI's static files are built (ADR-0016). Avoid: host, l
 device it is an SD card whose writes are measured and kept minimal (ADR-0214). Avoid: eMMC (the
 dev device's is an SD card), boot disk.
 
+**Write-ahead log**: `unos.db-wal` beside the database `unos.db` in `/data`, to which SQLite appends
+the pages of each commit; a checkpoint, when the log reaches 1000 pages and when the supervisor
+stops, copies them into `unos.db` (ADR-0306). Avoid: journal (SQLite's rollback journal, which
+`unos.db` no longer uses).
+
 **Owner**: The person who owns the repository and the dev device: decides, triages, asks for
 commits and pushes, opens pull requests and holds the credentials (ADR-0208, ADR-0024).
 Avoid: user (a UNOS user), admin.

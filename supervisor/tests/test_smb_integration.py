@@ -235,7 +235,10 @@ def test_whole_cycle(cycle):
     assert calls.index(["smbcontrol", str(test_pid), "shutdown"]) < calls.index(["userdel", "test"])
     assert "test" not in fake.passdb and "test" not in fake.passwd
 
-    # 11. A second startup writes nothing and sends the reload message.
+    # 11. A second startup writes nothing and sends the reload message. The one write that a
+    # start of the supervisor makes is SQLite's: its first connection makes unos.db-shm again,
+    # the exception of ADR-0306 to ADR-0214. This world's database has an engine of its own,
+    # with the rollback journal, so the startup here makes none.
     before = (c.conf.read_bytes(), c.conf.stat().st_mtime_ns, world.audit_file.read_bytes())
     commits = []
     real_commit = AsyncSession.commit

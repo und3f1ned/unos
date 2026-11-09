@@ -2594,9 +2594,10 @@
       "adr": [
         "ADR-0173",
         "ADR-0049",
-        "ADR-0050"
+        "ADR-0050",
+        "ADR-0306"
       ],
-      "notes": "Install Update and Rollback start nothing today: users update with deploy/update.sh (deploy.update-script)."
+      "notes": "Install Update and Rollback start nothing today: users update with deploy/update.sh (deploy.update-script). Its backup and its rollback copy unos.db with shutil.copy2 (supervisor/src/updates/updater.py), which the write-ahead log makes wrong (ADR-0306): the copy lacks the commits still in unos.db-wal, and a unos.db put back beside that log is read through it. Before Install Update starts anything, it needs copy_database and the restore's backup API of supervisor/src/backup/router.py."
     },
     {
       "id": "system.updates-tab-without-dead-buttons",
@@ -3489,12 +3490,18 @@
         "A sign-in on the dev device writes a few KiB to the SD card, measured before and after"
       ],
       "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_sqlite_write_cost.py",
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
       "adr": [
         "ADR-0214",
         "ADR-0224",
-        "ADR-0078"
+        "ADR-0078",
+        "ADR-0306"
       ],
-      "notes": "On 2026-11-07 a sign-in wrote about 0.16 MiB, mostly the login history's commit (rollback journal, synchronous FULL)."
+      "notes": "On 2026-11-07 a sign-in wrote about 0.16 MiB, mostly the login history's commit (rollback journal, synchronous FULL). Since ADR-0306 (2026-11-08) unos.db uses SQLite's write-ahead log with synchronous NORMAL: a sign-in's commit in the middle of the log appends 3 pages (12.4 KB) to unos.db-wal and changes 3 pages of unos.db-shm, syncs nothing and creates or deletes no file; backups stay one file with the rollback journal. Left: the deploy of the supervisor, then with scripts/dev/sd.sh measure two sign-ins (the second is in the middle of the log) against the 0.156 to 0.168 MiB of before, and a start against the 0.05 MiB of ADR-0306's exception. Expected: the commit's own pages are about 25 KB (6 to 7 pages of 4 KiB) before the file system's metadata, more than the few KiB of step 3: if the measurement confirms it, step 3 is reworded with an ADR. scripts/dev/api.py and the device-checks skill quote a login's 0.16 MiB until then."
     },
     {
       "id": "device.ipv6-inbound-filter",
