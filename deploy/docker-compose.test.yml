@@ -1,6 +1,7 @@
 # Deviceless Test Environment
 # This compose file runs the full UNOS stack without requiring a physical device.
-# Host commands run inside the supervisor's container (UNOS_HOST_EXEC=local), on test data.
+# Host commands run inside the supervisor's container (UNOS_HOST_EXEC=local); /data and
+# /mnt/pools hold the test data of tests/fixtures/init-test-data.sh.
 
 # Own project name. Without it this file shares the project "deploy" (the
 # directory name) with docker-compose.yml: its build would replace the

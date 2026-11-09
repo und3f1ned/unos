@@ -2230,6 +2230,9 @@ class TestBuildContexts:
         assert not (REPO_ROOT / "supervisor" / "tests" / "mocks").exists()
         assert "mocks" not in (REPO_ROOT / "supervisor" / "Dockerfile.test").read_text()
         assert "UNOS_TEST_MODE" not in (REPO_ROOT / "deploy" / "docker-compose.test.yml").read_text()
+        assert "mocks" not in (REPO_ROOT / "supervisor" / "pytest.ini").read_text()
+        testing = (REPO_ROOT / "docs" / "TESTING.md").read_text()
+        assert "tests/mocks" not in testing and "UNOS_TEST_MODE" not in testing
 
     def test_dockerignore_drops_local_build_output(self):
         assert {"node_modules", "build", ".svelte-kit"} <= _dockerignore("webui")

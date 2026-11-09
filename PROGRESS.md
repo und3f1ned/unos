@@ -204,7 +204,12 @@ Open owner actions:
   and the test target's command in `test_repo_tooling.py` failed before the removal; the check
   that the build context keeps what the test images copy now looks for `tests/fixtures`, the one
   folder of `tests/` that `Dockerfile.test` still copies. Not host-level.
-- RESULTS
+- A fresh-context review found nothing that blocks; fixed from it: `mocks` left the
+  `norecursedirs` of `supervisor/pytest.ini`, the test also asserts that `docs/TESTING.md` and
+  `pytest.ini` name neither, and the compose file's header says which data is test data.
+- `make check` passed: 6037 backend tests, 121 skipped, 1 xfailed; svelte-check without errors, the
+  build. Its first run, without `webui/node_modules` in the worktree, failed in its frontend part
+  and skipped the 87 backend tests that need them.
 
 ### 2026-11-09: two host-level entries pass on the device checks of main 31ac73b
 
