@@ -170,6 +170,37 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-09: a scrub of a pool that is not mounted answers 409, through one helper
+
+- `storage.scrub-needs-mounted-pool`, at the owner's word to work on through the features ("I
+  allow everything", in translation). The Storage page's Start Scrub ran `btrfs scrub start` on
+  `<pools base>/<pool>` whether or not the pool was mounted there; not mounted, that path is a
+  folder on the root filesystem, and btrfs would scrub that filesystem if it is btrfs. The
+  Scheduler's scrub tasks checked the mount, in a helper of their own, and only whether anything
+  was mounted at the path. Now `scrub_start` of `supervisor/src/storage/pools.py` is the one start
+  of a scrub (ADR-0311, which supersedes ADR-0071 and closes its open item): it asks the host's
+  mount table for a btrfs filesystem mounted at the pool's path, answers 409 without any btrfs
+  otherwise ("Pool data is not mounted at ..."), and starts btrfs killed at its timeout
+  (ADR-0290). The Storage page's start and the Scheduler's scrub tasks both call it.
+- Tests first (ADR-0186): `test_storage.py` (TestScrubNeedsAMountedPool: the 409 and no btrfs
+  with another pool mounted, and what counts as mounted on the fake host's mount table) and
+  `test_scheduler_validation.py` (both starts go through `scrub_start`) failed on the old code;
+  a check that took a mount at the parent or of another type failed them too. The tests of the
+  scrub endpoints and of the scheduled scrubs count their test pools, plain folders, as mounted.
+- A host-level change (GLOSSARY.md): the entry keeps `passes: false` until the device check and
+  the re-check after a reboot (ADR-0018), with the next deploy.
+- Found, and not part of this change: the status and the cancel of a scrub (GET and DELETE of the
+  same path) still run btrfs on an unmounted pool's folder (ADR-0311, Consequences).
+- A fresh-context review found nothing that blocks; fixed from it: no ADR recorded the decision
+  (ADR-0311 does, superseding ADR-0071, whose open item this closes); the check asked only
+  whether anything was mounted, in the container, so another filesystem mounted by hand or an
+  unmounted btrfs subvolume passed it (it asks the host's mount table for btrfs now); the planned
+  device check could not see "no btrfs run" and tested only a missing folder (it uses a folder
+  with nothing mounted, and the 409's text); the notes claimed too much; `test_command_timeouts.py`
+  left `verified_by`. Left: the Scheduler's snapshots keep their own mount check in the container.
+- `make check` passed (6030 backend tests, 121 skipped, 1 xfailed; svelte-check without errors,
+  the build).
+
 ### 2026-11-09: an SMB entry passes on the scenario checks, and passdb.tdb's writes measured
 
 - At the owner's word to work on through the features ("I allow everything", in translation),

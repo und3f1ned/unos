@@ -2474,29 +2474,51 @@ def delete_volume(pool_name: str, volume_name: str) -> None:
 SCRUB_COMMAND_TIMEOUT = 60
 
 
-def start_scrub(pool_name: str) -> ScrubStatus:
-    """Start a btrfs scrub on a pool; return once the scrub runs.
+def _btrfs_mounted_at(path: str) -> bool:
+    """Whether the host's mount table (findmnt) has a btrfs filesystem mounted at ``path``.
 
-    btrfs forks the process that runs the scrub and returns at once, but that
-    process keeps the standard output and error of btrfs until the scrub
-    ends, hours later on a large pool (btrfs-progs cmds/scrub.c). Read through
-    pipes, they would end only then: the error output goes to a temporary
-    file (in /tmp, RAM), the output (a line saying that the scrub started)
+    No btrfs command runs: an unmounted path must not reach btrfs at all. A filesystem of another
+    type mounted there, or an unmounted btrfs subvolume of a btrfs root filesystem at the path,
+    is no pool. RuntimeError when findmnt fails.
+    """
+    return any(m.target == path and m.fstype == "btrfs" for m in disks.host_mounts())
+
+
+def scrub_start(pool: str | os.PathLike, timeout: int) -> subprocess.CompletedProcess:
+    """``btrfs scrub start`` on the pool mounted at ``pool``, killed at ``timeout`` and not
+    waited for (host.run_in_container, ADR-0290); its error output is ``stderr``.
+
+    The one start of a scrub, for the Storage page (start_scrub) and the Scheduler's scrub
+    tasks (ADR-0311). PoolConflictError (HTTP 409), and no btrfs, when the host's mount table has
+    no btrfs filesystem mounted at ``pool``: the path is then a folder on the root filesystem, and
+    btrfs would scrub that filesystem if it is btrfs.
+
+    btrfs forks the process that runs the scrub and returns at once, but that process keeps the
+    standard output and error of btrfs until the scrub ends, hours later on a large pool
+    (btrfs-progs cmds/scrub.c). Read through pipes, they would end only then: the error output
+    goes to a temporary file (in /tmp, RAM), the output (a line saying that the scrub started)
     nowhere.
     """
-    mountpoint = os.path.join(settings.pools_base_path, pool_name)
-
+    path = os.fspath(pool)
+    if not _btrfs_mounted_at(path):
+        raise PoolConflictError(f"Pool {os.path.basename(path)} is not mounted at {path}")
     with tempfile.TemporaryFile() as stderr:
         result = host.run_in_container(
-            ["btrfs", "scrub", "start", mountpoint],
-            stdout=subprocess.DEVNULL,
-            stderr=stderr,
-            timeout=SCRUB_COMMAND_TIMEOUT,
+            ["btrfs", "scrub", "start", path], stdout=subprocess.DEVNULL, stderr=stderr, timeout=timeout
         )
         stderr.seek(0)
-        error = stderr.read().decode(errors="replace")
+        result.stderr = stderr.read().decode(errors="replace")
+    return result
+
+
+def start_scrub(pool_name: str) -> ScrubStatus:
+    """Start a btrfs scrub on a mounted pool (scrub_start); return once the scrub runs.
+
+    PoolConflictError (HTTP 409) when the pool is not mounted.
+    """
+    result = scrub_start(pool_mountpoint(pool_name), SCRUB_COMMAND_TIMEOUT)
     if result.returncode != 0:
-        raise RuntimeError(f"Scrub start failed: {error}")
+        raise RuntimeError(f"Scrub start failed: {result.stderr}")
 
     try:
         return get_scrub_status(pool_name)

@@ -1015,10 +1015,16 @@
         "POST /api/v1/storage/pools/<name>/scrub for a pool that is not mounted answers 409 and runs no btrfs command",
         "The Storage page and scheduled scrubs start scrubs through the same helper"
       ],
+      "verified_by": [
+        "supervisor/tests/test_storage.py",
+        "supervisor/tests/test_scheduler_validation.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0071"
-      ]
+        "ADR-0071",
+        "ADR-0311"
+      ],
+      "notes": "Built 2026-11-09 (ADR-0311, which superseded ADR-0071): scrub_start of supervisor/src/storage/pools.py is the one start of a scrub, for the Storage page (pools.start_scrub, POST /api/v1/storage/pools/<name>/scrub) and the Scheduler's scrub tasks: it asks the host's mount table (findmnt) for a btrfs filesystem mounted at the pool's path and answers 409 without any btrfs command otherwise, also for a name that nothing is mounted for, then starts btrfs killed at its timeout (ADR-0290). Step 1: test_storage.py, TestScrubNeedsAMountedPool (the 409 and no btrfs with another pool mounted, and what counts as mounted on the fake host's mount table). Step 2: test_scheduler_validation.py, test_the_storage_page_and_scheduled_scrubs_start_through_one_helper, and test_scrub_of_an_unmounted_pool_fails_without_btrfs. Open, as a scrub reaches the host's pools (a host-level change): the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step: after the deploy, a temporary folder /mnt/pools/unoscheck<hex>, with nothing mounted on it, gets POST .../scrub answered 409 with the text of ADR-0311 (the old code answered 500 with btrfs's refusal on the ext4 root) and is removed again; a Start Scrub of the pool data and a Run now of a scheduled scrub of it start, and are cancelled."
     },
     {
       "id": "storage.commands-time-out-cleanly",
