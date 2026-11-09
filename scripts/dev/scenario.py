@@ -28,7 +28,8 @@ SD writes of each check (ADR-0214). The areas:
            the access lowered to read and then removed during open sessions, a comment saved with
            the expected version and a stale one refused, a password change that ends the open
            session, the replaced password refused without a write to passdb.tdb, the new one
-           taken, a wrong password and an anonymous session refused, the [global] lines without a
+           taken, a wrong password refused without one either while no lockout counts failures
+           (ADR-0310), an anonymous session refused, the [global] lines without a
            guest share and of Samba's log in /run/samba, no password of the check in an answer
            or a log, the share's Delete keeping its folder, and the user's Delete removing its
            accounts.
@@ -165,7 +166,8 @@ done'''
 REMOTE_SAMBA_USERS = r'''
 set -uo pipefail
 pdbedit -L 2> /dev/null | cut -d : -f 1 | sed "s/^/user /"
-echo "history $(pdbedit -P "password history" 2> /dev/null | tail -n 1)"'''
+echo "history $(pdbedit -P "password history" 2> /dev/null | tail -n 1)"
+echo "lockout $(pdbedit -P "bad lockout attempt" 2> /dev/null | tail -n 1)"'''
 
 # $1: create, delete or show; $2: a subvolume of a scenario check's folder (show: any path below
 # /mnt/pools). The pool is not the root filesystem, so the read-only namespace leaves it writable.
@@ -551,17 +553,18 @@ class Device:
                 facts["sizes"][path] = size
         return facts
 
-    def passdb_entries(self) -> tuple[list[str], str]:
-        """Samba's account names (pdbedit -L) and the password history's value."""
-        names, history = [], ""
+    def passdb_entries(self) -> tuple[list[str], str, str]:
+        """Samba's account names (pdbedit -L), and the values of its account policies "password
+        history" and "bad lockout attempt"."""
+        names, policies = [], {"history": "", "lockout": ""}
         for line in self.run(REMOTE_SAMBA_USERS, read_only=False).splitlines():
             key, _, value = line.partition(" ")
             if key == "user":
                 names.append(value)
-            elif key == "history":
+            elif key in policies:
                 found = re.search(r"(\d+)\s*$", value)
-                history = found.group(1) if found else value
-        return sorted(names), history
+                policies[key] = found.group(1) if found else value
+        return sorted(names), policies["history"], policies["lockout"]
 
     def subvolume(self, action: str, path: str) -> str:
         return self.run(REMOTE_SUBVOLUME, action, path).strip()
@@ -1326,6 +1329,14 @@ def smb_global(conf: str) -> dict[str, str]:
     return found
 
 
+def passdb_time(c: Check) -> str:
+    """passdb.tdb's modification time (stat %y, in nanoseconds): a time, or the step fails, so that
+    a comparison never passes on two answers that are not one."""
+    value = c.device.facts()["passdb"]
+    c.expect(re.match(r"\d{4}-\d\d-\d\d \d", value or ""), f"passdb.tdb's time could not be read: {value!r}")
+    return value
+
+
 def smb_check(c: Check) -> None:
     with c.step("a pool is mounted read-write and managed by UNOS") as s:
         pool = c.pick_pool()
@@ -1352,16 +1363,19 @@ def smb_check(c: Check) -> None:
     with c.step("the device holds nothing of an earlier check"):
         c.baseline(state)
 
-    with c.step("Samba runs UNOS's smb.conf without problems with a password history of 3, and the device has "
-                "smbclient, stdbuf, testparm and pdbedit"):
+    with c.step("Samba runs UNOS's smb.conf without problems with a password history of 3 and no lockout, and the "
+                "device has smbclient, stdbuf, testparm and pdbedit"):
         status = c.get("/shares/smb-status")
         c.expect(not status.get("problems"), "the Shares page reports: " + "; ".join(status.get("problems") or []))
         facts = c.device.facts()
         missing = sorted({"smbclient", "stdbuf", "testparm", "pdbedit", "getent"} - set(facts["tools"]))
         c.expect(not missing, f"the device lacks {', '.join(missing)} (installing one is an owner action)")
         c.expect(facts["testparm"], "testparm refuses smb.conf")
-        history = c.device.passdb_entries()[1]
+        _, history, lockout = c.device.passdb_entries()
         c.expect(history == "3", f"Samba's password history is {history!r}, not 3 (ADR-0278)")
+        # No lockout counts failures, as UNOS leaves Samba (ADR-0280): a failed sign-in then writes
+        # nothing to passdb.tdb (ADR-0310), which the steps with wrong passwords compare.
+        c.expect(lockout == "0", f"Samba's bad lockout attempt is {lockout!r}, not 0 (ADR-0280, ADR-0310)")
         since, sizes = facts["now"], facts["sizes"]
         guests = status.get("guest_shares") or []
 
@@ -1483,7 +1497,7 @@ def smb_check(c: Check) -> None:
             s.text += f": {done.status}"
 
     with c.step("the replaced password is refused with NT_STATUS_LOGON_FAILURE and leaves passdb.tdb as it was"):
-        before = c.device.facts()["passdb"]
+        before = passdb_time(c)
         listing = c.device.smb_list(user, password)
         c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"it answered {listing.status}")
         after = c.device.facts()["passdb"]
@@ -1494,9 +1508,13 @@ def smb_check(c: Check) -> None:
         listing = c.device.smb_list(user, newer)
         c.expect(listing.ok and share in listing.disks, f"smbclient -L: {listing.status}, {listing.disks}")
 
-    with c.step("a wrong password is refused with NT_STATUS_LOGON_FAILURE, never as a guest") as s:
+    with c.step("a wrong password is refused with NT_STATUS_LOGON_FAILURE, never as a guest, and leaves passdb.tdb "
+                "as it was (ADR-0310)") as s:
+        before = passdb_time(c)
         listing = c.device.smb_list(user, wrong)
         c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"it answered {listing.status}")
+        after = c.device.facts()["passdb"]
+        c.expect(after == before, f"passdb.tdb changed at {after}")
         if guests:  # restrict anonymous = 1 and map to guest = Bad User: guests may list (ADR-0098)
             s.text += "; a null session is not tried, as the device has guest shares"
         else:
