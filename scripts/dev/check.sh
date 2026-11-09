@@ -5,10 +5,10 @@
 # containers (state, health, restarts), every container's log configuration (driver and
 # options, such as the max-size and max-file of a rotation set in the host's
 # /etc/docker/daemon.json, ADR-0178), the images, errors in the supervisor's log of the last 24
-# hours, smbd (and nmbd where NetBIOS is on), the API's health answer, the inbound IPv6 filter
-# (ADR-0301), the system disk's writes since boot (and its wear data where the card reports it),
-# free RAM and the mounted pools. Exits 0 when unos-supervisor and unos-webui run and are
-# healthy, smbd is active (nmbd too, unless smb.conf turns NetBIOS off: ADR-0275), the API
+# hours, smbd, network discovery (wsdd2 and avahi-daemon; nmbd off, as NetBIOS is: ADR-0275),
+# the API's health answer, the inbound IPv6 filter (ADR-0301), the system disk's writes since
+# boot (and its wear data where the card reports it), free RAM and the mounted pools. Exits 0 when unos-supervisor and unos-webui run and are
+# healthy, smbd, wsdd2 and avahi-daemon are active, nmbd neither runs nor is enabled, the API
 # answers and the filter's unit is active with its table loaded; 1 otherwise ("check: problems").
 #
 # It runs one script on the device, with the root filesystem read-only (dev_remote_ro of
@@ -77,19 +77,19 @@ else
     echo "no ERROR, CRITICAL or Traceback lines"
 fi
 
-echo "== samba"
-services=smbd
-# With NetBIOS off (disable netbios = yes, ADR-0275) nmbd has nothing to do and does not run.
-if grep -Eiq "^[[:space:]]*disable netbios[[:space:]]*=[[:space:]]*yes" /etc/samba/smb.conf 2> /dev/null; then
-    echo "nmbd: not needed (NetBIOS is off)"
-else
-    services="smbd nmbd"
-fi
-for s in $services; do
+# Network discovery (ADR-0275): wsdd2 for Windows, avahi-daemon for macOS. NetBIOS is off
+# (disable netbios = yes), so nmbd has nothing to do and must neither run nor start at boot.
+echo "== samba and network discovery"
+for s in smbd wsdd2 avahi-daemon; do
     st=$(systemctl is-active "$s" 2> /dev/null) || true
     echo "$s: ${st:-unknown}"
     [ "$st" = active ] || problem "$s is ${st:-unknown}"
 done
+st=$(systemctl is-active nmbd 2> /dev/null) || true
+en=$(systemctl is-enabled nmbd 2> /dev/null) || true
+echo "nmbd: ${st:-unknown}, ${en:-unknown}"
+case $st in active | activating | reloading) problem "nmbd is $st, while NetBIOS is off (ADR-0275)" ;; esac
+case $en in enabled | enabled-runtime) problem "nmbd is $en, while NetBIOS is off (ADR-0275)" ;; esac
 
 echo "== API"
 code=$(python3 -I -c "import ssl, urllib.request as u; print(u.urlopen(\"https://127.0.0.1/api/v1/health\", context=ssl._create_unverified_context(), timeout=5).status)" 2> /dev/null) || code=none

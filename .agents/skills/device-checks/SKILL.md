@@ -34,8 +34,9 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    old key (`ssh-keygen -R <host>`).
 
 2. **Check its health.** `scripts/dev/check.sh`. Result: `check: OK`, exit status 0, the lock
-   holder if a deploy or a test run is in progress, the inbound IPv6 filter active and loaded
-   (ADR-0301), and its own `SD writes check.sh` line.
+   holder if a deploy or a test run is in progress, smbd, wsdd2 and avahi-daemon active and nmbd
+   inactive and disabled (ADR-0275), the inbound IPv6 filter active and loaded (ADR-0301), and its
+   own `SD writes check.sh` line.
 
 3. **Ask the API.** `scripts/dev/sd.sh measure api -- scripts/dev/api.py GET /system/stats` (any
    path under `/api/v1`, query parameters with `--param key=value`). Result: `HTTP 200`, the

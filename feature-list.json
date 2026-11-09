@@ -192,12 +192,12 @@
         "supervisor/tests/test_login_bounds.py",
         "supervisor/tests/test_upload_streaming.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0062",
         "ADR-0065"
       ],
-      "notes": "Step 2 is asserted only without a token (supervisor/tests/test_request_limits.py), so passes is false until a test sends a declared and a chunked 2 MiB body with a valid token and gets 413. The limit is a middleware in front of every route (supervisor/src/request_limits.py)."
+      "notes": "The limit is a middleware in front of every route (supervisor/src/request_limits.py); not host-level. Step 1: test_request_limits.py (test_content_length_over_the_limit_is_answered_413_without_reading, also for the login, test_content_length_over_the_limit_is_answered_before_anything_is_received, test_chunked_body_over_the_limit_gets_413, test_chunked_body_is_counted_and_reading_stops_at_the_limit, and test_a_real_server_answers_413_for_chunked_and_declared_bodies with both of uvicorn's HTTP parsers). Step 2: test_a_signed_in_client_gets_413_for_a_declared_and_a_chunked_body (a valid administrator token, GET /auth/me answers 200, then a declared and a chunked 2 MiB body each answer 413); the note that said it was missing was stale: note and test came in the same commit (2e4306d, 2026-11-07). Step 3: test_uvicorn_refuses_a_large_first_message_before_the_application_gets_it and test_both_images_limit_websocket_messages_alike (uvicorn's --ws-max-size in both images). Step 4: test_login_bounds.py. Step 5: test_request_limits.py (each upload's own limit) and test_upload_streaming.py (the uploads stream into their destination, and the server's memory does not grow); its tests of unnamed files run on Linux only (scripts/dev/linux-tests.sh) and concern files.upload, not the limits. Passed 2026-11-09."
     },
     {
       "id": "security.audit-log",
@@ -429,12 +429,12 @@
         "supervisor/tests/test_authz.py",
         "webui/tests/auth.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0010",
         "ADR-0048"
       ],
-      "notes": "Step 2 is asserted only as a 401 for the other client's wrong password (supervisor/tests/test_authz.py), which a lockout of the account would answer too, so passes is false until the other client signs in with the right password and gets 200 while the first one still gets 429."
+      "notes": "Not host-level. Steps 1 and 2: test_authz.py, test_login_rate_limit_is_per_client_not_global (five wrong passwords from one client answer 401, the sixth 429; another client behind the same proxy signs in with the right password, 200, while the first one still gets 429 with it, which a lockout of the account would not allow) and test_direct_connections_cannot_choose_their_address (a new X-Forwarded-For per attempt is no new bucket); the note that said step 2 was asserted only as a 401 was stale: note and the strengthened test came in the same commit (2e4306d, 2026-11-07). Step 3: auth.spec.ts on the stand-in, 'a sign-in refused for too many attempts says so and keeps the form' (added 2026-11-09: the 429 at the password step, which failed with the message taken out of webui/src/lib/api/client.ts) and 'errors in the 2FA step keep the code form unless the password was rejected' (the 429 at the code step). Passed 2026-11-09."
     },
     {
       "id": "auth.roles",
@@ -3536,11 +3536,14 @@
         "check.sh reports a problem while nmbd is active or enabled",
         "The deploy-device and device-checks skills get check: OK on the dev device once the owner has set up network discovery and turned nmbd off"
       ],
-      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_dev_scripts.py"
+      ],
+      "passes": true,
       "adr": [
         "ADR-0275"
       ],
-      "notes": "Found by the review of shares.smb-discovery: check.sh loops over smbd and nmbd and marks the device unhealthy unless both are active, so once nmbd is off (ADR-0275) the deploy-device skill stops at its step 3, deploy.sh all ends with check.sh's failure, and every device check reports the device unhealthy. scripts/dev/ was off limits for that branch. The new check.sh passes on the dev device only after the owner's setup of shares.smb-discovery (avahi-daemon and wsdd2 installed and running, nmbd off): it lands between that setup and the device check of shares.smb-discovery."
+      "notes": "Found by the review of shares.smb-discovery: check.sh loops over smbd and nmbd and marks the device unhealthy unless both are active, so once nmbd is off (ADR-0275) the deploy-device skill stops at its step 3, deploy.sh all ends with check.sh's failure, and every device check reports the device unhealthy. scripts/dev/ was off limits for that branch. The new check.sh passes on the dev device only after the owner's setup of shares.smb-discovery (avahi-daemon and wsdd2 installed and running, nmbd off): it lands between that setup and the device check of shares.smb-discovery. Built 2026-11-09: check.sh's section \"samba and network discovery\" requires smbd, wsdd2 and avahi-daemon active and reports nmbd while it is active or enabled (enabled or enabled-runtime), whatever smb.conf says: UNOS always renders NetBIOS off (ADR-0275), so the branch for an smb.conf with NetBIOS on went (ADR-0207). Steps 1 and 2: test_dev_scripts.py (test_check_sh_reports_samba_and_network_discovery_problems for each service and for nmbd active or enabled, and test_check_sh_shows_every_containers_log_configuration for the lines of a healthy device, with a systemctl stub per unit). Step 3 on the dev device, 2026-11-09: the first run found nmbd inactive but enabled (Debian's nmbd.service skips its start through its ExecCondition /usr/share/samba/is-configured nmb while NetBIOS is off, so it never ran, but install.sh disables it); the session ran systemctl disable nmbd at 14:02 UTC on the owner's word \"I allow everything\" (a change of the device's services is the owner's, ADR-0211; it is the end state of install.sh's line, as nmbd was not running; 0.680 MiB), and check.sh answered check: OK (0.016 MiB)."
     },
     {
       "id": "apps.compose-stacks",
