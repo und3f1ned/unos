@@ -75,7 +75,7 @@
         </div>
         <div>
           <span class="text-slate-400">{$t("general.info.uptime")}</span>
-          <span class="ml-2">{formatUptime(systemInfo.uptime)}</span>
+          <span class="ml-2">{formatUptime(systemInfo.boot_time)}</span>
         </div>
       </div>
     {:else}

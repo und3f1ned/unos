@@ -164,7 +164,7 @@ const SYSTEM_INFO = {
   os: 'Debian GNU/Linux 13 (trixie)',
   architecture: 'aarch64',
   // When the host started (psutil.boot_time()): 3 days and 4 hours ago.
-  uptime: Date.now() / 1000 - (3 * 24 + 4) * 3600,
+  boot_time: Date.now() / 1000 - (3 * 24 + 4) * 3600,
 };
 
 function container(id: string, name: string, image: string, state: string, ports: object[] = []) {

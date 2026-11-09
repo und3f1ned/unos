@@ -78,6 +78,11 @@ test.describe('API Tests', () => {
     expect(data).toHaveProperty('hostname');
     expect(data).toHaveProperty('kernel');
     expect(data).toHaveProperty('os');
+    // The host's boot time in seconds since the epoch, under its own name (system.boot-time-field).
+    expect(typeof data.boot_time).toBe('number');
+    expect(data.boot_time).toBeGreaterThan(1e9); // a time, not a duration
+    expect(data.boot_time).toBeLessThan(Date.now() / 1000);
+    expect(data).not.toHaveProperty('uptime');
   });
 
   test('GET /api/v1/system/stats should return stats', async ({ request }) => {

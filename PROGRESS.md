@@ -170,6 +170,30 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-09: GET /system/info names the host's boot time boot_time
+
+- `system.boot-time-field`, at the owner's word to work on through the features ("I allow
+  everything", in translation). The field `uptime` of GET /api/v1/system/info held
+  `psutil.boot_time()`, the boot time in seconds since the epoch, which an API client would read
+  as a duration; the pages computed the uptime from it. It is `boot_time` now, with no field
+  `uptime` left (ADR-0207), and `webui/src/lib/api/system.ts`, the dashboard and System > General
+  read it.
+- Tests first (ADR-0186): `test_system.py` (the answer carries boot_time, close to
+  `psutil.boot_time()`, and no uptime) failed on the old code; `webui/tests/api.spec.ts` asserts a
+  boot_time in seconds since the epoch and no uptime against the stand-in, and failed with an
+  uptime field put back; the fake system info
+  of `mobile-layout.spec.ts` has the new field. The dashboard's and System > General's uptime are
+  asserted by `dashboard.spec.ts` and `updates.spec.ts`, which passed with `api.spec.ts` on the
+  stand-in (69 passed, 15 skipped for what the stand-in lacks). Not host-level.
+  `CHANGELOG.md` names the rename. `supervisor/tests/mocks/mock_data.py` keeps an `uptime` of its
+  own: nothing imports it, and `testing.remove-dead-mock-layer` removes that layer.
+- A fresh-context review found one blocker, fixed: the ledger's notes quoted a Russian text,
+  where the repository's text is English (ADR-0200). Fixed from it as well: the notes' "today"
+  sentence, a lower bound in `api.spec.ts` so that a duration cannot pass for a time, and the
+  changelog's line. `make e2e-local` passed (670 passed, 16 skipped; 11.7 minutes).
+- `make check` passed on the tree merged with main cfed052 (6031 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build).
+
 ### 2026-11-09: a scrub of a pool that is not mounted answers 409, through one helper
 
 - `storage.scrub-needs-mounted-pool`, at the owner's word to work on through the features ("I

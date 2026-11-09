@@ -2711,11 +2711,17 @@
         "The dashboard and System > General still show how long the host has run",
         "webui/src/lib/api/system.ts and both formatUptime callers use the new field"
       ],
-      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_system.py",
+        "webui/tests/api.spec.ts",
+        "webui/tests/dashboard.spec.ts",
+        "webui/tests/updates.spec.ts"
+      ],
+      "passes": true,
       "adr": [
         "ADR-0207"
       ],
-      "notes": "Today the field uptime holds psutil.boot_time(); the pages compute the uptime from it, so only API clients are misled."
+      "notes": "Until 2026-11-09 the field uptime held psutil.boot_time(), which the pages turned into an uptime and API clients would read as a duration. Built 2026-11-09: SystemInfo.boot_time in supervisor/src/system/router.py, no field uptime (ADR-0207). Step 1: test_system.py (test_the_answer_names_the_boot_time_boot_time_and_has_no_uptime) and api.spec.ts on the stand-in. Step 2: dashboard.spec.ts (the dashboard in Russian: the uptime in days, hours or minutes) and updates.spec.ts (System > General's uptime in Russian units), both from the stand-in's real answer. Step 3: system.ts's SystemInfo and both formatUptime callers, which svelte-check holds to the type. Not host-level."
     },
     {
       "id": "webui.navigation",
