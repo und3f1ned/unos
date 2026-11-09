@@ -16,7 +16,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   That morning: the dev device's inbound IPv6 filter (#75, ADR-0301), the web UI on a phone
   (#76, ADR-0302), and the device's NFS server with the device check of `shares.nfs-exports`
   (ADR-0303). That evening: the scenario checks of the dev device (#79, ADR-0304) and the base
-  images pinned by digest (#80, ADR-0305). The dev device runs main 78769b4.
+  images pinned by digest (#80, ADR-0305). The dev device runs main 78769b4, and since
+  2026-11-09 the compose file of `deploy.health-checks-and-start-order`, whose web UI waits for
+  the API also at boot (ADR-0306).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery).
@@ -42,12 +44,13 @@ significant step. Features and their state live in `feature-list.json`, decision
      has moved upstream, and Dependabot has proposed a digest.
   2. The host-level entries still open (the feature-pass skill's table): after the re-check of
      2026-11-08 after a reboot (Log), 14 more pass; the others need a device check first or, as
-     `storage.pool-health` and `deploy.health-checks-and-start-order`, a step the re-check could
-     not show.
+     `storage.pool-health`, a step the re-check could not show, and
+     `deploy.health-checks-and-start-order` its re-check after a reboot (ADR-0306; Log,
+     2026-11-09).
 
 ## Dev device
 
-State on 2026-11-08, 23:10 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-09, 01:20 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -57,11 +60,16 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
 - Runs main 78769b4, deployed on 2026-11-08 at 22:29 UTC: both images built from the bases that
   ADR-0305 pins (the supervisor's runtime files are those of ebb1856, the web UI's those of
-  36a6c1b). The device checkout `/opt/unos` equals main's tree; the deploy's backup and rollback
-  copies are in the main checkout's `tmp/dev/`. Rebooted from the API twice that morning, for the
-  reboot checks of the IPv6 filter, and by the owner at about 22:57 UTC for the re-check of
-  ADR-0018 (the boot of 22:59:48 UTC; it answered again at 23:00). Docker lists 11 dangling
-  images, the old builds' layers: pruning them is the owner's call (ADR-0211).
+  36a6c1b). On 2026-11-09 at 01:18 UTC the working tree of branch
+  `deploy.health-checks-and-start-order` was synced, whose only runtime file that differs from
+  main is `deploy/docker-compose.yml`, and the web UI was recreated with its new command
+  (ADR-0306), its image unchanged: the device checkout `/opt/unos` equals that tree. The deploys'
+  backup and rollback copies are in the main checkout's `tmp/dev/`. The device has no `unos`
+  unit: `deploy.sh up` starts its containers, and at boot dockerd does, by their restart policy.
+  Rebooted from the API twice on the morning of 2026-11-08, for the reboot checks of the IPv6
+  filter, and by the owner at about 22:57 UTC that day for the re-check of ADR-0018 (the boot of
+  22:59:48 UTC; it answered again at 23:00). Docker lists 11 dangling images, the old builds'
+  layers (about 351 MB that only they use): pruning them is the owner's call (ADR-0211).
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest (`97728ea0...`, the one before it as `:rollback`),
   deploy-webui:latest (`d77b0aa7...`, likewise), lscr.io/linuxserver/transmission, alpine (the
@@ -96,6 +104,9 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   0.125, 0.430 and 3.637) and 5.393 MiB at 23:03 UTC (0.441, 0.734, 0.105, 0.449 and 3.664);
   60.1 MiB in the 11.1 hours since that morning's boot, by 22:34 UTC; the boot of 22:59:48 UTC
   9.7 MiB by 23:00:29.
+- SD writes on 2026-11-09: the web UI's deploy 3.265 MiB (sync 0.812, `up webui` 2.453, its
+  backup 0); the read-only probes before it (the unit and the containers 0.031, busybox's wget
+  0.016, 0 and 0, the image list 0.266) and after it 0.023, `check.sh` 0.055 and 0.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -113,10 +124,35 @@ Open owner actions:
 3. The RAM rootfs of `scripts/dev/linux-tests.sh`, gone since the reboots of 2026-11-08: making
    it creates a container (the command that `linux-tests.sh` prints).
 4. Who gets access to the share DATA (an SMB account for a regular user).
-5. Whether the web UI must wait for the supervisor at boot too: after a reboot dockerd starts
-   both containers at once (`deploy.health-checks-and-start-order`, step 2; Log, 2026-11-08).
 
 ## Log
+
+### 2026-11-09: the web UI waits for the API also at boot (ADR-0306)
+
+- The re-check of 2026-11-08 after the reboot left step 2 of
+  `deploy.health-checks-and-start-order` open: the dev device has no `unos` unit (systemd finds
+  none), and at boot dockerd started both containers by their restart policy at once, the web UI
+  first. On a host of `install.sh` the unit's `docker compose down` at shutdown leaves dockerd
+  nothing to start after a clean shutdown, but not after a power cut. The owner left the choice
+  to the agent ("do it").
+- The web UI's `command` in both compose files now waits until
+  `http://supervisor:8080/api/v1/health` answers (busybox wget without a proxy and without a
+  file, an error printed only when it changes) and then execs the image's CMD (ADR-0306).
+  `test_webui_waits_for_the_api_whoever_starts_it` failed first (no `command`), then passed, and
+  fails for a loop that prints each try or a single `$`. In the running web UI on the device
+  (busybox 1.37, `caddy` left out) the loop waited on a closed port and on an unknown name,
+  printing each error once, and passed at once on the API (0 MiB).
+- Deployed at 01:18 UTC: sync 0.812 MiB, `up webui` 2.453 MiB (only the web UI recreated,
+  healthy after 6 s, post-up check OK). Its PID 1 is `caddy run --config /etc/caddy/Caddyfile`,
+  and its log has no waiting line, as the API answered at the first try; `check.sh` OK.
+  `make check` passed before the deploy (5966 tests).
+- A fresh-context review found no blocker; its findings, all fixed: the CHANGELOG spoke of every
+  reboot; the silent loop hid a cause that stays (now its error is printed once); the test ran
+  the command without compose's `$$` (now through `_compose_string`); the test stack's comment
+  and other wording; the dev device's missing unit and the owner's decision were unrecorded; and
+  the ADR lacked the option of Caddy answering while the supervisor starts.
+- Open: the re-check after a reboot (ADR-0018): Caddy's first log line after the supervisor's
+  startup, at boot.
 
 ### 2026-11-08: the testparm test of Samba's logging lines
 

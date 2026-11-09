@@ -3022,9 +3022,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0176"
+        "ADR-0176",
+        "ADR-0306"
       ],
-      "notes": "Device check: 2026-11-07 (scripts/dev/deploy.sh up: both containers healthy). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): both containers healthy after the boot (step 1). Step 2 holds for docker compose up only: at boot dockerd's restart policy (unless-stopped) starts both containers at once, the web UI 34 ms before the supervisor, and the web UI's first health check failed (23:00:14 UTC) before it turned healthy, so after a reboot the web UI does not wait for the supervisor's health check. Open: whether step 2 must hold at boot, the owner's decision."
+      "notes": "Device check: 2026-11-07 (scripts/dev/deploy.sh up: both containers healthy). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): both containers healthy after the boot (step 1). Step 2 holds for docker compose up only: at boot dockerd's restart policy (unless-stopped) starts both containers at once, the web UI 34 ms before the supervisor, and the web UI's first health check failed (23:00:14 UTC) before it turned healthy, so after a reboot the web UI did not wait for the supervisor's health check. Since 2026-11-09 the web UI's command waits for the API before Caddy starts, whoever starts the container (ADR-0306; the owner left the choice to the agent). Device check of 2026-11-09 (01:18 UTC, scripts/dev/deploy.sh up webui): the web UI recreated with that command, healthy after 6 s, Caddy its PID 1; busybox's wget of the image takes its options. Open: the re-check after a reboot (ADR-0018), where step 2 holds as Caddy waiting for the health route that the supervisor's check requests."
     },
     {
       "id": "deploy.release-images",
