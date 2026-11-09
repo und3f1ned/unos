@@ -190,6 +190,17 @@ Open owner actions:
   ended; on the old code the check ended with the cancellation. With the fix the whole of
   `test_ws_auth.py` passed, and the test that hung and the new one, 500 times each in one run,
   passed without a hang (1000 passed in 267 s). Not host-level.
+- A fresh-context review found nothing that blocks: it made the hang outside the test suite
+  with a slow query cancelled in its middle and then the event loop's shutdown (three hangs in
+  three runs of the old shape, none in 120 runs of the new one). Fixed from it: ADR-0312 names
+  the order of the two stops that makes the hang come only sometimes, uvicorn's shutdown, the
+  longest a check runs on after its socket closed (up to the busy timeout of 15 s when its
+  last-use commit waits, ADR-0252), and the handshake's query as what a test must not leave a
+  socket in; a second test, `test_a_recheck_that_fails_after_its_socket_closed_is_dropped_quietly`,
+  failed with asyncio's "Task exception was never retrieved" without `_consume_result`.
+- `make check` passed on the tree merged with main 31ac73b (6035 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build), before the review's second test and ADR
+  wording, which `test_ws_auth.py` (42 passed) and `make check-fast` cover.
 
 ### 2026-11-09: the smb check compares passdb.tdb at a wrong password
 
