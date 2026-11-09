@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Scenario checks of the dev device (ADR-0304): scripts/dev/scenario.sh [--pool NAME] AREA...
 #
-#   AREA     files, volumes, smart, backups or smb; all: every area, in this order.
-#   --pool   the pool of the files, volumes and smb checks (default: the one pool that is
+#   AREA     files, volumes, smart, backups, smb or smbconf; all: every area, in this order.
+#   --pool   the pool of the files, volumes, smb and smbconf checks (default: the one pool that is
 #            mounted read-write with UNOS's fstab entry).
 #
 # Each check runs the user scenario of its area on the device through the API and on the host
 # (scripts/dev/scenario.py --help says what each covers). It makes temporary things (a user, a
-# share, a volume and folders whose names start with "unoscheck", and two backups), prints PASS or
+# share, a volume and folders whose names start with "unoscheck", and two backups; smbconf also
+# edits smb.conf by hand and restarts the supervisor, ADR-0309), prints PASS or
 # FAIL for every step with the MiB written to the SD card meanwhile, removes what it made, also
 # after a FAIL or Ctrl-C, and compares the device with how it found it. The checks change the device:
 # run them when the owner asks for a check of the device (ADR-0016), for example the re-check
@@ -18,7 +19,7 @@
 # Settings: dev.env (see env.sh); UNOS_DEV_PYTHON (python3) runs scenario.py.
 set -euo pipefail
 usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
-AREAS=(files volumes smart backups smb)
+AREAS=(files volumes smart backups smb smbconf)
 case ${1:-} in
     -h | --help) usage; exit 0 ;;
 esac
@@ -32,7 +33,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         all) areas+=("${AREAS[@]}"); shift ;;
-        files | volumes | smart | backups | smb) areas+=("$1"); shift ;;
+        files | volumes | smart | backups | smb | smbconf) areas+=("$1"); shift ;;
         *) usage >&2; exit 2 ;;
     esac
 done
