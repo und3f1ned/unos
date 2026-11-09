@@ -3271,10 +3271,15 @@
         "UNOS_TEST_MODE is gone from deploy/docker-compose.test.yml (no code reads it)",
         "docs/TESTING.md no longer describes them"
       ],
-      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_repo_tooling.py"
+      ],
+      "passes": true,
       "adr": [
         "ADR-0207"
-      ]
+      ],
+      "notes": "Removed 2026-11-09: supervisor/tests/mocks (mock_data.py, which nothing imported) with its copy in supervisor/Dockerfile.test and the pytest flag --ignore=tests/mocks of the Makefile's test target and of the device's test runner (scripts/dev/tree.py), and UNOS_TEST_MODE from deploy/docker-compose.test.yml, which no code read. docs/TESTING.md had described neither. Step 1 and 2: test_deploy_scripts.py TestBuildContexts test_the_test_stack_has_no_mock_layer, and test_repo_tooling.py test_targets_run_the_agreed_commands (the test target without the flag); both failed before the removal. Not host-level."
     },
     {
       "id": "testing.coverage-report",

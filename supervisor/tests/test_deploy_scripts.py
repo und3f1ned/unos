@@ -2222,7 +2222,14 @@ class TestBuildContexts:
         for context in ("webui", "supervisor"):
             assert not any(p.strip("/*") == "tests" for p in _dockerignore(context)), context
         assert "COPY tests/" in (REPO_ROOT / "webui" / "Dockerfile.test").read_text()
-        assert "COPY tests/mocks/" in (REPO_ROOT / "supervisor" / "Dockerfile.test").read_text()
+        assert "COPY tests/fixtures/" in (REPO_ROOT / "supervisor" / "Dockerfile.test").read_text()
+
+    def test_the_test_stack_has_no_mock_layer(self):
+        """Nothing imported supervisor/tests/mocks, and no code read UNOS_TEST_MODE: both are gone
+        (testing.remove-dead-mock-layer, ADR-0207)."""
+        assert not (REPO_ROOT / "supervisor" / "tests" / "mocks").exists()
+        assert "mocks" not in (REPO_ROOT / "supervisor" / "Dockerfile.test").read_text()
+        assert "UNOS_TEST_MODE" not in (REPO_ROOT / "deploy" / "docker-compose.test.yml").read_text()
 
     def test_dockerignore_drops_local_build_output(self):
         assert {"node_modules", "build", ".svelte-kit"} <= _dockerignore("webui")

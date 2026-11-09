@@ -21,9 +21,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY src/ ./src/
 
-# Copy test mock layer
-COPY tests/mocks/ ./mocks/
-
 # Create test directories
 # testpool: a pool directory for the file manager E2E tests (the API cannot
 # create one directly in /mnt/pools). Docker copies it into the new test-pools

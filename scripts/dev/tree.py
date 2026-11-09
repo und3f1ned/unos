@@ -512,8 +512,8 @@ with open("/w/args", "rb") as f:
     args = [a.decode("utf-8", "surrogateescape") for a in f.read().split(b"\\0") if a]
 import pytest
 
-sys.exit(pytest.main(["-p", "no:cacheprovider", "--basetemp=/tmp/pt", "--ignore=tests/mocks",
-                      "--ignore=tests/fixtures", "-rfE"] + args))
+sys.exit(pytest.main(["-p", "no:cacheprovider", "--basetemp=/tmp/pt", "--ignore=tests/fixtures", "-rfE"]
+                     + args))
 '''
 
 

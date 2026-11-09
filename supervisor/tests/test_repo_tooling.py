@@ -102,7 +102,7 @@ def test_help_is_the_default_target():
               "deploy scripts .claude/hooks", "/opt/py/bin/python -m json.tool",
               "feature-list.json .claude/settings.json"]),
     ("test", ["cd supervisor &&", "/opt/py/bin/python -m pytest tests/ -q --tb=short "
-              "--ignore=tests/mocks --ignore=tests/fixtures"]),
+              "--ignore=tests/fixtures"]),
     ("test-fast", ["cd supervisor &&", "/opt/py/bin/python -m pytest " + " ".join(TEST_FAST)]),
     ("smoke", ["cd supervisor &&", "/opt/py/bin/python -m pytest " + " ".join(SMOKE)]),
     ("frontend", ["cd webui && npm run check", "cd webui && npm run i18n", "cd webui && npm run build"]),
