@@ -354,8 +354,8 @@ The dev device is a single shared resource whose system disk is an SD card that 
 replaced (ADR-0214). It is reached only through `scripts/dev/`, which reads its settings and
 secrets from the git-ignored `dev.env` (ADR-0212):
 
-- `scripts/dev/check.sh`: the device's health (containers, Samba, the API, the inbound IPv6
-  filter, SD writes since boot), read-only.
+- `scripts/dev/check.sh`: the device's health (containers, Samba and network discovery, the API,
+  the inbound IPv6 filter, SD writes since boot), read-only.
 - `scripts/dev/api.py METHOD PATH`: what the API on the device answers. Methods other than GET
   change the device.
 - `scripts/dev/linux-tests.sh`: the backend tests on Linux in the device's RAM.

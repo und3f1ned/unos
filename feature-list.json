@@ -3535,11 +3535,14 @@
         "check.sh reports a problem while nmbd is active or enabled",
         "The deploy-device and device-checks skills get check: OK on the dev device once the owner has set up network discovery and turned nmbd off"
       ],
-      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_dev_scripts.py"
+      ],
+      "passes": true,
       "adr": [
         "ADR-0275"
       ],
-      "notes": "Found by the review of shares.smb-discovery: check.sh loops over smbd and nmbd and marks the device unhealthy unless both are active, so once nmbd is off (ADR-0275) the deploy-device skill stops at its step 3, deploy.sh all ends with check.sh's failure, and every device check reports the device unhealthy. scripts/dev/ was off limits for that branch. The new check.sh passes on the dev device only after the owner's setup of shares.smb-discovery (avahi-daemon and wsdd2 installed and running, nmbd off): it lands between that setup and the device check of shares.smb-discovery."
+      "notes": "Found by the review of shares.smb-discovery: check.sh loops over smbd and nmbd and marks the device unhealthy unless both are active, so once nmbd is off (ADR-0275) the deploy-device skill stops at its step 3, deploy.sh all ends with check.sh's failure, and every device check reports the device unhealthy. scripts/dev/ was off limits for that branch. The new check.sh passes on the dev device only after the owner's setup of shares.smb-discovery (avahi-daemon and wsdd2 installed and running, nmbd off): it lands between that setup and the device check of shares.smb-discovery. Built 2026-11-09: check.sh's section \"samba and network discovery\" requires smbd, wsdd2 and avahi-daemon active and reports nmbd while it is active or enabled (enabled or enabled-runtime), whatever smb.conf says: UNOS always renders NetBIOS off (ADR-0275), so the branch for an smb.conf with NetBIOS on went (ADR-0207). Steps 1 and 2: test_dev_scripts.py (test_check_sh_reports_samba_and_network_discovery_problems for each service and for nmbd active or enabled, and test_check_sh_shows_every_containers_log_configuration for the lines of a healthy device, with a systemctl stub per unit). Step 3 on the dev device, 2026-11-09: the first run found nmbd inactive but enabled (Debian's nmbd.service skips its start through its ExecCondition /usr/share/samba/is-configured nmb while NetBIOS is off, so it never ran, but install.sh disables it); the session ran systemctl disable nmbd at 14:02 UTC on the owner's word \"I allow everything\" (a change of the device's services is the owner's, ADR-0211; it is the end state of install.sh's line, as nmbd was not running; 0.680 MiB), and check.sh answered check: OK (0.016 MiB)."
     },
     {
       "id": "apps.compose-stacks",

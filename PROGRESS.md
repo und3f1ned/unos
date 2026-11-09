@@ -24,7 +24,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   device runs main 12483dd, deployed on 2026-11-09 at 07:41 UTC.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
-  (ADR-0301). avahi-daemon and wsdd2 run (network discovery).
+  (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
+  2026-11-09 (ADR-0275), which `scripts/dev/check.sh` checks.
 - The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
   `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
@@ -160,6 +161,29 @@ Open owner actions:
 3. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-09: check.sh checks network discovery, and nmbd is disabled on the device
+
+- `device.check-network-discovery`, at the owner's word to work on through the features ("I
+  allow everything", in translation): `scripts/dev/check.sh`'s section "samba and network
+  discovery" requires smbd, wsdd2 and avahi-daemon active and reports nmbd while it is active or
+  enabled (ADR-0275), whatever smb.conf says: UNOS always renders NetBIOS off, so the branch for
+  an smb.conf with NetBIOS on went (ADR-0207). `supervisor/tests/test_dev_scripts.py` gives
+  check.sh a systemctl stub per unit; the old check.sh failed the new tests, as it checked
+  neither wsdd2 nor avahi-daemon and ignored is-enabled (`assert "- wsdd2 is failed" in out`
+  failed; it answered OK with nmbd active).
+- Its first run on the device (about 14:01 UTC) found nmbd inactive but enabled: Debian's
+  nmbd.service skips its start through `ExecCondition=/usr/share/samba/is-configured nmb` while
+  NetBIOS is off, so nmbd did not run (the boot of 12:23 UTC: "Skipped due to
+  'exec-condition'"), but `deploy/install.sh` disables it (`systemctl disable --now nmbd`,
+  ADR-0275), and step 3 waits for the owner to have turned it off. Changing the device's services
+  is the owner's (ADR-0211, ADR-0275): the session ran `systemctl disable nmbd` at 14:02 UTC on
+  the owner's word "I allow everything", the end state of install.sh's line, as nmbd was not
+  running; it removed its two links (0.680 MiB), and check.sh then answered check: OK (0.016 MiB;
+  the run before it 0.055).
+- `shares.smb-discovery`'s notes still describe check.sh before this change (the order of its
+  device setup, nmbd turned off by the owner): its next pass updates them.
+- REVIEW_AND_CHECK
 
 ### 2026-11-09: the scenario check smbconf runs the SMB steps checked by hand (ADR-0309)
 
