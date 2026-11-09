@@ -92,7 +92,7 @@ lint-json:
 	done; if [ -n "$$bad" ]; then echo "lint: not valid JSON:$$bad" >&2; exit 1; fi; echo "JSON: $(JSON_FILES)"
 
 test: ## All backend tests, supervisor/tests (TESTS=..., PYTEST_ARGS=...)
-	cd supervisor && $(LOCK) $(PY) -m pytest $(TESTS) -q --tb=short --ignore=tests/mocks --ignore=tests/fixtures $(PYTEST_ARGS)
+	cd supervisor && $(LOCK) $(PY) -m pytest $(TESTS) -q --tb=short --ignore=tests/fixtures $(PYTEST_ARGS)
 
 test-fast: ## The convention tests: ADRs, ledger, guard, repo tooling and secrets, dev and stand-in scripts
 	cd supervisor && $(LOCK) $(PY) -m pytest $(TEST_FAST) -q --tb=short $(PYTEST_ARGS)

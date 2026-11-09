@@ -1,6 +1,7 @@
 # Deviceless Test Environment
 # This compose file runs the full UNOS stack without requiring a physical device.
-# All device-dependent operations are mocked or use test fixtures.
+# Host commands run inside the supervisor's container (UNOS_HOST_EXEC=local); /data and
+# /mnt/pools hold the test data of tests/fixtures/init-test-data.sh.
 
 # Own project name. Without it this file shares the project "deploy" (the
 # directory name) with docker-compose.yml: its build would replace the
@@ -21,7 +22,6 @@ services:
       - UNOS_SMB_CONF_PATH=/data/smb.conf
       - UNOS_NFS_EXPORTS_PATH=/data/exports
       - UNOS_POOLS_BASE_PATH=/mnt/pools
-      - UNOS_TEST_MODE=true
       # Not privileged: run "host" commands inside the container instead of nsenter.
       - UNOS_HOST_EXEC=local
       # Same trust rule as production: X-Forwarded-For only from webui.

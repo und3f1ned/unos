@@ -191,6 +191,26 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-09: the unused mock layer of the tests is gone
+
+- `testing.remove-dead-mock-layer`, at the owner's word to work on through the features ("I
+  allow everything", in translation), under ADR-0207: `supervisor/tests/mocks` (one file,
+  `mock_data.py`, which nothing imported) is deleted, with its copy in
+  `supervisor/Dockerfile.test` and the pytest flag `--ignore=tests/mocks` of the Makefile's test
+  target and of the device's test runner (`scripts/dev/tree.py`); `UNOS_TEST_MODE`, which no code
+  read, left `deploy/docker-compose.test.yml`, whose header now says that host commands run in
+  the supervisor's container. `docs/TESTING.md` had described neither.
+- Tests first (ADR-0186): `test_the_test_stack_has_no_mock_layer` of `test_deploy_scripts.py`
+  and the test target's command in `test_repo_tooling.py` failed before the removal; the check
+  that the build context keeps what the test images copy now looks for `tests/fixtures`, the one
+  folder of `tests/` that `Dockerfile.test` still copies. Not host-level.
+- A fresh-context review found nothing that blocks; fixed from it: `mocks` left the
+  `norecursedirs` of `supervisor/pytest.ini`, the test also asserts that `docs/TESTING.md` and
+  `pytest.ini` name neither, and the compose file's header says which data is test data.
+- `make check` passed: 6037 backend tests, 121 skipped, 1 xfailed; svelte-check without errors, the
+  build. Its first run, without `webui/node_modules` in the worktree, failed in its frontend part
+  and skipped the 87 backend tests that need them.
+
 ### 2026-11-09: a scrub runs from its start, before btrfs records it (ADR-0313)
 
 - The device check of `storage.scrub-needs-mounted-pool` met it again: for about 6 s after a
