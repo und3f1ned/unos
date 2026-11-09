@@ -1,4 +1,5 @@
 """WebSocket authentication handshake (first-message auth, 4401/4403 close codes)."""
+import asyncio
 import json
 import logging
 import queue
@@ -618,6 +619,53 @@ class TestReauthentication:
 
         # Not 4401: the client reconnects instead of logging the user out.
         assert closed.code == 1011
+
+    def test_a_socket_that_closes_lets_its_recheck_in_progress_run_to_its_end(
+            self, client, user_token, fast_recheck, monkeypatch):
+        """Closing the socket ends its credential watch, and a re-check that has started still
+        runs to its end (ADR-0312). Cancelled in its database query, a re-check discarded the
+        session's connection; a second cancellation of that connection's close, the event loop's
+        shutdown at the end of a test, left aiosqlite waiting for ever, which hung make check."""
+        real_user_for_token = events._user_for_token
+        real_watch = events._watch_credential
+        started, release, watch_ended = threading.Event(), threading.Event(), threading.Event()
+        ends = []
+        calls = 0
+
+        async def held_after_handshake(token):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return await real_user_for_token(token)  # the handshake
+            started.set()
+            try:
+                while not release.is_set():
+                    await asyncio.sleep(0.01)
+                user = await real_user_for_token(token)
+            except asyncio.CancelledError:
+                ends.append("cancelled")
+                raise
+            ends.append(user.username)
+            return user
+
+        async def watch(token, **kwargs):
+            try:
+                return await real_watch(token, **kwargs)
+            finally:
+                watch_ended.set()
+
+        monkeypatch.setattr(events, "_user_for_token", held_after_handshake)
+        monkeypatch.setattr(events, "_watch_credential", watch)
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert started.wait(5), "no re-check started"
+            ws.close()
+            assert watch_ended.wait(5), "closing the socket did not end its credential watch"
+            release.set()
+            _wait_for(lambda: ends)
+
+        assert ends == ["ws_user"]
 
     def test_demoted_admin_is_disconnected_from_quiet_logs(self, client, ws_db, admin_token,
                                                            fast_recheck, fake_docker):
