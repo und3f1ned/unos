@@ -45,8 +45,6 @@ significant step. Features and their state live in `feature-list.json`, decision
      `storage.pool-health` and `deploy.health-checks-and-start-order`, a step the re-check could
      not show, or, as `shares.smb-conf-and-status` and `shares.edit-and-delete`, the steps that
      the smb scenario check leaves out, checked by hand.
-  3. `test_samba_takes_the_logging_lines` fails against the device's testparm: its expectations
-     of testparm's output are wrong (Log, the deploy of main 78769b4).
 
 ## Dev device
 
@@ -120,6 +118,29 @@ Open owner actions:
    both containers at once (`deploy.health-checks-and-start-order`, step 2; Log, 2026-11-08).
 
 ## Log
+
+### 2026-11-08: the testparm test of Samba's logging lines
+
+- `test_samba_takes_the_logging_lines` of `supervisor/tests/test_smbconf_testparm.py`, which
+  skips without testparm, failed against the device's testparm (Samba 4.22.6): it expected a
+  `log level` line and `debug timestamp = no`. Probed through the shim: the dump of
+  `testparm -s` shows no `log level` line, not even for a debug class that Samba lacks, and
+  names `debug timestamp` `timestamp logs`; only a misspelt parameter name draws a warning. So
+  of `log level` testparm checks only the parameter's name, never its classes or levels.
+- With the owner's yes ("yourself", in translation, asked for that yes) the test now asserts
+  `timestamp logs = no` beside the log file, its size limit and the syslog level; that Samba
+  knows the name `log level` is what `testparm()` asserts for every line. All 11 tests pass
+  against the device's testparm (0 MiB, measured with `sd.sh`); with `debug timestamp = yes` in
+  the renderer the logging test fails. The level of auth_audit rests on `test_smbconf.py`.
+- At work after the reboot, from the journal of the smb check's run at 23:03 UTC: the account's
+  two wrong passwords each added one notice of smbd.service with `Auth:`,
+  `NT_STATUS_WRONG_PASSWORD`, the account and `remote host [ipv4:127.0.0.1:`, and its successful
+  sign-ins none, so auth_audit logs at level 2, not 3; no smbd message had a header line, and
+  `GET /logs/entries?source=samba&search=<account>` listed both entries. The notes of
+  `shares.smb-auth-audit-logging` record it as the entry's re-check after a reboot.
+- A fresh-context review found the test right and as strong as testparm allows, and five
+  problems of wording and record: an overclaim of what the device check had seen, the owner's
+  yes not recorded, words wider than the probes, stale notes and missing backticks; all fixed.
 
 ### 2026-11-08: the re-check of the host-level entries after a reboot (ADR-0018)
 

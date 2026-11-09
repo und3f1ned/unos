@@ -92,13 +92,17 @@ def test_every_rendered_share_is_a_section_of_its_own(tmp_path):
 
 def test_samba_takes_the_logging_lines(tmp_path):
     """Samba takes the logging lines of [global] as UNOS writes them (ADR-0277): its log file in
-    /run/samba with a size limit, the class auth_audit at level 2 and the syslog backend at level 2,
-    and no header line before each message."""
+    /run/samba with a size limit, the syslog backend at level 2, and no header line before each
+    message, which testparm's dump names timestamp logs (UNOS writes its other name, debug
+    timestamp). The dump of testparm -s shows no log level line, not even for a debug class that
+    Samba lacks (Samba 4.22.6 on the dev device, 2026-11-08), so of that line testparm checks only
+    the parameter's name, which testparm() asserts for every line. The class auth_audit at level 2
+    is asserted on the rendered text by test_smbconf.py, and at work by the device check of
+    shares.smb-auth-audit-logging."""
     output = testparm(tmp_path, smbconf.render_config([]))
     lines = {" ".join(line.split()).lower() for line in output.splitlines()}
 
     assert "log file = /run/samba/log.samba" in lines
     assert "max log size = 100" in lines
-    assert any(line.startswith("log level = ") and "auth_audit:2" in line for line in lines), output
     assert "logging = syslog@2" in lines
-    assert "debug timestamp = no" in lines
+    assert "timestamp logs = no" in lines, output
