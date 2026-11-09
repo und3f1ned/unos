@@ -401,6 +401,8 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- The logs API reads every source through `GET /api/v1/logs/entries?source=...`:
+  the old `GET /api/v1/logs/dmesg` and `/logs/journal` are gone (404).
 - On a narrow screen the System tabs are listed above the open tab, the file
   manager leaves out the Modified column and scrolls as a whole page, and
   System → Logs shows each entry's time, level and program above its message.
