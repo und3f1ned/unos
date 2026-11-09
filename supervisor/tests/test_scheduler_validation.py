@@ -24,6 +24,7 @@ from src import host as host_module
 from src.auth.utils import verify_token
 from src.main import app
 from src.scheduler.schemas import ScheduledTask
+from src.storage import pools
 
 from .test_pool_persistence import install_fake_host
 from .test_snapshots import FakeBtrfs, local_time_9_hours_ahead_of_utc
@@ -54,6 +55,7 @@ def make_env(tmp_path, monkeypatch):
     app.dependency_overrides[verify_token] = lambda: ADMIN
     # Temporary directories are not mount points; treat existing pool directories as mounted.
     monkeypatch.setattr(scheduler, "_pool_is_mounted", scheduler._real_dir)
+    monkeypatch.setattr(pools, "_btrfs_mounted_at", scheduler._real_dir)
     # The host's block devices, as lsblk reports them in the host namespaces
     # (FakeHost also has the boot SD card mmcblk1 and the swap device zram0).
     host = install_fake_host(monkeypatch)
@@ -934,12 +936,30 @@ async def test_scrub_task(env):
 
 async def test_scrub_of_an_unmounted_pool_fails_without_btrfs(env, monkeypatch):
     """Not mounted, the pool's path is a folder on the root filesystem: btrfs would scrub that one if it is btrfs."""
-    monkeypatch.setattr(scheduler, "_pool_is_mounted", lambda pool: False)
+    monkeypatch.setattr(pools, "_btrfs_mounted_at", lambda pool: False)
 
     ok, message = await scheduler.execute_task(ScheduledTask(**_task(task_type="scrub")))
 
     assert not ok and message == f"Pool data is not mounted at {env.pool}"
     env.run.assert_not_called()
+
+
+async def test_the_storage_page_and_scheduled_scrubs_start_through_one_helper(env, monkeypatch):
+    """storage.scrub-needs-mounted-pool, step 2: both start a scrub through pools.scrub_start,
+    which checks that the pool is mounted before btrfs runs."""
+    started = []
+
+    def scrub_start(pool, timeout):
+        started.append((str(pool), timeout))
+        return subprocess.CompletedProcess(["btrfs"], 0, None, "")
+
+    monkeypatch.setattr(pools, "scrub_start", scrub_start)
+    ok, message = await scheduler.execute_task(ScheduledTask(**_task(task_type="scrub")))
+    assert (ok, message) == (True, "Scrub started")
+    response = env.client.post("/api/v1/storage/pools/data/scrub")
+    assert response.status_code == 200, response.text
+    assert started == [(str(env.pool), scheduler.SCRUB_START_TIMEOUT),
+                       (pools.pool_mountpoint("data"), pools.SCRUB_COMMAND_TIMEOUT)]
 
 
 async def test_hanging_scrub_start_is_recorded_as_timed_out(env):

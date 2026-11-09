@@ -442,6 +442,8 @@ async def api(one_worker, monkeypatch, tmp_path):
     monkeypatch.setattr(pools.settings, "pools_base_path", str(tmp_path))
     for pool in ("data", "media"):
         (tmp_path / pool).mkdir()
+    # Temporary directories are not mount points; treat the pool directories as mounted.
+    monkeypatch.setattr(pools, "_btrfs_mounted_at", os.path.isdir)
     monkeypatch.setattr(pools, "SCRUB_COMMAND_TIMEOUT", TIMEOUT)
     monkeypatch.setattr(disks, "SMARTCTL_TIMEOUT", TIMEOUT)
     monkeypatch.setattr(health_router, "SMARTCTL_TIMEOUT", TIMEOUT)
@@ -560,6 +562,7 @@ async def scheduled(one_worker, monkeypatch, tmp_path):
     monkeypatch.setattr("src.security.validators.settings", SimpleNamespace(pools_base_path=str(base)))
     # Temporary directories are not mount points; treat the pool directories as mounted.
     monkeypatch.setattr(scheduler, "_pool_is_mounted", scheduler._real_dir)
+    monkeypatch.setattr(pools, "_btrfs_mounted_at", scheduler._real_dir)
     monkeypatch.setattr(scheduler, "SCRUB_START_TIMEOUT", TIMEOUT)
     monkeypatch.setattr(scheduler, "SMART_TEST_TIMEOUT", TIMEOUT)
 
