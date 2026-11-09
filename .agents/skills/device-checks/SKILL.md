@@ -58,10 +58,12 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    gone: the script prints the owner action that makes it again.
 
 6. **Run a scenario check, when the owner asked for one.** `scripts/dev/scenario.sh <area>`
-   (`files`, `volumes`, `smart`, `backups`, `smb`, or `all`; `--pool <name>` where several pools
-   are mounted), the checks of the host-level entries that the feature-pass skill's table names
-   (ADR-0304). They change the device: they make a temporary user, share, volume and folders
-   named `unoscheck<6 hex digits>`, and two backups, through the API, and remove them again.
+   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, or `all`; `--pool <name>` where
+   several pools are mounted), the checks of the host-level entries that the feature-pass
+   skill's table names (ADR-0304). They change the device: they make a temporary user, share,
+   volume and folders named `unoscheck<6 hex digits>`, and two backups, through the API, and
+   remove them again; `smbconf` also edits smb.conf by hand and restarts the supervisor once
+   (ADR-0309).
    `all` takes several minutes: run it in the background, or with a timeout long enough, since a
    check that is killed cannot clean up, and read its whole output (not `| head`: a check whose
    output closes stops its steps). Result: a PASS line for every step, each with its SD
@@ -109,6 +111,17 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   owner action. A backup is not named `unoscheck`: only the run that made it names one whose
   answer it lost (`FAIL  clean up: delete the check's backups`), and
   `scripts/dev/api.py DELETE /backup/<name>` removes it.
+- The smbconf check refuses to start beside an smb.conf that is not UNOS's, a
+  `smb.conf.unos-replaced` or a problem on the Shares page. A run that lost its connection can
+  leave smb.conf as it edited it, with the original in
+  `/dev/shm/unos-scenario-unoscheck<6 hex digits>hand.conf`, a `smb.conf.unos-replaced` that
+  holds that section, and a symbolic link `<pool>/unoscheck<6 hex digits>` to its `-moved`
+  folder. Ask the owner, then put them back with `scripts/dev/ssh.sh`: the original over smb.conf
+  only while smb.conf does not start with UNOS's header (once an apply has run, UNOS's rendering
+  stays), the copy removed only when it holds nothing but the check's section beside UNOS's, the
+  link removed and the folder moved back; remove the share (and a user `unoscheck<6 hex
+  digits>`) as above, and restart the supervisor if the Shares page still names the section
+  (ADR-0092).
 - The smb check needs smbclient and stdbuf on the device (its first steps say which is
   missing): installing a package is an owner action (ADR-0211).
 - The scenario checks write to the SD card, and each step's line says how much: the API's

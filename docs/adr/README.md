@@ -374,6 +374,7 @@ and this index, and `make check-fast` runs it.
 | [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | The dev device admits inbound IPv6 to its services only from the LAN | accepted | 2026-11-08 |
 | [0303](0303-the-dev-device-runs-its-nfs-server.md) | The dev device runs its NFS server | accepted | 2026-11-08 |
 | [0304](0304-the-scenario-checks-of-the-dev-device-are-scripts-that-remove-what-they-make.md) | The scenario checks of the dev device are scripts that remove what they make and report each step's SD writes | accepted | 2026-11-08 |
+| [0309](0309-the-smbconf-scenario-check-edits-smb-conf-by-hand-and-restarts-the-supervisor.md) | The smbconf scenario check edits smb.conf by hand and restarts the supervisor | accepted | 2026-11-09 |
 
 ## Testing
 
