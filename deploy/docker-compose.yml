@@ -69,8 +69,9 @@ services:
     networks:
       unos-net:
         ipv4_address: 172.31.254.3
-    # Healthy once the API answers; docker ps shows it, and webui starts only
-    # then (depends_on below). Python, because the image has neither curl nor
+    # Healthy once the API answers; docker ps shows it, and compose starts
+    # webui only then (depends_on below; at boot Caddy waits for the API
+    # itself, webui's command). Python, because the image has neither curl nor
     # wget, and without a proxy, so that HTTP_PROXY in the container's
     # environment cannot divert the request. While the container starts
     # (start_period), Docker runs the check every 5 seconds (its default
@@ -119,6 +120,26 @@ services:
     depends_on:
       supervisor:
         condition: service_healthy
+    # Caddy only once the API answers, whoever starts the container: depends_on
+    # orders docker compose up, but at boot dockerd starts the containers it
+    # still has itself, by their restart policy and at once (after a power
+    # cut, or on a host without the unos unit of install.sh, such as the dev
+    # device; ADR-0307). busybox sh and wget (caddy:2-alpine) request the
+    # health route at Caddy's upstream (webui/Caddyfile) without a proxy, like
+    # the supervisor's own check, and pause 2 seconds after a failed try. A
+    # try writes no file (-O /dev/null), and an error is printed only when it
+    # differs from the one before: no log line per try (ADR-0214), and a cause
+    # that stays shows in docker logs. $$ is the shell's $ (compose would fill
+    # in a single $ from the host's environment). Then the CMD of
+    # webui/Dockerfile: change both together.
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        until err=$$(wget -q -Y off -T 5 -O /dev/null http://supervisor:8080/api/v1/health 2>&1);
+        do [ "$$err" = "$$last" ] || echo "unos-webui: waiting for the supervisor's API: $$err";
+        last=$$err; sleep 2; done;
+        exec caddy run --config /etc/caddy/Caddyfile
     networks:
       unos-net:
         # The supervisor trusts X-Forwarded-For from this address only.

@@ -74,6 +74,17 @@ services:
     depends_on:
       supervisor:
         condition: service_healthy
+    # As in docker-compose.yml, so that the test stack starts the web UI as an
+    # installed host does (ADR-0307); without a restart policy, only compose
+    # starts it here.
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        until err=$$(wget -q -Y off -T 5 -O /dev/null http://supervisor:8080/api/v1/health 2>&1);
+        do [ "$$err" = "$$last" ] || echo "unos-webui: waiting for the supervisor's API: $$err";
+        last=$$err; sleep 2; done;
+        exec caddy run --config /etc/caddy/Caddyfile
     networks:
       unos-test-net:
         ipv4_address: 172.31.253.2

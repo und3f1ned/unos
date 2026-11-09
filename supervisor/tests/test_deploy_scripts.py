@@ -2397,8 +2397,9 @@ def _http_server(status):
 
 
 class TestHealthchecks:
-    """docker ps shows whether the containers work, and compose starts webui
-    only once the supervisor answers."""
+    """docker ps shows whether the containers work, and webui starts only once
+    the supervisor answers: compose waits for its health, and webui's command
+    for the API, also when dockerd starts it at boot."""
 
     @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
     def test_has_no_obsolete_version_key(self, compose_file):
@@ -2411,6 +2412,58 @@ class TestHealthchecks:
 
         assert services["webui"]["depends_on"] == {"supervisor": {"condition": "service_healthy"}}
         assert services["supervisor"]["healthcheck"]["test"][0] == "CMD"
+
+    @pytest.mark.parametrize("compose_file", COMPOSE_FILES)
+    def test_webui_waits_for_the_api_whoever_starts_it(self, compose_file, tmp_path):
+        # depends_on holds for docker compose up only. At boot dockerd starts
+        # the containers it still has by their restart policy, at once (after
+        # the reboot of 2026-11-08 the web UI started 34 ms before the
+        # supervisor), so webui's command waits for the API and only then runs
+        # the image's CMD (ADR-0307). Here its wget fails three times, with the
+        # errors busybox's prints while the supervisor's name and then its port
+        # do not answer yet. As compose passes the command: $$ is a $.
+        command = [_compose_string(arg) for arg in _compose_file(compose_file)["services"]["webui"]["command"]]
+        assert command[:2] == ["/bin/sh", "-c"], command
+        image_cmd = re.search(r"^CMD (\[.*\])$", (REPO_ROOT / "webui" / "Dockerfile").read_text(), re.M)
+        assert image_cmd, "no CMD in webui/Dockerfile"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        calls_file = tmp_path / "calls"
+        fakes = {
+            "wget": textwrap.dedent("""\
+                echo "wget $*" >> "$CALLS"
+                case $(grep -c "^wget " "$CALLS") in
+                    1 | 2) echo "wget: bad address 'supervisor:8080'" >&2; exit 1 ;;
+                    3) echo "wget: can't connect to remote host (172.31.254.3): Connection refused" >&2; exit 1 ;;
+                esac"""),
+            "sleep": 'echo "sleep $*" >> "$CALLS"',
+            "caddy": 'echo "caddy $*" >> "$CALLS"',
+        }
+        for name, body in fakes.items():
+            (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+            (bin_dir / name).chmod(0o755)
+
+        result = subprocess.run(command, env={"PATH": f"{bin_dir}:/usr/bin:/bin", "CALLS": str(calls_file)},
+                                capture_output=True, text=True, timeout=60)
+
+        output = (result.stdout + result.stderr).splitlines()
+        calls = calls_file.read_text().splitlines()
+        assert result.returncode == 0, output
+        # Caddy only after the API answered, started as the image starts it.
+        assert [call.split()[0] for call in calls] == ["wget", "sleep"] * 3 + ["wget", "caddy"]
+        assert calls[-1] == " ".join(json.loads(image_cmd.group(1)))
+        for call in (call for call in calls if call.startswith("wget ")):
+            # The health route through the compose network (Caddy's upstream in
+            # webui/Caddyfile); without a proxy, as the supervisor's own check;
+            # a timeout, so that a supervisor that accepts but does not answer
+            # cannot hold the loop; and no file in the container's writable
+            # layer, which is on the system disk (ADR-0214).
+            assert call.endswith(" http://supervisor:8080/api/v1/health"), call
+            assert " -Y off " in call and " -T " in call and " -O /dev/null " in call, call
+        # A log line per new error, not per try (ADR-0214), so that a cause
+        # that does not go away shows in docker logs, once.
+        assert len(output) == 2, output
+        assert "bad address 'supervisor:8080'" in output[0] and "Connection refused" in output[1], output
 
     @pytest.mark.parametrize("status, exit_code", [(200, 0), (503, 1), (None, 1)])
     def test_supervisor_is_healthy_only_while_the_api_answers(self, status, exit_code):

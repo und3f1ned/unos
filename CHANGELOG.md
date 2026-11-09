@@ -622,6 +622,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   which is restored.
 
 ### Fixed
+- After a power cut, or on a host without the `unos` service, the web
+  interface also waits at boot until the supervisor answers: Docker then
+  starts both containers at once, without the order of `docker compose up`,
+  and until the supervisor answered, the pages loaded but every request failed
+  with 502. Until then `https://` does not answer; `docker logs unos-webui`
+  says what it waits for.
 - The file manager no longer cuts off the last entries of a long folder: its
   list ends at the bottom of the window.
 - The dialogs of System → Security for two-factor authentication, a firewall
