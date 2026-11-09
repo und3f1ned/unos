@@ -191,6 +191,21 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-09: the logs API has one entry endpoint for every source
+
+- `system.no-legacy-log-endpoints`, at the owner's word to work on through the features ("I allow
+  everything", in translation), under ADR-0207 and as ADR-0257 foresaw: `GET /api/v1/logs/dmesg`
+  and `/logs/journal` are gone from `supervisor/src/logs/router.py`; `GET /logs/entries` with
+  `source=dmesg` or `source=journal` serves what they did, and no page called them.
+- Tests first (ADR-0186): `TestOneEntryEndpoint` of `test_logs_sources.py` replaces the tests of
+  the old routes; its 404 test failed while they answered 200. The changelog says so. Not
+  host-level.
+- A fresh-context review found nothing that blocks; fixed from it: the tests' helper that only the
+  old routes used is gone, and the notes of `system.logs-viewer` no longer name their test class.
+- `make check` passed (6043 backend tests, 121 skipped, 1 xfailed; svelte-check without errors,
+  the build), before the review's two edits of a test and a note, which `test_logs_sources.py`
+  and `make check-fast` cover.
+
 ### 2026-11-09: the unused mock layer of the tests is gone
 
 - `testing.remove-dead-mock-layer`, at the owner's word to work on through the features ("I
