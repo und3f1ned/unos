@@ -879,6 +879,21 @@ class TestRunbook:
         assert "nothing mounted it, as in [step 1](#1-find-the-pool)" in _flat(text[shares:system_mount])
         assert "### 1. Find the Pool" in text
 
+    def test_reads_a_copy_of_the_database_with_its_write_ahead_log(self):
+        """unos.db uses SQLite's write-ahead log (ADR-0306). On the read-only mount SQLite
+        cannot open it without unos.db-wal and unos.db-shm beside it ("attempt to write a
+        readonly database"), and unos.db alone, read as immutable, lacks what a NAS that died
+        left in unos.db-wal: the runbook copies the database's files to this machine and reads
+        the copy. Root's shell expands the pattern: the user's own cannot enter Docker's folders
+        (mode 0710), and would hand cp the pattern itself."""
+        lines = _code_lines(_runbook())
+        data = "/mnt/nas-system/var/lib/docker/volumes/deploy_unos-data/_data"
+
+        assert f"""sudo sh -c 'cp {data}/unos.db* "$1"' sh ~/unos-db/""" in lines
+        assert "sudo sqlite3 ~/unos-db/unos.db 'SELECT name, path FROM smb_shares'" in lines
+        assert [line for line in lines if "sqlite3" in line and "/mnt/" in line] == []
+        assert [line for line in lines if line.startswith("sudo cp ") and "*" in line] == []
+
     def test_no_command_writes_to_the_pool(self):
         writes = re.compile(
             r"mkfs|wipefs|--repair|btrfs\s+(?:rescue|scrub|balance|device\s+(?:add|remove|delete|replace))"

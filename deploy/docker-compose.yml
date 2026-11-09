@@ -124,7 +124,7 @@ services:
     # orders docker compose up, but at boot dockerd starts the containers it
     # still has itself, by their restart policy and at once (after a power
     # cut, or on a host without the unos unit of install.sh, such as the dev
-    # device; ADR-0306). busybox sh and wget (caddy:2-alpine) request the
+    # device; ADR-0307). busybox sh and wget (caddy:2-alpine) request the
     # health route at Caddy's upstream (webui/Caddyfile) without a proxy, like
     # the supervisor's own check, and pause 2 seconds after a failed try. A
     # try writes no file (-O /dev/null), and an error is printed only when it

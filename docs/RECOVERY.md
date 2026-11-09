@@ -131,11 +131,16 @@ grep -E '^\[|^ *path = ' /mnt/nas-system/etc/samba/smb.conf
 `/etc/samba/smb.conf` holds each share's `[name]` and its folder,
 `path = /mnt/pools/<pool>/<folder>`. The UNOS database holds them too, in the table
 `smb_shares` (the columns `name` and `path`) of `unos.db` in the Docker volume `deploy_unos-data`,
-which is `/var/lib/docker/volumes/deploy_unos-data/_data` with Docker's default folders
-(`sudo apt install sqlite3` for the second command):
+which is `/var/lib/docker/volumes/deploy_unos-data/_data` with Docker's default folders. Its
+latest changes can still be in `unos.db-wal` beside it, which SQLite reads with it only where it
+may write: copy the files whose names start with `unos.db` to this machine, as root, whose shell
+lists them in Docker's folders (yours cannot), and read the copy (`sudo apt install sqlite3` for
+the last command):
 
 ```bash
-sudo sqlite3 -readonly /mnt/nas-system/var/lib/docker/volumes/deploy_unos-data/_data/unos.db 'SELECT name, path FROM smb_shares'
+mkdir -p ~/unos-db
+sudo sh -c 'cp /mnt/nas-system/var/lib/docker/volumes/deploy_unos-data/_data/unos.db* "$1"' sh ~/unos-db/
+sudo sqlite3 ~/unos-db/unos.db 'SELECT name, path FROM smb_shares'
 ```
 
 **Owners.** Share folders belong to root and the group 70000 (`unos-smb` on the NAS), with mode

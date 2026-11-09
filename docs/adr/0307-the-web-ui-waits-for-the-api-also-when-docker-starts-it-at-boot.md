@@ -5,7 +5,7 @@ area: deploy
 decided-by: agent
 ---
 
-# ADR-0306: The web UI waits for the supervisor's API also when Docker starts it at boot
+# ADR-0307: The web UI waits for the supervisor's API also when Docker starts it at boot
 
 ## Context
 

@@ -15,10 +15,11 @@ significant step. Features and their state live in `feature-list.json`, decision
   exports, the command timeouts and the whole web UI in Russian (Language on the Account page).
   That morning: the dev device's inbound IPv6 filter (#75, ADR-0301), the web UI on a phone
   (#76, ADR-0302), and the device's NFS server with the device check of `shares.nfs-exports`
-  (ADR-0303). That evening: the scenario checks of the dev device (#79, ADR-0304) and the base
-  images pinned by digest (#80, ADR-0305). The dev device runs main 78769b4, and since
-  2026-11-09 the compose file of `deploy.health-checks-and-start-order`, whose web UI waits for
-  the API also at boot (ADR-0306).
+  (ADR-0303). That evening: the scenario checks of the dev device (#79, ADR-0304), the base
+  images pinned by digest (#80, ADR-0305) and the database's write-ahead log (ADR-0306). The
+  dev device runs 78bb5b8 of `deploy.health-checks-and-start-order` since 2026-11-09: main
+  78769b4 with the compose file whose web UI waits for the API also at boot (ADR-0307), so not
+  yet the write-ahead log.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery).
@@ -38,15 +39,17 @@ significant step. Features and their state live in `feature-list.json`, decision
   `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
   `AGENTS.md` or `.claude/settings.json` is a stop.
 - Next, in this order:
-  1. `architecture.sqlite-write-cost` (the SD card), pushed on its branch, then its own deploy.
-     `deploy.digest-pinned-base-images` (#80, ADR-0305) is deployed and its supervisor build
-     reused the cached base; the entry passes once a build shows that after the tag's arm64 image
-     has moved upstream, and Dependabot has proposed a digest.
+  1. `architecture.sqlite-write-cost` (the SD card): the database's write-ahead log (ADR-0306),
+     merged into main, waits for a deploy of the supervisor and the measurement of a sign-in and
+     of a start with `scripts/dev/sd.sh measure` (Log). `deploy.digest-pinned-base-images` (#80,
+     ADR-0305) is deployed and its supervisor build reused the cached base; the entry passes once
+     a build shows that after the tag's arm64 image has moved upstream, and Dependabot has
+     proposed a digest.
   2. The host-level entries still open (the feature-pass skill's table): after the re-check of
      2026-11-08 after a reboot (Log), 12 more passed; the others need a device check first or, as
      `storage.pool-health`, a step the re-check could not show, as `shares.smb-conf-and-status`
      and `shares.edit-and-delete` the steps that the smb scenario check leaves out, checked by
-     hand, and `deploy.health-checks-and-start-order` its re-check after a reboot (ADR-0306; Log,
+     hand, and `deploy.health-checks-and-start-order` its re-check after a reboot (ADR-0307; Log,
      2026-11-09).
 
 ## Dev device
@@ -61,16 +64,17 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
 - Runs main 78769b4, deployed on 2026-11-08 at 22:29 UTC: both images built from the bases that
   ADR-0305 pins (the supervisor's runtime files are those of ebb1856, the web UI's those of
-  36a6c1b). On 2026-11-09 at 01:18 UTC the working tree of branch
-  `deploy.health-checks-and-start-order` was synced, whose only runtime file that differs from
-  main is `deploy/docker-compose.yml`, and the web UI was recreated with its new command
-  (ADR-0306), its image unchanged: the device checkout `/opt/unos` equals that tree. The deploys'
-  backup and rollback copies are in the main checkout's `tmp/dev/`. The device has no `unos`
-  unit: `deploy.sh up` starts its containers, and at boot dockerd does, by their restart policy.
-  Rebooted from the API twice on the morning of 2026-11-08, for the reboot checks of the IPv6
-  filter, and by the owner at about 22:57 UTC that day for the re-check of ADR-0018 (the boot of
-  22:59:48 UTC; it answered again at 23:00). Docker lists 11 dangling images, the old builds'
-  layers (about 351 MB that only they use): pruning them is the owner's call (ADR-0211).
+  36a6c1b). On 2026-11-09 at 01:18 UTC the working tree of `deploy.health-checks-and-start-order`
+  at 78bb5b8 was synced, whose only runtime file that differs from main 78769b4 is
+  `deploy/docker-compose.yml`, and the web UI was recreated with its new command (ADR-0307), its
+  image unchanged: the device checkout `/opt/unos` equals that tree. The write-ahead log of main
+  (ADR-0306) is not on the device yet. The deploys' backup and rollback copies are in the main
+  checkout's `tmp/dev/`. The device has no `unos` unit: `deploy.sh up` starts its containers, and
+  at boot dockerd does, by their restart policy. Rebooted from the API twice on the morning of
+  2026-11-08, for the reboot checks of the IPv6 filter, and by the owner at about 22:57 UTC that
+  day for the re-check of ADR-0018 (the boot of 22:59:48 UTC; it answered again at 23:00). Docker
+  lists 11 dangling images, the old builds' layers (about 351 MB that only they use): pruning them
+  is the owner's call (ADR-0211).
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest (`97728ea0...`, the one before it as `:rollback`),
   deploy-webui:latest (`d77b0aa7...`, likewise), lscr.io/linuxserver/transmission, alpine (the
@@ -125,10 +129,12 @@ Open owner actions:
 3. The RAM rootfs of `scripts/dev/linux-tests.sh`, gone since the reboots of 2026-11-08: making
    it creates a container (the command that `linux-tests.sh` prints).
 4. Who gets access to the share DATA (an SMB account for a regular user).
+5. A deploy of the supervisor for the SD measurements of `architecture.sqlite-write-cost`
+   (Log).
 
 ## Log
 
-### 2026-11-09: the web UI waits for the API also at boot (ADR-0306)
+### 2026-11-09: the web UI waits for the API also at boot (ADR-0307)
 
 - The re-check of 2026-11-08 after the reboot left step 2 of
   `deploy.health-checks-and-start-order` open: the dev device has no `unos` unit (systemd finds
@@ -138,7 +144,7 @@ Open owner actions:
   to the agent ("do it").
 - The web UI's `command` in both compose files now waits until
   `http://supervisor:8080/api/v1/health` answers (busybox wget without a proxy and without a
-  file, an error printed only when it changes) and then execs the image's CMD (ADR-0306).
+  file, an error printed only when it changes) and then execs the image's CMD (ADR-0307).
   `test_webui_waits_for_the_api_whoever_starts_it` failed first (no `command`), then passed, and
   fails for a loop that prints each try or a single `$`. In the running web UI on the device
   (busybox 1.37, `caddy` left out) the loop waited on a closed port and on an unknown name,
@@ -203,7 +209,7 @@ Open owner actions:
   and was never checked on the device; `deploy.health-checks-and-start-order`: at boot dockerd's
   restart policy starts both containers at once, the web UI 34 ms before the supervisor, and the
   web UI's first health check failed before it turned healthy, so step 2 holds for
-  `docker compose up` only (Open owner actions, 5).
+  `docker compose up` only (the fix: ADR-0307, 2026-11-09).
 - Not passed either: `shares.smb-conf-and-status` and `shares.edit-and-delete`, first recorded
   as passed. The re-check did not check by hand the steps of theirs that the smb scenario check
   leaves out (the feature-pass skill's table): step 4 of the first (a share section that UNOS
@@ -252,6 +258,66 @@ Open owner actions:
 - `deploy.digest-pinned-base-images` keeps `passes` false: its supervisor build reused the
   cached base, and step 3 asks for that once the tag's arm64 image has moved upstream (that
   morning only riscv64 had moved), step 2 for Dependabot's first digest pull request.
+
+### 2026-11-08: the database uses SQLite's write-ahead log (`architecture.sqlite-write-cost`)
+
+- The cause of a sign-in's 0.156 to 0.168 MiB on the SD card: `unos.db` kept SQLite's defaults,
+  the rollback journal with synchronous FULL. Counted with a VFS that counts SQLite's own file
+  operations, one login-history row's commit created, synced twice and deleted
+  `unos.db-journal`, synced its folder, and wrote and synced 4 pages of `unos.db`; every sync
+  makes ext4 commit its own journal. With the write-ahead log and synchronous NORMAL the same
+  commit, in the middle of the log, appends 3 pages (12,360 bytes) to `unos.db-wal`, changes 3
+  pages of `unos.db-shm` and syncs nothing.
+- The owner chose "WAL + NORMAL" out of three options, with its costs (ADR-0306, superseding
+  ADR-0078): a power cut can roll back the commits of its last seconds, security changes among
+  them; the first connection after every start makes `unos.db-shm` again, about 0.05 MiB, which
+  ADR-0214 now names as its one accepted exception ("Yes, an exception"). Synchronous FULL for
+  security changes only was offered and not chosen.
+- Backups stay one file with the rollback journal (a copy of a database in the log came out
+  marked for the log, and the restore refused it with 400); `update.sh` keeps `unos.db-wal`
+  beside its copy of a supervisor that was not running; a restore refuses a backup with pages of
+  another size before it changes anything (it failed with 500 after the copy kept before a
+  restore); at the stop a checkpoint copies the log into `unos.db` and keeps `unos.db-wal` and
+  `unos.db-shm`; a switch to the log that SQLite refuses leaves the connection in the rollback
+  journal with FULL, which reads as before (ADR-0251); `docs/RECOVERY.md` copies the database's
+  files as root and reads the copy, and `docs/INSTALL.md` says to delete `unos.db-wal` and
+  `unos.db-shm` before a `unos.db` is put back by hand.
+- Tests first: 12 new tests. Eight failed on the code before (the engine in `delete` and 2, pages
+  0 to 3 of `unos.db` written by a sign-in, no log, both backup copies marked for the log, the
+  restore's 400 and 500, the runbook's command on the mount), the backup of a stopped supervisor
+  failed before its fix, and the others caught their named mutations (no checkpoint at the stop,
+  or closing the pool there; no warning; a refused switch that raises, or sets NORMAL).
+- Reviewed in a fresh context (ADR-0017): no blocker, 2 major and 8 minor findings and 3 nits,
+  all fixed but one recorded. Fixed: a start on a full `/data` after a clean stop could not read
+  the database, as closing the pool deleted `unos.db-shm` (now the stop's checkpoint keeps it);
+  the runbook's `unos.db*` was expanded by the user's shell, which cannot enter Docker's folders
+  (now root's shell does); "syncs nothing" (the commit that starts the log again syncs it once);
+  the power-cut window, up to about 155 seconds while the log grows, not 120; the log's size
+  after a restore; NORMAL on the rollback journal after a refused switch; `update.sh`'s copy of a
+  stopped supervisor; a test docstring's reason, and the rule for a `unos.db` put back by hand;
+  ADR-0214's new line, moved from its Decision to its Consequences (the owner asked that ADR-0214
+  name the exception; its decision text is unchanged); the restore test's check of the file's
+  header; `make e2e-local`. Recorded: the in-app updater copies `unos.db` with `shutil.copy2`,
+  wrong in the log; it starts nothing today (`system.in-app-updater`).
+- `make check` passed (5874 backend tests, 121 skipped, 1 xfailed; svelte-check without errors,
+  the build), and `make e2e-local` alone (669 passed, 16 skipped): the stand-in's real supervisor
+  ran its database in the log, its restores kept copies with the rollback journal, and its stop
+  left an empty `unos.db-wal` and `unos.db-shm` beside `unos.db`. (A run beside `make check`
+  failed from its 386th test on: that build replaced `webui/build` while the stand-in served it.)
+- Committed as da7bb46, which names the decision ADR-0304. main took ADR-0304 for the scenario
+  checks (#79) and ADR-0305 for the base images (#80) first, so the merge of main renumbered this
+  branch's ADR to ADR-0306 (the adr skill). After the merge `make check` passed (5976 backend
+  tests, 121 skipped, 1 xfailed), and `make e2e-local` alone (669 passed, 16 skipped).
+- Not deployed. After the owner's deploy of the supervisor (no Dockerfile or requirement
+  changed), twice: `scripts/dev/api.py --forget-token`, then
+  `scripts/dev/sd.sh measure sign-in -- scripts/dev/api.py GET /auth/me` (the second sign-in is
+  in the middle of the log), against the 0.156 to 0.168 MiB of before; and the writes of a
+  supervisor start against the exception's 0.05 MiB.
+- Merged into main after the deploy record of main 78769b4 and the testparm test, each by a
+  merge commit pushed over SSH without a pull request: no client on the workstation was signed
+  in to GitHub's API, and the owner said "YOU CAN DO IT BY YOURSELF PERMISSION GRANTED". The
+  merge of main joined only PROGRESS.md by hand; `make check` passed on the tree of all three
+  (5976 backend tests, 121 skipped, 1 xfailed; svelte-check without errors, the build).
 
 ### 2026-11-08: the base images pinned by tag and digest
 

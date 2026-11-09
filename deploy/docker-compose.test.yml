@@ -75,7 +75,7 @@ services:
       supervisor:
         condition: service_healthy
     # As in docker-compose.yml, so that the test stack starts the web UI as an
-    # installed host does (ADR-0306); without a restart policy, only compose
+    # installed host does (ADR-0307); without a restart policy, only compose
     # starts it here.
     command:
       - /bin/sh

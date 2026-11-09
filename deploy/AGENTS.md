@@ -11,7 +11,7 @@
   `UNOS_DEV_UP_TIMEOUT` of `scripts/dev/deploy.sh` (700) must exceed (ADR-0176); the web UI's
   `command` waits for the API before it runs the CMD of `webui/Dockerfile`, because at boot
   dockerd starts the containers it still has at once, without `depends_on`: after a power cut,
-  and on a host without the `unos` unit, such as the dev device (ADR-0306);
+  and on a host without the `unos` unit, such as the dev device (ADR-0307);
   `UNOS_JWT_SECRET` stays empty so that each install generates its own (ADR-0028).
 - `docker-compose.test.yml` is the Docker test stack (project `unos-test`, ports 3443 and 3080 on
   127.0.0.1, the Playwright runner of the `test` profile), for a machine that runs Docker.
