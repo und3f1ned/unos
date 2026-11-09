@@ -16,10 +16,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   That morning: the dev device's inbound IPv6 filter (#75, ADR-0301), the web UI on a phone
   (#76, ADR-0302), and the device's NFS server with the device check of `shares.nfs-exports`
   (ADR-0303). That evening: the scenario checks of the dev device (#79, ADR-0304), the base
-  images pinned by digest (#80, ADR-0305) and the database's write-ahead log (ADR-0306). The
-  dev device runs 78bb5b8 of `deploy.health-checks-and-start-order` since 2026-11-09: main
-  78769b4 with the compose file whose web UI waits for the API also at boot (ADR-0307), so not
-  yet the write-ahead log.
+  images pinned by digest (#80, ADR-0305) and the database's write-ahead log (ADR-0306); on
+  2026-11-09 the web UI that waits for the API also at boot (ADR-0307). The dev device runs
+  main 12483dd, deployed on 2026-11-09 at 07:41 UTC.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery).
@@ -39,12 +38,13 @@ significant step. Features and their state live in `feature-list.json`, decision
   `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
   `AGENTS.md` or `.claude/settings.json` is a stop.
 - Next, in this order:
-  1. `architecture.sqlite-write-cost` (the SD card): the database's write-ahead log (ADR-0306),
-     merged into main, waits for a deploy of the supervisor and the measurement of a sign-in and
-     of a start with `scripts/dev/sd.sh measure` (Log). `deploy.digest-pinned-base-images` (#80,
-     ADR-0305) is deployed and its supervisor build reused the cached base; the entry passes once
-     a build shows that after the tag's arm64 image has moved upstream, and Dependabot has
-     proposed a digest.
+  1. `architecture.sqlite-write-cost` (the SD card): the database's write-ahead log (ADR-0306)
+     runs on the device since 2026-11-09, where a sign-in in the middle of the log wrote
+     0.082 MiB instead of 0.156 to 0.168 (Log). Step 3 asks for a few KiB, so the entry passes
+     once an ADR rewords that step to the measured writes, which is the owner's call.
+     `deploy.digest-pinned-base-images` (#80, ADR-0305) is deployed and its supervisor builds
+     reused the cached base; the entry passes once a build shows that after the tag's arm64 image
+     has moved upstream, and Dependabot has proposed a digest.
   2. The host-level entries still open (the feature-pass skill's table): after the re-check of
      2026-11-08 after a reboot (Log), 12 more passed, and `deploy.health-checks-and-start-order`
      after the reboot of 2026-11-09 (ADR-0307; Log); the others need a device check first or, as
@@ -54,7 +54,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-09, 07:30 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-09, 07:50 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -62,13 +62,11 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 78769b4, deployed on 2026-11-08 at 22:29 UTC: both images built from the bases that
-  ADR-0305 pins (the supervisor's runtime files are those of ebb1856, the web UI's those of
-  36a6c1b). On 2026-11-09 at 01:18 UTC the working tree of `deploy.health-checks-and-start-order`
-  at 78bb5b8 was synced, whose only runtime file that differs from main 78769b4 is
-  `deploy/docker-compose.yml`, and the web UI was recreated with its new command (ADR-0307), its
-  image unchanged: the device checkout `/opt/unos` equals that tree. The write-ahead log of main
-  (ADR-0306) is not on the device yet. The deploys' backup and rollback copies are in the main
+- Runs main 12483dd, deployed on 2026-11-09 at 07:41 UTC: the supervisor built from its runtime
+  files (the write-ahead log, ADR-0306) on the base that ADR-0305 pins; the web UI's image is
+  the one built for main 78769b4 on 2026-11-08 (the runtime files of 36a6c1b), with the command
+  of ADR-0307 since 01:18 UTC on 2026-11-09. The device checkout `/opt/unos` equals main's tree.
+  The deploys' backup and rollback copies are in the main
   checkout's `tmp/dev/`. The device has no `unos` unit: `deploy.sh up` starts its containers, and
   at boot dockerd does, by their restart policy. Rebooted from the API twice on the morning of
   2026-11-08, for the reboot checks of the IPv6 filter, by the owner at about 22:57 UTC that day
@@ -78,22 +76,24 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   images (the old builds' layers) and reclaimed only 134.9 kB, where this file had said about
   351 MB.
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
-  Images: deploy-supervisor:latest (`97728ea0...`, the one before it as `:rollback`),
+  Images: deploy-supervisor:latest (`a32d5759...` of 2026-11-09, `97728ea0...` as `:rollback`),
   deploy-webui:latest (`d77b0aa7...`, likewise), lscr.io/linuxserver/transmission, alpine (the
   final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base: Caddy 2.10.2 of
   January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files were deleted on
   2026-11-07.
 - Docker 29.1.5 with the containerd image store. The supervisor's base, python:3.11-slim
   `sha256:65bd3d9f...` (Python 3.11.18), is in BuildKit's build cache, not an image: the pins of
-  ADR-0305 are these two digests. The supervisor build of 22:28 UTC started from it, every step
-  of it CACHED.
+  ADR-0305 are these two digests. The supervisor builds of 2026-11-08, 22:28 UTC, and
+  2026-11-09, 07:41 UTC, started from it: every step of the first CACHED, of the second all but
+  `COPY src/`.
 - The audit log is `/data/audit/audit.jsonl` (ADR-0224); the old `/data/audit_log.json` was
   deleted.
 - Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220).
   The share DATA is served from /mnt/pools/data/shared (root:unos-smb 2770); no account has
   access to it yet. The regular account `test` stays for checks of a regular user's view.
 - Scenario checks (ADR-0304): `scripts/dev/scenario.sh all` passed on 2026-11-08 at about 17:15
-  UTC, at 22:33 UTC after the deploy and at 23:03 UTC after the reboot, and left none of its
+  UTC, at 22:33 UTC after the deploy and at 23:03 UTC after the reboot, and on 2026-11-09 at
+  07:43 UTC after the deploy of main 12483dd, and left none of its
   users, shares, volumes, folders or backups; the pool's trash `/mnt/pools/data/.unos-trash`
   (made at 00:05 UTC that night) is empty. The first run's short self-test of sda completed
   without error, as the two before it; sda's SMART status: PASSED. The RAM rootfs of
@@ -118,7 +118,13 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   02:55 UTC 0. Around the reboot: the old boot 36.0 MiB in its 8.3 hours, by 07:15 UTC;
   `check.sh` 0.039, the prune 5.371; the boot of 07:17:13 UTC 9.5 MiB by 07:21:37, the RAM
   rootfs's 1.148 among them; `check.sh` 0.023; the reads of the re-check 0.016, 0.141, 0, 0.016
-  and `check.sh` 0; `linux-tests.sh` 0.039.
+  and `check.sh` 0; `linux-tests.sh` 0.039. The deploy of main 12483dd 17.731 MiB (sync 1.633,
+  build-supervisor 12.836, up 3.262; `check.sh` 0.023 before it and 0.016 after it,
+  `deploy.sh status` 0.016, `sync --dry-run` 0); then the database's files read 0.016, 30
+  seconds idle 0 and 0, a sign-in right after the start 0.145, one in the middle of the log
+  0.082, a call with a cached token 0.020, a restart of the supervisor 1.125, `check.sh` 0.016
+  and `scripts/dev/scenario.sh all` 4.606 (files 0.434, volumes 0.559, smart 0.098, backups
+  0.449, smb 3.066).
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -134,10 +140,39 @@ Open owner actions:
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
 3. Who gets access to the share DATA (an SMB account for a regular user).
-4. A deploy of the supervisor for the SD measurements of `architecture.sqlite-write-cost`
-   (Log).
+4. Whether an ADR rewords step 3 of `architecture.sqlite-write-cost` (a sign-in writes a few
+   KiB) to the writes measured with the owner's choice of ADR-0306 (Log, 2026-11-09).
 
 ## Log
+
+### 2026-11-09: the deploy of main 12483dd and the SD writes of the write-ahead log
+
+- At the owner's word ("do it", to the deploy of `architecture.sqlite-write-cost` that waited
+  for their yes) deployed main 12483dd: the database's write-ahead log (ADR-0306) and the start
+  order of ADR-0307. `make check` passed on that tree (5978 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build). `deploy.sh status`: 6 runtime files
+  differed (the 4 of the supervisor that ADR-0306 changed, `deploy/update.sh` and a comment of
+  `deploy/docker-compose.yml`); the sync wrote 27 files and deleted the ADR's old name.
+- build-supervisor started from the pinned base on the device and took every step from the
+  cache but `COPY src/`: deploy-supervisor:latest `a32d5759...`. up recreated the supervisor and
+  kept the web UI, both healthy, post-up check OK. In the data volume `unos.db-wal` (0 bytes)
+  and `unos.db-shm` (32 KiB) appeared beside `unos.db` at the start.
+- Measured with `scripts/dev/sd.sh measure`, each sign-in after `scripts/dev/api.py
+  --forget-token`: a sign-in right after the start, which starts the log, 0.145 MiB; a sign-in
+  in the middle of the log 0.082 MiB, against 0.156 to 0.168 with the rollback journal; a call
+  with a cached token 0.020 MiB, as before; 30 seconds idle 0 MiB before and after. The two
+  sign-ins grew `unos.db-wal` to 24,752 bytes, 6 frames of 3 pages each, as ADR-0306 counted.
+  Each measurement syncs the file system before and after, so it counts the metadata that ext4
+  would otherwise commit once for all the requests of its 120 seconds.
+- `docker restart unos-supervisor` up to healthy, about 8 seconds: 1.125 MiB in all. The stop's
+  checkpoint rewrote `unos.db` and emptied `unos.db-wal`, and the start made `unos.db-shm`
+  again; Docker's own writes of a restart are part of the number, so it does not isolate the
+  0.05 MiB of ADR-0306's exception.
+- `scripts/dev/scenario.sh all` after it, from 07:43 UTC: every step of the five areas passed
+  (63), among them a plain and an encrypted backup of the database in the log; 4.606 MiB.
+- `architecture.sqlite-write-cost` keeps `passes` false: its step 3 asks for a few KiB, and the
+  owner's choice of ADR-0306 measures 0.082 MiB in the middle of the log. An ADR that rewords
+  the step is the owner's call (Open owner actions, 4).
 
 ### 2026-11-09: the reboot of 07:17 UTC: the web UI waited for the API at boot
 
