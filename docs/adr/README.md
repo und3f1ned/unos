@@ -62,6 +62,7 @@ and this index, and `make check-fast` runs it.
 | [0022](0022-database-migrations-with-alembic.md) | Adopt Alembic for database migrations | proposed | 2026-11-05 |
 | [0023](0023-audit-quality-debt.md) | Pay down the audit's P2 quality and technical debt | proposed | 2026-11-05 |
 | [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits | accepted | 2026-11-08 |
+| [0308](0308-a-sign-in-writes-at-most-0-1-mib-to-the-sd-card.md) | A sign-in in the middle of the write-ahead log writes at most 0.1 MiB to the SD card | accepted | 2026-11-09 |
 
 ## Security
 

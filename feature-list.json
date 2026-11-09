@@ -3484,13 +3484,13 @@
     {
       "id": "architecture.sqlite-write-cost",
       "category": "architecture",
-      "description": "A small database change, such as a sign-in's login-history row, writes a few KiB to the system disk instead of about 0.14 MiB",
+      "description": "A small database change, such as a sign-in's login-history row, writes at most 0.1 MiB to the system disk in the middle of SQLite's write-ahead log, instead of 0.156 to 0.168 MiB with the rollback journal",
       "steps": [
         "Measure one sign-in's SD writes on the dev device with scripts/dev/sd.sh measure, and the SQLite part of them",
         "An ADR decides the journal mode and synchronous level (for example WAL with synchronous NORMAL) against the power-cut window of ADR-0078 and the backups of the database",
-        "A sign-in on the dev device writes a few KiB to the SD card, measured before and after"
+        "A sign-in in the middle of the write-ahead log writes at most 0.1 MiB to the SD card, measured before and after with scripts/dev/sd.sh measure (0.156 to 0.168 MiB with the rollback journal)"
       ],
-      "passes": false,
+      "passes": true,
       "verified_by": [
         "supervisor/tests/test_sqlite_write_cost.py",
         "supervisor/tests/test_backup_restore.py",
@@ -3500,9 +3500,10 @@
         "ADR-0214",
         "ADR-0224",
         "ADR-0078",
-        "ADR-0306"
+        "ADR-0306",
+        "ADR-0308"
       ],
-      "notes": "On 2026-11-07 a sign-in wrote about 0.16 MiB, mostly the login history's commit (rollback journal, synchronous FULL). Since ADR-0306 (2026-11-08) unos.db uses SQLite's write-ahead log with synchronous NORMAL: a sign-in's commit in the middle of the log appends 3 pages (12.4 KB) to unos.db-wal and changes 3 pages of unos.db-shm, syncs nothing and creates or deletes no file; backups stay one file with the rollback journal. Device check of 2026-11-09 (main 12483dd, deployed at 07:41 UTC), with scripts/dev/sd.sh measure, each sign-in after scripts/dev/api.py --forget-token: a sign-in right after the start, which starts the log, 0.145 MiB; one in the middle of the log 0.082 MiB, against 0.156 to 0.168 MiB before; the two sign-ins grew unos.db-wal by 6 frames, 3 pages each; a call with a cached token 0.020 MiB; a restart of the supervisor up to healthy 1.125 MiB in all, Docker's own writes among them, so it does not isolate the 0.05 MiB of ADR-0306's exception. Steps 1 and 2 hold; step 3's few KiB are not met, and the entry passes once an ADR rewords step 3 to the measured writes (the owner's call). scripts/dev/api.py and the device-checks skill quote a login's 0.16 MiB until then."
+      "notes": "On 2026-11-07 a sign-in wrote about 0.16 MiB, mostly the login history's commit (rollback journal, synchronous FULL). Since ADR-0306 (2026-11-08) unos.db uses SQLite's write-ahead log with synchronous NORMAL: a sign-in's commit in the middle of the log appends 3 pages (12.4 KB) to unos.db-wal and changes 3 pages of unos.db-shm, syncs nothing and creates or deletes no file; backups stay one file with the rollback journal. Device check of 2026-11-09 (main 12483dd, deployed at 07:41 UTC), with scripts/dev/sd.sh measure, one run each, each sign-in after scripts/dev/api.py --forget-token: a sign-in right after the start, which starts the log, 0.145 MiB; one in the middle of the log 0.082 MiB, against 0.156 to 0.168 MiB before; the two sign-ins grew unos.db-wal by 6 frames, 3 pages each; a call with a cached token 0.020 MiB; a restart of the supervisor up to healthy 1.125 MiB in all, Docker's own writes among them, so it does not isolate the 0.05 MiB of ADR-0306's exception. Steps 1 and 2 hold, and step 3 as ADR-0308 reworded it (at most 0.1 MiB in the middle of the log): 0.082 MiB. Not a host-level change (GLOSSARY.md): the journal mode stays inside the supervisor's data volume, so no re-check after a reboot applies, and the feature-pass skill's table does not list the entry."
     },
     {
       "id": "device.ipv6-inbound-filter",

@@ -88,9 +88,10 @@ lists the rolled-back files as differing from the working tree.
 - `tmp/dev/backup` holds the device's JWT secret, password hashes and database: never show,
   copy or extract its files; only `deploy.sh rollback` reads them (ADR-0212, ADR-0223). Each
   backup deletes all but the newest 3.
-- Each API login writes about 0.16 MiB (measured on 2026-11-07: mostly the login history's
-  SQLite commit; the audit log only appends a line, ADR-0224), so `scripts/dev/api.py` keeps
-  its token in the device's RAM (ADR-0222).
+- Each API login writes about 0.08 MiB, the first after a supervisor start about 0.15 MiB
+  (measured on 2026-11-09: the login history's commit in the database's write-ahead log and
+  the file system's metadata, ADR-0308; the audit log only appends a line, ADR-0224), so
+  `scripts/dev/api.py` keeps its token in the device's RAM (ADR-0222).
 - The device's web ports do not answer this workstation's command-line tools: use
   `scripts/dev/api.py`, which calls the API on the device itself.
 - The device's checkout is not a git workspace: only its files are synced, its index and HEAD
