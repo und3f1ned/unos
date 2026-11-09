@@ -73,9 +73,10 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   at boot dockerd does, by their restart policy. Rebooted from the API twice on the morning of
   2026-11-08, for the reboot checks of the IPv6 filter, by the owner at about 22:57 UTC that day
   for the re-check of ADR-0018 (the boot of 22:59:48 UTC; it answered again at 23:00), and from
-  the API at the owner's word ("permission granted") at about 07:17 UTC on 2026-11-09 (the boot
-  of 07:17:13 UTC; ssh answered by 07:17:34). Since the prune before that reboot Docker lists no
-  dangling image (11 before, the old builds' layers, about 351 MB).
+  the API at the owner's word ("permission granted") at 07:16:57 UTC on 2026-11-09 (the boot of
+  07:17:13 UTC; ssh answered by 07:17:34). The prune before that reboot deleted the 11 dangling
+  images (the old builds' layers) and reclaimed only 134.9 kB, where this file had said about
+  351 MB.
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest (`97728ea0...`, the one before it as `:rollback`),
   deploy-webui:latest (`d77b0aa7...`, likewise), lscr.io/linuxserver/transmission, alpine (the
@@ -114,8 +115,10 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
 - SD writes on 2026-11-09: the web UI's deploy 3.265 MiB (sync 0.812, `up webui` 2.453, its
   backup 0); the read-only probes before it (the unit and the containers 0.031, busybox's wget
   0.016, 0 and 0, the image list 0.266) and after it 0.023, `check.sh` 0.055 and 0; a probe at
-  02:55 UTC 0; the boot of 07:17:13 UTC 9.513 MiB by 07:22:29, the RAM rootfs's container among
-  them; the reads of the re-check after it 0.016, 0.141, 0, 0.016 and `check.sh` 0.
+  02:55 UTC 0. Around the reboot: the old boot 36.0 MiB in its 8.3 hours, by 07:15 UTC;
+  `check.sh` 0.039, the prune 5.371; the boot of 07:17:13 UTC 9.5 MiB by 07:21:37, the RAM
+  rootfs's 1.148 among them; `check.sh` 0.023; the reads of the re-check 0.016, 0.141, 0, 0.016
+  and `check.sh` 0; `linux-tests.sh` 0.039.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -138,9 +141,11 @@ Open owner actions:
 
 ### 2026-11-09: the reboot of 07:17 UTC: the web UI waited for the API at boot
 
-- At the owner's word ("permission granted") the 11 dangling images were pruned, the device was
-  rebooted from the API (the boot of 07:17:13 UTC; ssh answered by 07:17:34) and the RAM rootfs
-  of `scripts/dev/linux-tests.sh` was made again.
+- At the owner's word ("permission granted"), each step measured with `sd.sh`: `check.sh` OK
+  before (0.039 MiB); `docker image prune -f` deleted the 11 dangling images and reclaimed
+  134.9 kB (5.371 MiB); the reboot from the API at 07:16:57 UTC (the boot of 07:17:13 UTC; ssh
+  answered by 07:17:34); the RAM rootfs of `scripts/dev/linux-tests.sh` made again at 07:21:13
+  (1.148 MiB); `check.sh` OK after it (0.023 MiB).
 - The re-check of `deploy.health-checks-and-start-order` after the reboot (ADR-0018), with 78bb5b8
   on the device: dockerd started both containers at once again (07:17:05 by the clock before
   timesyncd set it at 07:17:28). The web UI's command logged one wait, `waiting for the
@@ -148,8 +153,12 @@ Open owner actions:
   Caddy's first line came at 07:17:34.27 UTC, 1.5 s after the supervisor's `Application startup
   complete` (07:17:32.78). Both containers healthy with no restart, Caddy the web UI's PID 1, the
   health checks without credentials, `check.sh` OK: the entry passes (ADR-0307).
-- The boot wrote 9.513 MiB by 07:22:29 UTC, the RAM rootfs's container among them; the
-  re-check's reads 0 to 0.141 MiB.
+- The old boot wrote 36.0 MiB in its 8.3 hours; the new one 9.5 MiB by 07:21:37 UTC, the RAM
+  rootfs's 1.148 among them; the re-check's reads 0 to 0.141 MiB.
+- `scripts/dev/linux-tests.sh` on the tree of 195f7cb, 07:27 to 07:33 UTC (0.039 MiB): 5266
+  passed, 324 skipped. Its 29 failures and 456 errors all come from the chroot of the supervisor
+  image, which has no git (466), no make (18) and no pty device (1): the tests of the guard and
+  of the repository's tooling, and two of `deploy/reset-admin.sh`. No other test failed.
 
 ### 2026-11-09: the web UI waits for the API also at boot (ADR-0307)
 
