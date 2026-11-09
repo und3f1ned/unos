@@ -224,7 +224,9 @@ Open owner actions:
   showed none (the scheduled scrub of the folder shows it now); the progress and the last scrub
   are now steps' facts; the ADR names the clean-up's cancel of another scrub, the smallest pool,
   the rate that the wait needs and the Scheduler's last 100 runs.
-- RESULTS
+- `make check` passed on the tree merged with main 0b29a40 (6065 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build). The check runs on the device with the next
+  deploy.
 
 ### 2026-11-09: the logs API has one entry endpoint for every source
 
