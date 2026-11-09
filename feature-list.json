@@ -1232,7 +1232,7 @@
         "supervisor/tests/test_share_api.py",
         "webui/tests/shares.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0074",
         "ADR-0087",
@@ -1241,7 +1241,7 @@
         "ADR-0092",
         "ADR-0157"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: the device's testparm accepted the rendered files, a restart changed no file). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps, and the boot's restart of the supervisor changed no file: smb.conf byte-identical across the reboot, fstab, the export file and the import backup untouched, no apply in the supervisor's log; GET /shares/smb-status reports no problem. Open: steps 4 and 5 on the device, which scripts/dev/scenario.sh smb leaves out (the feature-pass skill's table) and the re-check did not check by hand: a share section that UNOS did not write, copied to smb.conf.unos-replaced and reported before an apply (step 4), and a problem shown as an alert of the status panel on Shares (step 5). A fresh-context review found the gap on 2026-11-09, and passes went back to false."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: the device's testparm accepted the rendered files, a restart changed no file). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps, and the boot's restart of the supervisor changed no file: smb.conf byte-identical across the reboot, fstab, the export file and the import backup untouched, no apply in the supervisor's log; GET /shares/smb-status reports no problem. Steps 4 and 5, which scripts/dev/scenario.sh smb leaves out (the feature-pass skill's table), by hand on 2026-11-09 with the runtime files of main 12483dd, before and after the reboot of 12:22 UTC (ADR-0018). Step 4 as ADR-0092 decides it (copied before an apply, reported after it): smb.conf edited by hand (UNOS's header replaced by a comment, a share section [unoscheck<hex>hand] with available = no appended); a share's create through the API applied smb.conf, which first copied the hand-edited file byte for byte to smb.conf.unos-replaced (root's, mode 600) and then installed UNOS's file (its header, [global], one section per served share); GET /shares/smb-status then named the copied section until the supervisor restarted. Before the apply the status named only the file as not UNOS's (ADR-0249), because its header was gone; with the header kept, nothing is reported before an apply. Step 5: the status answered no problem as found and after each clean-up, and named each problem on its own: the file not UNOS's, the copied section, and a share that was not served (the check of shares.edit-and-delete); the Shares page prints each problem of that answer in its error alert, which webui/tests/shares.spec.ts asserts on the stand-in (ADR-0215). The panel itself was not opened on the device, whose web UI runs the panel code of main (webui/ differs only in its Dockerfiles). After the clean-up smb.conf was byte-identical to how the check found it; the boot did not write it, a restart of the supervisor after the second check left it unchanged (same bytes and mtime), and the status had no problem after either."
     },
     {
       "id": "shares.smb-conf-import",
@@ -1280,12 +1280,12 @@
         "supervisor/tests/test_share_api.py",
         "webui/tests/shares.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0134",
         "ADR-0135"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: access changed with PATCH, the test share deleted and its folder kept). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (a comment saved with its version and a stale version refused with 409, the access lowered, removed and given back, Delete keeping the share's folder with its files). Open: step 3 on the device, which scripts/dev/scenario.sh smb leaves out (the feature-pass skill's table) and the re-check did not check by hand: a share that is not served gets access only together with a new folder. A fresh-context review found the gap on 2026-11-09, and passes went back to false."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: access changed with PATCH, the test share deleted and its folder kept). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (a comment saved with its version and a stale version refused with 409, the access lowered, removed and given back, Delete keeping the share's folder with its files). Step 3, which scripts/dev/scenario.sh smb leaves out (the feature-pass skill's table), by hand on 2026-11-09 with the runtime files of main 12483dd, before and after the reboot of 12:22 UTC (ADR-0018): a share made through the API, its folder replaced on the host by a symbolic link, so that UNOS did not serve the share (\"Share path must not contain symbolic links (...)\"; smb.conf kept its section until the next apply); a PATCH with the expected version and read access for the regular user test was refused with 400 and that reason and changed nothing (version 1, no access, smb.conf unchanged); the same PATCH with a new folder was saved as version 2, made the folder root:unos-smb 2770, and the share was served with its section at that folder (test's entry saved, not effective while test's SMB is off: valid users = root). The share, the link and the folders were removed again."
     },
     {
       "id": "shares.repair-permissions",
