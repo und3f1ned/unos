@@ -894,6 +894,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   for the whole scrub, hours on a large pool, and blocked the whole API
   meanwhile: the background process of btrfs kept open the output that UNOS
   read to its end. Both now return as soon as the scrub runs.
+- For about 6 seconds after Start Scrub, until btrfs had recorded the new
+  scrub, the Storage page showed no scrub and stopped following it; a second
+  Start Scrub then failed with "Scrub is already running". A scrub now shows
+  as running from its start.
 - Resetting the error counters of a pool
   (`POST /api/v1/health/raid/<pool>/reset-stats`) ran btrfs on the event loop
   without a time limit, blocking the whole API on a hung pool, and took any

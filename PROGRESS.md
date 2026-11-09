@@ -211,6 +211,40 @@ Open owner actions:
   build. Its first run, without `webui/node_modules` in the worktree, failed in its frontend part
   and skipped the 87 backend tests that need them.
 
+### 2026-11-09: a scrub runs from its start, before btrfs records it (ADR-0313)
+
+- The device check of `storage.scrub-needs-mounted-pool` met it again: for about 6 s after a
+  start the API answered the scrub as idle, which the notes of `storage.scrub` had seen on
+  2026-11-08 ("idle for a moment"). Measured on the dev device: Start Scrub's answer and the
+  requests after it said idle for 5.9 s, until the process that runs the scrub first reported its
+  progress (btrfs-progs does that every 5 s); `btrfs scrub status` in the supervisor's container
+  printed "no stats available" 0.8 and 3.4 s after a start, followed by the "Time left" and "ETA"
+  lines that it prints only for a scrub that runs. The Storage page follows a scrub only while an
+  answer says running, so it stopped following a scrub that ran, and a second Start Scrub failed
+  with "Scrub is already running".
+- `get_scrub_status` answers a scrub whose output has those lines as running, also below "no stats
+  available", and `start_scrub` answers running when the status read right after btrfs accepted
+  the start says idle (ADR-0313, which superseded ADR-0272 and restates its rules). Tests first
+  (ADR-0186): the status of a scrub that btrfs has not recorded yet, with the device's output, and
+  `test_start_answers_running_before_btrfs_reports_the_scrub` failed on the old code. The page
+  needs no change: it shows a running scrub without a bar until btrfs reports bytes scrubbed. A
+  first version kept the time of each start in memory and answered "no stats available" as
+  running for 15 s after it; btrfs's own lines made that unneeded, also for a scrub started
+  outside UNOS.
+- Two fresh-context reviews: the first, of the version with the times in memory, was stopped
+  when btrfs's own lines were found. The second found nothing that blocks; fixed from it: the
+  copy of a disk replace, which the kernel runs as a scrub of the source disk, shows as no scrub
+  when no record shows it (`btrfs replace status -1`: Cancel Scrub would cancel the replace), a
+  cancel that btrfs did answers aborted when the status then says idle, and the docs of the
+  endpoints, the schema and the web UI's type. Recorded, not fixed: a replace while the container
+  keeps the record of an earlier scrub still shows as a running scrub (ADR-0313); UNOS starts no
+  replace. The replace's output is btrfs-progs' format, not seen on the dev device, which has no
+  spare disk. `storage.scrub` passes again only after the fix's device check before and after a
+  reboot.
+- `make check` passed on the tree merged with main 5b55acd (6040 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build), and `webui/tests/storage.spec.ts` on the
+  stand-in (41 passed).
+
 ### 2026-11-09: two host-level entries pass on the device checks of main 31ac73b
 
 - At the owner's word to work on through the features ("I allow everything", in translation),
