@@ -18,8 +18,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   (ADR-0303). That evening: the scenario checks of the dev device (#79, ADR-0304), the base
   images pinned by digest (#80, ADR-0305) and the database's write-ahead log (ADR-0306); on
   2026-11-09 the web UI that waits for the API also at boot (ADR-0307), and the write-ahead
-  log's device check, after which a sign-in writes at most 0.1 MiB (ADR-0308). The dev device
-  runs main 12483dd, deployed on 2026-11-09 at 07:41 UTC.
+  log's device check, after which a sign-in writes at most 0.1 MiB (ADR-0308), and the steps
+  of two SMB entries that the scenario check leaves out, checked by hand before and after a
+  reboot. The dev device runs main 12483dd, deployed on 2026-11-09 at 07:41 UTC.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery).
@@ -43,15 +44,18 @@ significant step. Features and their state live in `feature-list.json`, decision
      reused the cached base; the entry passes once a build shows that after the tag's arm64 image
      has moved upstream, and Dependabot has proposed a digest.
   2. The host-level entries still open (the feature-pass skill's table): after the re-check of
-     2026-11-08 after a reboot (Log), 12 more passed, and `deploy.health-checks-and-start-order`
-     after the reboot of 2026-11-09 (ADR-0307; Log); the others need a device check first or, as
-     `storage.pool-health`, a step the re-check could not show, as `shares.smb-conf-and-status`
-     and `shares.edit-and-delete` the steps that the smb scenario check leaves out, checked by
-     hand.
+     2026-11-08 after a reboot (Log), 12 more passed, `deploy.health-checks-and-start-order`
+     after the reboot of 2026-11-09 (ADR-0307; Log), and `shares.smb-conf-and-status` and
+     `shares.edit-and-delete` with the steps checked by hand before and after the reboot of
+     12:22 UTC that day (Log); the others need a device check first or, as
+     `storage.pool-health`, a step the re-check could not show.
+  3. The checks by hand of 2026-11-09 (Log) become steps of the smb scenario check
+     (`scripts/dev/scenario.py`), as the feature-pass skill asks of a check by hand that is
+     repeated: a script of the session ran them before and after the reboot.
 
 ## Dev device
 
-State on 2026-11-09, 07:50 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-09, 12:25 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -62,16 +66,19 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
 - Runs main 12483dd, deployed on 2026-11-09 at 07:41 UTC: the supervisor built from its runtime
   files (the write-ahead log, ADR-0306) on the base that ADR-0305 pins; the web UI's image is
   the one built for main 78769b4 on 2026-11-08 (the runtime files of 36a6c1b), with the command
-  of ADR-0307 since 01:18 UTC on 2026-11-09. The device checkout `/opt/unos` equals main's tree.
+  of ADR-0307 since 01:18 UTC on 2026-11-09. The device checkout `/opt/unos` equals the tree of
+  main 12483dd; main's later commits change no runtime file (`deploy.sh status`, 12:16 UTC).
   The deploys' backup and rollback copies are in the main
   checkout's `tmp/dev/`. The device has no `unos` unit: `deploy.sh up` starts its containers, and
   at boot dockerd does, by their restart policy. Rebooted from the API twice on the morning of
   2026-11-08, for the reboot checks of the IPv6 filter, by the owner at about 22:57 UTC that day
   for the re-check of ADR-0018 (the boot of 22:59:48 UTC; it answered again at 23:00), and from
   the API at the owner's word ("permission granted") at 07:16:57 UTC on 2026-11-09 (the boot of
-  07:17:13 UTC; ssh answered by 07:17:34). The prune before that reboot deleted the 11 dangling
-  images (the old builds' layers) and reclaimed only 134.9 kB, where this file had said about
-  351 MB.
+  07:17:13 UTC; ssh answered by 07:17:34), and at 12:22:52 UTC that day for the SMB steps
+  checked by hand, at the owner's word ("Yes, check") (the boot of 12:23:08 UTC by `uptime -s`;
+  ssh answered by 12:23:24, both containers healthy by 12:23:37). The prune before the reboot of
+  07:17 UTC deleted the 11 dangling images (the old builds' layers) and reclaimed only 134.9 kB,
+  where this file had said about 351 MB.
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest (`a32d5759...` of 2026-11-09, `97728ea0...` as `:rollback`),
   deploy-webui:latest (`d77b0aa7...`, likewise), lscr.io/linuxserver/transmission, alpine (the
@@ -94,8 +101,9 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   users, shares, volumes, folders or backups; the pool's trash `/mnt/pools/data/.unos-trash`
   (made at 00:05 UTC that night) is empty. The first run's short self-test of sda completed
   without error, as the two before it; sda's SMART status: PASSED. The RAM rootfs of
-  `scripts/dev/linux-tests.sh` (560 MiB in `/dev/shm`) was made again after the boot of
-  2026-11-09, 07:17 UTC; every reboot removes it.
+  `scripts/dev/linux-tests.sh` (560 MiB in `/dev/shm`), made again after the boot of
+  2026-11-09, 07:17 UTC, is gone since the reboot of 12:22 UTC; every reboot removes it, and
+  `linux-tests.sh` prints the owner action that makes it again.
 - Network: global IPv6 from a Hurricane Electric tunnel prefix. Since 2026-11-08 the services
   answer over IPv6 only the LAN (link-local, unique-local and the LAN's global prefix), and the
   BitTorrent port 51413 everyone: the table `ip6 unos_ipv6_inbound`, loaded at boot by
@@ -121,7 +129,16 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   seconds idle 0 and 0, a sign-in right after the start 0.145, one in the middle of the log
   0.082, a call with a cached token 0.020, a restart of the supervisor 1.125, `check.sh` 0.016
   and `scripts/dev/scenario.sh all` 4.606 (files 0.434, volumes 0.559, smart 0.098, backups
-  0.449, smb 3.066).
+  0.449, smb 3.066). The SMB steps checked by hand: the reads before them (`check.sh` 0.023,
+  `deploy.sh status` 0, the Samba files 0.031, the status, the shares and the users 0.020
+  each); two attempts that stopped on errors of the session's script, 0.016 and 0.230 (the
+  second with its hand edit of smb.conf and its restore); the check before the reboot 1.082 (a
+  share's create 0.242, the PATCH with a new folder 0.203, the delete with the share list read
+  before it 0.219); `check.sh` 0.016 before the reboot and 0.016 after it, the reboot call
+  0.020, the boot 8.5 MiB by 12:23:37 (the reboot script's polls over ssh among them, not
+  measured on their own), the first call after it with its sign-in 0.133, the share list
+  0.020; the check after the reboot 2.308, the restart of the supervisor's 1.230 among them;
+  `check.sh` 0.016 at the end, 11.0 MiB since the boot.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -139,6 +156,53 @@ Open owner actions:
 3. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-09: two SMB entries pass the steps checked by hand
+
+- Asked whether to check by hand on the device the steps of `shares.smb-conf-and-status` (4 and
+  5) and `shares.edit-and-delete` (3) that `scripts/dev/scenario.sh smb` leaves out (the
+  feature-pass skill's table), told that the checks change the device and need a reboot, the
+  owner answered "Yes, check" (in translation). The device runs the runtime files of main
+  (`deploy.sh status`). A script of the session ran each step through `scripts/dev/` under
+  `sd.sh measure` and printed PASS or FAIL with its MiB; it removed all it made, also after a
+  failed step.
+- Step 4, as ADR-0092 decides it (copied before an apply, reported after it): smb.conf edited by
+  hand (UNOS's header replaced by a comment, a share section `[unoscheck<hex>hand]` with
+  `available = no` appended, so that Samba served nothing new). The create of a share through
+  the API applied smb.conf: it copied the hand-edited file byte for byte to
+  `smb.conf.unos-replaced` (root's, mode 600) and installed UNOS's file with its header,
+  [global], [DATA] and the new share's section; GET /shares/smb-status then named the copied
+  section, until the supervisor restarted. Before the apply the status named only the file as
+  not UNOS's (ADR-0249), because its header was gone: with the header kept, nothing is reported
+  before an apply.
+- Step 5: the status answered no problem as found and after each clean-up, and named each
+  problem on its own: the file that is not UNOS's, the copied section, and the share of step 3
+  while it was not served. The Shares page prints each problem of this answer in its error
+  alert, which `webui/tests/shares.spec.ts` asserts on the stand-in (ADR-0215); the panel itself
+  was not opened on the device, whose web UI runs the panel code of main (`webui/` differs only
+  in its Dockerfiles).
+- Step 3: the share's folder replaced on the host by a symbolic link, so that UNOS did not serve
+  the share ("Share path must not contain symbolic links (...)"; smb.conf kept its section until
+  the next apply). A PATCH with the expected version and read access for the regular user `test`
+  was refused with 400 and that reason and changed nothing (version 1, no access, smb.conf
+  unchanged); the same PATCH with a new folder was saved as version 2, made the folder
+  root:unos-smb 2770 and served the share there (`test`'s entry saved, not effective while its
+  SMB is off: `valid users = root`). Then the share, the link and the folders went.
+- Before the reboot (from 12:20:49 UTC) every step passed, 1.082 MiB. Rebooted from the API at
+  12:22:52 UTC: smb.conf byte-identical and not written by the boot, the status without a
+  problem. After the reboot (from 12:23:57 UTC) every step passed again, 2.308 MiB; a restart of
+  the supervisor at the end (`docker restart`, healthy after about 8 seconds) left smb.conf
+  unchanged (same bytes and mtime; step 3 of `shares.smb-conf-and-status`) and the status
+  without a problem. smb.conf ends byte-identical to how the checks found it, rewritten at
+  12:24:22 UTC by the last delete's apply. `check.sh` OK before and after. Both entries pass.
+- The first two attempts stopped on errors of the session's script, not of UNOS: the first only
+  read the device; the second edited smb.conf by hand, and its clean-up put the file back with
+  the hash it had found.
+- A fresh-context review (ADR-0017) found no step unmet. Fixed from it: "wrote no file" for the
+  restart, which compared smb.conf only; step 4's reading of ADR-0092 and what the status names
+  before an apply; that the panel was not opened on the device; the caveats of step 3; the MiB
+  of every read; Next item 3. `make check` passed (5978 backend tests, 121 skipped, 1 xfailed;
+  svelte-check without errors, the build).
 
 ### 2026-11-09: a sign-in writes at most 0.1 MiB in the middle of the log (ADR-0308)
 
