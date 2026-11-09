@@ -38,12 +38,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # bcrypt only ever used the first 72 bytes: the passlib-based code before
-    # this one silently truncated longer passwords when hashing them. Truncate
-    # the same way here so those users can still log in with the full password
-    # they chose (bcrypt>=5 raises instead of truncating). New passwords over
-    # the limit are rejected by the request schemas.
-    secret = plain_password.encode("utf-8")[:MAX_PASSWORD_BYTES]
+    # Checked as given (ADR-0315): no password longer than bcrypt's 72 bytes is
+    # ever hashed (the request schemas refuse it), so such a password matches no
+    # hash, also not the one of its first 72 bytes.
+    secret = plain_password.encode("utf-8")
+    if len(secret) > MAX_PASSWORD_BYTES:
+        return False
     try:
         return bcrypt.checkpw(secret, hashed_password.encode("ascii"))
     except (TypeError, ValueError):

@@ -71,7 +71,7 @@ and this index, and `make check-fast` runs it.
 | [0005](0005-device-access-with-sshpass-on-the-command-line.md) | Device access uses sshpass with the password on the command line | superseded by [0212](0212-device-secrets-in-dev-env.md) | 2026-01-24 |
 | [0024](0024-credentials-stay-with-the-owner.md) | Credentials and the device's security settings are changed only by the owner | accepted | 2026-11-05 |
 | [0025](0025-https-from-a-local-ca-without-hsts.md) | The web UI is served over HTTPS from Caddy's local CA, with a CSP and without HSTS | accepted | 2026-11-05 |
-| [0026](0026-pyjwt-and-bcrypt-with-pinned-dependencies.md) | PyJWT and bcrypt replace python-jose and passlib, and dependencies are pinned | accepted | 2026-11-05 |
+| [0026](0026-pyjwt-and-bcrypt-with-pinned-dependencies.md) | PyJWT and bcrypt replace python-jose and passlib, and dependencies are pinned | superseded by [0315](0315-pyjwt-and-bcrypt-check-passwords-as-given-and-dependencies-are-pinned.md) | 2026-11-05 |
 | [0027](0027-smaller-phase-0-hardening.md) | QR codes for 2FA are drawn locally, logs show as text, and token lifetimes are bounded | accepted | 2026-11-05 |
 | [0062](0062-limits-before-authentication.md) | Request bodies and WebSocket messages are limited before authentication | accepted | 2026-11-06 |
 | [0063](0063-uvicorn-header-and-connection-limits.md) | Limit uvicorn's request headers and connections after measuring the cost | proposed | 2026-11-06 |
@@ -84,6 +84,7 @@ and this index, and `make check-fast` runs it.
 | [0236](0236-audit-log-filtered-alike-and-shown-on-an-administrator-page.md) | The audit log is listed, counted and exported with one set of filters and shown on an administrator page | superseded by [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | 2026-11-07 |
 | [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page | accepted | 2026-11-07 |
 | [0286](0286-the-audit-logs-lock-holds-across-processes.md) | The audit log's lock holds across processes, through a file lock that the emergency command line takes too | accepted | 2026-11-08 |
+| [0315](0315-pyjwt-and-bcrypt-check-passwords-as-given-and-dependencies-are-pinned.md) | PyJWT and bcrypt check passwords as given, and dependencies are pinned | accepted | 2026-11-09 |
 
 ## Auth
 
