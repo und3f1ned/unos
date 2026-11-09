@@ -147,8 +147,8 @@ class ScrubStatus(BaseModel):
     pool: str
     # As btrfs scrub status prints it: "running", "finished", "aborted" (cancelled),
     # "interrupted" (ended neither by finishing nor by a cancel, for example because the btrfs
-    # process that ran it was killed); "idle": no scrub recorded, also after a restart of the
-    # supervisor, which forgets the last one (ADR-0171).
+    # process that ran it was killed); "idle": no scrub recorded and none running, also after a
+    # restart of the supervisor, which forgets the last one (ADR-0171).
     status: str
     duration: float | None = None  # seconds
     bytes_scrubbed: int | None = None

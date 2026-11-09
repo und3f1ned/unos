@@ -880,13 +880,16 @@ class TestScrubStatus:
 
     @pytest.fixture
     def btrfs_reports(self, monkeypatch):
-        """host.run_in_container as btrfs: ``scrub status`` prints SCRUB_OUTPUT[btrfs_reports.state]."""
-        reports = SimpleNamespace(state="never", commands=[])
+        """host.run_in_container as btrfs: ``scrub status`` prints SCRUB_OUTPUT[btrfs_reports.state],
+        ``replace status -1`` prints btrfs_reports.replace."""
+        reports = SimpleNamespace(state="never", replace="Never started\n", commands=[])
 
         def run(cmd, **kwargs):
             reports.commands.append(cmd)
             if cmd[:3] == ["btrfs", "scrub", "status"]:
                 return subprocess.CompletedProcess(cmd, 0, SCRUB_OUTPUT[reports.state], "")
+            if cmd[:3] == ["btrfs", "replace", "status"]:
+                return subprocess.CompletedProcess(cmd, 0, reports.replace, "")
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr(host, "run_in_container", run)
@@ -922,7 +925,33 @@ class TestScrubStatus:
         assert response.status_code == 200, response.text
         assert response.json() == {"pool": "data", **expected}
         mountpoint = os.path.join(pools.settings.pools_base_path, "data")
-        assert btrfs_reports.commands == [["btrfs", "scrub", "status", mountpoint]]
+        # A running scrub that no record shows could be the copy of a disk replace (ADR-0313).
+        asked_for_a_replace = [["btrfs", "replace", "status", "-1", mountpoint]] if state == "started" else []
+        assert btrfs_reports.commands == [["btrfs", "scrub", "status", mountpoint]] + asked_for_a_replace
+
+    def test_the_copy_of_a_disk_replace_is_no_scrub(self, btrfs_reports):
+        """The kernel runs the copy of ``btrfs replace`` as a scrub of the source disk: btrfs scrub
+        status prints it as running below "no stats available". It is answered idle, so that the
+        page offers no Cancel Scrub, which would cancel the replace (ADR-0313)."""
+        btrfs_reports.state = "started"
+        btrfs_reports.replace = "12.3% done, 0 write errs, 0 uncorr. read errs\n"
+
+        with admin_client() as client:
+            response = client.get("/api/v1/storage/pools/data/scrub")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "idle"
+
+    def test_a_cancel_before_btrfs_recorded_the_scrub_answers_aborted(self, btrfs_reports):
+        """btrfs cancelled a scrub in its first seconds, before it recorded the scrub: the status
+        then says that none is recorded or runs, and the answer is aborted (ADR-0313)."""
+        btrfs_reports.state = "never"
+
+        with admin_client() as client:
+            response = client.delete("/api/v1/storage/pools/data/scrub")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "aborted"
 
     def test_start_answers_the_progress_btrfs_reports_then(self, btrfs_reports):
         btrfs_reports.state = "running"

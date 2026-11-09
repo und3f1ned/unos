@@ -28,14 +28,18 @@ questions; I allow everything", in translation, 2026-11-09), the agent fixed it.
   finishing nor by a cancel, for example because the btrfs process that ran it was killed). A
   scrub whose output has the "Time left" or "ETA" line runs, also below "no stats available":
   then it is answered running, with the sizes and the rate btrfs prints and without a start time
-  or a duration. Idle is "no stats available" without those lines: no scrub recorded and none
-  running. `errors` is the sum of the counts on the "Error summary" line (read, super, verify and
+  or a duration. The kernel runs the copy of a disk replace as a scrub of the source disk, which
+  no record shows: below "no stats available", those lines count only when `btrfs replace status
+  -1` reports no replace that runs ("x.y% done"), so that the page offers no Cancel Scrub, which
+  would cancel the replace; when btrfs cannot tell, they count. Idle is "no stats available"
+  without a scrub that runs: no scrub recorded and none running. `errors` is the sum of the counts on the "Error summary" line (read, super, verify and
   csum errors), 0 for "no errors found". When btrfs fails to report the status, the endpoint
   answers 500 "Scrub status failed: <btrfs's error>", and when it does not answer within
   `SCRUB_COMMAND_TIMEOUT`, 500 as well (ADR-0290).
 - Right after btrfs accepted a start, `start_scrub` answers running when the status says idle or
   cannot be read: the process that runs the scrub may not have reached the kernel yet. Right
-  after a cancel, a status that cannot be read is answered aborted.
+  after a cancel that btrfs did, `cancel_scrub` answers aborted when the status says idle or
+  cannot be read: the scrub ended before btrfs recorded it, or its record is not readable.
 - The pool card (`webui/src/routes/storage/+page.svelte`) shows a running scrub with its progress
   (the bar named "Scrub progress", bytes, percent, rate and duration, once btrfs reports bytes
   scrubbed); a finished one as "Last scrub: No errors" or "Last scrub: N error(s)"; an aborted one
@@ -47,7 +51,9 @@ questions; I allow everything", in translation, 2026-11-09), the agent fixed it.
   reason, instead of the last one, and asked for again at the next load of the page; the last one
   still decides the button, so that a scrub that was running can be cancelled.
 - Tests: `supervisor/tests/test_storage.py` (`TestScrubStatus`, with btrfs's output of a scrub it
-  has not recorded yet and `test_start_answers_running_before_btrfs_reports_the_scrub`),
+  has not recorded yet, `test_start_answers_running_before_btrfs_reports_the_scrub`,
+  `test_the_copy_of_a_disk_replace_is_no_scrub` and
+  `test_a_cancel_before_btrfs_recorded_the_scrub_answers_aborted`),
   `webui/tests/storage.spec.ts` (`Scrub (fake data)`, on route fakes).
 
 ## Consequences
@@ -55,6 +61,9 @@ questions; I allow everything", in translation, 2026-11-09), the agent fixed it.
 - A scrub started outside UNOS, on the host's command line, shows as running as soon as the
   container's btrfs prints its time left, as one that UNOS started does; its record stays the
   host's.
+- A disk replace that runs while the container keeps the record of an earlier scrub still shows
+  as a running scrub, since btrfs then prints that record as running, and Cancel Scrub would
+  cancel the replace. UNOS starts no replace; one runs only from the host's command line.
 - A cancelled or interrupted scrub never passes for a check of the whole pool: Scrub starts a new
   one (btrfs's resume is not offered).
 - A restart of the supervisor, also with the host, forgets the last result (ADR-0171): a scrub that

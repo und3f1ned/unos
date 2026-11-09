@@ -193,7 +193,7 @@ export function quotaBytes(gib: string): number | null {
 export interface ScrubStatus {
   pool: string;
   /**
-   * running also for a scrub that btrfs has not recorded yet (no sizes until it reports them);
+   * running also for a scrub that btrfs has not recorded yet (no start time or duration then);
    * idle: no scrub recorded (a restart of the supervisor forgets the last one, ADR-0171);
    * aborted: cancelled; interrupted: ended neither by finishing nor by a cancel, for example
    * because the btrfs process that ran it was killed.

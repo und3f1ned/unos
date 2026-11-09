@@ -211,7 +211,17 @@ Open owner actions:
   first version kept the time of each start in memory and answered "no stats available" as
   running for 15 s after it; btrfs's own lines made that unneeded, also for a scrub started
   outside UNOS.
-- RESULTS
+- Two fresh-context reviews: the first, of the version with the times in memory, was stopped
+  when btrfs's own lines were found. The second found nothing that blocks; fixed from it: the
+  copy of a disk replace, which the kernel runs as a scrub of the source disk, shows as no scrub
+  when no record shows it (`btrfs replace status -1`: Cancel Scrub would cancel the replace), a
+  cancel that btrfs did answers aborted when the status then says idle, and the docs of the
+  endpoints, the schema and the web UI's type. Recorded, not fixed: a replace while the container
+  keeps the record of an earlier scrub still shows as a running scrub (ADR-0313); UNOS starts no
+  replace. The replace's output is btrfs-progs' format, not seen on the dev device, which has no
+  spare disk. `storage.scrub` passes again only after the fix's device check before and after a
+  reboot.
+- CHECK
 
 ### 2026-11-09: two host-level entries pass on the device checks of main 31ac73b
 

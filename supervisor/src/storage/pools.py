@@ -2511,6 +2511,18 @@ def scrub_start(pool: str | os.PathLike, timeout: int) -> subprocess.CompletedPr
     return result
 
 
+def _replace_runs(mountpoint: str) -> bool:
+    """Whether ``btrfs replace`` copies a disk of the pool at ``mountpoint`` ("x.y% done"). False
+    when btrfs cannot tell, so that a scrub it has not recorded yet still shows as running."""
+    result = host.run_in_container(
+        ["btrfs", "replace", "status", "-1", mountpoint], timeout=SCRUB_COMMAND_TIMEOUT
+    )
+    if result.returncode != 0:
+        logger.warning("Could not read the disk replace of %s: %s", mountpoint, result.stderr.strip())
+        return False
+    return "% done" in result.stdout
+
+
 def start_scrub(pool_name: str) -> ScrubStatus:
     """Start a btrfs scrub on a mounted pool (scrub_start); return once the scrub runs.
 
@@ -2553,9 +2565,22 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
 
     output = result.stdout
 
-    # btrfs prints the time left and the ETA only for a scrub that runs, also below "no stats
-    # available" while it has not recorded a scrub it has just started (ADR-0313).
+    # btrfs prints the time left and the ETA only while the kernel scrubs, also below "no stats
+    # available" while it has not recorded a scrub it has just started. The kernel runs the copy of
+    # a disk replace as a scrub too, which no record shows: that is no scrub (ADR-0313).
+    unrecorded = "no stats available" in output.lower()
     runs = re.search(r"^(Time left|ETA):", output, re.MULTILINE) is not None
+    if unrecorded and runs and _replace_runs(mountpoint):
+        runs = False
+
+    # No scrub recorded, and none runs.
+    if unrecorded and not runs:
+        return ScrubStatus(pool=pool_name, status="idle")
+    # Not "idle": btrfs could not report the status (ADR-0313).
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Scrub status failed: {result.stderr.strip() or f'exit status {result.returncode}'}"
+        )
 
     # Parse status
     if "Status:" in output:
@@ -2564,15 +2589,6 @@ def get_scrub_status(pool_name: str) -> ScrubStatus:
             status = status_match.group(1).lower()
     elif runs:
         status = "running"
-
-    # No scrub recorded, and none runs.
-    if "no stats available" in output.lower() and not runs:
-        return ScrubStatus(pool=pool_name, status="idle")
-    # Not "idle": btrfs could not report the status (ADR-0313).
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Scrub status failed: {result.stderr.strip() or f'exit status {result.returncode}'}"
-        )
 
     # Parse duration (format: 0:05:30 or similar)
     duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+)", output)
@@ -2638,13 +2654,17 @@ def cancel_scrub(pool_name: str) -> ScrubStatus:
         raise RuntimeError(f"Scrub cancel failed: {result.stderr}")
 
     try:
-        return get_scrub_status(pool_name)
+        status = get_scrub_status(pool_name)
     except RuntimeError as exc:
         if result.returncode != 0:
             raise  # it was not running: nothing tells how it ended
         # btrfs cancelled it, and the kernel has stopped it.
         logger.warning("Cancelled the scrub of %s, but could not read its status: %s", pool_name, exc)
         return ScrubStatus(pool=pool_name, status="aborted")
+    if result.returncode == 0 and status.status == "idle":
+        # btrfs cancelled a scrub that it had not recorded yet (ADR-0313).
+        return ScrubStatus(pool=pool_name, status="aborted")
+    return status
 
 
 def _parse_size_to_bytes(value: float, unit: str) -> int:

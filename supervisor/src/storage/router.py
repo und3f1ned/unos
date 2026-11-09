@@ -302,7 +302,7 @@ async def start_scrub_endpoint(name: str, _=Depends(verify_token)):
     409, and no btrfs, when the pool is not mounted (pools.scrub_start). 500 with btrfs's error
     when it does not start, or when btrfs does not
     answer within SCRUB_COMMAND_TIMEOUT. A scrub that started is answered
-    running when its status cannot be read yet (ADR-0313).
+    running when its status cannot be read yet or says idle (ADR-0313).
     """
     return await _scrub(pools.start_scrub, name)
 
@@ -311,8 +311,8 @@ async def start_scrub_endpoint(name: str, _=Depends(verify_token)):
 async def get_scrub_status_endpoint(name: str, _=Depends(verify_token)):
     """The pool's scrub as btrfs reports it: its progress while it runs, then its result (ADR-0313).
 
-    idle when no scrub is recorded; 500 with btrfs's error when it cannot
-    report the status, or does not answer within SCRUB_COMMAND_TIMEOUT.
+    idle when no scrub is recorded and none runs; 500 with btrfs's error when it
+    cannot report the status, or does not answer within SCRUB_COMMAND_TIMEOUT.
     """
     return await _scrub(pools.get_scrub_status, name)
 
@@ -322,6 +322,7 @@ async def cancel_scrub_endpoint(name: str, _=Depends(verify_token)):
     """Cancel a running scrub; answers its status after btrfs's cancel (aborted once it stopped).
 
     A scrub that no longer runs is no error: the answer is its status. A
-    cancelled scrub whose status cannot be read is answered aborted (ADR-0313).
+    cancelled scrub whose status cannot be read yet or says idle is answered
+    aborted (ADR-0313).
     """
     return await _scrub(pools.cancel_scrub, name)
