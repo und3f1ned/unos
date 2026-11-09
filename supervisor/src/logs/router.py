@@ -321,23 +321,3 @@ async def clear_logs(source: str, _: dict = Depends(verify_token)):
     # This is a placeholder - actual log clearing requires elevated privileges
     # and should be done carefully
     return {"status": "not_implemented", "message": "Log clearing requires manual intervention"}
-
-
-# The old endpoints, until system.no-legacy-log-endpoints removes them.
-@router.get("/dmesg", response_model=LogsResponse)
-async def get_dmesg_logs_legacy(
-    limit: int = Query(100, ge=1, le=1000),
-    _: dict = Depends(verify_token)
-):
-    """Get kernel ring buffer (dmesg) logs. Deprecated: use /entries?source=dmesg"""
-    return await read_journal("dmesg", limit=limit)
-
-
-@router.get("/journal", response_model=LogsResponse)
-async def get_journal_logs_legacy(
-    limit: int = Query(100, ge=1, le=1000),
-    priority: Optional[Priority] = None,
-    _: dict = Depends(verify_token)
-):
-    """Get systemd journal logs. Deprecated: use /entries?source=journal"""
-    return await read_journal("journal", limit=limit, priority=priority)

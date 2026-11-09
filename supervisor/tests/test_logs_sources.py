@@ -789,26 +789,27 @@ def test_the_host_tools_name_journalctl():
     assert host_module.HOST_TOOLS["journalctl"] == "systemd"
 
 
-class TestLegacyRoutes:
-    """GET /logs/dmesg and /logs/journal read like /entries until system.no-legacy-log-endpoints."""
+class TestOneEntryEndpoint:
+    """system.no-legacy-log-endpoints (ADR-0207): GET /logs/entries serves every source, and the old
+    GET /logs/dmesg and /logs/journal are gone."""
 
-    def test_they_read_the_journal_with_their_values(self, client, journal):
-        assert messages_of(client, "/dmesg", limit=2) == [OOM, EXT4]
-        assert messages_of(client, "/journal", limit=5, priority="err") == [OOM, USB]
+    @pytest.mark.parametrize("path", ["/dmesg", "/journal"])
+    def test_the_old_endpoints_answer_404_and_read_nothing(self, client, journal, path):
+        response = client.get(f"{API}{path}", params={"limit": 2})
+        assert response.status_code == 404, response.text
+        assert journal.calls == []
+
+    def test_entries_serve_the_kernel_and_the_journal(self, client, journal):
+        assert messages(client, source="dmesg", limit=2) == [OOM, EXT4]
+        assert messages(client, source="journal", limit=5, priority="err") == [OOM, USB]
         assert journal.calls == [journalctl("dmesg", lines=2),
                                  journalctl("journal", lines=5, filters=("--priority=err",))]
 
-    def test_the_journal_route_takes_no_unit(self):
-        # unit is removed (ADR-0257): the route does not offer a filter that it would ignore.
-        parameters = app.openapi()["paths"][f"{API}/journal"]["get"]["parameters"]
-
-        assert sorted(parameter["name"] for parameter in parameters) == ["limit", "priority"]
-
-
-def messages_of(client, path: str, **params) -> list[str]:
-    response = client.get(f"{API}{path}", params=params)
-    assert response.status_code == 200, response.text
-    return [entry["message"] for entry in response.json()["entries"]]
+    def test_no_page_calls_the_old_endpoints(self):
+        webui = Path(__file__).resolve().parents[2] / "webui" / "src"
+        callers = [str(p.relative_to(webui)) for p in webui.rglob("*") if p.is_file()
+                   and re.search(r"logs/(dmesg|journal)\b", p.read_text(errors="replace"))]
+        assert callers == []
 
 
 def test_the_e2e_fakes_answer_with_the_servers_texts():
