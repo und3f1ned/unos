@@ -42,13 +42,15 @@ SD writes of each check (ADR-0214). The areas:
            access refused without a new folder and saved with one; Delete keeping the folder with
            its files and smb.conf byte for byte as found; then, with the copy deleted, a restart
            of the supervisor that writes no file in /etc/samba and leaves no problem.
-  scrub    Scrubs of the pool (ADR-0314): a scrub of a folder below the pools' base with nothing
-           mounted on it refused with 409 (ADR-0311); Start Scrub answered running, and so the
-           status right after it (ADR-0313); the scrub reported until it finished without errors;
-           Cancel Scrub of a scrub that btrfs has recorded, which ends aborted; a disabled
+  scrub    Scrubs of the pool (ADR-0314): its last scrub as found (none after a restart of the
+           supervisor, ADR-0171); a scrub of a folder below the pools' base with nothing mounted
+           on it refused with 409, and a scheduled scrub of that folder failing with the same
+           text (ADR-0311); Start Scrub answered running, and so the status right after it
+           (ADR-0313); the scrub reported, its bytes scrubbed growing, until it finished without
+           errors; Cancel Scrub of a scrub that btrfs has recorded, which ends aborted; a disabled
            scheduled scrub task whose Run now starts a scrub ("Scrub started") that runs to its
            end; and the task deleted, its run left in the Scheduler's history. On a pool with more
-           than 64 GiB of data the scrubs are cancelled instead of waited for. The pool's last
+           than 32 GiB of data the scrubs are cancelled instead of waited for. The pool's last
            scrub result is the check's afterwards.
 
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
@@ -662,9 +664,9 @@ class Device:
         return self.run(REMOTE_UNSERVE, action, path).strip()
 
     def pool_folders(self, action: str = "list", name: str = "") -> list[str]:
-        """REMOTE_POOL_FOLDER, without the read-only namespace: the pools' base is a folder of the
-        root filesystem. The folders of the base afterwards."""
-        return sorted(self.run(REMOTE_POOL_FOLDER, action, name, read_only=False).split())
+        """REMOTE_POOL_FOLDER: make and remove run without the read-only namespace, since the pools'
+        base is a folder of the root filesystem. The folders of the base afterwards."""
+        return sorted(self.run(REMOTE_POOL_FOLDER, action, name, read_only=action == "list").split())
 
     def restart_supervisor(self) -> int:
         """Restart the supervisor's container; the seconds until it was healthy again."""
@@ -1800,21 +1802,35 @@ SCRUB_WAIT = 900
 SCRUB_POLL = 2
 # A pool with more data than this is scrubbed only until btrfs reports the scrub running, and the
 # scrub is then cancelled: the steps that let a scrub run to its end need a small pool.
-SCRUB_TO_THE_END = 64 * GIB
+SCRUB_TO_THE_END = 32 * GIB
 
 
 def scrub_of(c: Check, pool: str) -> dict:
     return c.get(f"/storage/pools/{pool}/scrub")
 
 
-def scrub_until_it_ends(c: Check, pool: str) -> dict:
-    """The pool's scrub once btrfs no longer reports it running."""
+def scrub_until_it_ends(c: Check, pool: str, progress: list[int] | None = None) -> dict:
+    """The pool's scrub once btrfs no longer reports it running; PROGRESS gets the bytes scrubbed
+    of each answer that said running."""
     deadline = time.monotonic() + SCRUB_WAIT
     while True:
         status = scrub_of(c, pool)
         if status.get("status") != "running":
             return status
+        if progress is not None:
+            progress.append(status.get("bytes_scrubbed") or 0)
         c.expect(time.monotonic() < deadline, f"the scrub of {pool} still runs after {SCRUB_WAIT} s")
+        time.sleep(SCRUB_POLL)
+
+
+def run_until_it_ends(c: Check, task_id: str) -> dict:
+    """The last run of a Scheduler task once it has ended."""
+    deadline = time.monotonic() + SCRUB_WAIT
+    while True:
+        runs = c.get(f"/scheduler/runs/{task_id}")
+        if runs and runs[-1].get("finished_at"):
+            return runs[-1]
+        c.expect(time.monotonic() < deadline, f"the task's run did not end within {SCRUB_WAIT} s")
         time.sleep(SCRUB_POLL)
 
 
@@ -1838,8 +1854,10 @@ def scrub_check(c: Check) -> None:
         base = os.path.dirname(pool["mountpoint"])
         used = pool.get("used_size") or 0
         to_the_end = used <= SCRUB_TO_THE_END
-        c.expect(scrub_of(c, name).get("status") != "running", f"a scrub of {name} runs: wait for its end, or cancel it")
-        s.text += f": {name} at {pool['mountpoint']}, {used / GIB:.1f} GiB used"
+        found = scrub_of(c, name)
+        c.expect(found.get("status") != "running", f"a scrub of {name} runs: wait for its end, or cancel it")
+        last = f"{found.get('status')} {found.get('last_run')}" if found.get("last_run") else found.get("status")
+        s.text += f": {name} at {pool['mountpoint']}, {used / GIB:.1f} GiB used, its last scrub {last}"
     folder = f"{base}/{c.run}"
     task = c.run
 
@@ -1860,12 +1878,21 @@ def scrub_check(c: Check) -> None:
         c.baseline(lambda: {"the Scheduler's tasks": sorted(t.get("name", "") for t in c.get("/scheduler/tasks")),
                             f"the folders of {base}": c.device.pool_folders()})
 
-    with c.step(f"a scrub of {folder}, a folder with nothing mounted on it, is refused with 409 (ADR-0311)") as s:
+    with c.step(f"a scrub of {folder}, a folder with nothing mounted on it, is refused with 409, and a "
+                "scheduled scrub of it fails with the same text: one start for both (ADR-0311)") as s:
         c.on_cleanup(f"remove {folder}", lambda: c.device.pool_folders("remove", c.run))
+        c.on_cleanup(f"delete the Scheduler's tasks {task}", delete_own_tasks)
         c.expect(c.run in c.device.pool_folders("make", c.run), f"{folder} was not made")
         refused = c.call("POST", f"/storage/pools/{c.run}/scrub", expect=409)
         want = f"Pool {c.run} is not mounted at {folder}"
         c.expect(refused.get("detail") == want, f"the answer is {refused.get('detail')!r}, not {want!r}")
+        elsewhere = c.post("/scheduler/tasks", {"name": task, "task_type": "scrub", "enabled": False,
+                                                "frequency": "daily", "hour": 3, "minute": 0, "target_pool": c.run})
+        c.post(f"/scheduler/tasks/{elsewhere['id']}/run")
+        failed = run_until_it_ends(c, elsewhere["id"])
+        c.expect((failed.get("status"), failed.get("error")) == ("failed", want),
+                 f"its run ended {failed.get('status')}: {failed.get('error') or failed.get('output')}")
+        c.call("DELETE", f"/scheduler/tasks/{elsewhere['id']}")
         c.expect(c.run not in c.device.pool_folders("remove", c.run), f"{folder} is still there")
         s.text += f": {want!r}"
 
@@ -1875,17 +1902,21 @@ def scrub_check(c: Check) -> None:
         started = c.post(f"/storage/pools/{name}/scrub")
         right_after = scrub_of(c, name)
         c.expect(started.get("status") == "running", f"Start Scrub answered {started.get('status')}")
-        c.expect(right_after.get("status") in ("running", "finished"),
-                 f"the status right after the start is {right_after.get('status')}")
+        c.expect(right_after.get("status") == "running", f"the status right after the start is {right_after.get('status')}")
         s.text += f": {started.get('status')}, then {right_after.get('status')}"
 
     if to_the_end:
-        with c.step(f"btrfs reports the scrub of {name} until it ends, finished without errors") as s:
-            ended = scrub_until_it_ends(c, name)
+        with c.step(f"btrfs reports the scrub of {name}, its progress moving, until it ends, finished without "
+                    "errors") as s:
+            progress: list[int] = []
+            ended = scrub_until_it_ends(c, name, progress)
+            moved = [b for b in progress if b]
             c.expect(ended.get("status") == "finished", f"it ended {ended.get('status')}")
             c.expect(ended.get("errors") == 0, f"it found {ended.get('errors')} errors")
             c.expect(ended.get("last_run"), "it names no start time")
-            s.text += f": {ended.get('duration')} s, started {ended.get('last_run')}"
+            c.expect(len(set(moved)) >= 2 and moved == sorted(moved), f"the bytes scrubbed while it ran: {progress}")
+            s.text += (f": {ended.get('duration')} s, started {ended.get('last_run')}, "
+                       f"{moved[0] / GIB:.2f} to {moved[-1] / GIB:.2f} GiB scrubbed while it ran")
     else:
         c.skip(f"btrfs reports the scrub of {name} until it ends", f"{used / GIB:.0f} GiB used: it is cancelled instead")
 
@@ -1905,19 +1936,12 @@ def scrub_check(c: Check) -> None:
                                                    f"ended {ended.get('status')}")
         s.text += f": {answer.get('status')}, then {ended.get('status')}"
 
-    with c.step(f"Run now of a scheduled scrub task of {name} starts a scrub through the same helper (ADR-0311)") as s:
-        c.on_cleanup(f"delete the Scheduler's task {task}", delete_own_tasks)
+    with c.step(f"Run now of a scheduled scrub task of {name} starts a scrub") as s:
+        scheduled_before = scrub_of(c, name).get("last_run")
         made = c.post("/scheduler/tasks", {"name": task, "task_type": "scrub", "enabled": False, "frequency": "daily",
                                            "hour": 3, "minute": 0, "target_pool": name})
         c.post(f"/scheduler/tasks/{made['id']}/run")
-        deadline = time.monotonic() + SCRUB_WAIT
-        while True:
-            runs = c.get(f"/scheduler/runs/{made['id']}")
-            if runs and runs[-1].get("finished_at"):
-                break
-            c.expect(time.monotonic() < deadline, f"the run did not end within {SCRUB_WAIT} s")
-            time.sleep(SCRUB_POLL)
-        run = runs[-1]
+        run = run_until_it_ends(c, made["id"])
         c.expect((run.get("status"), run.get("output")) == ("success", "Scrub started"),
                  f"the run ended {run.get('status')}: {run.get('output') or run.get('error')}")
         status = scrub_of(c, name)
@@ -1931,7 +1955,9 @@ def scrub_check(c: Check) -> None:
                      f"it ended {ended.get('status')} with {ended.get('errors')} errors")
             s.text += f": {ended.get('duration')} s"
     else:
-        with c.step(f"Cancel Scrub stops the scheduled scrub of {name}"):
+        with c.step(f"Cancel Scrub stops the scheduled scrub of {name} once btrfs has recorded it"):
+            recorded = scrub_recorded(c, name, scheduled_before)
+            c.expect(recorded.get("status") == "running", f"the scrub ended {recorded.get('status')} before the cancel")
             c.call("DELETE", f"/storage/pools/{name}/scrub")
             c.expect(scrub_until_it_ends(c, name).get("status") == "aborted", "it did not end as cancelled")
 

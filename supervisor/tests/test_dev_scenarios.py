@@ -11,7 +11,7 @@ deletion (ADR-0104), and a failed sign-in that changes passdb.tdb only while a l
 failures, and then not for one of the two passwords that the history holds (ADR-0278, ADR-0310).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
-* every area (files, volumes, smart, backups, smb, smbconf) passes against the fake, prints a
+* every area (files, volumes, smart, backups, smb, smbconf, scrub) passes against the fake, prints a
   PASS line with its SD MiB for each step and a summary, and leaves the device as it found it;
 * the smbconf check (ADR-0309) shows what an smb.conf edited by hand does: the Shares page names
   the file before an apply, the apply copies it byte for byte to smb.conf.unos-replaced, a share
@@ -495,7 +495,8 @@ class FakeNas:
             # Not recorded yet: btrfs prints the time left of a scrub that runs (ADR-0313).
             return {"pool": "data", "status": "idle" if "unrecorded-is-idle" in self.bugs else "running",
                     "duration": None, "bytes_scrubbed": 0, "total_bytes": scenario.GIB, "rate": 0, "errors": 0, "last_run": None}
-        return {"pool": "data", "status": s["status"], "duration": s.get("duration"), "bytes_scrubbed": None,
+        scrubbed = (3 - self.scrub_left) * scenario.GIB // 4 if s["status"] == "running" else None
+        return {"pool": "data", "status": s["status"], "duration": s.get("duration"), "bytes_scrubbed": scrubbed,
                 "total_bytes": scenario.GIB, "rate": scenario.GIB // 19, "errors": s.get("errors", 0), "last_run": s.get("last_run")}
 
     def start_scrub(self) -> None:
@@ -519,8 +520,13 @@ class FakeNas:
             return {**answer, "status": "idle" if "start-answers-idle" in self.bugs else "running"}
         if method == "DELETE":
             if self.scrub["status"] == "running" and "cancel-keeps-running" not in self.bugs:
+                if self.scrub_unrecorded:
+                    # Cancelled before btrfs recorded it: no record, and the answer says aborted
+                    # (ADR-0313).
+                    self.scrub = {"status": "idle", "last_run": None, "errors": 0}
+                    self.scrub_unrecorded = 0
+                    return {**self.scrub_answer(), "status": "aborted"}
                 self.scrub = {**self.scrub, "status": "aborted", "duration": 2, "errors": 0}
-                self.scrub_unrecorded = 0
             return self.scrub_answer()
         answer = self.scrub_answer()
         if self.scrub["status"] == "running":  # each request is a moment later
@@ -546,6 +552,11 @@ class FakeNas:
                    "started_at": "2026-11-09T10:00:00+00:00", "finished_at": "2026-11-09T10:00:01+00:00",
                    "status": "success", "output": "Scrub started", "error": None, "exit_code": None}
             try:
+                if task["target_pool"] != "data":  # the one start, with its mount check (ADR-0311)
+                    folder = f"/mnt/pools/{task['target_pool']}"
+                    if "no-mount-check" in self.bugs:
+                        raise Refused(500, f"ERROR: not a btrfs filesystem: {folder}")
+                    raise Refused(409, f"Pool {task['target_pool']} is not mounted at {folder}")
                 self.start_scrub()
             except Refused as e:
                 run.update(status="failed", output=None, error=e.detail)
@@ -1349,13 +1360,16 @@ def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(n
     status, output = run_check("scrub", nas)
     assert status == 0, output
     text = "\n".join(step_lines(output))
-    for words in ("refused with 409", "'Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c'",
+    for words in ("refused with 409", "a scheduled scrub of it fails with the same text",
+                  "'Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c'", "its last scrub finished",
+                  "its progress moving", "GiB scrubbed while it ran",
                   "Start Scrub of data answers running, and so does the status right after it (ADR-0313): running, "
                   "then running", "until it ends, finished without errors", "the status says it was cancelled: "
                   "aborted, then aborted", "Run now", "Scrub started, then running", "the scheduled scrub of data ends",
                   "its run stays in the Scheduler's history"):
         assert words in text, words
-    assert nas.scrubs == 3 and [r["output"] for r in nas.runs] == ["Scrub started"]
+    assert nas.scrubs == 3 and [r["output"] or r["error"] for r in nas.runs] == [
+        "Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c", "Scrub started"]
 
 
 def test_on_a_pool_with_much_data_the_scrub_check_cancels_its_scrubs(nas):
@@ -1364,7 +1378,8 @@ def test_on_a_pool_with_much_data_the_scrub_check_cancels_its_scrubs(nas):
     assert status == 0, output
     assert re.search(r"^SKIP  \d+\. btrfs reports the scrub of data until it ends: 100 GiB used: it is cancelled "
                      r"instead", output, re.M), output
-    assert re.search(r"^PASS  \d+\. Cancel Scrub stops the scheduled scrub of data", output, re.M), output
+    assert re.search(r"^PASS  \d+\. Cancel Scrub stops the scheduled scrub of data once btrfs has recorded it",
+                     output, re.M), output
     assert nas.scrubs == 2 and nas.scrub["status"] == "aborted"
 
 

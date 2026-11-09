@@ -196,24 +196,34 @@ Open owner actions:
 - At the owner's word to work on through the features ("I allow everything", in translation),
   and as the review of that day's device record asked: `scripts/dev/scenario.sh scrub` runs the
   steps of `storage.scrub` and `storage.scrub-needs-mounted-pool` that a script of the session had
-  checked by hand. A folder `<base>/unoscheck<6 hex digits>` with nothing mounted on it gets 409
-  (ADR-0311); Start Scrub answers running, and so does the status right after it (ADR-0313); the
-  scrub ends finished without errors; a second scrub is cancelled once btrfs has recorded it and
-  ends aborted; a disabled scheduled scrub task's Run now says "Scrub started", and its scrub ends
-  finished; the task is deleted, its run stays in the Scheduler's history. On a pool with more
-  than 64 GiB of data the scrubs are cancelled instead of waited for. `REMOTE_POOL_FOLDER` makes
-  and removes the folder on the root filesystem, only for a name of a check, and removes only an
-  empty folder that is no mount point.
+  checked by hand. Its first step names the pool's last scrub; a folder
+  `<base>/unoscheck<6 hex digits>` with nothing mounted on it gets 409, and a scheduled scrub of
+  that folder fails with the same text (ADR-0311); Start Scrub answers running, and so does the
+  status right after it (ADR-0313); the scrub ends finished without errors, its bytes scrubbed
+  growing on the way; a second scrub is cancelled once btrfs has recorded it and ends aborted; a
+  disabled scheduled scrub task's Run now says "Scrub started", and its scrub ends finished; the
+  task is deleted, its run stays in the Scheduler's history. On a pool with more than 32 GiB of
+  data the scrubs are cancelled, each once btrfs has recorded it, instead of waited for.
+  `REMOTE_POOL_FOLDER` makes and removes the folder on the root filesystem, only for a name of a
+  check, and removes only an empty folder that is no mount point.
 - The feature-pass skill's table names the new check for both entries, which leave the row of
   checks by hand; AGENTS.md, `deploy/AGENTS.md`, `docs/TESTING.md`, GLOSSARY.md and the
-  device-checks skill name the area.
+  device-checks skill name the area, the Scheduler task among what the checks make, and how to
+  remove a leftover task or folder.
 - `supervisor/tests/test_dev_scenarios.py`: the fake NAS records a scrub a few requests after its
-  start and has the Scheduler's tasks and runs; the check passes on it, every call that fails in
-  turn leaves the fake as it was, and the check fails on the defects it exists for: no mount
-  check (500 for the folder), Start Scrub answering idle, a status that reads idle before btrfs
-  records the scrub, errors found, a cancel that leaves the scrub running, and runs deleted with
-  their task. A cancel in the clean-up runs also when the status reads idle, since a scrub that
-  btrfs has not recorded can read so. The helper is tested against a temporary base.
+  start, leaves no record for a cancel before that, and has the Scheduler's tasks and runs; the
+  check passes on it, every call that fails in turn leaves the fake as it was, and the check fails
+  on the defects it exists for: no mount check, Start Scrub answering idle, a status that reads
+  idle before btrfs records the scrub, errors found, a cancel that leaves the scrub running, and
+  runs deleted with their task. Without the wait for btrfs's record, the large pool's last cancel
+  fails on the fake. The helper is tested against a temporary base.
+- A fresh-context review found nothing that blocks. Fixed from it: the large pool's last cancel
+  waited for no record, the leftover recipe lacked the folder and the task, the table did not say
+  what the check leaves out of `storage.scrub`, the start's status accepted "finished", the
+  listing of the base ran outside the read-only namespace, and the step that claimed one helper
+  showed none (the scheduled scrub of the folder shows it now); the progress and the last scrub
+  are now steps' facts; the ADR names the clean-up's cancel of another scrub, the smallest pool,
+  the rate that the wait needs and the Scheduler's last 100 runs.
 - RESULTS
 
 ### 2026-11-09: a scrub runs from its start, before btrfs records it (ADR-0313)

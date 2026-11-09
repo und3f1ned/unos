@@ -42,10 +42,11 @@ vendor's firmware and is never written, so every write counts (ADR-0214, ADR-022
   `SD writes <label>: <MiB>`; `ssh.sh`, `api.py` and `bin/testparm` print none, so wrap them in
   `scripts/dev/sd.sh measure <label> -- ...`. The report carries those numbers.
 - The scenario checks (`scripts/dev/scenario.sh <area>`, ADR-0304) run an area's user scenario
-  through the API and on the host with a temporary user, share, volume and folders named
-  `unoscheck<6 hex digits>` and two backups, remove them again and compare the device with how
-  they found it; the smbconf check also edits smb.conf by hand and restarts the supervisor
-  (ADR-0309), and the scrub check scrubs the pool (ADR-0314). They change the device for their duration, so they run on the owner's request;
+  through the API and on the host with a temporary user, share, volume, Scheduler task and folders
+  named `unoscheck<6 hex digits>` and two backups, remove them again and compare the device with
+  how they found it; the smbconf check also edits smb.conf by hand and restarts the supervisor
+  (ADR-0309), and the scrub check scrubs the pool (ADR-0314). They change the device for their
+  duration, so they run on the owner's request;
   the feature-pass skill names the check of each host-level entry, and after a reboot
   (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table lists.
 - A linked worktree without a `dev.env` of its own uses the main checkout's (`scripts/dev/env.sh`),

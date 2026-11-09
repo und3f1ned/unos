@@ -7,11 +7,11 @@
 #
 # Each check runs the user scenario of its area on the device through the API and on the host
 # (scripts/dev/scenario.py --help says what each covers). It makes temporary things (a user, a
-# share, a volume and folders whose names start with "unoscheck", and two backups; smbconf also
-# edits smb.conf by hand and restarts the supervisor, ADR-0309; scrub scrubs the pool, ADR-0314),
-# prints PASS or FAIL for every step with the MiB written to the SD card meanwhile, removes what it
-# made, also
-# after a FAIL or Ctrl-C, and compares the device with how it found it. The checks change the device:
+# share, a volume, a Scheduler task and folders whose names start with "unoscheck", and two
+# backups; smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; scrub
+# scrubs the pool, ADR-0314), prints PASS or FAIL for every step with the MiB written to the SD
+# card meanwhile, removes what it made, also after a FAIL or Ctrl-C, and compares the device with
+# how it found it. The checks change the device:
 # run them when the owner asks for a check of the device (ADR-0016), for example the re-check
 # after a reboot (ADR-0018). The feature-pass skill names the check of each host-level entry.
 #

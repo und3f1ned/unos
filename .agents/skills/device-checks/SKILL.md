@@ -62,7 +62,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `scrub`, or `all`; `--pool <name>` where
    several pools are mounted), the checks of the host-level entries that the feature-pass
    skill's table names (ADR-0304). They change the device: they make a temporary user, share,
-   volume and folders named `unoscheck<6 hex digits>`, and two backups, through the API, and
+   volume, Scheduler task and folders named `unoscheck<6 hex digits>`, and two backups, through
+   the API, and
    remove them again; `smbconf` also edits smb.conf by hand and restarts the supervisor once
    (ADR-0309), and `scrub` scrubs the pool, three times on a small pool, and leaves its last
    scrub result (ADR-0314).
@@ -107,7 +108,9 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   `scripts/dev/ssh.sh 'btrfs subvolume delete /mnt/pools/<pool>/<folder>/nest/sub'`; items of
   the trash, `echo '["<path from GET /files/trash>"]' | scripts/dev/api.py DELETE /files/trash -`;
   folders, `echo '["/mnt/pools/<pool>/<folder>"]' | scripts/dev/api.py DELETE /files/delete - --param permanent=true`
-  (the `-` before `--param`). A marked host account or Samba account `unoscheck<6 hex digits>`
+  (the `-` before `--param`); a Scheduler task, `scripts/dev/api.py DELETE /scheduler/tasks/<id>`
+  (the id from `GET /scheduler/tasks`); the scrub check's empty folder right below the pools'
+  base, which the files API does not delete, `scripts/dev/ssh.sh 'rmdir /mnt/pools/<folder>'`. A marked host account or Samba account `unoscheck<6 hex digits>`
   that stayed after its user was deleted (the delete's warning names a failed userdel or pdbedit)
   is the host's: removing it, `scripts/dev/ssh.sh 'pdbedit -x -u <name>; userdel <name>'`, is an
   owner action. A backup is not named `unoscheck`: only the run that made it names one whose
