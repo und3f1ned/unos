@@ -742,6 +742,27 @@ STUB_DOCKER = textwrap.dedent(
 )
 
 
+# systemctl for check.sh: is-active and is-enabled of a unit answer FAKE_<UNIT>_ACTIVE and
+# FAKE_<UNIT>_ENABLED (the unit's name in capitals, "-" as "_"); by default every unit is active
+# and enabled but nmbd, which is inactive and disabled, as deploy/install.sh leaves it (ADR-0275).
+# FAKE_<UNIT>_ENABLED=none answers as for a unit that is not installed: nothing, and exit 1.
+STUB_SYSTEMCTL = textwrap.dedent(
+    """\
+    #!/usr/bin/env bash
+    unit=${2%.service}
+    var=FAKE_$(printf "%s" "$unit" | tr "a-z-" "A-Z_")
+    case $1 in
+        is-active) default=active; [ "$unit" != nmbd ] || default=inactive
+                   eval "state=\${${var}_ACTIVE:-$default}"; echo "$state"; [ "$state" = active ] ;;
+        is-enabled) default=enabled; [ "$unit" != nmbd ] || default=disabled
+                    eval "state=\${${var}_ENABLED:-$default}"; [ "$state" != none ] || exit 1
+                    echo "$state"; [ "$state" = enabled ] ;;
+        *) echo "the systemctl stub does not know: $*" >&2; exit 2 ;;
+    esac
+    """
+)
+
+
 def test_check_sh_shows_every_containers_log_configuration(local_device):
     """The rotation of the containers' json-file logs is set in the host's daemon.json, as log
     options (ADR-0178): check.sh prints the driver and the options of every container, also the
@@ -749,7 +770,7 @@ def test_check_sh_shows_every_containers_log_configuration(local_device):
     report. Its script runs here, with stubs."""
     device = local_device
     device.stub("docker", STUB_DOCKER)
-    device.stub("systemctl", "#!/usr/bin/env bash\necho active\n")
+    device.stub("systemctl", STUB_SYSTEMCTL)
     device.stub("nft", STUB_NFT_LIST)
     device.stub("python3", "#!/usr/bin/env bash\necho 200\n")  # the API's health check
     device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
@@ -768,6 +789,10 @@ def test_check_sh_shows_every_containers_log_configuration(local_device):
     ], out + result.stderr
     assert "unos-supervisor: running healthy restarts=0" in out and "unos-webui: running healthy restarts=0" in out
     assert "== inbound IPv6 filter\nunos-ipv6-inbound.service: active, table ip6 unos_ipv6_inbound: loaded\n" in out
+    # Samba and network discovery (ADR-0275): smbd, wsdd2 and avahi-daemon run, nmbd neither runs
+    # nor starts at boot.
+    assert ("== samba and network discovery\nsmbd: active\nwsdd2: active\navahi-daemon: active\n"
+            "nmbd: inactive, disabled\n") in out, out
     # The writes since boot (ADR-0214), whatever the machine's uptime and disk: linux-tests.sh
     # runs this test on the device too.
     assert re.search(r"^mmcblk1 \([^)]*\): \d+\.\d MiB written since boot, \d+\.\d hours ago: \d+\.\d\d MiB per hour$",
@@ -801,6 +826,8 @@ def test_check_sh_reports_a_missing_ipv6_filter_as_a_problem(local_device, unit,
         #!/usr/bin/env bash
         case $* in
             "is-active unos-ipv6-inbound.service") echo "$FAKE_UNIT"; [ "$FAKE_UNIT" = active ] ;;
+            "is-active nmbd") echo inactive; exit 3 ;;
+            "is-enabled nmbd") echo disabled; exit 1 ;;
             *) echo active ;;
         esac
         """))
@@ -813,6 +840,44 @@ def test_check_sh_reports_a_missing_ipv6_filter_as_a_problem(local_device, unit,
     assert f"unos-ipv6-inbound.service: {unit}, table ip6 unos_ipv6_inbound: {table}" in out, out + result.stderr
     assert "- the inbound IPv6 filter is not loaded (scripts/dev/ipv6-filter.sh status)" in out, out
     assert "check: problems" in out and result.returncode == 1
+
+
+@pytest.mark.parametrize("env, problem", [
+    ({"FAKE_SMBD_ACTIVE": "inactive"}, "smbd is inactive"),
+    ({"FAKE_WSDD2_ACTIVE": "failed"}, "wsdd2 is failed"),
+    ({"FAKE_AVAHI_DAEMON_ACTIVE": "inactive"}, "avahi-daemon is inactive"),
+    ({"FAKE_NMBD_ACTIVE": "active"}, "nmbd is active, while NetBIOS is off (ADR-0275)"),
+    ({"FAKE_NMBD_ACTIVE": "activating"}, "nmbd is activating, while NetBIOS is off (ADR-0275)"),
+    ({"FAKE_NMBD_ENABLED": "enabled"}, "nmbd is enabled, while NetBIOS is off (ADR-0275)"),
+    ({"FAKE_NMBD_ENABLED": "enabled-runtime"}, "nmbd is enabled-runtime, while NetBIOS is off (ADR-0275)"),
+])
+def test_check_sh_reports_samba_and_network_discovery_problems(local_device, env, problem):
+    """Network discovery needs smbd, wsdd2 (Windows) and avahi-daemon (macOS), and NetBIOS is off,
+    so nmbd neither runs nor starts at boot (ADR-0275): check.sh says what is wrong and exits 1."""
+    device = local_device
+    device.stub("docker", STUB_DOCKER)
+    device.stub("systemctl", STUB_SYSTEMCTL)
+    device.stub("nft", STUB_NFT_LIST)
+    device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
+    device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    result = device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable, **env)
+    out = result.stdout
+    assert f"- {problem}" in out and "check: problems" in out and result.returncode == 1, out + result.stderr
+
+
+@pytest.mark.parametrize("enabled", ["none", "masked", "static"])
+def test_check_sh_takes_an_nmbd_that_cannot_start(local_device, enabled):
+    """An nmbd that is not installed, masked or static (never started by itself) is no problem."""
+    device = local_device
+    device.stub("docker", STUB_DOCKER)
+    device.stub("systemctl", STUB_SYSTEMCTL)
+    device.stub("nft", STUB_NFT_LIST)
+    device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
+    device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    result = device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable, FAKE_NMBD_ENABLED=enabled)
+    out = result.stdout
+    shown = "unknown" if enabled == "none" else enabled
+    assert f"nmbd: inactive, {shown}\n" in out and "check: OK" in out and result.returncode == 0, out + result.stderr
 
 
 # --- deploy's tree comparison end to end ---------------------------------------------------
