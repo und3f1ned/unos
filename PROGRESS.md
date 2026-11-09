@@ -183,7 +183,38 @@ Open owner actions:
   the run before it 0.055).
 - `shares.smb-discovery`'s notes still describe check.sh before this change (the order of its
   device setup, nmbd turned off by the owner): its next pass updates them.
-- REVIEW_AND_CHECK
+- A fresh-context review found nothing that blocks; fixed from it: the record of who disabled
+  nmbd and on which word; the change of `shares.smb-discovery`'s notes taken back out (one entry
+  per pass), with the line above instead; "enabled-runtime" no longer said to start at boot;
+  tests for an nmbd that is activating or enabled-runtime, and for one that is not installed,
+  masked or static (no problem); `docs/TESTING.md`'s description of check.sh.
+- `make check` passed on the tree merged with main a8a1f53 (6027 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build).
+
+### 2026-11-09: two entries pass on tests that were there, and a test of a 429 at sign-in
+
+- At the owner's word to work on through the features ("I allow everything", in translation).
+  `security.request-limits` and `auth.login-rate-limit` kept `passes: false` for a test that,
+  their notes said, was missing; both tests were in the tree already: a declared and a chunked
+  2 MiB body with a valid administrator token answer 413
+  (`test_a_signed_in_client_gets_413_for_a_declared_and_a_chunked_body`, since 2026-11-07), and
+  another client signs in with the right password, 200, while the first still gets 429 with
+  it (`test_login_rate_limit_is_per_client_not_global`, in this form since 2026-11-07). Both
+  notes came in the same commit as the tests they asked for (2e4306d): they were stale from the
+  start. Every step of both is asserted now (the entries' notes map each step to its tests);
+  neither is host-level, and both pass in one change, as one stale note made both open.
+- `webui/tests/auth.spec.ts` gets 'a sign-in refused for too many attempts says so and keeps the
+  form': a 429 at the password step shows "Too many attempts. Wait a minute and try again." and
+  keeps the form, as the test of the code step already showed there. It failed with the 429
+  message taken out of `webui/src/lib/api/client.ts` and passes with it; the whole spec passed
+  on the stand-in (8 tests).
+- A fresh-context review found nothing that blocks; fixed from it: the date of the strengthened
+  rate-limit test and the history of both notes. Found, and not part of this change: the limiter
+  keys the client by the address in X-Forwarded-For that the web UI's Caddy sets; nothing pins
+  that `webui/Caddyfile` does not trust a client's own header (`trusted_proxies`), which would
+  give a LAN client a new bucket per attempt: a test of the Caddyfile is a task of its own.
+- `make check` passed (6017 backend tests, 121 skipped, 1 xfailed; svelte-check without errors,
+  the build); of the E2E specs, `tests/auth.spec.ts`, the one changed, passed on the stand-in.
 
 ### 2026-11-09: the scenario check smbconf runs the SMB steps checked by hand (ADR-0309)
 

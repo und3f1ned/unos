@@ -59,6 +59,24 @@ test.describe('Authentication', () => {
     expect(answers).toEqual([]);
   });
 
+  test('a sign-in refused for too many attempts says so and keeps the form', async ({ page }) => {
+    // slowapi's answer once this client's 5 attempts per minute are used up (auth.login-rate-limit).
+    let tries = 0;
+    await page.route('**/api/v1/auth/login', (route) => {
+      tries += 1;
+      return route.fulfill({ status: 429, json: { error: 'Rate limit exceeded: 5 per 1 minute' } });
+    });
+    await page.goto('/login');
+    await page.fill('#username', 'e2e_user');
+    await page.fill('#password', 'e2e-password');
+    await page.click('button[type="submit"]');
+    await expect(page.getByText('Too many attempts. Wait a minute and try again.')).toBeVisible();
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.locator('#password')).toBeVisible();
+    await expect(page.locator('#totp')).toHaveCount(0);
+    expect(tries).toBe(1);
+  });
+
   test('a two-factor code that was already used keeps the code form and says to wait', async ({ page }) => {
     // Codes are single-use: the server refuses a code of a time step it accepted already.
     const reused = 'This two-factor code was already used; wait for the next one';
