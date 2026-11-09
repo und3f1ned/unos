@@ -129,7 +129,7 @@ and this index, and `make check-fast` runs it.
 | [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | The Snapshots page offers mounted pools and their volumes, also a pool whose volumes cannot be read, and the Volumes dialog takes a quota in GiB | accepted | 2026-11-07 |
 | [0269](0269-the-smart-history-is-kept-in-ram-and-written-when-it-changes.md) | The SMART monitor keeps its history in RAM and writes it only when a pass changes it, and at shutdown | accepted | 2026-11-07 |
 | [0270](0270-smart-trends-report-every-tracked-disk.md) | GET /health/smart/trends reports every tracked disk, and trends read each counter from the snapshots that hold it | accepted | 2026-11-07 |
-| [0272](0272-scrub-results-name-cancelled-scrubs-and-count-every-error.md) | A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports | accepted | 2026-11-07 |
+| [0272](0272-scrub-results-name-cancelled-scrubs-and-count-every-error.md) | A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports | superseded by [0313](0313-a-scrub-runs-from-its-start-and-its-result-names-how-it-ended.md) | 2026-11-07 |
 | [0282](0282-a-filesystem-found-on-the-disks-is-imported-under-a-name-that-becomes-its-label.md) | A btrfs filesystem found on the disks is imported at its top level, under a name that becomes its label | superseded by [0283](0283-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | 2026-11-08 |
 | [0283](0283-a-filesystem-found-on-the-disks-becomes-a-pool-only-from-data-disks-under-a-free-name.md) | A filesystem found on the disks becomes a pool only from data disks and under a name that no earlier pool still uses | accepted | 2026-11-08 |
 | [0285](0285-the-recovery-runbook-reads-a-pool-from-another-linux-machine-without-writing-to-it.md) | The recovery runbook reads a pool from another Linux machine without writing to it, degraded when a disk is missing | accepted | 2026-11-08 |
@@ -137,6 +137,7 @@ and this index, and `make check-fast` runs it.
 | [0289](0289-commands-in-the-container-are-killed-at-their-timeout-and-not-waited-for.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, and a command still stuck is not started again | superseded by [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | 2026-11-08 |
 | [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, a command still stuck is not started again, and a snapshot cleanup without an answer fails its run | accepted | 2026-11-08 |
 | [0311](0311-a-scrub-starts-only-on-a-mounted-pool-through-one-helper.md) | A scrub starts only on a pool whose btrfs filesystem is mounted, through one helper | accepted | 2026-11-09 |
+| [0313](0313-a-scrub-runs-from-its-start-and-its-result-names-how-it-ended.md) | A scrub runs from its start, before btrfs records it, and its result names how it ended | accepted | 2026-11-09 |
 
 ## Shares
 

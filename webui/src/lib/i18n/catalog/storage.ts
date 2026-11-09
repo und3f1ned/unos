@@ -137,7 +137,7 @@ export const en = {
 	'storage.pool.unreadable':
 		"UNOS could not read the host mount table or this pool's btrfs error counters, so its health is unknown. Check the system logs.",
 
-	// A pool's scrub, as btrfs reports it (ADR-0272).
+	// A pool's scrub, as btrfs reports it (ADR-0313).
 	'storage.scrub.statusError': 'Could not read the scrub status',
 	'storage.scrub.running': 'Scrub in progress',
 	'storage.scrub.progress': 'Scrub progress',

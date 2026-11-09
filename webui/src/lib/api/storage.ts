@@ -189,10 +189,11 @@ export function quotaBytes(gib: string): number | null {
   return bytes >= 1 && bytes <= MAX_QUOTA_GIB * GIB ? bytes : null;
 }
 
-/** A pool's scrub as `btrfs scrub status` reports it (ADR-0272). */
+/** A pool's scrub as `btrfs scrub status` reports it (ADR-0313). */
 export interface ScrubStatus {
   pool: string;
   /**
+   * running also for a scrub that btrfs has not recorded yet (no start time or duration then);
    * idle: no scrub recorded (a restart of the supervisor forgets the last one, ADR-0171);
    * aborted: cancelled; interrupted: ended neither by finishing nor by a cancel, for example
    * because the btrfs process that ran it was killed.

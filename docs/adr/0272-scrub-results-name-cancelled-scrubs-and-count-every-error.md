@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: storage
 decided-by: agent
+superseded-by: ADR-0313
 ---
 
 # ADR-0272: A scrub's result names a cancelled or interrupted scrub and counts every error btrfs reports
 
 ## Context
+
+Superseded by ADR-0313: a scrub runs from its start, also before btrfs records it.
 
 The Storage page showed a cancelled scrub ("aborted") as "Last scrub: No errors", like a scrub that checked the whole pool, and a scrub that btrfs reports as "interrupted" not at all. `get_scrub_status` counted only the first number of btrfs's error summary ("read=1 csum=12" gave 1), and answered "idle" when btrfs failed to report the status. After Cancel Scrub, or a status request that failed, the page stopped asking and kept showing the scrub as running (storage.scrub).
 

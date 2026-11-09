@@ -105,7 +105,7 @@
 
 	// Scrub state
 	let scrubStatuses: Record<string, ScrubStatus> = {};
-	// Why a pool's scrub status could not be read: shown instead of the last one (ADR-0272).
+	// Why a pool's scrub status could not be read: shown instead of the last one (ADR-0313).
 	let scrubErrors: Record<string, string> = {};
 	let scrubPollingIntervals: Record<string, ReturnType<typeof setInterval>> = {};
 	let startingScrub: Record<string, boolean> = {};
@@ -229,7 +229,7 @@
 	async function handleCancelScrub(poolName: string) {
 		try {
 			// btrfs can still report the scrub as running for a moment: then it is followed
-			// until it stopped (ADR-0272).
+			// until it stopped (ADR-0313).
 			showScrubStatus(poolName, await cancelScrub(poolName));
 		} catch (e) {
 			error = messageOf(e);
@@ -242,7 +242,7 @@
 		interrupted: 'storage.scrub.interrupted'
 	};
 
-	/** The result of a pool's last scrub, as btrfs reports it (ADR-0272). */
+	/** The result of a pool's last scrub, as btrfs reports it (ADR-0313). */
 	$: scrubResult = (status: ScrubStatus): { text: string; tone: 'success' | 'warning' | 'error' } => {
 		if (status.status === 'finished') {
 			return status.errors > 0
@@ -1093,7 +1093,7 @@
 								</Alert>
 							{/if}
 
-							<!-- Scrub Status: progress while it runs, then the result (ADR-0272) -->
+							<!-- Scrub Status: progress while it runs, then the result (ADR-0313) -->
 							{#if pool.mounted && scrubErrors[pool.name]}
 								<Alert variant="warning" title={$t('storage.scrub.statusError')} class="mt-3">
 									{scrubErrors[pool.name]}
