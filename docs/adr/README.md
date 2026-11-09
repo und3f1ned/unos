@@ -119,7 +119,7 @@ and this index, and `make check-fast` runs it.
 | [0036](0036-pool-health-from-the-host.md) | Pool health is computed from the host and never assumed | accepted | 2026-11-05 |
 | [0069](0069-volumes-are-top-level-subvolumes.md) | Volumes are top-level subvolumes, addressed by subvolume id | accepted | 2026-11-06 |
 | [0070](0070-pools-respect-docker-volumes-and-odd-names.md) | Pool unmount and delete respect Docker volumes, and odd names do not break storage | accepted | 2026-11-06 |
-| [0071](0071-scrubs-return-once-started.md) | Scrubs return once started, and scheduled scrubs need a mounted pool | accepted | 2026-11-06 |
+| [0071](0071-scrubs-return-once-started.md) | Scrubs return once started, and scheduled scrubs need a mounted pool | superseded by [0311](0311-a-scrub-starts-only-on-a-mounted-pool-through-one-helper.md) | 2026-11-06 |
 | [0072](0072-smart-only-on-whole-host-disks.md) | SMART runs only on whole host disks, the set the Storage page lists | accepted | 2026-11-06 |
 | [0073](0073-deferred-storage-edge-cases.md) | Fix the deferred storage and snapshot edge cases of slice 1 | proposed | 2026-11-06 |
 | [0235](0235-disk-health-shows-smart-data-and-replace-soon-marks.md) | Disk Health opens each disk's SMART data, and disks whose SMART trend scores 50 are marked replace soon | accepted | 2026-11-07 |
@@ -135,6 +135,7 @@ and this index, and `make check-fast` runs it.
 | [0288](0288-an-unmount-also-unmounts-the-copies-that-services-keep-in-their-mount-namespaces.md) | An unmount also unmounts the copies of a pool's mount that services keep in mount namespaces of their own, and refuses every other user as before | accepted | 2026-11-08 |
 | [0289](0289-commands-in-the-container-are-killed-at-their-timeout-and-not-waited-for.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, and a command still stuck is not started again | superseded by [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | 2026-11-08 |
 | [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, a command still stuck is not started again, and a snapshot cleanup without an answer fails its run | accepted | 2026-11-08 |
+| [0311](0311-a-scrub-starts-only-on-a-mounted-pool-through-one-helper.md) | A scrub starts only on a pool whose btrfs filesystem is mounted, through one helper | accepted | 2026-11-09 |
 
 ## Shares
 

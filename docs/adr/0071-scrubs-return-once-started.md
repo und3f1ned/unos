@@ -1,13 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: storage
 decided-by: agent
+superseded-by: ADR-0311
 ---
 
 # ADR-0071: Scrubs return once started, and scheduled scrubs need a mounted pool
 
 ## Context
+
+Superseded by ADR-0311: every start of a scrub goes through one helper, which answers 409
+without btrfs for a pool whose btrfs filesystem is not mounted.
 
 In 1.0.0, Start Scrub blocked the whole API for the whole scrub, hours on a large pool: `btrfs scrub start` returns at once, but the process it forks keeps btrfs's output pipes open until the scrub ends. A scheduled scrub of a pool that was not mounted ran on the folder under the mountpoint, that is on the root filesystem.
 

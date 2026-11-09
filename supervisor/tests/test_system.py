@@ -18,9 +18,25 @@ class TestSystemInfo:
         assert hasattr(result, "kernel")
         assert hasattr(result, "os")
         assert hasattr(result, "architecture")
-        assert hasattr(result, "uptime")
         assert isinstance(result.hostname, str)
         assert isinstance(result.kernel, str)
+
+    def test_the_answer_names_the_boot_time_boot_time_and_has_no_uptime(self):
+        """system.boot-time-field: the host's boot time, in seconds since the epoch, is boot_time;
+        a field named uptime would mislead an API client into reading a duration (ADR-0207)."""
+        import psutil
+        from fastapi.testclient import TestClient
+        from types import SimpleNamespace
+        from src.auth.utils import verify_token
+        from src.main import app
+
+        app.dependency_overrides[verify_token] = lambda: SimpleNamespace(id=1, username="admin", is_admin=True)
+        try:
+            data = TestClient(app).get("/api/v1/system/info").json()
+        finally:
+            app.dependency_overrides.pop(verify_token, None)
+        assert "uptime" not in data
+        assert data["boot_time"] == pytest.approx(psutil.boot_time(), abs=1)
 
 
 class TestSystemStats:

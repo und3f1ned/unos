@@ -149,7 +149,7 @@
         <h1 class="text-2xl font-bold">{systemInfo?.hostname || $t("common.product")}</h1>
         {#if systemInfo}
           <p class="text-sm text-slate-400">
-            {$t("dashboard.osUptime", { os: systemInfo.os, uptime: formatUptime(systemInfo.uptime) })}
+            {$t("dashboard.osUptime", { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
           </p>
         {/if}
       </div>

@@ -283,6 +283,8 @@ async def _scrub(func: Callable[[str], ScrubStatus], name: str) -> ScrubStatus:
     validated_name = validate_pool_name(name)
     try:
         return await asyncio.to_thread(func, validated_name)
+    except pools.PoolConflictError as e:  # a start on a pool that is not mounted
+        raise HTTPException(status_code=409, detail=str(e))
     except subprocess.TimeoutExpired as e:
         raise HTTPException(
             status_code=500,
@@ -297,7 +299,8 @@ async def _scrub(func: Callable[[str], ScrubStatus], name: str) -> ScrubStatus:
 async def start_scrub_endpoint(name: str, _=Depends(verify_token)):
     """Start a scrub on a pool; answers once btrfs runs it, with its status then (ADR-0071).
 
-    500 with btrfs's error when it does not start, or when btrfs does not
+    409, and no btrfs, when the pool is not mounted (pools.scrub_start). 500 with btrfs's error
+    when it does not start, or when btrfs does not
     answer within SCRUB_COMMAND_TIMEOUT. A scrub that started is answered
     running when its status cannot be read yet (ADR-0272).
     """

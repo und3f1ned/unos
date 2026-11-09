@@ -38,7 +38,6 @@ import secrets
 import signal
 import stat
 import subprocess
-import tempfile
 import threading
 import asyncio
 from datetime import datetime, timedelta, timezone, tzinfo
@@ -69,6 +68,7 @@ from ..security.validators import (
 )
 from ..snapshots.router import AUTO_SNAPSHOT_PREFIX, delete_snapshot_by_id, make_snapshot, utc_stamp
 from ..storage import disks as storage_disks
+from ..storage import pools as storage_pools
 from .schemas import ScheduledTask, ScheduledTaskInfo, TaskRun, TaskType, ScheduleFrequency
 
 router = APIRouter(
@@ -518,26 +518,6 @@ def new_task_key(task: ScheduledTask, *, has_key: bool) -> bytes | None:
         raise _bad_task("The passphrase must be valid Unicode text") from None
 
 
-def _start_scrub(pool: Path) -> subprocess.CompletedProcess:
-    """Run `btrfs scrub start` on ``pool``, within SCRUB_START_TIMEOUT; stderr: its error output.
-
-    btrfs forks the process that runs the scrub and returns at once, but
-    that process keeps the standard output and error of btrfs until the
-    scrub ends, hours later on a large pool. Read through pipes
-    (capture_output), they would end only then, and the run would time out
-    while the scrub runs: the error output goes to a temporary file, the
-    output (a line saying that the scrub started) nowhere.
-    """
-    with tempfile.TemporaryFile() as stderr:
-        result = host.run_in_container(
-            ["btrfs", "scrub", "start", str(pool)],
-            stdout=subprocess.DEVNULL, stderr=stderr, timeout=SCRUB_START_TIMEOUT,
-        )
-        stderr.seek(0)
-        result.stderr = stderr.read().decode(errors="replace")
-    return result
-
-
 def _real_dir(path: Path) -> bool:
     try:
         return stat.S_ISDIR(os.lstat(path).st_mode)
@@ -769,14 +749,14 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
 
         elif task.task_type == TaskType.SCRUB:
             pool = pool_path(task.target_pool)
-            # Not mounted, the path is a folder on the root filesystem: btrfs
-            # would scrub that filesystem if it is btrfs.
-            if not await asyncio.to_thread(_pool_is_mounted, pool):
-                return False, f"Pool {task.target_pool} is not mounted at {pool}"
-            # Killed at its timeout and not waited for (ADR-0290): a hung
-            # filesystem neither holds a worker thread nor leaves the run "running".
+            # Started as the Storage page starts it (storage.scrub-needs-mounted-pool): no btrfs
+            # on a pool that is not mounted, whose path is a folder on the root filesystem; killed
+            # at its timeout and not waited for (ADR-0290), so a hung filesystem neither holds a
+            # worker thread nor leaves the run "running".
             try:
-                result = await asyncio.to_thread(_start_scrub, pool)
+                result = await asyncio.to_thread(storage_pools.scrub_start, pool, SCRUB_START_TIMEOUT)
+            except storage_pools.PoolConflictError as exc:
+                return False, str(exc)
             except subprocess.TimeoutExpired:
                 return False, (
                     f"btrfs scrub start timed out: {task.target_pool} did not answer within "

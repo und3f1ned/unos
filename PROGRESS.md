@@ -187,7 +187,69 @@ Open owner actions:
   not show what they claim. A device with a lockout stops the smb check there.
 - The entry passes once this check has run on the device before and after a reboot; setting a
   previous password again through UNOS stays unchecked on the device, as its notes say.
-- REVIEW_AND_CHECK
+- A fresh-context review found nothing that blocks. Fixed from it: `passdb_time` requires a
+  timestamp, so an unreadable passdb.tdb fails the step instead of comparing two empty values;
+  the device-checks skill, Now and the test's docstring name the compared step; the defects'
+  failure messages, the steps' numbers, and the reason the lockout is read at the first step.
+- `make check` passed on the tree merged with main a718ba9 (6034 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build). Its first run hung in
+  `supervisor/tests/test_ws_auth.py`, which this change does not touch; a change of its own
+  fixes that hang.
+
+### 2026-11-09: GET /system/info names the host's boot time boot_time
+
+- `system.boot-time-field`, at the owner's word to work on through the features ("I allow
+  everything", in translation). The field `uptime` of GET /api/v1/system/info held
+  `psutil.boot_time()`, the boot time in seconds since the epoch, which an API client would read
+  as a duration; the pages computed the uptime from it. It is `boot_time` now, with no field
+  `uptime` left (ADR-0207), and `webui/src/lib/api/system.ts`, the dashboard and System > General
+  read it.
+- Tests first (ADR-0186): `test_system.py` (the answer carries boot_time, close to
+  `psutil.boot_time()`, and no uptime) failed on the old code; `webui/tests/api.spec.ts` asserts a
+  boot_time in seconds since the epoch and no uptime against the stand-in, and failed with an
+  uptime field put back; the fake system info
+  of `mobile-layout.spec.ts` has the new field. The dashboard's and System > General's uptime are
+  asserted by `dashboard.spec.ts` and `updates.spec.ts`, which passed with `api.spec.ts` on the
+  stand-in (69 passed, 15 skipped for what the stand-in lacks). Not host-level.
+  `CHANGELOG.md` names the rename. `supervisor/tests/mocks/mock_data.py` keeps an `uptime` of its
+  own: nothing imports it, and `testing.remove-dead-mock-layer` removes that layer.
+- A fresh-context review found one blocker, fixed: the ledger's notes quoted a Russian text,
+  where the repository's text is English (ADR-0200). Fixed from it as well: the notes' "today"
+  sentence, a lower bound in `api.spec.ts` so that a duration cannot pass for a time, and the
+  changelog's line. `make e2e-local` passed (670 passed, 16 skipped; 11.7 minutes).
+- `make check` passed on the tree merged with main cfed052 (6031 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build).
+
+### 2026-11-09: a scrub of a pool that is not mounted answers 409, through one helper
+
+- `storage.scrub-needs-mounted-pool`, at the owner's word to work on through the features ("I
+  allow everything", in translation). The Storage page's Start Scrub ran `btrfs scrub start` on
+  `<pools base>/<pool>` whether or not the pool was mounted there; not mounted, that path is a
+  folder on the root filesystem, and btrfs would scrub that filesystem if it is btrfs. The
+  Scheduler's scrub tasks checked the mount, in a helper of their own, and only whether anything
+  was mounted at the path. Now `scrub_start` of `supervisor/src/storage/pools.py` is the one start
+  of a scrub (ADR-0311, which supersedes ADR-0071 and closes its open item): it asks the host's
+  mount table for a btrfs filesystem mounted at the pool's path, answers 409 without any btrfs
+  otherwise ("Pool data is not mounted at ..."), and starts btrfs killed at its timeout
+  (ADR-0290). The Storage page's start and the Scheduler's scrub tasks both call it.
+- Tests first (ADR-0186): `test_storage.py` (TestScrubNeedsAMountedPool: the 409 and no btrfs
+  with another pool mounted, and what counts as mounted on the fake host's mount table) and
+  `test_scheduler_validation.py` (both starts go through `scrub_start`) failed on the old code;
+  a check that took a mount at the parent or of another type failed them too. The tests of the
+  scrub endpoints and of the scheduled scrubs count their test pools, plain folders, as mounted.
+- A host-level change (GLOSSARY.md): the entry keeps `passes: false` until the device check and
+  the re-check after a reboot (ADR-0018), with the next deploy.
+- Found, and not part of this change: the status and the cancel of a scrub (GET and DELETE of the
+  same path) still run btrfs on an unmounted pool's folder (ADR-0311, Consequences).
+- A fresh-context review found nothing that blocks; fixed from it: no ADR recorded the decision
+  (ADR-0311 does, superseding ADR-0071, whose open item this closes); the check asked only
+  whether anything was mounted, in the container, so another filesystem mounted by hand or an
+  unmounted btrfs subvolume passed it (it asks the host's mount table for btrfs now); the planned
+  device check could not see "no btrfs run" and tested only a missing folder (it uses a folder
+  with nothing mounted, and the 409's text); the notes claimed too much; `test_command_timeouts.py`
+  left `verified_by`. Left: the Scheduler's snapshots keep their own mount check in the container.
+- `make check` passed (6030 backend tests, 121 skipped, 1 xfailed; svelte-check without errors,
+  the build).
 
 ### 2026-11-09: an SMB entry passes on the scenario checks, and passdb.tdb's writes measured
 
