@@ -1232,7 +1232,7 @@
         "supervisor/tests/test_share_api.py",
         "webui/tests/shares.spec.ts"
       ],
-      "passes": true,
+      "passes": false,
       "adr": [
         "ADR-0074",
         "ADR-0087",
@@ -1241,7 +1241,7 @@
         "ADR-0092",
         "ADR-0157"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: the device's testparm accepted the rendered files, a restart changed no file). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps, and the boot's restart of the supervisor changed no file: smb.conf byte-identical across the reboot, fstab, the export file and the import backup untouched, no apply in the supervisor's log; GET /shares/smb-status reports no problem."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: the device's testparm accepted the rendered files, a restart changed no file). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps, and the boot's restart of the supervisor changed no file: smb.conf byte-identical across the reboot, fstab, the export file and the import backup untouched, no apply in the supervisor's log; GET /shares/smb-status reports no problem. Open: steps 4 and 5 on the device, which scripts/dev/scenario.sh smb leaves out (the feature-pass skill's table) and the re-check did not check by hand: a share section that UNOS did not write, copied to smb.conf.unos-replaced and reported before an apply (step 4), and a problem shown as an alert of the status panel on Shares (step 5). A fresh-context review found the gap on 2026-11-09, and passes went back to false."
     },
     {
       "id": "shares.smb-conf-import",
@@ -1280,12 +1280,12 @@
         "supervisor/tests/test_share_api.py",
         "webui/tests/shares.spec.ts"
       ],
-      "passes": true,
+      "passes": false,
       "adr": [
         "ADR-0134",
         "ADR-0135"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: access changed with PATCH, the test share deleted and its folder kept). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (a comment saved with its version and a stale version refused with 409, the access lowered, removed and given back, Delete keeping the share's folder with its files)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: access changed with PATCH, the test share deleted and its folder kept). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (a comment saved with its version and a stale version refused with 409, the access lowered, removed and given back, Delete keeping the share's folder with its files). Open: step 3 on the device, which scripts/dev/scenario.sh smb leaves out (the feature-pass skill's table) and the re-check did not check by hand: a share that is not served gets access only together with a new folder. A fresh-context review found the gap on 2026-11-09, and passes went back to false."
     },
     {
       "id": "shares.repair-permissions",

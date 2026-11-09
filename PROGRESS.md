@@ -43,9 +43,10 @@ significant step. Features and their state live in `feature-list.json`, decision
      reused the cached base; the entry passes once a build shows that after the tag's arm64 image
      has moved upstream, and Dependabot has proposed a digest.
   2. The host-level entries still open (the feature-pass skill's table): after the re-check of
-     2026-11-08 after a reboot (Log), 14 more pass; the others need a device check first or, as
-     `storage.pool-health`, a step the re-check could not show, and
-     `deploy.health-checks-and-start-order` its re-check after a reboot (ADR-0306; Log,
+     2026-11-08 after a reboot (Log), 12 more passed; the others need a device check first or, as
+     `storage.pool-health`, a step the re-check could not show, as `shares.smb-conf-and-status`
+     and `shares.edit-and-delete` the steps that the smb scenario check leaves out, checked by
+     hand, and `deploy.health-checks-and-start-order` its re-check after a reboot (ADR-0306; Log,
      2026-11-09).
 
 ## Dev device
@@ -193,17 +194,24 @@ Open owner actions:
   with a bind mount below it answered 409 and deleted nothing (the mount and both folders were
   removed afterwards); the boot's restart of the supervisor changed no file (smb.conf
   byte-identical, fstab, the export file and the import backup untouched, no apply in its log).
-- 14 entries pass, each with its re-check in its notes: `device.scenario-checks-in-repo`,
+- 12 entries passed, each with its re-check in its notes: `device.scenario-checks-in-repo`,
   `files.protects-volumes-and-mounts`, `shares.smb-accounts`, `shares.smb-share`,
-  `shares.per-user-access`, `shares.guest-off-by-default`, `shares.smb-conf-and-status`,
-  `shares.edit-and-delete`, `shares.password-follows-unos`, `security.https-local-ca`,
-  `shares.smb-conf-import`, `apps.install-on-a-pool`, `apps.transmission-login` and
-  `system.health-details-and-metrics`.
+  `shares.per-user-access`, `shares.guest-off-by-default`, `shares.password-follows-unos`,
+  `security.https-local-ca`, `shares.smb-conf-import`, `apps.install-on-a-pool`,
+  `apps.transmission-login` and `system.health-details-and-metrics`.
 - Not passed: `storage.pool-health`, whose step 4 (a degraded RAID1 test pool) needs spare disks
   and was never checked on the device; `deploy.health-checks-and-start-order`: at boot dockerd's
   restart policy starts both containers at once, the web UI 34 ms before the supervisor, and the
   web UI's first health check failed before it turned healthy, so step 2 holds for
   `docker compose up` only (Open owner actions, 5).
+- Not passed either: `shares.smb-conf-and-status` and `shares.edit-and-delete`, first recorded
+  as passed. The re-check did not check by hand the steps of theirs that the smb scenario check
+  leaves out (the feature-pass skill's table): step 4 of the first (a share section that UNOS
+  did not write, copied to `smb.conf.unos-replaced` and reported before an apply) and its
+  step 5 (a problem shown as an alert of the status panel), and step 3 of the second (a share
+  that is not served gets access only with a new folder). A fresh-context review of this record
+  found that on 2026-11-09, and both went back to `passes: false` with notes saying what is
+  missing.
 - The boot wrote 9.7 MiB by 23:00:29 UTC. Docker records that boot's container starts as
   22:56:57, before the clock was set. The RAM rootfs of `scripts/dev/linux-tests.sh` is gone
   again (Open owner actions, 3).
