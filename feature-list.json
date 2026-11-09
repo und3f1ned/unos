@@ -170,11 +170,11 @@
         "webui/tests/https.spec.ts",
         "supervisor/tests/test_standin.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0025"
       ],
-      "notes": "The stand-in serves these headers through scripts/standin/front.mjs. Device check: 2026-11-05 (Phase 0 deploy, also after a reboot of that tree); the deployed tree changed since. Open: the re-check after a reboot (ADR-0018)."
+      "notes": "The stand-in serves these headers through scripts/standin/front.mjs. Device check: 2026-11-05 (Phase 0 deploy, also after a reboot of that tree); the deployed tree changed since. Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC), from the device: https://127.0.0.1/ and /api/v1/health answer with Content-Security-Policy, X-Frame-Options DENY and X-Content-Type-Options nosniff, http://127.0.0.1/storage answers 308 to https://127.0.0.1/storage, and /api/v1/health answers 200 over plain HTTP."
     },
     {
       "id": "security.request-limits",
@@ -828,7 +828,7 @@
         "ADR-0036",
         "ADR-0043"
       ],
-      "notes": "Device check: 2026-11-05 (a healthy pool, also after a reboot of the Phase 0 tree). The degraded case needs a test pool on spare disks. Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-05 (a healthy pool, also after a reboot of the Phase 0 tree). The degraded case needs a test pool on spare disks. Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): the pool data shows healthy and mounted read-write, and GET /api/v1/health/raid-monitor/status names its latest check (23:00:15 UTC, after the boot). Open: step 4, a degraded RAID1 test pool, which needs spare disks and was never checked on the device."
     },
     {
       "id": "storage.forget-pool",
@@ -1134,7 +1134,7 @@
         "supervisor/tests/test_validators.py",
         "webui/tests/shares.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0038",
         "ADR-0145",
@@ -1143,7 +1143,7 @@
         "ADR-0150",
         "ADR-0153"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: a share on an existing folder, and a new folder below the 0777 pool root refused). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: a share on an existing folder, and a new folder below the 0777 pool root refused). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (the new folder 2770 root:unos-smb served at once, the pool's top folder and a folder inside a share refused), and GET /shares/paths offers the managed pool data only."
     },
     {
       "id": "shares.per-user-access",
@@ -1162,13 +1162,13 @@
         "supervisor/tests/test_smbconf.py",
         "webui/tests/shares.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0075",
         "ADR-0088",
         "ADR-0103"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: read and write over a signed session, a downgrade and a revocation during open sessions). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: read and write over a signed session, a downgrade and a revocation during open sessions). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (the access lowered to read and removed during open sessions: NT_STATUS_NETWORK_NAME_DELETED; without access NT_STATUS_ACCESS_DENIED)."
     },
     {
       "id": "shares.guest-off-by-default",
@@ -1183,13 +1183,13 @@
         "supervisor/tests/test_smbconf.py",
         "supervisor/tests/test_share_api.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0096",
         "ADR-0098",
         "ADR-0100"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (a wrong password refused with NT_STATUS_LOGON_FAILURE, never as a guest, the null session refused, server signing mandatory without a guest share)."
     },
     {
       "id": "shares.read-only-guest-share",
@@ -1241,7 +1241,7 @@
         "ADR-0092",
         "ADR-0157"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: the device's testparm accepted the rendered files, a restart changed no file). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: the device's testparm accepted the rendered files, a restart changed no file). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps, and the boot's restart of the supervisor changed no file: smb.conf byte-identical across the reboot, fstab, the export file and the import backup untouched, no apply in the supervisor's log; GET /shares/smb-status reports no problem. Open: steps 4 and 5 on the device, which scripts/dev/scenario.sh smb leaves out (the feature-pass skill's table) and the re-check did not check by hand: a share section that UNOS did not write, copied to smb.conf.unos-replaced and reported before an apply (step 4), and a problem shown as an alert of the status panel on Shares (step 5). A fresh-context review found the gap on 2026-11-09, and passes went back to false."
     },
     {
       "id": "shares.smb-conf-import",
@@ -1257,14 +1257,14 @@
         "supervisor/tests/test_share_import.py",
         "webui/tests/shares.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0084",
         "ADR-0085",
         "ADR-0086",
         "ADR-0136"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: the old smb.conf imported, the share DATA not served). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: the old smb.conf imported, the share DATA not served). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): no new import (smb.conf byte-identical across the reboot), /etc/samba/smb.conf.unos-import-backup kept with mode 600 and unchanged since 2026-11-07, and GET /shares/smb-status still reports the import's two notes."
     },
     {
       "id": "shares.edit-and-delete",
@@ -1285,7 +1285,7 @@
         "ADR-0134",
         "ADR-0135"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: access changed with PATCH, the test share deleted and its folder kept). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: access changed with PATCH, the test share deleted and its folder kept). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (a comment saved with its version and a stale version refused with 409, the access lowered, removed and given back, Delete keeping the share's folder with its files). Open: step 3 on the device, which scripts/dev/scenario.sh smb leaves out (the feature-pass skill's table) and the re-check did not check by hand: a share that is not served gets access only together with a new folder. A fresh-context review found the gap on 2026-11-09, and passes went back to false."
     },
     {
       "id": "shares.repair-permissions",
@@ -1324,7 +1324,7 @@
         "supervisor/tests/test_smb_reconcile.py",
         "webui/tests/users.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0105",
         "ADR-0107",
@@ -1332,7 +1332,7 @@
         "ADR-0117",
         "ADR-0118"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: a temporary account made and removed). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: a temporary account made and removed). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (the marked host account and the Samba account made with the user and removed with it)."
     },
     {
       "id": "shares.self-activation",
@@ -1372,14 +1372,14 @@
         "supervisor/tests/test_smb_integration.py",
         "webui/tests/users.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0104",
         "ADR-0119",
         "ADR-0123",
         "ADR-0125"
       ],
-      "notes": "Device check: 2026-11-07 (slice 2 deploy: a password change during an open session). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (slice 2 deploy: a password change during an open session). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (the administrator's new password ended the open session: NT_STATUS_CONNECTION_DISCONNECTED; the replaced password refused, the new one signs in)."
     },
     {
       "id": "shares.account-page-shares",
@@ -1777,11 +1777,11 @@
         "webui/tests/apps.spec.ts",
         "webui/tests/appstore.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0039"
       ],
-      "notes": "Device check: 2026-11-07 (transmission reinstalled with its login on the pool data). Open: the re-check after a reboot (ADR-0018). The stand-in has no Docker: the catalog cards are skipped there."
+      "notes": "Device check: 2026-11-07 (transmission reinstalled with its login on the pool data). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): GET /apps/installed lists transmission with the same host folders on the pool data as before the reboot, its container runs again, and GET /apps/catalog lists 70 apps by category. The stand-in has no Docker: the catalog cards are skipped there."
     },
     {
       "id": "apps.transmission-login",
@@ -1794,11 +1794,11 @@
       "verified_by": [
         "supervisor/tests/test_apps.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0219"
       ],
-      "notes": "Device check: 2026-11-07 (the RPC answered 401 without the login). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (the RPC answered 401 without the login). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): transmission's RPC answers 401 without the login."
     },
     {
       "id": "apps.manage-installed",
@@ -2190,11 +2190,11 @@
       "verified_by": [
         "supervisor/tests/test_files_security.py"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0170"
       ],
-      "notes": "Device check: 2026-11-06 (slice 1 deploy). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-06 (slice 1 deploy). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh files passed (Delete, Rename and Move of a volume refused with 409, a folder with a subvolume below it refused, Copy of a volume), and by hand a folder with a bind mount below it: Delete and Delete for good answered 409 (\"contains 'sub', a separate subvolume or filesystem\") and deleted nothing; the bind mount and both folders were removed afterwards."
     },
     {
       "id": "files.upload-edge-cases",
@@ -2577,8 +2577,8 @@
         "supervisor/tests/test_health_monitor.py",
         "supervisor/tests/test_authz.py"
       ],
-      "passes": false,
-      "notes": "Device check: 2026-11-05 (health/full, also after a reboot of the Phase 0 tree). Open: the re-check after a reboot (ADR-0018)."
+      "passes": true,
+      "notes": "Device check: 2026-11-05 (health/full, also after a reboot of the Phase 0 tree). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): GET /api/v1/health/full answers healthy with the database, Docker, storage and RAID ok (UPS not configured), GET /api/v1/health/prometheus the metrics with unos_storage_pools 1, and both answer 401 without a token; the 403 to a regular user is asserted by the route matrix of test_authz.py."
     },
     {
       "id": "system.in-app-updater",
@@ -3024,7 +3024,7 @@
       "adr": [
         "ADR-0176"
       ],
-      "notes": "Device check: 2026-11-07 (scripts/dev/deploy.sh up: both containers healthy). Open: the re-check after a reboot (ADR-0018)."
+      "notes": "Device check: 2026-11-07 (scripts/dev/deploy.sh up: both containers healthy). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): both containers healthy after the boot (step 1). Step 2 holds for docker compose up only: at boot dockerd's restart policy (unless-stopped) starts both containers at once, the web UI 34 ms before the supervisor, and the web UI's first health check failed (23:00:14 UTC) before it turned healthy, so after a reboot the web UI does not wait for the supervisor's health check. Open: whether step 2 must hold at boot, the owner's decision."
     },
     {
       "id": "deploy.release-images",
@@ -3060,7 +3060,7 @@
         "ADR-0218",
         "ADR-0305"
       ],
-      "notes": "The pins (ADR-0305) are the digests the dev device held on 2026-11-08: python:3.11-slim@sha256:65bd3d9f... in its build cache, the base of deploy-supervisor:latest, and caddy:2-alpine@sha256:f2b257f2..., the base of deploy-webui:latest; node and the Playwright image take the registry's digests of that day. That day the registry's python:3.11-slim named sha256:07d48240..., with the same linux/arm64 image (sha256:31afb5c0...) and only riscv64 rebuilt, so an unpinned build would still have reused the cache. Step 1: TestBaseImages in supervisor/tests/test_deploy_scripts.py. deploy.sh build-supervisor says before the build whether the pinned base is on the device (test_deploy_sh_build_supervisor_says_whether_its_pinned_base_is_on_the_device). Not yet checked: step 2 (the first Dependabot pull request that moves a digest: its cooldown counts from the tag's last push) and step 3 (a deploy once python:3.11-slim names an arm64 image other than sha256:31afb5c0...: build-supervisor says the base is on the device, every step of the build is CACHED, and the SD writes stay in single MiB)."
+      "notes": "The pins (ADR-0305) are the digests the dev device held on 2026-11-08: python:3.11-slim@sha256:65bd3d9f... in its build cache, the base of deploy-supervisor:latest, and caddy:2-alpine@sha256:f2b257f2..., the base of deploy-webui:latest; node and the Playwright image take the registry's digests of that day. That day the registry's python:3.11-slim named sha256:07d48240..., with the same linux/arm64 image (sha256:31afb5c0...) and only riscv64 rebuilt, so an unpinned build would still have reused the cache. Step 1: TestBaseImages in supervisor/tests/test_deploy_scripts.py. deploy.sh build-supervisor says before the build whether the pinned base is on the device (test_deploy_sh_build_supervisor_says_whether_its_pinned_base_is_on_the_device). Not yet checked: step 2 (the first Dependabot pull request that moves a digest: its cooldown counts from the tag's last push) and step 3 (a deploy once python:3.11-slim names an arm64 image other than sha256:31afb5c0...: build-supervisor says the base is on the device, every step of the build is CACHED, and the SD writes stay in single MiB). Deploy of main 78769b4 on 2026-11-08: build-supervisor said the pinned base is on the device (layers of the build cache pulled from sha256:65bd3d9f...), COPY requirements.txt, pip install and COPY src/ were CACHED and nothing was pulled (6.094 MiB on the SD card); build-webui built the final stage from the pinned caddy image on the device with --pull=false (18.539 MiB). Whether the tag's arm64 image had moved upstream by then was not checked, so step 3 stays open."
     },
     {
       "id": "deploy.tmpfs-for-small-boards",
@@ -3206,13 +3206,13 @@
         "Each check prints its results and the MiB it wrote to the SD card",
         "The feature-pass skill names the check of each host-level entry"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0018",
         "ADR-0185",
         "ADR-0214"
       ],
-      "notes": "Built (ADR-0304); before, the device checks of the slice 1 and slice 2 deploys were scratch scripts outside the repository. scripts/dev/scenario.sh [--pool NAME] AREA... (files, volumes, smart, backups, smb; all: every area) holds the device lock and runs scripts/dev/scenario.py once per area. Step 1: each check reads the device's state first and refuses to start beside names of an earlier check, makes a temporary user, share, volume and folders named unoscheck and six hex digits, and two backups, through the API, registers each clean-up before the call that makes its thing, removes them newest first, also after a FAIL, a lost answer or a signal, and compares the device with the state it read; files: New Folder and Upload (755 and 644 root:root), Download, Rename, Copy, Move, Delete into the pool's trash, Restore, a restore refused while the name is taken, Delete for good, a volume that Delete, Rename and Move refuse with 409 and Copy copies, the volume's own trash, a folder with a subvolume below it refused; volumes: a volume without a quota, one with a quota (refused while quotas are off, else its quota group's limit read with btrfs), the Delete refused while a share uses it; smart: the disks of Storage and Disk Health, their SMART data, the system disk, a partition and a name of no disk refused with 400, a short self-test; backups: a plain and an encrypted backup, the restores refused for a missing backup and without or with a wrong passphrase (never a restore), no passphrase in the logs; smb: the flows of ADR-0185 with a temporary account and share (the marked host account and Samba account, the folder's 2770 root:unos-smb, a signed session that writes, New Folder and Upload in the share's folder changed over SMB, the access lowered and removed during open sessions, a comment with the expected version and a stale one refused, a password change that ends the open session, the replaced password refused without a write to passdb.tdb, a wrong password and a null session refused, the [global] lines, Samba's log in /run/samba, no password of the check in an answer or a log, the share's Delete keeping its folder, the user's Delete removing its accounts), each session step naming Samba's NT_STATUS. Step 2: every step prints PASS or FAIL with the SD MiB written meanwhile, and scenario.sh prints SD writes scenario <area> for each check, also one that a signal ended. Step 3: the feature-pass skill's table names the check of each host-level entry (a scenario area, or by hand with the steps of the entry's notes) and what each scenario check leaves out; its test fails for an entry whose notes name the reboot rule of ADR-0018 and that the table lacks. Tests: test_dev_scenarios.py runs every area against a stand-in of the device in memory (each passes and leaves it as it was; a 500 at any API call of a step, before or after the call changed something, an interruption, an output that fails or a refusal of the device still removes everything, and a backup whose answer was lost is named; a signal waits for the clean-up and the device lock holds through it (test_dev_scripts.py); a failed clean-up and leftovers are reported; the defects each check exists for fail it; every call matches a route of the supervisor with a body its model accepts), runs the SMB helper's session and share-list protocol against a stand-in smbclient, the subvolume helper's path guard, scenario.sh's lock and SD lines, and the skill's table; test_dev_scripts.py the relay's upload and what the device-checks skill says about the lock and the SD writes. Reviewed twice in a fresh context (ADR-0017): the findings of both are fixed (PROGRESS.md, 2026-11-08). Device run 2026-11-08 before the reboot (scripts/dev/scenario.sh all, the pool data): every step passed, and each check left the device as it found it; SD writes files 0.418 MiB (16 steps), volumes 0.938 (7), smart 0.098 (5), backups 0.512 (8), smb 3.980 (27), 5.946 MiB in all. Open: the same run after the owner's reboot (ADR-0018).",
+      "notes": "Built (ADR-0304); before, the device checks of the slice 1 and slice 2 deploys were scratch scripts outside the repository. scripts/dev/scenario.sh [--pool NAME] AREA... (files, volumes, smart, backups, smb; all: every area) holds the device lock and runs scripts/dev/scenario.py once per area. Step 1: each check reads the device's state first and refuses to start beside names of an earlier check, makes a temporary user, share, volume and folders named unoscheck and six hex digits, and two backups, through the API, registers each clean-up before the call that makes its thing, removes them newest first, also after a FAIL, a lost answer or a signal, and compares the device with the state it read; files: New Folder and Upload (755 and 644 root:root), Download, Rename, Copy, Move, Delete into the pool's trash, Restore, a restore refused while the name is taken, Delete for good, a volume that Delete, Rename and Move refuse with 409 and Copy copies, the volume's own trash, a folder with a subvolume below it refused; volumes: a volume without a quota, one with a quota (refused while quotas are off, else its quota group's limit read with btrfs), the Delete refused while a share uses it; smart: the disks of Storage and Disk Health, their SMART data, the system disk, a partition and a name of no disk refused with 400, a short self-test; backups: a plain and an encrypted backup, the restores refused for a missing backup and without or with a wrong passphrase (never a restore), no passphrase in the logs; smb: the flows of ADR-0185 with a temporary account and share (the marked host account and Samba account, the folder's 2770 root:unos-smb, a signed session that writes, New Folder and Upload in the share's folder changed over SMB, the access lowered and removed during open sessions, a comment with the expected version and a stale one refused, a password change that ends the open session, the replaced password refused without a write to passdb.tdb, a wrong password and a null session refused, the [global] lines, Samba's log in /run/samba, no password of the check in an answer or a log, the share's Delete keeping its folder, the user's Delete removing its accounts), each session step naming Samba's NT_STATUS. Step 2: every step prints PASS or FAIL with the SD MiB written meanwhile, and scenario.sh prints SD writes scenario <area> for each check, also one that a signal ended. Step 3: the feature-pass skill's table names the check of each host-level entry (a scenario area, or by hand with the steps of the entry's notes) and what each scenario check leaves out; its test fails for an entry whose notes name the reboot rule of ADR-0018 and that the table lacks. Tests: test_dev_scenarios.py runs every area against a stand-in of the device in memory (each passes and leaves it as it was; a 500 at any API call of a step, before or after the call changed something, an interruption, an output that fails or a refusal of the device still removes everything, and a backup whose answer was lost is named; a signal waits for the clean-up and the device lock holds through it (test_dev_scripts.py); a failed clean-up and leftovers are reported; the defects each check exists for fail it; every call matches a route of the supervisor with a body its model accepts), runs the SMB helper's session and share-list protocol against a stand-in smbclient, the subvolume helper's path guard, scenario.sh's lock and SD lines, and the skill's table; test_dev_scripts.py the relay's upload and what the device-checks skill says about the lock and the SD writes. Reviewed twice in a fresh context (ADR-0017): the findings of both are fixed (PROGRESS.md, 2026-11-08). Device run 2026-11-08 before the reboot (scripts/dev/scenario.sh all, the pool data): every step passed, and each check left the device as it found it; SD writes files 0.418 MiB (16 steps), volumes 0.938 (7), smart 0.098 (5), backups 0.512 (8), smb 3.980 (27), 5.946 MiB in all. Run again after the deploy of main 78769b4 (22:33 UTC, still before the reboot): every step passed, 5.259 MiB. After the owner's reboot (the boot of 22:59:48 UTC, ADR-0018), 23:02 to 23:05 UTC: every step of the five areas passed again, 5.393 MiB (files 0.441, volumes 0.734, smart 0.105, backups 0.449, smb 3.664).",
       "verified_by": [
         "supervisor/tests/test_dev_scenarios.py",
         "supervisor/tests/test_dev_scripts.py"
