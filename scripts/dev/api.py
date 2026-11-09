@@ -16,7 +16,8 @@ device's own loopback address, and never through a proxy.
 
 Login: UNOS_DEV_ADMIN_USER and UNOS_DEV_ADMIN_PASSWORD from dev.env. Every login commits a
 row of the login history to the database and appends a line to the audit log, both on the
-device's SD card (about 0.16 MiB in all, ADR-0224), and counts
+device's SD card (about 0.08 MiB in all, 0.15 MiB for the first after a start; ADR-0308),
+and counts
 against the login rate limit (5 per minute), so the relay keeps the token in the device's RAM
 (/dev/shm/unos-dev-api.token, mode 600, root's; root there can mint tokens anyway; ADR-0222)
 and signs in again only when the API refuses it. A cache that is not a regular file of root

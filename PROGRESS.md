@@ -17,8 +17,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   (#76, ADR-0302), and the device's NFS server with the device check of `shares.nfs-exports`
   (ADR-0303). That evening: the scenario checks of the dev device (#79, ADR-0304), the base
   images pinned by digest (#80, ADR-0305) and the database's write-ahead log (ADR-0306); on
-  2026-11-09 the web UI that waits for the API also at boot (ADR-0307). The dev device runs
-  main 12483dd, deployed on 2026-11-09 at 07:41 UTC.
+  2026-11-09 the web UI that waits for the API also at boot (ADR-0307), and the write-ahead
+  log's device check, after which a sign-in writes at most 0.1 MiB (ADR-0308). The dev device
+  runs main 12483dd, deployed on 2026-11-09 at 07:41 UTC.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery).
@@ -38,11 +39,7 @@ significant step. Features and their state live in `feature-list.json`, decision
   `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
   `AGENTS.md` or `.claude/settings.json` is a stop.
 - Next, in this order:
-  1. `architecture.sqlite-write-cost` (the SD card): the database's write-ahead log (ADR-0306)
-     runs on the device since 2026-11-09, where a sign-in in the middle of the log wrote
-     0.082 MiB instead of 0.156 to 0.168 (Log). Step 3 asks for a few KiB, so the entry passes
-     once an ADR rewords that step to the measured writes, which is the owner's call.
-     `deploy.digest-pinned-base-images` (#80, ADR-0305) is deployed and its supervisor builds
+  1. `deploy.digest-pinned-base-images` (#80, ADR-0305) is deployed and its supervisor builds
      reused the cached base; the entry passes once a build shows that after the tag's arm64 image
      has moved upstream, and Dependabot has proposed a digest.
   2. The host-level entries still open (the feature-pass skill's table): after the re-check of
@@ -140,10 +137,25 @@ Open owner actions:
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
 3. Who gets access to the share DATA (an SMB account for a regular user).
-4. Whether an ADR rewords step 3 of `architecture.sqlite-write-cost` (a sign-in writes a few
-   KiB) to the writes measured with the owner's choice of ADR-0306 (Log, 2026-11-09).
 
 ## Log
+
+### 2026-11-09: a sign-in writes at most 0.1 MiB in the middle of the log (ADR-0308)
+
+- Asked whether an ADR rewords step 3 of `architecture.sqlite-write-cost` (a sign-in writes a
+  few KiB) to the writes measured with the write-ahead log, the owner answered "Yes, through
+  an ADR" (in translation). ADR-0308 sets at most 0.1 MiB for a sign-in in the middle of the
+  log, against the 0.082 MiB measured on 2026-11-09 (the Log entry below), and the entry's
+  description says the same; the first commit after a start or a checkpoint stays outside
+  the bound. The entry passes. `scripts/dev/api.py`, the deploy-device skill and the
+  device-checks skill quote a sign-in's writes as measured, in place of 0.16 MiB.
+- A fresh-context review found no blocker: the numbers match the measurements, a new ADR
+  that names the entry is right (ADR-0224 only handed the SQLite part to it), and the quotes
+  are accurate. Its minor findings, fixed: the ADR and the notes say that each figure is one
+  run, the ADR that the start itself made `unos.db-shm` again, the notes why no re-check after
+  a reboot applies (not a host-level change), and a long line of the device-checks skill is
+  wrapped. `make check` passed (5978 backend tests, 121 skipped, 1 xfailed; svelte-check
+  without errors, the build).
 
 ### 2026-11-09: the deploy of main 12483dd and the SD writes of the write-ahead log
 
@@ -173,7 +185,7 @@ Open owner actions:
   (63), among them a plain and an encrypted backup of the database in the log; 4.606 MiB.
 - `architecture.sqlite-write-cost` keeps `passes` false: its step 3 asks for a few KiB, and the
   owner's choice of ADR-0306 measures 0.082 MiB in the middle of the log. An ADR that rewords
-  the step is the owner's call (Open owner actions, 4).
+  the step is the owner's call.
 
 ### 2026-11-09: the reboot of 07:17 UTC: the web UI waited for the API at boot
 
