@@ -191,6 +191,16 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-09: the stub checks of the SMB models' tests are gone
+
+- `testing.remove-dead-stub-checks`, at the owner's word to work on through the features ("I
+  allow everything", in translation), under ADR-0186 and ADR-0207: `test_smb_models.py` lost the
+  test that skipped for each of the 13 functions whose NotImplementedError body real code had
+  replaced, and its table, now `INTERFACES`, lost the work packages' labels; `TestSignatures`
+  checks the 13 signatures as before. `make test TESTS=tests/test_smb_models.py`: 174 passed and
+  none skipped, where 13 skipped before. Not host-level.
+- RESULTS
+
 ### 2026-11-09: the scrub steps checked by hand become the scenario check scrub (ADR-0314)
 
 - At the owner's word to work on through the features ("I allow everything", in translation),

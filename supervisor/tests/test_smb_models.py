@@ -1,7 +1,6 @@
 """Slice 2 foundation: the SMB tables (ADR-0077), the fixed values, the SMB state derived
-for a user, the types shared by the shares modules, and the stubs whose signatures the
-later work packages coded against (STUBS)."""
-import ast
+for a user, the types shared by the shares modules, and the signatures of the functions that
+other code is written against (INTERFACES)."""
 import asyncio
 import inspect
 import os
@@ -9,7 +8,6 @@ import sqlite3
 import stat
 import subprocess
 import sys
-import textwrap
 from contextlib import asynccontextmanager, closing
 from dataclasses import FrozenInstanceError
 from datetime import datetime
@@ -655,73 +653,54 @@ class TestInterfaces:
 _POS = inspect.Parameter.POSITIONAL_OR_KEYWORD
 _KW = inspect.Parameter.KEYWORD_ONLY
 
-# The stubs that the first work package of slice 2 (P0) wrote: async or not, parameters
-# (name, kind, annotation), return annotation, and the later package (P1, P2) that
-# replaced the body, keeping the signature.
-STUBS = {
-    "service.apply_smb_config": (True, [("db", _POS, "AsyncSession")], "interfaces.ApplyResult", "P1"),
-    "service.reconcile_smb_on_startup": (True, [], "None", "P1"),
+# The functions of the SMB service and accounts modules that other code is written against
+# (slice 2 began them as stubs): async or not, parameters (name, kind, annotation), and the
+# return annotation.
+INTERFACES = {
+    "service.apply_smb_config": (True, [("db", _POS, "AsyncSession")], "interfaces.ApplyResult"),
+    "service.reconcile_smb_on_startup": (True, [], "None"),
     "service.after_database_restore_locked": (
-        True, [("db", _POS, "AsyncSession")], "tuple[list[str], bool]", "P1"
+        True, [("db", _POS, "AsyncSession")], "tuple[list[str], bool]"
     ),
     "service.delete_access_of_user": (
-        True, [("db", _POS, "AsyncSession"), ("user_id", _POS, "int")], "int", "P1"
+        True, [("db", _POS, "AsyncSession"), ("user_id", _POS, "int")], "int"
     ),
     "service.share_problem": (
-        True, [("db", _POS, "AsyncSession"), ("share_id", _POS, "int")], "str | None", "P1"
+        True, [("db", _POS, "AsyncSession"), ("share_id", _POS, "int")], "str | None"
     ),
     "service.share_path_problem": (
         False,
         [("path", _POS, "object"), ("other_paths", _KW, "Mapping[str, str]"),
          ("pool_names", _KW, "Collection[str]")],
-        "str | None",
-        "P1",
+        "str | None"
     ),
     "accounts.snapshot_for_restore": (
-        False, [("db_path", _POS, "pathlib.Path | None")], "interfaces.RestoreSnapshot", "P2"
+        False, [("db_path", _POS, "pathlib.Path | None")], "interfaces.RestoreSnapshot"
     ),
     "accounts.prepare_restored_accounts": (
         False,
         [("conn", _POS, "sqlite3.Connection"), ("snapshot", _POS, "interfaces.RestoreSnapshot"),
          ("authoritative", _POS, "bool")],
-        "list[str]",
-        "P2",
+        "list[str]"
     ),
-    "accounts.reconcile_accounts": (True, [("db", _POS, "AsyncSession")], "interfaces.ReconcileResult", "P2"),
-    "accounts.host_status": (False, [], "interfaces.AccountHostStatus", "P2"),
-    "accounts.gid_problem": (False, [], "str | None", "P2"),
-    "accounts.read_smb_sessions": (False, [], "list[interfaces.SmbSession] | None", "P2"),
-    "accounts.end_smb_sessions": (False, [("names", _POS, "Iterable[str]")], "list[str]", "P2"),
+    "accounts.reconcile_accounts": (True, [("db", _POS, "AsyncSession")], "interfaces.ReconcileResult"),
+    "accounts.host_status": (False, [], "interfaces.AccountHostStatus"),
+    "accounts.gid_problem": (False, [], "str | None"),
+    "accounts.read_smb_sessions": (False, [], "list[interfaces.SmbSession] | None"),
+    "accounts.end_smb_sessions": (False, [("names", _POS, "Iterable[str]")], "list[str]"),
 }
 
 
-def _stub(name: str):
+def _function(name: str):
     module, function = name.split(".")
     return getattr({"service": service, "accounts": accounts}[module], function)
 
 
-def _has_p0_body(function) -> bool:
-    """Whether ``function`` still has its P0 body: a docstring, then raise NotImplementedError(...).
-
-    P1 and P2 replace these bodies and keep the signatures; no package owns this file after P0.
-    """
-    definition = ast.parse(textwrap.dedent(inspect.getsource(function))).body[0]
-    body = definition.body
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-        body = body[1:]
-    return (
-        len(body) == 1
-        and isinstance(body[0], ast.Raise)
-        and isinstance(body[0].exc, ast.Call)
-        and getattr(body[0].exc.func, "id", None) == "NotImplementedError"
-    )
-
-
-class TestStubs:
-    @pytest.mark.parametrize("name", list(STUBS))
+class TestSignatures:
+    @pytest.mark.parametrize("name", list(INTERFACES))
     def test_signature(self, name):
-        is_async, parameters, returns, _ = STUBS[name]
-        function = _stub(name)
+        is_async, parameters, returns = INTERFACES[name]
+        function = _function(name)
         signature = inspect.signature(function)
 
         assert [(p.name, p.kind, p.annotation, p.default) for p in signature.parameters.values()] == [
@@ -729,20 +708,6 @@ class TestStubs:
         ]
         assert signature.return_annotation == returns
         assert inspect.iscoroutinefunction(function) is is_async
-
-    @pytest.mark.parametrize("name", list(STUBS))
-    async def test_a_stub_raises_not_implemented_naming_its_package(self, name):
-        package = STUBS[name][3]
-        function = _stub(name)
-        if not _has_p0_body(function):
-            pytest.skip(f"{package} has replaced the P0 body of {name}")
-
-        with pytest.raises(NotImplementedError) as raised:
-            result = function(**{parameter: None for parameter, *_ in STUBS[name][1]})
-            if inspect.isawaitable(result):
-                await result
-
-        assert raised.value.args == (package,)
 
     def test_pool_list_unavailable_is_a_samba_config_error(self):
         assert issubclass(service.PoolListUnavailable, smb.SambaConfigError)
