@@ -162,8 +162,9 @@ Open owner actions:
   in the middle of the log 0.082 MiB, against 0.156 to 0.168 with the rollback journal; a call
   with a cached token 0.020 MiB, as before; 30 seconds idle 0 MiB before and after. The two
   sign-ins grew `unos.db-wal` to 24,752 bytes, 6 frames of 3 pages each, as ADR-0306 counted.
-  Each measurement syncs the file system before and after, so it counts the metadata that ext4
-  would otherwise commit once for all the requests of its 120 seconds.
+  Each measurement syncs the file system before and after, so it counts a request's writes at
+  once; without the sync the kernel writes them out within about 35 seconds, together with those
+  of other commits (ADR-0306).
 - `docker restart unos-supervisor` up to healthy, about 8 seconds: 1.125 MiB in all. The stop's
   checkpoint rewrote `unos.db` and emptied `unos.db-wal`, and the start made `unos.db-shm`
   again; Docker's own writes of a restart are part of the number, so it does not isolate the
