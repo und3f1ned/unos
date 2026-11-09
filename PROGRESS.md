@@ -56,9 +56,9 @@ significant step. Features and their state live in `feature-list.json`, decision
      `storage.scrub-needs-mounted-pool` on the checks around the reboot of 18:41 UTC (Log); the
      others need a device check first or, as `storage.pool-health`, a step the re-check could
      not show.
-  3. The scrub steps checked by hand on 2026-11-09 become an area of `scripts/dev/scenario.py`
-     (ADR-0304), with Start Scrub's answer; `storage.scrub` passes again after the fix of the
-     scrub's status after a start and its device check before and after a reboot.
+  3. `storage.scrub` passes again once `scripts/dev/scenario.sh scrub` (ADR-0314) passes on the
+     device with the fix of the scrub's status after a start (ADR-0313) deployed, before and
+     after a reboot.
 
 ## Dev device
 
@@ -190,6 +190,31 @@ Open owner actions:
 3. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-09: the scrub steps checked by hand become the scenario check scrub (ADR-0314)
+
+- At the owner's word to work on through the features ("I allow everything", in translation),
+  and as the review of that day's device record asked: `scripts/dev/scenario.sh scrub` runs the
+  steps of `storage.scrub` and `storage.scrub-needs-mounted-pool` that a script of the session had
+  checked by hand. A folder `<base>/unoscheck<6 hex digits>` with nothing mounted on it gets 409
+  (ADR-0311); Start Scrub answers running, and so does the status right after it (ADR-0313); the
+  scrub ends finished without errors; a second scrub is cancelled once btrfs has recorded it and
+  ends aborted; a disabled scheduled scrub task's Run now says "Scrub started", and its scrub ends
+  finished; the task is deleted, its run stays in the Scheduler's history. On a pool with more
+  than 64 GiB of data the scrubs are cancelled instead of waited for. `REMOTE_POOL_FOLDER` makes
+  and removes the folder on the root filesystem, only for a name of a check, and removes only an
+  empty folder that is no mount point.
+- The feature-pass skill's table names the new check for both entries, which leave the row of
+  checks by hand; AGENTS.md, `deploy/AGENTS.md`, `docs/TESTING.md`, GLOSSARY.md and the
+  device-checks skill name the area.
+- `supervisor/tests/test_dev_scenarios.py`: the fake NAS records a scrub a few requests after its
+  start and has the Scheduler's tasks and runs; the check passes on it, every call that fails in
+  turn leaves the fake as it was, and the check fails on the defects it exists for: no mount
+  check (500 for the folder), Start Scrub answering idle, a status that reads idle before btrfs
+  records the scrub, errors found, a cancel that leaves the scrub running, and runs deleted with
+  their task. A cancel in the clean-up runs also when the status reads idle, since a scrub that
+  btrfs has not recorded can read so. The helper is tested against a temporary base.
+- RESULTS
 
 ### 2026-11-09: a scrub runs from its start, before btrfs records it (ADR-0313)
 

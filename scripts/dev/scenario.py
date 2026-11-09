@@ -42,6 +42,14 @@ SD writes of each check (ADR-0214). The areas:
            access refused without a new folder and saved with one; Delete keeping the folder with
            its files and smb.conf byte for byte as found; then, with the copy deleted, a restart
            of the supervisor that writes no file in /etc/samba and leaves no problem.
+  scrub    Scrubs of the pool (ADR-0314): a scrub of a folder below the pools' base with nothing
+           mounted on it refused with 409 (ADR-0311); Start Scrub answered running, and so the
+           status right after it (ADR-0313); the scrub reported until it finished without errors;
+           Cancel Scrub of a scrub that btrfs has recorded, which ends aborted; a disabled
+           scheduled scrub task whose Run now starts a scrub ("Scrub started") that runs to its
+           end; and the task deleted, its run left in the Scheduler's history. On a pool with more
+           than 64 GiB of data the scrubs are cancelled instead of waited for. The pool's last
+           scrub result is the check's afterwards.
 
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
 of an earlier check. It makes what it needs through the API, under names made of "unoscheck"
@@ -60,7 +68,8 @@ ssh.sh, in a private mount namespace with the root filesystem read-only (ADR-022
 files in /dev/shm: stat, the account files' digests, testparm, Samba's log sizes, smbclient with
 a client configuration of its own in RAM, the scan for passwords; only pdbedit runs without that
 namespace, since tdbsam opens passdb.tdb read-write, and the smbconf check's edit of smb.conf by
-hand, which writes /etc/samba (ADR-0309). The passwords of the temporary user and the
+hand, which writes /etc/samba (ADR-0309), and the scrub check's folder below the pools'
+base, on the root filesystem (ADR-0314). The passwords of the temporary user and the
 backup's passphrase are made here, go to the device only on standard input (to the relay, and
 into an auth file of mode 600 in RAM that smbclient reads), and are never printed. The checks
 start no container (ADR-0183); the smbconf check restarts the supervisor's (ADR-0309).
@@ -95,7 +104,7 @@ import api as relay  # noqa: E402  scripts/dev/api.py
 
 SSH = HERE / "ssh.sh"
 SD = HERE / "sd.sh"
-AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf")
+AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "scrub")
 MARK = "unoscheck"
 LEFTOVER = re.compile(MARK + r"[0-9a-f]{6}")
 POOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -401,6 +410,31 @@ case $action in
 esac
 if [ -L "$path" ]; then echo link; elif [ -d "$path" ]; then echo folder; else echo missing; fi'''
 
+# A folder of the check below the pools' base, where nothing is mounted (ADR-0311): on the root
+# filesystem, so it runs without the read-only namespace. $1: make, remove or list; $2: the
+# folder's name, unoscheck and six hex digits. Prints the folders of the base, one per line.
+REMOTE_POOL_FOLDER = r'''
+set -uo pipefail
+action=$1 name=${2:-}
+base=${UNOS_DEV_POOLS:-/mnt/pools}
+case $action in
+    make | remove)
+        if ! [[ $name =~ ^unoscheck[0-9a-f]{6}$ ]]; then
+            echo "not a folder of a scenario check: $name" >&2
+            exit 2
+        fi
+        path=$base/$name
+        if [ "$action" = make ]; then
+            mkdir -m 0755 -- "$path" || exit 1
+        elif [ -d "$path" ] && [ ! -L "$path" ] && ! mountpoint -q -- "$path"; then
+            rmdir -- "$path" || exit 1
+        fi
+        ;;
+    list) ;;
+    *) echo "not an action: $action" >&2; exit 2 ;;
+esac
+ls -1A -- "$base"'''
+
 # The supervisor's restart (ADR-0309): Docker restarts the container that runs (no new one,
 # ADR-0183); prints "healthy <seconds>" once its health check passes again.
 REMOTE_RESTART = r'''
@@ -626,6 +660,11 @@ class Device:
 
     def unserve(self, action: str, path: str) -> str:
         return self.run(REMOTE_UNSERVE, action, path).strip()
+
+    def pool_folders(self, action: str = "list", name: str = "") -> list[str]:
+        """REMOTE_POOL_FOLDER, without the read-only namespace: the pools' base is a folder of the
+        root filesystem. The folders of the base afterwards."""
+        return sorted(self.run(REMOTE_POOL_FOLDER, action, name, read_only=False).split())
 
     def restart_supervisor(self) -> int:
         """Restart the supervisor's container; the seconds until it was healthy again."""
@@ -1754,6 +1793,154 @@ def smbconf_check(c: Check) -> None:
         s.text += f": healthy after about {took} s"
 
 
+# --- scrub -----------------------------------------------------------------------------------
+
+# How long the scrub steps wait for btrfs, and how often they ask (the tests make both short).
+SCRUB_WAIT = 900
+SCRUB_POLL = 2
+# A pool with more data than this is scrubbed only until btrfs reports the scrub running, and the
+# scrub is then cancelled: the steps that let a scrub run to its end need a small pool.
+SCRUB_TO_THE_END = 64 * GIB
+
+
+def scrub_of(c: Check, pool: str) -> dict:
+    return c.get(f"/storage/pools/{pool}/scrub")
+
+
+def scrub_until_it_ends(c: Check, pool: str) -> dict:
+    """The pool's scrub once btrfs no longer reports it running."""
+    deadline = time.monotonic() + SCRUB_WAIT
+    while True:
+        status = scrub_of(c, pool)
+        if status.get("status") != "running":
+            return status
+        c.expect(time.monotonic() < deadline, f"the scrub of {pool} still runs after {SCRUB_WAIT} s")
+        time.sleep(SCRUB_POLL)
+
+
+def scrub_recorded(c: Check, pool: str, before: str | None) -> dict:
+    """The pool's scrub once btrfs has recorded the one started after ``before`` (the start time
+    of the scrub recorded before it): btrfs records a scrub only about 5 seconds after its start
+    (ADR-0313), and a cancel before that leaves no record to name the cancel."""
+    deadline = time.monotonic() + SCRUB_WAIT
+    while True:
+        status = scrub_of(c, pool)
+        if status.get("last_run") and status.get("last_run") != before:
+            return status
+        c.expect(time.monotonic() < deadline, f"btrfs did not record the scrub of {pool} within {SCRUB_WAIT} s")
+        time.sleep(SCRUB_POLL)
+
+
+def scrub_check(c: Check) -> None:
+    with c.step("a pool is mounted read-write and managed by UNOS, and none of its scrubs runs") as s:
+        pool = c.pick_pool()
+        name = pool["name"]
+        base = os.path.dirname(pool["mountpoint"])
+        used = pool.get("used_size") or 0
+        to_the_end = used <= SCRUB_TO_THE_END
+        c.expect(scrub_of(c, name).get("status") != "running", f"a scrub of {name} runs: wait for its end, or cancel it")
+        s.text += f": {name} at {pool['mountpoint']}, {used / GIB:.1f} GiB used"
+    folder = f"{base}/{c.run}"
+    task = c.run
+
+    def own_tasks() -> list[dict]:
+        return [t for t in c.get("/scheduler/tasks") if t.get("name") == task]
+
+    def delete_own_tasks() -> None:
+        for t in own_tasks():
+            c.call("DELETE", f"/scheduler/tasks/{t['id']}")
+
+    def cancel() -> None:
+        """Cancel a scrub of the pool that still runs. Always: DELETE answers the status also when
+        none runs, and a scrub that btrfs has not recorded yet may read as idle."""
+        c.call("DELETE", f"/storage/pools/{name}/scrub")
+        scrub_until_it_ends(c, name)
+
+    with c.step("the device holds nothing of an earlier check"):
+        c.baseline(lambda: {"the Scheduler's tasks": sorted(t.get("name", "") for t in c.get("/scheduler/tasks")),
+                            f"the folders of {base}": c.device.pool_folders()})
+
+    with c.step(f"a scrub of {folder}, a folder with nothing mounted on it, is refused with 409 (ADR-0311)") as s:
+        c.on_cleanup(f"remove {folder}", lambda: c.device.pool_folders("remove", c.run))
+        c.expect(c.run in c.device.pool_folders("make", c.run), f"{folder} was not made")
+        refused = c.call("POST", f"/storage/pools/{c.run}/scrub", expect=409)
+        want = f"Pool {c.run} is not mounted at {folder}"
+        c.expect(refused.get("detail") == want, f"the answer is {refused.get('detail')!r}, not {want!r}")
+        c.expect(c.run not in c.device.pool_folders("remove", c.run), f"{folder} is still there")
+        s.text += f": {want!r}"
+
+    with c.step(f"Start Scrub of {name} answers running, and so does the status right after it (ADR-0313)") as s:
+        c.on_cleanup(f"cancel a scrub of {name} that still runs", cancel)
+        first_before = scrub_of(c, name).get("last_run")
+        started = c.post(f"/storage/pools/{name}/scrub")
+        right_after = scrub_of(c, name)
+        c.expect(started.get("status") == "running", f"Start Scrub answered {started.get('status')}")
+        c.expect(right_after.get("status") in ("running", "finished"),
+                 f"the status right after the start is {right_after.get('status')}")
+        s.text += f": {started.get('status')}, then {right_after.get('status')}"
+
+    if to_the_end:
+        with c.step(f"btrfs reports the scrub of {name} until it ends, finished without errors") as s:
+            ended = scrub_until_it_ends(c, name)
+            c.expect(ended.get("status") == "finished", f"it ended {ended.get('status')}")
+            c.expect(ended.get("errors") == 0, f"it found {ended.get('errors')} errors")
+            c.expect(ended.get("last_run"), "it names no start time")
+            s.text += f": {ended.get('duration')} s, started {ended.get('last_run')}"
+    else:
+        c.skip(f"btrfs reports the scrub of {name} until it ends", f"{used / GIB:.0f} GiB used: it is cancelled instead")
+
+    with c.step(f"Cancel Scrub stops a scrub of {name} that btrfs has recorded, and the status says it was "
+                "cancelled") as s:
+        if to_the_end:
+            before = scrub_of(c, name).get("last_run")
+            started = c.post(f"/storage/pools/{name}/scrub")
+            c.expect(started.get("status") == "running", f"Start Scrub answered {started.get('status')}")
+        else:
+            before = first_before  # the scrub of the start's step still runs
+        recorded = scrub_recorded(c, name, before)
+        c.expect(recorded.get("status") == "running", f"the scrub ended {recorded.get('status')} before the cancel")
+        answer = c.call("DELETE", f"/storage/pools/{name}/scrub")
+        ended = scrub_until_it_ends(c, name)
+        c.expect(ended.get("status") == "aborted", f"the cancel answered {answer.get('status')}, and the scrub "
+                                                   f"ended {ended.get('status')}")
+        s.text += f": {answer.get('status')}, then {ended.get('status')}"
+
+    with c.step(f"Run now of a scheduled scrub task of {name} starts a scrub through the same helper (ADR-0311)") as s:
+        c.on_cleanup(f"delete the Scheduler's task {task}", delete_own_tasks)
+        made = c.post("/scheduler/tasks", {"name": task, "task_type": "scrub", "enabled": False, "frequency": "daily",
+                                           "hour": 3, "minute": 0, "target_pool": name})
+        c.post(f"/scheduler/tasks/{made['id']}/run")
+        deadline = time.monotonic() + SCRUB_WAIT
+        while True:
+            runs = c.get(f"/scheduler/runs/{made['id']}")
+            if runs and runs[-1].get("finished_at"):
+                break
+            c.expect(time.monotonic() < deadline, f"the run did not end within {SCRUB_WAIT} s")
+            time.sleep(SCRUB_POLL)
+        run = runs[-1]
+        c.expect((run.get("status"), run.get("output")) == ("success", "Scrub started"),
+                 f"the run ended {run.get('status')}: {run.get('output') or run.get('error')}")
+        status = scrub_of(c, name)
+        c.expect(status.get("status") in ("running", "finished"), f"then the scrub is {status.get('status')}")
+        s.text += f": {run.get('output')}, then {status.get('status')}"
+
+    if to_the_end:
+        with c.step(f"the scheduled scrub of {name} ends, finished without errors") as s:
+            ended = scrub_until_it_ends(c, name)
+            c.expect((ended.get("status"), ended.get("errors")) == ("finished", 0),
+                     f"it ended {ended.get('status')} with {ended.get('errors')} errors")
+            s.text += f": {ended.get('duration')} s"
+    else:
+        with c.step(f"Cancel Scrub stops the scheduled scrub of {name}"):
+            c.call("DELETE", f"/storage/pools/{name}/scrub")
+            c.expect(scrub_until_it_ends(c, name).get("status") == "aborted", "it did not end as cancelled")
+
+    with c.step(f"the task {task} is deleted, and its run stays in the Scheduler's history"):
+        c.call("DELETE", f"/scheduler/tasks/{made['id']}")
+        c.expect(not own_tasks(), f"the task {task} is still there")
+        c.expect([r["id"] for r in c.get(f"/scheduler/runs/{made['id']}")] == [run["id"]], "its run is gone")
+
+
 CHECKS: dict[str, Callable[[Check], None]] = {
     "files": files_check,
     "volumes": volumes_check,
@@ -1761,6 +1948,7 @@ CHECKS: dict[str, Callable[[Check], None]] = {
     "backups": backups_check,
     "smb": smb_check,
     "smbconf": smbconf_check,
+    "scrub": scrub_check,
 }
 
 
@@ -1794,7 +1982,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scenario.py", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("area", choices=AREAS)
-    parser.add_argument("--pool", type=pool_name, help="the pool of the files, volumes, smb and smbconf checks")
+    parser.add_argument("--pool", type=pool_name, help="the pool of the files, volumes, smb, smbconf and scrub checks")
     args = parser.parse_args(argv)
     if not lock_holder_alive(os.environ.get("UNOS_DEV_LOCK_HELD", "")):
         print("scenario.py: run it through scripts/dev/scenario.sh, which holds the device lock (ADR-0210)", file=sys.stderr)
