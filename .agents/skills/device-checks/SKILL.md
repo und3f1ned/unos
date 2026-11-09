@@ -128,5 +128,6 @@ use the main checkout's. Output shows secrets as `<redacted>`.
 - The scenario checks write to the SD card, and each step's line says how much: the API's
   database and audit log at every change, smb.conf at every share change, `/etc/passwd` and
   `/etc/shadow` when the smb check's account is made and deleted, passdb.tdb then and at its
-  password change and its one wrong password (ADR-0159), the backups check's two backups, and
+  password change (not at a wrong password while no lockout counts failures: ADR-0310, which the
+  check compares), the backups check's two backups, and
   about 0.02 MiB of container logs per API call (ADR-0304).
