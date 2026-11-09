@@ -221,7 +221,9 @@ Open owner actions:
   replace. The replace's output is btrfs-progs' format, not seen on the dev device, which has no
   spare disk. `storage.scrub` passes again only after the fix's device check before and after a
   reboot.
-- CHECK
+- `make check` passed on the tree merged with main 5b55acd (6040 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build), and `webui/tests/storage.spec.ts` on the
+  stand-in (41 passed).
 
 ### 2026-11-09: two host-level entries pass on the device checks of main 31ac73b
 
