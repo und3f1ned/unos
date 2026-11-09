@@ -7,8 +7,8 @@ over one model in memory of a pool with its folders, trash and volumes, the shar
 users, the SMB host accounts and Samba's passdb, the disks and the backups. Its Samba serves
 sessions as the device's does for the checks: access per share, a closed tree connect when a
 share's access shrinks (ADR-0103), the end of an account's sessions at a password change or a
-deletion (ADR-0104), and a failed sign-in that changes passdb.tdb unless the password is one of
-the two that the password history holds (ADR-0278).
+deletion (ADR-0104), and a failed sign-in that changes passdb.tdb only while a lockout counts
+failures, and then not for one of the two passwords that the history holds (ADR-0278, ADR-0310).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 * every area (files, volumes, smart, backups, smb, smbconf) passes against the fake, prints a
@@ -242,6 +242,7 @@ class FakeNas:
         self.quotas = False
         self.sessions: list[FakeSmbSession] = []
         self.passdb_mtime = 1
+        self.lockout = "0"  # Samba's "bad lockout attempt": none, as UNOS leaves it (ADR-0280)
         self.log: list[str] = []
         self.sector_count = 1000
         self.calls: list[tuple] = []
@@ -396,8 +397,14 @@ class FakeNas:
                 session.tree_closed = True
 
     def failed_sign_in(self, user: str, password: str) -> None:
+        """Samba stores the account's entry again after a wrong password; while no lockout counts
+        failures its bytes stay the same, which tdb does not write (ADR-0310). With a lockout,
+        each counted failure writes it, but for the two previous passwords (ADR-0278)."""
         account = self.passdb.get(user)
-        if account is not None and (password not in account["history"] or "no-history" in self.bugs):
+        if account is None:
+            return
+        counted = self.lockout_value() != "0" and password not in account["history"]
+        if counted or "wrong-password-writes" in self.bugs:
             self.passdb_mtime += 1
 
     # --- the API
@@ -734,13 +741,16 @@ class FakeNas:
             "accounts": accounts,
             "group": "unos-smb:x:70000:",
             "testparm": True,
-            "passdb": str(self.passdb_mtime),
+            "passdb": f"2026-11-08 12:00:00.{self.passdb_mtime:09d} +0000",  # stat -c %y
             "sizes": {"/var/log/samba/log.smbd": "120", "/var/log/samba/log.nmbd": "missing", "/run/samba/log.samba": "800"},
         }
 
     def passdb_entries(self):
         self.device_call("passdb_entries")
-        return sorted(self.passdb), "3"
+        return sorted(self.passdb), "0" if "no-history" in self.bugs else "3", self.lockout_value()
+
+    def lockout_value(self) -> str:
+        return "3" if "lockout" in self.bugs else self.lockout
 
     def subvolume(self, action, path):
         self.device_call("subvolume")
@@ -1233,7 +1243,9 @@ def test_a_check_refuses_to_start_beside_leftovers_of_an_earlier_one(nas, area):
     ("smb", "sessions-stay", "a new password set by an administrator ends the user's open session"),
     ("smb", "share-folder-mode", "2770 root:unos-smb"),
     ("smb", "upload-mode", "660 root:unos-smb"),
-    ("smb", "no-history", "passdb.tdb"),
+    ("smb", "no-history", "Samba's password history is '0', not 3"),
+    ("smb", "wrong-password-writes", "the replaced password is refused"),
+    ("smb", "lockout", "Samba's bad lockout attempt is '3', not 0"),
     ("smb", "log-password", "no password of the check"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
@@ -1301,6 +1313,24 @@ def test_the_smart_check_refuses_a_partition_where_a_disk_has_one(nas):
     status, output = run_check("smart", nas)
     assert status == 0, output
     assert f"/health/disk/{DISK}1" in [path for _, path, _, _ in nas.calls] and f"mmcblk1, sdz, {DISK}1" in output
+
+
+def test_the_smb_check_compares_passdb_at_a_password_the_account_never_had(nas, monkeypatch):
+    """shares.samba-runtime-writes, step 2 (ADR-0310): a wrong password that the account never had
+    leaves passdb.tdb as it was too, which the check compares at its step with a wrong password."""
+    real = nas.failed_sign_in
+
+    def writes_for_a_new_password(user, password):
+        real(user, password)
+        account = nas.passdb.get(user)
+        if account is not None and password not in account["history"]:
+            nas.passdb_mtime += 1
+
+    monkeypatch.setattr(nas, "failed_sign_in", writes_for_a_new_password)
+    status, output = run_check("smb", nas)
+    assert status == 1
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "a wrong password is refused" in failed[0] and "passdb.tdb" in failed[0], output
 
 
 def test_with_a_guest_share_the_smb_check_tries_no_null_session(nas, monkeypatch):
@@ -1502,9 +1532,10 @@ def test_the_device_gets_the_script_and_the_secrets_on_standard_input_only(stub)
 def test_the_device_reads_pdbedit_without_the_read_only_namespace(stub):
     """tdbsam opens passdb.tdb read-write, which a read-only root refuses (ADR-0304)."""
     device = device_with_stub(stub)
-    (stub.log / "reply").write_text("user test\nuser unoscheck1a2b3c\nhistory account policy value is: 3\n")
-    names, history = device.passdb_entries()
-    assert names == ["test", "unoscheck1a2b3c"] and history == "3"
+    (stub.log / "reply").write_text("user test\nuser unoscheck1a2b3c\nhistory account policy value is: 3\n"
+                                    "lockout account policy value is: 0\n")
+    names, history, lockout = device.passdb_entries()
+    assert names == ["test", "unoscheck1a2b3c"] and (history, lockout) == ("3", "0")
     argv = (stub.log / "argv").read_text()
     assert "unshare" not in argv and argv.rstrip("\n").endswith("\0bash -s --")
     assert scenario.RO_ROOT not in (stub.log / "stdin").read_text()

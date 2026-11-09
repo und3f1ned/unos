@@ -50,8 +50,8 @@ significant step. Features and their state live in `feature-list.json`, decision
      after the reboot of 2026-11-09 (ADR-0307; Log), and `shares.smb-conf-and-status` and
      `shares.edit-and-delete` with the steps checked by hand before and after the reboot of
      12:22 UTC that day (Log), and `files.group-writable-entries-in-shares` on the scenario
-     checks around that reboot (Log); `shares.samba-runtime-writes` waits for the smb check to
-     compare passdb.tdb at a wrong password (ADR-0310); the others
+     checks around that reboot (Log); `shares.samba-runtime-writes` waits for the run of the smb
+     check, which compares passdb.tdb at a wrong password (ADR-0310), around a reboot; the others
      need a device check first or, as
      `storage.pool-health`, a step the re-check could not show.
 
@@ -169,6 +169,25 @@ Open owner actions:
 3. Who gets access to the share DATA (an SMB account for a regular user).
 
 ## Log
+
+### 2026-11-09: the smb check compares passdb.tdb at a wrong password
+
+- For `shares.samba-runtime-writes`, at the owner's word to work on through the features ("I
+  allow everything", in translation): the smb scenario check's step with a password the account
+  never had compares passdb.tdb's modification time before and after it, and its first step reads
+  Samba's "bad lockout attempt" beside the password history and expects 0, as UNOS leaves Samba
+  (ADR-0280): a failed sign-in writes nothing to passdb.tdb while no lockout counts failures
+  (ADR-0310). The feature-pass skill's table no longer leaves this out of the smb check.
+- `supervisor/tests/test_dev_scenarios.py`: the stand-in's Samba writes passdb.tdb at a wrong
+  password only while a lockout counts failures (and then not for the two previous passwords);
+  new tests failed on the old check: a write for a password the account never had, and a lockout
+  policy, each fail it now; `scenario.Device.passdb_entries` reads the lockout policy.
+- The policy is read at the check's start, before anything is made: with a lockout the check's
+  own wrong passwords would count against its temporary account, so the steps after them would
+  not show what they claim. A device with a lockout stops the smb check there.
+- The entry passes once this check has run on the device before and after a reboot; setting a
+  previous password again through UNOS stays unchecked on the device, as its notes say.
+- REVIEW_AND_CHECK
 
 ### 2026-11-09: an SMB entry passes on the scenario checks, and passdb.tdb's writes measured
 
