@@ -5,9 +5,9 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 
 from ..shares.account_state import SmbAccountStatus
 
-# bcrypt only reads the first 72 bytes of a password. New passwords longer than
-# that are rejected instead of being silently truncated; see auth.utils for how
-# existing hashes of longer passwords keep verifying.
+# bcrypt takes at most 72 bytes of a password: new passwords longer than that
+# are refused (422), and a longer one that is only checked matches no hash
+# (auth.utils.verify_password, ADR-0315).
 MAX_PASSWORD_BYTES = 72
 
 
@@ -20,8 +20,8 @@ def _fits_bcrypt(password: str) -> str:
 
 
 # Use for passwords that are about to be hashed. Passwords that are only
-# verified (login, current password) must not be limited, or accounts created
-# before the limit existed could no longer log in.
+# checked (the sign-in, the current password) get no such limit: a longer one
+# fails like a wrong password, not with a 422 (ADR-0315).
 NewPassword = Annotated[str, AfterValidator(_fits_bcrypt)]
 
 
@@ -57,7 +57,7 @@ class Token(BaseModel):
 class LoginRequest(BaseModel):
     # Bounded: a failed login is recorded (login_attempts, the audit log) before
     # anyone is authenticated. The limits are far above any real name, password
-    # (bcrypt reads 72 bytes) or code; the 422 handler leaves the values out.
+    # (bcrypt takes at most 72 bytes) or code; the 422 handler leaves the values out.
     username: str = Field(max_length=255)
     password: str = Field(max_length=1024)
     totp_code: str | None = Field(default=None, max_length=16)

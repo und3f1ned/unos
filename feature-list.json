@@ -720,11 +720,17 @@
         "A sign-in with a password longer than 72 bytes fails like a wrong password, without a server error",
         "New passwords longer than 72 bytes are still refused with 422, and the comment in supervisor/src/auth/schemas.py no longer points to old hashes"
       ],
-      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_auth.py",
+        "supervisor/tests/test_authz.py"
+      ],
+      "passes": true,
       "adr": [
         "ADR-0207",
-        "ADR-0026"
-      ]
+        "ADR-0026",
+        "ADR-0315"
+      ],
+      "notes": "Done 2026-11-09 (ADR-0315, which superseded ADR-0026). Step 1: verify_password encodes the password whole and answers False for one longer than 72 bytes before bcrypt, which matches no hash then, also not that of its first 72 bytes (test_auth.py TestPasswordHashing test_a_password_longer_than_72_bytes_matches_no_hash, which failed on the cut). Step 2: test_a_sign_in_with_a_password_longer_than_72_bytes_fails_like_a_wrong_one: an account with a password of 72 bytes signs in with it, and with one character more gets 401 \"Incorrect username or password\" (it signed in on the old code). Step 3: test_new_password_schemas_enforce_bcrypt_limit and test_authz.py test_new_passwords_longer_than_bcrypt_limit_are_rejected (422), and schemas.py's comments name the check as given. A hash of the passlib code for a password of at most 72 bytes still verifies (test_a_hash_of_the_passlib_era_still_verifies_its_password). Not host-level."
     },
     {
       "id": "auth.user-rename",

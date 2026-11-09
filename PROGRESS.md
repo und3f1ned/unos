@@ -188,6 +188,9 @@ Open owner actions:
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
 3. Who gets access to the share DATA (an SMB account for a regular user).
+4. After the next deploy, sign in as the dev device's regular account `test`: if its password is
+   longer than 72 bytes it no longer signs in (ADR-0315), and an administrator sets a new one on
+   the Users page.
 
 ## Log
 
@@ -200,6 +203,31 @@ Open owner actions:
   checks the 13 signatures as before. `make test TESTS=tests/test_smb_models.py`: 174 passed and
   none skipped, where 13 skipped before. Not host-level.
 - RESULTS
+
+### 2026-11-09: passwords are checked as given (ADR-0315)
+
+- `auth.no-legacy-password-truncation`, at the owner's word to work on through the features ("I
+  allow everything", in translation), under ADR-0207: `verify_password` no longer cuts a password
+  to bcrypt's 72 bytes, which ADR-0026 kept for the hashes of the passlib code before Phase 0, so
+  that a password of 72 bytes no longer signs in with anything appended to it. A password longer
+  than 72 bytes matches no hash and fails like a wrong password, also at the sign-in (401). On
+  the dev device the administrator's password was set through the API after the 72-byte limit;
+  its regular account `test` kept its password of Phase 0 (ADR-0226), so whether it still signs
+  in after the deploy is for the owner to check (Open owner actions). ADR-0315 supersedes
+  ADR-0026 and restates the rest of it; the comments of `auth/schemas.py` and the changelog say
+  so.
+- Tests first (ADR-0186): `test_a_password_longer_than_72_bytes_matches_no_hash` (ASCII and two-byte
+  characters) and `test_a_sign_in_with_a_password_longer_than_72_bytes_fails_like_a_wrong_one`
+  failed on the old code, where the longer password verified and signed in. The tests of the
+  passlib hashes of longer passwords are gone; a passlib hash of a shorter password still
+  verifies. Not host-level.
+- A fresh-context review found nothing that blocks; fixed from it: the ADR's premise about the
+  device's passwords (the account `test` kept its own) and its citation of the sign-in's limits
+  (ADR-0065, not ADR-0062). Not done: API tests of a change of one's own password and of turning
+  one's SMB on with a current password longer than 72 bytes; both check it through
+  `verify_password` before anything else and answer 400 like a wrong one.
+- `make check` passed on the tree merged with main f3d20be (6066 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build), before the review's edits of the ADR.
 
 ### 2026-11-09: the scrub steps checked by hand become the scenario check scrub (ADR-0314)
 

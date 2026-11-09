@@ -53,23 +53,27 @@ class TestPasswordHashing:
         
         assert verify_password("", hashed) is False
 
-    # Hashes written by the previous passlib 1.7.4 + bcrypt 4.0.1 code. passlib
-    # silently truncated passwords to bcrypt's 72-byte limit when hashing.
-    LEGACY_PASSLIB_HASHES = (
-        ("unos-e2e-pass", "$2b$12$70/WS7hrwVa4RW2kJdhIZuGbVq2hWk12O0dsSq1ZrsCQycx3gCUbe"),
-        ("correct-horse-battery-staple-" * 4,  # 116 bytes
-         "$2b$12$Ijd/kIObhng1hvAERpfQIebn2dKXTJryGyrHePLsyoKXIFU9W0gYS"),
-        ("\u043f\u0430\u0440\u043e\u043b\u044c-" * 12,  # 156 bytes, cut mid-character at 72
-         "$2b$12$Ia7euZ1YJhlwuWL8mWaRMu1m0CdQqMCbhpaeP5uJOqC5T4zpbu1LS"),
-    )
+    # A hash written by the passlib 1.7.4 + bcrypt 4.0.1 code before Phase 0.
+    PASSLIB_HASH = ("unos-e2e-pass", "$2b$12$70/WS7hrwVa4RW2kJdhIZuGbVq2hWk12O0dsSq1ZrsCQycx3gCUbe")
 
-    @pytest.mark.parametrize("password,legacy_hash", LEGACY_PASSLIB_HASHES)
-    def test_legacy_passlib_hashes_still_verify(self, password, legacy_hash):
+    def test_a_hash_of_the_passlib_era_still_verifies_its_password(self):
         from src.auth.utils import verify_password
 
-        assert verify_password(password, legacy_hash) is True
-        assert verify_password(password + "x", legacy_hash) is (len(password.encode()) >= 72)
-        assert verify_password("wrong", legacy_hash) is False
+        password, hashed = self.PASSLIB_HASH
+        assert verify_password(password, hashed) is True
+        assert verify_password(password + "x", hashed) is False
+
+    @pytest.mark.parametrize("password", ["a" * 72, "\u00e4" * 36], ids=["72-ascii", "72-bytes-of-umlauts"])
+    def test_a_password_longer_than_72_bytes_matches_no_hash(self, password):
+        """Passwords are checked as given (auth.no-legacy-password-truncation, ADR-0315): one longer
+        than bcrypt's 72 bytes matches no hash, also not the hash of its first 72 bytes, which the
+        passlib-era code made of it."""
+        from src.auth.utils import hash_password, verify_password
+
+        hashed = hash_password(password)
+        assert verify_password(password, hashed) is True
+        assert verify_password(password + "a", hashed) is False
+        assert verify_password(password + "\u00e4", hashed) is False
 
     def test_hash_password_rejects_more_than_72_bytes(self):
         from src.auth.utils import hash_password
@@ -97,8 +101,8 @@ class TestPasswordHashing:
             PasswordChange(current_password="old", new_password=long_password)
         with pytest.raises(ValidationError):
             UserUpdate(password=long_password)
-        # Passwords that are only verified stay unlimited, so legacy accounts
-        # whose password is longer than 72 bytes can still log in.
+        # Passwords that are only checked are bounded by the request limits alone: a
+        # longer one fails like a wrong password (ADR-0315), not with a 422.
         assert LoginRequest(username="u", password=long_password).password == long_password
         assert PasswordChange(current_password=long_password, new_password="new").new_password == "new"
 
@@ -571,3 +575,26 @@ class TestFirstRunSetup:
                 assert session.scalar(select(func.count()).select_from(User)) == 0
         finally:
             check.dispose()
+
+
+def test_a_sign_in_with_a_password_longer_than_72_bytes_fails_like_a_wrong_one(tmp_path, monkeypatch, caplog):
+    """auth.no-legacy-password-truncation (ADR-0315): the password of an account is 72 bytes long,
+    and a sign-in with it and one more character is refused as a wrong password, not taken for its
+    first 72 bytes, and with no server error."""
+    from src.auth import router as auth_router
+
+    from .test_smb_accounts import API, World
+
+    world = World(tmp_path, monkeypatch, caplog)
+    try:
+        password = "Seventy-two-bytes-" + "x" * 54
+        assert len(password.encode()) == 72
+        world.add_user("carol", password)
+        right = world.client.post(f"{API}/auth/login", json={"username": "carol", "password": password})
+        auth_router.limiter.reset()
+        longer = world.client.post(f"{API}/auth/login", json={"username": "carol", "password": password + "y"})
+    finally:
+        world.close()
+
+    assert right.status_code == 200, right.text
+    assert (longer.status_code, longer.json()["detail"]) == (401, "Incorrect username or password")
