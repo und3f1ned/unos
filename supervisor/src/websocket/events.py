@@ -20,7 +20,8 @@ While a socket is open, its token is checked again every
 JWT, disabled or expired API token, deleted user) closes the socket with
 4401; a logs socket whose user is no longer an administrator is closed with
 4403. If the check itself fails (database error), the socket is closed with
-1011 and the client reconnects through the handshake.
+1011 and the client reconnects through the handshake. A check in progress
+when the socket closes runs to its end, and its answer is dropped.
 
 A logs socket is closed with 1000 once the container's log ended (the
 container stopped) or could not be read, after a ``{"type": "error"}`` message
@@ -377,16 +378,31 @@ async def authenticate_websocket(websocket: WebSocket, *, admin_only: bool = Fal
     return token
 
 
+# Re-checks that a closed socket left running (ADR-0312): the event loop keeps only weak
+# references to tasks.
+_checks_left_running: set["asyncio.Task[Any]"] = set()
+
+
 async def _watch_credential(token: str, *, admin_only: bool = False) -> tuple[int, str]:
     """Check ``token`` every WS_REAUTH_INTERVAL_SECONDS while a socket is open.
 
     Returns the close code and reason once the socket must be closed. Each
     check uses a new short-lived database session (see ``_user_for_token``).
+    Cancelling the watch ends it at once, but a check in progress runs to its
+    end and its answer is dropped (ADR-0312): cancelled in its database query,
+    a check discards the session's connection, and when that connection's
+    close is cancelled as well, aiosqlite waits for ever.
     """
     while True:
         await asyncio.sleep(WS_REAUTH_INTERVAL_SECONDS)
+        check = asyncio.ensure_future(_user_for_token(token))
         try:
-            user = await _user_for_token(token)
+            user = await asyncio.shield(check)
+        except asyncio.CancelledError:
+            _checks_left_running.add(check)
+            check.add_done_callback(_checks_left_running.discard)
+            check.add_done_callback(_consume_result)
+            raise
         except Exception:
             logger.exception("Could not re-check a WebSocket's credentials")
             return WS_CLOSE_INTERNAL_ERROR, "re-authentication failed"

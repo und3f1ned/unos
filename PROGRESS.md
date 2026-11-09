@@ -170,6 +170,38 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-09: a WebSocket's re-check in progress runs to its end when the socket closes
+
+- `make check` of the smb check's comparison of passdb.tdb, merged with main a718ba9, hung
+  for more than two hours at the end of `test_rechecks_of_an_api_token_do_not_commit_its_last_use_again`
+  of `supervisor/tests/test_ws_auth.py`. The Python stacks (an abort of the hung pytest, which
+  pytest's faulthandler dumps) showed the TestClient's event loop in its shutdown, waiting for a
+  task left over. That test alone, repeated in a loop with a dump of the asyncio tasks, hung after
+  106 and after 21 runs, both times on SQLAlchemy's close of a discarded aiosqlite connection,
+  waiting in aiosqlite's `close()` for a worker thread that had ended.
+- The cause on UNOS's side: a socket that closes cancelled its credential watch (ADR-0031,
+  `_finish`) also in the middle of a re-check's database query; SQLAlchemy then discards the
+  connection and closes it in a task of its own, the event loop's shutdown cancels that close
+  too, and aiosqlite 0.22.1 then waits for ever. `_watch_credential` of
+  `supervisor/src/websocket/events.py` now waits for each check shielded, so a check in progress
+  runs to its end and its answer is dropped (ADR-0312), for the events and the logs socket.
+- Test first (ADR-0186): `test_a_socket_that_closes_lets_its_recheck_in_progress_run_to_its_end`
+  holds a re-check in progress, closes the socket and lets the check go on once the watch has
+  ended; on the old code the check ended with the cancellation. With the fix the whole of
+  `test_ws_auth.py` passed, and the test that hung and the new one, 500 times each in one run,
+  passed without a hang (1000 passed in 267 s). Not host-level.
+- A fresh-context review found nothing that blocks: it made the hang outside the test suite
+  with a slow query cancelled in its middle and then the event loop's shutdown (three hangs in
+  three runs of the old shape, none in 120 runs of the new one). Fixed from it: ADR-0312 names
+  the order of the two stops that makes the hang come only sometimes, uvicorn's shutdown, the
+  longest a check runs on after its socket closed (up to the busy timeout of 15 s when its
+  last-use commit waits, ADR-0252), and the handshake's query as what a test must not leave a
+  socket in; a second test, `test_a_recheck_that_fails_after_its_socket_closed_is_dropped_quietly`,
+  failed with asyncio's "Task exception was never retrieved" without `_consume_result`.
+- `make check` passed on the tree merged with main 31ac73b (6035 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build), before the review's second test and ADR
+  wording, which `test_ws_auth.py` (42 passed) and `make check-fast` cover.
+
 ### 2026-11-09: the smb check compares passdb.tdb at a wrong password
 
 - For `shares.samba-runtime-writes`, at the owner's word to work on through the features ("I
