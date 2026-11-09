@@ -191,6 +191,23 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-09: passwords are checked as given (ADR-0315)
+
+- `auth.no-legacy-password-truncation`, at the owner's word to work on through the features ("I
+  allow everything", in translation), under ADR-0207: `verify_password` no longer cuts a password
+  to bcrypt's 72 bytes, which ADR-0026 kept for the hashes of the passlib code before Phase 0, so
+  that a password of 72 bytes no longer signs in with anything appended to it. A password longer
+  than 72 bytes matches no hash and fails like a wrong password, also at the sign-in (401). No
+  installation has such hashes: the dev device's passwords were set again (ADR-0226). ADR-0315
+  supersedes ADR-0026 and restates the rest of it; the comments of `auth/schemas.py` and the
+  changelog say so.
+- Tests first (ADR-0186): `test_a_password_longer_than_72_bytes_matches_no_hash` (ASCII and two-byte
+  characters) and `test_a_sign_in_with_a_password_longer_than_72_bytes_fails_like_a_wrong_one`
+  failed on the old code, where the longer password verified and signed in. The tests of the
+  passlib hashes of longer passwords are gone; a passlib hash of a shorter password still
+  verifies. Not host-level.
+- RESULTS
+
 ### 2026-11-09: the scrub steps checked by hand become the scenario check scrub (ADR-0314)
 
 - At the owner's word to work on through the features ("I allow everything", in translation),

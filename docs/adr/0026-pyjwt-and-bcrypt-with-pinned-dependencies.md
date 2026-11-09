@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-05
 area: security
 decided-by: agent
+superseded-by: ADR-0315
 ---
 
 # ADR-0026: PyJWT and bcrypt replace python-jose and passlib, and dependencies are pinned
 
 ## Context
+
+Superseded by ADR-0315: passwords are checked as given, without the cut to 72 bytes.
 
 In November 2026 pip-audit reported 25 unique CVEs in 7 Python packages, among them a denial of service before authentication (python-multipart 0.0.6 with Starlette 0.35.1) that the audit confirmed. python-jose and passlib were abandoned, docker 6.1.3 held requests below 2.32 with its CVEs, and the test packages were installed into the production image.
 

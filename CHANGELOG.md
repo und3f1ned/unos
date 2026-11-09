@@ -76,7 +76,8 @@ manager, encrypted backup uploads, health checks, CI checks).
 - The 2FA QR code is drawn in the browser; the TOTP secret was sent to a
   third-party QR code service before.
 - `PyJWT` and `bcrypt` replace `python-jose` and `passlib`; new passwords
-  longer than 72 bytes are refused (422).
+  longer than 72 bytes are refused (422), and a password is checked as given:
+  one longer than 72 bytes never signs in.
 - Python dependencies are pinned and updated (FastAPI 0.162, Starlette 1.10,
   Uvicorn 0.54, Pydantic 2.14, SQLAlchemy 2.1, cryptography 50, docker 7.2,
   requests 2.34); the web UI image installs exactly `package-lock.json`
