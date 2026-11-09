@@ -46,15 +46,15 @@ significant step. Features and their state live in `feature-list.json`, decision
      a build shows that after the tag's arm64 image has moved upstream, and Dependabot has
      proposed a digest.
   2. The host-level entries still open (the feature-pass skill's table): after the re-check of
-     2026-11-08 after a reboot (Log), 12 more passed; the others need a device check first or, as
+     2026-11-08 after a reboot (Log), 12 more passed, and `deploy.health-checks-and-start-order`
+     after the reboot of 2026-11-09 (ADR-0307; Log); the others need a device check first or, as
      `storage.pool-health`, a step the re-check could not show, as `shares.smb-conf-and-status`
      and `shares.edit-and-delete` the steps that the smb scenario check leaves out, checked by
-     hand, and `deploy.health-checks-and-start-order` its re-check after a reboot (ADR-0307; Log,
-     2026-11-09).
+     hand.
 
 ## Dev device
 
-State on 2026-11-09, 01:20 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-09, 07:30 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -71,10 +71,11 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   (ADR-0306) is not on the device yet. The deploys' backup and rollback copies are in the main
   checkout's `tmp/dev/`. The device has no `unos` unit: `deploy.sh up` starts its containers, and
   at boot dockerd does, by their restart policy. Rebooted from the API twice on the morning of
-  2026-11-08, for the reboot checks of the IPv6 filter, and by the owner at about 22:57 UTC that
-  day for the re-check of ADR-0018 (the boot of 22:59:48 UTC; it answered again at 23:00). Docker
-  lists 11 dangling images, the old builds' layers (about 351 MB that only they use): pruning them
-  is the owner's call (ADR-0211).
+  2026-11-08, for the reboot checks of the IPv6 filter, by the owner at about 22:57 UTC that day
+  for the re-check of ADR-0018 (the boot of 22:59:48 UTC; it answered again at 23:00), and from
+  the API at the owner's word ("permission granted") at about 07:17 UTC on 2026-11-09 (the boot
+  of 07:17:13 UTC; ssh answered by 07:17:34). Since the prune before that reboot Docker lists no
+  dangling image (11 before, the old builds' layers, about 351 MB).
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
   Images: deploy-supervisor:latest (`97728ea0...`, the one before it as `:rollback`),
   deploy-webui:latest (`d77b0aa7...`, likewise), lscr.io/linuxserver/transmission, alpine (the
@@ -95,7 +96,8 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   users, shares, volumes, folders or backups; the pool's trash `/mnt/pools/data/.unos-trash`
   (made at 00:05 UTC that night) is empty. The first run's short self-test of sda completed
   without error, as the two before it; sda's SMART status: PASSED. The RAM rootfs of
-  `scripts/dev/linux-tests.sh` is gone since the reboots of that day (Open owner actions, 3).
+  `scripts/dev/linux-tests.sh` (560 MiB in `/dev/shm`) was made again after the boot of
+  2026-11-09, 07:17 UTC; every reboot removes it.
 - Network: global IPv6 from a Hurricane Electric tunnel prefix. Since 2026-11-08 the services
   answer over IPv6 only the LAN (link-local, unique-local and the LAN's global prefix), and the
   BitTorrent port 51413 everyone: the table `ip6 unos_ipv6_inbound`, loaded at boot by
@@ -111,7 +113,9 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   9.7 MiB by 23:00:29.
 - SD writes on 2026-11-09: the web UI's deploy 3.265 MiB (sync 0.812, `up webui` 2.453, its
   backup 0); the read-only probes before it (the unit and the containers 0.031, busybox's wget
-  0.016, 0 and 0, the image list 0.266) and after it 0.023, `check.sh` 0.055 and 0.
+  0.016, 0 and 0, the image list 0.266) and after it 0.023, `check.sh` 0.055 and 0; a probe at
+  02:55 UTC 0; the boot of 07:17:13 UTC 9.513 MiB by 07:22:29, the RAM rootfs's container among
+  them; the reads of the re-check after it 0.016, 0.141, 0, 0.016 and `check.sh` 0.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -126,13 +130,26 @@ Open owner actions:
    Developer settings, Tokens).
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
-3. The RAM rootfs of `scripts/dev/linux-tests.sh`, gone since the reboots of 2026-11-08: making
-   it creates a container (the command that `linux-tests.sh` prints).
-4. Who gets access to the share DATA (an SMB account for a regular user).
-5. A deploy of the supervisor for the SD measurements of `architecture.sqlite-write-cost`
+3. Who gets access to the share DATA (an SMB account for a regular user).
+4. A deploy of the supervisor for the SD measurements of `architecture.sqlite-write-cost`
    (Log).
 
 ## Log
+
+### 2026-11-09: the reboot of 07:17 UTC: the web UI waited for the API at boot
+
+- At the owner's word ("permission granted") the 11 dangling images were pruned, the device was
+  rebooted from the API (the boot of 07:17:13 UTC; ssh answered by 07:17:34) and the RAM rootfs
+  of `scripts/dev/linux-tests.sh` was made again.
+- The re-check of `deploy.health-checks-and-start-order` after the reboot (ADR-0018), with 78bb5b8
+  on the device: dockerd started both containers at once again (07:17:05 by the clock before
+  timesyncd set it at 07:17:28). The web UI's command logged one wait, `waiting for the
+  supervisor's API: wget: can't connect to remote host (172.31.254.3): Connection refused`, and
+  Caddy's first line came at 07:17:34.27 UTC, 1.5 s after the supervisor's `Application startup
+  complete` (07:17:32.78). Both containers healthy with no restart, Caddy the web UI's PID 1, the
+  health checks without credentials, `check.sh` OK: the entry passes (ADR-0307).
+- The boot wrote 9.513 MiB by 07:22:29 UTC, the RAM rootfs's container among them; the
+  re-check's reads 0 to 0.141 MiB.
 
 ### 2026-11-09: the web UI waits for the API also at boot (ADR-0307)
 
@@ -220,7 +237,7 @@ Open owner actions:
   missing.
 - The boot wrote 9.7 MiB by 23:00:29 UTC. Docker records that boot's container starts as
   22:56:57, before the clock was set. The RAM rootfs of `scripts/dev/linux-tests.sh` is gone
-  again (Open owner actions, 3).
+  again (made again on 2026-11-09).
 
 ### 2026-11-08: the deploy of main 78769b4
 
@@ -254,7 +271,7 @@ Open owner actions:
   `shares.smb-auth-audit-logging` the journal held a failed sign-in that auth_audit logged: the
   test's expectations are wrong, a fix of its own.
 - `scripts/dev/linux-tests.sh`: the RAM rootfs is gone since the morning's reboots, and making it
-  again creates a container, an owner action (Open owner actions, 3).
+  again creates a container, an owner action (made again on 2026-11-09).
 - `deploy.digest-pinned-base-images` keeps `passes` false: its supervisor build reused the
   cached base, and step 3 asks for that once the tag's arm64 image has moved upstream (that
   morning only riscv64 had moved), step 2 for Dependabot's first digest pull request.
