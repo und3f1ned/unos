@@ -792,7 +792,27 @@ SCRUB_HEADER = (
     "Scrub started:    Fri Nov  6 10:00:00 2026\n"
 )
 SCRUB_OUTPUT = {
-    "never": f"UUID:             {DATA_UUID}\n\tno stats available\n",
+    # No scrub recorded, none running (the dev device's output, 2026-11-09).
+    "never": (
+        f"UUID:             {DATA_UUID}\n"
+        "\tno stats available\n"
+        "Total to scrub:   4.00GiB\n"
+        "Rate:             0.00B/s\n"
+        "Error summary:    no errors found\n"
+    ),
+    # A scrub that runs and that btrfs has not recorded yet: for about 5 seconds after its
+    # start, until the process that runs it first reports its progress (the dev device's
+    # output, 2026-11-09, ADR-0313).
+    "started": (
+        f"UUID:             {DATA_UUID}\n"
+        "\tno stats available\n"
+        "Time left:        0:00:00\n"
+        "ETA:              Mon Nov  9 19:06:18 2026\n"
+        "Total to scrub:   4.00GiB\n"
+        "Bytes scrubbed:   0.00B  (0.00%)\n"
+        "Rate:             0.00B/s\n"
+        "Error summary:    no errors found\n"
+    ),
     "running": SCRUB_HEADER + (
         "Status:           running\n"
         "Duration:         0:01:04\n"
@@ -850,7 +870,7 @@ class TestScrubStatus:
     """What the Storage page shows of a scrub: btrfs's progress while it runs, its result after it.
 
     The endpoints answer btrfs's status as printed (idle when no scrub is
-    recorded) and count every error of its error summary (ADR-0272).
+    recorded and none runs) and count every error of its error summary (ADR-0313).
     """
 
     @pytest.fixture(autouse=True)
@@ -877,6 +897,9 @@ class TestScrubStatus:
         [
             ("never", {"status": "idle", "duration": None, "bytes_scrubbed": None, "total_bytes": None,
                        "rate": None, "errors": 0, "last_run": None}),
+            # Not recorded yet, but btrfs prints the time left of a scrub that runs (ADR-0313).
+            ("started", {"status": "running", "duration": None, "bytes_scrubbed": 0, "total_bytes": 4 * GIB,
+                         "rate": 0, "errors": 0, "last_run": None}),
             ("running", {"status": "running", "duration": 64, "bytes_scrubbed": GIB, "total_bytes": 4 * GIB,
                          "rate": 16 * 1024**2, "errors": 0, "last_run": STARTED}),
             ("finished", {"status": "finished", "duration": 256, "bytes_scrubbed": None,
@@ -911,6 +934,19 @@ class TestScrubStatus:
         assert (response.json()["status"], response.json()["bytes_scrubbed"]) == ("running", GIB)
         assert [cmd[:3] for cmd in btrfs_reports.commands] == [
             ["btrfs", "scrub", "start"], ["btrfs", "scrub", "status"]]
+
+    def test_start_answers_running_before_btrfs_reports_the_scrub(self, btrfs_reports):
+        """Right after btrfs accepted a start, its status can still say that no scrub is recorded
+        or runs: the process that runs the scrub has not reached the kernel yet. Start Scrub then
+        answers running, so that the page follows the scrub (ADR-0313)."""
+        btrfs_reports.state = "never"
+
+        with admin_client() as client:
+            started = client.post("/api/v1/storage/pools/data/scrub")
+            asked_again = client.get("/api/v1/storage/pools/data/scrub")
+
+        assert started.status_code == 200, started.text
+        assert (started.json()["status"], asked_again.json()["status"]) == ("running", "idle")
 
     def test_cancel_answers_the_cancelled_scrub(self, btrfs_reports):
         btrfs_reports.state = "aborted"

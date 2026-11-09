@@ -154,5 +154,5 @@ class ScrubStatus(BaseModel):
     bytes_scrubbed: int | None = None
     total_bytes: int | None = None
     rate: int | None = None  # bytes per second
-    errors: int = 0  # the sum of the error summary: read, super, verify and csum errors (ADR-0272)
+    errors: int = 0  # the sum of the error summary: read, super, verify and csum errors (ADR-0313)
     last_run: str | None = None  # when the scrub started, as btrfs prints it
