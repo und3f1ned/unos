@@ -1071,10 +1071,9 @@ SMB connections are ended: the computers sign in again with the new password.
 The new password must then follow the SMB rules (at least 8 characters, not a
 common password; see [SMB Access](#smb-access)). Update the saved password on
 every computer and app that connects over SMB (mapped drives, media players,
-sync apps, `cifs` credential files). Samba remembers each account's two
-previous passwords: a device that keeps trying one of them is refused without
-a write to the system disk, but every other wrong password of an SMB account
-is written to the system disk, and SMB has no limit on sign-in attempts. If
+sync apps, `cifs` credential files). A device that keeps trying an old
+password is refused each time, and each refusal adds a line to the system's
+log; SMB has no limit on sign-in attempts. If
 open SMB connections could not be ended, **Change Password** shows a warning
 that stays until you dismiss it.
 
@@ -1716,10 +1715,9 @@ notification.
    no limit on login attempts and no two-factor authentication. UNOS refuses
    common passwords for SMB, but not every password that is easy to guess
 4. ✅ After a password change, update the saved password on every computer
-   and app that connects over SMB: Samba writes each failed sign-in to the
-   system disk, unless the password is one of the account's two previous
-   ones. **System** → **Logs**, source **Samba**, shows the computers whose
-   sign-ins fail (see [Logs](#logs))
+   and app that connects over SMB: a computer with the old one fails to sign
+   in again and again. **System** → **Logs**, source **Samba**, shows the
+   computers whose sign-ins fail (see [Logs](#logs))
 5. ✅ Use a regular account, not an administrator, for your files
 6. ✅ Keep guest shares few (guests can only read)
 7. ✅ Keep UNOS updated

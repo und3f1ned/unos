@@ -49,8 +49,9 @@ significant step. Features and their state live in `feature-list.json`, decision
      2026-11-08 after a reboot (Log), 12 more passed, `deploy.health-checks-and-start-order`
      after the reboot of 2026-11-09 (ADR-0307; Log), and `shares.smb-conf-and-status` and
      `shares.edit-and-delete` with the steps checked by hand before and after the reboot of
-     12:22 UTC that day (Log), and `files.group-writable-entries-in-shares` and
-     `shares.samba-runtime-writes` on the scenario checks around that reboot (Log); the others
+     12:22 UTC that day (Log), and `files.group-writable-entries-in-shares` on the scenario
+     checks around that reboot (Log); `shares.samba-runtime-writes` waits for the smb check to
+     compare passdb.tdb at a wrong password (ADR-0310); the others
      need a device check first or, as
      `storage.pool-health`, a step the re-check could not show.
 
@@ -169,7 +170,7 @@ Open owner actions:
 
 ## Log
 
-### 2026-11-09: two host-level entries pass on the scenario checks before and after a reboot
+### 2026-11-09: an SMB entry passes on the scenario checks, and passdb.tdb's writes measured
 
 - At the owner's word to work on through the features ("I allow everything", in translation),
   `scripts/dev/scenario.sh all` ran at 13:58 UTC after the reboot of 12:22 UTC, with the runtime
@@ -180,21 +181,31 @@ Open owner actions:
   folder and an SMB user's change there, are the smb check's steps 10 and 11, and its step 3 the
   files check's steps 3 and 4 (755 and 644 root:root outside share folders); the feature-pass
   skill's table names the smb check for it, and it had not been passed after these runs.
-- `shares.samba-runtime-writes` passes as written. Its step 2, that a failed sign-in writes
-  nothing to passdb.tdb, looked out of reach: ADR-0159 and ADR-0278 took every wrong password but
-  an account's two previous ones to write passdb.tdb once. The smb check's step 21 measured
-  0.000 MiB for a password the account never had, and a measurement at 14:24 UTC with a
-  temporary account (bad lockout attempt 0, password history 3) settled it: four sign-ins with
-  passwords it never had and one with its replaced password each left passdb.tdb's time of
-  change as it was, at 0.000 to 0.016 MiB each, the idle level; the account was deleted again.
-  ADR-0310 records it and supersedes ADR-0159: passdb.tdb stays on the system disk, as nothing
-  writes it while the lockout policy is 0. Step 1 is the smb check's step 23 (Samba's log in
-  /run/samba with a size cap, /var/log/samba's logs unchanged). `GET /audit/logs?search=password
-  history` answered one entry, "Set Samba's password history to 3 (it was 0)" of 2026-11-08 04:02
-  UTC: every start since read the policy without setting it. Not checked on the device: setting
-  a previous password again through UNOS, which `smbpasswd` as root does without the history's
-  check (ADR-0278).
-- REVIEW_AND_CHECK
+- `shares.samba-runtime-writes` stays open. Its step 2, that a failed sign-in writes nothing to
+  passdb.tdb, looked out of reach: ADR-0159 and ADR-0278 took every wrong password but an
+  account's two previous ones to write passdb.tdb once. The smb check's step 21 showed 0.000 MiB
+  for a password the account never had, and a measurement at 14:24 UTC with a temporary account
+  (bad lockout attempt 0, password history 3; 1.496 MiB in all) found that four sign-ins with
+  passwords it never had and one with its replaced password each left passdb.tdb's modification
+  time as it was, at 0.000 to 0.016 MiB each; the account was deleted again. ADR-0310 records it
+  and supersedes ADR-0159: passdb.tdb stays on the system disk, as nothing writes it while no
+  lockout counts failures; `docs/USER_GUIDE.md` no longer says that wrong passwords are written to
+  the system disk. But step 21 does not look at passdb.tdb, so its pass at 07:43 UTC, before the
+  reboot, shows nothing of step 2, and the measurement came after the reboot only: the entry
+  passes once the smb check compares passdb.tdb's modification time at its wrong password and
+  reads the lockout policy, before and after a reboot. `GET /audit/logs` with the search
+  "password history" answered one entry, "Set Samba's password history to 3 (it was 0)" of
+  2026-11-08 04:02 UTC: every start since read the policy without setting it.
+- Fresh-context reviews (ADR-0017). The first found that the narrowing of step 2 that this change
+  first made (by ADR-0310 then) rested on a claim the run contradicted: the measurement replaced
+  it, and the ADR records the measurement. The second found that step 2 had no evidence from
+  before the reboot, as step 21 does not compare passdb.tdb: the entry stays open; and that the
+  ADR stated Samba's reason as fact, named not every statement it contradicts, and promised no
+  write at all where the journal entry stays: fixed. Both entries' notes and this record carry
+  the rest of their findings; the two entries are in one change as one run of the scenario
+  checks shows both.
+- `make check` passed on the tree merged with main a050256 (6027 backend tests, 121 skipped, 1
+  xfailed; svelte-check without errors, the build), before these fixes of text.
 
 ### 2026-11-09: check.sh checks network discovery, and nmbd is disabled on the device
 

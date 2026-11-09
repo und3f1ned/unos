@@ -250,7 +250,7 @@ and this index, and `make check-fast` runs it.
 | [0292](0292-nfs-exports-in-their-own-file-read-as-exportfs-reads-them.md) | UNOS keeps its NFS exports in its own export file on the host, reads every export file as exportfs reads it, and applies them with the host's exportfs | accepted | 2026-11-08 |
 | [0293](0293-share-and-export-values-validated-and-web-exports-limited-to-local-networks.md) | Share and export values are validated before they reach smb.conf or an export file, and an NFS export from the web interface is an existing folder for one local network, read-only or read-write | accepted | 2026-11-08 |
 | [0294](0294-only-managed-pools-hold-shares-and-nfs-exports.md) | Only pools that UNOS manages can hold SMB shares and NFS exports, and the UI offers only those | accepted | 2026-11-08 |
-| [0310](0310-a-failed-smb-sign-in-writes-nothing-to-passdb.md) | A failed SMB sign-in writes nothing to passdb.tdb, so passdb stays on the system disk | accepted | 2026-11-09 |
+| [0310](0310-a-failed-smb-sign-in-writes-nothing-to-passdb.md) | A failed SMB sign-in writes nothing to passdb.tdb while no lockout counts failures, so passdb stays on the system disk | accepted | 2026-11-09 |
 
 ## Apps
 

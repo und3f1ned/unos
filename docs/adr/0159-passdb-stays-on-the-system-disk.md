@@ -11,7 +11,7 @@ superseded-by: ADR-0310
 ## Context
 
 Superseded by ADR-0310: measured on the device, a failed sign-in writes nothing to passdb.tdb
-while Samba's lockout policy is 0, so passdb.tdb stays on the system disk.
+while no lockout counts failures, so passdb.tdb stays on the system disk.
 
 Samba's tdbsam passdb, passdb.tdb, lives in Samba's private directory on the system disk,
 which must be written as little as possible (ADR-0214). How much each wrong password writes
