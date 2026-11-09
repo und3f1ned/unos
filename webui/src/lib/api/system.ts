@@ -5,7 +5,8 @@ export interface SystemInfo {
   kernel: string;
   os: string;
   architecture: string;
-  uptime: number;
+  /** When the host booted, in seconds since the epoch. */
+  boot_time: number;
 }
 
 export interface SystemStats {

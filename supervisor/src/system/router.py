@@ -46,7 +46,7 @@ class SystemInfo(BaseModel):
     kernel: str
     os: str
     architecture: str
-    uptime: float
+    boot_time: float  # when the host booted, in seconds since the epoch
 
 
 class SystemStats(BaseModel):
@@ -70,7 +70,7 @@ async def get_system_info(_=Depends(verify_token)):
         kernel=platform.release(),
         os=get_distro_name(),
         architecture=platform.machine(),
-        uptime=psutil.boot_time(),
+        boot_time=psutil.boot_time(),
     )
 
 

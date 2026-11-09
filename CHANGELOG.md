@@ -435,6 +435,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   including a text search (`search=`); an end bound includes the whole unit it
   names (a date its whole day).
 - `GET /api/v1/snapshots/` needs the pool or volume (`subvolume=`).
+- `GET /api/v1/system/info` names the host's boot time `boot_time`, in seconds
+  since the epoch; its field `uptime`, which held that time, is gone.
 - System → Network shows each interface's IPv6 addresses, link speed and
   whether it is disabled, and the IPv6 routes.
 - System → Updates shows the installed version and points to
