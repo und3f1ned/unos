@@ -199,10 +199,13 @@ Open owner actions:
 - `testing.remove-dead-stub-checks`, at the owner's word to work on through the features ("I
   allow everything", in translation), under ADR-0186 and ADR-0207: `test_smb_models.py` lost the
   test that skipped for each of the 13 functions whose NotImplementedError body real code had
-  replaced, and its table, now `INTERFACES`, lost the work packages' labels; `TestSignatures`
+  replaced, and its table, now `SIGNATURES`, lost the work packages' labels; `TestSignatures`
   checks the 13 signatures as before. `make test TESTS=tests/test_smb_models.py`: 174 passed and
   none skipped, where 13 skipped before. Not host-level.
-- RESULTS
+- A fresh-context review found nothing that blocks; from its nit, the table is `SIGNATURES`, as
+  `TestInterfaces` of the same file tests the types of the module `interfaces`. `make check`
+  passed on the tree merged with main eceead5 (6066 backend tests, 108 skipped, 13 fewer than
+  before, 1 xfailed; svelte-check without errors, the build).
 
 ### 2026-11-09: passwords are checked as given (ADR-0315)
 

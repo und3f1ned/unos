@@ -3352,7 +3352,7 @@
         "ADR-0186",
         "ADR-0207"
       ],
-      "notes": "Done 2026-11-09. Step 1: the test that skipped for each of the 13 functions once real code had replaced its NotImplementedError body is gone, with its helper, and the table of the functions (now INTERFACES) has no work-package labels. Step 2: TestSignatures checks the 13 signatures, async or not, as before. Step 3: make test TESTS=tests/test_smb_models.py gives 174 passed and none skipped (174 passed and 13 skipped before). Not host-level."
+      "notes": "Done 2026-11-09. Step 1: the test that skipped for each of the 13 functions once real code had replaced its NotImplementedError body is gone, with its helper, and the table of the functions (now SIGNATURES) has no work-package labels. Step 2: TestSignatures checks the 13 signatures, async or not, as before. Step 3: make test TESTS=tests/test_smb_models.py gives 174 passed and none skipped (174 passed and 13 skipped before). Not host-level."
     },
     {
       "id": "ci.actions-pinned-by-sha",

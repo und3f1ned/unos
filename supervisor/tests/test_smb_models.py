@@ -1,6 +1,6 @@
 """Slice 2 foundation: the SMB tables (ADR-0077), the fixed values, the SMB state derived
 for a user, the types shared by the shares modules, and the signatures of the functions that
-other code is written against (INTERFACES)."""
+other code is written against (SIGNATURES)."""
 import asyncio
 import inspect
 import os
@@ -656,7 +656,7 @@ _KW = inspect.Parameter.KEYWORD_ONLY
 # The functions of the SMB service and accounts modules that other code is written against
 # (slice 2 began them as stubs): async or not, parameters (name, kind, annotation), and the
 # return annotation.
-INTERFACES = {
+SIGNATURES = {
     "service.apply_smb_config": (True, [("db", _POS, "AsyncSession")], "interfaces.ApplyResult"),
     "service.reconcile_smb_on_startup": (True, [], "None"),
     "service.after_database_restore_locked": (
@@ -697,9 +697,9 @@ def _function(name: str):
 
 
 class TestSignatures:
-    @pytest.mark.parametrize("name", list(INTERFACES))
+    @pytest.mark.parametrize("name", list(SIGNATURES))
     def test_signature(self, name):
-        is_async, parameters, returns = INTERFACES[name]
+        is_async, parameters, returns = SIGNATURES[name]
         function = _function(name)
         signature = inspect.signature(function)
 
