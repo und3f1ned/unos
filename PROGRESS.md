@@ -22,8 +22,11 @@ significant step. Features and their state live in `feature-list.json`, decision
   two SMB entries that the scenario check leaves out, checked by hand before and after a
   reboot, and the scenario check `smbconf` that runs those checks since (ADR-0309); that evening
   the scrub's start through one helper (ADR-0311) and the device checks that pass it and
-  `shares.samba-runtime-writes` before and after a reboot. The dev device runs main 31ac73b,
-  deployed on 2026-11-09 at 18:25 UTC.
+  `shares.samba-runtime-writes` before and after a reboot; later that night the WebSocket's
+  re-check that runs to its end (ADR-0312), the scrub's status from its start (ADR-0313), the
+  scenario check `scrub` (ADR-0314), passwords checked as given (ADR-0315) and three cleanups of
+  legacy code, and `storage.scrub` passing again on the scenario check scrub before and after a
+  reboot. The dev device runs main eceead5, deployed on 2026-11-09 at 21:07 UTC.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -53,16 +56,14 @@ significant step. Features and their state live in `feature-list.json`, decision
      `shares.edit-and-delete` with the steps checked by hand before and after the reboot of
      12:22 UTC that day (Log), and `files.group-writable-entries-in-shares` on the scenario
      checks around that reboot (Log), and `shares.samba-runtime-writes` and
-     `storage.scrub-needs-mounted-pool` on the checks around the reboot of 18:41 UTC (Log); the
+     `storage.scrub-needs-mounted-pool` on the checks around the reboot of 18:41 UTC, and
+     `storage.scrub` again on the scenario check scrub around the reboot of 21:12 UTC (Log); the
      others need a device check first or, as `storage.pool-health`, a step the re-check could
      not show.
-  3. `storage.scrub` passes again once `scripts/dev/scenario.sh scrub` (ADR-0314) passes on the
-     device with the fix of the scrub's status after a start (ADR-0313) deployed, before and
-     after a reboot.
 
 ## Dev device
 
-State on 2026-11-09, 18:50 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-09, 21:20 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -70,9 +71,9 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 31ac73b, deployed on 2026-11-09 at 18:25 UTC: both images built from its runtime
+- Runs main eceead5, deployed on 2026-11-09 at 21:07 UTC: both images built from its runtime
   files, the supervisor on the base that ADR-0305 pins. The device checkout `/opt/unos` equals
-  the tree of main 31ac73b; main's WebSocket fix after it (ADR-0312) is not deployed.
+  the tree of main eceead5; main's later commits change no runtime file.
   The deploys' backup and rollback copies are in the main
   checkout's `tmp/dev/`. The device has no `unos` unit: `deploy.sh up` starts its containers, and
   at boot dockerd does, by their restart policy. Rebooted from the API twice on the morning of
@@ -84,12 +85,14 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   ssh answered by 12:23:24, both containers healthy by 12:23:37), and from the API at 18:41:15
   UTC that day for the device checks of that evening, at the owner's word ("I allow
   everything", in translation) (the boot of 18:42:31 UTC; ssh answered by 18:42:47, both
-  containers healthy by 18:42:59). The prune before the reboot of
+  containers healthy by 18:42:59), and at 21:12:45 UTC, at the same word, for the checks of main
+  eceead5 (the boot of 21:14:01 UTC; ssh answered by 21:14:17, both containers healthy by
+  21:14:29). The prune before the reboot of
   07:17 UTC deleted the 11 dangling images (the old builds' layers) and reclaimed only 134.9 kB,
   where this file had said about 351 MB.
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
-  Images: deploy-supervisor:latest (`f6eff77a...` of 2026-11-09, 18:24 UTC, `a32d5759...` as
-  `:rollback`), deploy-webui:latest (`c6dd8cdc...` of 18:25 UTC, `d77b0aa7...` as `:rollback`),
+  Images: deploy-supervisor:latest (`ba92f8e6...` of 2026-11-09, 21:07 UTC, `f6eff77a...` as
+  `:rollback`), deploy-webui:latest (`44bd3f12...` of 21:07 UTC, `c6dd8cdc...` as `:rollback`),
   lscr.io/linuxserver/transmission, alpine (the
   final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base: Caddy 2.10.2 of
   January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files were deleted on
@@ -97,14 +100,15 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
 - Docker 29.1.5 with the containerd image store. The supervisor's base, python:3.11-slim
   `sha256:65bd3d9f...` (Python 3.11.18), is in BuildKit's build cache, not an image: the pins of
   ADR-0305 are these two digests. The supervisor builds of 2026-11-08, 22:28 UTC, and
-  2026-11-09, 07:41 and 18:24 UTC, started from it: every step of the first CACHED, of the
+  2026-11-09, 07:41, 18:24 and 21:06 UTC, started from it: every step of the first CACHED, of the
   others all but `COPY src/`.
 - The audit log is `/data/audit/audit.jsonl` (ADR-0224); the old `/data/audit_log.json` was
   deleted.
 - The Scheduler has no tasks of the checks; its history keeps their runs, which deleting a task
   leaves: three of `unos check keep 3` (2026-11-07), one of `unos check command` (2026-11-08)
   and four of `unos check scrub` (2026-11-09, two of them failed with "Scrub is already
-  running").
+  running"), and two of each run of the scenario check `scrub`, named `unoscheck<6 hex digits>`
+  (one failed with the 409's text, one "Scrub started").
 - Storage: the pool `data` (btrfs on /dev/sda) at /mnt/pools/data, root:root 755 (ADR-0220).
   The share DATA is served from /mnt/pools/data/shared (root:unos-smb 2770); no account has
   access to it yet. The regular account `test` stays for checks of a regular user's view.
@@ -114,7 +118,9 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   folders or backups; `scripts/dev/scenario.sh smbconf` (ADR-0309) passed at 13:22 UTC that
   day and, after its review's fixes, at 13:46 UTC, and left the device as it found it, and
   `scripts/dev/scenario.sh all` (six areas) at 13:58 UTC, after the reboot of 12:22 UTC, at
-  18:25 UTC after the deploy of main 31ac73b and at 18:43 UTC after the reboot of 18:41 UTC. The
+  18:25 UTC after the deploy of main 31ac73b and at 18:43 UTC after the reboot of 18:41 UTC, and
+  with the area scrub at 21:09 UTC after the deploy of main eceead5 and at 21:14 UTC after the
+  reboot of 21:12 UTC. The
   pool's trash `/mnt/pools/data/.unos-trash` (made at 00:05 UTC that night) is empty. The first
   run's short self-test of sda completed without error, as the two before it; sda's SMART status:
   PASSED.
@@ -172,7 +178,13 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   reboot and 0.285 after it; `check.sh` 0.016 before the reboot, 0.023 right after the boot and
   0.016 at the end; the reboot call 0.020, the boot 9.0 MiB by 18:42:59. Afterwards: a scrub of
   data with its status read every half second 0.031 (18:52 UTC); the Scheduler's tasks and runs
-  read 0.020, and a scrub with btrfs's status read in the container 0.035 (19:06 UTC).
+  read 0.020, and a scrub with btrfs's status read in the container 0.035 (19:06 UTC). The
+  deploy of main eceead5 39.270 MiB (`check.sh` 0.023, `status` and `sync --dry-run` 0, sync
+  2.176, build-supervisor 12.609, build-webui 18.688, up 5.758, `check.sh` 0.016);
+  `scripts/dev/scenario.sh all` 7.613 MiB before the reboot (files 0.426, volumes 0.566, smart
+  0.117, backups 0.398, smb 3.047, smbconf 2.504, scrub 0.555) and 7.746 after it (0.574, 0.523,
+  0.098, 0.473, 3.027, 2.508, 0.543); `check.sh` 0.016 each time; the reboot call 0.027, the boot
+  8.6 MiB by 21:14:29.
 - SD writes on 2026-11-07: the audit log's deploy wrote 4.6 MiB (sync), 11.8 MiB (build of the
   supervisor; the base came from the build cache) and 2.6 MiB (up); deleting the old audit file
   0.06 MiB. A sign-in writes 0.156 to 0.168 MiB (0.172 to 0.195 MiB before), an API call with a
@@ -188,11 +200,34 @@ Open owner actions:
 2. `make setup` in the owner's own terminal, where the network filter may allow it: Playwright's
    Chromium 1200, and the pip versions of #25 in the venvs of each checkout.
 3. Who gets access to the share DATA (an SMB account for a regular user).
-4. After the next deploy, sign in as the dev device's regular account `test`: if its password is
-   longer than 72 bytes it no longer signs in (ADR-0315), and an administrator sets a new one on
-   the Users page.
+4. Sign in as the dev device's regular account `test`: main eceead5, deployed on 2026-11-09 at
+   21:07 UTC, checks passwords as given (ADR-0315), so if its password is longer than 72 bytes it
+   no longer signs in, and an administrator sets a new one on the Users page.
 
 ## Log
+
+### 2026-11-09: storage.scrub passes on the scenario check scrub, before and after a reboot
+
+- At the owner's word to work on through the features ("I allow everything", in translation),
+  main eceead5 was deployed to the dev device at 21:07 UTC (39.270 MiB) and
+  `scripts/dev/scenario.sh all`, with the area `scrub` of ADR-0314, ran after the deploy and
+  after a reboot from the API at 21:12 UTC (the boot of 21:14:01 UTC), with the SD MiB of each
+  step (Dev device). All seven areas passed both times and left the device as they found it, but
+  for the scrub check's history: the pool's last scrub result and two runs in the Scheduler
+  (ADR-0314).
+- `storage.scrub` passes again, on what its notes record: the start's answer and the status right
+  after it (ADR-0313), a scrub to its end with its progress, a cancel, and a scheduled scrub that
+  starts, and one of a folder with nothing mounted on it that fails with the 409's text (0.152 and
+  0.148 MiB), by which `storage.scrub-needs-mounted-pool` holds too. The Storage page itself is
+  the E2E specs' (ADR-0215).
+- Not checked on the device: whether the regular account `test` still signs in after ADR-0315
+  (Open owner actions).
+- A fresh-context review found every number and time in line with the logs and nothing that
+  blocks the pass. Fixed from it: the owner action named a deploy that has happened, the notes
+  of `storage.scrub` now record the scheduled scrub of a folder with nothing mounted and that the
+  page was not looked at on the device, the step's MiB in the order of the runs, the history that
+  the scrub check leaves, why the last scrub read idle (the smbconf check restarts the supervisor
+  before it), and Now and Next name the pass.
 
 ### 2026-11-09: the stub checks of the SMB models' tests are gone
 
