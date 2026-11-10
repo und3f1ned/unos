@@ -96,8 +96,9 @@ test.describe('File Browser', () => {
 
 // The flows below work on real files: each test gets a scratch folder
 // e2e-files-<id> in the first pool (a directory of the pools directory) that
-// accepts one, and removes it afterwards. They are skipped when there is none:
-// the stand-in has testpool, the test stack's pools directory is empty.
+// accepts one, and removes it afterwards. They are skipped when there is none, as
+// on a target whose pools are all unmounted: the stand-in and the test stack have
+// the folder testpool (docs/TESTING.md).
 
 type Entry = { name: string; path: string; type: string; size: number };
 type Scratch = { pool: Entry; name: string; path: string };
@@ -279,7 +280,9 @@ test.describe('File Browser operations', () => {
     const response = await page.request.get('/api/v1/files/list', { headers: auth() });
     expect(response.ok(), `list pools: HTTP ${response.status()}`).toBeTruthy();
     const name = `e2e-files-${Date.now().toString(36)}`;
-    // The first pool that takes a new folder (an unmounted pool's directory is write-protected).
+    // The first pool that takes a new folder. A pool that takes none refuses it with 403
+    // "Permission denied" (an unmounted pool's directory is immutable: EPERM); any other answer,
+    // a 403 for another reason included, is an error of the API.
     for (const pool of (await response.json()).items as Entry[]) {
       if (pool.type !== 'directory') continue;
       const made = await page.request.post('/api/v1/files/mkdir', {
@@ -290,6 +293,9 @@ test.describe('File Browser operations', () => {
         scratch = { pool, name, path: (await made.json()).path };
         break;
       }
+      expect(`HTTP ${made.status()} ${await made.text()}`, `a new folder in ${pool.path}`).toBe(
+        'HTTP 403 {"detail":"Permission denied"}',
+      );
     }
     test.skip(scratch === null, NO_POOL_FOLDER);
   });

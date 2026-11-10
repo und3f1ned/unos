@@ -18,6 +18,8 @@ const NO_HOST_NETWORK =
 const NO_DISK_HEALTH = 'The stand-in is not a NAS host: it has no disks to check (lsblk, smartctl)' + TEST_STACK_TOO;
 const NO_JOURNAL = 'The stand-in has no systemd journal (journalctl)' + TEST_STACK_TOO;
 const NO_PROC = "The stand-in has no Linux /proc with the host's uptime and load" + TEST_STACK_TOO;
+const NO_MOUNTED_POOLS =
+  'The stand-in is not a NAS host: it has no mounted btrfs filesystems to list (findmnt, btrfs)' + TEST_STACK_TOO;
 
 test.describe('API Tests', () => {
   test.beforeAll(async ({ request }) => {
@@ -202,15 +204,13 @@ test.describe('API Tests', () => {
   });
 
   test('GET /api/v1/containers/images should return images', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_DOCKER);
     const response = await request.get(`${BASE_URL}/api/v1/containers/images`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    // 500 when Docker is not available; 404 was /containers/{container_id} taking "images" for a name
-    expect([200, 500]).toContain(response.status());
-    if (response.ok()) {
-      const data = await response.json();
-      expect(Array.isArray(data)).toBeTruthy();
-    }
+    // Not 404: /containers/{container_id} once took "images" for the name of a container.
+    expect(response.status(), await response.text()).toBe(200);
+    expect(Array.isArray(await response.json())).toBeTruthy();
   });
 
   // ==================== Apps ====================
@@ -235,16 +235,15 @@ test.describe('API Tests', () => {
   });
 
   // ==================== Files ====================
-  test('GET /api/v1/files/list should return directory listing or 404', async ({ request }) => {
+  test('GET /api/v1/files/list should return the listing of the pools', async ({ request }) => {
     const response = await request.get(`${BASE_URL}/api/v1/files/list`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    expect([200, 404]).toContain(response.status());
-    if (response.ok()) {
-      const data = await response.json();
-      expect(data).toHaveProperty('path');
-      expect(data).toHaveProperty('items');
-    }
+    // As files.spec.ts expects it: every local target has a pools folder.
+    expect(response.status(), await response.text()).toBe(200);
+    const data = await response.json();
+    expect(data).toHaveProperty('path');
+    expect(data).toHaveProperty('items');
   });
 
   // ==================== Snapshots ====================
@@ -255,20 +254,20 @@ test.describe('API Tests', () => {
     // Without one it listed only the folders right in the pools base, not the volumes' snapshots (ADR-0243).
     expect((await request.get(`${BASE_URL}/api/v1/snapshots/`, { headers })).status()).toBe(422);
 
-    // The stand-in's pool folder has no .snapshots folder; the test stack may have no such folder at all.
+    // The pool folder testpool of the stand-in and of the test stack (docs/TESTING.md) has no snapshots.
     const subvolume = encodeURIComponent(`${POOLS}/testpool`);
     const response = await request.get(`${BASE_URL}/api/v1/snapshots/?subvolume=${subvolume}`, { headers });
-    expect([200, 404]).toContain(response.status());
-    if (response.ok()) {
-      expect(Array.isArray(await response.json())).toBeTruthy();
-    }
+    expect(response.status(), await response.text()).toBe(200);
+    expect(await response.json()).toEqual([]);
   });
 
   test('GET /api/v1/snapshots/subvolumes should return subvolumes', async ({ request }) => {
+    test.skip(process.env.E2E_STAND_IN === '1', NO_MOUNTED_POOLS);
     const response = await request.get(`${BASE_URL}/api/v1/snapshots/subvolumes`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    expect([200, 500]).toContain(response.status());
+    expect(response.status(), await response.text()).toBe(200);
+    expect(Array.isArray(await response.json())).toBeTruthy();
   });
 
   // ==================== Network ====================

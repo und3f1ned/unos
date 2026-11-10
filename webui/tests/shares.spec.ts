@@ -1116,11 +1116,14 @@ test.describe('SMB shares page (fake data)', () => {
     const base = new URL(baseURL ?? 'https://localhost');
     test.skip(!['localhost', '127.0.0.1'].includes(base.hostname), 'only for a stand-in on this machine');
     const origin = `${base.protocol}//[::1]${base.port ? `:${base.port}` : ''}`;
-    const reachable = await page.request
-      .get(`${origin}/api/v1/health`)
-      .then((response) => response.ok())
-      .catch(() => false);
-    test.skip(!reachable, `${origin} is not reachable`);
+    // Only no answer skips: nothing listens on [::1], or this machine has no IPv6 loopback. Any
+    // other failure of the request, and an answer that is not OK, is an error of the stand-in.
+    const health = await page.request.get(`${origin}/api/v1/health`).catch((error: Error) => {
+      if (/\b(ECONNREFUSED|EADDRNOTAVAIL|ENETUNREACH|EAFNOSUPPORT)\b/.test(error.message)) return null;
+      throw error;
+    });
+    test.skip(health === null, `nothing answers on ${origin}`);
+    expect(health?.ok(), `${origin}/api/v1/health: HTTP ${health?.status()}`).toBeTruthy();
 
     await fakeSmbApi(page, {
       users: fakeUsers(),
@@ -1398,13 +1401,13 @@ test.describe('Seeded SMB share (stand-in)', () => {
     }
   });
 
-  /** The import notes are dismissed by the last test: a later run on the same stand-in has none. */
-  async function skipWithoutNotes(request: APIRequestContext) {
+  /**
+   * The last test dismisses the import notes: e2e.sh starts every run on a new stand-in, whose
+   * seeded share has them, and the test stack has them until a run dismisses them (docs/TESTING.md).
+   */
+  async function expectNotes(request: APIRequestContext) {
     const notes = (await seed(request)).import_notes as string[];
-    test.skip(
-      notes.length === 0,
-      'The import notes of e2e_seed were dismissed by an earlier run on this stand-in (reset its data to check them)',
-    );
+    expect(notes.length, 'the import notes of e2e_seed (a target that a run used has none: start it with new data)').toBeGreaterThan(0);
   }
 
   test('the imported share is listed as not served, with its import notes', async ({
@@ -1416,7 +1419,7 @@ test.describe('Seeded SMB share (stand-in)', () => {
     await expect(card.locator('.badge', { hasText: /^Not served$/ })).toBeVisible();
     await expect(card.getByText(/storage pool that UNOS manages/).first()).toBeVisible();
     await expect(card.getByRole('button', { name: 'Repair permissions' })).toHaveCount(0);
-    await skipWithoutNotes(request);
+    await expectNotes(request);
     const notes = card.locator('.alert li');
     await expect(notes.filter({ hasText: /e2e_nobody/ })).not.toHaveCount(0);
     await expect(notes.filter({ hasText: /vfs objects/ })).not.toHaveCount(0);
@@ -1492,7 +1495,7 @@ test.describe('Seeded SMB share (stand-in)', () => {
 
   // Last: the notes are gone afterwards.
   test('its import notes can be dismissed', async ({ request }) => {
-    await skipWithoutNotes(request);
+    await expectNotes(request);
     const before = await seed(request);
     expect(before.import_notes.length).toBeGreaterThan(0);
     const response = await request.patch(SEED_URL, {
