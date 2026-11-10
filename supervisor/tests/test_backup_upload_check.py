@@ -180,9 +180,6 @@ HOSTILE = [
          lambda: _gz(_members([_file("manifest.json", MANIFEST)])
                      + _header("unos.db", backup_router.MAX_DB_BYTES + 1) + END_OF_TAR),
          "unos.db in the backup archive is too large"),
-    Case("oversized-smb-conf",
-         lambda: _tar_gz([_file("manifest.json", MANIFEST), _file("smb.conf", bytes(backup_router.MAX_CONFIG_BYTES + 1))]),
-         "smb.conf in the backup archive is too large"),
     Case("oversized-netplan-file",
          lambda: _tar_gz([_file("manifest.json", MANIFEST), _directory("netplan"),
                           _file("netplan/01.yaml", bytes(backup_router.MAX_CONFIG_BYTES + 1))]),

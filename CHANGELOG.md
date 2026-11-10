@@ -500,8 +500,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   a digit (such as `s-1-1-0`) are reserved: Samba reads them as security
   identifiers (SIDs).
 - Shares and their access are part of the UNOS database and are restored with
-  it. `include_shares` only adds a copy of smb.conf to the archive; it no
-  longer decides whether shares are restored.
+  it, and a backup holds no smb.conf: the option `include_shares` is gone. A
+  restore refuses a backup whose database has no SMB tables (of an older
+  UNOS), and a database that never imported its shares gets those of the
+  current smb.conf.
 - E2E specs run only against a local stand-in: Playwright's default target is
   the stand-in that `scripts/standin/e2e.sh` (`make e2e-local`) starts, and
   `webui/playwright.config.ts` refuses a `BASE_URL` or `HTTP_URL` whose host is

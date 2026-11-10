@@ -1,14 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0319
 ---
 
 # ADR-0143: Shares are part of the database, and include_shares only adds the old smb.conf copy
 
 ## Context
 
+Superseded by ADR-0319: backups carry no smb.conf, and include_shares is gone.
 With shares and their access in SQLite (ADR-0074), every backup carries them in unos.db. The
 backup option `include_shares` therefore no longer protects shares from being restored.
 

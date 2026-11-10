@@ -13,14 +13,15 @@ archive into arbitrary file writes on the host. Restore therefore:
   administrator and no triggers or views. The current database is copied
   first, and the copy into the live file uses SQLite's online backup API, so
   connections that are open in the running supervisor stay consistent;
-* never installs the archived smb.conf: shares and their access are rows of
-  the database, and smb.conf is rendered from them. Before the swap, the
-  extracted database is prepared for SMB (shares/service.py and
-  shares/accounts.py, ADR-0139): its SMB tables are created or checked, and
-  a database whose shares were never imported gets its shares imported again
-  after the restore, from the archived smb.conf or else the live one. The
-  restore runs under the SMB lock, which also covers the post-restore step
-  that renders smb.conf from the restored database.
+* never installs or reads an smb.conf: shares and their access are rows of
+  the database, and smb.conf is rendered from them; a backup carries none.
+  Before the swap, the extracted database is prepared for SMB
+  (shares/service.py and shares/accounts.py, ADR-0139): its SMB tables are
+  checked, a database without them (of an older UNOS) is refused, and a
+  database whose shares were never imported gets the shares of the live
+  smb.conf imported after the restore (ADR-0319). The restore runs under the
+  SMB lock, which also covers the post-restore step that renders smb.conf from
+  the restored database.
 
 An uploaded backup is checked with the same limits and member checks in one
 pass over its gzip stream, which writes nothing (``_inspect_archive``).
@@ -61,7 +62,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import database
@@ -114,7 +115,6 @@ STALE_TEMP_SECONDS = 24 * 3600
 _FILE_MEMBERS = {
     "manifest.json": MAX_CONFIG_BYTES,
     "unos.db": MAX_DB_BYTES,
-    "smb.conf": MAX_CONFIG_BYTES,
     "fstab": MAX_CONFIG_BYTES,
     "scheduled_tasks.json": MAX_CONFIG_BYTES,
 }
@@ -146,10 +146,6 @@ _restore_lock = threading.Lock()
 _restore_running = False
 
 SMB_REPAIRED_AT_START = "SMB state is repaired at the next start"
-SMB_CONF_WITHOUT_DATABASE = (
-    "smb.conf in the backup was not restored: shares are stored in the UNOS database; "
-    "restore a backup that contains the database"
-)
 
 
 class BackupValidationError(Exception):
@@ -175,15 +171,6 @@ class BackupInfo(BaseModel):
 
 class BackupConfig(BaseModel):
     include_users: bool = True
-    include_shares: bool = Field(
-        default=True,
-        description=(
-            "Also store the current smb.conf in the archive, as a copy for reference. Shares and their "
-            "access are part of the UNOS database, which every backup contains, and a restore takes them "
-            "from the database: this option does not protect shares from being restored, and the "
-            "archived smb.conf is never installed."
-        ),
-    )
     include_pools: bool = True
     include_apps: bool = True
     include_scheduler: bool = True
@@ -759,33 +746,17 @@ class _BackupUpload(UploadSink):
             self.tmp.unlink(missing_ok=True)
 
 
-def _archived_smb_conf(path: Path, warnings: list[str]) -> str | None:
-    """The text of the archived smb.conf (strict UTF-8, at most MAX_CONFIG_BYTES), or None with a warning.
-
-    It is never installed: the import after the restore reads its shares when
-    the restored database has none of its own (ADR-0142).
-    """
-    data = path.read_bytes()
-    try:
-        if len(data) > MAX_CONFIG_BYTES:
-            raise ValueError("too large")
-        return data.decode("utf-8")
-    except (UnicodeDecodeError, ValueError):
-        warnings.append("smb.conf in the backup is not valid UTF-8 and was not restored.")
-        return None
-
-
-def _prepare_smb(db_file: Path, db_path: Path, archive_conf: str | None) -> list[str]:
+def _prepare_smb(db_file: Path, db_path: Path) -> list[str]:
     """The SMB rules of a restore (ADR-0139) on the extracted database, before it replaces the live one.
 
-    The SMB tables are created or checked (BackupValidationError), the SMB
+    The SMB tables are checked (BackupValidationError), the SMB
     accounts of the live database are read, and then one transaction on the
     extracted file applies the share rules (shares/service.py) and the
     account rules (shares/accounts.py). Any failure rolls it back and the
     restore fails: the live database never holds an unproven SMB state.
     Returns the messages for the restore result.
     """
-    service.ensure_smb_tables(db_file)
+    service.check_smb_tables(db_file)
     snapshot = accounts.snapshot_for_restore(db_path)
     conn = sqlite3.connect(str(db_file), isolation_level=None)
     try:
@@ -793,7 +764,7 @@ def _prepare_smb(db_file: Path, db_path: Path, archive_conf: str | None) -> list
         conn.execute("BEGIN IMMEDIATE")
         try:
             authoritative = service.restored_smb_authoritative(conn)
-            guest_shares = service.prepare_restored_shares(conn, authoritative, archive_conf)
+            guest_shares = service.prepare_restored_shares(conn, authoritative)
             messages = accounts.prepare_restored_accounts(conn, snapshot, authoritative)
             conn.execute("COMMIT")
         except BaseException:
@@ -874,14 +845,8 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
                 _verify_database(db_file)
                 _verify_page_size(db_file, db_path)
 
-        archive_conf = None
-        if "smb.conf" in members:
-            if db_file is None:
-                warnings.append(SMB_CONF_WITHOUT_DATABASE)
-            else:
-                archive_conf = _archived_smb_conf(extract_dir / "smb.conf", warnings)
         if db_file is not None:
-            warnings.extend(_prepare_smb(db_file, db_path, archive_conf))
+            warnings.extend(_prepare_smb(db_file, db_path))
 
         if db_file is not None:
             previous_db = _keep_copy_of_database(db_path)
@@ -1040,11 +1005,6 @@ def _collect_backup_content(config: BackupConfig, content: Path) -> None:
     db_path = _live_db_path()
     if db_path is not None and db_path.exists():
         copy_database(db_path, content / "unos.db")
-
-    # Backup SMB config
-    smb_conf = Path("/etc/samba/smb.conf")
-    if smb_conf.exists() and config.include_shares:
-        shutil.copy2(smb_conf, content / "smb.conf")
 
     # The container's /etc/fstab, not the host's: the host's (with the pool
     # entries, see src/storage/pools.py) is not mounted into the container.

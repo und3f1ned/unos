@@ -2186,8 +2186,8 @@ def prepare_restored_accounts(
     floor = min(floor, constants.SMB_UID_MAX + 1)
     if found_state is None:
         conn.execute(
-            "INSERT INTO smb_state (id, next_uid, shares_imported_at, import_report, pending_import_source, "
-            "pending_import_conf) VALUES (1, ?, NULL, NULL, NULL, NULL)",
+            "INSERT INTO smb_state (id, next_uid, shares_imported_at, import_report, pending_import_source) "
+            "VALUES (1, ?, NULL, NULL, NULL)",
             (floor,),
         )
     elif not (_valid_next_uid(restored_next) and restored_next == floor):

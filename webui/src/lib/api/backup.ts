@@ -11,7 +11,6 @@ export interface BackupInfo {
 
 export interface BackupConfig {
   include_users: boolean;
-  include_shares: boolean;
   include_pools: boolean;
   include_apps: boolean;
   include_scheduler: boolean;

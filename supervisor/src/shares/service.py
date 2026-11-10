@@ -21,7 +21,7 @@ installs it:
 * The startup reconcile (ADR-0138) and the post-restore step (ADR-0139) run
   the same path: import, purge, the SMB accounts (shares/accounts.py), the
   apply, a reload and the session sweep. The restore prepares the extracted
-  database before it replaces the live one (ensure_smb_tables,
+  database before it replaces the live one (check_smb_tables,
   restored_smb_authoritative, prepare_restored_shares).
 
 Every change of SMB state runs under ``smb_lock()``. Modules in src/shares
@@ -49,10 +49,9 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 from fastapi import HTTPException
-from sqlalchemy import DateTime, create_engine, select
+from sqlalchemy import DateTime, select
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.pool import NullPool
 
 from .. import database
 from ..audit.router import log_action
@@ -701,7 +700,7 @@ def _import_section(
     if not removed:
         if values.guest_ok and not values.valid_users:
             if ctx.restored:
-                _add(notes, "Guest access in the backup was not restored")
+                _add(notes, "Guest access was not restored")
             else:
                 share.guest_ok = True
                 if not values.read_only:
@@ -901,22 +900,12 @@ async def _run_import(db: AsyncSession) -> _ImportPlan | None:
     """The import in ``db``, a session of its own; None when the marker is set already."""
     if await _marker_set(db):
         return None
-    state_row = (
-        await db.execute(
-            select(models.SmbState.pending_import_source, models.SmbState.pending_import_conf).where(
-                models.SmbState.id == 1
-            )
-        )
-    ).first()
-    source = state_row.pending_import_source if state_row is not None else None
+    source = (
+        await db.execute(select(models.SmbState.pending_import_source).where(models.SmbState.id == 1))
+    ).scalar_one_or_none()
     pool_names = await _pool_names()
-    if source == "backup":
-        conf = state_row.pending_import_conf
-        text, copy_written = (conf if isinstance(conf, str) else ""), False
-        source_label = "the smb.conf of the restored backup"
-    else:
-        text, copy_written = await asyncio.to_thread(_read_live_source)
-        source_label = smb.settings.smb_conf_path
+    text, copy_written = await asyncio.to_thread(_read_live_source)
+    source_label = smb.settings.smb_conf_path
     users = [
         _ImportUser(id=row.id, username=row.username, is_admin=bool(row.is_admin))
         for row in (await db.execute(select(User.id, User.username, User.is_admin))).all()
@@ -955,7 +944,6 @@ async def _run_import(db: AsyncSession) -> _ImportPlan | None:
     state.shares_imported_at = _utcnow()
     state.import_report = json.dumps(plan.report) if plan.report else None
     state.pending_import_source = None
-    state.pending_import_conf = None
     await db.commit()
     return plan
 
@@ -1005,7 +993,7 @@ async def _import_if_needed_locked(db: AsyncSession) -> bool:
     The caller holds smb_lock() and has nothing uncommitted in ``db``. The
     import runs in a session of its own on the same database, in one
     transaction: shares, access rows, the marker and the report, and the
-    pending_import columns cleared. Nothing of the caller's session is
+    pending import source cleared. Nothing of the caller's session is
     committed or expired by it. Returns True when it imported now; a failure
     raises SambaConfigError("Shares were not imported from smb.conf yet: ...")
     and commits nothing. That text gives the reason of a pool list or file
@@ -2995,36 +2983,46 @@ _SMB_TABLES = (
 )
 
 
-def ensure_smb_tables(db_file: os.PathLike | str) -> None:
-    """Create the four SMB tables in an extracted backup database where they are missing (sync).
+def check_smb_tables(db_file: os.PathLike | str) -> None:
+    """Check the four SMB tables of an extracted backup database (sync).
 
-    A table that lacks a column of the model, or that has an extra column
-    declared NOT NULL without a default (every ORM insert would fail), is
-    refused with BackupValidationError naming the tables and columns: the live
-    database never receives SMB tables of an unknown layout. Extra columns that
-    are nullable or have a default are accepted.
+    A database without one of them comes from a UNOS before shares were stored
+    in the database, whose backups are not restored (ADR-0319). A table that
+    lacks a column of the model, or that has an extra column declared NOT NULL
+    without a default (every ORM insert would fail), is refused naming the
+    tables and columns: the live database never receives SMB tables of an
+    unknown layout. Extra columns that are nullable or have a default are
+    accepted. Raises BackupValidationError.
     """
     from ..backup.router import BackupValidationError  # backup.router imports this module
 
-    path = os.fspath(db_file)
-    engine = create_engine("sqlite://", creator=lambda: sqlite3.connect(path), poolclass=NullPool)
+    conn = sqlite3.connect(os.fspath(db_file))
+    absent: list[str] = []
     missing: list[str] = []
     extra: list[str] = []
     try:
-        with engine.begin() as conn:
-            models.SmbShare.metadata.create_all(conn, tables=list(_SMB_TABLES))
-            for table in _SMB_TABLES:
-                info = conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")').fetchall()
-                columns = {str(row[1]).lower(): row for row in info}
-                model_columns = {column.name.lower() for column in table.columns}
-                missing.extend(f"{table.name}.{name}" for name in sorted(model_columns - set(columns)))
-                extra.extend(
-                    f"{table.name}.{row[1]}"
-                    for name, row in sorted(columns.items())
-                    if name not in model_columns and row[3] and row[4] is None
-                )
+        for table in _SMB_TABLES:
+            info = conn.execute(f'PRAGMA table_info("{table.name}")').fetchall()
+            if not info:
+                absent.append(table.name)
+                continue
+            columns = {str(row[1]).lower(): row for row in info}
+            model_columns = {column.name.lower() for column in table.columns}
+            missing.extend(f"{table.name}.{name}" for name in sorted(model_columns - set(columns)))
+            extra.extend(
+                f"{table.name}.{row[1]}"
+                for name, row in sorted(columns.items())
+                if name not in model_columns and row[3] and row[4] is None
+            )
     finally:
-        engine.dispose()
+        conn.close()
+    if absent:
+        names = sorted(absent)
+        listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+        raise BackupValidationError(
+            f"unos.db in the backup lacks the SMB table{'s' if len(names) > 1 else ''} {listed}: "
+            "it was made by an older UNOS, whose backups this one does not restore"
+        )
     if missing or extra:
         parts = ([f"missing: {', '.join(missing)}"] if missing else []) + (
             [f"extra NOT NULL: {', '.join(extra)}"] if extra else []
@@ -3084,12 +3082,12 @@ def restored_smb_authoritative(conn: sqlite3.Connection) -> bool:
     return row is not None and row[0] is not None
 
 
-def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool, archive_conf: str | None) -> list[str]:
-    """The share rules of a restore (ADR-0142) on an extracted database, in the caller's transaction (sync).
+def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool) -> list[str]:
+    """The share rules of a restore (ADR-0319) on an extracted database, in the caller's transaction (sync).
 
     Not authoritative: every share and access row is deleted, and the next
-    import reads the backup's smb.conf (``archive_conf``), else the live file;
-    such an import never turns guest access on. Authoritative: the rows are
+    import reads the live file; such an import never turns guest access on.
+    Authoritative: the rows are
     kept, DateTime values that SQLAlchemy cannot read are replaced, and every
     share whose stored path breaks a rule of ADR-0145 loses its access rows
     and guest access, with a note. Returns the names of the shares with guest
@@ -3099,18 +3097,16 @@ def prepare_restored_shares(conn: sqlite3.Connection, authoritative: bool, archi
     if not authoritative:
         conn.execute("DELETE FROM smb_share_access")
         conn.execute("DELETE FROM smb_shares")
-        source, text = ("backup", archive_conf) if archive_conf is not None else ("live", None)
         if conn.execute("SELECT 1 FROM smb_state WHERE id = 1").fetchone() is None:
             conn.execute(
-                "INSERT INTO smb_state (id, next_uid, shares_imported_at, import_report, pending_import_source, "
-                "pending_import_conf) VALUES (1, ?, NULL, NULL, ?, ?)",
-                (constants.SMB_UID_MIN, source, text),
+                "INSERT INTO smb_state (id, next_uid, shares_imported_at, import_report, pending_import_source) "
+                "VALUES (1, ?, NULL, NULL, 'live')",
+                (constants.SMB_UID_MIN,),
             )
         else:
             conn.execute(
-                "UPDATE smb_state SET shares_imported_at = NULL, import_report = NULL, pending_import_source = ?, "
-                "pending_import_conf = ? WHERE id = 1",
-                (source, text),
+                "UPDATE smb_state SET shares_imported_at = NULL, import_report = NULL, pending_import_source = 'live' "
+                "WHERE id = 1"
             )
         return []
 

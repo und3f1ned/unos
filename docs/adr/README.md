@@ -214,8 +214,8 @@ and this index, and `make check-fast` runs it.
 | [0139](0139-restore-prepares-the-database-before-the-swap.md) | A restore prepares the extracted database before the swap, under smb_lock | accepted | 2026-11-06 |
 | [0140](0140-restore-marks-every-smb-account-needed.md) | After a restore every SMB account needs its password again | superseded by [0141](0141-restored-accounts-stay-active-only-with-proof.md) | 2026-11-06 |
 | [0141](0141-restored-accounts-stay-active-only-with-proof.md) | After a restore an SMB account stays active only with proof | accepted | 2026-11-06 |
-| [0142](0142-old-backups-import-shares-without-guest-access.md) | Old backups import their shares from smb.conf, never with guest access | accepted | 2026-11-06 |
-| [0143](0143-shares-are-part-of-the-database-backup.md) | Shares are part of the database, and include_shares only adds the old smb.conf copy | accepted | 2026-11-06 |
+| [0142](0142-old-backups-import-shares-without-guest-access.md) | Old backups import their shares from smb.conf, never with guest access | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-06 |
+| [0143](0143-shares-are-part-of-the-database-backup.md) | Shares are part of the database, and include_shares only adds the old smb.conf copy | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-06 |
 | [0144](0144-restored-databases-are-untrusted.md) | Restored databases are untrusted input | accepted | 2026-11-06 |
 | [0145](0145-what-may-be-shared.md) | A share is a folder strictly inside a managed pool, never the pool root or apps/ | accepted | 2026-11-06 |
 | [0146](0146-share-folders-do-not-overlap.md) | Share folders must not overlap | accepted | 2026-11-06 |
@@ -255,6 +255,7 @@ and this index, and `make check-fast` runs it.
 | [0293](0293-share-and-export-values-validated-and-web-exports-limited-to-local-networks.md) | Share and export values are validated before they reach smb.conf or an export file, and an NFS export from the web interface is an existing folder for one local network, read-only or read-write | accepted | 2026-11-08 |
 | [0294](0294-only-managed-pools-hold-shares-and-nfs-exports.md) | Only pools that UNOS manages can hold SMB shares and NFS exports, and the UI offers only those | accepted | 2026-11-08 |
 | [0310](0310-a-failed-smb-sign-in-writes-nothing-to-passdb.md) | A failed SMB sign-in writes nothing to passdb.tdb while no lockout counts failures, so passdb stays on the system disk | accepted | 2026-11-09 |
+| [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | A restore refuses backups without SMB tables, and a backup's database alone holds its shares | accepted | 2026-11-10 |
 
 ## Apps
 

@@ -2093,13 +2093,19 @@
         "The path that imports shares from the archive's smb.conf for such backups is removed with its tests",
         "Backups stop carrying a copy of smb.conf, unless an ADR keeps it"
       ],
+      "verified_by": [
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_share_import.py",
+        "supervisor/tests/test_smb_models.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0142",
-        "ADR-0143"
+        "ADR-0143",
+        "ADR-0319"
       ],
-      "notes": "The same path also imports the shares of a backup whose database has the share tables but no import marker, from the archive's smb.conf (ADR-0142): that branch stays, so step 3 needs an ADR that settles what such a backup restores from."
+      "notes": "Done in the code 2026-11-10 (ADR-0319, which supersedes ADR-0142 and ADR-0143). Step 1: a restore checks the four SMB tables of the extracted database and creates none; one that lacks them is refused with 400 and nothing changes (TestNotAuthoritative test_a_backup_without_the_smb_tables_is_refused, which failed before: the tables were created and the shares imported). Step 2: the import of the archive's smb.conf is gone, with the source 'backup' and smb_state.pending_import_conf; a database without the import marker imports the live smb.conf, never with guest access (test_the_smb_conf_of_an_older_backup_is_not_read, test_the_shares_of_the_live_file_are_imported, test_guest_access_is_not_restored), and its tests are gone or read the live file. Step 3: a backup carries no smb.conf and BackupConfig has no include_shares (test_a_backup_restores_the_shares_of_its_database); a restore ignores an smb.conf in an archive. The web UI's BackupConfig has no include_shares either. Open: host-level (GLOSSARY.md: the smb.conf that a restore leads to): on the dev device, a backup made after the deploy holds no smb.conf, and its restore keeps the shares and writes smb.conf byte for byte as before, with the device check and the re-check after a reboot (ADR-0018), as for backup.restore."
     },
     {
       "id": "backup.encrypted-scheduled-backups",
