@@ -649,13 +649,23 @@ class TestCertificateFilesStayInCertsDir:
         certs.dir.mkdir(parents=True)
         for suffix in (".crt", ".key", ".chain.crt"):
             (certs.dir / f"nas.local{suffix}").write_text("x")
-        # Stored by an older version under a name that is not a host name.
-        (certs.dir / "My NAS.crt").write_text("x")
 
         assert admin_api.delete(f"{API}/custom_nas.local").status_code == 200
-        assert admin_api.delete(f"{API}/custom_My NAS").status_code == 200
         assert admin_api.delete(f"{API}/custom_missing.local").status_code == 404
         assert list(certs.dir.iterdir()) == []
+
+    @pytest.mark.parametrize("name", ["My NAS", "*", "a b.local", "-x.local"])
+    def test_delete_refuses_an_id_that_names_no_certificate_name(self, certs, admin_api, name):
+        """The certificates are stored under the names that upload and self-signed take
+        (security.no-legacy-certificate-fixups, ADR-0207): the delete checks its id the same way,
+        and a file of another name is no certificate of UNOS."""
+        certs.dir.mkdir(parents=True)
+        (certs.dir / f"{name}.crt").write_text("keep me")
+
+        response = admin_api.delete(f"{API}/custom_{name}")
+
+        assert (response.status_code, response.json()["detail"]) == (400, "Invalid certificate id")
+        assert (certs.dir / f"{name}.crt").read_text() == "keep me"
 
     @pytest.mark.parametrize("common_name", ["..", "", "a/b", "My NAS", "*", "*.*.example.com"])
     def test_upload_refuses_a_common_name_that_is_not_a_name(self, certs, admin_api, monkeypatch,
@@ -784,15 +794,6 @@ class TestPrivateKeyMode:
         finally:
             os.umask(old)
 
-    @pytest.fixture
-    def old_key_file(self, certs):
-        """A key file as older versions uploaded it: world-readable."""
-        certs.dir.mkdir(parents=True)
-        key_file = certs.dir / "nas.local.key"
-        key_file.write_text("an older and longer key")
-        key_file.chmod(0o644)
-        return key_file
-
     def test_uploaded_key_file_is_0600(self, certs, admin_api, monkeypatch):
         assert _upload_as(monkeypatch, admin_api, "nas.local").status_code == 200
 
@@ -800,30 +801,24 @@ class TestPrivateKeyMode:
         assert key_file.read_text() == "KEY"
         assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
 
-    def test_upload_tightens_an_existing_key_file(self, old_key_file, admin_api, monkeypatch):
-        assert _upload_as(monkeypatch, admin_api, "nas.local").status_code == 200
-
-        assert old_key_file.read_text() == "KEY"
-        assert stat.S_IMODE(old_key_file.stat().st_mode) == 0o600
-
-    def test_self_signed_tightens_an_existing_key_file(self, old_key_file, admin_api, monkeypatch):
-        # Like openssl's -keyout, the fake writes into an existing key file
-        # without changing its mode (a new one openssl creates 0600).
-        fake_openssl = subprocess.run
-        modes_seen_by_openssl = []
-
-        def openssl(cmd, **kwargs):
-            modes_seen_by_openssl.append(stat.S_IMODE(old_key_file.stat().st_mode))
-            return fake_openssl(cmd, **kwargs)
-
-        monkeypatch.setattr(subprocess, "run", openssl)
+    @pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+    def test_self_signed_key_file_is_0600(self, upload_env, admin_api):
+        """The real openssl creates the key file 0600 under the usual umask, as
+        _write_private_key creates an uploaded one: UNOS writes no key of another mode that
+        would need a fix-up (security.no-legacy-certificate-fixups, ADR-0207)."""
         response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
 
         assert response.status_code == 200, response.text
-        # Tightened before openssl wrote the new key into it, not afterwards.
-        assert modes_seen_by_openssl == [0o600]
-        assert old_key_file.read_text() == "KEY"
-        assert stat.S_IMODE(old_key_file.stat().st_mode) == 0o600
+        key_file = upload_env.certs / "nas.local.key"
+        subprocess.run(["openssl", "pkey", "-in", str(key_file), "-noout"], check=True, timeout=30)
+        assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+
+    def test_no_key_mode_is_fixed_up(self):
+        """The fix-ups for the keys that older versions left 0644 are gone
+        (security.no-legacy-certificate-fixups, ADR-0207)."""
+        router = (Path(__file__).resolve().parents[1] / "src" / "security" / "router.py").read_text()
+        assert "chmod" not in router
+        assert "older version" not in router
 
 
 # ==================== Uploads leave no temporary file (R-6) ====================

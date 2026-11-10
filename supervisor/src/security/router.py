@@ -413,12 +413,9 @@ def _uploaded_certificate_name(common_name: str) -> str | None:
 
 
 def _write_private_key(path: Path, key: str) -> None:
-    """Write ``key`` to ``path``, readable and writable by the owner only (0600)."""
+    """Write ``key`` to ``path``, a file created readable and writable by the owner only (0600)."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
     with os.fdopen(fd, "w") as fh:
-        # open() applies the mode only to a new file: tighten one that already
-        # existed (older versions wrote uploaded keys 0644) before writing.
-        os.fchmod(fd, 0o600)
         fh.write(key)
 
 
@@ -645,14 +642,8 @@ async def generate_self_signed_certificate(
         if request.country:
             subject += f"/C={_subject_value(request.country)}"
 
-        # openssl creates a new key file 0600, but writes into an existing one
-        # without changing its mode: tighten a key an older version left 0644.
-        try:
-            key_file.chmod(0o600)
-        except FileNotFoundError:
-            pass
-
-        # Generate self-signed certificate
+        # Generate self-signed certificate. openssl creates the key file 0600,
+        # as _write_private_key creates an uploaded one.
         result = subprocess.run([
             "openssl", "req", "-x509", "-nodes",
             "-days", str(request.validity_days),
@@ -744,12 +735,12 @@ async def delete_certificate(
     if not cert_id.startswith("custom_"):
         raise HTTPException(400, "Can only delete custom certificates")
 
-    # Not re-validated as a host name: certificates stored by older versions
-    # under other names must stay deletable. The files must be in CERTS_DIR.
-    try:
-        cert_file, key_file, chain_file = _certificate_files(cert_id.removeprefix("custom_"))
-    except ValueError:
-        raise HTTPException(400, "Invalid certificate id") from None
+    # Certificates are stored under the names that an upload and a self-signed
+    # certificate take, which also keeps the files in CERTS_DIR.
+    name = cert_id.removeprefix("custom_")
+    if _uploaded_certificate_name(name) != name:
+        raise HTTPException(400, "Invalid certificate id")
+    cert_file, key_file, chain_file = _certificate_files(name)
 
     if not cert_file.exists():
         raise HTTPException(404, "Certificate not found")
