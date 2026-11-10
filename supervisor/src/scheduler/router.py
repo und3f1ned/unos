@@ -16,7 +16,7 @@ Do not expose task creation or editing to regular users. Task targets (pool
 names, disks) are validated when a task is saved and again before it runs,
 because the tasks file may predate validation or have been edited by hand.
 
-Backup tasks encrypt their backups (ADR-0240). Their passphrase is never
+Backup tasks encrypt their backups (ADR-0325). Their passphrase is never
 stored: BACKUP_KEYS_FILE (0600) keeps the key derived from it, apart from
 TASKS_FILE, which the API returns and every scheduled backup contains.
 
@@ -46,9 +46,10 @@ from typing import NamedTuple, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from croniter import croniter
+from pydantic import TypeAdapter
 import psutil
 
-from .. import host
+from .. import host, state_files
 from ..auth.utils import require_admin, verify_token
 from ..backup.router import (
     BACKUP_KEY_SIZE,
@@ -165,34 +166,32 @@ def _report_zone_problem(problem: str | None) -> None:
     _zone_problem = problem
 
 
+_TASKS = TypeAdapter(list[ScheduledTask])
+_RUNS = TypeAdapter(list[TaskRun])
+
+
 def load_tasks() -> list[ScheduledTask]:
-    """Load scheduled tasks from file."""
-    path = Path(TASKS_FILE)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        return [ScheduledTask(**t) for t in data]
-    except Exception:
-        return []
+    """The scheduled tasks; none without a file, or for one kept as .bad (ADR-0324)."""
+    return state_files.load_json(Path(TASKS_FILE), _TASKS.validate_python, list, what="the scheduled tasks")
 
 
 def save_tasks(tasks: list[ScheduledTask]) -> None:
-    """Save scheduled tasks to file."""
-    path = Path(TASKS_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([t.model_dump() for t in tasks], indent=2))
+    """Replace the scheduled tasks' file (ADR-0324)."""
+    state_files.write_json(Path(TASKS_FILE), [t.model_dump() for t in tasks], sync=False)
 
 
 def load_runs() -> list[TaskRun]:
     """Load task runs from file."""
-    path = Path(RUNS_FILE)
-    if not path.exists():
-        return []
+    # UTF-8 (_save_runs); the last 100 (a file written elsewhere may hold more). A history: a file
+    # that cannot be opened reads as no runs, with a warning, as the start (finish_interrupted_runs)
+    # and the runs themselves need (ADR-0324).
     try:
-        data = json.loads(path.read_bytes())  # UTF-8 (_save_runs)
-        return [TaskRun(**r) for r in data[-100:]]  # Keep last 100
-    except Exception:
+        return state_files.load_json(
+            Path(RUNS_FILE), lambda data: _RUNS.validate_python(data)[-100:], list,
+            what="the runs of the scheduled tasks",
+        )
+    except OSError as exc:
+        logger.warning("Could not read the runs of the scheduled tasks %s: %s", RUNS_FILE, exc)
         return []
 
 
@@ -204,14 +203,11 @@ def _save_runs(runs: list[TaskRun]) -> None:
     bytes instead of 2 (ADR-0267). A lone surrogate, which UTF-8 cannot hold (the bytes of a
     file name that are not UTF-8, in an error), is written as its JSON escape.
     """
-    path = Path(RUNS_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps([r.model_dump() for r in runs[-100:]], indent=2, ensure_ascii=False)
-    path.write_bytes(text.encode("utf-8", "backslashreplace"))
+    state_files.write_json(Path(RUNS_FILE), [r.model_dump() for r in runs[-100:]], sync=False, ensure_ascii=False)
 
 
 def save_run(run: TaskRun) -> None:
-    """Save a task run."""
+    """Save a task run. A run that cannot be recorded goes on, with a warning (ADR-0324)."""
     runs = load_runs()
     # Update existing or append
     for i, r in enumerate(runs):
@@ -220,30 +216,34 @@ def save_run(run: TaskRun) -> None:
             break
     else:
         runs.append(run)
-    _save_runs(runs)
+    try:
+        _save_runs(runs)
+    except OSError as exc:
+        logger.warning("Could not record the run %s of the task %s in %s: %s", run.id, run.task_name, RUNS_FILE, exc)
 
 
 def load_backup_keys() -> dict[str, bytes]:
     """The keys of the backup tasks by task id; an entry that is not a key is left out.
 
-    A file that is not JSON counts as empty, since none of its keys can be
-    used: the runs of the backup tasks fail with NO_BACKUP_KEY, and the next
-    passphrase that is set replaces the file. A file that cannot be read is
-    HTTPException(500), so that no write replaces the keys it may still hold.
+    A file that is not JSON or holds no object counts as empty, since none of
+    its keys can be used: it is kept as scheduled_backup_keys.json.bad, with its
+    mode 0600 (ADR-0324), the runs of the backup tasks fail with NO_BACKUP_KEY,
+    and the next passphrase that is set writes a new file. A file that cannot
+    be read is HTTPException(500), so that no write replaces the keys it may
+    still hold.
     """
     try:
-        raw = Path(BACKUP_KEYS_FILE).read_bytes()
-    except FileNotFoundError:
-        return {}
+        return state_files.load_json(Path(BACKUP_KEYS_FILE), _backup_keys, dict, what="the keys of the backup tasks")
     except OSError as e:
         raise HTTPException(500, f"The keys of the backup tasks cannot be read: {e}") from e
-    try:
-        data = json.loads(raw)
-    except ValueError as e:  # also not UTF-8 text
-        logger.warning("%s is not JSON (%s): no backup task has a key", BACKUP_KEYS_FILE, e)
-        return {}
+
+
+def _backup_keys(data: object) -> dict[str, bytes]:
+    """The decoded keys file's keys (load_backup_keys); ValueError for no object."""
+    if not isinstance(data, dict):
+        raise ValueError("it holds no keys by task")
     keys = {}
-    for task_id, value in data.items() if isinstance(data, dict) else ():
+    for task_id, value in data.items():
         try:
             key = base64.b64decode(value, validate=True)
         except (TypeError, ValueError):  # not a string, not ASCII, not base64 (binascii.Error)
@@ -260,18 +260,8 @@ def save_backup_keys(keys: dict[str, bytes]) -> None:
     cut, a passphrase that was set must not turn out to be the one before.
     """
     path = Path(BACKUP_KEYS_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps({task_id: base64.b64encode(key).decode() for task_id, key in keys.items()}, indent=2)
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    keys_json = {task_id: base64.b64encode(key).decode() for task_id, key in keys.items()}
+    state_files.write_json(path, keys_json, sync=True, mode=0o600)
     folder = os.open(path.parent, os.O_RDONLY)
     try:
         os.fsync(folder)
@@ -780,7 +770,7 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             return True, "SMART test started"
 
         elif task.task_type == TaskType.BACKUP:
-            # Encrypted with the key of the task (ADR-0240); never unencrypted.
+            # Encrypted with the key of the task (ADR-0325); never unencrypted.
             key = load_backup_keys().get(task.id or "")
             if key is None:
                 return False, NO_BACKUP_KEY
@@ -974,7 +964,10 @@ def _record_end(run: TaskRun, success: bool) -> None:
     run.finished_at = _utc_now().isoformat()
     run.status = "success" if success else "failed"
     save_run(run)
-    _record_last_runs([run])
+    try:
+        _record_last_runs([run])
+    except OSError as exc:  # the tasks' file cannot be read or written (ADR-0324)
+        logger.warning("Could not record the last run of the task %s: %s", run.task_name, exc)
 
 
 async def run_task(task: ScheduledTask) -> None:
@@ -1060,7 +1053,10 @@ async def scheduler_loop():
 async def start_scheduler():
     """Start the scheduler on app startup, once the runs that a stop interrupted are recorded."""
     global _scheduler_running, _scheduler_task
-    await asyncio.to_thread(finish_interrupted_runs)
+    try:
+        await asyncio.to_thread(finish_interrupted_runs)
+    except Exception:  # a state file that cannot be read or written must not stop the supervisor
+        logger.exception("The scheduler could not record the runs that a stop interrupted")
     _scheduler_running = True
     _scheduler_task = asyncio.create_task(scheduler_loop())
 

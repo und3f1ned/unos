@@ -103,10 +103,20 @@
         "A supervisor killed while it writes a state file leaves the old or the new content, never a partial file",
         "A state file that cannot be parsed is renamed to <name>.bad and named in a warning, and the defaults are used"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0023"
-      ]
+        "ADR-0324",
+        "ADR-0325",
+        "ADR-0326"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_state_files.py",
+        "supervisor/tests/test_notifications.py",
+        "supervisor/tests/test_smart_predictions.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "supervisor/tests/test_health_monitor.py"
+      ],
+      "notes": "Passed 2026-11-10 (ADR-0324; ADR-0325 and ADR-0326 supersede ADR-0240 and ADR-0260 for the key file and the notification files). Step 1: every JSON state file of the supervisor, 14 of them (STATE_FILES of test_state_files.py; a scan finds every module-level path of one in src in the table, no module that opens one of its paths with write_text, open and the like, and no literal path in a function), is written through state_files.replace_file: a temporary file next to it, renamed over it, synced first for the SMART history, the notification files and the key file. A process killed with SIGKILL before the rename leaves the old content, after it the new one, and a write that fails leaves no temporary file. Step 2: load_json renames a file that is not UTF-8, not JSON or no state of its kind to <name>.bad, names it in a warning and answers the defaults, unless a writer put a new file in place meanwhile, and every state file's loader uses it; the SMART history does so in the monitor's pass, while its endpoints keep their 500 (ADR-0235). Before the change, 10 of the 14 rename checks and all 14 checks of the .bad file failed. A fresh-context review found: a runs file that cannot be opened stopped the start, a task's run and the RAID check; a reader could set aside a file that a writer had just put in place; new syncs on the event loop; RAID gauges that went missing for a status without pools; and claims of the ADR and the records. Fixed: histories and caches read as none when they cannot be opened, the start and a run go on, renames take the path's lock and check the inode, only the files that an ADR wants durable are synced, the health outputs read the status as before, and the texts. Not host-level: the files are the supervisor's own state in its data volume."
     },
     {
       "id": "architecture.times-with-time-zones",
@@ -2059,9 +2069,9 @@
       "passes": true,
       "adr": [
         "ADR-0172",
-        "ADR-0240"
+        "ADR-0325"
       ],
-      "notes": "webui/tests/scheduler.spec.ts makes a backup task with Keep Count 3 in the form on the stand-in and runs it four times (Run now): each run stores one auto_backup_*.tar.gz.enc, the fourth deletes the oldest, and the Backup & Restore tab lists the three newest and the manual backup. The backend tests check that a backup is listed only once complete and that two runs at once both succeed. Not host-level: the backups stay in the supervisor's /data. Device check: 2026-11-06 (two scheduled backups at once), before scheduled backups were encrypted (ADR-0240)."
+      "notes": "webui/tests/scheduler.spec.ts makes a backup task with Keep Count 3 in the form on the stand-in and runs it four times (Run now): each run stores one auto_backup_*.tar.gz.enc, the fourth deletes the oldest, and the Backup & Restore tab lists the three newest and the manual backup. The backend tests check that a backup is listed only once complete and that two runs at once both succeed. Not host-level: the backups stay in the supervisor's /data. Device check: 2026-11-06 (two scheduled backups at once), before scheduled backups were encrypted (ADR-0325)."
     },
     {
       "id": "backup.off-device-copies",
@@ -2142,7 +2152,7 @@
       "passes": true,
       "adr": [
         "ADR-0041",
-        "ADR-0240"
+        "ADR-0325"
       ],
       "verified_by": [
         "supervisor/tests/test_scheduler_validation.py",
@@ -2150,7 +2160,7 @@
         "webui/tests/scheduler.spec.ts",
         "webui/tests/backup-restore.spec.ts"
       ],
-      "notes": "A backup task needs a passphrase, which no answer of the API and no file holds; the device keeps the key derived from it in /data/scheduled_backup_keys.json, mode 0600 (ADR-0240). The stand-in runs a backup task and restores its backup with the passphrase (webui/tests/backup-restore.spec.ts). Not checked on the device: the RAM a run takes there, and that backup tasks made before ADR-0240 fail until a passphrase is set."
+      "notes": "A backup task needs a passphrase, which no answer of the API and no file holds; the device keeps the key derived from it in /data/scheduled_backup_keys.json, mode 0600 (ADR-0325). The stand-in runs a backup task and restores its backup with the passphrase (webui/tests/backup-restore.spec.ts). Not checked on the device: the RAM a run takes there, and that backup tasks made before ADR-0325 fail until a passphrase is set."
     },
     {
       "id": "files.browse-and-download",
@@ -2507,9 +2517,9 @@
       "adr": [
         "ADR-0045",
         "ADR-0046",
-        "ADR-0260"
+        "ADR-0326"
       ],
-      "notes": "System > Notifications adds e-mail, Telegram, webhook, Discord and Slack channels; a test shows under its channel whether it was sent or the error, and the history lists tests, POST /notifications/send and the monitors' alerts, newest first (ADR-0260). The certificate check of ADR-0045 (STARTTLS, SMTPS on port 465, the self-signed opt-out) came in from commit bbb773b of the branch smtp-verify-tls, which stays unmerged. test_notifications.py delivers to a local mail server (STARTTLS and SMTPS; trusted, self-signed and wrong-host certificates; a relay that takes mail without a login; the Date and Message-ID it receives) and a local webhook receiver, and fakes Telegram's API; its API tests also let the writes of the channels and the history fail as on a full disk, wait as on a busy SD card, and come two at once; notifications.spec.ts drives the tab with route fakes, and one of its tests sends through the stand-in's own supervisor to a mail server that is not there. Not a host-level change. No real mail server, Telegram or webhook service has been reached: that needs the owner's accounts, and Telegram from the dev device is system.telegram-from-the-device."
+      "notes": "System > Notifications adds e-mail, Telegram, webhook, Discord and Slack channels; a test shows under its channel whether it was sent or the error, and the history lists tests, POST /notifications/send and the monitors' alerts, newest first (ADR-0326). The certificate check of ADR-0045 (STARTTLS, SMTPS on port 465, the self-signed opt-out) came in from commit bbb773b of the branch smtp-verify-tls, which stays unmerged. test_notifications.py delivers to a local mail server (STARTTLS and SMTPS; trusted, self-signed and wrong-host certificates; a relay that takes mail without a login; the Date and Message-ID it receives) and a local webhook receiver, and fakes Telegram's API; its API tests also let the writes of the channels and the history fail as on a full disk, wait as on a busy SD card, and come two at once; notifications.spec.ts drives the tab with route fakes, and one of its tests sends through the stand-in's own supervisor to a mail server that is not there. Not a host-level change. No real mail server, Telegram or webhook service has been reached: that needs the owner's accounts, and Telegram from the dev device is system.telegram-from-the-device."
     },
     {
       "id": "system.alert-events",
@@ -2580,7 +2590,7 @@
         "supervisor/tests/test_scheduler_validation.py",
         "webui/tests/scheduler.spec.ts"
       ],
-      "notes": "The task form keeps its native controls, each named by its label through a for/id pair; the passphrase fields of backup tasks are Input components (ADR-0240)."
+      "notes": "The task form keeps its native controls, each named by its label through a for/id pair; the passphrase fields of backup tasks are Input components (ADR-0325)."
     },
     {
       "id": "system.scheduler-time-zone",

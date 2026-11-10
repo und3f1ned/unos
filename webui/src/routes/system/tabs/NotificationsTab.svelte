@@ -12,7 +12,7 @@
     type ChannelKind, type EventType, type NotificationConfig, type NotificationLog
   } from "$lib/api/notifications";
 
-  // Channels of five kinds (ADR-0260). A test reports next to its channel whether the server
+  // Channels of five kinds (ADR-0326). A test reports next to its channel whether the server
   // delivered it, or why not, and the history lists every notification sent, newest first.
 
   // Each kind's name and the text of the button that adds one: keys of the catalog.

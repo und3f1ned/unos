@@ -63,6 +63,7 @@ and this index, and `make check-fast` runs it.
 | [0023](0023-audit-quality-debt.md) | Pay down the audit's P2 quality and technical debt | proposed | 2026-11-05 |
 | [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits | accepted | 2026-11-08 |
 | [0308](0308-a-sign-in-writes-at-most-0-1-mib-to-the-sd-card.md) | A sign-in in the middle of the write-ahead log writes at most 0.1 MiB to the SD card | accepted | 2026-11-09 |
+| [0324](0324-json-state-files-are-replaced-through-a-rename-and-one-that-cannot-be-read-is-kept-as-bad.md) | JSON state files are replaced through a rename, and one that cannot be read is kept as .bad | accepted | 2026-11-10 |
 
 ## Security
 
@@ -281,7 +282,8 @@ and this index, and `make check-fast` runs it.
 | [0165](0165-backup-restore-flows-and-unique-names.md) | Backups restore from the tab, accept encrypted uploads and get unique names | accepted | 2026-11-06 |
 | [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | accepted | 2026-11-06 |
 | [0167](0167-deferred-backup-and-upload-edge-cases.md) | Fix the deferred backup and upload edge cases of slice 1 | proposed | 2026-11-06 |
-| [0240](0240-scheduled-backups-encrypted-with-a-key-derived-from-the-passphrase.md) | Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own | accepted | 2026-11-07 |
+| [0240](0240-scheduled-backups-encrypted-with-a-key-derived-from-the-passphrase.md) | Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own | superseded by [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | 2026-11-07 |
+| [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | Backup tasks encrypt every backup with a key derived from their passphrase, stored in a file of its own that is set aside when damaged | accepted | 2026-11-10 |
 
 ## Files
 
@@ -315,12 +317,13 @@ and this index, and `make check-fast` runs it.
 | [0247](0247-wake-on-lan-from-power-off-depends-on-the-board.md) | Waking a host that is off by Wake-on-LAN depends on its board, and the Power tab says so | accepted | 2026-11-07 |
 | [0257](0257-system-logs-reads-every-source-from-the-hosts-journal-newest-first.md) | System > Logs reads every source from the host's journal, newest first, with one set of filters | accepted | 2026-11-07 |
 | [0258](0258-a-journal-read-ends-on-the-host-and-two-run-at-a-time.md) | A journal read of System > Logs ends on the host after 30 seconds, two run at a time, and a search without a match lists nothing | accepted | 2026-11-07 |
-| [0260](0260-notification-channels-of-every-kind-name-failed-deliveries-and-keep-a-full-history.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, and the history lists every notification sent | accepted | 2026-11-07 |
+| [0260](0260-notification-channels-of-every-kind-name-failed-deliveries-and-keep-a-full-history.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, and the history lists every notification sent | superseded by [0326](0326-notification-channels-their-history-and-damaged-files-of-them.md) | 2026-11-07 |
 | [0264](0264-schedules-follow-the-clock-of-the-hosts-time-zone.md) | Schedules follow the clock of the host's time zone, read from its /etc/localtime link, with fixed rules for the changes of daylight saving time | superseded by [0266](0266-schedules-follow-the-hosts-time-zone-as-last-read.md) | 2026-11-07 |
 | [0265](0265-custom-task-runs-record-output-and-exit-status-and-end-within-a-day.md) | A custom task's run records the command's output and exit status, and the command ends within 24 hours with what it started | superseded by [0267](0267-custom-task-commands-end-with-every-process-of-their-session.md) | 2026-11-07 |
 | [0266](0266-schedules-follow-the-hosts-time-zone-as-last-read.md) | Schedules follow the host's time zone as last read from its /etc/localtime link, with fixed rules for the changes of daylight saving time | accepted | 2026-11-08 |
 | [0267](0267-custom-task-commands-end-with-every-process-of-their-session.md) | A custom task's run records the command's output and exit status, and the command ends within 24 hours with every process of its session | accepted | 2026-11-08 |
 | [0268](0268-a-run-that-a-stop-of-the-supervisor-interrupts-is-recorded-as-failed.md) | A task run that a stop of the supervisor interrupts is recorded as failed | accepted | 2026-11-08 |
+| [0326](0326-notification-channels-their-history-and-damaged-files-of-them.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, the history lists every notification sent, and damaged files of them are kept | accepted | 2026-11-10 |
 
 ## Web UI
 

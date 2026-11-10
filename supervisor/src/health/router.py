@@ -3,7 +3,6 @@ import subprocess
 import json
 import asyncio
 import logging
-import os
 import re
 import threading
 from collections import Counter
@@ -15,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
 
-from .. import host
+from .. import host, state_files
 from ..auth.utils import verify_token
 from ..security.validators import validate_pool_name
 from ..storage import disks as storage_disks
@@ -181,27 +180,44 @@ _smart_history = _SmartHistoryState()
 _smart_history_lock = threading.Lock()
 
 
-def load_smart_history() -> dict[str, list[dict]]:
-    """The SMART history: smartctl's serial -> its snapshots, oldest first.
-
-    {} without a file. A file that cannot be read or holds no history raises
-    SmartHistoryUnreadable: that is not an empty history (ADR-0235).
-    """
-    path = Path(SMART_HISTORY_FILE)
-    try:
-        history = json.loads(path.read_text())
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError) as exc:
-        raise SmartHistoryUnreadable(f"Could not read the SMART history {path}: {exc}") from exc
+def _history_by_serial(history: object) -> dict[str, list[dict]]:
+    """The decoded SMART history file as the history; ValueError for anything else."""
     if not isinstance(history, dict) or not all(
         isinstance(entries, list) and all(isinstance(entry, dict) for entry in entries)
         for entries in history.values()
     ):
-        raise SmartHistoryUnreadable(
-            f"Could not read the SMART history {path}: it holds no snapshots by serial"
-        )
+        raise ValueError("it holds no snapshots by serial")
     return history
+
+
+def load_smart_history() -> dict[str, list[dict]]:
+    """The SMART history: smartctl's serial -> its snapshots, oldest first.
+
+    {} without a file. A file that cannot be read or holds no history raises
+    SmartHistoryUnreadable: that is not an empty history (ADR-0235), and the
+    file stays for the monitor's pass (load_smart_history_or_start_anew).
+    """
+    path = Path(SMART_HISTORY_FILE)
+    try:
+        return _history_by_serial(json.loads(path.read_bytes()))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        raise SmartHistoryUnreadable(f"Could not read the SMART history {path}: {exc}") from exc
+
+
+def load_smart_history_or_start_anew() -> dict[str, list[dict]]:
+    """The SMART history for the monitor's pass, which starts a new one instead of a damaged one.
+
+    A file that cannot be read as a history is kept as smart_history.json.bad and named in a
+    warning (ADR-0324); one that cannot be opened raises SmartHistoryUnreadable, as for the
+    endpoints, and stays where it is.
+    """
+    path = Path(SMART_HISTORY_FILE)
+    try:
+        return state_files.load_json(path, _history_by_serial, dict, what="the SMART history")
+    except OSError as exc:
+        raise SmartHistoryUnreadable(f"Could not read the SMART history {path}: {exc}") from exc
 
 
 def _smart_history_or_500() -> dict[str, list[dict]]:
@@ -227,18 +243,7 @@ def save_smart_history(history: dict[str, list[dict]]):
     (ADR-0235). The monitor writes only when a pass changed the history,
     and at shutdown (ADR-0269).
     """
-    path = Path(SMART_HISTORY_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    staged = path.with_name(path.name + ".new")
-    try:
-        with open(staged, "w") as f:
-            f.write(json.dumps(history, indent=2))
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(staged, path)
-    except BaseException:
-        staged.unlink(missing_ok=True)
-        raise
+    state_files.write_json(Path(SMART_HISTORY_FILE), history, sync=True)
 
 
 def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
@@ -435,7 +440,7 @@ async def _deliver_alert(event: NotificationEvent) -> None:
     The senders report failures as (False, error) instead of raising; those are
     logged like timeouts and exceptions. The history of System > Notifications
     lists each alert sent, with its result, in one write per alert, made in a
-    worker thread: it is synced to the system disk (ADR-0021, ADR-0260).
+    worker thread: it is synced to the system disk (ADR-0021, ADR-0326).
     """
     loop = asyncio.get_running_loop()
     entries = []
@@ -573,7 +578,7 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
             return []
         if state.history is None:
             try:
-                history = load_smart_history()
+                history = load_smart_history_or_start_anew()
             except SmartHistoryUnreadable as exc:
                 logger.warning("SMART monitor: %s; starting a new history", exc)
                 history = {}
@@ -720,18 +725,33 @@ async def send_raid_alert(pool: str, status: str, errors: int, details: str):
     await _deliver_alert(event)
 
 
-def load_previous_raid_status() -> dict:
-    """Load previous RAID status to detect new errors (only well-formed pool entries)."""
-    path = Path(RAID_STATUS_FILE)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-    except Exception:
-        return {}
+def _raid_status(data: object) -> dict:
+    """The decoded RAID status file: its well-formed pool entries; ValueError for no object."""
     if not isinstance(data, dict):
-        return {}
+        raise ValueError("it holds no status by pool")
     return {pool: entry for pool, entry in data.items() if isinstance(entry, dict)}
+
+
+def raid_status_or_none() -> Optional[dict]:
+    """The RAID status the last check kept (only well-formed pool entries); None without one.
+
+    A file that cannot be read as a status is kept as raid_status.json.bad (ADR-0324), and there
+    is none then; one that cannot be opened raises.
+    """
+    return state_files.load_json(Path(RAID_STATUS_FILE), _raid_status, lambda: None, what="the RAID status")
+
+
+def load_previous_raid_status() -> dict:
+    """The RAID status the last check kept, to detect new errors; {} without one.
+
+    A cache of the monitor's: a file that cannot be opened reads as none, with a warning, so that
+    the check and its alerts go on (ADR-0324).
+    """
+    try:
+        return raid_status_or_none() or {}
+    except OSError as exc:
+        logger.warning("Could not read the RAID status %s: %s", RAID_STATUS_FILE, exc)
+        return {}
 
 
 # The latest RAID check, with its time (GET /raid-monitor/status). The file
@@ -756,8 +776,7 @@ def save_raid_status(status: dict):
     path = Path(RAID_STATUS_FILE)
     if path.exists() and _raid_state(load_previous_raid_status()) == _raid_state(status):
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(status, indent=2))
+    state_files.write_json(path, status, sync=False)
 
 
 async def raid_monitor_loop():

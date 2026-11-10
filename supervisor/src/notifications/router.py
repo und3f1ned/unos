@@ -2,7 +2,6 @@ import asyncio
 import email.utils
 import html
 import logging
-import os
 import smtplib
 import ssl
 import json
@@ -16,8 +15,9 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
+from .. import state_files
 from ..auth.utils import verify_token
 from .schemas import (
     NotificationConfig, NotificationEvent, NotificationLog,
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 CONFIG_FILE = "/data/notifications.json"
 LOGS_FILE = "/data/notification_logs.json"
-# The history keeps the latest notifications sent (ADR-0260).
+# The history keeps the latest notifications sent (ADR-0326).
 HISTORY_SIZE = 100
 
 # Seconds the e-mail and Telegram senders wait for each network operation
@@ -52,45 +52,32 @@ _SMTP_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="unos-smtp
 
 # The channels and the history are written in worker threads, synced to the
 # system disk (ADR-0021): one change of each file at a time, each on what the
-# one before stored, through a staged file of a fixed name.
+# one before stored, through a temporary file renamed over it (ADR-0324).
 _CONFIGS_LOCK = threading.Lock()
 _HISTORY_LOCK = threading.Lock()
+
+
+_CHANNELS = TypeAdapter(list[NotificationConfig])
 
 
 def load_configs() -> list[NotificationConfig]:
     """The notification channels; [] without a file.
 
-    A file that cannot be read reads as no channels too, and that is logged.
+    A file that cannot be read as channels is kept as notifications.json.bad and
+    reads as no channels (ADR-0324); one that cannot be opened reads as no
+    channels too. Both are logged.
     """
     path = Path(CONFIG_FILE)
-    if not path.exists():
-        return []
     try:
-        data = json.loads(path.read_text())
-        return [NotificationConfig(**c) for c in data]
-    except Exception as error:
+        return state_files.load_json(path, _CHANNELS.validate_python, list, what="the notification channels")
+    except OSError as error:
         logger.warning("Could not read the notification channels %s: %s", path, error)
         return []
 
 
 def _replace_file(path: Path, text: str) -> None:
-    """Replace the file at ``path`` with ``text`` (blocking: fsync).
-
-    Staged next to the file, synced, then renamed over it, as the SMART
-    history (ADR-0235): a full system disk or a power loss during the write
-    leaves the old file or the new one, never a part.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    staged = path.with_name(path.name + ".new")
-    try:
-        with open(staged, "w") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(staged, path)
-    except BaseException:
-        staged.unlink(missing_ok=True)
-        raise
+    """Replace the file at ``path`` with ``text`` (blocking: fsync): state_files.replace_file (ADR-0324)."""
+    state_files.replace_file(path, text.encode("utf-8"), sync=True)
 
 
 def save_configs(configs: list[NotificationConfig]) -> None:
@@ -120,19 +107,21 @@ def load_logs() -> list[NotificationLog]:
     An entry that is not a notification as this version writes it (one from
     before channel_name, or one damaged from outside UNOS) is left out, and a
     file that cannot be read reads as no history. Both are logged, and the
-    next notification writes the history without them (ADR-0260).
+    next notification writes the history without them (ADR-0326).
     """
     path = Path(LOGS_FILE)
     try:
-        data = json.loads(path.read_text())
-    except FileNotFoundError:
-        return []
-    except (OSError, ValueError) as error:
+        return state_files.load_json(path, _history, list, what="the notification history")
+    except OSError as error:
         logger.warning("Could not read the notification history %s: %s", path, error)
         return []
+
+
+def _history(data: object) -> list[NotificationLog]:
+    """The decoded history file as the history; ValueError for no list (load_logs)."""
+    path = Path(LOGS_FILE)
     if not isinstance(data, list):
-        logger.warning("Could not read the notification history %s: it holds no list of notifications", path)
-        return []
+        raise ValueError("it holds no list of notifications")
     logs = []
     for item in data:
         try:
@@ -199,7 +188,7 @@ def _webhook_failure(response: httpx.Response) -> str | None:
     """None for a success (2xx); otherwise the status and the start of the body.
 
     A redirect is a failure too: the senders do not follow it, so the message
-    did not arrive (ADR-0260).
+    did not arrive (ADR-0326).
     """
     if response.is_success:
         return None
@@ -301,7 +290,7 @@ async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tup
         emoji = type_emoji.get(event.type, "📢")
 
         # HTML with the texts escaped: in Telegram's Markdown a single "_" or "*",
-        # as in a pool named e2e_tank, makes it refuse the message (ADR-0260).
+        # as in a pool named e2e_tank, makes it refuse the message (ADR-0326).
         title = html.escape(event.title, quote=False)
         text = html.escape(event.message, quote=False)
         message = f"{emoji} <b>{title}</b>\n\n{text}\n\n<i>UNOS NAS</i>"

@@ -53,10 +53,10 @@ from .files.router import start_trash_expiry, stop_trash_expiry
 from .snapshots.router import router as snapshots_router
 from .notifications.router import router as notifications_router
 from .scheduler.router import router as scheduler_router
-from .power.router import router as power_router
+from .power.router import router as power_router, saved_ups_config
 from .network.router import router as network_router
 from .logs.router import router as logs_router
-from .health.router import router as health_router
+from .health.router import raid_status_or_none, router as health_router
 from .security.router import router as security_router
 from .monitor.router import router as monitor_router
 from .backup.router import router as backup_router
@@ -308,7 +308,6 @@ async def full_health_check():
     Comprehensive health check aggregating all system components.
     Suitable for monitoring systems like Prometheus, Uptime Robot, etc.
     """
-    import json
     import psutil
     from pathlib import Path
     from datetime import datetime
@@ -356,11 +355,10 @@ async def full_health_check():
         health["components"]["storage"] = {"status": "error", "message": str(e)}
         issues.append("storage")
 
-    # RAID health check
+    # RAID health check: the status the RAID monitor keeps (ADR-0324).
     try:
-        raid_status = Path("/data/raid_status.json")
-        if raid_status.exists():
-            data = json.loads(raid_status.read_text())
+        data = raid_status_or_none()
+        if data is not None:
             degraded = [p for p, s in data.items() if s.get("status") != "healthy"]
             if degraded:
                 health["components"]["raid"] = {"status": "degraded", "pools": degraded}
@@ -388,10 +386,9 @@ async def full_health_check():
 
     # UPS check
     try:
-        ups_config = Path("/data/ups_config.json")
-        if ups_config.exists():
-            data = json.loads(ups_config.read_text())
-            if data.get("enabled"):
+        ups = saved_ups_config()
+        if ups is not None:
+            if ups.enabled:
                 health["components"]["ups"] = {"status": "configured", "enabled": True}
             else:
                 health["components"]["ups"] = {"status": "disabled"}
@@ -423,8 +420,6 @@ async def prometheus_metrics():
     Returns metrics in Prometheus text format.
     """
     import psutil
-    from pathlib import Path
-    import json
 
     lines = []
     lines.append("# HELP unos_up UNOS supervisor is running")
@@ -471,9 +466,8 @@ async def prometheus_metrics():
 
     # RAID status
     try:
-        raid_status = Path("/data/raid_status.json")
-        if raid_status.exists():
-            data = json.loads(raid_status.read_text())
+        data = raid_status_or_none()
+        if data is not None:
             healthy = len([p for p, s in data.items() if s.get("status") == "healthy"])
             degraded = len([p for p, s in data.items() if s.get("status") != "healthy"])
             lines.append("# HELP unos_raid_pools_healthy Number of healthy RAID pools")

@@ -628,6 +628,22 @@ class TestPoolCount:
         assert "storage" in body["issues"]
         assert body["status"] in ("degraded", "critical")
 
+    def test_a_raid_status_without_pools_gives_its_counts_of_0(self, admin_api, monkeypatch, tmp_path):
+        # The RAID monitor keeps {} on a host without pools: Prometheus keeps its gauges at 0, and
+        # /health/full counts 0 pools; without a file there are neither (ADR-0324).
+        status = tmp_path / "raid_status.json"
+        monkeypatch.setattr(storage_pools, "list_pools", lambda: [])
+        monkeypatch.setattr(health_router, "RAID_STATUS_FILE", str(status))
+        assert "unos_raid_pools_healthy" not in admin_api.get("/api/v1/health/prometheus").text
+        assert admin_api.get("/api/v1/health/full").json()["components"]["raid"] == {
+            "status": "ok", "message": "No RAID pools"}
+
+        status.write_text("{}")
+
+        metrics = admin_api.get("/api/v1/health/prometheus").text
+        assert "unos_raid_pools_healthy 0\n" in metrics and "unos_raid_pools_degraded 0\n" in metrics
+        assert admin_api.get("/api/v1/health/full").json()["components"]["raid"] == {"status": "ok", "pools_checked": 0}
+
     def test_prometheus_counts_the_listed_pools(self, admin_api, monkeypatch):
         monkeypatch.setattr(storage_pools, "list_pools", lambda: [SimpleNamespace(name="data")])
         response = admin_api.get("/api/v1/health/prometheus")

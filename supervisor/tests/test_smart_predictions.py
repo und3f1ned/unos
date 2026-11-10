@@ -518,5 +518,7 @@ def test_the_monitor_starts_a_new_history_when_the_file_cannot_be_read(disks, mo
 
     assert {serial: len(entries) for serial, entries in health_router.load_smart_history().items()} == {
         "WD-1": 1}
-    assert f"Could not read the SMART history {disks.history_file}: " in caplog.text
-    assert "starting a new history" in caplog.text
+    # The damaged file is kept beside the new history (ADR-0324).
+    assert disks.history_file.with_name(disks.history_file.name + ".bad").read_text() == "{"
+    assert f"Could not read the SMART history {disks.history_file} (" in caplog.text
+    assert f"kept as {disks.history_file}.bad, using the defaults" in caplog.text

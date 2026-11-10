@@ -40,6 +40,11 @@ the pages of each commit; a checkpoint, when the log reaches 1000 pages and when
 stops, copies them into `unos.db` (ADR-0306). Avoid: journal (SQLite's rollback journal, which
 `unos.db` no longer uses).
 
+**State file**: One of the supervisor's JSON files of state in `/data` besides the database: the
+settings, rules, tasks and histories that `supervisor/src/state_files.py` replaces through a
+rename and keeps as `<name>.bad` when it cannot read one (ADR-0324). Avoid: config file (some hold
+histories), cache.
+
 **Owner**: The person who owns the repository and the dev device: decides, triages, asks for
 commits and pushes, opens pull requests and holds the credentials (ADR-0208, ADR-0024).
 Avoid: user (a UNOS user), admin.
@@ -56,14 +61,14 @@ run is recorded with its status in the task's history (ADR-0044, ADR-0266, ADR-0
 its runs record the command's output and exit status (ADR-0044, ADR-0267). Avoid: script.
 
 **Notification channel**: Where UNOS sends notifications: e-mail through a mail server, a Telegram
-chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0260).
+chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0326).
 Avoid: notifier, integration.
 
 **Alert**: A notification that a monitor sends on its own, for a pool's RAID errors or a disk's
 rising SMART counters, to every enabled e-mail and Telegram channel (ADR-0047). Avoid: alarm.
 
 **Notification history**: The latest 100 notifications sent, tests and alerts included, with the
-channel and the result of each: History in System > Notifications (ADR-0260). Avoid: log (the
+channel and the result of each: History in System > Notifications (ADR-0326). Avoid: log (the
 Logs tab shows the journal and container output).
 
 ## Storage
@@ -218,7 +223,7 @@ one or more containers. Avoid: app.
 
 **Scheduled backup**: A backup that a backup task of the Scheduler makes,
 `auto_backup_<date>_<time>.tar.gz.enc`, always encrypted with the task's passphrase, of which the
-device keeps only a derived key (ADR-0240). Avoid: auto backup.
+device keeps only a derived key (ADR-0325). Avoid: auto backup.
 
 **Restore**: Replacing the live database with a backup's after the archive and the database are
 checked (ADR-0040, ADR-0144). Restoring a snapshot is another action: it makes a copy.

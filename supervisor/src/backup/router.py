@@ -201,7 +201,7 @@ def new_backup_key(passphrase: str) -> bytes:
 
     Blocking (PBKDF2). What encrypt_with_key writes with it, decrypt_file opens
     with the passphrase: the salt is stored at the start of each file. A
-    scheduled backup task keeps this instead of its passphrase (ADR-0240).
+    scheduled backup task keeps this instead of its passphrase (ADR-0325).
     """
     salt = secrets.token_bytes(SALT_SIZE)
     return salt + derive_key(passphrase, salt)

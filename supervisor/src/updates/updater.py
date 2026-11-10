@@ -25,6 +25,7 @@ from typing import Optional
 
 import httpx
 
+from .. import state_files
 from .schemas import (
     CurrentVersion,
     ReleaseAsset,
@@ -307,9 +308,8 @@ class Updater:
         self._save_progress_state()
 
     def _save_progress_state(self):
-        """Save progress state to disk for persistence."""
+        """Save progress state to disk for persistence (replaced whole, ADR-0324)."""
         try:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
             state = {
                 "status": self._progress.status.value,
                 "progress_percent": self._progress.progress_percent,
@@ -319,24 +319,16 @@ class Updater:
                 "completed_at": self._progress.completed_at.isoformat() if self._progress.completed_at else None,
                 "can_rollback": self._progress.can_rollback,
             }
-            UPDATE_STATE_FILE.write_text(json.dumps(state, indent=2))
+            state_files.write_json(UPDATE_STATE_FILE, state, sync=False)
         except Exception as e:
             logger.warning(f"Failed to save progress state: {e}")
 
     def _load_progress_state(self):
-        """Load progress state from disk."""
+        """Load progress state from disk; a file kept as .bad leaves the progress as it is (ADR-0324)."""
         try:
-            if UPDATE_STATE_FILE.exists():
-                state = json.loads(UPDATE_STATE_FILE.read_text())
-                self._progress = UpdateProgress(
-                    status=UpdateStatus(state.get("status", "idle")),
-                    progress_percent=state.get("progress_percent", 0),
-                    message=state.get("message", ""),
-                    error=state.get("error"),
-                    started_at=datetime.fromisoformat(state["started_at"]) if state.get("started_at") else None,
-                    completed_at=datetime.fromisoformat(state["completed_at"]) if state.get("completed_at") else None,
-                    can_rollback=state.get("can_rollback", False),
-                )
+            self._progress = state_files.load_json(
+                UPDATE_STATE_FILE, _progress_of, lambda: self._progress, what="the update's progress"
+            )
         except Exception as e:
             logger.warning(f"Failed to load progress state: {e}")
 
@@ -572,9 +564,7 @@ class Updater:
     ):
         """Add an entry to the update history."""
         try:
-            history = []
-            if UPDATE_HISTORY_FILE.exists():
-                history = json.loads(UPDATE_HISTORY_FILE.read_text())
+            history = state_files.load_json(UPDATE_HISTORY_FILE, _history_list, list, what="the update history")
 
             new_id = max([e.get("id", 0) for e in history], default=0) + 1
 
@@ -592,7 +582,7 @@ class Updater:
             history.insert(0, entry)  # Most recent first
             history = history[:50]  # Keep last 50 entries
 
-            UPDATE_HISTORY_FILE.write_text(json.dumps(history, indent=2))
+            state_files.write_json(UPDATE_HISTORY_FILE, history, sync=False)
 
         except Exception as e:
             logger.warning(f"Failed to update history: {e}")
@@ -600,21 +590,7 @@ class Updater:
     async def get_update_history(self) -> list[UpdateHistoryEntry]:
         """Get the update history."""
         try:
-            if UPDATE_HISTORY_FILE.exists():
-                history = json.loads(UPDATE_HISTORY_FILE.read_text())
-                return [
-                    UpdateHistoryEntry(
-                        id=e.get("id", 0),
-                        from_version=e.get("from_version", ""),
-                        to_version=e.get("to_version", ""),
-                        status=e.get("status", ""),
-                        started_at=datetime.fromisoformat(e["started_at"]),
-                        completed_at=datetime.fromisoformat(e["completed_at"]) if e.get("completed_at") else None,
-                        error=e.get("error"),
-                        changelog=e.get("changelog"),
-                    )
-                    for e in history
-                ]
+            return state_files.load_json(UPDATE_HISTORY_FILE, _history_entries, list, what="the update history")
         except Exception as e:
             logger.warning(f"Failed to load history: {e}")
         return []
@@ -815,9 +791,9 @@ class Updater:
     async def get_config(self) -> UpdateConfig:
         """Get the update configuration."""
         try:
-            if UPDATE_CONFIG_FILE.exists():
-                data = json.loads(UPDATE_CONFIG_FILE.read_text())
-                return UpdateConfig(**data)
+            return state_files.load_json(
+                UPDATE_CONFIG_FILE, UpdateConfig.model_validate, UpdateConfig, what="the update settings"
+            )
         except Exception as e:
             logger.warning(f"Failed to load update config: {e}")
         return UpdateConfig()
@@ -825,11 +801,53 @@ class Updater:
     async def save_config(self, config: UpdateConfig) -> None:
         """Save the update configuration."""
         try:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            UPDATE_CONFIG_FILE.write_text(config.model_dump_json(indent=2))
+            state_files.replace_file(UPDATE_CONFIG_FILE, config.model_dump_json(indent=2).encode(), sync=False)
         except Exception as e:
             logger.error(f"Failed to save update config: {e}")
             raise UpdateError(f"Failed to save configuration: {e}")
+
+
+def _progress_of(state: object) -> UpdateProgress:
+    """The decoded progress file as the progress; ValueError or TypeError for anything else (ADR-0324)."""
+    if not isinstance(state, dict):
+        raise ValueError("it holds no progress")
+    return UpdateProgress(
+        status=UpdateStatus(state.get("status", "idle")),
+        progress_percent=state.get("progress_percent", 0),
+        message=state.get("message", ""),
+        error=state.get("error"),
+        started_at=datetime.fromisoformat(state["started_at"]) if state.get("started_at") else None,
+        completed_at=datetime.fromisoformat(state["completed_at"]) if state.get("completed_at") else None,
+        can_rollback=state.get("can_rollback", False),
+    )
+
+
+def _history_list(history: object) -> list[dict]:
+    """The decoded history file as its list of entries; ValueError for anything else."""
+    if not isinstance(history, list) or not all(isinstance(e, dict) for e in history):
+        raise ValueError("it holds no list of updates")
+    return history
+
+
+def _history_entries(history: object) -> list[UpdateHistoryEntry]:
+    """The decoded history file's entries (get_update_history); ValueError, TypeError or KeyError
+    as ValueError for anything else."""
+    try:
+        return [
+            UpdateHistoryEntry(
+                id=e.get("id", 0),
+                from_version=e.get("from_version", ""),
+                to_version=e.get("to_version", ""),
+                status=e.get("status", ""),
+                started_at=datetime.fromisoformat(e["started_at"]),
+                completed_at=datetime.fromisoformat(e["completed_at"]) if e.get("completed_at") else None,
+                error=e.get("error"),
+                changelog=e.get("changelog"),
+            )
+            for e in _history_list(history)
+        ]
+    except KeyError as exc:
+        raise ValueError(f"an entry has no {exc}") from exc
 
 
 # Global updater instance

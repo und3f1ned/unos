@@ -12,7 +12,7 @@ from typing import Literal, Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from .. import host
+from .. import host, state_files
 from ..auth.utils import verify_token
 from ..security.validators import INTERFACE_NAME_PATTERN, validate_interface_name
 
@@ -145,41 +145,28 @@ class WolStatus(BaseModel):
 
 
 def load_config() -> PowerConfig:
-    """Load power config from file."""
-    path = Path(CONFIG_FILE)
-    if not path.exists():
-        return PowerConfig()
-    try:
-        data = json.loads(path.read_text())
-        return PowerConfig(**data)
-    except Exception:
-        return PowerConfig()
+    """The power settings; the defaults without a file, or for one kept as .bad (ADR-0324)."""
+    return state_files.load_json(Path(CONFIG_FILE), PowerConfig.model_validate, PowerConfig, what="the power settings")
 
 
 def save_config(config: PowerConfig) -> None:
-    """Save power config to file."""
-    path = Path(CONFIG_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config.model_dump(), indent=2))
+    """Replace the power settings' file (ADR-0324)."""
+    state_files.write_json(Path(CONFIG_FILE), config.model_dump(), sync=False)
 
 
 def load_ups_config() -> UPSConfig:
-    """Load UPS config from file."""
-    path = Path(UPS_CONFIG_FILE)
-    if not path.exists():
-        return UPSConfig()
-    try:
-        data = json.loads(path.read_text())
-        return UPSConfig(**data)
-    except Exception:
-        return UPSConfig()
+    """The UPS settings; the defaults without a file, or for one kept as .bad (ADR-0324)."""
+    return state_files.load_json(Path(UPS_CONFIG_FILE), UPSConfig.model_validate, UPSConfig, what="the UPS settings")
+
+
+def saved_ups_config() -> Optional[UPSConfig]:
+    """The UPS settings that were saved; None while there are none (no file, or one kept as .bad)."""
+    return state_files.load_json(Path(UPS_CONFIG_FILE), UPSConfig.model_validate, lambda: None, what="the UPS settings")
 
 
 def save_ups_config(config: UPSConfig) -> None:
-    """Save UPS config to file."""
-    path = Path(UPS_CONFIG_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config.model_dump(), indent=2))
+    """Replace the UPS settings' file (ADR-0324)."""
+    state_files.write_json(Path(UPS_CONFIG_FILE), config.model_dump(), sync=False)
 
 
 def get_ups_status(config: UPSConfig) -> UPSStatus:
@@ -525,17 +512,17 @@ def _list_wol() -> list[WolInterface]:
 
 def _load_wol_choices() -> dict[str, bool]:
     """The Wake-on-LAN state chosen per interface name; entries that are not a name and a bool are left out."""
-    path = Path(WOL_FILE)
-    if not path.exists():
-        return {}
     try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError) as exc:
+        return state_files.load_json(Path(WOL_FILE), _wol_choices, dict, what="the Wake-on-LAN settings")
+    except OSError as exc:
         logger.warning("Ignoring the Wake-on-LAN settings in %s: %s", WOL_FILE, exc)
         return {}
+
+
+def _wol_choices(data: object) -> dict[str, bool]:
+    """The decoded Wake-on-LAN file's choices (_load_wol_choices); ValueError for no object (ADR-0324)."""
     if not isinstance(data, dict):
-        logger.warning("Ignoring the Wake-on-LAN settings in %s: not an object", WOL_FILE)
-        return {}
+        raise ValueError("not an object")
     return {
         name: on for name, on in data.items()
         if isinstance(name, str) and INTERFACE_NAME_PATTERN.fullmatch(name) and isinstance(on, bool)
@@ -548,9 +535,7 @@ def _remember_wol(name: str, on: bool) -> None:
     if choices.get(name) is on:
         return
     choices[name] = on
-    path = Path(WOL_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(choices, indent=2, sort_keys=True) + "\n")
+    state_files.replace_file(Path(WOL_FILE), (json.dumps(choices, indent=2, sort_keys=True) + "\n").encode(), sync=False)
 
 
 def _set_wol(name: str, on: bool) -> WolInterface:
