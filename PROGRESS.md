@@ -233,6 +233,18 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: Limits on open connections and header blocks
+
+- `security.server-limits` (ADR-0333): uvicorn took any number of connections and Caddy header
+  blocks up to 1 MB. Now uvicorn serves at most 128 open connections (503 beyond them), the
+  supervisor at most 64 sockets and 16 waiting for their sign-in, and Caddy refuses a header
+  block over 16 KB (431). Tests first: `test_request_limits.py` (both images, and a real uvicorn
+  refusing over its limit and serving again), `test_ws_auth.py` and `test_deploy_scripts.py`.
+  A fresh-context review found that uvicorn's limit never refuses a WebSocket upgrade while
+  every socket counts toward it, so unauthenticated sockets could have filled it for every
+  request: hence the socket caps. Open: the throughput over 2.5 GbE (a LAN client) and the
+  device check of Caddy's 431.
+
 ### 2026-11-10: Problems reach every channel once and show in a banner
 
 - `system.alert-events` (ADR-0332, which supersedes the proposal ADR-0047): the branch's first

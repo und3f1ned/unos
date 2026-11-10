@@ -308,8 +308,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0063"
-      ]
+        "ADR-0063",
+        "ADR-0333"
+      ],
+      "notes": "Built (ADR-0333): uvicorn runs with --limit-concurrency 128 in both supervisor images and the stand-in, src/websocket/events.py holds at most 64 open sockets and 16 waiting for their auth message (uvicorn's limit never refuses an upgrade), and Caddy's global servers block sets max_header_size 16KB. Step 2: test_deploy_scripts.py checks the Caddyfile's limit (the stand-in's proxy is Node's, with its default of 16 KB, so Caddy's 431 is a device check). Step 3: test_request_limits.py checks that both images pass the same limit, and a real uvicorn with a limit of 3 answers 503 while two other connections are open and 200 again once they are closed; TestSocketCaps of test_ws_auth.py refuses a socket past either cap before it is accepted, and counts sockets out when they close or fail to sign in. Step 1: the parser stays httptools and the limits do not touch request bodies; the measurement over 2.5 GbE needs a client on the LAN. Open: step 1's measurement, and the device check (a header block over 21 KB gets 431 from Caddy, a normal request 200) with the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "security.host-firewall",

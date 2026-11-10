@@ -32,6 +32,9 @@
 		# HTTP/3 needs UDP 443, which docker-compose does not publish. Without
 		# it, browsers open WebSockets with the plain HTTP/1.1 upgrade.
 		protocols h1 h2
+		# A header block over 16 KB gets 431 before it reaches the supervisor (ADR-0333): far
+		# above a browser's (with the session token), far below Caddy's default of 1 MB.
+		max_header_size 16KB
 	}
 }
 

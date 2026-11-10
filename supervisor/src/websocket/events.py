@@ -67,6 +67,16 @@ WS_CLOSE_NORMAL = 1000
 WS_CLOSE_UNAUTHORIZED = 4401
 WS_CLOSE_FORBIDDEN = 4403
 WS_CLOSE_INTERNAL_ERROR = 1011
+
+# The sockets the supervisor holds (ADR-0333). Uvicorn's --limit-concurrency refuses plain
+# requests over its limit but never a WebSocket upgrade, while every open socket counts toward
+# it: a client that opened sockets without end, or left them waiting for their auth message,
+# would use up the limit for every request. Past these caps a socket is refused before it is
+# accepted (the client gets HTTP 403), so sockets alone never fill uvicorn's 128.
+MAX_OPEN_SOCKETS = 64
+MAX_SOCKETS_BEFORE_AUTH = 16
+_open_sockets = 0
+_sockets_before_auth = 0
 # Generous bound for {"type": "auth", "token": ...}; anything larger is not a token.
 _MAX_AUTH_MESSAGE_CHARS = 16 * 1024
 
@@ -302,8 +312,33 @@ async def authenticate_websocket(
     the socket is open) and its user, or ``None`` after the socket has been
     closed (or the client went away). The socket must be accepted before it
     can be closed with an application close code, so rejected clients are
-    accepted first and then closed with 4401/4403.
+    accepted first and then closed with 4401/4403. Past MAX_OPEN_SOCKETS or
+    MAX_SOCKETS_BEFORE_AUTH a socket is refused before it is accepted. A socket
+    that signed in stays counted until its endpoint calls ``release_socket``.
     """
+    global _open_sockets, _sockets_before_auth
+    if _open_sockets >= MAX_OPEN_SOCKETS or _sockets_before_auth >= MAX_SOCKETS_BEFORE_AUTH:
+        await websocket.close()  # not accepted yet: the client gets HTTP 403
+        return None
+    _open_sockets += 1
+    _sockets_before_auth += 1
+    signed_in = None
+    try:
+        signed_in = await _handshake(websocket, admin_only)
+        return signed_in
+    finally:
+        _sockets_before_auth -= 1
+        if signed_in is None:
+            _open_sockets -= 1
+
+
+def release_socket() -> None:
+    """A socket that signed in has closed: it no longer counts (ADR-0333)."""
+    global _open_sockets
+    _open_sockets -= 1
+
+
+async def _handshake(websocket: WebSocket, admin_only: bool) -> tuple[str, User] | None:
     await websocket.accept()
 
     if "token" in websocket.query_params:
@@ -422,6 +457,7 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         _finish(disconnected)
         _finish(revoked)
+        release_socket()
 
 
 @router.websocket("/ws/v1/logs/{container_id}")
@@ -431,7 +467,10 @@ async def container_logs_endpoint(websocket: WebSocket, container_id: str):
     if signed_in is None:
         return
 
-    await _stream_container_logs(websocket, container_id, signed_in[0])
+    try:
+        await _stream_container_logs(websocket, container_id, signed_in[0])
+    finally:
+        release_socket()
 
 
 async def _wait_for_disconnect(websocket: WebSocket) -> None:
