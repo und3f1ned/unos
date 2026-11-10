@@ -1,6 +1,6 @@
 """Notification channels (system.notification-channels): the senders deliver to local mail and
 webhook servers or name the error, without blocking the event loop, and the history lists every
-notification sent (ADR-0045, ADR-0260)."""
+notification sent (ADR-0045, ADR-0326)."""
 import asyncio
 import builtins
 import contextlib
@@ -11,6 +11,7 @@ import errno
 import importlib
 import io
 import json
+import os
 import re
 import ssl
 import threading
@@ -672,7 +673,10 @@ def _count_history_writes(monkeypatch) -> list[int]:
 @contextlib.contextmanager
 def _full_disk(monkeypatch, folder: Path):
     """Inside it, every write of a file in ``folder`` fails as on a full system disk: opening the
-    file for writing empties it, then the write fails with ENOSPC."""
+    file for writing empties it, then the write fails with ENOSPC. A file created there with
+    os.open, as state_files.replace_file does (ADR-0324), is created, and its write fails."""
+    real_os_open, real_fdopen = os.open, os.fdopen
+    created: set[int] = set()
 
     def full_disk(file, mode="r", *args, **kwargs):
         handle = _REAL_OPEN(file, mode, *args, **kwargs)  # "w" has emptied the file
@@ -681,13 +685,54 @@ def _full_disk(monkeypatch, folder: Path):
             raise OSError(errno.ENOSPC, "No space left on device")
         return handle
 
+    def full_disk_os_open(file, flags, *args, **kwargs):
+        fd = real_os_open(file, flags, *args, **kwargs)
+        if flags & os.O_CREAT and str(file).startswith(str(folder)):
+            created.add(fd)
+        return fd
+
+    class _FullDiskFile:
+        """A file of the full disk: it opens and closes; its write fails."""
+
+        def __init__(self, handle):
+            self._handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._handle.close()
+
+        def fileno(self):
+            return self._handle.fileno()
+
+        def write(self, data):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        def flush(self):
+            self._handle.flush()
+
+        def close(self):
+            self._handle.close()
+
+    def full_disk_fdopen(fd, *args, **kwargs):
+        handle = real_fdopen(fd, *args, **kwargs)
+        if fd in created:
+            created.discard(fd)
+            return _FullDiskFile(handle)
+        return handle
+
     monkeypatch.setattr(builtins, "open", full_disk)
     monkeypatch.setattr(io, "open", full_disk)  # what Path.open and Path.write_text call
+    monkeypatch.setattr(os, "open", full_disk_os_open)
+    monkeypatch.setattr(os, "fdopen", full_disk_fdopen)
     try:
         yield
     finally:
         monkeypatch.setattr(builtins, "open", _REAL_OPEN)
         monkeypatch.setattr(io, "open", _REAL_OPEN)
+        monkeypatch.setattr(os, "open", real_os_open)
+        monkeypatch.setattr(os, "fdopen", real_fdopen)
 
 
 def _hold_writes_of(monkeypatch, name: str) -> tuple[threading.Event, threading.Event]:

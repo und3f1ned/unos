@@ -511,7 +511,7 @@ def _scheduler(env, monkeypatch):
 
 @pytest.fixture
 def key():
-    """The key of a backup task whose passphrase is PASSPHRASE (ADR-0240)."""
+    """The key of a backup task whose passphrase is PASSPHRASE (ADR-0325)."""
     return backup_router.new_backup_key(PASSPHRASE)
 
 

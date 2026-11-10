@@ -93,10 +93,6 @@ SKIP_CONDITIONS = {
 READ_ONLY_PROBES = {
     # GET /api/v1/health/full
     ("main.py", "full_health_check", "/data/unos.db"),
-    ("main.py", "full_health_check", "/data/raid_status.json"),
-    ("main.py", "full_health_check", "/data/ups_config.json"),
-    # GET /api/v1/health/prometheus
-    ("main.py", "prometheus_metrics", "/data/raid_status.json"),
 }
 
 # Runs in a child process, so that the redirected globals and the cached

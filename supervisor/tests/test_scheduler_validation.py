@@ -10,8 +10,10 @@ import signal
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -388,7 +390,7 @@ def test_an_edit_keeps_the_result_of_a_run_that_ends_while_the_disk_is_checked(e
     )
 
 
-# --- backup tasks and their passphrase (ADR-0240) ---------------------------------------
+# --- backup tasks and their passphrase (ADR-0325) ---------------------------------------
 
 PASSPHRASE = "correct horse battery"
 NO_PASSPHRASE = "A backup task needs a passphrase: its backups are encrypted with it"
@@ -665,6 +667,15 @@ def test_a_key_file_that_is_not_json_counts_as_empty_until_a_passphrase_is_set(b
     assert _run_now(env, task["id"])["status"] == "success"
 
 
+def _path_of(fd: int) -> str:
+    """The path of the file that ``fd`` has open."""
+    if sys.platform == "darwin":
+        import fcntl
+
+        return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))).rstrip("\0")
+    return os.readlink(f"/proc/self/fd/{fd}")
+
+
 def test_the_key_file_is_written_off_the_event_loop_and_reaches_the_disk(env, monkeypatch):
     """fsync of the file and of its folder: after a power cut, a new passphrase must not turn into the old one."""
     import asyncio
@@ -682,7 +693,11 @@ def test_the_key_file_is_written_off_the_event_loop_and_reaches_the_disk(env, mo
         real_save(keys)
 
     def fsync(fd):
-        synced.append("folder" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        # The key file and its folder; the tasks' file is synced too (ADR-0324), not counted here.
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            synced.append("folder")
+        elif Path(scheduler.BACKUP_KEYS_FILE).name in _path_of(fd):
+            synced.append("file")
         real_fsync(fd)
 
     monkeypatch.setattr(scheduler, "save_backup_keys", save)

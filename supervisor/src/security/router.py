@@ -8,8 +8,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import TypeAdapter
 from sqlalchemy import select, func, desc
 
+from .. import state_files
 from ..database import get_db
 from ..auth.utils import client_ip, require_admin, verify_token
 from ..auth.models import User
@@ -118,23 +120,19 @@ async def clear_login_history(
 
 # ==================== Firewall Management ====================
 
+_FIREWALL_RULES = TypeAdapter(list[FirewallRule])
+
+
 def load_firewall_rules() -> list[FirewallRule]:
-    """Load firewall rules from config file."""
-    path = Path(FIREWALL_RULES_FILE)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        return [FirewallRule(**r) for r in data]
-    except Exception:
-        return []
+    """The firewall rules; none without a file, or for one kept as .bad (ADR-0324)."""
+    return state_files.load_json(
+        Path(FIREWALL_RULES_FILE), _FIREWALL_RULES.validate_python, list, what="the firewall rules"
+    )
 
 
 def save_firewall_rules(rules: list[FirewallRule]) -> None:
-    """Save firewall rules to config file."""
-    path = Path(FIREWALL_RULES_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([r.model_dump() for r in rules], indent=2))
+    """Replace the firewall rules' file (ADR-0324)."""
+    state_files.write_json(Path(FIREWALL_RULES_FILE), [r.model_dump() for r in rules], sync=False)
 
 
 def get_ufw_status() -> tuple[bool, str, str]:

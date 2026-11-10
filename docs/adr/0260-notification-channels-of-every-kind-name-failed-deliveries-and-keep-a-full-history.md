@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0326
 date: 2026-11-07
 area: system
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0260: Notification channels of every kind are set up in the web UI, a delivery counts only on success, and the history lists every notification sent
 
 ## Context
+
+Superseded by ADR-0326: a damaged channels or history file is kept as <name>.bad.
 
 System > Notifications let an administrator add e-mail and Telegram channels only; webhook, Discord and Slack channels existed in the API alone. A test's result was put into a dialog that was already closed, a webhook that answered with a redirect counted as delivered, Telegram refused a text with a single "_" (parse_mode Markdown), the history left out the monitors' alerts and listed the oldest first, and two channels added in the same second shared an id. An e-mail channel without a username could not send through a mail server that takes mail without a login, e-mails had no Date and no Message-ID, the channels' file was written in place, and the history was written on the event loop. The certificate check of ADR-0045 was on the branch `smtp-verify-tls` only: this change brings its commit bbb773b into main without the commit's CHANGELOG hunk, and the branch itself stays unmerged.
 

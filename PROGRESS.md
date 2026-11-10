@@ -211,6 +211,48 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: JSON state files are replaced whole, and a damaged one is kept as .bad
+
+- `architecture.atomic-state-files`, under the owner's delegation: ten of the supervisor's 14
+  JSON state files in `/data` were rewritten in place, and most loaders read a file that they
+  could not parse as the defaults. So the next write made the loss final, for the firewall
+  rules, the scheduled tasks and the power, UPS and update settings, and nothing said so.
+- Now `src/state_files.py` replaces each of them through a temporary file and a rename.
+  Synced first are the SMART history, the notification files and the key file, as their ADRs
+  want; no other write gained a sync on the event loop. `load_json` renames a file that cannot
+  be read as its state to `<name>.bad`, names it in a warning and answers the defaults. A file
+  that cannot be opened reads as none where it is a history or a cache, and raises where it
+  holds settings, rules or tasks. The SMART history's endpoints keep their 500 until the
+  monitor's pass, which keeps the file as `.bad` and starts anew (ADR-0324).
+- The key file of the backup tasks and the notification files had decisions of their own, now
+  restated: ADR-0325 supersedes ADR-0240, and ADR-0326 supersedes ADR-0260. The references to
+  the two older ADRs moved; GLOSSARY.md has the term State file.
+- Test first (ADR-0186): `test_state_files.py` kills a writer with SIGKILL before and after the
+  rename. For each of the 14 files, a table checks the rename and the `.bad` file, and scans of
+  `src` keep the table and the writes in step. On the code before, 10 of the 14 rename checks
+  and every `.bad` check failed.
+- Four existing tests followed the new writes:
+  - `test_notifications.py`'s full disk also fails the write of a file made with `os.open`;
+  - `test_scheduler_validation.py`'s sync check counts only the key file;
+  - the SMART monitor's check in `test_smart_predictions.py` expects the `.bad` file;
+  - `test_standin.py` lists no probes of the two files that `main.py` reads through their loaders now.
+- A fresh-context review found every step met, and:
+  - a runs file that cannot be opened stopped the supervisor's start, a task's run and the RAID
+    check;
+  - a reader could set aside a file that a writer had just put in place;
+  - writes that were synced on the event loop;
+  - RAID gauges that went missing for a status without pools;
+  - claims of the ADR and the records.
+
+  Fixed:
+  - the start and a run go on, and the RAID monitor reads such a status as none;
+  - renames take the path's lock, and a reader checks the inode;
+  - only the files that an ADR wants durable are synced;
+  - the health outputs read the status as before;
+  - the texts.
+
+  Each fix has a test. Not host-level.
+
 ### 2026-11-10: The container and app routes answer 503 when Docker does not answer
 
 - `apps.docker-down-503`, under the owner's delegation: while Docker could not be reached, the

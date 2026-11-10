@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Notifications: src/routes/system/tabs/NotificationsTab.svelte (ADR-0260). The titles,
+// System > Notifications: src/routes/system/tabs/NotificationsTab.svelte (ADR-0326). The titles,
 // messages and errors of the notifications in the history are the server's, and stay as they come.
 
 export const en = {

@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0325
 date: 2026-11-07
 area: backup
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0240: Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own
 
 ## Context
+
+Superseded by ADR-0325: a key file that cannot be read as keys is kept as scheduled_backup_keys.json.bad.
 
 Scheduled backups were plain `.tar.gz` files that hold `unos.db` with the users' password hashes and two-factor secrets (ADR-0041, `backup.encrypted-scheduled-backups`). A backup task runs unattended, so what encrypts its backups must be on the device; but `/data/scheduled_tasks.json` is returned by `GET /api/v1/scheduler/tasks` and copied into every scheduled backup, and `unos.db` is in every backup, so neither may hold it.
 
