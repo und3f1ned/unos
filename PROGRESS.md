@@ -211,6 +211,21 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: The dashboard's header fits a phone with a long host name
+
+- `webui.mobile-layout`, a regression that the full E2E run of `apps.catalog-without-docker`
+  showed: on a 375 px screen the dashboard's header did not wrap. On the stand-in, the
+  workstation's host name (beast.tail.home.arpa), the live stats' time and Refresh then reached
+  past the screen, and two menu checks of `mobile-layout.spec.ts` failed: the entry failed on
+  main c1e8032 while the ledger said it passed. Now the header wraps and a long host name
+  breaks (`break-words`), as ADR-0302 asks, and so does the host name in System > General.
+- Test first (ADR-0186): the view "Dashboard with a long host name" of `mobile-layout.spec.ts`
+  waits for a name with no place to break and for the time beside Refresh; it failed in both
+  languages before the fix. A fresh-context review found that the view did not wait for the
+  name, which the page shows after all its requests, and that `break-all` is ADR-0302's class
+  for code, not names: both fixed. The phone layout and dashboard specs: 131 passed. Not
+  host-level.
+
 ### 2026-11-10: The App Store lists its catalog without Docker
 
 - `apps.catalog-without-docker`, under the owner's delegation: the Apps page loaded the catalog

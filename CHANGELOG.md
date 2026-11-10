@@ -641,6 +641,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- On a phone, the dashboard's header wraps, and a long host name breaks
+  instead of reaching past the screen.
 - The App Store lists its catalog also when Docker cannot be reached, and
   says that the installed apps could not be loaded, with the reason; before,
   one error hid the whole catalog.
