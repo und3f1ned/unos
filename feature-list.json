@@ -2093,13 +2093,23 @@
         "The path that imports shares from the archive's smb.conf for such backups is removed with its tests",
         "Backups stop carrying a copy of smb.conf, unless an ADR keeps it"
       ],
+      "verified_by": [
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "supervisor/tests/test_share_import.py",
+        "supervisor/tests/test_smb_models.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
+        "ADR-0040",
+        "ADR-0077",
+        "ADR-0139",
         "ADR-0142",
-        "ADR-0143"
+        "ADR-0143",
+        "ADR-0319"
       ],
-      "notes": "The same path also imports the shares of a backup whose database has the share tables but no import marker, from the archive's smb.conf (ADR-0142): that branch stays, so step 3 needs an ADR that settles what such a backup restores from."
+      "notes": "Done in the code 2026-11-10 (ADR-0319, which supersedes ADR-0040, ADR-0077, ADR-0139, ADR-0142 and ADR-0143). Step 1: a restore checks the four SMB tables of the extracted database and creates none; one that lacks them is refused with 400 and nothing changes (TestNotAuthoritative test_a_backup_without_the_smb_tables_is_refused, which failed before: the tables were created and the shares imported). Step 2: the import of the archive's smb.conf is gone, with the source 'backup' and smb_state.pending_import_conf; a database without the import marker imports the live smb.conf, never with guest access (test_the_smb_conf_of_an_older_backup_is_not_read, test_the_shares_of_the_live_file_are_imported, test_guest_access_is_not_restored), and its tests are gone or read the live file. Step 3: no backup, manual or scheduled, carries smb.conf, and BackupConfig has no include_shares (test_a_backup_holds_no_smb_conf and test_a_backup_task_stores_encrypted_backups, with the host's smb.conf in place, which failed before for scheduled backups; test_a_backup_restores_the_shares_of_its_database); a restore ignores an smb.conf in an archive, and a database of the previous layout, with pending_import_conf, restores (test_a_database_of_the_previous_layout_restores). The web UI's BackupConfig has no include_shares either. Open: host-level (GLOSSARY.md: the smb.conf that a restore leads to): on the dev device, a backup made after the deploy and a scheduled one hold no smb.conf, and a restore of the first keeps the shares and writes smb.conf byte for byte as before, with the device check and the re-check after a reboot (ADR-0018), as for backup.restore."
     },
     {
       "id": "backup.encrypted-scheduled-backups",
@@ -3399,6 +3409,22 @@
         "ADR-0215"
       ],
       "notes": "Found by the fresh-context review of testing.no-compat-skips on 2026-11-09: files.spec.ts (scratch === null) skips the whole describe whenever POST /files/mkdir fails, 404 and 5xx included; shares.spec.ts (notes.length === 0) names an earlier run that dismissed the notes, which never applies on a stand-in that e2e.sh starts fresh, so the skip fires only when the import stops writing notes; api.spec.ts accepts a 404 for GET /files/list. The review of 2026-11-10 added: api.spec.ts accepts a 500 (two checks) and a 404 (one more), and shares.spec.ts's !reachable is only that /api/v1/health answered OK."
+    },
+    {
+      "id": "testing.keyboard-upload-opens-the-file-chooser",
+      "category": "testing",
+      "description": "The E2E test that uploads files from the keyboard opens the file chooser in every run of make e2e-local",
+      "steps": [
+        "Find why files.spec.ts 'uploads files from the keyboard' sometimes waits in vain for the file chooser after Enter on the focused Upload button",
+        "Fix the cause, in the page or in the test, without a retry",
+        "make e2e-local passes five times in a row with the test"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0215",
+        "ADR-0186"
+      ],
+      "notes": "Seen on 2026-11-10 in two of five full runs of make e2e-local on the stand-in with E2E_CHROMIUM_PATH (the cached chromium_headless_shell-1234, while @playwright/test 1.57.0 expects build 1200), once with a second stand-in running and once without: page.waitForEvent('filechooser') timed out after Enter on the Upload button, which kept the focus, and the folder stayed empty. The test passed alone and in the other runs. A browser of the build that Playwright expects (make setup) is the first thing to try."
     },
     {
       "id": "testing.remove-dead-stub-checks",

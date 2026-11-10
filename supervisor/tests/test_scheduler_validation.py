@@ -539,8 +539,13 @@ def test_the_task_list_loads_when_the_key_file_cannot_be_read(env):
     assert [(t["id"], t["has_backup_key"]) for t in response.json()] == [(task["id"], None)]
 
 
-def test_a_backup_task_stores_encrypted_backups(backup_env):
+def test_a_backup_task_stores_encrypted_backups(backup_env, monkeypatch):
     env = backup_env
+    # The host's smb.conf, as the supervisor's container sees it: a scheduled backup holds none
+    # either (backup.no-old-backup-import, ADR-0319).
+    from .test_backup_restore import _pretend_the_hosts_smb_conf_exists
+
+    _pretend_the_hosts_smb_conf_exists(monkeypatch)
     task = env.client.post("/api/v1/scheduler/tasks", json=_backup_task()).json()
 
     run = _run_now(env, task["id"])
@@ -555,7 +560,7 @@ def test_a_backup_task_stores_encrypted_backups(backup_env):
         names = tar.getnames()
         archived_tasks = json.load(tar.extractfile("scheduled_tasks.json"))
     assert names[0] == "manifest.json" and "unos.db" in names
-    assert set(names) <= {"manifest.json", "unos.db", "smb.conf", "fstab", "scheduled_tasks.json"}
+    assert set(names) <= {"manifest.json", "unos.db", "fstab", "scheduled_tasks.json"}
     assert [t["id"] for t in archived_tasks] == [task["id"]]
     assert "passphrase" not in archived_tasks[0]
     (stored,) = env.client.get("/api/v1/scheduler/tasks").json()

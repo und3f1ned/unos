@@ -917,7 +917,7 @@ class TestRenderInput:
     @pytest.mark.parametrize("order", [("read", "write"), ("write", "read")])
     async def test_two_rows_of_one_user_render_the_lower_level(self, env, order):
         """ADR-0144: a restored smb_share_access without UNIQUE(share_id, user_id) passes
-        ensure_smb_tables (it checks columns) and can hold two rows for one user. Neither the
+        check_smb_tables (it checks columns) and can hold two rows for one user. Neither the
         first nor the last row wins: the lower level does."""
         share_id = add_share(env, "docs", "docs")
         with closing(sqlite3.connect(env.db_path)) as conn:

@@ -298,7 +298,7 @@ class TestLiveUids:
 
 class TestCarryOver:
     def test_accounts_are_carried_over_by_username(self, live, tmp_path):
-        # An old backup: users only (ensure_smb_tables made empty SMB tables), not authoritative.
+        # A database whose shares were never imported: not authoritative (ADR-0141).
         restored = make_db(tmp_path / "restored.db",
                            users=[(1, "admin", HASH_B, True), (7, "alice", HASH_A, False), (8, "bob", HASH_B, False),
                                   (9, "carol", HASH_B, False)],

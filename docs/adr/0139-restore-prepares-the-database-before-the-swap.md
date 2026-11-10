@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0319
 ---
 
 # ADR-0139: A restore prepares the extracted database before the swap, under smb_lock
 
 ## Context
+
+Superseded by ADR-0319: the same preparation before the swap, with the SMB tables checked, not created.
 
 A restore changes SMB state like any share or account change (ADR-0080), and an uploaded
 archive can hold anything (ADR-0144). If the restored database replaced the live one first

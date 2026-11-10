@@ -6,6 +6,7 @@ import importlib
 import io
 import json
 import os
+import shutil
 import sqlite3
 import tarfile
 import tempfile
@@ -62,7 +63,9 @@ def _tar_gz(entries) -> bytes:
     return buf.getvalue()
 
 
-def _make_db(path, users=(("admin2", 1),), *, users_table=True, columns=None, wal=False) -> bytes:
+def _make_db(path, users=(("admin2", 1),), *, users_table=True, columns=None, wal=False, smb_tables=True) -> bytes:
+    """A database with a users table and, as one of this release has them, the SMB tables
+    (smb_tables=False: as a release before shares were stored in the database), without SMB rows."""
     conn = sqlite3.connect(path)
     if wal:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -77,8 +80,17 @@ def _make_db(path, users=(("admin2", 1),), *, users_table=True, columns=None, wa
         conn.execute("CREATE TABLE other (x)")
     conn.commit()
     conn.close()
+    if users_table and smb_tables:
+        _create_smb_tables(path)
     with open(path, "rb") as f:
         return f.read()
+
+
+def _create_smb_tables(path) -> None:
+    """The SMB tables of the models that the database at ``path`` does not have yet."""
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine, tables=list(service._SMB_TABLES))
+    engine.dispose()
 
 
 def _usernames(db_path) -> set[str]:
@@ -212,20 +224,19 @@ def test_restore_database_and_shares(env):
     env.init_db.assert_awaited_once()
     env.after_restore.assert_awaited_once()
 
-    # The archived smb.conf is never installed: the database it came with had no
-    # SMB state, so its shares are imported from it after the restore.
+    # The archived smb.conf, as older backups carry it, is not read and never installed
+    # (ADR-0319): the database had no imported shares, so the import after the restore
+    # reads the live file.
     assert env.smb_conf.read_text() == INITIAL_SMB_CONF
     assert sorted(os.listdir(env.samba)) == ["smb.conf"]
     assert env.host.call_args_list == []
     with closing(sqlite3.connect(env.db_path)) as conn:
-        assert conn.execute(
-            "SELECT shares_imported_at, pending_import_source, pending_import_conf FROM smb_state"
-        ).fetchall() == [(None, "backup", archived_smb)]
+        assert conn.execute("SELECT shares_imported_at, pending_import_source FROM smb_state").fetchall() == [
+            (None, "live")]
 
 
 def test_create_then_restore_roundtrip(env):
-    response = env.client.post("/api/v1/backup/create", json={"include_shares": False, "include_pools": False,
-                                                               "include_network": False})
+    response = env.client.post("/api/v1/backup/create", json={"include_pools": False, "include_network": False})
     assert response.status_code == 200, response.text
     name = response.json()["backup"]["filename"]
 
@@ -250,8 +261,7 @@ def test_a_backup_of_the_database_in_the_write_ahead_log_restores_with_its_last_
         assert pool.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
         pool.execute("INSERT INTO users (username, hashed_password, is_admin) VALUES ('recent', 'x', 0)")
         pool.commit()
-        response = env.client.post("/api/v1/backup/create", json={"include_shares": False, "include_pools": False,
-                                                                   "include_network": False})
+        response = env.client.post("/api/v1/backup/create", json={"include_pools": False, "include_network": False})
         assert response.status_code == 200, response.text
         name = response.json()["backup"]["filename"]
         pool.execute("DELETE FROM users WHERE username = 'recent'")
@@ -861,7 +871,8 @@ def test_bad_databases_are_rejected(env, make):
 
 
 def test_the_archived_smb_conf_is_never_tested_or_installed(env):
-    """The restore stages no smb.conf: shares come from the database (ADR-0040)."""
+    """The restore stages no smb.conf: shares come from the database (ADR-0040), and an archived
+    smb.conf, as older backups carry it, is not even read (ADR-0319)."""
     env.host.side_effect = AssertionError("no host command during the restore")
     name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env)),
                         _file("smb.conf", f"[docs]\n   path = {env.pools}/data/docs\n".encode())])
@@ -872,12 +883,11 @@ def test_the_archived_smb_conf_is_never_tested_or_installed(env):
     assert sorted(os.listdir(env.samba)) == ["smb.conf"]
 
 
-def test_smb_conf_not_utf8_is_skipped(env):
+def test_an_archive_with_only_an_smb_conf_restores_nothing(env):
     name = _store(env, [_file("manifest.json", MANIFEST), _file("smb.conf", b"[docs]\xff\n")])
     response = _restore(env, name)
     assert response.status_code == 200
-    assert response.json()["restored"] == []
-    assert response.json()["warnings"] == [backup_router.SMB_CONF_WITHOUT_DATABASE]
+    assert (response.json()["restored"], response.json()["warnings"]) == ([], [])
     assert env.smb_conf.read_text() == INITIAL_SMB_CONF
 
 
@@ -957,11 +967,12 @@ def test_upload_wrong_extension_is_rejected(env):
 
 # --- SMB state (ADR-0139): the extracted database is prepared before the swap ---------------------
 #
-# The restored database is untrusted: triggers and views are refused, SMB
-# tables of an unknown layout too, and its SMB state is proven before it
-# replaces the live database. A database whose shares were never imported is
-# not authoritative: its shares are imported again after the restore, from
-# the archived smb.conf (else the live one), and never with guest access.
+# The restored database is untrusted: triggers and views are refused, a database
+# without the SMB tables (of an older UNOS) and SMB tables of an unknown layout
+# too, and its SMB state is proven before it replaces the live database. A
+# database whose shares were never imported is not authoritative: the shares of
+# the live smb.conf are imported after the restore, never with guest access
+# (ADR-0319).
 
 import asyncio  # noqa: E402
 import contextlib  # noqa: E402
@@ -1121,10 +1132,11 @@ class TestRestoredSchema:
 
     def test_a_table_without_a_model_column(self, env):
         path = env.tmp / "old.db"
-        _make_db(path, users=[("admin2", 1)])
+        _make_db(path, users=[("admin2", 1)], smb_tables=False)
         with closing(sqlite3.connect(path)) as conn:
             conn.execute("CREATE TABLE smb_shares (id INTEGER PRIMARY KEY, name TEXT, path TEXT)")
             conn.commit()
+        _create_smb_tables(path)
         response = _restore_smb(env, path.read_bytes())
         assert response.status_code == 400
         assert response.json()["detail"] == (
@@ -1137,7 +1149,7 @@ class TestRestoredSchema:
                                                ("flag INTEGER NOT NULL DEFAULT 0", 200)])
     def test_extra_columns(self, env, extra, status):
         path = env.tmp / "extra.db"
-        _make_db(path, users=[("admin2", 1)])
+        _make_db(path, users=[("admin2", 1)], smb_tables=False)
         with closing(sqlite3.connect(path)) as conn:
             conn.execute(
                 "CREATE TABLE smb_accounts (user_id INTEGER PRIMARY KEY, linux_name VARCHAR(32) NOT NULL UNIQUE, "
@@ -1145,6 +1157,7 @@ class TestRestoredSchema:
                 "DEFAULT 'needed', password_set_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
                 f"updated_at DATETIME, {extra})")
             conn.commit()
+        _create_smb_tables(path)
         response = _restore_smb(env, path.read_bytes())
         assert response.status_code == status, response.text
         if status == 400:
@@ -1153,13 +1166,6 @@ class TestRestoredSchema:
             _assert_untouched(env)
         else:
             assert _usernames(env.db_path) == {"admin2"}
-
-    def test_old_databases_get_the_tables(self, env):
-        response = _restore_smb(env, _good_db(env))
-        assert response.status_code == 200, response.text
-        with closing(sqlite3.connect(env.db_path)) as conn:
-            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        assert {"smb_shares", "smb_share_access", "smb_accounts", "smb_state"} <= tables
 
 
 class TestAccountStep:
@@ -1202,7 +1208,7 @@ class TestAuthoritative:
         assert response.json()["restored"] == ["database", "smb_config"]
         assert env.smb_conf.read_text() == _render(env, ("docs", f"{env.data}/docs", "", True, False, (), ("alice",)))
         assert _db_rows(env, "SELECT name FROM smb_shares") == [("docs",)]
-        assert _db_rows(env, "SELECT pending_import_source, pending_import_conf FROM smb_state") == [(None, None)]
+        assert _db_rows(env, "SELECT pending_import_source FROM smb_state") == [(None,)]
         env.reconcile.assert_awaited_once()
         (entry,) = audit_entries(env.audit)
         assert (entry["action"], entry["username"], entry["resource_type"], entry["severity"]) == (
@@ -1384,66 +1390,93 @@ class TestAuthoritative:
 
 
 class TestNotAuthoritative:
-    def test_shares_are_imported_from_the_archived_smb_conf(self, smb_env):
+    def test_a_backup_without_the_smb_tables_is_refused(self, smb_env):
+        """backup.no-old-backup-import (ADR-0319): a database without the SMB tables is one of a UNOS
+        from before shares were stored in the database, which this one does not restore: the
+        restore is refused and changes nothing."""
         env = smb_env
-        db = _smb_db(env.tmp / "b.db", imported=False, shares=[(1, "stale", f"{env.data}/stale", True)],
-                     smb_accounts=[(2, "alice", 70002, 1, "set")])
-        conf = f"[global]\n   workgroup = HOME\n[media]\n   path = {env.data}/media\n   valid users = alice\n" \
-               "   read only = no\n"
-        response = _restore_smb(env, db, conf.encode())
+        live = env.db_path.read_bytes()
+        response = _restore_smb(env, _make_db(env.tmp / "old.db", smb_tables=False),
+                                f"[media]\n   path = {env.data}/media\n".encode())
 
-        assert response.status_code == 200, response.text
-        assert response.json()["restored"] == ["database", "smb_config"]
-        assert _db_rows(env, "SELECT name, guest_ok FROM smb_shares") == [("media", 0)]
-        assert _db_rows(env, "SELECT username, level FROM smb_share_access") == [("alice", "write")]
-        state = _db_rows(env, "SELECT shares_imported_at IS NOT NULL, pending_import_source, pending_import_conf "
-                              "FROM smb_state")
-        assert state == [(1, None, None)]
-        assert env.smb_conf.read_text() == _render(env, ("media", f"{env.data}/media", "", True, False, (), ("alice",)))
-        assert not Path(str(env.smb_conf) + ".unos-import-backup").exists()  # the live file was not read
-        (entry,) = [e for e in audit_entries(env.audit) if e["resource_type"] == "smb"]
-        assert "imported 1 share(s) from smb.conf" in entry["details"]
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == (
+            "unos.db in the backup lacks SMB tables (smb_accounts, smb_share_access, smb_shares, smb_state): "
+            "it was made by an older UNOS, whose backups this one does not restore")
+        assert env.db_path.read_bytes() == live
+        assert env.smb_conf.read_text() == INITIAL_SMB_CONF
+        assert env.fake.calls == []
 
-    def test_without_an_archived_smb_conf_the_live_file_is_imported(self, smb_env):
+    def test_the_smb_conf_of_an_older_backup_is_not_read(self, smb_env):
+        """A database without imported shares takes the shares of the live file (ADR-0319), also when
+        the archive has an smb.conf, as older backups carry it."""
         env = smb_env
         env.smb_conf.write_text(f"[global]\n   workgroup = HOME\n[live]\n   path = {env.data}/live\n"
                                 "   valid users = alice\n")
-        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=None))
+        db = _smb_db(env.tmp / "b.db", imported=False, shares=[(1, "stale", f"{env.data}/stale", True)])
+        response = _restore_smb(env, db, f"[media]\n   path = {env.data}/media\n   valid users = alice\n".encode())
 
         assert response.status_code == 200, response.text
+        assert response.json()["warnings"] == []
         assert _db_rows(env, "SELECT name FROM smb_shares") == [("live",)]
-        assert Path(str(env.smb_conf) + ".unos-import-backup").read_text().startswith("[global]\n   workgroup = HOME")
 
-    def test_an_archived_smb_conf_that_is_not_utf8_is_not_used(self, smb_env):
+    def test_the_shares_of_the_live_file_are_imported(self, smb_env):
+        env = smb_env
+        env.smb_conf.write_text(f"[global]\n   workgroup = HOME\n[live]\n   path = {env.data}/live\n"
+                                "   valid users = alice\n   read only = no\n")
+        db = _smb_db(env.tmp / "b.db", imported=None, shares=[(1, "stale", f"{env.data}/stale", True)],
+                     smb_accounts=[(2, "alice", 70002, 1, "set")])
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["restored"] == ["database", "smb_config"]
+        assert _db_rows(env, "SELECT name, guest_ok FROM smb_shares") == [("live", 0)]
+        assert _db_rows(env, "SELECT username, level FROM smb_share_access") == [("alice", "write")]
+        assert _db_rows(env, "SELECT shares_imported_at IS NOT NULL, pending_import_source FROM smb_state") == [
+            (1, None)]
+        assert env.smb_conf.read_text() == _render(env, ("live", f"{env.data}/live", "", True, False, (), ("alice",)))
+        # The live file, which UNOS did not write, is kept before the import (ADR-0085).
+        assert Path(str(env.smb_conf) + ".unos-import-backup").read_text().startswith("[global]\n   workgroup = HOME")
+        (entry,) = [e for e in audit_entries(env.audit) if e["resource_type"] == "smb"]
+        assert "imported 1 share(s) from smb.conf" in entry["details"]
+
+    def test_a_database_of_the_previous_layout_restores(self, smb_env):
+        """A backup made before ADR-0319 has smb_state.pending_import_conf, here with the text and the
+        source 'backup' of a pending import: the column stays unused, and the import reads the live file."""
         env = smb_env
         env.smb_conf.write_text(f"[live]\n   path = {env.data}/live\n   valid users = alice\n")
-        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False),
-                                f"[media]\n   path = {env.data}/media\n   comment = caf\xe9\n".encode("latin-1"))
+        path = env.tmp / "previous.db"
+        _smb_db(path, imported=False, checks=False)
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("PRAGMA ignore_check_constraints = ON")
+            conn.execute("ALTER TABLE smb_state ADD COLUMN pending_import_conf TEXT")
+            conn.execute("UPDATE smb_state SET pending_import_source = 'backup', "
+                         f"pending_import_conf = '[media]\n   path = {env.data}/media\n'")
+            conn.commit()
+        response = _restore_smb(env, path.read_bytes())
 
         assert response.status_code == 200, response.text
-        assert "smb.conf in the backup is not valid UTF-8 and was not restored." in response.json()["warnings"]
         assert _db_rows(env, "SELECT name FROM smb_shares") == [("live",)]
 
-    def test_guest_access_in_the_backup_is_not_restored(self, smb_env):
+    def test_guest_access_is_not_restored(self, smb_env):
         env = smb_env
-        conf = PRE_PHASE0_CONF.format(path=f"{env.data}/public")
-        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False), conf.encode())
+        env.smb_conf.write_text(PRE_PHASE0_CONF.format(path=f"{env.data}/public"))
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False))
 
         assert response.status_code == 200, response.text
         (row,) = _db_rows(env, "SELECT name, guest_ok, import_notes FROM smb_shares")
         assert row[:2] == ("public", 0)
-        assert "Guest access in the backup was not restored" in json.loads(row[2])
+        assert "Guest access was not restored" in json.loads(row[2])
         assert "map to guest = Never" in env.smb_conf.read_text()
 
-    def test_smb_conf_without_a_database_changes_nothing(self, smb_env):
+    def test_an_smb_conf_without_a_database_changes_nothing(self, smb_env):
         env = smb_env
         live = env.db_path.read_bytes()
         name = _store(env, [_file("manifest.json", MANIFEST),
                             _file("smb.conf", f"[media]\n   path = {env.data}/media\n".encode())])
         response = _restore(env, name)
         assert response.status_code == 200
-        assert (response.json()["restored"], response.json()["warnings"]) == (
-            [], [backup_router.SMB_CONF_WITHOUT_DATABASE])
+        assert (response.json()["restored"], response.json()["warnings"]) == ([], [])
         assert env.db_path.read_bytes() == live
         assert env.smb_conf.read_text() == INITIAL_SMB_CONF
         assert env.fake.calls == []
@@ -1493,13 +1526,13 @@ class TestCrashSafety:
             raise RuntimeError("post-restore exploded")
 
         monkeypatch.setattr(service, "after_database_restore_locked", broken)
-        conf = f"[media]\n   path = {env.data}/media\n   valid users = alice\n"
-        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False), conf.encode())
+        env.smb_conf.write_text(f"[media]\n   path = {env.data}/media\n   valid users = alice\n")
+        response = _restore_smb(env, _smb_db(env.tmp / "b.db", imported=False))
 
         assert response.status_code == 200, response.text
         assert response.json()["restored"] == ["database"]
         assert response.json()["warnings"] == ["SMB state is repaired at the next start"]
-        assert _db_rows(env, "SELECT pending_import_source FROM smb_state") == [("backup",)]
+        assert _db_rows(env, "SELECT pending_import_source FROM smb_state") == [("live",)]
         assert _db_rows(env, "SELECT * FROM smb_shares") == []
 
         asyncio.run(service.reconcile_smb_on_startup())
@@ -1647,16 +1680,16 @@ def test_a_second_restore_while_one_runs_is_refused(env, monkeypatch):
     assert (response.status_code, response.json()["detail"]) == (409, "Another restore is already running")
 
 
-def test_include_shares_false_still_restores_the_shares_of_the_database(smb_env):
-    """Shares are rows of the database, which every backup contains (ADR-0143)."""
+def test_a_backup_restores_the_shares_of_its_database(smb_env):
+    """Shares are rows of the database, which every backup contains, and a backup carries no smb.conf
+    (backup.no-old-backup-import, ADR-0319)."""
     env = smb_env
     with closing(sqlite3.connect(env.db_path)) as conn:
         conn.execute("UPDATE smb_state SET shares_imported_at = ?", (IMPORTED_AT,))
         conn.execute("INSERT INTO smb_shares (id, name, path, comment, browseable, guest_ok, version) "
                      f"VALUES (1, 'docs', '{env.data}/docs', '', 1, 0, 1)")
         conn.commit()
-    response = env.client.post("/api/v1/backup/create",
-                               json={"include_shares": False, "include_pools": False, "include_network": False})
+    response = env.client.post("/api/v1/backup/create", json={"include_pools": False, "include_network": False})
     assert response.status_code == 200, response.text
     name = response.json()["backup"]["filename"]
     with closing(sqlite3.connect(env.db_path)) as conn:
@@ -1668,5 +1701,30 @@ def test_include_shares_false_still_restores_the_shares_of_the_database(smb_env)
     assert response.status_code == 200, response.text
     assert _db_rows(env, "SELECT name FROM smb_shares") == [("docs",)]
     assert "[docs]" in env.smb_conf.read_text()
-    description = backup_router.BackupConfig.model_fields["include_shares"].description
-    assert "every backup contains" in description and "never installed" in description
+    assert "include_shares" not in backup_router.BackupConfig.model_fields
+
+
+def test_a_backup_holds_no_smb_conf(env, monkeypatch):
+    """backup.no-old-backup-import (ADR-0319): the host's smb.conf, which the supervisor sees as
+    /etc/samba/smb.conf, is neither read nor archived."""
+    _pretend_the_hosts_smb_conf_exists(monkeypatch)
+    response = env.client.post("/api/v1/backup/create", json={"include_pools": False, "include_network": False})
+    assert response.status_code == 200, response.text
+    with tarfile.open(env.backup_dir / response.json()["backup"]["filename"], "r:gz") as tar:
+        assert "smb.conf" not in tar.getnames()
+
+
+def _pretend_the_hosts_smb_conf_exists(monkeypatch) -> None:
+    """/etc/samba/smb.conf exists, as in the supervisor's container, and reading it fails the test."""
+    host_file = "/etc/samba/smb.conf"
+    exists, copy2 = Path.exists, shutil.copy2
+
+    def pretended_exists(path, *args, **kwargs):
+        return True if str(path) == host_file else exists(path, *args, **kwargs)
+
+    def refused_copy(source, *args, **kwargs):
+        assert str(source) != host_file, "a backup copied the host's smb.conf"
+        return copy2(source, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", pretended_exists)
+    monkeypatch.setattr(shutil, "copy2", refused_copy)

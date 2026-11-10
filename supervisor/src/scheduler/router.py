@@ -580,11 +580,6 @@ def _create_scheduled_backup(keep_count: int | None, key: bytes) -> tuple[bool, 
             if db_path.exists():
                 copy_database(db_path, tmpdir_path / "unos.db")
 
-            # Backup SMB config
-            smb_conf = Path("/etc/samba/smb.conf")
-            if smb_conf.exists():
-                shutil.copy2(smb_conf, tmpdir_path / "smb.conf")
-
             # Backup fstab
             fstab = Path("/etc/fstab")
             if fstab.exists():

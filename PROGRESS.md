@@ -206,6 +206,45 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: a restore refuses backups without SMB tables, and backups hold no smb.conf
+
+- `backup.no-old-backup-import`, at the owner's word to go on ("Continue", in translation),
+  under ADR-0207: a restore created the SMB tables in a backup's database that had none, of a
+  UNOS before shares were stored in the database, and imported their shares from the archive's
+  smb.conf, which every backup carried for that (`include_shares`). Now a database that lacks
+  the SMB tables is refused with 400 and nothing changes; a database with the tables but
+  without the import marker imports the live smb.conf, never with guest access, as it did when
+  an archive had no smb.conf; backups hold no smb.conf, `include_shares` is gone from the API
+  and the web UI's type, and an smb.conf in an archive is ignored; `pending_import_conf` is gone
+  from the model (ADR-0319, which supersedes ADR-0040, ADR-0077, ADR-0139, ADR-0142 and ADR-0143
+  and restates their rules that stay). The import's note is
+  "Guest access was not restored", as the guest share now comes from the live file. USER_GUIDE.md
+  and CHANGELOG.md say so.
+- Tests first (ADR-0186): the refusal of a backup without SMB tables, the live import beside an
+  archived smb.conf, BackupConfig without `include_shares`, and the pending sources of the model
+  failed before the change; the tests of the archive's import are
+  gone or read the live file, and the test databases of this release have the SMB tables. The
+  restore, import, model, account and backup file tests passed (587). The entry is host-level
+  (the smb.conf that a restore leads to), so `passes` stays false until the device check by hand
+  in its notes, with the reboot check (ADR-0018); the feature-pass skill lists it.
+- The fresh-context review (ADR-0017) found one blocker and fixed it: scheduled backups still
+  copied the host's smb.conf, and the test of a backup without smb.conf could not fail on this
+  workstation, which has no `/etc/samba/smb.conf`; the copy is gone, and the tests of manual and
+  scheduled backups pretend that the host's file exists and fail when it is read (the scheduled
+  one failed before). Also fixed: a test of the tables that a restore created now passed only
+  because the test database had them, and is gone; the end-to-end checks of a restore that
+  imports, which only the removed test of the archive held (the restored parts, the access rows,
+  the marker, the rendered smb.conf, the audit text), are on the test of the live file now; a
+  database of the previous layout, with `pending_import_conf` and the source 'backup', restores
+  (new test); ADR-0040, ADR-0077 and ADR-0139 stated the removed rules, so ADR-0319 supersedes
+  them too and restates what stays, with why the model change needs no `ALTER` (ADR-0022);
+  stale comments and the refusal's text for one missing table. The tests of restore, scheduler,
+  import, model, accounts, apply, backup files, upload checks and startup passed (888).
+- `make check` passed, and `make e2e-local` 669 with 16 skips on listed conditions; `files.spec.ts`
+  "uploads files from the keyboard" failed again, this time without a second stand-in, so it is
+  the new entry `testing.keyboard-upload-opens-the-file-chooser` (it passed in three of five full
+  runs of the day and alone).
+
 ### 2026-11-10: the stats message and the web UI's stats code carry nothing unread
 
 - `system.stats-without-unread-parts`, which the review of `system.no-legacy-basic-stats`

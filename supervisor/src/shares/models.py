@@ -2,8 +2,8 @@
 
 New tables only: init_db() runs create_all, which creates missing tables in
 existing databases (there is no migration framework, and columns are never
-added to existing tables). A restore creates them in the extracted backup
-database before that database replaces the live one (ADR-0077). SQLite does
+added to existing tables). A restore checks them in the extracted backup
+database and refuses one that lacks them (ADR-0319). SQLite does
 not enforce foreign keys here (no PRAGMA foreign_keys): code that deletes a
 user or a share deletes the dependent rows itself, in the same transaction
 (SQLite reuses the highest rowid, so an orphan row would attach to the next
@@ -106,7 +106,7 @@ class SmbState(Base):
     __table_args__ = (
         CheckConstraint("id = 1", name="ck_smb_state_singleton"),
         CheckConstraint(
-            "pending_import_source IS NULL OR pending_import_source IN ('backup', 'live')",
+            "pending_import_source IS NULL OR pending_import_source IN ('live')",
             name="ck_smb_state_pending_import_source",
         ),
     )
@@ -118,11 +118,9 @@ class SmbState(Base):
     shares_imported_at = Column(DateTime, nullable=True)
     # JSON list of messages from that import for the administrator; NULL when none or dismissed.
     import_report = Column(Text, nullable=True)
-    # Set by a restore whose database is not authoritative for SMB (ADR-0142): the next
-    # import reads the backup's smb.conf ('backup', its text in pending_import_conf) or
-    # the live file ('live'), never turns guest access on, and clears both columns.
+    # Set by a restore whose database is not authoritative for SMB (ADR-0319): the next
+    # import reads the live file ('live'), never turns guest access on, and clears it.
     pending_import_source = Column(String(8), nullable=True)
-    pending_import_conf = Column(Text, nullable=True)
 
 
 async def get_smb_state(db: AsyncSession) -> SmbState:

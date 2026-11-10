@@ -153,13 +153,13 @@ def shares(env) -> dict[str, SimpleNamespace]:
 def state(env) -> SimpleNamespace | None:
     with closing(sqlite3.connect(env.db_path)) as conn:
         row = conn.execute(
-            "SELECT shares_imported_at, import_report, pending_import_source, pending_import_conf FROM smb_state "
+            "SELECT shares_imported_at, import_report, pending_import_source FROM smb_state "
             "WHERE id = 1"
         ).fetchone()
     if row is None:
         return None
     return SimpleNamespace(imported_at=row[0], report=json.loads(row[1]) if row[1] is not None else None,
-                           source=row[2], conf=row[3])
+                           source=row[2])
 
 
 def one(env, name="x") -> SimpleNamespace:
@@ -331,18 +331,16 @@ class TestMapping:
         assert one(env).access == {"alice": "write"}
         assert one(env).notes is None
 
-    @pytest.mark.parametrize("source", [None, "backup"])
+    @pytest.mark.parametrize("source", [None, "live"])
     async def test_invalid_users_exclude_writers_of_a_guest_share(self, env, source):
         """Samba refuses an invalid users entry before it looks at write list
-        (share_access.c user_ok_token): bob must not get write, live or from a backup."""
+        (share_access.c user_ok_token): bob must not get write, also not after a restore."""
         text = "[x]\n path = {pool}/x\n guest ok = yes\n write list = carol, bob\n invalid users = bob\n"
-        if source is None:
-            write_conf(env, text)
-        else:
-            write_conf(env, "")
+        write_conf(env, text)
+        if source is not None:
             with closing(sqlite3.connect(env.db_path)) as conn:
-                conn.execute("INSERT INTO smb_state (id, next_uid, pending_import_source, pending_import_conf) "
-                             "VALUES (1, 70000, 'backup', ?)", (text.format(pool=env.pool),))
+                conn.execute("INSERT INTO smb_state (id, next_uid, pending_import_source) VALUES (1, 70000, ?)",
+                             (source,))
                 conn.commit()
         await run_import(env)
         share = one(env)
@@ -362,19 +360,17 @@ class TestMapping:
         assert share.notes == ["Guest write access was removed: guests can only read this share now",
                                "guest only was removed: people with access now sign in with their own account"]
 
-    @pytest.mark.parametrize("source", ["backup", "live"])
-    async def test_guest_share_from_a_restore_is_not_guest(self, env, source):
+    async def test_guest_share_from_a_restore_is_not_guest(self, env):
         text = "[x]\n path = {pool}/x\n guest ok = yes\n write list = carol\n".format(pool=env.pool)
-        write_conf(env, text if source == "live" else "")
+        write_conf(env, text)
         with closing(sqlite3.connect(env.db_path)) as conn:
-            conn.execute("INSERT INTO smb_state (id, next_uid, pending_import_source, pending_import_conf) "
-                         "VALUES (1, 70000, ?, ?)", (source, text if source == "backup" else None))
+            conn.execute("INSERT INTO smb_state (id, next_uid, pending_import_source) VALUES (1, 70000, 'live')")
             conn.commit()
         await run_import(env)
         share = one(env)
         assert (share.guest_ok, share.access) == (False, {"carol": "write"})
-        assert share.notes == ["Guest access in the backup was not restored"]
-        assert (state(env).source, state(env).conf) == (None, None)
+        assert share.notes == ["Guest access was not restored"]
+        assert state(env).source is None
 
     async def test_guest_ok_with_valid_users(self, env):
         write_conf(env, "[x]\n path = {pool}/x\n guest ok = yes\n valid users = alice\n")
@@ -622,18 +618,20 @@ class TestDeviceFiles:
             "0777) were replaced by the UNOS model: group unos-smb, folders 2770; run Repair permissions",
         ]
 
-    async def test_pre_phase0_guest_copy_from_a_backup(self, env):
+    async def test_pre_phase0_guest_copy_after_a_restore(self, env):
+        write_conf(env, PRE_PHASE0_CONF.format(path=served_folder(env, "shared")))
         with closing(sqlite3.connect(env.db_path)) as conn:
-            conn.execute("INSERT INTO smb_state (id, next_uid, pending_import_source, pending_import_conf) "
-                         "VALUES (1, 70000, 'backup', ?)", (PRE_PHASE0_CONF.format(path=served_folder(env, "shared")),))
+            conn.execute("INSERT INTO smb_state (id, next_uid, pending_import_source) VALUES (1, 70000, 'live')")
             conn.commit()
         await run_import(env)
         share = one(env, "DATA")
         assert (share.guest_ok, share.access) == (False, {})
-        assert share.notes[0] == "Guest access in the backup was not restored"
+        assert share.notes[0] == "Guest access was not restored"
         assert share.notes[1].startswith("Ownership settings (force user = nobody")
-        assert state(env).report[0] == "Imported 1 share(s) from the smb.conf of the restored backup"
-        assert not env.backup.exists()
+        # The live file, which UNOS did not write, is kept before the import (ADR-0085).
+        assert state(env).report[0] == (
+            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {env.conf}.unos-import-backup")
+        assert env.backup.exists()
 
 
 # --- path rules (ADR-0145) -----------------------------------------------------------------

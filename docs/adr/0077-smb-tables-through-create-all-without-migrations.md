@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0319
 ---
 
 # ADR-0077: The SMB tables come from create_all, and existing tables are never altered
 
 ## Context
+
+Superseded by ADR-0319: the same rule on the tables, and a restore creates none: it refuses a database without them.
 
 Slice 2 adds four tables (ADR-0074) to databases that already exist: the live `unos.db` of an installation and the databases inside backups made before the slice. UNOS has no migration framework (ADR-0022), and SQLAlchemy's `create_all` creates missing tables but changes no existing one.
 

@@ -294,13 +294,14 @@ class TestConstraints:
             _add(db, SmbState(id=2))
 
         _execute(db_path, "INSERT INTO smb_state (id) VALUES (1)")
-        assert _rows(db_path, "smb_state") == [(1, 70000, None, None, None, None)]
+        assert _rows(db_path, "smb_state") == [(1, 70000, None, None, None)]
 
-    @pytest.mark.parametrize("source", ["backup", "live", None])
+    @pytest.mark.parametrize("source", ["live", None])
     def test_pending_import_sources_accepted(self, db, source):
-        _add(db, SmbState(id=1, pending_import_source=source, pending_import_conf="[media]\n"))
+        _add(db, SmbState(id=1, pending_import_source=source))
 
-    @pytest.mark.parametrize("source", ["tape", "BACKUP", "file", ""])
+    # A restore imports from the live file alone (ADR-0319): no source names a backup's smb.conf.
+    @pytest.mark.parametrize("source", ["backup", "tape", "LIVE", "file", ""])
     def test_other_pending_import_sources_are_refused(self, db, source):
         with pytest.raises(IntegrityError, match="ck_smb_state_pending_import_source"):
             _add(db, SmbState(id=1, pending_import_source=source))
@@ -329,7 +330,7 @@ class TestGetSmbState:
             async with maker() as session:
                 state = await models.get_smb_state(session)
                 assert (state.id, state.next_uid, state.shares_imported_at, state.import_report,
-                        state.pending_import_source, state.pending_import_conf) == (1, 70000, None, None, None, None)
+                        state.pending_import_source) == (1, 70000, None, None, None)
                 assert await models.get_smb_state(session) is state
                 await session.rollback()
             assert _rows(db_path, "smb_state") == []  # flushed, not committed
@@ -337,7 +338,7 @@ class TestGetSmbState:
             async with maker() as session:
                 await models.get_smb_state(session)
                 await session.commit()
-            assert _rows(db_path, "smb_state") == [(1, 70000, None, None, None, None)]
+            assert _rows(db_path, "smb_state") == [(1, 70000, None, None, None)]
 
     async def test_an_existing_row_is_returned_as_stored(self, db_path):
         _execute(db_path, "INSERT INTO smb_state (id, next_uid, import_report) VALUES (1, 70042, '[]')")

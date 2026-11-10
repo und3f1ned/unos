@@ -32,8 +32,8 @@ from .test_backup_restore import (
 
 backup_router = importlib.import_module("src.backup.router")
 
-# Without smb.conf (the host's), fstab and netplan (the container's): the database is enough here.
-CREATE = {"include_shares": False, "include_pools": False, "include_network": False}
+# Without fstab and netplan (the container's): the database is enough here.
+CREATE = {"include_pools": False, "include_network": False}
 PASSPHRASE = "correct horse battery"
 FROZEN = datetime(2026, 1, 2, 3, 4, 5)
 SECOND = "20260102_030405"

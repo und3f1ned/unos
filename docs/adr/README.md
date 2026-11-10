@@ -149,7 +149,7 @@ and this index, and `make check-fast` runs it.
 | [0074](0074-smb-state-in-sqlite-and-unos-writes-smb-conf.md) | Shares and SMB accounts live in SQLite, and UNOS alone writes smb.conf | accepted | 2026-11-06 |
 | [0075](0075-per-user-share-access-levels.md) | Each share grants each user none, read or write, and new users get no access | accepted | 2026-11-06 |
 | [0076](0076-no-group-principals-for-smb-yet.md) | Share access names individual users, not groups, for now | accepted | 2026-11-06 |
-| [0077](0077-smb-tables-through-create-all-without-migrations.md) | The SMB tables come from create_all, and existing tables are never altered | accepted | 2026-11-06 |
+| [0077](0077-smb-tables-through-create-all-without-migrations.md) | The SMB tables come from create_all, and existing tables are never altered | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-06 |
 | [0078](0078-accept-the-sqlite-power-cut-window.md) | SQLite's power-cut rollback window is accepted, and the startup reconcile repairs the host | superseded by [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | 2026-11-06 |
 | [0079](0079-sqlite-busy-timeout-and-unbounded-pool-overflow.md) | The SQLite engine waits 15 s for locks and has an unbounded pool overflow | accepted | 2026-11-06 |
 | [0080](0080-one-lock-for-every-smb-change.md) | One lock, smb_lock, serializes every change of SMB state | accepted | 2026-11-06 |
@@ -211,11 +211,11 @@ and this index, and `make check-fast` runs it.
 | [0136](0136-dismiss-import-notes-of-unserved-shares.md) | Import notes can be dismissed for a share that is not served | accepted | 2026-11-06 |
 | [0137](0137-purge-smb-rows-that-no-longer-match.md) | SMB rows whose username or role no longer matches are purged | accepted | 2026-11-06 |
 | [0138](0138-startup-reconcile-in-the-background.md) | The startup reconcile runs in the background under smb_lock and ends with a sweep | accepted | 2026-11-06 |
-| [0139](0139-restore-prepares-the-database-before-the-swap.md) | A restore prepares the extracted database before the swap, under smb_lock | accepted | 2026-11-06 |
+| [0139](0139-restore-prepares-the-database-before-the-swap.md) | A restore prepares the extracted database before the swap, under smb_lock | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-06 |
 | [0140](0140-restore-marks-every-smb-account-needed.md) | After a restore every SMB account needs its password again | superseded by [0141](0141-restored-accounts-stay-active-only-with-proof.md) | 2026-11-06 |
 | [0141](0141-restored-accounts-stay-active-only-with-proof.md) | After a restore an SMB account stays active only with proof | accepted | 2026-11-06 |
-| [0142](0142-old-backups-import-shares-without-guest-access.md) | Old backups import their shares from smb.conf, never with guest access | accepted | 2026-11-06 |
-| [0143](0143-shares-are-part-of-the-database-backup.md) | Shares are part of the database, and include_shares only adds the old smb.conf copy | accepted | 2026-11-06 |
+| [0142](0142-old-backups-import-shares-without-guest-access.md) | Old backups import their shares from smb.conf, never with guest access | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-06 |
+| [0143](0143-shares-are-part-of-the-database-backup.md) | Shares are part of the database, and include_shares only adds the old smb.conf copy | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-06 |
 | [0144](0144-restored-databases-are-untrusted.md) | Restored databases are untrusted input | accepted | 2026-11-06 |
 | [0145](0145-what-may-be-shared.md) | A share is a folder strictly inside a managed pool, never the pool root or apps/ | accepted | 2026-11-06 |
 | [0146](0146-share-folders-do-not-overlap.md) | Share folders must not overlap | accepted | 2026-11-06 |
@@ -255,6 +255,7 @@ and this index, and `make check-fast` runs it.
 | [0293](0293-share-and-export-values-validated-and-web-exports-limited-to-local-networks.md) | Share and export values are validated before they reach smb.conf or an export file, and an NFS export from the web interface is an existing folder for one local network, read-only or read-write | accepted | 2026-11-08 |
 | [0294](0294-only-managed-pools-hold-shares-and-nfs-exports.md) | Only pools that UNOS manages can hold SMB shares and NFS exports, and the UI offers only those | accepted | 2026-11-08 |
 | [0310](0310-a-failed-smb-sign-in-writes-nothing-to-passdb.md) | A failed SMB sign-in writes nothing to passdb.tdb while no lockout counts failures, so passdb stays on the system disk | accepted | 2026-11-09 |
+| [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | A restore refuses backups without SMB tables, and a backup's database alone holds its shares | accepted | 2026-11-10 |
 
 ## Apps
 
@@ -272,7 +273,7 @@ and this index, and `make check-fast` runs it.
 
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
-| [0040](0040-restore-checks-archives-and-regenerates-smb-conf.md) | Restore checks archives and regenerates smb.conf instead of installing the archived file | accepted | 2026-11-05 |
+| [0040](0040-restore-checks-archives-and-regenerates-smb-conf.md) | Restore checks archives and regenerates smb.conf instead of installing the archived file | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-05 |
 | [0041](0041-off-device-backup-slice.md) | Give off-device backup of user data its own slice | proposed | 2026-11-05 |
 | [0165](0165-backup-restore-flows-and-unique-names.md) | Backups restore from the tab, accept encrypted uploads and get unique names | accepted | 2026-11-06 |
 | [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | accepted | 2026-11-06 |
