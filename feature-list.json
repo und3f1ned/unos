@@ -3209,8 +3209,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0178"
-      ]
+        "ADR-0178",
+        "ADR-0330"
+      ],
+      "notes": "Built (ADR-0330): deploy/docker-compose.yml gives unos-supervisor and unos-webui the json-file driver with max-size 10m and max-file 3, and the containers UNOS creates (App Store installs, the Containers page) get the same LogConfig, CAPPED_LOG of supervisor/src/containers/docker.py. Step 1: TestContainerLogs of test_deploy_scripts.py, TestCreatedContainersLogs of test_containers.py and the install test of test_apps.py. Step 2, a device check after a deploy: scripts/dev/check.sh lists both UNOS containers with json-file {max-file 3, max-size 10m}; Docker then keeps at most three files of 10 MB each."
     },
     {
       "id": "deploy.uninstall-samba-restore",

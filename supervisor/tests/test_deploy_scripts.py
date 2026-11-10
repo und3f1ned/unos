@@ -3068,6 +3068,20 @@ def _hashed_requirements(text):
     return requirements
 
 
+class TestContainerLogs:
+    """Docker rotates the json-file logs of the UNOS containers and of the containers UNOS creates
+    (ADR-0330): a container that logs much cannot fill the system disk."""
+
+    def test_each_log_of_the_unos_containers_is_capped(self):
+        services = _compose_file("docker-compose.yml")["services"]
+
+        assert set(services) == {"supervisor", "webui"}
+        for name, service in services.items():
+            assert service.get("logging") == {
+                "driver": "json-file", "options": {"max-size": "10m", "max-file": "3"},
+            }, name
+
+
 class TestContinuousIntegration:
     """.github/workflows/test.yml. docs/TESTING.md lists the same commands."""
 

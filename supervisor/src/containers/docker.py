@@ -3,8 +3,14 @@ import requests
 import urllib3
 from docker.errors import APIError, DockerException, NotFound
 from docker.models.containers import Container
+from docker.types import LogConfig
 from ..config import get_settings
 from .schemas import ContainerInfo, ContainerCreate, ContainerState, PortMapping, ImageInfo
+
+# The log options of every container that UNOS creates, as of its own two (deploy/docker-compose.yml):
+# Docker rotates the json-file log at 10 MB and keeps 3 files, so a container that logs much cannot
+# fill the system disk (ADR-0330).
+CAPPED_LOG = LogConfig(type=LogConfig.types.JSON, config={"max-size": "10m", "max-file": "3"})
 
 settings = get_settings()
 
@@ -205,6 +211,7 @@ def create_container(config: ContainerCreate) -> ContainerInfo:
         environment=config.environment if config.environment else None,
         restart_policy={"Name": config.restart_policy},
         labels=config.labels,
+        log_config=CAPPED_LOG,
     )
 
     return get_container(container.short_id)

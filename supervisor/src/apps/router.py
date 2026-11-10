@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.models import User
 from ..auth.utils import require_admin, verify_token
 from ..config import get_settings
-from ..containers.docker import NO_ANSWER, get_client, no_answer_detail
+from ..containers.docker import CAPPED_LOG, NO_ANSWER, get_client, no_answer_detail
 from ..database import get_db
 from ..files.router import TRASH
 from ..security.validators import open_dir_nofollow, pools_base, validate_pools_path
@@ -898,6 +898,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
             cap_add=template.capabilities or None,
             network_mode=template.network_mode,
             labels=labels,
+            log_config=CAPPED_LOG,
         )
     except _DOCKER_ERRORS as e:
         raise HTTPException(500, f"Failed to create container: {e}")

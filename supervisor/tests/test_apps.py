@@ -331,6 +331,10 @@ class TestPoolSelection:
             }
         }
         assert "unos.app.pool" not in docker_client.containers.create.call_args.kwargs["labels"]
+        # The app's log is capped as the UNOS containers' are (ADR-0330).
+        assert docker_client.containers.create.call_args.kwargs["log_config"] == {
+            "Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"},
+        }
 
     def test_requested_pool_is_validated_but_not_reported_without_pool_data(
         self, api, pools, docker_client
