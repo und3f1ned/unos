@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 from enum import Enum
 
 
@@ -91,3 +91,15 @@ class AuditEntry(BaseModel):
     resource_id: Optional[str] = None    # e.g., pool name, share name
     details: Optional[str] = None        # Additional context
     success: bool = True
+    # The hash chain (ADR-0328): the hash of the entry before it in the log, and its own hash over
+    # its fields but this one. An entry written before the chain has neither.
+    prev_hash: Optional[str] = None
+    hash: Optional[str] = None
+
+
+class AuditEntryView(AuditEntry):
+    """An entry as GET /audit/logs answers with it: with where it stands in the hash chain, which is
+    derived for the answer and never stored. "ok" while its hash and its link to the entry before
+    it hold, "broken" where they do not, None for an entry from before the chain (ADR-0328)."""
+
+    chain: Optional[Literal["ok", "broken"]] = None

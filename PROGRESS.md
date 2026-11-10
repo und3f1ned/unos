@@ -211,6 +211,36 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: Each audit entry carries the hash of the one before
+
+- `security.tamper-evident-audit-log`, under the owner's delegation: the audit log's reader
+  skipped what it could not read, so an entry edited or removed in the file left no trace. Now
+  each entry stores the hash of the one before it and its own, over the fields of its line,
+  chained under the log's lock across the rotated files and processes. `GET
+  /api/v1/audit/logs` says for each entry whether its place in the chain holds, and the Audit
+  page marks one where it does not with "Chain broken". The newest entries have no entry
+  after them: the supervisor keeps the last entry it wrote or read at the end, and a critical
+  entry of the user `system` says when that is gone or changed (ADR-0328).
+- Test first (ADR-0186): the 7 tests of `TestHashChain` in `test_audit_log.py` failed before.
+  Four tests that size their files by entries, three in `test_audit_log.py` and one in
+  `test_emergency.py`, now leave room for the two hashes.
+- A fresh-context review found steps 1 and 3 met, and step 2 not for the newest entries: a
+  removed or rewritten end left no trace. It also found:
+  - an entry without hashes inside the chain that showed no mark;
+  - a hash over every field of the model, which a new field would have broken for every older
+    entry;
+  - no check of the chain under concurrency;
+  - a false break of a clearing when the file's order is not the order of the times;
+  - the texts;
+  - `make check` failing: the emergency test's size and the order of the index row.
+
+  Fixed with the end that the supervisor keeps and the entry that reports it, the mark for
+  entries without hashes after the chain, the hash over the fields of the line (a clearing's
+  rewrite keeps them), chain checks of eight threads and of the other process's appends, and
+  `TestTheEndOfTheChain`. The false break of a clearing is recorded in ADR-0328, with what the
+  chain cannot show: removing the oldest entries, and a chain written anew while the supervisor
+  was stopped. The audit tests: 131 passed. Not host-level.
+
 ### 2026-11-10: The dashboard's header fits a phone with a long host name
 
 - `webui.mobile-layout`, a regression that the full E2E run of `apps.catalog-without-docker`

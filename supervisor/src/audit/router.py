@@ -14,7 +14,9 @@ export holds no cell that a spreadsheet reads as a formula (_spreadsheet_text).
 import asyncio
 import csv
 import fcntl
+import hashlib
 import io
+import json
 import logging
 import os
 import re
@@ -32,7 +34,7 @@ from pydantic import ValidationError
 
 from ..auth.utils import client_ip, require_admin
 from ..auth.models import User
-from .schemas import AuditEntry, AuditAction, AuditSeverity
+from .schemas import AuditEntry, AuditEntryView, AuditAction, AuditSeverity
 
 logger = logging.getLogger(__name__)
 
@@ -105,27 +107,153 @@ def _rotate() -> None:
     os.replace(current, _rotated(1))
 
 
-def _append_line(line: str) -> None:
-    """Append one entry's line to the log; the only writer of entries (runs in a worker thread)."""
-    data = line.encode("utf-8")
+# How much of a file's end _last_entry reads first: more than a few entries of the longest kind.
+_TAIL_BYTES = 16 * 1024
+
+
+def entry_hash(entry: AuditEntry) -> str:
+    """The hash of an entry: SHA-256 over the fields that its line holds but the hash, as canonical
+    JSON (ADR-0328). Only the fields of the line count, so that a field added to AuditEntry later,
+    which an older line lacks, leaves the older hashes as they are."""
+    keys = (entry.model_fields_set & set(AuditEntry.model_fields)) - {"hash"}
+    content = entry.model_dump(mode="json", include=keys)
+    canonical = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _last_entry(path: Path) -> Optional[AuditEntry]:
+    """The last valid entry of one file, from its end; None for a file without one."""
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return None
+    start = max(0, size - _TAIL_BYTES)
+    with open(path, "rb") as f:
+        f.seek(start)
+        lines = f.read().split(b"\n")
+    if start:
+        lines = lines[1:]  # the seek may have landed inside a line
+    for raw in reversed(lines):
+        if raw.strip():
+            try:
+                return AuditEntry.model_validate_json(raw)
+            except (ValidationError, ValueError):
+                continue
+    if start:  # no valid entry near the end: the whole file
+        entries = _read_file(path)
+        return entries[-1] if entries else None
+    return None
+
+
+def _last_of_log() -> Optional[AuditEntry]:
+    """The log's last valid entry, in the newest file that has one; None for an empty log."""
+    for path in reversed(_files_oldest_first()):
+        last = _last_entry(path)
+        if last is not None:
+            return last
+    return None
+
+
+# The last entry that this process wrote, or saw at the end of the log, by log file: (id, hash).
+# It must stay in the log: when it is gone or changed, its end was cut or rewritten in the file,
+# and an entry says so (ADR-0328). Kept in memory only, under the log's lock: a new process
+# takes the end of the log as it finds it.
+_heads: dict[str, tuple[str, Optional[str]]] = {}
+
+
+def _see_end(last: Optional[AuditEntry]) -> None:
+    if last is None:
+        _heads.pop(AUDIT_FILE, None)
+    else:
+        _heads[AUDIT_FILE] = (last.id, last.hash)
+
+
+def _lost_head(entries: list[AuditEntry]) -> Optional[tuple[str, Optional[str]]]:
+    """The head this process kept, when the log no longer holds it; None while it does."""
+    head = _heads.get(AUDIT_FILE)
+    if head is None or any((e.id, e.hash) == head for e in entries):
+        return None
+    return head
+
+
+def _write_chained(fields: dict, prev_hash: Optional[str]) -> AuditEntry:
+    """Append one entry's fields to the current file, after the entry whose hash is ``prev_hash``,
+    rotating it first when the line would not fit (call it under the log's lock)."""
+    entry = AuditEntry.model_validate(fields)
+    chained = entry.model_copy(update={"prev_hash": prev_hash, "hash": None})
+    chained = chained.model_copy(update={"hash": entry_hash(chained)})
+    # The line as the caller wrote it, with the two fields of the chain; the hash is over the
+    # fields of the line as the reader takes them, so the line's layout does not matter.
+    data = (json.dumps({**fields, "prev_hash": prev_hash, "hash": chained.hash},
+                       ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     current = Path(AUDIT_FILE)
-    with _log_lock():
-        try:
-            size = current.stat().st_size
-        except FileNotFoundError:
-            size = 0
+    try:
+        size = current.stat().st_size
+    except FileNotFoundError:
+        size = 0
+    separator = b""
+    if size:
+        # A line cut by a power failure has no newline: this entry starts on a line of its own.
+        with open(current, "rb") as f:
+            f.seek(size - 1)
+            if f.read(1) != b"\n":
+                separator = b"\n"
+    if size and size + len(separator) + len(data) > MAX_FILE_BYTES:
+        _rotate()
         separator = b""
-        if size:
-            # A line cut by a power failure has no newline: this entry starts on a line of its own.
-            with open(current, "rb") as f:
-                f.seek(size - 1)
-                if f.read(1) != b"\n":
-                    separator = b"\n"
-        if size and size + len(separator) + len(data) > MAX_FILE_BYTES:
-            _rotate()
-            separator = b""
-        with open(current, "ab") as f:
-            f.write(separator + data)
+    with open(current, "ab") as f:
+        f.write(separator + data)
+    return chained
+
+
+def _cut_entry(head: tuple[str, Optional[str]]) -> dict:
+    """The fields of the entry that says the end of the log was cut or rewritten after ``head``."""
+    now = datetime.now()
+    return {
+        "id": f"audit_{now.strftime('%Y%m%d%H%M%S%f')}",
+        "timestamp": now.isoformat(),
+        "action": AuditAction.OTHER.value,
+        "severity": AuditSeverity.CRITICAL.value,
+        "username": "system",
+        "resource_type": "audit_log",
+        "details": (
+            f"The end of the audit log was changed in its file: the entry {head[0]}, which the supervisor "
+            "had written or read last, and the entries after it are gone or changed"
+        ),
+        "success": False,
+    }
+
+
+def _record_a_lost_end(entries: list[AuditEntry]) -> Optional[AuditEntry]:
+    """When the log no longer holds the head this process kept, append the entry that says so after
+    its last entry; returns that entry (call it under the log's lock)."""
+    head = _lost_head(entries)
+    if head is None:
+        return None
+    stored = _write_chained(_cut_entry(head), entries[-1].hash if entries else None)
+    logger.error("Audit log %s: the entry %s that it ended with is gone or changed", AUDIT_FILE, head[0])
+    return stored
+
+
+def _append_line(line: str) -> AuditEntry:
+    """Append one entry to the log, chained to the entry before it: the entry's line gets the
+    previous entry's hash and its own, under the log's lock, so that two writers make one chain
+    (ADR-0328). Before it, an entry says so when the end of the log no longer holds what this
+    process wrote or read there last. The only writer of entries (runs in a worker thread);
+    returns the entry as stored."""
+    fields = json.loads(line)
+    AuditEntry.model_validate(fields)  # a line that is no entry is refused before the lock
+    with _log_lock():
+        last = _last_of_log()
+        head = _heads.get(AUDIT_FILE)
+        if head is not None and (last is None or (last.id, last.hash) != head):
+            # Another process appended, or the end was cut or rewritten: the whole log tells which.
+            entries = _read_all()
+            cut = _record_a_lost_end(entries)
+            last = cut if cut is not None else (entries[-1] if entries else None)
+        stored = _write_chained(fields, last.hash if last else None)
+        _see_end(stored)
+    return stored
 
 
 def _read_file(path: Path) -> list[AuditEntry]:
@@ -157,9 +285,18 @@ def _read_all() -> list[AuditEntry]:
 
 
 def load_audit_log() -> list[AuditEntry]:
-    """Every valid entry of the log, oldest first (blocking: call it off the event loop)."""
+    """Every valid entry of the log, oldest first (blocking: call it off the event loop).
+
+    When the log no longer holds the entry that this process wrote or read at its end last, an
+    entry that says so is appended first, and listed too (ADR-0328).
+    """
     with _log_lock():
-        return _read_all()
+        entries = _read_all()
+        cut = _record_a_lost_end(entries)
+        if cut is not None:
+            entries.append(cut)
+        _see_end(entries[-1] if entries else None)
+        return entries
 
 
 def _rewrite(path: Path, entries: list[AuditEntry]) -> None:
@@ -167,7 +304,8 @@ def _rewrite(path: Path, entries: list[AuditEntry]) -> None:
     staged = path.with_name(path.name + ".new")
     try:
         with open(staged, "wb") as f:
-            f.write("".join(e.model_dump_json() + "\n" for e in entries).encode("utf-8"))
+            # The fields that each line held, so that its hash still holds (entry_hash, ADR-0328).
+            f.write("".join(e.model_dump_json(exclude_unset=True) + "\n" for e in entries).encode("utf-8"))
         os.replace(staged, path)
     except BaseException:
         staged.unlink(missing_ok=True)
@@ -202,6 +340,7 @@ def _clear(before_date: Optional[str]) -> int:
             else:
                 path.unlink()
             removed += len(older)
+        _see_end(_last_of_log())  # the end that this clearing left (ADR-0328)
     return removed
 
 
@@ -251,11 +390,10 @@ async def log_action(
 
     line = entry.model_dump_json()
     try:
-        await asyncio.to_thread(_append_line, line + "\n")
+        return await asyncio.to_thread(_append_line, line + "\n")
     except OSError as exc:
         logger.error("Could not write this audit entry to the audit log: %s (%s)", line, exc)
         raise
-    return entry
 
 
 # ==================== Filters (ADR-0237) ====================
@@ -360,9 +498,37 @@ def audit_filter(
     )
 
 
-def _selected(selection: AuditFilter) -> list[AuditEntry]:
-    """The entries that match, newest first (blocking: runs in a worker thread)."""
-    entries = [e for e in load_audit_log() if selection.matches(e)]
+def chained(entries: list[AuditEntry]) -> list[AuditEntryView]:
+    """The entries of the log, oldest first, each with where it stands in the hash chain (ADR-0328).
+
+    An entry is "ok" while its hash is the hash of its fields and its prev_hash the hash of the
+    entry before it, "broken" where either does not hold: an entry edited in the file, or the one
+    after an entry that was removed or damaged. The oldest entry is where the chain starts: its
+    link is not checked, since the entries before it were rotated out or cleared.
+    """
+    viewed = []
+    chain_seen = False
+    for i, entry in enumerate(entries):
+        if entry.hash is None:
+            # Before the first entry with a hash: written before the chain. After it: an entry whose
+            # hash was taken away, or one put in without one.
+            chain = "broken" if chain_seen else None
+        else:
+            chain_seen = True
+            intact = entry.hash == entry_hash(entry)
+            linked = i == 0 or entry.prev_hash == entries[i - 1].hash
+            chain = "ok" if intact and linked else "broken"
+        viewed.append(AuditEntryView(**entry.model_dump(), chain=chain))
+    return viewed
+
+
+def _selected(selection: AuditFilter, *, with_chain: bool = True) -> list[AuditEntry]:
+    """The entries that match, newest first, with their place in the chain unless ``with_chain``
+    is false, as for a count (blocking: runs in a worker thread)."""
+    entries = load_audit_log()
+    if with_chain:
+        entries = chained(entries)
+    entries = [e for e in entries if selection.matches(e)]
     entries.sort(key=lambda e: e.timestamp, reverse=True)
     return entries
 
@@ -385,7 +551,7 @@ def _spreadsheet_text(value: object) -> str:
 
 # ==================== API Endpoints ====================
 
-@router.get("/logs", response_model=list[AuditEntry])
+@router.get("/logs", response_model=list[AuditEntryView])
 async def get_audit_logs(
     selection: AuditFilter = Depends(audit_filter),
     limit: int = Query(100, ge=1),
@@ -403,7 +569,7 @@ async def get_audit_count(
     current_user: User = Depends(require_admin)
 ):
     """The number of entries that match. Admin only."""
-    return {"count": len(await asyncio.to_thread(_selected, selection))}
+    return {"count": len(await asyncio.to_thread(_selected, selection, with_chain=False))}
 
 
 @router.get("/logs/export")

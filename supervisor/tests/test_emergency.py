@@ -694,7 +694,8 @@ class TestBesideTheSupervisor:
 
     def test_the_command_waits_for_a_rotation_of_the_supervisor_and_no_entry_is_lost(self, world, monkeypatch):
         world.set_totp("admin", SECRET)
-        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", 1000)
+        # Three seeded entries fill a file, with the two hashes of the chain (ADR-0328).
+        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", 1500)
         for n in range(3):
             audit_router._append_line(self._line(f"seeded-{n}"))  # a full file: the next entry rotates it
         # The supervisor appends an entry and stops in the rotation, before its first rename.

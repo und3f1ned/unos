@@ -403,7 +403,13 @@
 												>{severity ? $t(severity.key) : entry.severity}</Badge
 											>
 										{/if}
+										{#if entry.chain === 'broken'}
+											<Badge variant="error">{$t('audit.chain.broken')}</Badge>
+										{/if}
 									</div>
+									{#if entry.chain === 'broken'}
+										<p class="mt-1 text-sm text-status-error">{$t('audit.chain.brokenHint')}</p>
+									{/if}
 									{#if entry.details}
 										<p class="mt-1 text-sm text-content">{entry.details}</p>
 									{/if}

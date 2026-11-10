@@ -86,6 +86,7 @@ and this index, and `make check-fast` runs it.
 | [0237](0237-audit-log-filtered-by-whole-units-exported-without-formulas.md) | The audit log is filtered alike by whole units of time, exported without spreadsheet formulas and shown on an administrator page | accepted | 2026-11-07 |
 | [0286](0286-the-audit-logs-lock-holds-across-processes.md) | The audit log's lock holds across processes, through a file lock that the emergency command line takes too | accepted | 2026-11-08 |
 | [0315](0315-pyjwt-and-bcrypt-check-passwords-as-given-and-dependencies-are-pinned.md) | PyJWT and bcrypt check passwords as given, and dependencies are pinned | accepted | 2026-11-09 |
+| [0328](0328-each-audit-entry-carries-the-hash-of-the-one-before-and-the-listing-says-where-the-chain-breaks.md) | Each audit entry carries the hash of the one before, and the listing says where the chain breaks | accepted | 2026-11-10 |
 
 ## Auth
 

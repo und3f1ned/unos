@@ -284,12 +284,18 @@
         "After an entry in the file is edited or deleted, GET /api/v1/audit/logs reports where the chain breaks",
         "The chain continues across rotated files"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0066",
-        "ADR-0224"
+        "ADR-0224",
+        "ADR-0328"
       ],
-      "notes": "Builds on security.append-only-audit-log."
+      "notes": "Builds on security.append-only-audit-log. Passed 2026-11-10 (ADR-0328). Step 1: every entry stores prev_hash, the hash of the entry before it, and hash, SHA-256 over the fields of its line but hash as canonical JSON, chained under the log's lock by _append_line, so the supervisor and the emergency command line make one chain. Step 2: GET /api/v1/audit/logs gives each entry its chain: broken for an edited entry, the entry after a removed, inserted or damaged one, the entry after one whose hash was made anew, and an entry without hashes after the chain; ok for the others; none for the entries from before the chain. The Audit page marks a broken one with \"Chain broken\" and why. The newest entries have no entry after them: the supervisor keeps the last entry it wrote or read at the log's end, and when that is gone or changed, a critical entry of the user system says so. Step 3: the first entry of each newer file links to the last entry of the file before it, and the oldest entry kept starts the chain, also after a clearing. TestHashChain and TestTheEndOfTheChain of test_audit_log.py (the 7 tests of TestHashChain failed before the change), and \"an entry where the chain breaks is marked, with why\" of audit.spec.ts. Not shown (ADR-0328): removing the oldest entries, and a chain written anew while the supervisor was stopped, as the hashes need no key. Not host-level.",
+      "verified_by": [
+        "supervisor/tests/test_audit_log.py",
+        "supervisor/tests/test_emergency.py",
+        "webui/tests/audit.spec.ts"
+      ]
     },
     {
       "id": "security.server-limits",
