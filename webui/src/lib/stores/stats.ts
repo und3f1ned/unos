@@ -1,7 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import { getToken, handleUnauthorized } from '$lib/api/client';
 
-// Extended types for WebSocket stats
+// The parts of the stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface CpuStats {
   percent: number;
   per_core: number[];
@@ -96,22 +96,9 @@ export interface StatsHistory {
   disk_io: DiskIOHistoryPoint[];
 }
 
-// Full WebSocket stats payload
+// The stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface WebSocketStats {
-  // Basic stats (backward compatible)
-  cpu_percent: number;
-  cpu_count: number;
-  memory_total: number;
-  memory_used: number;
-  memory_percent: number;
-  disk_total: number;
-  disk_used: number;
-  disk_percent: number;
-  network_sent: number;
-  network_recv: number;
   temperatures: Record<string, number>;
-
-  // Extended stats
   cpu: CpuStats;
   memory: MemoryStats;
   network: NetworkStats;
@@ -119,21 +106,6 @@ export interface WebSocketStats {
   processes: ProcessInfo[];
   history: StatsHistory;
   timestamp: string;
-}
-
-// Legacy SystemStats interface for backward compatibility
-export interface SystemStats {
-  cpu_percent: number;
-  cpu_count: number;
-  memory_total: number;
-  memory_used: number;
-  memory_percent: number;
-  disk_total: number;
-  disk_used: number;
-  disk_percent: number;
-  network_sent: number;
-  network_recv: number;
-  temperatures: Record<string, number>;
 }
 
 export interface TemperatureSensor {

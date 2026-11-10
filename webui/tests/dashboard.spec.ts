@@ -38,9 +38,11 @@ const CONTAINERS = [
 // with the part that the dashboard's stats cards show: 12.5% CPU, 768 MiB of 2 GiB memory, 1.2 MiB/s
 // received and 512 bytes/s sent, and a sensor at 45.8 degrees, which the card rounds.
 const LIVE_STATS = {
-  cpu_percent: 12.5, cpu_count: 4,
-  memory_total: 2 * 1024 ** 3, memory_used: 768 * 1024 ** 2, memory_percent: 37.5,
-  disk_total: 0, disk_used: 0, disk_percent: 0, network_sent: 0, network_recv: 0,
+  cpu: { percent: 12.5, per_core: [12.5, 12.5, 12.5, 12.5], load_1: 0.5, load_5: 0.4, load_15: 0.3, cores: 4, threads: 4 },
+  memory: {
+    total: 2 * 1024 ** 3, used: 768 * 1024 ** 2, free: 1280 * 1024 ** 2, available: 1280 * 1024 ** 2, percent: 37.5,
+    swap_total: 0, swap_used: 0, swap_percent: 0,
+  },
   temperatures: { cpu_thermal: 45.8 },
   network: {
     bytes_sent: 0, bytes_recv: 0, bytes_sent_rate: 512, bytes_recv_rate: 1.2 * 1024 ** 2,
