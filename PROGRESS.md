@@ -240,6 +240,10 @@ Open owner actions:
   them too and restates what stays, with why the model change needs no `ALTER` (ADR-0022);
   stale comments and the refusal's text for one missing table. The tests of restore, scheduler,
   import, model, accounts, apply, backup files, upload checks and startup passed (888).
+- `make check` passed, and `make e2e-local` 669 with 16 skips on listed conditions; `files.spec.ts`
+  "uploads files from the keyboard" failed again, this time without a second stand-in, so it is
+  the new entry `testing.keyboard-upload-opens-the-file-chooser` (it passed in three of five full
+  runs of the day and alone).
 
 ### 2026-11-10: the stats message and the web UI's stats code carry nothing unread
 

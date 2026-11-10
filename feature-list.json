@@ -3411,6 +3411,22 @@
       "notes": "Found by the fresh-context review of testing.no-compat-skips on 2026-11-09: files.spec.ts (scratch === null) skips the whole describe whenever POST /files/mkdir fails, 404 and 5xx included; shares.spec.ts (notes.length === 0) names an earlier run that dismissed the notes, which never applies on a stand-in that e2e.sh starts fresh, so the skip fires only when the import stops writing notes; api.spec.ts accepts a 404 for GET /files/list. The review of 2026-11-10 added: api.spec.ts accepts a 500 (two checks) and a 404 (one more), and shares.spec.ts's !reachable is only that /api/v1/health answered OK."
     },
     {
+      "id": "testing.keyboard-upload-opens-the-file-chooser",
+      "category": "testing",
+      "description": "The E2E test that uploads files from the keyboard opens the file chooser in every run of make e2e-local",
+      "steps": [
+        "Find why files.spec.ts 'uploads files from the keyboard' sometimes waits in vain for the file chooser after Enter on the focused Upload button",
+        "Fix the cause, in the page or in the test, without a retry",
+        "make e2e-local passes five times in a row with the test"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0215",
+        "ADR-0186"
+      ],
+      "notes": "Seen on 2026-11-10 in two of five full runs of make e2e-local on the stand-in with E2E_CHROMIUM_PATH (the cached chromium_headless_shell-1234, while @playwright/test 1.57.0 expects build 1200), once with a second stand-in running and once without: page.waitForEvent('filechooser') timed out after Enter on the Upload button, which kept the focus, and the folder stayed empty. The test passed alone and in the other runs. A browser of the build that Playwright expects (make setup) is the first thing to try."
+    },
+    {
       "id": "testing.remove-dead-stub-checks",
       "category": "testing",
       "description": "The stub checks of supervisor/tests/test_smb_models.py, whose stubs real code has replaced, are removed",
