@@ -233,6 +233,8 @@ Open owner actions:
   caller in the web UI; it is the example of `scripts/dev/api.py`, and removing it would be an
   entry of its own. `getPCIeDevices` of `api/system.ts` has no caller either, and is no stats
   code.
+- On the stand-in with `E2E_CHROMIUM_PATH`, `make e2e-local` passed (670, 16 skips on listed
+  conditions), and so did `make check`: the entry passes.
 
 ### 2026-11-10: the apps keep no code for apps of older versions under /mnt/pools/default
 
