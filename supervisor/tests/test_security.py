@@ -515,11 +515,12 @@ def certs(tmp_path, monkeypatch):
     calls = []
 
     def fake_openssl(cmd, **kwargs):
+        # Like the real one with -keyout -: the key on standard output, the certificate in -out.
         assert cmd[:2] == ["openssl", "req"], cmd
         calls.append(cmd)
-        Path(cmd[cmd.index("-keyout") + 1]).write_text("KEY")
+        assert cmd[cmd.index("-keyout") + 1] == "-", cmd
         Path(cmd[cmd.index("-out") + 1]).write_text("CERT")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return subprocess.CompletedProcess(cmd, 0, "KEY", "")
 
     monkeypatch.setattr(subprocess, "run", fake_openssl)
     return SimpleNamespace(root=tmp_path, dir=certs_dir, calls=calls)
@@ -575,7 +576,7 @@ class TestCertificateDomainValidation:
         assert response.status_code == 200, response.text
         assert response.json()["certificate_id"] == "custom_nas.local"
         [cmd] = certs.calls
-        assert cmd[cmd.index("-keyout") + 1] == str(certs.dir / "nas.local.key")
+        assert cmd[cmd.index("-keyout") + 1] == "-"
         assert cmd[cmd.index("-out") + 1] == str(certs.dir / "nas.local.crt")
         assert cmd[cmd.index("-subj") + 1] == "/CN=nas.local"
         assert cmd[cmd.index("-addext") + 1] == "subjectAltName=DNS:nas.local"
@@ -622,7 +623,7 @@ class TestCertificateFilesStayInCertsDir:
 
         files = _certificate_files("*.example.com")
         assert [f.name for f in files] == ["*.example.com.crt", "*.example.com.key",
-                                           "*.example.com.chain.crt"]
+                                           "*.example.com.chain.pem"]
         assert all(f.parent == certs.dir for f in files)
 
     @pytest.mark.parametrize("cert_id", ["custom_", "custom_.", "custom_.."])
@@ -647,7 +648,7 @@ class TestCertificateFilesStayInCertsDir:
 
     def test_delete_removes_a_stored_certificate(self, certs, admin_api):
         certs.dir.mkdir(parents=True)
-        for suffix in (".crt", ".key", ".chain.crt"):
+        for suffix in (".crt", ".key", ".chain.pem"):
             (certs.dir / f"nas.local{suffix}").write_text("x")
 
         assert admin_api.delete(f"{API}/custom_nas.local").status_code == 200
@@ -664,7 +665,8 @@ class TestCertificateFilesStayInCertsDir:
 
         response = admin_api.delete(f"{API}/custom_{name}")
 
-        assert (response.status_code, response.json()["detail"]) == (400, "Invalid certificate id")
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == "Invalid certificate id"
         assert (certs.dir / f"{name}.crt").read_text() == "keep me"
 
     @pytest.mark.parametrize("common_name", ["..", "", "a/b", "My NAS", "*", "*.*.example.com"])
@@ -688,13 +690,13 @@ class TestCertificateFilesStayInCertsDir:
         assert response.status_code == 200, response.text
         assert response.json()["certificate_id"] == f"custom_{common_name}"
         assert _files_under(certs.root) == sorted(
-            f"data/certs/{common_name}{suffix}" for suffix in (".chain.crt", ".crt", ".key")
+            f"data/certs/{common_name}{suffix}" for suffix in (".chain.pem", ".crt", ".key")
         )
 
 
 # ==================== Certificate name length (ADV-7) ====================
 
-# Longest name a certificate is stored under: "<name>.chain.crt" is then
+# Longest name a certificate is stored under: "<name>.chain.pem" is then
 # NAME_MAX (255) bytes.
 LONGEST_NAME = 245
 # Longest subject CN (X.509): what openssl puts a self-signed domain into.
@@ -720,7 +722,7 @@ def _upload_as(monkeypatch, admin_api, common_name: str):
 
 
 class TestCertificateNameLength:
-    """Each file of a certificate (<name>.crt, .key, .chain.crt) must fit in NAME_MAX bytes,
+    """Each file of a certificate (<name>.crt, .key, .chain.pem) must fit in NAME_MAX bytes,
     and the domain of a self-signed certificate in its subject CN."""
 
     def test_host_name_helper(self):
@@ -740,7 +742,7 @@ class TestCertificateNameLength:
         assert cmd[cmd.index("-subj") + 1] == f"/CN={name}"
         assert _files_under(certs.root) == [f"data/certs/{name}.crt", f"data/certs/{name}.key"]
 
-    # Real openssl refuses a CN over 64 characters only after writing the key,
+    # Real openssl refuses a CN over 64 characters only after making the key,
     # and names of 252 and more do not fit the key file name at all.
     @pytest.mark.parametrize("length", [LONGEST_COMMON_NAME + 1, LONGEST_NAME + 1, 253])
     def test_self_signed_refuses_longer_names_and_writes_nothing(self, certs, admin_api, length):
@@ -762,7 +764,7 @@ class TestCertificateNameLength:
         assert response.json()["domain"] == common_name
         files = _files_under(certs.root)
         assert files == sorted(
-            f"data/certs/{common_name}{suffix}" for suffix in (".chain.crt", ".crt", ".key")
+            f"data/certs/{common_name}{suffix}" for suffix in (".chain.pem", ".crt", ".key")
         )
         assert max(len(Path(f).name) for f in files) == 255
 
@@ -794,6 +796,17 @@ class TestPrivateKeyMode:
         finally:
             os.umask(old)
 
+    def test_a_new_upload_replaces_the_whole_key_file(self, certs, admin_api, monkeypatch):
+        # A renewal under the same name, with a shorter key: nothing of the old one stays.
+        certs.dir.mkdir(parents=True)
+        (certs.dir / "nas.local.key").write_text("A LONGER FIRST KEY")
+        (certs.dir / "nas.local.key").chmod(0o600)
+
+        assert _upload_as(monkeypatch, admin_api, "nas.local").status_code == 200
+
+        assert (certs.dir / "nas.local.key").read_text() == "KEY"
+        assert stat.S_IMODE((certs.dir / "nas.local.key").stat().st_mode) == 0o600
+
     def test_uploaded_key_file_is_0600(self, certs, admin_api, monkeypatch):
         assert _upload_as(monkeypatch, admin_api, "nas.local").status_code == 200
 
@@ -803,9 +816,10 @@ class TestPrivateKeyMode:
 
     @pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
     def test_self_signed_key_file_is_0600(self, upload_env, admin_api):
-        """The real openssl creates the key file 0600 under the usual umask, as
-        _write_private_key creates an uploaded one: UNOS writes no key of another mode that
-        would need a fix-up (security.no-legacy-certificate-fixups, ADR-0207)."""
+        """The real openssl prints the new key, and _write_private_key stores it as it stores an
+        uploaded one: 0600 under the usual umask, whatever mode openssl would give a file of its
+        own (LibreSSL's are 0644). UNOS writes no key of another mode that would need a fix-up
+        (security.no-legacy-certificate-fixups, ADR-0207)."""
         response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
 
         assert response.status_code == 200, response.text
@@ -816,9 +830,14 @@ class TestPrivateKeyMode:
     def test_no_key_mode_is_fixed_up(self):
         """The fix-ups for the keys that older versions left 0644 are gone
         (security.no-legacy-certificate-fixups, ADR-0207)."""
-        router = (Path(__file__).resolve().parents[1] / "src" / "security" / "router.py").read_text()
-        assert "chmod" not in router
-        assert "older version" not in router
+        import inspect
+
+        from src.security import router
+
+        for function in (router._write_private_key, router.generate_self_signed_certificate,
+                         router.upload_certificate, router.delete_certificate, router.get_custom_certificates):
+            source = inspect.getsource(function)
+            assert "chmod" not in source and "older version" not in source, function.__name__
 
 
 # ==================== Uploads leave no temporary file (R-6) ====================
@@ -940,7 +959,7 @@ class TestCertificateUploadLeavesNoTemporaryFile:
                                                                   field, message):
         # They used to fail half-way: the certificate replaced, the old key emptied.
         upload_env.certs.mkdir(parents=True)
-        old = {f"nas.local{suffix}": f"old {suffix}" for suffix in (".crt", ".key", ".chain.crt")}
+        old = {f"nas.local{suffix}": f"old {suffix}" for suffix in (".crt", ".key", ".chain.pem")}
         for name, text in old.items():
             (upload_env.certs / name).write_text(text)
 
@@ -962,3 +981,37 @@ class TestCertificateUploadLeavesNoTemporaryFile:
 
         assert response.status_code == 200, response.text
         assert (upload_env.certs / "nas.local.crt").read_text() == TEST_CERTIFICATE
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+class TestStoredCertificates:
+    """What a failed generation keeps, and what the listing shows and the delete takes, with the
+    real openssl."""
+
+    def test_a_failed_self_signed_certificate_leaves_the_stored_key(self, upload_env, admin_api):
+        # openssl refuses a country of three letters only after it has made the new key, which it
+        # wrote over the stored key when it wrote the key file itself.
+        assert _upload(admin_api, TEST_CERTIFICATE).status_code == 200
+
+        response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local", "country": "DEU"})
+
+        assert response.status_code == 500, response.text
+        assert (upload_env.certs / "nas.local.key").read_text() == "KEY"
+        assert (upload_env.certs / "nas.local.crt").read_text() == TEST_CERTIFICATE
+
+    def test_every_listed_certificate_can_be_deleted(self, upload_env, admin_api):
+        """A chain file is no certificate of its own, nor is a file under a name that UNOS does not
+        store (security.no-legacy-certificate-fixups, ADR-0207): the listing shows the
+        certificates whose ids the delete takes, and only those."""
+        assert admin_api.post(f"{API}/self-signed", json={"domain": "fd00::1"}).status_code == 200
+        ipv6 = (upload_env.certs / "fd00::1.crt").read_text()
+        assert _upload(admin_api, ipv6, chain=TEST_CERTIFICATE).status_code == 200
+        assert _upload(admin_api, TEST_CERTIFICATE, chain=TEST_CERTIFICATE).status_code == 200
+        (upload_env.certs / "My NAS.crt").write_text(TEST_CERTIFICATE)
+
+        listed = [cert["id"] for cert in admin_api.get(API).json()["certificates"]]
+
+        assert sorted(listed) == ["custom_fd00::1", "custom_nas.local"]
+        for cert_id in listed:
+            assert admin_api.delete(f"{API}/{cert_id}").status_code == 200, cert_id
+        assert sorted(path.name for path in upload_env.certs.iterdir()) == ["My NAS.crt"]

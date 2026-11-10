@@ -393,7 +393,7 @@ def _certificate_files(name: str) -> tuple[Path, Path, Path]:
     files = (
         certs_path / f"{name}.crt",
         certs_path / f"{name}.key",
-        certs_path / f"{name}.chain.crt",
+        certs_path / f"{name}.chain.pem",
     )
     if any(path.parent != certs_path for path in files):
         raise ValueError(f"Invalid certificate name: {name!r}")
@@ -545,6 +545,10 @@ def get_custom_certificates() -> list[Certificate]:
         return certs
 
     for cert_file in certs_path.glob("*.crt"):
+        # Only what an upload or a self-signed certificate stored: the names
+        # that the delete takes.
+        if _uploaded_certificate_name(cert_file.stem) != cert_file.stem:
+            continue
         info = get_certificate_info(str(cert_file))
         if info:
             # Check if it's self-signed (issuer matches subject)
@@ -642,13 +646,14 @@ async def generate_self_signed_certificate(
         if request.country:
             subject += f"/C={_subject_value(request.country)}"
 
-        # Generate self-signed certificate. openssl creates the key file 0600,
-        # as _write_private_key creates an uploaded one.
+        # Generate self-signed certificate. openssl prints the new key, which
+        # is stored like an uploaded one once openssl has succeeded: one writer
+        # of keys (0600), and a failure leaves the stored key as it was.
         result = subprocess.run([
             "openssl", "req", "-x509", "-nodes",
             "-days", str(request.validity_days),
             "-newkey", "rsa:2048",
-            "-keyout", str(key_file),
+            "-keyout", "-",
             "-out", str(cert_file),
             "-subj", subject,
             "-addext", f"subjectAltName={san}"
@@ -656,6 +661,7 @@ async def generate_self_signed_certificate(
 
         if result.returncode != 0:
             raise HTTPException(500, f"Failed to generate certificate: {result.stderr}")
+        _write_private_key(key_file, result.stdout)
 
         return {
             "status": "ok",

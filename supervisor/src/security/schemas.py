@@ -13,14 +13,13 @@ from .validators import NAME_MAX
 _DNS_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 MAX_HOSTNAME_LENGTH = 253
 
-# A custom certificate is stored as <name>.crt, <name>.key and <name>.chain.crt
+# A custom certificate is stored as <name>.crt, <name>.key and <name>.chain.pem
 # (security.router._certificate_files), and each file name must fit in
 # NAME_MAX bytes. The names are ASCII, so characters are bytes.
-MAX_CERTIFICATE_NAME_LENGTH = NAME_MAX - len(".chain.crt")
+MAX_CERTIFICATE_NAME_LENGTH = NAME_MAX - len(".chain.pem")
 
 # X.509 limits a certificate's subject common name (CN) to 64 characters
-# (RFC 5280, ub-common-name). openssl refuses a longer one, after it has
-# already written the new key.
+# (RFC 5280, ub-common-name), and openssl refuses a longer one.
 MAX_COMMON_NAME_LENGTH = 64
 
 

@@ -206,6 +206,33 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: the certificate code keeps no fix-ups for files of older versions
+
+- `security.no-legacy-certificate-fixups`, at the owner's word to go on ("Continue", in
+  translation), under ADR-0207: `_write_private_key` no longer tightens an existing key file, the
+  self-signed generation no longer chmods one before openssl, and the delete no longer takes any
+  id inside `CERTS_DIR` for names that older versions stored: it takes only the names that an
+  upload and a self-signed certificate store.
+- Tests first (ADR-0186): the delete of `My NAS`, `*`, `a b.local` and `-x.local` answers 400
+  and keeps the file, and the certificate code has no chmod; both failed before the change. The
+  tests of 0644 keys and of the name `My NAS` are gone.
+- The fresh-context review (ADR-0017) found no blocker and three things that are fixed: the
+  removed tests were the only ones of a key file that a new upload replaces whole
+  (`test_a_new_upload_replaces_the_whole_key_file`); the self-signed key was 0600 only because
+  OpenSSL creates its key files so (LibreSSL's are 0644), and openssl wrote the new key over the
+  stored one before it refused the subject, so openssl now prints the key and
+  `_write_private_key` stores it after openssl succeeded; the listing showed each chain file
+  `<name>.chain.crt` as a certificate, whose id the delete now refused for some names, so the
+  chain is stored as `<name>.chain.pem` and the listing shows only the names that the delete
+  takes (`test_every_listed_certificate_can_be_deleted`). Both new tests failed on the code
+  before. Recorded, not changed: an IP address id in another form (`custom_0:0::1`) answers 400
+  instead of 404, which the web UI never sends; older gaps of the certificate code (untested
+  error paths, the unchecked organization and country, openssl on the event loop, symlinks
+  followed) went into the notes of `security.custom-certificates`. `test_security.py` 119
+  passed.
+- `passes` stays false: `make e2e-local` cannot start Chromium on this workstation now (owner
+  action 2), and the web UI calls the delete and the listing. Not host-level.
+
 ### 2026-11-09: storage.scrub passes on the scenario check scrub, before and after a reboot
 
 - At the owner's word to work on through the features ("I allow everything", in translation),
