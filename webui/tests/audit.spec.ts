@@ -296,6 +296,55 @@ test.describe('Audit log, more entries than one page', () => {
   });
 });
 
+test.describe('Audit log, a broken hash chain', () => {
+  // In the server's form (ADR-0328): the second entry was edited in the log file, so its
+  // place in the chain is "broken"; the others hold.
+  const entry = (n: number, chain: 'ok' | 'broken') => ({
+    id: `audit_chain_${n}`,
+    timestamp: `2026-11-10T12:0${n}:00`,
+    action: 'login_success',
+    severity: 'info',
+    username: `chain_user_${n}`,
+    ip_address: '192.0.2.10',
+    user_agent: null,
+    resource_type: null,
+    resource_id: null,
+    details: null,
+    success: true,
+    prev_hash: n ? 'a'.repeat(64) : null,
+    hash: 'b'.repeat(64),
+    chain,
+  });
+
+  test('an entry where the chain breaks is marked, with why', async ({ authenticatedPage: page }) => {
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/audit/'),
+      (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/v1/audit/logs') {
+          return route.fulfill({ json: [entry(2, 'ok'), entry(1, 'broken'), entry(0, 'ok')] });
+        }
+        if (url.pathname === '/api/v1/audit/logs/count') return route.fulfill({ json: { count: 3 } });
+        if (url.pathname === '/api/v1/audit/actions') return route.continue();
+        return route.abort();
+      },
+    );
+    await page.goto('/audit');
+
+    await expect(timelineEntries(page)).toHaveCount(3);
+    const broken = timelineEntries(page).filter({ hasText: 'chain_user_1' });
+    await expect(broken.getByText('Chain broken', { exact: true })).toBeVisible();
+    await expect(
+      broken.getByText(
+        'The log file was changed here: this entry, or the one before it, was edited, removed, inserted or given a new hash.',
+      ),
+    ).toBeVisible();
+    for (const n of [0, 2]) {
+      await expect(timelineEntries(page).filter({ hasText: `chain_user_${n}` }).getByText('Chain broken')).toHaveCount(0);
+    }
+  });
+});
+
 test.describe('Audit log errors', () => {
   test('a list that cannot be loaded is reported, and Retry loads it', async ({ authenticatedPage: page }) => {
     const detail = 'Administrator privileges required';

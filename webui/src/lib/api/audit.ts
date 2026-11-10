@@ -17,6 +17,11 @@ export interface AuditEntry {
   resource_id: string | null;
   details: string | null;
   success: boolean;
+  /** The hash chain (ADR-0328): the hash of the entry before it, and its own. */
+  prev_hash: string | null;
+  hash: string | null;
+  /** Where the entry stands in the chain: broken where it was edited, or after a removed entry. */
+  chain: 'ok' | 'broken' | null;
 }
 
 export interface AuditAction {

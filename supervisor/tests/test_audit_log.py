@@ -11,6 +11,7 @@ import ast
 import asyncio
 import csv
 import errno
+import hashlib
 import io
 import json
 import os
@@ -244,9 +245,12 @@ class TestRotation:
 
 
 class TestClear:
+    # Three entries of the fixture fit in a file, with the two hashes of the chain (ADR-0328).
+    LIMIT = 1536
+
     @pytest.fixture
     def rotated_log(self, world, monkeypatch):
-        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", 1024)
+        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", self.LIMIT)
         for n in range(20):
             log(f"entry {n:02d} " + "x" * 100)
         assert rotated(world.audit_file, 2).exists()
@@ -281,7 +285,7 @@ class TestClear:
         for f, (inode, data) in before.items():
             if f.exists() and files.index(f) > files.index(straddling) and f != rotated_log.audit_file:
                 assert (f.stat().st_ino, f.read_bytes()) == (inode, data)  # newer files untouched
-        assert all(f.stat().st_size <= 1024 for f in files if f.exists())
+        assert all(f.stat().st_size <= self.LIMIT for f in files if f.exists())
         assert not list(rotated_log.audit_file.parent.glob("*.new"))
 
     def test_clearing_that_removes_nothing_rewrites_nothing(self, rotated_log):
@@ -322,7 +326,8 @@ class TestClear:
 class TestLock:
     def test_concurrent_entries_are_all_kept_across_rotations(self, tmp_path, monkeypatch):
         monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit.jsonl"))
-        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", 600)
+        # Three entries a file, with the two hashes of the chain (ADR-0328).
+        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", 1000)
         monkeypatch.setattr(audit_router, "KEEP_ROTATED", 100)
         errors: list[BaseException] = []
 
@@ -343,7 +348,9 @@ class TestLock:
 
         assert errors == []
         assert len(audit_router.load_audit_log()) == 200
-        assert all(p.stat().st_size <= 600 for p in tmp_path.glob("audit.jsonl*"))
+        # One chain, whatever the order of the threads (ADR-0328).
+        assert {e.chain for e in audit_router.chained(audit_router.load_audit_log())} == {"ok"}
+        assert all(p.stat().st_size <= 1000 for p in tmp_path.glob("audit.jsonl*"))
 
     def test_a_reader_never_sees_a_rotation_halfway(self, tmp_path, monkeypatch):
         monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit.jsonl"))
@@ -415,7 +422,7 @@ class TestOtherProcesses:
     runs (ADR-0284): appends, rotations, reads and clearing exclude each other across processes
     as they do across threads (ADR-0286)."""
 
-    LIMIT = 1000  # three entries of entry_line fit in a file
+    LIMIT = 1500  # three entries of entry_line fit in a file, with the two hashes of the chain (ADR-0328)
 
     @pytest.fixture
     def log_file(self, tmp_path, monkeypatch) -> Path:
@@ -827,3 +834,211 @@ def test_the_web_ui_names_every_resource_type_as_the_server_records_it():
                            resource_type=resource_type, resource_id="carol")
         assert audit_router.AuditFilter(search=f"{english} carol".casefold()).matches(entry), english
         assert catalog["ru"][key]
+
+
+def _entry_hash(entry: dict) -> str:
+    """What an entry's hash is over: its fields but the hash itself, as canonical JSON (ADR-0328)."""
+    content = {key: value for key, value in entry.items() if key != "hash"}
+    return hashlib.sha256(
+        json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def _chain_by_details(world: World) -> dict[str, object]:
+    return {e["details"]: e["chain"] for e in reversed(listed(world))}
+
+
+class TestHashChain:
+    """Each entry carries the hash of the one before, so an edited or removed entry is found
+    (security.tamper-evident-audit-log, ADR-0328)."""
+
+    def test_each_entry_stores_its_hash_and_the_hash_of_the_one_before(self, world):
+        for n in range(3):
+            log(f"entry {n}")
+
+        entries = audit_entries(world.audit_file)
+        assert entries[0]["prev_hash"] is None  # the first entry of the log
+        for before, entry in zip(entries, entries[1:]):
+            assert entry["prev_hash"] == before["hash"]
+        assert [e["hash"] for e in entries] == [_entry_hash(e) for e in entries]
+        assert _chain_by_details(world) == {"entry 0": "ok", "entry 1": "ok", "entry 2": "ok"}
+
+    def test_an_edited_entry_is_where_the_chain_breaks(self, world):
+        for n in range(4):
+            log(f"entry {n}")
+        lines = world.audit_file.read_bytes().split(b"\n")
+        edited = json.loads(lines[1])
+        edited["details"] = "edited"
+        lines[1] = json.dumps(edited).encode()
+        world.audit_file.write_bytes(b"\n".join(lines))
+
+        assert _chain_by_details(world) == {"entry 0": "ok", "edited": "broken", "entry 2": "ok", "entry 3": "ok"}
+
+    def test_an_edit_that_gives_the_entry_a_new_hash_breaks_the_chain_at_the_next_one(self, world):
+        for n in range(4):
+            log(f"entry {n}")
+        lines = world.audit_file.read_bytes().split(b"\n")
+        edited = json.loads(lines[1])
+        edited["details"] = "edited"
+        edited["hash"] = _entry_hash(edited)
+        lines[1] = json.dumps(edited).encode()
+        world.audit_file.write_bytes(b"\n".join(lines))
+
+        assert _chain_by_details(world) == {"entry 0": "ok", "edited": "ok", "entry 2": "broken", "entry 3": "ok"}
+
+    def test_a_removed_entry_breaks_the_chain_at_the_next_one(self, world):
+        for n in range(4):
+            log(f"entry {n}")
+        lines = world.audit_file.read_bytes().split(b"\n")
+        del lines[1]
+        world.audit_file.write_bytes(b"\n".join(lines))
+
+        assert _chain_by_details(world) == {"entry 0": "ok", "entry 2": "broken", "entry 3": "ok"}
+
+    def test_the_chain_continues_across_the_rotated_files(self, world, monkeypatch):
+        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", 1500)
+        for n in range(40):
+            log(f"entry {n:02d} " + "x" * 100)
+
+        files = files_oldest_first(world.audit_file, audit_router.KEEP_ROTATED)
+        assert all(f.exists() for f in files)
+        entries = [entry for f in files for entry in audit_entries(f)]
+        for before, entry in zip(entries, entries[1:]):
+            assert entry["prev_hash"] == before["hash"]
+        # The oldest entry still kept is where the chain starts: the files before it were dropped.
+        assert entries[0]["prev_hash"] is not None
+        assert {e["chain"] for e in listed(world)} == {"ok"}
+
+    def test_clearing_the_older_entries_leaves_the_chain_whole(self, world):
+        for n in range(3):
+            log(f"entry {n}")
+        lines = world.audit_file.read_bytes().split(b"\n")
+        cut = json.loads(lines[1])["timestamp"]
+
+        response = world.client.delete(f"{API}/audit/logs", headers=world.headers("admin"), params={"before_date": cut})
+
+        assert response.status_code == 200, response.text
+        assert set(_chain_by_details(world).values()) == {"ok"}
+
+    def test_an_entry_from_before_the_chain_is_not_in_it(self, world):
+        world.audit_file.parent.mkdir(parents=True, exist_ok=True)
+        old = {"id": "audit_old", "timestamp": "2026-11-01T00:00:00", "action": "other", "details": "old"}
+        world.audit_file.write_text(json.dumps(old) + "\n")
+
+        log("new")
+
+        assert _chain_by_details(world) == {"old": None, "new": "ok"}
+
+
+def _cut_entries(world: World) -> list[dict]:
+    """The entries that say that the end of the log was changed in its file (ADR-0328)."""
+    return [e for e in listed(world) if e["resource_type"] == "audit_log" and e["severity"] == "critical"]
+
+
+class TestTheEndOfTheChain:
+    """The newest entries have no entry after them to break the chain: the supervisor keeps the
+    entry it wrote or read last at the log's end, and when it is gone or changed, an entry says so
+    (ADR-0328)."""
+
+    def _three(self, world: World) -> list[str]:
+        for n in range(3):
+            log(f"entry {n}")
+        return [e["id"] for e in audit_entries(world.audit_file)]
+
+    def test_a_removed_last_entry_is_reported_by_an_entry_of_its_own(self, world):
+        ids = self._three(world)
+        lines = world.audit_file.read_bytes().split(b"\n")
+        world.audit_file.write_bytes(b"\n".join(lines[:2]) + b"\n")
+
+        [cut] = _cut_entries(world)
+        assert ids[2] in cut["details"] and "gone or changed" in cut["details"]
+        assert cut["username"] == "system" and cut["success"] is False and cut["chain"] == "ok"
+        assert len(_cut_entries(world)) == 1  # said once, not at every read
+
+    def test_a_last_entry_made_unreadable_is_reported(self, world):
+        self._three(world)
+        lines = world.audit_file.read_bytes().split(b"\n")
+        lines[2] = b"{garbage"
+        world.audit_file.write_bytes(b"\n".join(lines))
+
+        assert len(_cut_entries(world)) == 1
+
+    def test_an_edited_last_entry_without_its_hashes_is_reported_and_broken(self, world):
+        self._three(world)
+        lines = world.audit_file.read_bytes().split(b"\n")
+        edited = json.loads(lines[2])
+        edited["details"] = "edited"
+        del edited["hash"], edited["prev_hash"]
+        lines[2] = json.dumps(edited).encode()
+        world.audit_file.write_bytes(b"\n".join(lines))
+
+        assert _chain_by_details(world)["edited"] == "broken"
+        assert len(_cut_entries(world)) == 1
+
+    def test_a_removed_current_file_is_reported_while_the_old_files_stay(self, world, monkeypatch):
+        monkeypatch.setattr(audit_router, "MAX_FILE_BYTES", 1500)
+        for n in range(12):
+            log(f"entry {n:02d} " + "x" * 100)
+        assert rotated(world.audit_file, 1).exists()
+        world.audit_file.unlink()
+
+        assert len(_cut_entries(world)) == 1
+
+    def test_an_append_after_a_cut_end_records_the_cut_first(self, world):
+        ids = self._three(world)
+        lines = world.audit_file.read_bytes().split(b"\n")
+        world.audit_file.write_bytes(b"\n".join(lines[:2]) + b"\n")
+
+        log("after")
+
+        entries = audit_entries(world.audit_file)
+        assert [e["details"] for e in entries][-1] == "after"
+        assert ids[2] in entries[-2]["details"]  # the entry that says so, right before
+        assert {e["chain"] for e in listed(world)} == {"ok"}
+
+    def test_another_process_that_appends_or_a_clearing_is_no_cut(self, world):
+        self._three(world)
+        # As the emergency command line does from a process of its own: it chains its entry after
+        # ours under the log's lock, and the head that this process keeps stays where it was.
+        with audit_router._log_lock():
+            last = audit_router._last_of_log()
+            audit_router._write_chained({"id": "audit_other", "timestamp": "2026-11-10T23:59:00",
+                                         "action": "other", "details": "other process"}, last.hash)
+        log("ours again")
+        response = world.client.delete(f"{API}/audit/logs", headers=world.headers("admin"),
+                                       params={"before_date": "2000-01-01"})
+        assert response.status_code == 200, response.text
+
+        assert _cut_entries(world) == []
+        assert {e["chain"] for e in listed(world)} == {"ok"}
+
+    def test_an_entry_without_hashes_after_the_chain_is_broken(self, world):
+        self._three(world)
+        with open(world.audit_file, "ab") as f:
+            f.write(json.dumps({"id": "audit_put_in", "timestamp": "2026-11-10T23:59:59",
+                                "action": "other", "details": "put in"}).encode() + b"\n")
+
+        assert _chain_by_details(world)["put in"] == "broken"
+
+    def test_a_line_without_some_fields_keeps_its_hash(self, world):
+        # The hash is over the fields of the line: a field that AuditEntry gets later, with a default,
+        # leaves older lines as they are.
+        audit_router._append_line(json.dumps({"id": "audit_short", "timestamp": "2026-11-10T00:00:00",
+                                              "action": "other", "details": "short"}) + "\n")
+        stored = audit_entries(world.audit_file)[0]
+        assert "user_agent" not in stored and stored["hash"] == _entry_hash(stored)
+
+        assert _chain_by_details(world) == {"short": "ok"}
+
+    def test_a_cut_line_and_a_full_clearing_leave_the_chain_whole(self, world):
+        log("before")
+        with open(world.audit_file, "ab") as f:
+            f.write(b'{"id": "cut by a power fail')
+        log("after")
+        assert set(_chain_by_details(world).values()) == {"ok"}
+
+        response = world.client.delete(f"{API}/audit/logs", headers=world.headers("admin"))
+        assert response.status_code == 200, response.text
+        log("after the clearing")
+
+        assert set(_chain_by_details(world).values()) == {"ok"} and _cut_entries(world) == []

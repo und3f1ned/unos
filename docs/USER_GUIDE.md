@@ -1229,6 +1229,14 @@ regular users have no access to it.
   and **To** a range of days, each day included whole. The list follows the
   filters as you change them; **Clear filters** resets them.
 - The page shows the newest 100 matching entries; **Show more** adds 100 more.
+- Each entry carries the hash of the one before it. **Chain broken** marks an
+  entry that was changed in the log file, or the one after an entry that was
+  removed, put in or damaged there. When the newest entries are removed or
+  rewritten while the supervisor runs, a **Critical** entry of the user
+  `system` says so. No mark is no proof: the hashes have no key, so whoever
+  can write the file while the supervisor is stopped can write a new chain,
+  and removing the oldest entries shows no break, as after a rotation or a
+  clearing. Entries recorded before this chain have no mark.
 - **Export CSV** and **Export JSON** download every entry that matches the
   filters, newest first. In the CSV file, a `'` stands before what a
   spreadsheet would read as a formula: a value that starts with `=`, `+`,

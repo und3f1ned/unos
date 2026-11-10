@@ -12,6 +12,11 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- Each audit entry carries the hash of the one before it. An entry edited in
+  the log file, and the entry after one that was removed, are marked **Chain
+  broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest
+  entries are removed or rewritten while the supervisor runs, a critical
+  entry says so.
 - The CSV export of the audit log puts a `'` before a value that a spreadsheet
   would read as a formula (one that starts with `=`, `+`, `-`, `@`, a tab or a
   carriage return).
