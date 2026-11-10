@@ -158,12 +158,13 @@ test.describe('Two-factor authentication', () => {
     await page.getByRole('button', { name: 'Verify' }).click();
     await expect(page).toHaveURL('/');
     await expect(page.getByText(`Signed in as ${USER.username}`)).toBeVisible();
-    // Logout drops this session's token in the browser only: it stays valid on the server.
+    // Step 4 drops this session's token in the browser only, without Logout, which would end it
+    // on the server (ADR-0329): step 5 goes on in it.
     const session = (await page.evaluate(() => localStorage.getItem('token')))!;
 
     // Step 4: the same code a second time is refused, and the code form stays and says to wait.
-    await page.getByRole('button', { name: 'Logout' }).click();
-    await expect(page).toHaveURL('/login');
+    await page.evaluate(() => localStorage.removeItem('token'));
+    await page.goto('/login');
     await submitPassword(page);
     await expectCodeForm(page);
     await page.getByLabel('Authentication Code').fill(loginCode);

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import TextIO
 from urllib.parse import quote
 
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, delete, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -33,7 +33,7 @@ from sqlalchemy.pool import NullPool
 
 from .audit.router import log_action
 from .audit.schemas import AuditAction, AuditSeverity
-from .auth.models import User
+from .auth.models import User, UserSession
 from .auth.schemas import MAX_PASSWORD_BYTES
 from .auth.utils import hash_password
 from .config import get_settings
@@ -161,7 +161,8 @@ def _read_password(stdin: TextIO | None, name: str) -> str:
 
 def _store(engine: Engine, admin: Administrator, hashed: str) -> None:
     """Store the new hash and turn two-factor authentication off, as turning it off does
-    (ADR-0238), in one UPDATE that changes the row only while it is as it was read."""
+    (ADR-0238), in one UPDATE that changes the row only while it is as it was read; the
+    administrator's sessions end in the same commit (ADR-0329)."""
     with Session(engine) as session:
         result = session.execute(
             update(User)
@@ -180,6 +181,7 @@ def _store(engine: Engine, admin: Administrator, hashed: str) -> None:
                 f"Administrator '{_shown(admin.username)}' changed while the new password was typed: "
                 "run the command again."
             )
+        session.execute(delete(UserSession).where(UserSession.user_id == admin.id))
         session.commit()
 
 
@@ -234,7 +236,7 @@ def reset_admin(name: str | None) -> int:
     else:
         print(f"Administrator '{shown}': the password is reset (two-factor authentication was off).")
         print("Sign in with the new password.")
-    print("Sessions signed in before stay valid until they expire: docs/RECOVERY.md says how to end them.")
+    print("Its sessions are ended; its API tokens keep working: docs/RECOVERY.md says what else to do.")
     if problems:
         print(f"reset-admin: The reset is done, but the audit log could not record it ({'; '.join(problems)}).",
               file=sys.stderr)

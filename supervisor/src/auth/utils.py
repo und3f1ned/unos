@@ -5,19 +5,20 @@ import logging
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple, Optional
 
 import bcrypt
 import jwt
 import pyotp
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
 from ..database import get_db
-from .models import APIToken, User
+from .models import APIToken, User, UserSession
 from .schemas import MAX_PASSWORD_BYTES
 
 logger = logging.getLogger(__name__)
@@ -52,29 +53,130 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(data: dict) -> str:
+    """A JWT for ``data`` with an expiry, and a new jti unless ``data`` holds one. It is a session only
+    with its row (start_session): tests make the row themselves."""
     settings = get_settings()
-    to_encode = data.copy()
+    to_encode = {"jti": secrets.token_urlsafe(24), **data}
     to_encode["exp"] = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
     return jwt.encode(to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> str:
-    """Return the username of a valid, unexpired access token.
+def start_session(db: AsyncSession, user: User) -> str:
+    """A new session token of ``user``: a JWT with a jti, and the session's row added to ``db``,
+    which the sign-in's commit stores (ADR-0329). Rows of expired sessions go in the same commit."""
+    settings = get_settings()
+    session_id = secrets.token_urlsafe(24)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+    db.add(UserSession(id=session_id, user_id=user.id, expires_at=expires.replace(tzinfo=None)))
+    return jwt.encode(
+        {"sub": user.username, "jti": session_id, "exp": expires},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+
+# Sessions whose row the sign-in's commit could not store, as on a full /data (ADR-0251): the
+# session id and its user. Valid in this process until the token expires, the session ends or the
+# supervisor restarts (ADR-0329).
+_unstored_sessions: dict[str, int] = {}
+
+
+async def keep_unstored_session(db: AsyncSession, token: str, user_id: int) -> None:
+    """After a sign-in's commit: keep the session of ``token`` in memory when its row is not stored."""
+    session_id = decode_access_token(token)[1]
+    if await db.get(UserSession, session_id) is None:
+        _unstored_sessions[session_id] = user_id
+
+
+async def _delete_sessions(db: AsyncSession, query) -> int:
+    """Mark the session rows that ``query`` selects as deleted, without flushing what ``db`` holds:
+    the DELETEs run in the caller's commit, inside its error handling (ADR-0329). Their number."""
+    with db.no_autoflush:
+        rows = (await db.scalars(query)).all()
+    for row in rows:
+        await db.delete(row)
+    return len(rows)
+
+
+async def purge_expired_sessions(db: AsyncSession) -> None:
+    """Delete the rows of the sessions whose tokens have expired, in the caller's commit."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    await _delete_sessions(db, select(UserSession).where(UserSession.expires_at < now))
+
+
+async def end_sessions(db: AsyncSession, user_id: int, *, keep: Optional[str] = None) -> int:
+    """End the sessions of a user, but the one ``keep`` names: their rows go in the caller's
+    commit (ADR-0329). The number of stored sessions ended."""
+    query = select(UserSession).where(UserSession.user_id == user_id)
+    if keep is not None:
+        query = query.where(UserSession.id != keep)
+    for session_id in [s for s, owner in _unstored_sessions.items() if owner == user_id and s != keep]:
+        del _unstored_sessions[session_id]
+    return await _delete_sessions(db, query)
+
+
+def forget_unstored_sessions() -> None:
+    """A restore replaced the database: the sessions kept in memory end with the stored ones."""
+    _unstored_sessions.clear()
+
+
+async def end_session(db: AsyncSession, session_id: str) -> None:
+    """Delete one session, stored or kept in memory; the caller commits."""
+    await db.execute(delete(UserSession).where(UserSession.id == session_id))
+    _unstored_sessions.pop(session_id, None)
+
+
+def decode_access_token(token: str) -> tuple[str, str]:
+    """Return the username and the session id of a valid, unexpired access token.
 
     Raises ``jwt.PyJWTError`` for anything else (bad signature, expired,
-    missing ``exp``/``sub`` claim, other algorithm).
+    missing ``exp``/``sub``/``jti`` claim, other algorithm).
     """
     settings = get_settings()
     payload = jwt.decode(
         token,
         settings.jwt_secret,
         algorithms=[settings.jwt_algorithm],
-        options={"require": ["exp", "sub"]},
+        options={"require": ["exp", "sub", "jti"]},
     )
-    username = payload["sub"]
+    username, session_id = payload["sub"], payload["jti"]
     if not isinstance(username, str) or not username:
         raise jwt.InvalidTokenError("Token subject must be a non-empty string")
-    return username
+    if not isinstance(session_id, str) or not session_id:
+        raise jwt.InvalidTokenError("Token id must be a non-empty string")
+    return username, session_id
+
+
+def session_id_of(token: str) -> Optional[str]:
+    """The session id of a session token that ``authenticate_token`` accepted; None for an API token.
+    Its expiry is not checked again: a request that began with a valid token ends as it began."""
+    if token.startswith(API_TOKEN_PREFIX):
+        return None
+    settings = get_settings()
+    return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm],
+                      options={"verify_exp": False})["jti"]
+
+
+class CallerSession(NamedTuple):
+    """The session of a request, kept across a restore of the database (ADR-0329)."""
+
+    id: str
+    user_id: int
+    username: str
+    expires_at: datetime  # UTC, without a zone, as user_sessions keeps it
+
+
+def caller_session(request: Request, user: User) -> Optional[CallerSession]:
+    """The session of the request that ``authenticate_token`` accepted for ``user``; None for an
+    API token or a request without a Bearer token."""
+    scheme, _, token = (request.headers.get("Authorization") or "").partition(" ")
+    if scheme.lower() != "bearer" or not token or token.startswith(API_TOKEN_PREFIX):
+        return None
+    settings = get_settings()
+    claims = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm],
+                        options={"verify_exp": False})
+    expires_at = datetime.fromtimestamp(claims["exp"], timezone.utc).replace(tzinfo=None)
+    return CallerSession(claims["jti"], user.id, user.username, expires_at)
 
 
 def client_ip(request: Request | None) -> str | None:
@@ -233,7 +335,7 @@ async def authenticate_token(token: str, db: AsyncSession) -> User:
         return await verify_api_token(token, db)
 
     try:
-        username = decode_access_token(token)
+        username, session_id = decode_access_token(token)
     except jwt.PyJWTError:
         raise _unauthorized("Invalid token") from None
 
@@ -241,6 +343,12 @@ async def authenticate_token(token: str, db: AsyncSession) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         raise _unauthorized("User not found")
+    # A token whose session was ended (sign-out, a password change, an administrator) is no
+    # session any more (ADR-0329).
+    session = await db.get(UserSession, session_id)
+    owner = session.user_id if session is not None else _unstored_sessions.get(session_id)
+    if owner != user.id:
+        raise _unauthorized("Session ended")
     return user
 
 

@@ -39,3 +39,23 @@ class APIToken(Base):
     permissions = Column(String, default="*")  # * for all, or specific like "read,containers"
 
     user = relationship("User", back_populates="api_tokens")
+
+
+class UserSession(Base):
+    """A session that a sign-in began: the jti of its JWT (ADR-0329).
+
+    A session token is valid while its row exists. Signing out deletes its row, a password
+    change the user's other rows, and an administrator's End sessions, a new password set by an
+    administrator and the deletion of the user all of them.
+    """
+
+    __tablename__ = "user_sessions"
+    # The rows live in their primary key's B-tree alone, without indexes: a sign-in writes fewer
+    # pages (ADR-0308), and the table holds about a day of sessions, so a scan costs nothing.
+    __table_args__ = {"sqlite_with_rowid": False}
+
+    id = Column(String, primary_key=True)  # the token's jti
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # When the token expires (UTC, without a zone, as SQLite keeps it): rows of expired
+    # sessions go at the next sign-in.
+    expires_at = Column(DateTime, nullable=False)

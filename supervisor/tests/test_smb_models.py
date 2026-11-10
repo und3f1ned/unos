@@ -148,7 +148,8 @@ class TestTablesOnAnOldDatabase:
 
         await _init_db_on(old_db, monkeypatch)
 
-        assert _tables(old_db) == OLD_TABLES | SMB_TABLES
+        # And the sessions' table (ADR-0329), new beside them.
+        assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions"}
         assert _rows(old_db, "users") == users
         assert _schema(old_db, "users") == users_schema  # no column added to users
         # Nothing is written into the new tables: the SmbState row is made on first use.

@@ -189,7 +189,7 @@ class TestTokensFollowCurrentSettings:
         token = create_access_token({"sub": "alice"})
 
         assert jwt.decode(token, rotated_settings.jwt_secret, algorithms=["HS256"])["sub"] == "alice"
-        assert decode_access_token(token) == "alice"
+        assert decode_access_token(token)[0] == "alice"
         with pytest.raises(jwt.InvalidSignatureError):
             jwt.decode(token, SUITE_SECRET, algorithms=["HS256"])
 

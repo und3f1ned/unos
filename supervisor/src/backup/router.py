@@ -66,7 +66,7 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import database
-from ..auth.utils import verify_token
+from ..auth.utils import CallerSession, caller_session, forget_unstored_sessions, verify_token
 from ..config import get_settings
 from ..database import init_db
 from ..request_limits import UPLOAD_OPENAPI, UploadSink, receive_upload
@@ -766,6 +766,10 @@ def _prepare_smb(db_file: Path, db_path: Path) -> list[str]:
             authoritative = service.restored_smb_authoritative(conn)
             guest_shares = service.prepare_restored_shares(conn, authoritative)
             messages = accounts.prepare_restored_accounts(conn, snapshot, authoritative)
+            # The backup's sessions are not this installation's: a restore ends every session
+            # (ADR-0329). An older backup has no such table: init_db makes it after the swap.
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_sessions'").fetchone():
+                conn.execute("DELETE FROM user_sessions")
             conn.execute("COMMIT")
         except BaseException:
             conn.execute("ROLLBACK")
@@ -851,6 +855,7 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
         if db_file is not None:
             previous_db = _keep_copy_of_database(db_path)
             _replace_database(db_file, db_path)
+            forget_unstored_sessions()
             restored.append("database")
 
         for name in _NOT_RESTORED:
@@ -901,7 +906,24 @@ async def _after_database_restore(result: dict) -> None:
     result["message"] = _restore_message(result["restored"], result["warnings"])
 
 
-async def _restore_and_reconcile(backup_path: Path, passphrase: str | None) -> dict:
+def _keep_caller_session(caller: CallerSession) -> None:
+    """After a restore, which ended every session: the session of the administrator who restored
+    goes on when the restored database has them as an administrator, under the same id and name
+    (ADR-0329), so that they see the result. Otherwise, or when it cannot be stored, they sign in again."""
+    try:
+        with contextlib.closing(sqlite3.connect(_live_db_path(), timeout=DB_BUSY_TIMEOUT)) as conn:
+            same = conn.execute("SELECT 1 FROM users WHERE id = ? AND username = ? AND is_admin",
+                                (caller.user_id, caller.username)).fetchone()
+            if same:
+                conn.execute("INSERT OR IGNORE INTO user_sessions (id, user_id, expires_at) VALUES (?, ?, ?)",
+                             (caller.id, caller.user_id, caller.expires_at.strftime("%Y-%m-%d %H:%M:%S.%f")))
+                conn.commit()
+    except sqlite3.Error:
+        logger.warning("Could not keep the session of the restore's administrator", exc_info=True)
+
+
+async def _restore_and_reconcile(backup_path: Path, passphrase: str | None,
+                                 caller: CallerSession | None = None) -> dict:
     """The restore and its post-restore step, holding smb_lock (a restore is an SMB state change)."""
     global _restore_running
     try:
@@ -909,6 +931,8 @@ async def _restore_and_reconcile(backup_path: Path, passphrase: str | None) -> d
             result = await asyncio.to_thread(_restore, backup_path, passphrase)
             if "database" in result["restored"]:
                 await _after_database_restore(result)
+                if caller is not None:
+                    await asyncio.to_thread(_keep_caller_session, caller)
             return result
     finally:
         _restore_running = False
@@ -1134,9 +1158,10 @@ async def upload_backup(request: Request, _: dict = Depends(verify_token)):
 
 @router.post("/restore/{filename}")
 async def restore_backup(
+    request: Request,
     filename: str,
     decrypt_request: Optional[DecryptRequest] = None,
-    _: dict = Depends(verify_token)
+    user=Depends(verify_token),
 ):
     """Restore from a backup file. Provide passphrase for encrypted backups.
 
@@ -1161,7 +1186,9 @@ async def restore_backup(
         raise HTTPException(409, "Another restore is already running")
     _restore_running = True
     try:
-        task = asyncio.ensure_future(_restore_and_reconcile(backup_path, passphrase if is_encrypted else None))
+        caller = caller_session(request, user)
+        task = asyncio.ensure_future(
+            _restore_and_reconcile(backup_path, passphrase if is_encrypted else None, caller))
     except BaseException:
         _restore_running = False
         raise

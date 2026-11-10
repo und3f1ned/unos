@@ -112,6 +112,7 @@ and this index, and `make check-fast` runs it.
 | [0263](0263-a-users-login-history-starts-with-their-account.md) | A regular user's login history starts with their account | accepted | 2026-11-08 |
 | [0284](0284-root-on-the-host-resets-an-administrators-password-and-two-factor-authentication.md) | Only root on the host resets an administrator's password and two-factor authentication, with the emergency command line | accepted | 2026-11-08 |
 | [0312](0312-a-websockets-credential-re-check-in-progress-runs-to-its-end.md) | A WebSocket's credential re-check in progress runs to its end when the socket closes | accepted | 2026-11-09 |
+| [0329](0329-a-session-is-a-row-and-ending-it-deletes-the-row.md) | A session is a row of user_sessions, and ending a session deletes its row | accepted | 2026-11-10 |
 
 ## Storage
 

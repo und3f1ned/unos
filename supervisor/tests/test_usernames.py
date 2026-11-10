@@ -17,12 +17,13 @@ from sqlalchemy.pool import NullPool
 
 from src.auth import router as auth_router
 from src.auth.models import User
-from src.auth.utils import create_access_token
 from src.database import Base, get_db
 from src.main import app
 from src.main import limiter as app_limiter
 from src.security.validators import validate_new_username
 from src.shares import smb, smbconf
+
+from .session_tokens import session_headers, session_token
 
 API = "/api/v1"
 ADMIN_PW = "Admin-pass-2026"
@@ -94,7 +95,7 @@ def usernames(engine) -> list[str]:
 
 def admin_headers(db) -> dict[str, str]:
     add_user(db.engine, "owner", ADMIN_PW, admin=True)
-    return {"Authorization": f"Bearer {create_access_token({'sub': 'owner'})}"}
+    return session_headers(db.engine, "owner")
 
 
 class TestValidator:
@@ -189,7 +190,7 @@ class TestLegacyUsers:
 
     def test_smb_is_unavailable_for_them(self, db):
         add_user(db.engine, "Bob.Smith", "Legacy-pass-2026")
-        token = create_access_token({"sub": "Bob.Smith"})
+        token = session_token(db.engine, "Bob.Smith")
 
         status = db.client.get(f"{API}/auth/me/smb", headers={"Authorization": f"Bearer {token}"}).json()
 
@@ -200,7 +201,7 @@ class TestLegacyUsers:
         """A user created before the SID rule (or restored) keeps the name, but gets no SMB:
         smb.conf never names it in valid users or write list."""
         add_user(db.engine, "s-1-1-0", "Legacy-pass-2026")
-        token = create_access_token({"sub": "s-1-1-0"})
+        token = session_token(db.engine, "s-1-1-0")
 
         status = db.client.get(f"{API}/auth/me/smb", headers={"Authorization": f"Bearer {token}"}).json()
 
@@ -211,7 +212,7 @@ class TestLegacyUsers:
 
     def test_they_can_change_their_password(self, db):
         add_user(db.engine, "Bob.Smith", "Legacy-pass-2026")
-        token = create_access_token({"sub": "Bob.Smith"})
+        token = session_token(db.engine, "Bob.Smith")
 
         response = db.client.post(f"{API}/auth/change-password",
                                   json={"current_password": "Legacy-pass-2026", "new_password": "New-pass-2026"},

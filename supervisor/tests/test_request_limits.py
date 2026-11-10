@@ -52,6 +52,8 @@ from src.request_limits import (
 )
 from src.websocket import events
 
+from .session_tokens import session_token
+
 backup_router = importlib.import_module("src.backup.router")
 files_router = importlib.import_module("src.files.router")
 SUPERVISOR = Path(__file__).resolve().parents[1]
@@ -577,10 +579,11 @@ def ws_token(tmp_path):
     with Session(engine) as session:
         session.add(User(username="ws_user", hashed_password="!", is_admin=False))
         session.commit()
+    token = session_token(engine, "ws_user")
     engine.dispose()
     maker = async_sessionmaker(create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool))
     with patch.object(events, "async_session", maker):
-        yield create_access_token({"sub": "ws_user"})
+        yield token
 
 
 def _first_message(port: int, message: str, compression: str | None) -> tuple[str | None, int | None]:
@@ -696,6 +699,7 @@ def admin_token(tmp_path):
     with Session(engine) as session:
         session.add(User(username="limits_admin", hashed_password="!", is_admin=True))
         session.commit()
+    token = session_token(engine, "limits_admin")
     engine.dispose()
     maker = async_sessionmaker(
         create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool), expire_on_commit=False
@@ -707,7 +711,7 @@ def admin_token(tmp_path):
 
     app.dependency_overrides[get_db] = override_get_db
     try:
-        yield create_access_token({"sub": "limits_admin"})
+        yield token
     finally:
         app.dependency_overrides.pop(get_db, None)
 

@@ -24,7 +24,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect as ws_connect
 
 from src.auth import utils as auth_utils
-from src.auth.models import APIToken, User
+from src.auth.models import APIToken, User, UserSession
 from src.auth.utils import create_access_token, generate_api_token
 from src.config import get_settings
 from src.database import Base
@@ -32,6 +32,7 @@ from src.main import app
 from src.websocket import events
 
 from .test_api_token_last_use import FAILURES, START
+from .session_tokens import session_token
 from .test_containers import served_by_uvicorn
 
 _FAST_HASH = bcrypt.hashpw(b"irrelevant", bcrypt.gensalt(rounds=4)).decode()
@@ -63,13 +64,13 @@ def client(ws_db):
 
 
 @pytest.fixture
-def admin_token():
-    return create_access_token({"sub": "ws_admin"})
+def admin_token(ws_db):
+    return session_token(ws_db.engine, "ws_admin")
 
 
 @pytest.fixture
-def user_token():
-    return create_access_token({"sub": "ws_user"})
+def user_token(ws_db):
+    return session_token(ws_db.engine, "ws_user")
 
 
 def _auth(ws, token):
@@ -473,6 +474,22 @@ class TestReauthentication:
         assert (closed.code, closed.reason) == (4401, "unauthorized")
         assert all(message["type"] == "stats" for message in received)
 
+    def test_an_ended_session_is_disconnected_from_events(self, client, ws_db, user_token, fast_recheck):
+        """Signing out, a password change or an administrator ends a session (ADR-0329): the socket
+        closes at its next check."""
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "stats"
+
+            with Session(ws_db.engine) as session:
+                session.query(UserSession).delete()
+                session.commit()
+            closed, received = _read_until_closed(ws)
+
+        assert (closed.code, closed.reason) == (4401, "unauthorized")
+        assert all(message["type"] == "stats" for message in received)
+
     def test_disabled_api_token_is_disconnected_from_events(self, client, ws_db, fast_recheck):
         full_token, token_hash = generate_api_token()
         with Session(ws_db.engine) as session:
@@ -576,9 +593,8 @@ class TestReauthentication:
         # The first two of those re-checks are over: each one tried, and was rolled back.
         assert len(self._last_use_warnings(caplog, error)) >= 2
 
-    def test_expired_jwt_is_disconnected_from_events(self, client, fast_recheck):
-        token = jwt.encode({"sub": "ws_user", "exp": int(time.time()) + 2},
-                           get_settings().jwt_secret, algorithm=get_settings().jwt_algorithm)
+    def test_expired_jwt_is_disconnected_from_events(self, client, ws_db, fast_recheck):
+        token = session_token(ws_db.engine, "ws_user", expires=int(time.time()) + 2)
 
         with client.websocket_connect("/ws/v1/events") as ws:
             _auth(ws, token)

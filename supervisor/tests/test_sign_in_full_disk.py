@@ -154,6 +154,16 @@ class TestSignInWhileDataIsFull:
         assert stored_attempts(world) == []
         assert world.audit() == []
 
+    def test_a_session_that_could_not_be_stored_ends_at_sign_out(self, world, monkeypatch):
+        """Its row was lost with the commit: the supervisor keeps it in memory (ADR-0329)."""
+        fill_data(world, monkeypatch)
+        headers = {"Authorization": f"Bearer {sign_in(world).json()['access_token']}"}
+        assert world.client.get(f"{API}/auth/me", headers=headers).status_code == 200
+
+        assert world.client.post(f"{API}/auth/logout", headers=headers).status_code == 200
+
+        assert world.client.get(f"{API}/auth/me", headers=headers).status_code == 401
+
     def test_the_records_it_could_not_write_are_reported_in_the_log(self, world, monkeypatch):
         fill_data(world, monkeypatch)
         before = datetime.now(timezone.utc).replace(microsecond=0)

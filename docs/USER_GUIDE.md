@@ -41,11 +41,17 @@ Welcome to UNOS! This guide will help you get the most out of your NAS.
    administrator with "Admin user already exists. Use /login instead." and
    creates nobody; administrators add further users on the **Users** page.
 
-A session lasts 24 hours. When it has ended, the page you have open goes to
-the login page once, at its next request (also during an upload or a
-download) or when the server ends its live statistics. **Logout** in one
-browser tab signs out the other tabs too, and signing in as another account
-in one tab switches the other tabs to that account.
+A session lasts 24 hours, or until it is ended: **Logout** ends it on the
+server too, a password change ends your other sessions, and an administrator
+can end all of a user's sessions with the log-out icon in the user's row on
+the **Users** page. When it has ended, the page you have open goes to the
+login page once, at its next request (also during an upload or a download) or
+when the server ends its live statistics. **Logout** in one browser tab signs
+out the other tabs too, and signing in as another account in one tab switches
+the other tabs to that account. Restoring a backup ends every session but that
+of the administrator who restored it: everyone else signs in again. API tokens
+are not sessions: they keep working until they are disabled, expire or are
+deleted.
 
 Signing in works also while the disk that holds the UNOS data (`/data`, on the
 system disk) is full, so that an administrator can sign in and free space, for
@@ -1059,8 +1065,9 @@ Users can change their own password:
    successfully"
 
 From then on the old password no longer signs in, and the new one does.
-Sessions that were open before stay signed in until they end (see
-[First Login](#first-login)).
+Your other sessions end (on other browsers and devices); this one stays signed
+in. A password that an administrator sets on the **Users** page ends every
+session of that user.
 
 Admins can reset any user's password via **Users** page. When no administrator
 can sign in, root on the NAS resets an administrator's password (see

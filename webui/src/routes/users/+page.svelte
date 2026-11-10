@@ -5,6 +5,7 @@
 		createUser,
 		deleteUser,
 		disableUserSmb,
+		endSessions,
 		enableUserSmb,
 		getUsers,
 		updateUser,
@@ -15,7 +16,7 @@
 	import { ApiError } from '$lib/api/client';
 	import { getSmbShares } from '$lib/api/shares';
 	import { user as currentUser } from '$lib/stores/auth';
-	import { Edit, Shield, ShieldOff, Trash2, UserPlus, Users } from 'lucide-svelte';
+	import { Edit, LogOut, Shield, ShieldOff, Trash2, UserPlus, Users } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, Input, Modal } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { intlLocale, t } from '$lib/i18n';
@@ -329,6 +330,19 @@
 		}
 	}
 
+	// ---- End sessions (ADR-0329) ----
+
+	async function endUserSessions(target: User) {
+		try {
+			const result = await endSessions(target.id, target.username);
+			showOutcome($t('users.endSessions.done', { name: target.username, n: result.ended }), []);
+		} catch (e) {
+			const message = messageOf(e);
+			await currentAfterRefusal(e, target);
+			actionError = { title: $t('users.endSessions.failed'), message };
+		}
+	}
+
 	// ---- Delete ----
 
 	let userToDelete: User | null = null;
@@ -471,6 +485,10 @@
 													<span class="sr-only">{$t('users.editUser', { name: user.username })}</span>
 												</Button>
 												{#if $currentUser?.id !== user.id}
+													<Button variant="ghost" size="icon-sm" on:click={() => endUserSessions(user)}>
+														<LogOut class="w-4 h-4" />
+														<span class="sr-only">{$t('users.endSessionsOf', { name: user.username })}</span>
+													</Button>
 													<Button variant="ghost" size="icon-sm" on:click={() => openDelete(user)}>
 														<Trash2 class="w-4 h-4 text-error" />
 														<span class="sr-only">{$t('users.deleteUser', { name: user.username })}</span>
