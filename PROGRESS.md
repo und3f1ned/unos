@@ -350,8 +350,10 @@ Open owner actions:
   error paths, the unchecked organization and country, openssl on the event loop, symlinks
   followed) went into the notes of `security.custom-certificates`. `test_security.py` 119
   passed.
-- `passes` stays false: `make e2e-local` cannot start Chromium on this workstation now (owner
-  action 2), and the web UI calls the delete and the listing. Not host-level.
+- `make e2e-local` on main f3347fb, which holds the change, passed on the stand-in with
+  `E2E_CHROMIUM_PATH`, the cached Chromium that Now names (670 passed, 16 skips on listed
+  conditions), so `passes` is true; the first record of this entry said wrongly that Chromium
+  could not start. Not host-level.
 
 ### 2026-11-10: install.sh and update.sh start UNOS without a compose down first
 
