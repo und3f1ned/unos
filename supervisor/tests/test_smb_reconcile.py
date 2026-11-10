@@ -62,9 +62,22 @@ def raw(world: World, *statements: str) -> None:
         conn.commit()
 
 
+# The account policies that the reconcile keeps, in the order it reads and sets them: the
+# password history (ADR-0278), then the lockout's duration and reset time before its threshold
+# (ADR-0334).
+POLICIES = {"password history": 3, "lockout duration": 5, "reset count minutes": 5, "bad lockout attempt": 5}
+LOCKOUT = ("lockout duration", "reset count minutes", "bad lockout attempt")
+# Samba's defaults (pdbedit -P): no lockout, whose times are 30 minutes each.
+LOCKOUT_DEFAULTS = {"lockout duration": 30, "reset count minutes": 30, "bad lockout attempt": 0}
+READ = {policy: ["pdbedit", "-P", policy] for policy in POLICIES}
+SET = {policy: ["pdbedit", "-P", policy, "-C", str(value)] for policy, value in POLICIES.items()}
+READS = [READ[policy] for policy in POLICIES]
+SKIPPED_THRESHOLD = "Samba's bad lockout attempt was not set: the lockout needs its duration and reset time first"
+
+
 def consistent(world: World) -> None:
     """alice active, bob deactivated (account kept, no passdb), carol allowed (never activated);
-    Samba keeps the password history that the reconcile sets (ADR-0278)."""
+    Samba keeps the account policies that the reconcile sets (ADR-0278, ADR-0334)."""
     world.make_active("alice", 70000, ALICE_PW)
     world.deactivated("bob", 70001)
     world.add_user("carol", "Carol-pass-2026")
@@ -72,7 +85,7 @@ def consistent(world: World) -> None:
     world.set_next_uid(70002)
     world.fake.add_account("nas", 1000, gid=1000, gecos="nas", home="/home/nas", shell="/bin/bash")
     world.fake.add_passdb("nas", uid=1000)
-    world.fake.policies["password history"] = accounts.PASSWORD_HISTORY
+    world.fake.policies.update(POLICIES)
 
 
 def _erin_with_daves_uid(world: World) -> None:
@@ -108,11 +121,12 @@ class TestConsistent:
         assert result == interfaces.ReconcileResult(changes=[], problems=[])
         assert world.fake.mutating_calls() == []
         assert commits["n"] == 0
-        # The read-only commands of a consistent start (ADR-0138), Samba's password history among them (ADR-0278).
+        # The read-only commands of a consistent start (ADR-0138), Samba's account policies among them
+        # (ADR-0278, ADR-0334).
         assert [a[:2] for a in world.fake.argvs()] == [
             ["/bin/sh", "-c"], ["getent", "passwd"], ["getent", "group"], ["getent", "group"], ["pdbedit", "-L"],
-            ["pdbedit", "-P"],
-        ]
+        ] + [["pdbedit", "-P"]] * 4
+        assert world.fake.commands("pdbedit", "-P") == READS
 
     def test_twice(self, world, commits):
         consistent(world)
@@ -125,8 +139,8 @@ class TestConsistent:
         assert second == interfaces.ReconcileResult()
 
 
-READ_HISTORY = ["pdbedit", "-P", "password history"]
-SET_HISTORY = ["pdbedit", "-P", "password history", "-C", "3"]
+READ_HISTORY = READ["password history"]
+SET_HISTORY = SET["password history"]
 
 
 class TestPasswordHistory:
@@ -142,7 +156,7 @@ class TestPasswordHistory:
 
         assert result == interfaces.ReconcileResult(changes=["Set Samba's password history to 3 (it was 0)"])
         assert world.fake.policies["password history"] == 3
-        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY, SET_HISTORY]
+        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY, SET_HISTORY] + READS[1:]
         assert world.fake.mutating_calls() == [SET_HISTORY]
 
     def test_another_value_is_set_back(self, world):
@@ -161,7 +175,7 @@ class TestPasswordHistory:
         second = reconcile(world)
 
         assert first == second == interfaces.ReconcileResult()
-        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY, READ_HISTORY]
+        assert world.fake.commands("pdbedit", "-P") == READS + READS
         assert world.fake.mutating_calls() == []
         assert commits["n"] == 0
 
@@ -173,7 +187,7 @@ class TestPasswordHistory:
         again = reconcile(world)
 
         assert again == interfaces.ReconcileResult()
-        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY, SET_HISTORY, READ_HISTORY]
+        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY, SET_HISTORY] + READS[1:] + READS
 
     def test_a_failed_read_is_a_problem_and_the_rest_goes_on(self, world):
         consistent(world)
@@ -183,11 +197,14 @@ class TestPasswordHistory:
 
         result = reconcile(world)
 
+        # Each policy is read on its own, so each is named; without its times the lockout's
+        # threshold is not even read (ADR-0334).
         assert result.problems == [
-            "pdbedit could not read Samba's password history: Failed to open account policy database"
-        ]
+            f"pdbedit could not read Samba's {policy}: Failed to open account policy database"
+            for policy in POLICIES if policy != "bad lockout attempt"
+        ] + [SKIPPED_THRESHOLD]
         assert result.changes == ["Created the missing host account alice (uid 70000)"]
-        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY]
+        assert world.fake.commands("pdbedit", "-P") == READS[:3]
         assert world.fake.policies["password history"] == 0
 
     def test_a_failed_change_is_a_problem(self, world):
@@ -208,6 +225,7 @@ class TestPasswordHistory:
         'account policy "password history" description: Length of Password History Entries (0 = off)\n',
         'account policy "password history" value is: many\n',
         'account policy "min password length" value is: 3\n',
+        'account policy "bad lockout attempt" value is: 3\n',
     ])
     def test_an_answer_without_the_value_is_a_problem_and_nothing_is_set(self, world, monkeypatch, stdout):
         consistent(world)
@@ -224,7 +242,130 @@ class TestPasswordHistory:
         result = reconcile(world)
 
         assert result.problems == ["pdbedit did not print Samba's password history"]
-        assert world.fake.commands("pdbedit", "-P") == [READ_HISTORY]
+        assert world.fake.commands("pdbedit", "-P") == READS
+
+
+class TestLockout:
+    """shares.smb-login-protection, step 1 (ADR-0334): Samba locks an account for 5 minutes after 5
+    failed sign-ins, and the count of failures starts again after 5 minutes without one. The
+    reconcile reads the three policies at every start and sets each only when it differs, the
+    threshold last, so that the lockout starts with its own duration and reset time."""
+
+    def test_a_host_without_a_lockout_gets_one(self, world):
+        consistent(world)
+        world.fake.policies.update(LOCKOUT_DEFAULTS)
+
+        result = reconcile(world)
+
+        assert result == interfaces.ReconcileResult(changes=[
+            "Set Samba's lockout duration to 5 (it was 30)",
+            "Set Samba's reset count minutes to 5 (it was 30)",
+            "Set Samba's bad lockout attempt to 5 (it was 0)",
+        ])
+        assert world.fake.policies == POLICIES
+        assert world.fake.commands("pdbedit", "-P") == [
+            READ_HISTORY,
+            READ["lockout duration"], SET["lockout duration"],
+            READ["reset count minutes"], SET["reset count minutes"],
+            READ["bad lockout attempt"], SET["bad lockout attempt"],
+        ]
+        assert world.fake.mutating_calls() == [SET[policy] for policy in LOCKOUT]
+
+    def test_a_fresh_host_gets_every_policy_at_its_first_start(self, world):
+        consistent(world)
+        world.fake.policies.update({"password history": 0, **LOCKOUT_DEFAULTS})  # the fake's defaults
+
+        result = reconcile(world)
+
+        assert result.changes == [
+            "Set Samba's password history to 3 (it was 0)",
+            "Set Samba's lockout duration to 5 (it was 30)",
+            "Set Samba's reset count minutes to 5 (it was 30)",
+            "Set Samba's bad lockout attempt to 5 (it was 0)",
+        ]
+        assert world.fake.policies == POLICIES
+        assert reconcile(world) == interfaces.ReconcileResult()
+        assert world.fake.mutating_calls() == list(SET.values())
+
+    def test_other_values_are_set_back(self, world):
+        consistent(world)
+        # pdbedit prints a duration of -1 (locked until an administrator unlocks) as 4294967295.
+        world.fake.policies.update({"lockout duration": 4294967295, "reset count minutes": 0, "bad lockout attempt": 3})
+
+        result = reconcile(world)
+
+        assert result.changes == [
+            "Set Samba's lockout duration to 5 (it was 4294967295)",
+            "Set Samba's reset count minutes to 5 (it was 0)",
+            "Set Samba's bad lockout attempt to 5 (it was 3)",
+        ]
+        assert world.fake.policies == POLICIES
+
+    def test_a_host_that_has_it_is_only_read(self, world, commits):
+        consistent(world)
+
+        first = reconcile(world)
+        second = reconcile(world)
+
+        assert first == second == interfaces.ReconcileResult()
+        assert world.fake.commands("pdbedit", "-P") == READS + READS
+        assert world.fake.mutating_calls() == []
+        assert commits["n"] == 0
+
+    def test_a_failed_change_is_a_problem_and_the_lockout_stays_off(self, world):
+        """Without its own duration the lockout would lock on the host's terms (ADR-0334)."""
+        consistent(world)
+        world.fake.policies.update(LOCKOUT_DEFAULTS)
+        world.fake.fail[tuple(SET["lockout duration"])] = (1, "valid account policy, but unable to set value!")
+
+        result = reconcile(world)
+
+        assert result.problems == [
+            "pdbedit could not set Samba's lockout duration: valid account policy, but unable to set value!",
+            SKIPPED_THRESHOLD,
+        ]
+        assert result.changes == ["Set Samba's reset count minutes to 5 (it was 30)"]
+        assert world.fake.policies["lockout duration"] == 30
+        assert world.fake.policies["bad lockout attempt"] == 0
+
+    def test_a_failed_read_is_a_problem_and_the_lockout_stays_off(self, world):
+        consistent(world)
+        world.fake.policies.update(LOCKOUT_DEFAULTS)
+        world.fake.fail[tuple(READ["reset count minutes"])] = (1, "No account policy by that name!")
+
+        result = reconcile(world)
+
+        assert result.problems == [
+            "pdbedit could not read Samba's reset count minutes: No account policy by that name!",
+            SKIPPED_THRESHOLD,
+        ]
+        assert result.changes == ["Set Samba's lockout duration to 5 (it was 30)"]
+        assert world.fake.policies["reset count minutes"] == 30
+        assert world.fake.policies["bad lockout attempt"] == 0
+
+    @pytest.mark.parametrize("policy", LOCKOUT)
+    def test_an_answer_without_the_value_is_a_problem_and_nothing_is_set(self, world, monkeypatch, policy):
+        consistent(world)
+        world.fake.policies[policy] = LOCKOUT_DEFAULTS[policy]
+        real = world.fake.run
+
+        def run(cmd, **kwargs):
+            if list(cmd) == READ[policy]:
+                world.fake.calls.append((list(cmd), kwargs.get("input")))
+                return HostResult(0, f'account policy "{policy}" value is: many\n', "")
+            return real(cmd, **kwargs)
+
+        monkeypatch.setattr("src.host.run_on_host", run)
+
+        result = reconcile(world)
+
+        if policy == "bad lockout attempt":
+            assert result.problems == [f"pdbedit did not print Samba's {policy}"]
+            assert world.fake.commands("pdbedit", "-P") == READS
+        else:  # a time the lockout needs: its threshold stays as it was, and is not read
+            assert result.problems == [f"pdbedit did not print Samba's {policy}", SKIPPED_THRESHOLD]
+            assert world.fake.commands("pdbedit", "-P") == READS[:3]
+        assert world.fake.policies[policy] == LOCKOUT_DEFAULTS[policy]
 
 
 class TestHostRepairs:

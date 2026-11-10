@@ -70,9 +70,10 @@ SID_LIKE_RULE = "Names that start with 's-' and a digit are reserved: Samba read
 
 SMB_PASSWORD_MIN_CHARS = 8
 SMB_PASSWORD_MAX_BYTES = 72
-# SMB has no second factor and no login limit (ADR-0280): passwords on the list of
-# common_passwords.txt are refused (ADR-0279). The web UI shows its hint to change the
-# password after every answer that starts with "SMB passwords must".
+# SMB has no second factor, and its lockout still lets 5 passwords per account be tried every
+# 5 minutes (ADR-0334): passwords on the list of common_passwords.txt are refused (ADR-0279).
+# The web UI shows its hint to change the password after every answer that starts with "SMB
+# passwords must".
 COMMON_PASSWORD_RULE = (
     "SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first"
 )

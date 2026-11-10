@@ -131,7 +131,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   missing): installing a package is an owner action (ADR-0211).
 - The scenario checks write to the SD card, and each step's line says how much: the API's
   database and audit log at every change, smb.conf at every share change, `/etc/passwd` and
-  `/etc/shadow` when the smb check's account is made and deleted, passdb.tdb then and at its
-  password change (not at a wrong password while no lockout counts failures: ADR-0310, which the
-  check compares), the backups check's two backups, and
+  `/etc/shadow` when the smb check's account is made and deleted, passdb.tdb then, at its
+  password change and at each wrong password that Samba's lockout counts (not at the replaced
+  password, which the history holds, nor while the account is locked: ADR-0334, which the check
+  compares), the backups check's two backups, and
   about 0.02 MiB of container logs per API call (ADR-0304).

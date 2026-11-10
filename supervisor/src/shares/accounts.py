@@ -104,11 +104,28 @@ SMB_CONF_REPLACED = (
 AUTH_IN_PROGRESS = "(auth in progress)"
 _DIGITS = re.compile(r"[0-9]{1,10}")
 
-# Samba keeps the hashes of each account's current and two previous passwords (ADR-0278).
+# Samba's account policies that the startup reconcile keeps (ensure_account_policy). Samba keeps
+# the hashes of each account's current and two previous passwords (ADR-0278), and locks an
+# account for LOCKOUT_MINUTES after BAD_LOCKOUT_ATTEMPTS failed sign-ins, whose count starts
+# again after RESET_COUNT_MINUTES without one (ADR-0334).
 PASSWORD_HISTORY = 3
 PASSWORD_HISTORY_POLICY = "password history"
-# What ``pdbedit -P "password history"`` prints for the value (source3/utils/pdbedit.c).
-_POLICY_VALUE = re.compile(r'^account policy "password history" value is: ([0-9]{1,10})$', re.MULTILINE)
+BAD_LOCKOUT_ATTEMPTS = 5
+BAD_LOCKOUT_POLICY = "bad lockout attempt"
+LOCKOUT_MINUTES = 5
+LOCKOUT_DURATION_POLICY = "lockout duration"
+RESET_COUNT_MINUTES = 5
+RESET_COUNT_POLICY = "reset count minutes"
+# In the order the reconcile reads and sets them: the lockout's threshold after its duration and
+# reset time, so that the lockout starts with its own times rather than Samba's 30 minutes.
+ACCOUNT_POLICIES: tuple[tuple[str, int], ...] = (
+    (PASSWORD_HISTORY_POLICY, PASSWORD_HISTORY),
+    (LOCKOUT_DURATION_POLICY, LOCKOUT_MINUTES),
+    (RESET_COUNT_POLICY, RESET_COUNT_MINUTES),
+    (BAD_LOCKOUT_POLICY, BAD_LOCKOUT_ATTEMPTS),
+)
+# What ``pdbedit -P "<policy>"`` prints for the value (source3/utils/pdbedit.c).
+_POLICY_VALUE = 'account policy "{}" value is: ([0-9]{{1,10}})'
 
 _GID = constants.SMB_GROUP_GID
 _GROUP = constants.SMB_GROUP_NAME
@@ -398,32 +415,38 @@ def read_passdb_names() -> dict[str, str]:
     return names
 
 
-def ensure_password_history() -> str | None:
-    """Samba keeps the last PASSWORD_HISTORY passwords of each passdb entry (ADR-0278).
+def ensure_account_policy(policy: str, value: int) -> str | None:
+    """Samba's account policy ``policy`` (one of ACCOUNT_POLICIES) is ``value``.
 
-    A wrong password that is one of the two before an account's current one
-    then writes nothing to passdb.tdb, while every other wrong password still
-    writes the entry (source3/auth/check_samsec.c): a client that keeps a saved
-    old password after a change no longer writes to the system disk at each
-    attempt. Only a password set while the policy is 3 enters the history
-    (source3/passdb/passdb.c). ``pdbedit -P`` reads the account policy at every
-    start; it is set, which writes account_policy.tdb, only when it differs.
-    Returns the change to report, or None; raises SmbHostError.
+    The password history (ADR-0278): a wrong password that is one of the two
+    before an account's current one does not count as a failed sign-in, and
+    writes passdb.tdb only to set an expired count back to 0
+    (source3/auth/check_samsec.c), so a client that keeps a saved old password
+    after a change locks nothing. Only a password set while the policy is 3
+    enters the history (source3/passdb/passdb.c). The lockout (ADR-0334): every other wrong
+    password counts, which writes the account's passdb entry; the failure that
+    reaches BAD_LOCKOUT_ATTEMPTS locks the account for LOCKOUT_MINUTES, during
+    which every sign-in, with the right password too, is refused with
+    NT_STATUS_ACCOUNT_LOCKED_OUT and writes nothing.
+
+    ``pdbedit -P`` reads the policy at every start; it is set, which writes
+    account_policy.tdb, only when it differs. Returns the change to report, or
+    None; raises SmbHostError.
     """
-    result = _run(["pdbedit", "-P", PASSWORD_HISTORY_POLICY], timeout=CHANGE_TIMEOUT)
+    result = _run(["pdbedit", "-P", policy], timeout=CHANGE_TIMEOUT)
     if not result.ok:
-        raise SmbHostCommandFailed(503, f"pdbedit could not read Samba's password history: {_last_line(result)}")
-    found = _POLICY_VALUE.search(result.stdout)
+        raise SmbHostCommandFailed(503, f"pdbedit could not read Samba's {policy}: {_last_line(result)}")
+    found = re.search("^" + _POLICY_VALUE.format(re.escape(policy)) + "$", result.stdout, re.MULTILINE)
     if found is None:
-        raise SmbHostCommandFailed(503, "pdbedit did not print Samba's password history")
-    value = int(found.group(1))
-    if value == PASSWORD_HISTORY:
+        raise SmbHostCommandFailed(503, f"pdbedit did not print Samba's {policy}")
+    current = int(found.group(1))
+    if current == value:
         return None
-    result = _run(["pdbedit", "-P", PASSWORD_HISTORY_POLICY, "-C", str(PASSWORD_HISTORY)], timeout=CHANGE_TIMEOUT)
+    result = _run(["pdbedit", "-P", policy, "-C", str(value)], timeout=CHANGE_TIMEOUT)
     if not result.ok:
-        raise SmbHostCommandFailed(503, f"pdbedit could not set Samba's password history: {_last_line(result)}")
-    logger.info("Samba's password history is now %d (it was %d)", PASSWORD_HISTORY, value)
-    return f"Set Samba's password history to {PASSWORD_HISTORY} (it was {value})"
+        raise SmbHostCommandFailed(503, f"pdbedit could not set Samba's {policy}: {_last_line(result)}")
+    logger.info("Samba's %s is now %d (it was %d)", policy, value, current)
+    return f"Set Samba's {policy} to {value} (it was {current})"
 
 
 def is_unos_passdb_entry(name: object, accounts: dict[str, HostAccount], passdb: dict[str, str]) -> bool:
@@ -1647,14 +1670,26 @@ def _reconcile_host(plan: _HostPlan) -> _HostOutcome:
     accounts = dict(plan.accounts)
     passwd_changed = False
 
-    # Samba's password history (ADR-0278): read at every start, set only when it differs.
-    try:
-        history = ensure_password_history()
-    except SmbHostError as error:
-        out.problems.append(error.message)
-    else:
-        if history is not None:
-            out.changes.append(history)
+    # Samba's account policies (ADR-0278, ADR-0334): each read at every start and set only when it
+    # differs; a policy that fails is a problem, and the others go on. The lockout's threshold is
+    # set only when both of its times are UNOS's: with the host's (30 minutes, or 0, which never
+    # ends a lock or forgets a failure) it would lock accounts on other terms.
+    times_ok = True
+    for policy, value in ACCOUNT_POLICIES:
+        if policy == BAD_LOCKOUT_POLICY and not times_ok:
+            out.problems.append(
+                f"Samba's {BAD_LOCKOUT_POLICY} was not set: the lockout needs its duration and reset time first"
+            )
+            continue
+        try:
+            change = ensure_account_policy(policy, value)
+        except SmbHostError as error:
+            out.problems.append(error.message)
+            if policy in (LOCKOUT_DURATION_POLICY, RESET_COUNT_POLICY):
+                times_ok = False
+        else:
+            if change is not None:
+                out.changes.append(change)
 
     # Group: smbd needs it for "force group"; a conflict blocks account creations.
     group_ok = True

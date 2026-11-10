@@ -2302,7 +2302,7 @@ class TestSelfFlowErrors:
         source = (SRC / "shares" / "accounts.py").read_text()
         built = re.findall(r"\b(\w+)\(\d{3}, f\"[^\"\n]*\{(?:_last_line\(|_clean\(str\(exc\)\))", source)
 
-        # The two of Samba's password history (ADR-0278) reach only the reconcile's problems.
+        # The two of Samba's account policies (ADR-0278, ADR-0334) reach only the reconcile's problems.
         assert built.count("SmbHostCommandFailed") == 11
         assert set(built) == {"SmbHostCommandFailed", "SmbConfNotUnos"}
 

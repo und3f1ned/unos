@@ -1,14 +1,18 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-09
 area: shares
 decided-by: agent
 supersedes: [ADR-0159]
+superseded-by: ADR-0334
 ---
 
 # ADR-0310: A failed SMB sign-in writes nothing to passdb.tdb while no lockout counts failures, so passdb stays on the system disk
 
 ## Context
+
+Superseded by ADR-0334: Samba's lockout now counts failed sign-ins, so a failed sign-in writes the
+account's passdb entry until the account is locked; passdb.tdb stays on the system disk.
 
 ADR-0159 kept Samba's passdb.tdb on the system disk until the writes of a wrong password were
 measured on the device, and stated, as ADR-0278 did after it, that every failed sign-in of an
