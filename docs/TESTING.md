@@ -312,7 +312,10 @@ Wake-on-LAN request with 503 and runs nothing (ADR-0233): `tests/power.spec.ts` 
 answer and answers the Power tab's requests with route fakes otherwise. The backend tests (with fake hosts), the testparm check above and the checks on
 the dev device cover what the stand-in cannot. The compose test stack sets `E2E_STAND_IN=1` too
 (`scripts/test-cycle.sh` and its `test-runner`), so it takes the same skips, also those of the
-specs that need Docker, although that stack has the host's Docker socket.
+specs that need Docker, although that stack has the host's Docker socket. On the stand-in, which
+has no Docker socket, the container and app routes answer 503 with the reason (ADR-0323), which
+`tests/api.spec.ts` and the "Containers without Docker (stand-in)" specs of
+`tests/containers.spec.ts` check; the test stack skips them too.
 
 The tests that restore a backup ("Restoring backups" in `tests/backup-restore.spec.ts`) replace
 the database and `smb.conf` of the target. They run only when the target is on this machine

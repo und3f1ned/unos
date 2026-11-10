@@ -14,13 +14,16 @@ router = APIRouter(prefix="/containers", tags=["containers"])
 async def _docker(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run a docker.py operation in a worker thread: docker-py blocks (ADR-0021).
 
-    A conflict answers 409: an image that containers use, which remove_image
+    A Docker that does not answer answers 503 with the reason (ADR-0323). A
+    conflict answers 409: an image that containers use, which remove_image
     refuses itself (ADR-0255), and the conflicts that Docker reports (a name that
     is taken, a running container removed without force) with Docker's reason as
     the detail (ADR-0254).
     """
     try:
         return await asyncio.to_thread(operation, *args, **kwargs)
+    except docker_ops.NO_ANSWER as e:
+        raise HTTPException(status_code=503, detail=docker_ops.no_answer_detail(e)) from e
     except docker_ops.ImageInUse as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except APIError as e:

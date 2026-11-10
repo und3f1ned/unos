@@ -211,6 +211,41 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: The container and app routes answer 503 when Docker does not answer
+
+- `apps.docker-down-503`, under the owner's delegation: while Docker could not be reached, the
+  container API answered 500 with docker-py's error, the Apps API 500 also for errors that Docker
+  answered, and the Containers tab showed counts of 0 and "No containers found" with its Create
+  button under the error (ADR-0175). Now `get_client` raises `DockerUnavailable` when Docker
+  does not answer `docker.from_env`'s version request, and `NO_ANSWER` holds it and the forms of a
+  refused or broken connection. The containers API answers them with 503 `Docker is not
+  available: <reason>` on every route. The Apps API does so for the first request of each route to
+  Docker, and an operation that fails after it keeps its 500 `Failed to ...` (ADR-0254,
+  ADR-0256). A read timeout and an error that Docker answers keep their status, and the
+  Containers tab shows the error alone (ADR-0323).
+- Test first (ADR-0186): 41 tests of `TestADockerThatDoesNotAnswer` in `test_containers.py` and
+  `test_apps.py` failed before. On the stand-in, which has no Docker socket, `api.spec.ts`
+  checks the 503 and its reason for three routes that it skipped there. The "Containers without
+  Docker (stand-in)" specs check the Containers tab, its Images tab and the Apps page; the test
+  stack skips both, as it skips the specs that need Docker (ADR-0215).
+- A fresh-context review found the step met for a Docker that is down, and nine points:
+  - the tab's error, shared with the Create dialog, which cleared it;
+  - a broken stream or chunked answer that gave 500;
+  - a read timeout of a long stop that was called unavailable, and so was an error answer to the
+    version query;
+  - the Apps API's operations, which ADR-0254 and ADR-0256 keep at 500;
+  - the API checks, which ran on the test stack against ADR-0215;
+  - an Apps-page spec that passed before;
+  - records that claimed more than the code did.
+
+  All are fixed as ADR-0323 now says. Left: the Apps page's empty texts under the error
+  (`apps.catalog-without-docker`), and the dashboard, which does not show the 503.
+- The whole of `make e2e-local` on the first version: 674 passed, 15 skipped. After the fixes,
+  the specs of the API, the Containers and Apps pages, the App Store, the phone layout and
+  the languages: 218 passed, 15 skipped. Not host-level: it changes the answers, not the host's
+  containers. A stopped Docker on the dev device stops UNOS with it, so the stand-in is the test
+  host.
+
 ### 2026-11-10: Uninstall restarts smbd once and restores smb.conf through a temporary file
 
 - `deploy.uninstall-samba-restore`, under the owner's delegation ("work on through the

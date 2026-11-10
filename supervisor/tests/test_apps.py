@@ -18,6 +18,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import requests
+import urllib3
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
 from fastapi import HTTPException
@@ -2141,6 +2143,77 @@ APP_ACTIONS = [
     ("stop", "POST", STOP),
     ("uninstall", "DELETE", UNINSTALL),
 ]
+
+
+# ---------------------------------------------------------------------------
+# A Docker that does not answer (apps.docker-down-503)
+# ---------------------------------------------------------------------------
+
+# What docker.from_env raises when the Docker socket is missing, as on the local stand-in.
+NO_SOCKET = (
+    "Error while fetching server API version: ('Connection aborted.', "
+    "FileNotFoundError(2, 'No such file or directory'))"
+)
+
+
+def _no_socket(**kwargs):
+    import docker
+
+    raise docker.errors.DockerException(NO_SOCKET)
+
+
+class TestADockerThatDoesNotAnswer:
+    """Each route of the Apps API that asks Docker answers 503 with the reason when Docker does not
+    answer; an error that Docker answers keeps its own status."""
+
+    @pytest.mark.parametrize(
+        "method,path",
+        [("GET", INSTALLED), ("POST", INSTALL), *[(method, path.format("jellyfin")) for _, method, path in APP_ACTIONS]],
+    )
+    def test_without_a_socket(self, api, pools, monkeypatch, method, path):
+        import docker
+
+        monkeypatch.setattr(docker, "from_env", _no_socket)
+
+        response = api.request(method, path, json={"template_id": "jellyfin"} if path == INSTALL else None)
+
+        assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {NO_SOCKET}"})
+
+    def test_a_lookup_whose_connection_breaks_answers_503(self, api, pools, installed, docker_client):
+        error = requests.exceptions.ConnectionError("('Connection aborted.', ConnectionResetError(104, 'reset'))")
+        docker_client.containers.get.side_effect = error
+
+        response = api.post(STOP.format("jellyfin"))
+
+        assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {error}"})
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            requests.exceptions.ConnectionError("('Connection aborted.', ConnectionResetError(104, 'reset'))"),
+            # A pull is a stream: docker-py passes on urllib3's error of a broken one.
+            urllib3.exceptions.ProtocolError("Connection broken: IncompleteRead(0 bytes read, 12 more expected)"),
+        ],
+        ids=["connection", "stream"],
+    )
+    def test_a_pull_that_breaks_off_keeps_the_500_of_the_operation(self, api, pools, docker_client, error):
+        # Docker answered the name check: the operation that fails after it keeps its own answer
+        # (ADR-0254), also when the connection broke during it.
+        docker_client.images.pull.side_effect = error
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (500, {"detail": f"Failed to pull image: {error}"})
+        docker_client.containers.create.assert_not_called()
+
+    def test_a_pull_that_docker_refuses_keeps_its_status(self, api, pools, docker_client):
+        docker_client.images.pull.side_effect = APIError("404 Client Error", explanation="manifest unknown")
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 500
+        assert response.json()["detail"].startswith("Failed to pull image: ")
+
 
 
 class TestStopAndUninstall:

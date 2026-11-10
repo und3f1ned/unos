@@ -6,6 +6,7 @@ import re
 import threading
 import pytest
 import requests
+import urllib3
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -695,6 +696,92 @@ class TestDockerCallsOffTheEventLoop:
         assert docker_module.get_client() == "client"
         assert made == [{"timeout": docker_module.DOCKER_TIMEOUT_SECONDS}]
         assert 0 < docker_module.DOCKER_TIMEOUT_SECONDS <= 60
+
+
+# What docker.from_env raises when the Docker socket is missing, as on the local stand-in.
+NO_SOCKET = (
+    "Error while fetching server API version: ('Connection aborted.', "
+    "FileNotFoundError(2, 'No such file or directory'))"
+)
+# What docker-py passes on when the connection to Docker breaks: from requests, and from urllib3
+# for a stream such as a pull or a log.
+BROKEN = [
+    requests.exceptions.ConnectionError("('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))"),
+    requests.exceptions.ChunkedEncodingError("('Connection broken: IncompleteRead(0 bytes read)', IncompleteRead(0))"),
+    urllib3.exceptions.ProtocolError("Connection broken: IncompleteRead(0 bytes read, 12 more expected)"),
+]
+
+
+def _no_socket(**kwargs):
+    import docker
+
+    raise docker.errors.DockerException(NO_SOCKET)
+
+
+class TestADockerThatDoesNotAnswer:
+    """Each route of the containers API answers 503 with the reason when Docker does not answer: no
+    socket, or a connection that broke (apps.docker-down-503, ADR-0323)."""
+
+    @pytest.mark.parametrize(
+        "method,url,body", [(m, u, b) for m, _, u, b in DOCKER_REQUESTS], ids=[f"{m} {p}" for m, p, _, _ in DOCKER_REQUESTS]
+    )
+    def test_without_a_socket(self, api, monkeypatch, method, url, body):
+        import docker
+
+        monkeypatch.setattr(docker, "from_env", _no_socket)
+
+        response = api.request(method, url, json=body)
+
+        assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {NO_SOCKET}"})
+
+    @pytest.mark.parametrize("error", BROKEN, ids=["connection", "chunked", "stream"])
+    @pytest.mark.parametrize(
+        "method,url,body", [(m, u, b) for m, _, u, b in DOCKER_REQUESTS], ids=[f"{m} {p}" for m, p, _, _ in DOCKER_REQUESTS]
+    )
+    def test_when_the_connection_breaks(self, api, docker_client, method, url, body, error):
+        _answering_docker(docker_client)
+        for request in (docker_client.containers, docker_client.images):
+            for name in ("get", "list", "run", "create", "pull", "remove"):
+                getattr(request, name).side_effect = error
+
+        response = api.request(method, url, json=body)
+
+        assert (response.status_code, response.json()) == (503, {"detail": f"Docker is not available: {error}"})
+
+    def test_an_answer_that_does_not_come_in_time_keeps_its_500(self, api, docker_client):
+        # Docker took the request: a stop waits for the container, which can take longer (ADR-0254).
+        _answering_docker(docker_client).stop.side_effect = requests.exceptions.ReadTimeout(
+            "UnixHTTPConnectionPool(host='localhost', port=None): Read timed out. (read timeout=70)"
+        )
+
+        response = api.post("/api/v1/containers/jellyfin/stop")
+
+        assert response.status_code == 500
+        assert "Read timed out" in response.json()["detail"]
+
+    def test_an_error_that_docker_answers_to_the_version_query_is_no_503(self, monkeypatch):
+        import docker
+
+        def from_env(**kwargs):
+            try:
+                raise APIError("500 Server Error: Internal Server Error", explanation="daemon is shutting down")
+            except APIError as e:
+                raise docker.errors.DockerException(f"Error while fetching server API version: {e}")
+
+        monkeypatch.setattr(docker, "from_env", from_env)
+
+        with pytest.raises(docker.errors.DockerException) as raised:
+            docker_module.get_client()
+        assert not isinstance(raised.value, docker_module.DockerUnavailable)
+
+    def test_an_error_that_docker_answers_keeps_its_status(self, api, docker_client):
+        # Docker answered: the request reached it, so it is no 503.
+        docker_client.containers.list.side_effect = APIError("500 Server Error", explanation="driver failed")
+
+        response = api.get("/api/v1/containers")
+
+        assert response.status_code == 500
+        assert "Docker is not available" not in response.json()["detail"]
 
 
 @contextlib.contextmanager

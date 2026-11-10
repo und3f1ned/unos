@@ -193,6 +193,50 @@ async function openLogsOf(page: Page, name: string): Promise<Locator> {
   return drawer;
 }
 
+// The detail of the supervisor's 503 when docker.from_env finds no Docker socket (docker.py).
+const NO_DOCKER_ANSWER = /Docker is not available: Error while fetching server API version: /;
+
+test.describe('Containers without Docker (stand-in)', () => {
+  // The stand-in's own supervisor, without route fakes: the stand-in has no Docker socket, and
+  // the API answers 503 with Docker's reason (ADR-0323). The test stack reaches the host's Docker.
+  test.beforeEach(() => {
+    test.skip(!process.env.E2E_STANDIN_STATE, "Only the stand-in has no Docker: the test stack reaches the host's");
+  });
+
+  test('the Containers page says that Docker is not available, and lists nothing', async ({
+    authenticatedPage: page,
+  }) => {
+    const answer = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/containers');
+    await page.goto('/containers');
+
+    expect((await answer).status()).toBe(503);
+    await expect(page.locator('.alert').getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    // The error alone: no counts of 0, search, empty list or Create button.
+    const panel = page.getByRole('tabpanel', { name: 'Containers' });
+    await expect(panel.getByRole('button', { name: /^Running/ })).toHaveCount(0);
+    await expect(panel.getByPlaceholder('Search containers...')).toHaveCount(0);
+    await expect(page.getByText('No containers found')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Create Container' })).toHaveCount(0);
+  });
+
+  test('the Images tab says that Docker is not available', async ({ authenticatedPage: page }) => {
+    await page.goto('/containers');
+    await page.getByRole('tab', { name: 'Images' }).click();
+
+    const alert = page.getByRole('tabpanel', { name: 'Images' }).locator('.alert');
+    await expect(alert.getByText('The images could not be read')).toBeVisible();
+    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
+  });
+
+  test('the Apps page says that Docker is not available', async ({ authenticatedPage: page }) => {
+    const answer = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/apps/installed');
+    await page.goto('/apps');
+
+    expect((await answer).status()).toBe(503);
+    await expect(page.locator('.alert').getByText(NO_DOCKER_ANSWER)).toBeVisible();
+  });
+});
+
 test.describe('Containers', () => {
   test('lists every container with its state and filters by state', async ({ authenticatedPage: page }) => {
     await fakeContainersApi(page);
