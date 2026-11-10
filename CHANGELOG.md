@@ -240,6 +240,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- Alerts for the problems of the NAS, and a health banner: a managed pool not
+  mounted (also when none of its disks is connected), degraded (scrub errors
+  included), read-only after an error or 90% full (95%: an error; it stays so
+  until below 85%), a disk that fails its SMART health self-assessment or its
+  latest self-test, and a scheduled task whose last run failed or that missed
+  a run since it was created, enabled or given another time. Each problem is
+  alerted once, through every enabled channel, webhooks, Discord and Slack
+  included, and administrators see the problems above every page until they
+  are gone. UNOS keeps them in memory: after a restart it alerts those still
+  there once more. A managed pool's change of status is no longer alerted by
+  the RAID monitor as well, and its new device errors not twice.
 - **System** → **General** sets the host's name and time zone.
 - The web interface works on a phone: below 768 px a menu button in the top
   bar opens the navigation, and every page, tab and dialog fits a 375 px wide

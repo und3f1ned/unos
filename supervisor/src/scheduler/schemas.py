@@ -49,6 +49,10 @@ class ScheduledTask(BaseModel):
     # The start of the task's last run (ISO 8601 in UTC, with its offset) and its status.
     last_run: Optional[str] = None
     last_status: Optional[str] = None
+    # When the task was created, enabled again or given another schedule (ISO 8601 in UTC, with
+    # its offset): a run it missed is a time of its schedule after this and after its last run
+    # (ADR-0332). Set by the server, whatever a request sends.
+    schedule_since: Optional[str] = None
 
 
 class ScheduledTaskInfo(ScheduledTask):

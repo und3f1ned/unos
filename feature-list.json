@@ -2554,11 +2554,19 @@
         "The web UI shows a health banner until the problem is gone",
         "An alert is sent once per problem, not at every check"
       ],
+      "verified_by": [
+        "supervisor/tests/test_alert_events.py",
+        "supervisor/tests/test_ws_auth.py",
+        "supervisor/tests/test_health_monitor.py",
+        "webui/tests/health-banner.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0047"
+        "ADR-0047",
+        "ADR-0332"
       ],
-      "notes": "Today RAID and SMART alerts go only to e-mail and Telegram channels."
+      "notes": "The RAID monitor reports the problems of the managed pools (not mounted or no disk found, degraded, read-only after an error, 90% and 95% full), the SMART monitor those of the disks (health FAILED, a failed self-test), and a check every 5 minutes those of the scheduled tasks (last run failed, a missed run); each is alerted once through every enabled channel, webhooks included, while it lasts, and again after a restart of the supervisor, since the list is kept in RAM (ADR-0332). Scrub errors reach the devices' error counters, which make the pool degraded. Administrators see the list as a banner above every page until it is empty. Open: the device check (the problems of the dev device's real pools, disks and tasks, and their alerts again after a reboot)."
     },
     {
       "id": "system.telegram-from-the-device",

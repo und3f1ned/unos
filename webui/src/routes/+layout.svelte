@@ -7,11 +7,13 @@
 	import { navigating, page } from '$app/stores';
 	import {
 		user,
+		isAdmin,
 		isAdminOnlyRoute,
 		loadCurrentUser,
 		clearCurrentUser
 	} from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
+	import ProblemsBanner from '$lib/components/ProblemsBanner.svelte';
 	import {
 		ApiError,
 		getToken,
@@ -327,6 +329,10 @@
 
 		<!-- Main content -->
 		<main class="flex-1 overflow-auto bg-surface p-4 md:p-6 scrollbar-thin">
+			<!-- The problems of the NAS, above every page of an administrator (ADR-0332). -->
+			{#if gate === 'allowed' && $isAdmin}
+				<ProblemsBanner />
+			{/if}
 			{#if gate === 'allowed' && showSlot}
 				<slot />
 			{:else if userLoadError}

@@ -45,6 +45,19 @@ def _smart_history_not_read_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_problems_yet(monkeypatch):
+    """The problems of the NAS, the SMART monitor's verdicts of the disks and the pools that the RAID
+    monitor read last are kept in RAM (ADR-0332): every test starts without them, as the supervisor does."""
+    problems = sys.modules.get("src.health.problems")
+    if problems is not None:
+        monkeypatch.setattr(problems, "_by_source", {})
+    health_router = sys.modules.get("src.health.router")
+    if health_router is not None:
+        monkeypatch.setattr(health_router, "_disk_verdicts", {})
+        monkeypatch.setattr(health_router, "_pools_read", None)
+
+
+@pytest.fixture(autouse=True)
 def _notification_files_in_tmp_path(monkeypatch, tmp_path):
     """The notification channels and their history are files under /data
     (src/notifications/router.py), and every alert that a monitor sends is recorded in the

@@ -27,6 +27,8 @@ scheduler = importlib.import_module("src.scheduler.router")
 
 LOOPS = {
     "scheduler": (scheduler, "scheduler_loop", "_scheduler_task"),
+    # The problems of the scheduled tasks, every 5 minutes (ADR-0332).
+    "task_checks": (scheduler, "task_check_loop", "_task_check_task"),
     "raid_monitor": (health, "raid_monitor_loop", "_raid_monitor_task"),
     "smart_monitor": (health, "smart_monitor_loop", "_smart_monitor_task"),
     "ups_monitor": (power, "ups_monitor_loop", "_ups_monitor_task"),

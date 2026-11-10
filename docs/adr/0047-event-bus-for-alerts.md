@@ -1,13 +1,16 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-05
 area: system
 decided-by: agent
+superseded-by: ADR-0332
 ---
 
 # ADR-0047: Send alerts to every channel through an event bus, with a health banner in the UI
 
 ## Context
+
+Superseded by ADR-0332: no event bus; the monitors and a check of the tasks report their problems to one list in RAM, which alerts each problem once through every enabled channel and feeds the health banner of administrators.
 
 A NAS has to tell its owner when a disk fails. The roadmap of February 2026 already listed an event bus as an architecture idea, and the November 2026 audit found the alerts fake: nothing generated notification events (they went out only on an explicit `POST /api/v1/notifications/send`), automatic alerts could not reach Discord, Slack or webhooks, and Telegram rejects messages that contain `_` when they are sent with `parse_mode` Markdown, as the sender still does. Since Phase 0 the RAID and SMART monitors run (ADR-0043) and send their alerts directly to the enabled e-mail and Telegram channels (`_deliver_alert` in `supervisor/src/health/router.py`).
 

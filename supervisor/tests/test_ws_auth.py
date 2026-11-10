@@ -1,6 +1,8 @@
-"""WebSocket authentication handshake (first-message auth, 4401/4403 close codes)."""
+"""WebSocket authentication handshake (first-message auth, 4401/4403 close codes), and the problems
+that the events socket sends administrators only (ADR-0332)."""
 import asyncio
 import gc
+import importlib
 import json
 import logging
 import queue
@@ -28,12 +30,16 @@ from src.auth.models import APIToken, User, UserSession
 from src.auth.utils import create_access_token, generate_api_token
 from src.config import get_settings
 from src.database import Base
+from src.health import problems
 from src.main import app
 from src.websocket import events
 
+from .test_alert_events import _found, _problem
 from .test_api_token_last_use import FAILURES, START
 from .session_tokens import session_token
 from .test_containers import served_by_uvicorn
+
+health_router = importlib.import_module("src.health.router")
 
 _FAST_HASH = bcrypt.hashpw(b"irrelevant", bcrypt.gensalt(rounds=4)).decode()
 
@@ -761,3 +767,89 @@ class TestReauthentication:
             stream.feed(b"after\n")
             assert ws.receive_json() == {"type": "log", "container_id": "abc", "data": "after\n"}
         _wait_for(stream.closed.is_set)
+
+
+# ---------------------------------------------------------------------------
+# The problems of the NAS on the events socket (system.alert-events, ADR-0332)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def alerts(monkeypatch):
+    """The events of the alerts that the problems send, recorded instead of sent."""
+    sent = []
+
+    async def deliver(event):
+        sent.append(event)
+
+    monkeypatch.setattr(health_router, "_deliver_alert", deliver)
+    return sent
+
+
+def _next_problems(ws, until=lambda data: True, timeout: float = 5.0) -> dict:
+    """The next problems message on ``ws`` whose list ``until`` accepts, skipping the stats."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        message = ws.receive_json()
+        if message["type"] == "problems" and until(message["data"]):
+            return message
+    pytest.fail("no such problems message")
+
+
+class TestTheProblemsOnTheEventsSocket:
+    def test_an_administrator_gets_the_problems_after_auth_ok_and_whenever_they_change(
+            self, client, admin_token, fast_recheck, alerts):
+        asyncio.run(problems.update("pools", _found(_problem(since="2026-11-10T10:00:00+00:00"))))
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json() == {"type": "problems", "data": [{
+                "key": "pool_degraded:data", "severity": "error", "kind": "pool_degraded", "subject": "data",
+                "title": "Pool 'data' is degraded", "detail": "1 device(s) of the pool are missing.",
+                "since": "2026-11-10T10:00:00+00:00",
+            }]}
+            assert ws.receive_json()["type"] == "stats"
+
+            asyncio.run(problems.update("tasks", _found(_problem("task_failed:task_1", "warning", "Task 'a' failed"))))
+            assert [item["key"] for item in _next_problems(ws)["data"]] == ["pool_degraded:data", "task_failed:task_1"]
+
+            asyncio.run(problems.update("pools", {}))
+            asyncio.run(problems.update("tasks", {}))
+            # The socket may send the list between the two updates as well.
+            assert _next_problems(ws, until=lambda data: data == [])["data"] == []
+
+    def test_an_unchanged_list_is_not_sent_again(self, client, admin_token, fast_recheck, alerts):
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json() == {"type": "problems", "data": []}
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+
+    def test_a_regular_user_never_gets_them(self, client, user_token, fast_recheck, alerts):
+        asyncio.run(problems.update("pools", _found(_problem())))
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            asyncio.run(problems.update("pools", _found(_problem(detail="Another detail"))))
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+
+    def test_an_administrator_who_is_no_longer_one_gets_none_from_the_next_check_on(
+            self, client, ws_db, admin_token, fast_recheck, alerts):
+        asyncio.run(problems.update("pools", _found(_problem())))
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert len(ws.receive_json()["data"]) == 1
+
+            _set_user(ws_db, "ws_admin", is_admin=False)
+            assert _next_problems(ws)["data"] == []  # the banner goes
+
+            asyncio.run(problems.update("pools", _found(_problem(detail="Another detail"))))
+            checked = len(fast_recheck)
+            deadline = time.monotonic() + 5
+            while len(fast_recheck) < checked + 2:
+                assert ws.receive_json()["type"] == "stats"
+                assert time.monotonic() < deadline, "credentials were not re-checked"

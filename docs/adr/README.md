@@ -308,7 +308,7 @@ and this index, and `make check-fast` runs it.
 | [0044](0044-custom-tasks-administrator-only.md) | Custom shell tasks stay, but are administrator-only and validated | accepted | 2026-11-05 |
 | [0045](0045-smtp-verifies-certificates.md) | E-mail notifications verify the mail server's certificate by default | accepted | 2026-11-05 |
 | [0046](0046-telegram-alerts-over-ipv6-or-e-mail.md) | Deliver Telegram alerts over Docker IPv6, or send them by e-mail | proposed | 2026-11-05 |
-| [0047](0047-event-bus-for-alerts.md) | Send alerts to every channel through an event bus, with a health banner in the UI | proposed | 2026-11-05 |
+| [0047](0047-event-bus-for-alerts.md) | Send alerts to every channel through an event bus, with a health banner in the UI | superseded by [0332](0332-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner.md) | 2026-11-05 |
 | [0171](0171-supervisor-volatile-files-in-ram.md) | The supervisor keeps volatile files in RAM | accepted | 2026-11-06 |
 | [0172](0172-unique-task-ids-and-bounded-smart-tests.md) | Scheduled tasks get unique ids, backups run concurrently, and SMART tests time out | accepted | 2026-11-06 |
 | [0173](0173-in-app-updater-in-its-own-slice.md) | Redesign the in-app updater in its own slice; until then update.sh is the way | proposed | 2026-11-06 |
@@ -328,6 +328,7 @@ and this index, and `make check-fast` runs it.
 | [0268](0268-a-run-that-a-stop-of-the-supervisor-interrupts-is-recorded-as-failed.md) | A task run that a stop of the supervisor interrupts is recorded as failed | accepted | 2026-11-08 |
 | [0326](0326-notification-channels-their-history-and-damaged-files-of-them.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, the history lists every notification sent, and damaged files of them are kept | accepted | 2026-11-10 |
 | [0331](0331-the-time-zone-routes-run-timedatectl-on-the-host.md) | The time zone and hostname routes ask the host, and PUT /network/hostname alone sets the name | accepted | 2026-11-10 |
+| [0332](0332-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner.md) | The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner | accepted | 2026-11-10 |
 
 ## Web UI
 

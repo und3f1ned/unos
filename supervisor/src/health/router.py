@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
+from . import problems
 from .. import host, state_files
 from ..auth.utils import verify_token
 from ..security.validators import validate_pool_name
@@ -21,7 +22,7 @@ from ..storage import disks as storage_disks
 from ..storage import pools as storage_pools
 from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
-from ..notifications.router import history_entry, save_logs, send_email, send_telegram
+from ..notifications.router import history_entry, save_logs, send_email, send_through
 from ..notifications.schemas import NotificationEvent, NotificationType, NotificationChannel
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -139,6 +140,11 @@ class SmartHistoryEntry(BaseModel):
     attributes: dict[int, int]  # attr_id -> raw_value
     temperature: Optional[int] = None
     power_on_hours: Optional[int] = None
+    # What smartctl said of the disk's health with this snapshot, which the SMART monitor keeps in
+    # RAM for the disk problems (ADR-0332); never stored in the history (exclude). The overall
+    # health self-assessment FAILED; the result of the newest self-test, when it failed.
+    health_failed: bool = Field(default=False, exclude=True)
+    failed_self_test: Optional[str] = Field(default=None, exclude=True)
 
 
 class SmartTrendAlert(BaseModel):
@@ -295,16 +301,57 @@ def collect_smart_snapshot(device: str) -> Optional[SmartHistoryEntry]:
                 except (ValueError, TypeError):
                     pass
 
+        health_failed, failed_self_test = _health_verdicts(data)
         return SmartHistoryEntry(
             timestamp=datetime.now().isoformat(),
             device=device,
             serial=serial,
             attributes=attributes,
             temperature=temperature,
-            power_on_hours=power_on_hours
+            power_on_hours=power_on_hours,
+            health_failed=health_failed,
+            failed_self_test=failed_self_test,
         )
     except Exception:
         return None
+
+
+# The results of an NVMe self-test that are failures: a fatal or unknown error, a failed segment
+# that is not known, one or more failed segments (the NVMe Device Self-test log).
+_NVME_SELF_TEST_FAILURES = {5, 6, 7}
+# The bit of an NVMe disk's critical warning for a temperature beyond its thresholds.
+_NVME_TOO_HOT = 0x02
+
+
+def _health_verdicts(data: dict) -> tuple[bool, Optional[str]]:
+    """Whether ``smartctl -j -a`` says the overall health self-assessment FAILED, and the result of
+    the newest self-test when it failed, as smartctl names it (ADR-0332).
+
+    smartctl calls an NVMe disk's health FAILED for any bit of its critical warning: one that is
+    only too hot (_NVME_TOO_HOT) is not failing, and it cools down. The newest test comes first in
+    the ATA self-test log and in the NVMe one (smartctl 7.3 and later); smartctl marks an ATA test
+    that ended with an error passed: false, and a test that still runs, or that the host aborted,
+    is no failure. Output of another shape says neither.
+    """
+    try:
+        smart_status = data.get("smart_status", {})
+        warning = (smart_status.get("nvme") or {}).get("value")
+        health_failed = smart_status.get("passed") is False and not (
+            isinstance(warning, int) and not warning & ~_NVME_TOO_HOT
+        )
+        ata_tests = data.get("ata_smart_self_test_log", {}).get("standard", {}).get("table") or []
+        nvme_tests = data.get("nvme_self_test_log", {}).get("table") or []
+        if ata_tests:
+            status = ata_tests[0].get("status") or {}
+            failed = status.get("passed") is False
+        elif nvme_tests:
+            status = nvme_tests[0].get("self_test_result") or {}
+            failed = status.get("value") in _NVME_SELF_TEST_FAILURES
+        else:
+            status, failed = {}, False
+        return health_failed, str(status.get("string") or "an error") if failed else None
+    except (AttributeError, IndexError, TypeError):
+        return False, None
 
 
 def _attribute_value(entry: dict, attr_id: int) -> int:
@@ -435,7 +482,7 @@ def _send_email_blocking(config, event: NotificationEvent):
 
 
 async def _deliver_alert(event: NotificationEvent) -> None:
-    """Send an alert through every enabled e-mail/Telegram channel; best effort.
+    """Send an alert through every enabled channel, of every kind; best effort.
 
     The senders report failures as (False, error) instead of raising; those are
     logged like timeouts and exceptions. The history of System > Notifications
@@ -452,10 +499,10 @@ async def _deliver_alert(event: NotificationEvent) -> None:
                 sending = loop.run_in_executor(
                     _ALERT_EXECUTOR, _send_email_blocking, config.email_config, event
                 )
-            elif config.channel == NotificationChannel.TELEGRAM and config.telegram_config:
-                sending = send_telegram(config.telegram_config, event)
             else:
-                continue
+                # Telegram, webhooks, Discord and Slack; a channel without its settings is
+                # recorded as failed, as its test send reports it.
+                sending = send_through(config, event)
             sent, error = await asyncio.wait_for(sending, ALERT_TIMEOUT)
         except TimeoutError:
             sent, error = False, f"no answer within {ALERT_TIMEOUT} s"
@@ -542,6 +589,47 @@ def _write_smart_history(state: _SmartHistoryState) -> None:
     state.unsaved = state.changed = False
 
 
+@dataclass(frozen=True)
+class _DiskVerdict:
+    """What the SMART monitor's last read of a disk said of its health (ADR-0332)."""
+
+    serial: str  # smartctl's
+    lsblk_serial: Optional[str]  # lsblk's, of the disk at the path then
+    health_failed: bool  # the overall health self-assessment FAILED
+    failed_self_test: Optional[str]  # the result of the newest self-test, when it failed
+
+
+# The verdict of each disk of the host by its path, from the SMART monitor's passes: one that
+# sleeps keeps the verdict of its last read while lsblk reports the same serial at its path, and
+# a disk that is gone has none. In RAM only, like
+# the problems that come from it; replaced whole by each pass.
+_disk_verdicts: dict[str, _DiskVerdict] = {}
+
+
+def disk_problems(verdicts: dict[str, _DiskVerdict]) -> dict[str, problems.Problem]:
+    """The problems of the disks in the SMART monitor's verdicts, by key (ADR-0332): an error for a
+    disk whose overall health self-assessment FAILED, and one for a disk whose newest self-test
+    failed."""
+    found = {}
+    for path, verdict in sorted(verdicts.items()):
+        disk = path if verdict.serial == _NO_SERIAL else f"{path} (serial {verdict.serial})"
+        if verdict.health_failed:
+            found[f"disk_failed:{path}"] = problems.Problem(
+                key=f"disk_failed:{path}", severity="error", kind="disk_failed", subject=path,
+                title=f"Disk {path} is failing",
+                detail=f"SMART reports that the disk {disk} fails its health self-assessment: "
+                "copy its data to another disk and replace it.",
+            )
+        if verdict.failed_self_test:
+            found[f"disk_test_failed:{path}"] = problems.Problem(
+                key=f"disk_test_failed:{path}", severity="error", kind="disk_test_failed", subject=path,
+                title=f"The SMART self-test of disk {path} failed",
+                detail=f"The newest SMART self-test of the disk {disk} ended with: {verdict.failed_self_test}. "
+                "Run an extended test, and replace the disk if it fails again.",
+            )
+    return found
+
+
 def _smart_monitor_pass() -> list[SmartTrendAlert]:
     """One round of the SMART monitor (blocking: lsblk on the host, smartctl per disk).
 
@@ -553,20 +641,31 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
     only when a snapshot changed it, or one of an earlier pass whose write
     failed (ADR-0269). The first pass reads the file: one that cannot be
     read is logged and replaced by a new history, so that a damaged file
-    does not stop the recording (ADR-0235).
+    does not stop the recording (ADR-0235). The verdicts of the disks'
+    health go into _disk_verdicts (ADR-0332).
     """
+    global _disk_verdicts
     try:
         disks = storage_disks.host_disks()
     except Exception as exc:
         logger.warning("SMART monitor: pass skipped, could not list the host's disks: %s", exc)
         return []
     snapshots = []
+    verdicts: dict[str, _DiskVerdict] = {}
     for disk in disks:
         snapshot = collect_smart_snapshot(disk.path)
         if snapshot:
             snapshot.lsblk_serial = disk.serial
             # JSON form (str attribute keys), like the entries read from the file.
             snapshots.append(snapshot.model_dump(mode="json"))
+            verdicts[disk.path] = _DiskVerdict(
+                snapshot.serial, disk.serial, snapshot.health_failed, snapshot.failed_self_test
+            )
+        elif (verdict := _disk_verdicts.get(disk.path)) is not None and verdict.lsblk_serial == disk.serial:
+            # Asleep (smartctl leaves it alone), or it could not be opened: what its last read said,
+            # unless another disk is at its path now.
+            verdicts[disk.path] = verdict
+    _disk_verdicts = verdicts
 
     alerts: list[SmartTrendAlert] = []
     with _smart_history_lock:
@@ -612,7 +711,7 @@ def save_unsaved_smart_history() -> None:
 
 
 async def smart_monitor_loop():
-    """Background loop for SMART trend monitoring."""
+    """Background loop for SMART trend monitoring, and the problems of the disks (ADR-0332)."""
     global _smart_monitor_running
 
     while _smart_monitor_running:
@@ -621,6 +720,7 @@ async def smart_monitor_loop():
             alerts = await asyncio.to_thread(_smart_monitor_pass)
             for alert in alerts:
                 await send_smart_alert(alert)
+            await problems.update(DISK_PROBLEMS, disk_problems(_disk_verdicts))
         except Exception as e:
             logger.error("SMART monitor error: %s", e)
 
@@ -703,15 +803,142 @@ def _raid_health_of_pool(info: PoolInfo) -> RaidHealthInfo:
     )
 
 
-def _raid_health_of_all_pools() -> list[RaidHealthInfo]:
+@dataclass
+class _PoolsRead:
+    """What a check of the RAID health read of the pools (storage.pools.pools_and_managed_names)."""
+
+    pools: list[PoolInfo]
+    managed: Optional[set[str]]  # the names in the host's fstab; None when it could not be read
+
+
+# The pools that the latest check read, until the RAID monitor takes them for the problems of the
+# pools (ADR-0332): its check and the pool problems come from one read of the host.
+_pools_read: Optional[_PoolsRead] = None
+
+
+def _raid_health_and_pools() -> tuple[list[RaidHealthInfo], _PoolsRead]:
     # Pools are btrfs filesystems labelled with a pool name, mounted or not;
     # other directories under the pools base are not pools.
-    return [_raid_health_of_pool(info) for info in storage_pools.list_pools()]
+    pools, managed = storage_pools.pools_and_managed_names()
+    return [_raid_health_of_pool(info) for info in pools], _PoolsRead(pools, managed)
 
 
 async def check_raid_health() -> list[RaidHealthInfo]:
-    """Check RAID health for all BTRFS pools."""
-    return await asyncio.to_thread(_raid_health_of_all_pools)
+    """Check RAID health for all BTRFS pools.
+
+    Keeps what it read of the pools for the RAID monitor that called it (_take_pools_read): on
+    the event loop as it returns, so that the read of another check never comes between.
+    """
+    global _pools_read
+    health, _pools_read = await asyncio.to_thread(_raid_health_and_pools)
+    return health
+
+
+def _take_pools_read() -> Optional[_PoolsRead]:
+    global _pools_read
+    read, _pools_read = _pools_read, None
+    return read
+
+
+# The sources of the problems that the monitors find (health.problems).
+POOL_PROBLEMS = "pools"
+DISK_PROBLEMS = "disks"
+# A mounted managed pool this full is low on space: a warning; and this full, an error (ADR-0332).
+# It stays low on space until it is less full than POOL_LOW_SPACE_CLEARED: a pool that hovers
+# at POOL_LOW_SPACE is alerted once.
+POOL_LOW_SPACE = 0.90
+POOL_NEARLY_FULL = 0.95
+POOL_LOW_SPACE_CLEARED = 0.85
+
+
+def pool_problems(
+    pools: list[PoolInfo], managed: Optional[set[str]], earlier: dict[str, problems.Problem]
+) -> dict[str, problems.Problem]:
+    """The problems of the pools that UNOS manages, by key, from one read of the pools (ADR-0332).
+
+    ``managed`` names the pools whose entries the host's fstab has; when it could not be read
+    (None), the problems found before (``earlier``) stay. A managed pool that is not mounted, or
+    of which btrfs finds no disk, is a warning. One that is degraded (devices missing, or errors
+    in their counters, which a scrub counts too) is an error, and so is one that btrfs made
+    read-only after an error (that, rather than degraded). A mounted one is low on space at
+    POOL_LOW_SPACE of its size, a warning, and at POOL_NEARLY_FULL an error, until it is below
+    POOL_LOW_SPACE_CLEARED. A pool whose state could not be read (health unknown) keeps the
+    problems found before. Pools that UNOS does not manage have none: the RAID monitor alerts the
+    changes of their status itself.
+    """
+    if managed is None:
+        return dict(earlier)
+    found: dict[str, problems.Problem] = {}
+
+    def add(kind: str, severity: problems.Severity, name: str, title: str, detail: str) -> None:
+        key = f"{kind}:{name}"
+        found[key] = problems.Problem(
+            key=key, severity=severity, kind=kind, subject=name, title=title, detail=detail
+        )
+
+    listed = {info.name for info in pools if info.persistent}
+    for name in sorted(managed - listed):
+        add("pool_unmounted", "warning", name, f"Pool '{name}' is not mounted",
+            f"The host finds no disk of pool {name}: the pool is not mounted, and its shares and apps "
+            "cannot reach their data. Connect its disks.")
+    for info in pools:
+        name = info.name
+        if not info.persistent:
+            continue
+        if info.health == "unknown":
+            found.update({key: problem for key, problem in earlier.items() if problem.subject == name})
+            continue
+        if info.health == "unmounted":
+            add("pool_unmounted", "warning", name, f"Pool '{name}' is not mounted",
+                f"Nothing is mounted at {storage_pools.pool_mountpoint(name)}: the shares and apps of the "
+                "pool cannot reach their data. Mount it on the Storage page.")
+            continue
+        causes = []
+        if info.missing_devices:
+            causes.append(f"{info.missing_devices} device(s) of the pool are missing.")
+        if info.device_errors:
+            causes.append(
+                f"The error counters of its devices show {info.device_errors} error(s), of reads "
+                "and writes or found by a scrub: btrfs device stats names the devices."
+            )
+        if info.forced_read_only:
+            add("pool_read_only", "error", name, f"Pool '{name}' is read-only after an error",
+                " ".join(["btrfs made the filesystem read-only after a serious error, and every write "
+                          "to it fails: check the kernel log (dmesg).", *causes]))
+        elif info.health in ("degraded", "error"):
+            add("pool_degraded", "error", name, f"Pool '{name}' is degraded",
+                " ".join(causes) or "Check its disks on the Storage page.")
+        used = info.used_size / info.total_size if info.total_size > 0 else 0.0
+        low = POOL_LOW_SPACE_CLEARED if f"pool_low_space:{name}" in earlier else POOL_LOW_SPACE
+        if used >= low:
+            add("pool_low_space", "error" if used >= POOL_NEARLY_FULL else "warning", name,
+                f"Pool '{name}' is {info.used_size * 100 // info.total_size}% full",
+                f"{_format_capacity(info.used_size)} of the {_format_capacity(info.total_size)} of pool "
+                f"{name} are used: free some space, or add a disk to the pool.")
+    return found
+
+
+async def _update_pool_problems() -> tuple[set[str], set[str]]:
+    """Report the problems of the managed pools that the RAID check just read (ADR-0332).
+
+    Returns the names of the managed pools, and those whose pool_degraded or pool_read_only
+    problem is new: its alert names their device errors. Nothing when the check read no pools
+    (the tests replace it), and when the problems fail: the RAID monitor then alerts every pool as
+    it alerts the others.
+    """
+    read = _take_pools_read()
+    if read is None:
+        return set(), set()
+    try:
+        earlier = problems.of_source(POOL_PROBLEMS)
+        found = pool_problems(read.pools, read.managed, earlier)
+        await problems.update(POOL_PROBLEMS, found)
+    except Exception:
+        logger.exception("RAID monitor: could not report the problems of the pools")
+        return set(), set()
+    health = {"pool_degraded", "pool_read_only"}
+    alerted = {p.subject for key, p in found.items() if p.kind in health and key not in earlier}
+    return {info.name for info in read.pools if info.persistent}, alerted
 
 
 async def send_raid_alert(pool: str, status: str, errors: int, details: str):
@@ -780,12 +1007,20 @@ def save_raid_status(status: dict):
 
 
 async def raid_monitor_loop():
-    """Background loop for RAID health monitoring."""
+    """Background loop for RAID health monitoring.
+
+    The pools that UNOS manages report their problems (pool_problems), which alert a pool that
+    is not mounted, degraded, read-only or low on space once (ADR-0332); for them the loop alerts
+    new device errors, unless the pool's new pool_degraded or pool_read_only problem of the same
+    check names them, and a state that could not be read. For the other pools it alerts new
+    errors, a filesystem forced read-only, and a status that turned from healthy.
+    """
     global _raid_monitor_running
 
     while _raid_monitor_running:
         try:
             health_info = await check_raid_health()
+            managed, alerted = await _update_pool_problems()
             previous_status = load_previous_raid_status()
             current_status = {}
 
@@ -806,12 +1041,20 @@ async def raid_monitor_loop():
                 # filesystem read-only (no error counter moves for that, and
                 # the pool may already be degraded or in error), or if the
                 # status changed from healthy (or was never recorded) to
-                # anything else
-                if (
-                    pool_health.total_errors > prev_errors
-                    or (pool_health.forced_read_only and not prev.get("forced_read_only", False))
-                    or (pool_health.status != "healthy" and prev.get("status", "healthy") == "healthy")
-                ):
+                # anything else. A managed pool's problems alert the last two, but for a state that
+                # cannot be read: its problems stay as they were found before.
+                new_errors = pool_health.total_errors > prev_errors
+                if pool_name in managed:
+                    alert = (new_errors and pool_name not in alerted) or (
+                        pool_health.status == "unknown" and prev.get("status", "healthy") == "healthy"
+                    )
+                else:
+                    alert = (
+                        new_errors
+                        or (pool_health.forced_read_only and not prev.get("forced_read_only", False))
+                        or (pool_health.status != "healthy" and prev.get("status", "healthy") == "healthy")
+                    )
+                if alert:
                     # Build error details
                     details = []
                     if pool_health.status == "unmounted":
