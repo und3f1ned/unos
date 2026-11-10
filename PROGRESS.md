@@ -235,7 +235,12 @@ Open owner actions:
   that the review read); remarks on older installs in `router.py` and `test_disk_safety.py` are
   gone. Recorded in ADR-0318, not changed: a container that UNOS did not install and that binds
   the pools base itself is told to mount the pools base. `test_apps.py`, `test_containers.py`,
-  `test_disk_safety.py` and `test_health_monitor.py` 413 passed.
+  `test_disk_safety.py` and `test_health_monitor.py` 413 passed, and `make check` passed.
+- `make e2e-local` with `E2E_CHROMIUM_PATH`: 669 passed and 16 skips on listed conditions, and
+  `files.spec.ts` "uploads files from the keyboard" failed once (the file chooser did not open
+  within 15 s) while a second stand-in ran on other ports; `files.spec.ts` and `apps.spec.ts`
+  alone then passed (65), as that test did in the other full runs of the day. Not changed: if it
+  fails again without such a load, it becomes an entry of its own.
 
 ### 2026-11-10: the stats message of the WebSocket has one shape
 
