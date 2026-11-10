@@ -1917,6 +1917,138 @@ class TestUninstallScript:
         assert ("unos-import-backup" in text) is backup
         assert "The file from before UNOS is" not in text
 
+    def test_with_smb_conf_original_smbd_restarts_once(self, tmp_path):
+        """The restore of smb.conf.original restarts smbd, which also ends the connections of the
+        Samba passwords that were removed: no restart of their own comes before it (ADR-0322)."""
+        result, calls, _ = self._run(
+            tmp_path, "remove_samba_passwords; restore_samba_config", samba=("smb.conf", "smb.conf.original")
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls == [
+            "getent passwd",
+            "pdbedit -L",
+            "pdbedit -x -u alice",
+            "pdbedit -x -u bob",
+            "systemctl enable nmbd",
+            "systemctl restart smbd nmbd",
+        ]
+        assert (tmp_path / "samba" / "smb.conf").read_text() == "smb.conf.original\n"
+        assert "WARN" not in result.stdout
+
+    def test_a_restart_that_fails_after_the_restore_is_reported(self, tmp_path):
+        """The restart after the restore is also the one that ends the removed passwords'
+        connections: when it fails, the uninstallation says so and goes on (ADR-0322)."""
+        result, calls, _ = self._run(
+            tmp_path,
+            "remove_samba_passwords; restore_samba_config; print_completion",
+            fail=("systemctl restart smbd nmbd",),
+            samba=("smb.conf", "smb.conf.original"),
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert calls[-2:] == ["systemctl enable nmbd", "systemctl restart smbd nmbd"]
+        assert (
+            "Could not restart Samba (smbd and nmbd): until they are restarted, Samba may still use UNOS's "
+            "smb.conf and keep open SMB connections. Restart them with: systemctl restart smbd nmbd"
+            in self._text(result)
+        )
+        assert "UNOS Uninstallation Complete!" in result.stdout
+
+    def test_the_restore_copies_next_to_smb_conf_and_renames_before_samba_restarts(self, tmp_path):
+        """The copy goes next to smb.conf, keeping the original's mode, and one rename puts it in
+        place before Samba restarts with it; no temporary file stays (ADR-0322)."""
+        real = {name: shutil.which(name) for name in ("cp", "mv")}
+        folder = tmp_path / "samba"
+        result, calls, _ = self._run(
+            tmp_path,
+            "chmod 640 \"$SAMBA/smb.conf.original\"; remove_samba_passwords; restore_samba_config",
+            samba=("smb.conf", "smb.conf.original"),
+            stubs={name: _LOGGER + f'exec {path} "$@"\n' for name, path in real.items()},
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        staged = f"{folder}/.smb.conf.unos-restore.unos-tmp"
+        assert calls[-4:] == [
+            f"cp -p {folder}/smb.conf.original {staged}",
+            f"mv -f {staged} {folder}/smb.conf",
+            "systemctl enable nmbd",
+            "systemctl restart smbd nmbd",
+        ]
+        assert (folder / "smb.conf").read_text() == "smb.conf.original\n"
+        assert stat.S_IMODE((folder / "smb.conf").stat().st_mode) == 0o640
+        assert sorted(path.name for path in folder.iterdir()) == ["smb.conf", "smb.conf.original"]
+
+    def test_a_rename_that_fails_leaves_smb_conf_whole(self, tmp_path):
+        """mv fails (an immutable smb.conf): smb.conf stays as UNOS wrote it, the temporary file
+        goes, and the removed passwords' connections end with a restart of their own (ADR-0322)."""
+        folder = tmp_path / "samba"
+        result, calls, _ = self._run(
+            tmp_path,
+            "remove_samba_passwords; restore_samba_config; print_completion",
+            samba=("smb.conf", "smb.conf.original"),
+            # Only the rename over smb.conf fails; the pdbedit stub moves its passdb too.
+            stubs={
+                "mv": _LOGGER
+                + 'case "$*" in */smb.conf) echo "mv: cannot move: Operation not permitted" >&2; exit 1 ;; esac\n'
+                + f'exec {shutil.which("mv")} "$@"\n'
+            },
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (folder / "smb.conf").read_text() == "smb.conf\n"
+        assert sorted(path.name for path in folder.iterdir()) == ["smb.conf", "smb.conf.original"]
+        assert calls[-2:] == [
+            f"mv -f {folder}/.smb.conf.unos-restore.unos-tmp {folder}/smb.conf",
+            "systemctl try-restart smbd",
+        ]
+        assert "systemctl restart smbd nmbd" not in calls and "systemctl enable nmbd" not in calls
+        assert "it is still the file UNOS wrote" in self._text(result)
+
+    def test_a_temporary_file_that_cannot_go_does_not_stop_the_uninstallation(self, tmp_path):
+        """A temporary file left by a run that was killed in the restore, in an /etc/samba whose
+        entries cannot be removed: the restore fails, and the uninstallation goes on to its end."""
+        folder = tmp_path / "samba"
+        rm = _LOGGER + "echo \"rm: cannot remove: Read-only file system\" >&2\nexit 1\n"
+        cp = _LOGGER + "exit 1\n"
+        result, calls, _ = self._run(
+            tmp_path,
+            "remove_samba_passwords; restore_samba_config; print_completion",
+            samba=("smb.conf", "smb.conf.original"),
+            stubs={"rm": rm, "cp": cp},
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"rm -f {folder}/.smb.conf.unos-restore.unos-tmp" in calls
+        assert calls[-1] == "systemctl try-restart smbd"
+        assert "UNOS Uninstallation Complete!" in result.stdout
+
+    def test_a_copy_that_fails_halfway_leaves_smb_conf_whole(self, tmp_path):
+        """smb.conf.original is copied next to smb.conf and renamed over it: a copy that stops
+        halfway (a full /etc) leaves smb.conf as UNOS wrote it, and no temporary file. The removed
+        passwords' connections still end, with a restart of their own (ADR-0322)."""
+        cp = _LOGGER + 'printf partial > "$2"\nexit 1\n'
+        result, calls, _ = self._run(
+            tmp_path,
+            "remove_samba_passwords; restore_samba_config; print_completion",
+            samba=("smb.conf", "smb.conf.original"),
+            stubs={"cp": cp},
+        )
+        folder = tmp_path / "samba"
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (folder / "smb.conf").read_text() == "smb.conf\n"
+        assert sorted(path.name for path in folder.iterdir()) == ["smb.conf", "smb.conf.original"]
+        assert calls == [
+            "getent passwd",
+            "pdbedit -L",
+            "pdbedit -x -u alice",
+            "pdbedit -x -u bob",
+            f"cp -p {folder}/smb.conf.original {folder}/.smb.conf.unos-restore.unos-tmp",
+            "systemctl try-restart smbd",
+        ]
+        assert "Restarted Samba (smbd): open SMB connections were ended" in result.stdout
+
     def test_a_failed_restore_of_smb_conf_does_not_stop_the_uninstallation(self, tmp_path):
         """The copy of smb.conf.original fails (a read-only or full /etc). Under set -e it
         ended the uninstallation before its last text, which names the Samba passwords
@@ -1933,10 +2065,12 @@ class TestUninstallScript:
         folder = tmp_path / "samba"
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert f"cp {folder}/smb.conf.original {folder}/smb.conf" in calls
-        # Samba is not restarted with a file that may be incomplete, nor nmbd turned on.
+        assert f"cp -p {folder}/smb.conf.original {folder}/.smb.conf.unos-restore.unos-tmp" in calls
+        # nmbd is not turned on for UNOS's smb.conf, and smbd restarts once, for bob's removed
+        # password (ADR-0322).
         assert "systemctl restart smbd nmbd" not in calls
         assert "systemctl enable nmbd" not in calls
+        assert calls.count("systemctl try-restart smbd") == 1
         assert (
             f"Could not restore {folder}/smb.conf from smb.conf.original; copy it back by hand "
             "(see the end of the uninstallation)" in text
@@ -1951,8 +2085,8 @@ class TestUninstallScript:
         ]
         assert (
             f"Samba configuration: {folder}/smb.conf could not be replaced by the file from before UNOS "
-            f"({folder}/smb.conf.original): it may still be the file UNOS wrote, or be incomplete. Copy it "
-            "back, then restart Samba:" in text
+            f"({folder}/smb.conf.original): it is still the file UNOS wrote. Copy it back, then restart Samba:"
+            in text
         )
         block = completion[completion.index("Samba configuration:") : completion.index("Network discovery:")]
         commands = [line.strip() for line in block.splitlines() if line.startswith("  ")]
