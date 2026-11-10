@@ -247,6 +247,21 @@ Open owner actions:
   division), and so did the fixme case of `test_an_expected_failure_is_refused_on_any_condition`
   and `test_a_file_that_typescript_cannot_parse_fails_the_check`. In the real specs the parser
   finds the same 28 skips, all on listed conditions, in 0.3 s; `test_standin.py` 53 passed.
+- A fourth fresh-context review found step 2 still not met as written: a cast around a key
+  (`test['skip' as const]`, `'fixme'!`, `<const>'skip'`, `satisfies`), an import alias
+  (`import s = test.skip`), a class field `type = 'skip'` as an annotation, and
+  `expectedStatus = 'failed'`, which marks an expected failure as `test.fail` does. Fixed: the
+  scan no longer looks for forms one by one; it reports every use of the names skip, fixme, fail
+  and expectedStatus that a file writes out, a member, a destructured name, a key
+  `expectedStatus`, an import alias or any other string of a name alone, and the check refuses
+  all of them but a skip on a listed condition (ADR-0316 and step 2 say so). Also fixed from its
+  nits: the reason check takes a folder and has a test of its own
+  (`test_a_skip_without_its_reason_is_refused`), the parse test feeds a file whose readable skip
+  is on a listed condition, and the notes say that the skip on `E2E_OLD_SUPERVISOR` was a manual
+  run. Recorded in ADR-0316: conditions are compared as text, a comment in a condition or a reason
+  makes the check refuse more, and the Unit Tests job of the CI workflow (off, ADR-0230) installs
+  no web UI packages, so the checks would skip there. The forms test holds 36 uses in five files,
+  which the scan before failed on; `test_standin.py` 54 passed.
 
 ### 2026-11-10: install.sh and update.sh start UNOS without a compose down first
 

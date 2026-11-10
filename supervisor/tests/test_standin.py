@@ -585,36 +585,44 @@ STRING = re.compile(r"""'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|
 
 TYPESCRIPT = REPO / "webui" / "node_modules" / "typescript"
 
-# Run by node with the path of TYPESCRIPT and the files: prints as JSON every skip, fixme and fail
-# of Playwright that TypeScript's parser finds in them, and their syntax errors. It finds every
-# form that names the method: a call or a reference on any object (test, test.describe,
-# test.step, a TestInfo under any name, test.info(), an alias), through ., ?. or brackets with a
-# literal, parentheses, a non-null assertion or a cast, also test.fail.only; a destructured name;
-# and an annotation of that type. A name that the code computes or passes as a value is not seen.
+# Run by node with the path of TYPESCRIPT and the files: prints as JSON every use of the names skip,
+# fixme, fail and expectedStatus that TypeScript's parser finds in them, and their syntax errors. It
+# reports each one that the code writes out: a member of any object (test, test.describe,
+# test.step, a TestInfo under any name, test.info(), an alias) through ., ?. or brackets, with
+# parentheses, a non-null assertion or a cast around the object or the key, called (with its
+# condition and reason; also test.fail.only) or not; a destructured name; a key expectedStatus; an
+# import alias; and any other string of the name alone, an annotation's type among them. A name
+# that the code builds, or reads from data, is not seen.
 SKIP_SCAN = r"""
 const [typescript, ...files] = process.argv.slice(1);
 const ts = require(typescript);
+// The methods of a skip, a fixme and a fail, and the field of a TestInfo that test.fail sets.
 const METHODS = new Set(['skip', 'fixme', 'fail']);
+const EXPECTED_STATUS = 'expectedStatus';
+const NAMES = new Set([...METHODS, EXPECTED_STATUS]);
 const options = { allowJs: true, noLib: true, noResolve: true, noEmit: true, types: [] };
 // With the parent of every node set, which the parser alone leaves out.
 const program = ts.createProgram(files, options, ts.createCompilerHost(options, true));
-// The text of a string, or of a template without substitutions, through parentheses.
-const literal = (node) => {
-  while (node && ts.isParenthesizedExpression(node)) node = node.expression;
-  return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : undefined;
-};
-// The name of a member, a binding or a property: written out, quoted, or a computed literal.
-const nameOf = (name) => {
-  if (!name) return undefined;
-  if (ts.isComputedPropertyName(name)) return literal(name.expression);
-  return ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name) ? name.text : undefined;
-};
-// The outermost expression that stands for node: through parentheses, a non-null assertion and casts.
+// Parentheses, a non-null assertion and casts, which leave the value inside as it is.
 const WRAPPERS = [ts.isParenthesizedExpression, ts.isNonNullExpression, ts.isAsExpression,
   ts.isTypeAssertionExpression, ts.isSatisfiesExpression];
+const inner = (node) => {
+  while (node && WRAPPERS.some((is) => is(node))) node = node.expression;
+  return node;
+};
 const outer = (node) => {
   while (node.parent && WRAPPERS.some((is) => is(node.parent)) && node.parent.expression === node) node = node.parent;
   return node;
+};
+const isString = (node) => !!node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node));
+// The strings that are the name of a member, a binding or a property: reported there, if at all.
+const named = new Set();
+// The name of a member, a binding or a property: written out, quoted, or a computed string.
+const nameOf = (name) => {
+  if (!name) return undefined;
+  const node = ts.isComputedPropertyName(name) ? inner(name.expression) : name;
+  if (isString(node)) named.add(node);
+  return node && (ts.isIdentifier(node) || isString(node)) ? node.text : undefined;
 };
 // Whether an object literal is the target of a destructuring assignment, also inside another one.
 const assigned = (node) => {
@@ -646,10 +654,18 @@ for (const file of files) {
     found.push({ file, line: line + 1, method, condition, reason });
   };
   const visit = (node) => {
-    let method;
-    if (ts.isPropertyAccessExpression(node)) method = nameOf(node.name);
-    else if (ts.isElementAccessExpression(node)) method = literal(node.argumentExpression);
-    if (METHODS.has(method)) {
+    let member;
+    if (ts.isPropertyAccessExpression(node)) member = nameOf(node.name);
+    else if (ts.isElementAccessExpression(node)) {
+      const key = inner(node.argumentExpression);
+      if (isString(key)) {
+        named.add(key);
+        member = key.text;
+      }
+    }
+    if (member === EXPECTED_STATUS) {
+      add(node, member, '(a member)');
+    } else if (METHODS.has(member)) {
       // A call, also through .only; anything else is a reference.
       let use = outer(node);
       const only = use.parent;
@@ -657,21 +673,35 @@ for (const file of files) {
       const call = use.parent;
       if (ts.isCallExpression(call) && call.expression === use) {
         const [condition, reason] = call.arguments;
-        add(call, method, condition ? condition.getText(source).split(/\s+/).join(' ') : '',
+        add(call, member, condition ? condition.getText(source).split(/\s+/).join(' ') : '',
           reason ? reason.getText(source) : null);
       } else {
-        add(node, method, '(a reference)');
+        add(node, member, '(a reference)');
       }
     } else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
-      const name = nameOf(node.propertyName ?? node.name);
-      if (METHODS.has(name)) add(node, name, '(a destructured name)');
+      const bound = nameOf(node.propertyName ?? node.name);
+      if (NAMES.has(bound)) add(node, bound, '(a destructured name)');
     } else if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
                && ts.isObjectLiteralExpression(node.parent)) {
-      const name = nameOf(node.name);
-      if (METHODS.has(name) && assigned(node.parent)) add(node, name, '(a destructured name)');
-      else if (name === 'type' && ts.isPropertyAssignment(node) && METHODS.has(literal(node.initializer))) {
-        add(node, literal(node.initializer), '(an annotation)');
+      const key = nameOf(node.name);
+      if (NAMES.has(key) && assigned(node.parent)) add(node, key, '(a destructured name)');
+      else if (key === EXPECTED_STATUS) add(node, key, '(a property)');
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isEntityName(node.moduleReference)) {
+      // import alias = test.skip
+      for (let name = node.moduleReference; name; name = ts.isQualifiedName(name) ? name.left : undefined) {
+        const segment = ts.isQualifiedName(name) ? name.right : name;
+        if (NAMES.has(segment.text)) {
+          add(node, segment.text, '(an import alias)');
+          break;
+        }
       }
+    } else if (isString(node) && NAMES.has(node.text) && !named.has(node)) {
+      // Any other string of a name alone: an annotation's type, or a name that the code passes on.
+      const value = outer(node);
+      const holder = value.parent;
+      const annotation = (ts.isPropertyAssignment(holder) || ts.isPropertyDeclaration(holder))
+        && holder.initializer === value && nameOf(holder.name) === 'type';
+      add(node, node.text, annotation ? '(an annotation)' : '(a string)');
     }
     ts.forEachChild(node, visit);
   };
@@ -679,6 +709,12 @@ for (const file of files) {
 }
 process.stdout.write(JSON.stringify({ found, problems }));
 """
+
+
+# The conditions that SKIP_SCAN gives a use of the names that is not a call; none is a condition
+# of TypeScript.
+NOT_A_CALL = {"(a reference)", "(a destructured name)", "(a property)", "(a member)", "(an import alias)",
+              "(an annotation)", "(a string)"}
 
 
 @functools.cache
@@ -712,17 +748,46 @@ def _skip_calls(folder: Path = SPECS):
 
 
 def _unexpected_skips(folder: Path = SPECS) -> list[str]:
-    """The skips that test_specs_skip_only_on_the_listed_conditions refuses: one on a condition
-    that SKIP_CONDITIONS does not list (a reference, a destructured name and an annotation
-    included), and every test.fixme and test.fail, the marks of a known failure (ADR-0215)."""
+    """What test_specs_skip_only_on_the_listed_conditions refuses: a skip on a condition that
+    SKIP_CONDITIONS does not list (every use of the names that is not a call, such as a reference
+    or a string, included), and every test.fixme, test.fail and expectedStatus, the marks of a
+    known failure (ADR-0215)."""
     unexpected = []
     for spec, line, method, condition, _reason, _text in _skip_calls(folder):
         where = f"{spec.relative_to(folder).as_posix()}:{line}"
-        if method in ("fixme", "fail"):
+        if method == "expectedStatus":
+            unexpected.append(f"{where}: expectedStatus {condition}: a known failure (ADR-0215)")
+        elif method in ("fixme", "fail"):
             unexpected.append(f"{where}: test.{method} on {condition or '(no condition)'}: a known failure (ADR-0215)")
         elif condition not in SKIP_CONDITIONS:
             unexpected.append(f"{where}: {condition or '(no condition)'}")
     return unexpected
+
+
+def _missing_reasons(folder: Path = SPECS) -> list[str]:
+    """What test_every_skip_gives_its_reason refuses: a skip without a reason (string literals and
+    string constants joined by +), and a stand-in skip whose reason does not start with what the
+    stand-in lacks or does not end with TEST_STACK_TOO of webui/tests/target.ts."""
+    test_stack_too = _string_value("TEST_STACK_TOO", (SPECS / "target.ts").read_text(encoding="utf-8"))
+    assert "compose test stack" in test_stack_too, "webui/tests/target.ts: no TEST_STACK_TOO"
+    missing = []
+    for spec, line, _method, condition, reason, text in _skip_calls(folder):
+        if condition in NOT_A_CALL:
+            continue  # test_specs_skip_only_on_the_listed_conditions refuses it
+        where = f"{spec.relative_to(folder).as_posix()}:{line}"
+        value = _string_value(reason, text)
+        if not value.strip():
+            missing.append(f"{where}: no reason (string literals and string constants joined by +)")
+        elif condition == STAND_IN_SKIP:
+            lacks = value.removeprefix("The stand-in ")
+            if lacks == value or not lacks.removesuffix(test_stack_too).strip(" ;,."):
+                missing.append(f"{where}: {value!r} does not start with what the stand-in lacks")
+            elif not lacks.endswith(test_stack_too):
+                missing.append(
+                    f"{where}: {value!r} does not end with TEST_STACK_TOO of webui/tests/target.ts "
+                    "(the compose test stack takes the skip too)"
+                )
+    return missing
 
 
 NAME = re.compile(r"[A-Za-z_$][\w$]*")
@@ -868,12 +933,13 @@ class TestSpecsAndRunner:
         assert SKIP_CONDITIONS <= found, f"stale SKIP_CONDITIONS entries: {sorted(SKIP_CONDITIONS - found)}"
 
     def test_every_skip_form_in_every_spec_file_is_seen(self, tmp_path):
-        """A skip, fixme or fail of Playwright in any form that names it, in any file of webui/tests
-        and its folders, is seen and refused unless it skips on a listed condition
-        (testing.no-compat-skips, ADR-0316): a call or a reference on any object, a destructured
-        name and an annotation of that type. One that the checks above missed would pass them
-        unseen. TypeScript's parser reads the files, so neither a comment nor a division or a
-        regular expression literal that a heuristic might misread hides what follows it."""
+        """Every use of the names skip, fixme, fail and expectedStatus that a file of webui/tests
+        and its folders writes out is seen and refused, but a skip on a listed condition
+        (testing.no-compat-skips, ADR-0316): a member of any object, also inside casts, called or
+        not, a destructured name, an import alias and a string of the name alone, an annotation's
+        type among them. One that the checks above missed would pass them unseen. TypeScript's
+        parser reads the files, so neither a comment nor a division or a regular expression literal
+        that a heuristic might misread hides what follows it."""
         (tmp_path / "sub").mkdir()
         (tmp_path / "a.spec.ts").write_text(
             "test('x', async ({}, info) => {\n  info.skip(smbStatus === 404, 'old');\n});\n"
@@ -903,6 +969,22 @@ class TestSpecsAndRunner:
             "const half = n! / 2 + '/';\nconst u = 'https://x'; test.skip(afterDivision, 'r');\n"
             "if (ok) /'/.test(s); test.skip(afterRegex, 'r');\n",
             encoding="utf-8")
+        (tmp_path / "e.spec.ts").write_text(
+            "test['skip' as const](castKey, 'r');\n"
+            "test['fixme'!](nonNullKey, 'r');\n"
+            "test[<const>'skip'](angleKey, 'r');\n"
+            "test['skip' satisfies string](satisfiesKey, 'r');\n"
+            "test?.['fixme' as const](optionalCastKey, 'r');\n"
+            "const { ['skip' as const]: s } = test;\n"
+            "test('t', { annotation: { type: 'skip' as const } }, async () => {});\n"
+            "class Old { type = 'fail'; }\n"
+            "import alias = test.skip;\n"
+            "export import nested = test.describe.fixme;\n"
+            "test('u', async ({}, info) => { info.expectedStatus = 'failed'; });\n"
+            "Object.assign(testInfo, { expectedStatus: 'failed' });\n"
+            "Reflect.get(test, 'skip')(viaReflect, 'r');\n"
+            "test[old ? 'skip' : 'only'](ternary, 'r');\n",
+            encoding="utf-8")
         found = sorted((spec.relative_to(tmp_path).as_posix(), method, condition)
                        for spec, _line, method, condition, *_ in _skip_calls(tmp_path))
         assert found == [
@@ -914,48 +996,59 @@ class TestSpecsAndRunner:
             ("d.spec.ts", "skip", "(a destructured name)"), ("d.spec.ts", "skip", "(a reference)"),
             ("d.spec.ts", "skip", "afterDivision"), ("d.spec.ts", "skip", "afterRegex"), ("d.spec.ts", "skip", "cast"),
             ("d.spec.ts", "skip", "optionalBracket"), ("d.spec.ts", "skip", "parenthesized"),
-            ("d.spec.ts", "skip", "templated"), ("sub/b.spec.mts", "fail", "version < 2"),
+            ("d.spec.ts", "skip", "templated"),
+            ("e.spec.ts", "expectedStatus", "(a member)"), ("e.spec.ts", "expectedStatus", "(a property)"),
+            ("e.spec.ts", "fail", "(an annotation)"), ("e.spec.ts", "fixme", "(an import alias)"),
+            ("e.spec.ts", "fixme", "nonNullKey"), ("e.spec.ts", "fixme", "optionalCastKey"),
+            ("e.spec.ts", "skip", "(a destructured name)"), ("e.spec.ts", "skip", "(a string)"),
+            ("e.spec.ts", "skip", "(a string)"), ("e.spec.ts", "skip", "(an annotation)"),
+            ("e.spec.ts", "skip", "(an import alias)"), ("e.spec.ts", "skip", "angleKey"),
+            ("e.spec.ts", "skip", "castKey"), ("e.spec.ts", "skip", "satisfiesKey"),
+            ("sub/b.spec.mts", "fail", "version < 2"),
         ]
         assert len(_unexpected_skips(tmp_path)) == len(found)
 
     def test_an_expected_failure_is_refused_on_any_condition(self, tmp_path):
-        """test.fixme and test.fail mark a known failure, which ADR-0215 rules out, also on the
-        stand-in's condition."""
+        """test.fixme, test.fail and the expectedStatus that test.fail sets mark a known failure,
+        which ADR-0215 rules out, also on the stand-in's condition."""
         (tmp_path / "a.spec.ts").write_text(
             "test.fail(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks' + TEST_STACK_TOO);\n"
-            "test.fixme(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks' + TEST_STACK_TOO);\n",
+            "test.fixme(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks' + TEST_STACK_TOO);\n"
+            "test('x', async ({}, info) => {\n  info.expectedStatus = 'failed';\n});\n",
             encoding="utf-8")
         assert _unexpected_skips(tmp_path) == [
             "a.spec.ts:1: test.fail on process.env.E2E_STAND_IN === '1': a known failure (ADR-0215)",
             "a.spec.ts:2: test.fixme on process.env.E2E_STAND_IN === '1': a known failure (ADR-0215)",
+            "a.spec.ts:4: expectedStatus (a member): a known failure (ADR-0215)",
         ]
 
     def test_a_file_that_typescript_cannot_parse_fails_the_check(self, tmp_path):
-        """Its skips are not known, so it fails the check instead of passing unseen."""
-        (tmp_path / "a.spec.ts").write_text("test.skip(\n", encoding="utf-8")
+        """Its skips are not known, so it fails the check instead of passing unseen, even when the
+        skips that can be read are on listed conditions."""
+        (tmp_path / "a.spec.ts").write_text(
+            "test.skip(!httpUrl, 'set HTTP_URL to the plain-HTTP address');\nconst = 1;\n", encoding="utf-8")
         with pytest.raises(AssertionError, match="TypeScript cannot parse"):
             list(_skip_calls(tmp_path))
 
     def test_every_skip_gives_its_reason(self):
-        calls = list(_skip_calls())
-        assert any(call[3] == STAND_IN_SKIP for call in calls), "no skip on E2E_STAND_IN found"
-        test_stack_too = _string_value("TEST_STACK_TOO", (SPECS / "target.ts").read_text(encoding="utf-8"))
-        assert "compose test stack" in test_stack_too, "webui/tests/target.ts: no TEST_STACK_TOO"
-        missing = []
-        for spec, line, _method, condition, reason, text in calls:
-            value = _string_value(reason, text)
-            if not value.strip():
-                missing.append(f"{spec.name}:{line}: no reason (string literals and string constants joined by +)")
-            elif condition == STAND_IN_SKIP:
-                lacks = value.removeprefix("The stand-in ")
-                if lacks == value or not lacks.removesuffix(test_stack_too).strip(" ;,."):
-                    missing.append(f"{spec.name}:{line}: {value!r} does not start with what the stand-in lacks")
-                elif not lacks.endswith(test_stack_too):
-                    missing.append(
-                        f"{spec.name}:{line}: {value!r} does not end with TEST_STACK_TOO of webui/tests/target.ts "
-                        "(the compose test stack takes the skip too)"
-                    )
-        assert missing == []
+        assert any(call[3] == STAND_IN_SKIP for call in _skip_calls()), "no skip on E2E_STAND_IN found"
+        assert _missing_reasons() == []
+
+    def test_a_skip_without_its_reason_is_refused(self, tmp_path):
+        """No reason, a stand-in skip that does not start with what the stand-in lacks, and one that
+        does not end with TEST_STACK_TOO."""
+        (tmp_path / "a.spec.ts").write_text(
+            "test.skip(!httpUrl);\n"
+            "test.skip(process.env.E2E_STAND_IN === '1', 'No disks here' + TEST_STACK_TOO);\n"
+            "test.skip(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks');\n"
+            "test.skip(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks' + TEST_STACK_TOO);\n",
+            encoding="utf-8")
+        missing = _missing_reasons(tmp_path)
+        assert [problem.split(":")[:2] for problem in missing] == [["a.spec.ts", "1"], ["a.spec.ts", "2"],
+                                                                   ["a.spec.ts", "3"]]
+        assert "no reason" in missing[0]
+        assert "does not start with what the stand-in lacks" in missing[1]
+        assert "does not end with TEST_STACK_TOO" in missing[2]
 
     def test_the_first_run_spec_creates_the_administrator_the_specs_sign_in_as(self):
         fixtures = (SPECS / "fixtures.ts").read_text(encoding="utf-8")
