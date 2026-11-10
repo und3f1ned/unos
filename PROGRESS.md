@@ -233,6 +233,33 @@ Open owner actions:
 - `passes` stays false: `make e2e-local` cannot start Chromium on this workstation now (owner
   action 2), and the web UI calls the delete and the listing. Not host-level.
 
+### 2026-11-10: install.sh and update.sh start UNOS without a compose down first
+
+- `deploy.no-legacy-network-recreate`, at the owner's word to go on ("Continue", in translation),
+  under ADR-0207: `start_unos` of `deploy/install.sh` and `restart_services` of
+  `deploy/update.sh` ran `docker compose down --remove-orphans` before `up`, kept for the network
+  of releases without the fixed subnet (ADR-0048). Both start with `up --remove-orphans` alone
+  now, which recreates the containers of new images and removes those of services that a release
+  dropped or renamed, as the old `down --remove-orphans` did; their comments on older networks are
+  gone, and `docs/INSTALL.md`, README.md and CHANGELOG.md describe the restart and the upgrade by
+  hand so. A change of the subnet still needs a `docker compose down` by hand, as that guide says;
+  the rollback of `update.sh` keeps its own.
+- Tests first (ADR-0186): an update makes no `compose down` call, and `start_unos` makes none
+  either, nor does either script mention the fixed subnet; both failed before the change. The
+  docker stub of `test_deploy_scripts.py` interrupts the restart during its `up` now
+  (`interrupt-at-up`), where it interrupted at the old `down`. 173 tests of the file passed. The
+  entry is host-level (GLOSSARY.md: the host's containers), so `passes` stays false until a run of
+  both scripts on a host with the reboot check (ADR-0018), like `deploy.install-script` and
+  `deploy.update-script`; the feature-pass skill lists it among the checks by hand.
+- The fresh-context review (ADR-0017) found seven things, all fixed: CHANGELOG.md still described
+  a `down` before `up`; without `--remove-orphans`, the containers of a service that a release
+  dropped or renamed kept running (a renamed `webui` would keep ports 80 and 443 and its address,
+  and every update to that release would roll back), so both starts pass it now and the tests
+  assert the exact `up`; `passes` was true with a reason that GLOSSARY.md does not give, and the
+  Log entry had no results; the `on_interrupt` comment of `update.sh`, the guide's text on an
+  interrupted update and the upgrades by hand of `docs/INSTALL.md` and README.md still named the
+  old `down`; the stub's `interrupt_at down` was dead code. `make check` passed.
+
 ### 2026-11-09: storage.scrub passes on the scenario check scrub, before and after a reboot
 
 - At the owner's word to work on through the features ("I allow everything", in translation),

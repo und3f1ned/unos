@@ -3141,11 +3141,15 @@
         "install.sh starts UNOS without docker compose down --remove-orphans, and its comment about older installs is gone",
         "tests/test_deploy_scripts.py checks both starts"
       ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0048"
-      ]
+      ],
+      "notes": "Done in the code 2026-11-10. Step 1: restart_services of update.sh runs docker compose up -d --no-build --remove-orphans alone, which recreates the containers of the new images and removes those of services that a release dropped or renamed, as the old down --remove-orphans did; the comment on the networks of releases without the fixed subnet is gone (TestUpdateScript test_builds_while_running_then_switches_and_prunes_after_health: no compose down in an update; test_every_compose_up_waits_for_the_supervisor_start_or_the_health_timeout: the exact up). Step 2: start_unos of install.sh runs docker compose up --remove-orphans without a compose down before it, and its comment on older installs is gone (TestInstallScript test_the_start_runs_no_compose_down_before_up, also that neither script mentions the fixed subnet; test_start_and_the_unit_wait_at_most_the_start_timeout: the exact up, and the unit's ExecStart unchanged). The no-down tests failed before the change. An interrupt of the restart now comes during its compose up (the docker stub's interrupt-at-up), and the rollback starts the previous version as before; the rollback itself still runs compose down first. A change of the subnet needs docker compose down by hand, as docs/INSTALL.md says (ADR-0048). Open: host-level (GLOSSARY.md, the host's containers), and neither script has run on a host in this phase (the dev device is deployed with scripts/dev/deploy.sh): a run of install.sh and of update.sh on a host, with the device check and the re-check after a reboot (ADR-0018), as for deploy.install-script and deploy.update-script."
     },
     {
       "id": "deploy.one-caddyfile",
