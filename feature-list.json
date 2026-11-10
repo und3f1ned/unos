@@ -2685,12 +2685,17 @@
         "webui/src/lib/api/system.ts keeps no SystemStats client without a caller, and webui/src/lib/stores/stats.ts no store that nothing sets or reads",
         "The dashboard and Resource Monitor specs pass"
       ],
+      "verified_by": [
+        "supervisor/tests/test_ws_stats.py",
+        "webui/tests/dashboard.spec.ts",
+        "webui/tests/monitor.spec.ts"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0006"
       ],
-      "notes": "Found by the review of system.no-legacy-basic-stats on 2026-11-10: with a full history, the history of the stats message is about 17 of its 25 KB, sent every 2 seconds, and no page reads it; getSystemStats of webui/src/lib/api/system.ts, a client of GET /api/v1/system/stats, has no caller; the temperatures store of stats.ts is never set, and its derived stores (cpuStats to networkInterfaces) have no reader."
+      "notes": "Found by the review of system.no-legacy-basic-stats on 2026-11-10: with a full history, the history of the stats message is about 17 of its 25 KB, sent every 2 seconds, and no page reads it; getSystemStats of webui/src/lib/api/system.ts, a client of GET /api/v1/system/stats, has no caller; the temperatures store of stats.ts is never set, and its derived stores (cpuStats to networkInterfaces) have no reader. Done 2026-11-10. Step 1: get_system_stats of supervisor/src/websocket/events.py keeps and sends no history, and the fakes of mobile-layout.spec.ts and monitor.spec.ts have none (test_ws_stats.py test_the_stats_message_has_one_shape, which failed before the change). Step 2: the history types, the temperatures store and the derived stores of webui/src/lib/stores/stats.ts are gone, and so are SystemStats, getSystemStats and getTemperatures of webui/src/lib/api/system.ts, which nothing called; the endpoints /api/v1/system/stats and /system/temperatures stay (test_the_web_ui_keeps_no_unread_stats_code, which failed before). webui/AGENTS.md names the stats store as it is now. Not host-level."
     },
     {
       "id": "system.opt-in-telemetry",

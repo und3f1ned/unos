@@ -32,7 +32,6 @@ import functools
 import json
 import logging
 import time
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
@@ -68,13 +67,6 @@ _prev_net_io = None
 _prev_disk_io = None
 _prev_time = None
 _prev_net_per_iface = {}
-
-# History storage (60 points = ~2 minutes at 2s interval)
-HISTORY_SIZE = 60
-cpu_history: deque = deque(maxlen=HISTORY_SIZE)
-memory_history: deque = deque(maxlen=HISTORY_SIZE)
-network_history: deque = deque(maxlen=HISTORY_SIZE)
-disk_io_history: deque = deque(maxlen=HISTORY_SIZE)
 
 
 class ConnectionManager:
@@ -216,12 +208,7 @@ def get_system_stats() -> dict:
     except Exception:
         pass
 
-    # Update history
     timestamp = datetime.now().isoformat()
-    cpu_history.append({"timestamp": timestamp, "value": cpu_percent})
-    memory_history.append({"timestamp": timestamp, "value": memory.percent})
-    network_history.append({"timestamp": timestamp, "sent": bytes_sent_rate, "recv": bytes_recv_rate})
-    disk_io_history.append({"timestamp": timestamp, "read": read_rate, "write": write_rate})
 
     # Store previous values for next calculation
     _prev_net_io = net_io
@@ -281,13 +268,6 @@ def get_system_stats() -> dict:
             # Top processes
             "processes": top_processes,
 
-            # History data
-            "history": {
-                "cpu": list(cpu_history),
-                "memory": list(memory_history),
-                "network": list(network_history),
-                "disk_io": list(disk_io_history),
-            },
 
             # Timestamp
             "timestamp": timestamp,

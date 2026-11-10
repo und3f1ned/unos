@@ -206,6 +206,21 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: the stats message and the web UI's stats code carry nothing unread
+
+- `system.stats-without-unread-parts`, which the review of `system.no-legacy-basic-stats`
+  found, at the owner's word to go on ("Continue", in translation), under ADR-0207 and
+  ADR-0006: the stats message sent the history of the last two minutes, about 17 of its 25 KB
+  every 2 seconds, which no page read; `stats.ts` had a `temperatures` store that nothing set
+  and derived stores that nothing read, and `api/system.ts` clients of `/system/stats` and
+  `/system/temperatures` that nothing called. They are gone; the endpoints stay. The spec fakes
+  of the message have no history, webui/AGENTS.md names the stats store as it is, and
+  CHANGELOG.md says so.
+- Tests first (ADR-0186): `test_ws_stats.py` checks that the message has no history and that the
+  web UI keeps none of these; both failed before the change. `test_ws_stats.py` and
+  `test_ws_auth.py` 44 passed; svelte-check found no error. Not host-level.
+- RESULTS
+
 ### 2026-11-10: the stats message of the WebSocket has one shape
 
 - `system.no-legacy-basic-stats`, at the owner's word to go on ("Continue", in translation),

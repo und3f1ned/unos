@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store';
+import { writable } from 'svelte/store';
 import { getToken, handleUnauthorized } from '$lib/api/client';
 
 // The parts of the stats message of /ws/v1/events (supervisor/src/websocket/events.py)
@@ -72,30 +72,6 @@ export interface ProcessInfo {
   username: string;
 }
 
-export interface HistoryPoint {
-  timestamp: string;
-  value: number;
-}
-
-export interface NetworkHistoryPoint {
-  timestamp: string;
-  sent: number;
-  recv: number;
-}
-
-export interface DiskIOHistoryPoint {
-  timestamp: string;
-  read: number;
-  write: number;
-}
-
-export interface StatsHistory {
-  cpu: HistoryPoint[];
-  memory: HistoryPoint[];
-  network: NetworkHistoryPoint[];
-  disk_io: DiskIOHistoryPoint[];
-}
-
 // The stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface WebSocketStats {
   temperatures: Record<string, number>;
@@ -104,37 +80,12 @@ export interface WebSocketStats {
   network: NetworkStats;
   disk_io: DiskIOStats;
   processes: ProcessInfo[];
-  history: StatsHistory;
   timestamp: string;
-}
-
-export interface TemperatureSensor {
-  label: string;
-  current: number;
-  high: number | null;
-  critical: number | null;
-}
-
-export interface TemperatureGroup {
-  name: string;
-  sensors: TemperatureSensor[];
 }
 
 // Main stores
 export const stats = writable<WebSocketStats | null>(null);
 export const wsConnected = writable(false);
-export const temperatures = writable<TemperatureGroup[]>([]);
-
-// Derived stores for specific data
-export const cpuStats = derived(stats, $stats => $stats?.cpu ?? null);
-export const memoryStats = derived(stats, $stats => $stats?.memory ?? null);
-export const networkStats = derived(stats, $stats => $stats?.network ?? null);
-export const diskIOStats = derived(stats, $stats => $stats?.disk_io ?? null);
-export const processes = derived(stats, $stats => $stats?.processes ?? []);
-export const statsHistory = derived(stats, $stats => $stats?.history ?? null);
-
-// Derived store for network interfaces with rates
-export const networkInterfaces = derived(stats, $stats => $stats?.network?.interfaces ?? []);
 
 // Close codes of the WebSocket auth handshake (supervisor/src/websocket/events.py).
 export const WS_CLOSE_UNAUTHORIZED = 4401;
