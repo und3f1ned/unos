@@ -227,8 +227,26 @@ Open owner actions:
   the entry to what the check holds; comments are blanked with strings and regular expression
   literals kept, and the detector finds those forms and refuses every `test.fail`
   (`test_an_expected_failure_is_refused_on_any_condition`); the new entry has the review's
-  further checks. Not caught: a skip through a destructured `{ skip }` of a TestInfo.
-- RESULTS
+  further checks.
+- A third fresh-context review found step 2's "in any form" still not met: a `{ skip }`
+  destructured from `test`, a template literal or `?.` in brackets, a parenthesized `(test)` and a
+  template literal annotation passed unseen. It also found that ADR-0316 called the listed
+  conditions permanent while `testing.no-skips-that-hide-api-errors` changes one, and, as nits, a
+  division or a regular expression literal that the heuristic misread and that hid the skip after
+  it, two quadratic paths on long words and chains, a stale count in the notes and a `test.fixme`
+  that passed on a listed condition. Fixed: `test_standin.py` reads the files with TypeScript's
+  parser (`SKIP_SCAN`, run by node with `webui/node_modules/typescript`), which finds a skip,
+  fixme or fail called or referenced on any object, destructured or as an annotation, and fails
+  on a file that does not parse; the regex detector and its tokenizer are gone, and with them the
+  misreads and the quadratic paths; every `test.fixme` is refused like `test.fail`; ADR-0316 and
+  step 2 say what the check holds and what it does not see (a name that the code computes or
+  passes as a value), and the notes give the counts of the new test.
+- Tests first (ADR-0186): `test_every_skip_form_in_every_spec_file_is_seen`, now with 22 skips in
+  four files, failed on the regex detector (it stopped with an error at the regular expression
+  literal after `if (ok)`, and without that line missed the new forms and the skip after a
+  division), and so did the fixme case of `test_an_expected_failure_is_refused_on_any_condition`
+  and `test_a_file_that_typescript_cannot_parse_fails_the_check`. In the real specs the parser
+  finds the same 28 skips, all on listed conditions, in 0.3 s; `test_standin.py` 53 passed.
 
 ### 2026-11-09: storage.scrub passes on the scenario check scrub, before and after a reboot
 

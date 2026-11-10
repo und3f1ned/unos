@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import importlib.util
 import json
 import os
@@ -54,11 +55,12 @@ DATA_PATH = re.compile(r"^/data(/|$)")
 # The skip of a feature that the stand-in lacks (ADR-0215).
 STAND_IN_SKIP = "process.env.E2E_STAND_IN === '1'"
 
-# The conditions a spec may skip on (test.skip, test.fixme and test.fail, in
-# their test.describe and testInfo forms too), each with why. A condition is
-# something a local target lacks or must keep; never the version of the
-# supervisor it runs (ADR-0207: no compatibility skips) and never a known
-# failure (ADR-0215). A new kind of skip is added here, with its reason.
+# The conditions a spec may skip on (test.skip, in its test.describe, test.step
+# and TestInfo forms too), each with why. A condition is something a local
+# target lacks or must keep; never the version of the supervisor it runs
+# (ADR-0207: no compatibility skips) and never a known failure (ADR-0215):
+# test.fixme and test.fail are refused on any condition. A new kind of skip is
+# added here, with its reason.
 SKIP_CONDITIONS = {
     # A feature the stand-in lacks: the reason starts with "The stand-in" and names it, and
     # ends with TEST_STACK_TOO (webui/tests/target.ts): the compose test stack takes it too.
@@ -571,177 +573,153 @@ class TestTargets:
         assert {name: command for name, command in scripts.items() if re.search(r"\bplaywright\b", command)} == {}
 
 
-# A skip, fixme or fail of Playwright on any object (test, test.describe, test.step, a TestInfo
-# under any name, test.info()), also through ?., ['skip'] or .only and with spaces before its
-# parenthesis; a reference to one without a call (an alias); and an annotation of that type. A
-# helper of a spec names no method skip, fixme or fail.
-_CHAIN = r"[A-Za-z_$][\w$]*(?:\(\))?(?:\s*\??\.\s*[A-Za-z_$][\w$]*(?:\(\))?)*"
-SKIP_CALL = re.compile(
-    rf"(?<![\w$.])(?:{_CHAIN})\s*(?:\??\.\s*(?P<method>skip|fixme|fail)"
-    r"|\[\s*(?P<q>[\x27\x22])(?P<bracket>skip|fixme|fail)(?P=q)\s*\])(?:\s*\.\s*only)?\s*\("
-)
-SKIP_REFERENCE = re.compile(
-    rf"(?<![\w$.])(?:{_CHAIN})\s*\??\.\s*(?P<method>skip|fixme|fail)\b(?!\s*(?:\(|\.\s*only\s*\())"
-)
-SKIP_ANNOTATION = re.compile(r"\btype\s*:\s*(?P<q>[\x27\x22])(?P<method>skip|fixme|fail)(?P=q)")
 # The files Playwright may load from webui/tests: specs and the modules they import, in every folder.
 SPEC_SUFFIXES = {".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"}
 
 
 def _spec_files(folder: Path = SPECS) -> list[Path]:
     return sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix in SPEC_SUFFIXES)
-CLOSING = {"(": ")", "[": "]", "{": "}"}
+
+
 STRING = re.compile(r"""'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`""", re.S)
 
+TYPESCRIPT = REPO / "webui" / "node_modules" / "typescript"
 
-def _skip_over(text: str, i: int) -> int | None:
-    """The index after the string, comment or bracketed group that starts at ``i``; None for anything else."""
-    char = text[i]
-    if text.startswith("//", i):
-        end = text.find("\n", i)
-        return len(text) if end < 0 else end
-    if text.startswith("/*", i):
-        end = text.find("*/", i + 2)
-        assert end >= 0, f"unterminated comment at offset {i}"
-        return end + 2
-    if char in "'\"`":
-        j = i + 1
-        while j < len(text):
-            if text[j] == "\\":
-                j += 2
-            elif text[j] == char:
-                return j + 1
-            elif char == "`" and text.startswith("${", j):
-                j = _skip_over(text, j + 1)
-            else:
-                j += 1
-        raise AssertionError(f"unterminated string at offset {i}")
-    if char in CLOSING:
-        j = i + 1
-        while True:
-            assert j < len(text), f"unbalanced {char!r} at offset {i}"
-            after = _skip_over(text, j) if text[j] in "'\"`/([{" else None
-            if after is not None:
-                j = after  # a nested group, string or comment
-            elif text[j] in ")]}":
-                assert text[j] == CLOSING[char], f"unbalanced {text[j]!r} at offset {j}"
-                return j + 1
-            else:
-                j += 1
-    return None
+# Run by node with the path of TYPESCRIPT and the files: prints as JSON every skip, fixme and fail
+# of Playwright that TypeScript's parser finds in them, and their syntax errors. It finds every
+# form that names the method: a call or a reference on any object (test, test.describe,
+# test.step, a TestInfo under any name, test.info(), an alias), through ., ?. or brackets with a
+# literal, parentheses, a non-null assertion or a cast, also test.fail.only; a destructured name;
+# and an annotation of that type. A name that the code computes or passes as a value is not seen.
+SKIP_SCAN = r"""
+const [typescript, ...files] = process.argv.slice(1);
+const ts = require(typescript);
+const METHODS = new Set(['skip', 'fixme', 'fail']);
+const options = { allowJs: true, noLib: true, noResolve: true, noEmit: true, types: [] };
+// With the parent of every node set, which the parser alone leaves out.
+const program = ts.createProgram(files, options, ts.createCompilerHost(options, true));
+// The text of a string, or of a template without substitutions, through parentheses.
+const literal = (node) => {
+  while (node && ts.isParenthesizedExpression(node)) node = node.expression;
+  return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : undefined;
+};
+// The name of a member, a binding or a property: written out, quoted, or a computed literal.
+const nameOf = (name) => {
+  if (!name) return undefined;
+  if (ts.isComputedPropertyName(name)) return literal(name.expression);
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name) ? name.text : undefined;
+};
+// The outermost expression that stands for node: through parentheses, a non-null assertion and casts.
+const WRAPPERS = [ts.isParenthesizedExpression, ts.isNonNullExpression, ts.isAsExpression,
+  ts.isTypeAssertionExpression, ts.isSatisfiesExpression];
+const outer = (node) => {
+  while (node.parent && WRAPPERS.some((is) => is(node.parent)) && node.parent.expression === node) node = node.parent;
+  return node;
+};
+// Whether an object literal is the target of a destructuring assignment, also inside another one.
+const assigned = (node) => {
+  for (;;) {
+    node = outer(node);
+    const parent = node.parent;
+    if (ts.isBinaryExpression(parent)) return parent.left === node && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+    if (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) return parent.initializer === node;
+    if (ts.isPropertyAssignment(parent) && parent.initializer === node) node = parent.parent;
+    else if (ts.isArrayLiteralExpression(parent)) node = parent;
+    else if (ts.isSpreadElement(parent)) node = parent.parent;
+    else return false;
+  }
+};
+const found = [];
+const problems = [];
+for (const file of files) {
+  const source = program.getSourceFile(file);
+  if (!source) {
+    problems.push(`${file}: not read`);
+    continue;
+  }
+  for (const diagnostic of program.getSyntacticDiagnostics(source)) {
+    const { line } = source.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
+    problems.push(`${file}:${line + 1}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`);
+  }
+  const add = (node, method, condition, reason = null) => {
+    const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+    found.push({ file, line: line + 1, method, condition, reason });
+  };
+  const visit = (node) => {
+    let method;
+    if (ts.isPropertyAccessExpression(node)) method = nameOf(node.name);
+    else if (ts.isElementAccessExpression(node)) method = literal(node.argumentExpression);
+    if (METHODS.has(method)) {
+      // A call, also through .only; anything else is a reference.
+      let use = outer(node);
+      const only = use.parent;
+      if (ts.isPropertyAccessExpression(only) && only.expression === use && nameOf(only.name) === 'only') use = outer(only);
+      const call = use.parent;
+      if (ts.isCallExpression(call) && call.expression === use) {
+        const [condition, reason] = call.arguments;
+        add(call, method, condition ? condition.getText(source).split(/\s+/).join(' ') : '',
+          reason ? reason.getText(source) : null);
+      } else {
+        add(node, method, '(a reference)');
+      }
+    } else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+      const name = nameOf(node.propertyName ?? node.name);
+      if (METHODS.has(name)) add(node, name, '(a destructured name)');
+    } else if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
+               && ts.isObjectLiteralExpression(node.parent)) {
+      const name = nameOf(node.name);
+      if (METHODS.has(name) && assigned(node.parent)) add(node, name, '(a destructured name)');
+      else if (name === 'type' && ts.isPropertyAssignment(node) && METHODS.has(literal(node.initializer))) {
+        add(node, literal(node.initializer), '(an annotation)');
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+}
+process.stdout.write(JSON.stringify({ found, problems }));
+"""
 
 
-def _call_arguments(text: str, open_paren: int) -> list[str]:
-    """The top-level arguments of the call whose parenthesis is at ``open_paren``, without comments."""
-    end = _skip_over(text, open_paren)
-    inner = text[open_paren + 1 : end - 1]
-    arguments, current, i = [], "", 0
-    while i < len(inner):
-        after = _skip_over(inner, i) if inner[i] in "'\"`/([{" else None
-        if after is not None:
-            if not inner.startswith(("//", "/*"), i):
-                current += inner[i:after]
-            i = after
-        elif inner[i] == ",":
-            arguments.append(current)
-            current, i = "", i + 1
-        else:
-            current, i = current + inner[i], i + 1
-    arguments.append(current)
-    return [argument.strip() for argument in arguments if argument.strip()]
-
-
-# A "/" that follows one of these, or one of the words, starts a regular expression; after a
-# name, a number or a closing bracket it divides.
-_REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^")
-_REGEX_AFTER_WORDS = {"return", "typeof", "case", "do", "else", "in", "of", "void", "yield", "await", "delete"}
-
-
-def _regex_end(text: str, i: int) -> int | None:
-    """The index after the regular expression literal whose "/" is at ``i``; None if its line has
-    no closing "/"."""
-    j, in_class = i + 1, False
-    while j < len(text) and text[j] != "\n":
-        char = text[j]
-        if char == "\\":
-            j += 2
-            continue
-        if char == "[":
-            in_class = True
-        elif char == "]":
-            in_class = False
-        elif char == "/" and not in_class:
-            j += 1
-            while j < len(text) and text[j].isalpha():  # the flags
-                j += 1
-            return j
-        j += 1
-    return None
-
-
-def _starts_regex(last: str, before: str) -> bool:
-    """Whether a "/" after the code ``before``, whose last character is ``last``, starts a regular
-    expression literal."""
-    if not last or last in _REGEX_AFTER:
-        return True
-    word = re.search(r"(\w+)\s*$", before)
-    return word is not None and word[1] in _REGEX_AFTER_WORDS
-
-
-def _without_comments(text: str) -> str:
-    """``text`` with every comment blanked, its newlines kept; strings and regular expression
-    literals stay as they are."""
-    parts: list[str] = []
-    last = ""  # the last character of code, not white space
-    i = 0
-    while i < len(text):
-        char = text[i]
-        if text.startswith(("//", "/*"), i):
-            end = _skip_over(text, i)
-            parts.append(re.sub(r"[^\n]", " ", text[i:end]))
-            i = end
-            continue
-        if char in "'\"`":
-            end = _skip_over(text, i)
-        elif char == "/" and _starts_regex(last, "".join(parts[-40:])):
-            end = _regex_end(text, i) or i + 1
-        else:
-            end = i + 1
-        parts.append(text[i:end])
-        if text[i:end].strip():
-            last = text[i:end].rstrip()[-1]
-        i = end
-    return "".join(parts)
+@functools.cache
+def _scan(folder: Path) -> tuple[dict, ...]:
+    """What SKIP_SCAN finds in the files of ``folder`` that Playwright may load. Skips the test
+    without node or without TypeScript in webui/node_modules (make setup installs it)."""
+    node = _node()
+    if not (TYPESCRIPT / "package.json").is_file():
+        pytest.skip("webui/node_modules has no typescript: make setup installs it")
+    files = [str(path) for path in _spec_files(folder)]
+    result = subprocess.run(
+        [node, "-e", SKIP_SCAN, str(TYPESCRIPT), *files], capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stderr[-3000:]
+    scan = json.loads(result.stdout)
+    assert scan["problems"] == [], "TypeScript cannot parse these files, so their skips are not known"
+    return tuple(scan["found"])
 
 
 def _skip_calls(folder: Path = SPECS):
     """(spec, line, method, condition, reason expression, spec text) of every skip, fixme and fail
-    of Playwright in webui/tests, in every form that SKIP_CALL, SKIP_REFERENCE and SKIP_ANNOTATION
-    find outside comments; a reference's condition is "(a reference)", an annotation's
-    "(an annotation)"."""
-    for spec in _spec_files(folder):
-        original = spec.read_text(encoding="utf-8")
-        text = _without_comments(original)
-        line = lambda match: text.count("\n", 0, match.start()) + 1  # noqa: E731
-        for match in SKIP_CALL.finditer(text):
-            arguments = _call_arguments(text, match.end() - 1)
-            condition = " ".join(arguments[0].split()) if arguments else ""
-            reason = arguments[1] if len(arguments) > 1 else None
-            yield spec, line(match), match["method"] or match["bracket"], condition, reason, original
-        for match in SKIP_REFERENCE.finditer(text):
-            yield spec, line(match), match["method"], "(a reference)", None, original
-        for match in SKIP_ANNOTATION.finditer(text):
-            yield spec, line(match), match["method"], "(an annotation)", None, original
+    of Playwright that SKIP_SCAN finds in ``folder``. The condition of a call is the text of its
+    first argument; that of a reference, a destructured name and an annotation says which it is,
+    such as "(a reference)"."""
+    texts: dict[Path, str] = {}
+    for item in _scan(folder):
+        spec = Path(item["file"])
+        if spec not in texts:
+            texts[spec] = spec.read_text(encoding="utf-8")
+        yield spec, item["line"], item["method"], item["condition"], item["reason"], texts[spec]
 
 
 def _unexpected_skips(folder: Path = SPECS) -> list[str]:
     """The skips that test_specs_skip_only_on_the_listed_conditions refuses: one on a condition
-    that SKIP_CONDITIONS does not list, and every test.fail, a known failure (ADR-0215)."""
+    that SKIP_CONDITIONS does not list (a reference, a destructured name and an annotation
+    included), and every test.fixme and test.fail, the marks of a known failure (ADR-0215)."""
     unexpected = []
     for spec, line, method, condition, _reason, _text in _skip_calls(folder):
         where = f"{spec.relative_to(folder).as_posix()}:{line}"
-        if method == "fail":
-            unexpected.append(f"{where}: test.fail on {condition or '(no condition)'}: a known failure (ADR-0215)")
+        if method in ("fixme", "fail"):
+            unexpected.append(f"{where}: test.{method} on {condition or '(no condition)'}: a known failure (ADR-0215)")
         elif condition not in SKIP_CONDITIONS:
             unexpected.append(f"{where}: {condition or '(no condition)'}")
     return unexpected
@@ -890,10 +868,12 @@ class TestSpecsAndRunner:
         assert SKIP_CONDITIONS <= found, f"stale SKIP_CONDITIONS entries: {sorted(SKIP_CONDITIONS - found)}"
 
     def test_every_skip_form_in_every_spec_file_is_seen(self, tmp_path):
-        """A skip, fixme or fail call on any object, in any form and in any file of webui/tests and
-        its folders, is seen (testing.no-compat-skips, ADR-0316), and so are a reference to one (an
-        alias) and an annotation of that type: one that the checks above missed would pass them
-        unseen. A comment hides nothing that follows code on its line."""
+        """A skip, fixme or fail of Playwright in any form that names it, in any file of webui/tests
+        and its folders, is seen and refused unless it skips on a listed condition
+        (testing.no-compat-skips, ADR-0316): a call or a reference on any object, a destructured
+        name and an annotation of that type. One that the checks above missed would pass them
+        unseen. TypeScript's parser reads the files, so neither a comment nor a division or a
+        regular expression literal that a heuristic might misread hides what follows it."""
         (tmp_path / "sub").mkdir()
         (tmp_path / "a.spec.ts").write_text(
             "test('x', async ({}, info) => {\n  info.skip(smbStatus === 404, 'old');\n});\n"
@@ -910,22 +890,51 @@ class TestSpecsAndRunner:
         (tmp_path / "sub" / "b.spec.mts").write_text("test.fail(version < 2, 'old');\n", encoding="utf-8")
         (tmp_path / "c.spec.js").write_text("// test.skip(commented, 'no')\n/* test.skip(blocked, 'no') */\n"
                                             "test.info().skip(x, 'y');\n", encoding="utf-8")
+        (tmp_path / "d.spec.ts").write_text(
+            "const { skip } = test;\nskip(destructured, 'r');\n"
+            "({ fixme: later } = test);\n"
+            "test[`skip`](templated, 'r');\n"
+            "test?.['skip'](optionalBracket, 'r');\n"
+            "(test).skip(parenthesized, 'r');\n"
+            "(test.skip as typeof test.skip)(cast, 'r');\n"
+            "test.skip.call(test, viaCall, 'r');\n"
+            "test('t', { annotation: { type: `fixme` } }, async () => {});\n"
+            "const options = { skip: true, type: 'other' };\n"
+            "const half = n! / 2 + '/';\nconst u = 'https://x'; test.skip(afterDivision, 'r');\n"
+            "if (ok) /'/.test(s); test.skip(afterRegex, 'r');\n",
+            encoding="utf-8")
         found = sorted((spec.relative_to(tmp_path).as_posix(), method, condition)
                        for spec, _line, method, condition, *_ in _skip_calls(tmp_path))
         assert found == [
             ("a.spec.ts", "fail", "failing"), ("a.spec.ts", "fixme", "bracketed"), ("a.spec.ts", "fixme", "old === true"),
             ("a.spec.ts", "skip", "'a step'"), ("a.spec.ts", "skip", "(a reference)"), ("a.spec.ts", "skip", "(an annotation)"),
             ("a.spec.ts", "skip", "optional"), ("a.spec.ts", "skip", "smbStatus === 404"), ("a.spec.ts", "skip", "spaced"),
-            ("a.spec.ts", "skip", "viaUrl"), ("c.spec.js", "skip", "x"), ("sub/b.spec.mts", "fail", "version < 2"),
+            ("a.spec.ts", "skip", "viaUrl"), ("c.spec.js", "skip", "x"),
+            ("d.spec.ts", "fixme", "(a destructured name)"), ("d.spec.ts", "fixme", "(an annotation)"),
+            ("d.spec.ts", "skip", "(a destructured name)"), ("d.spec.ts", "skip", "(a reference)"),
+            ("d.spec.ts", "skip", "afterDivision"), ("d.spec.ts", "skip", "afterRegex"), ("d.spec.ts", "skip", "cast"),
+            ("d.spec.ts", "skip", "optionalBracket"), ("d.spec.ts", "skip", "parenthesized"),
+            ("d.spec.ts", "skip", "templated"), ("sub/b.spec.mts", "fail", "version < 2"),
         ]
+        assert len(_unexpected_skips(tmp_path)) == len(found)
 
     def test_an_expected_failure_is_refused_on_any_condition(self, tmp_path):
-        """test.fail marks a known failure, which ADR-0215 rules out, also on the stand-in's condition."""
+        """test.fixme and test.fail mark a known failure, which ADR-0215 rules out, also on the
+        stand-in's condition."""
         (tmp_path / "a.spec.ts").write_text(
-            "test.fail(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks' + TEST_STACK_TOO);\n",
+            "test.fail(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks' + TEST_STACK_TOO);\n"
+            "test.fixme(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks' + TEST_STACK_TOO);\n",
             encoding="utf-8")
         assert _unexpected_skips(tmp_path) == [
-            "a.spec.ts:1: test.fail on process.env.E2E_STAND_IN === '1': a known failure (ADR-0215)"]
+            "a.spec.ts:1: test.fail on process.env.E2E_STAND_IN === '1': a known failure (ADR-0215)",
+            "a.spec.ts:2: test.fixme on process.env.E2E_STAND_IN === '1': a known failure (ADR-0215)",
+        ]
+
+    def test_a_file_that_typescript_cannot_parse_fails_the_check(self, tmp_path):
+        """Its skips are not known, so it fails the check instead of passing unseen."""
+        (tmp_path / "a.spec.ts").write_text("test.skip(\n", encoding="utf-8")
+        with pytest.raises(AssertionError, match="TypeScript cannot parse"):
+            list(_skip_calls(tmp_path))
 
     def test_every_skip_gives_its_reason(self):
         calls = list(_skip_calls())
