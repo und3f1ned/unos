@@ -75,7 +75,7 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
 - Only marked host accounts and their passdb entries are touched (ADR-0108), each after a fresh
   read right before a destructive command (ADR-0192).
 - An unchanged state renders byte-identical text and writes nothing (ADR-0082); audit entries
-  record real changes only, with existing `AuditAction` values (ADR-0157).
+  record real changes only, with the SMB actions of `AuditAction` (ADR-0320).
 - Administrators never have SMB (ADR-0117); a user's own SMB flows answer fixed texts (ADR-0131).
 
 ## Tests

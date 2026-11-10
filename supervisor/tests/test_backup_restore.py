@@ -1212,7 +1212,7 @@ class TestAuthoritative:
         env.reconcile.assert_awaited_once()
         (entry,) = audit_entries(env.audit)
         assert (entry["action"], entry["username"], entry["resource_type"], entry["severity"]) == (
-            "other", "system", "smb", "info")
+            "smb_restored", "system", "smb", "info")
         assert entry["details"].startswith("SMB state after restore: the shares of the restored database were kept")
 
     def test_an_smb_conf_that_cannot_be_installed_is_not_reported_as_restored(self, smb_env, monkeypatch):

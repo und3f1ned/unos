@@ -962,7 +962,7 @@ class TestAudit:
         await run_import(env)
         (entry,) = audit_entries(env.audit)
         assert (entry["action"], entry["username"], entry["resource_type"], entry["details"]) == (
-            "other", "system", "share", "Imported 2 shares from smb.conf")
+            "smb_shares_imported", "system", "share", "Imported 2 shares from smb.conf")
 
     @pytest.mark.parametrize("text", [None, "[global]\n workgroup = HOME\n[homes]\n browseable = no\n"])
     async def test_an_import_of_no_share_writes_no_audit_entry(self, env, text):

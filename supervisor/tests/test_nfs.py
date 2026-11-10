@@ -512,7 +512,7 @@ class TestCreate:
         assert nfs_api.exportfs_runs == [EXPORTFS]
         [entry] = audit_entries(nfs_api.audit)
         assert (entry["action"], entry["username"], entry["resource_type"], entry["resource_id"]) == (
-            "share_created", "admin", "nfs_export", str(folder))
+            "nfs_export_created", "admin", "nfs_export", str(folder))
         assert entry["details"] == f"Exported {folder} to 192.168.1.0/24, read and write"
 
     def test_a_second_export_is_appended_and_the_lines_before_stay(self, nfs_api):
@@ -852,7 +852,7 @@ class TestDelete:
         assert nfs_api.exportfs_runs == [EXPORTFS]
         [entry] = audit_entries(nfs_api.audit)
         assert (entry["action"], entry["severity"], entry["resource_type"], entry["resource_id"], entry["details"]) == (
-            "share_deleted", "warning", "nfs_export", str(media), f"Removed the NFS export of {media}")
+            "nfs_export_deleted", "warning", "nfs_export", str(media), f"Removed the NFS export of {media}")
 
         # A line written by hand into UNOS's file is the owner's: UNOS does not delete it.
         after = nfs_api.unos_file

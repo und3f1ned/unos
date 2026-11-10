@@ -715,7 +715,7 @@ class TestCreateUserWithSmb:
         body = response.json()
         assert body["smb"]["state"] == "active" and body["warnings"] == []
         assert world.fake.passdb["carol"]["password"] == "Carol-pass-2026"
-        assert [e["action"] for e in world.audit()] == ["user_created", "user_updated"]
+        assert [e["action"] for e in world.audit()] == ["user_created", "smb_account_updated"]
 
     def test_create_with_smb_on_a_host_without_samba(self, world):
         world.fake.missing = {"smbpasswd", "pdbedit", "smbstatus"}

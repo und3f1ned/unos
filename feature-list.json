@@ -1691,13 +1691,24 @@
         "An ADR decides whether the startup purge of SMB rows and the copy of foreign share sections still guard against restored databases and hand edits, and code kept only for rollbacks is removed",
         "The tests of the removed paths are removed with them"
       ],
+      "verified_by": [
+        "supervisor/tests/test_smb_startup.py",
+        "supervisor/tests/test_smb_accounts.py",
+        "supervisor/tests/test_share_import.py",
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_nfs.py",
+        "supervisor/tests/test_share_repair.py",
+        "supervisor/tests/test_audit_log.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0157",
         "ADR-0137",
-        "ADR-0092"
-      ]
+        "ADR-0092",
+        "ADR-0320"
+      ],
+      "notes": "Done in the code 2026-11-10 (ADR-0320, which supersedes ADR-0157). Step 1: SMB changes are audited with actions of their own: smb_account_updated (a user's SMB account), smb_shares_imported (the import), smb_reconciled (the startup reconcile), smb_restored (the SMB state after a restore) and share_permissions_repaired (Repair permissions), and the NFS exports with nfs_export_created and nfs_export_deleted; the rule to use only actions an older release knows is gone, as the audit loader skips a line it cannot read and keeps the rest; the web UI names every action in English and Russian (test_smb_startup.py, test_smb_accounts.py, test_share_import.py, test_backup_restore.py, test_nfs.py and test_share_repair.py expect the new actions and failed before; test_audit_log.py checks the names). Step 2: ADR-0320 keeps the startup purge of SMB rows (ADR-0137) and the copy of foreign share sections (ADR-0092), which guard restored and hand-edited databases and smb.conf files; their remarks on older releases in the comments of auth/router.py and shares/accounts.py are gone, and no code served a rollback alone. Step 3: no test served a removed path. Not host-level: the audit log is the supervisor's file."
     },
     {
       "id": "shares.smb-login-protection",

@@ -122,11 +122,13 @@ async def _pool_names() -> frozenset[str]:
     return frozenset(names)
 
 
-async def _audit(details: str, *, resource_type: str, severity: AuditSeverity = AuditSeverity.INFO) -> None:
-    """An audit entry of the system (ADR-0157); a failure to write it is logged, never raised."""
+async def _audit(
+    action: AuditAction, details: str, *, resource_type: str, severity: AuditSeverity = AuditSeverity.INFO
+) -> None:
+    """An audit entry of the system (ADR-0320); a failure to write it is logged, never raised."""
     try:
         await log_action(
-            AuditAction.OTHER,
+            action,
             username="system",
             resource_type=resource_type,
             details=details,
@@ -983,7 +985,8 @@ async def _import_locked(db: AsyncSession) -> _ImportPlan | None:
     if plan.shares:
         # An import of no share (a fresh install, a missing file) is not audited: every
         # audit entry rewrites the whole audit log on the system disk.
-        await _audit(f"Imported {len(plan.shares)} shares from smb.conf", resource_type="share")
+        await _audit(AuditAction.SMB_SHARES_IMPORTED, f"Imported {len(plan.shares)} shares from smb.conf",
+                     resource_type="share")
     return plan
 
 
@@ -2919,7 +2922,7 @@ async def reconcile_smb_on_startup() -> None:
         if run.changes:
             summary = "; ".join(run.changes)
             logger.info("SMB startup reconcile: %s", summary)
-            await _audit(f"SMB startup reconcile: {summary}", resource_type="smb")
+            await _audit(AuditAction.SMB_RECONCILED, f"SMB startup reconcile: {summary}", resource_type="smb")
         if problems:
             logger.warning("SMB startup reconcile found problems: %s", " | ".join(problems))
         if not run.changes and not problems:
@@ -2964,6 +2967,7 @@ async def after_database_restore_locked(db: AsyncSession) -> tuple[list[str], bo
     if run.changes:
         parts.append("; ".join(run.changes))
     await _audit(
+        AuditAction.SMB_RESTORED,
         f"SMB state after restore: {'; '.join(parts)}",
         resource_type="smb",
         severity=AuditSeverity.WARNING if guests else AuditSeverity.INFO,

@@ -206,6 +206,25 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: SMB changes are audited with actions of their own
+
+- `shares.rollback-era-safeguards`, at the owner's word to go on ("Continue", in translation),
+  under ADR-0207: the SMB code audited with `other` and `user_updated` only, because a release
+  after an update's rollback dropped the whole audit log at an action it did not know. The
+  audit loader of this release skips a line it cannot read and keeps the rest, so SMB changes
+  have actions of their own now: `smb_account_updated`, `smb_shares_imported`,
+  `smb_reconciled`, `smb_restored` and `share_permissions_repaired`, and the NFS exports
+  `nfs_export_created` and `nfs_export_deleted`; the audit page names them in English and
+  Russian (ADR-0320, which supersedes ADR-0157). The purge of SMB rows (ADR-0137) and the copy
+  of foreign share sections (ADR-0092) stay, for restored and hand-edited databases and files;
+  only their remarks on older releases went from the comments.
+- Tests first (ADR-0186): the tests of the startup reconcile, the restore, an SMB account, the
+  import and the NFS exports expect the new actions and failed before the change (Repair
+  permissions' test runs on Linux only). 1075 tests of those files and of the audit log, the
+  share API and the SMB integration passed; svelte-check and the text check passed. Not
+  host-level.
+- RESULTS
+
 ### 2026-11-10: a restore refuses backups without SMB tables, and backups hold no smb.conf
 
 - `backup.no-old-backup-import`, at the owner's word to go on ("Continue", in translation),

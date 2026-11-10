@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0320
 ---
 
 # ADR-0157: The SMB code audits only real changes, and problems go to the status
 
 ## Context
+
+Superseded by ADR-0320: SMB changes have audit actions of their own; the rest stays.
 
 Every audit entry reads and rewrites the whole audit_log.json on the system disk (ADR-0066),
 so a persistent problem, such as a host without Samba, would rewrite it at every start.
