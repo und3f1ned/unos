@@ -56,31 +56,32 @@ test.describe('App Store', () => {
   });
 });
 
-// Apps installed by older versions keep their data in /mnt/pools/default, a
-// plain folder on the system SD card. The installed list and the app details
-// must show those real paths and a warning, never paths on a storage pool.
-// The supervisor's answers are faked, so nothing is started or changed.
+// An app whose pool is not mounted keeps its data in folders of that pool, which the
+// server lists as not on a mounted pool. The installed list and the app details must
+// show those real paths and a warning. The supervisor's answers are faked, so nothing
+// is started or changed.
 test.describe('App data outside the storage pools', () => {
-  const legacyTransmission = {
-    id: 'e2e-legacy',
+  const unmountedTransmission = {
+    id: 'e2e-unmounted',
     template_id: 'transmission',
     name: 'e2e-transmission',
-    container_id: 'e2e-legacy',
-    status: 'running',
+    container_id: 'e2e-unmounted',
+    status: 'exited',
     web_port: null,
     created_at: '2026-01-01T00:00:00Z',
-    pool: null,
+    pool: 'e2e_data',
     volumes: [
-      { host: '/mnt/pools/default/apps/transmission/config', container: '/config', readonly: false },
-      { host: '/mnt/pools/default/downloads', container: '/downloads', readonly: false },
+      { host: '/mnt/pools/e2e_data/apps/transmission/config', container: '/config', readonly: false },
+      { host: '/mnt/pools/e2e_data/downloads', container: '/downloads', readonly: false },
     ],
-    data_outside_pools: ['/mnt/pools/default/apps/transmission/config', '/mnt/pools/default/downloads'],
+    data_outside_pools: ['/mnt/pools/e2e_data/apps/transmission/config', '/mnt/pools/e2e_data/downloads'],
+    runs_in_unos_smb: false,
   };
 
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/installed',
-      (route: Route) => route.fulfill({ json: [legacyTransmission] }),
+      (route: Route) => route.fulfill({ json: [unmountedTransmission] }),
     );
     // Start/stop/restart/uninstall of the fake app never reach the supervisor.
     await page.route(
@@ -89,11 +90,11 @@ test.describe('App data outside the storage pools', () => {
     );
   });
 
-  test('installed list warns that the data is on the system disk', async ({ authenticatedPage: page }) => {
+  test('installed list warns that the data folders are not available', async ({ authenticatedPage: page }) => {
     await page.goto('/apps');
     await page.click('button:has-text("Installed")');
-    await expect(page.getByText('App data is on the system disk')).toBeVisible();
-    await expect(page.locator('li.mono', { hasText: '/mnt/pools/default/downloads' })).toBeVisible();
+    await expect(page.getByText('Data folders are not available')).toBeVisible();
+    await expect(page.locator('li.mono', { hasText: '/mnt/pools/e2e_data/downloads' })).toBeVisible();
   });
 
   test('details show the real host folders of the installed app', async ({ authenticatedPage: page }) => {
@@ -105,7 +106,7 @@ test.describe('App data outside the storage pools', () => {
     await page.locator('h3', { hasText: 'Transmission' }).first().click();
     await page.click('button:has-text("Volumes")');
     await expect(
-      page.locator('p.mono', { hasText: '/mnt/pools/default/apps/transmission/config' }),
+      page.locator('p.mono', { hasText: '/mnt/pools/e2e_data/apps/transmission/config' }),
     ).toBeVisible();
     await expect(page.getByText('Not on a pool').first()).toBeVisible();
     // No pool is chosen for an installed app, so pools are not even loaded.
@@ -487,8 +488,8 @@ test.describe('App details', () => {
 test.describe('The App Store in Russian', () => {
   const POOL = SIZED_POOL;
 
-  function installed(name: string, templateId: string, status: string, pool: string | null) {
-    const config = `/mnt/pools/${pool ?? 'default'}/apps/${templateId}/config`;
+  function installed(name: string, templateId: string, status: string, pool: string, mounted = true) {
+    const config = `/mnt/pools/${pool}/apps/${templateId}/config`;
     return {
       id: `${name}-id`,
       template_id: templateId,
@@ -499,8 +500,8 @@ test.describe('The App Store in Russian', () => {
       created_at: '2026-11-08T10:00:00Z',
       pool,
       volumes: [{ host: config, container: '/config', readonly: false }],
-      // An app of an older version keeps its data on the system disk.
-      data_outside_pools: pool ? [] : [config],
+      // The folders of an app whose pool is not mounted.
+      data_outside_pools: mounted ? [] : [config],
       runs_in_unos_smb: false,
     };
   }
@@ -508,7 +509,7 @@ test.describe('The App Store in Russian', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     const apps = [
       installed('e2e-jellyfin', 'jellyfin', 'running', POOL.name),
-      installed('e2e-syncthing', 'syncthing', 'exited', null),
+      installed('e2e-syncthing', 'syncthing', 'exited', 'e2e_backup', false),
     ];
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/installed',
@@ -579,7 +580,7 @@ test.describe('The App Store in Russian', () => {
     await dialog.getByRole('button', { name: 'Отмена', exact: true }).click();
     await expect(dialog).toHaveCount(0);
 
-    // The installed apps: their states and actions, and the warning of an app on the system disk.
+    // The installed apps: their states and actions, and the warning of an app whose pool is not mounted.
     await main.getByRole('button', { name: 'Установленные (2)', exact: true }).click();
     const installedCard = (name: string) => main.locator('.card', { has: page.locator('h3', { hasText: name }) });
     const jellyfin = installedCard('e2e-jellyfin');
@@ -591,7 +592,7 @@ test.describe('The App Store in Russian', () => {
     const syncthing = installedCard('e2e-syncthing');
     await expect(syncthing.getByText('Остановлено', { exact: true })).toBeVisible();
     await expect(syncthing.getByRole('button', { name: 'Запустить', exact: true })).toBeVisible();
-    await expect(syncthing.getByText('Данные приложения находятся на системном диске')).toBeVisible();
+    await expect(syncthing.getByText('Папки с данными недоступны')).toBeVisible();
 
     let question = '';
     page.once('dialog', (dialog) => {

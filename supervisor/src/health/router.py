@@ -700,8 +700,7 @@ def _raid_health_of_pool(info: PoolInfo) -> RaidHealthInfo:
 
 def _raid_health_of_all_pools() -> list[RaidHealthInfo]:
     # Pools are btrfs filesystems labelled with a pool name, mounted or not;
-    # other directories under the pools base (e.g. app data an older version
-    # put on the boot disk) are not pools.
+    # other directories under the pools base are not pools.
     return [_raid_health_of_pool(info) for info in storage_pools.list_pools()]
 
 

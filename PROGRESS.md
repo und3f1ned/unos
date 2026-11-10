@@ -206,6 +206,42 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: the apps keep no code for apps of older versions under /mnt/pools/default
+
+- `apps.no-legacy-default-pool`, at the owner's word to go on ("Continue", in translation),
+  under ADR-0207 and ADR-0039: the start of an installed app had a 409 of its own for an app
+  without a pool label, whose data was in `/mnt/pools/default` on the system disk, and counted a
+  catalog pool volume outside the pools base as data; the web UI had a warning and texts for
+  such apps. They are gone: data is what lies under the pools base, where an install puts every
+  pool volume, and the one 409 for data that is not on a mounted pool names the pool that the
+  folder lies on, so a folder on another pool than the install's (a share's folder) names that
+  pool, not the install's. The comments of `apps/schemas.py`, `health/router.py` and
+  `webui/src/lib/api/apps.ts` no longer speak of older versions, and the fake of `apps.spec.ts`
+  is an app whose pool is not mounted.
+- Tests first (ADR-0186): `test_the_answer_names_the_pool_that_holds_the_folder` and
+  `test_no_code_for_apps_of_older_versions` failed before the change; the tests of an app under
+  `/mnt/pools/default` and of an override outside the pools base are gone. `test_apps.py`,
+  `test_containers.py` and `test_health_monitor.py` 340 passed; svelte-check and the text check
+  passed. `passes` stays false: the entry is host-level (the host's containers), with its device
+  check by hand in the notes. ADR-0318 supersedes ADR-0039: the same rules without the handling
+  of apps of older versions.
+- The fresh-context review (ADR-0017) found one blocker and fixed it: the Russian test of
+  `apps.spec.ts` still faked an app of an older version and looked for the removed warning; it
+  now fakes an app whose pool is not mounted, and the text check also reads the spec. Also fixed:
+  with the pools base set to a path through a symbolic link, the pool volumes, which an install
+  gives Docker under the resolved base, no longer counted as data, so an app whose pool was not
+  mounted would start; data is now what lies under either form of the base
+  (`test_data_under_a_pools_base_reached_through_a_link_is_checked`, which failed on the code
+  that the review read); remarks on older installs in `router.py` and `test_disk_safety.py` are
+  gone. Recorded in ADR-0318, not changed: a container that UNOS did not install and that binds
+  the pools base itself is told to mount the pools base. `test_apps.py`, `test_containers.py`,
+  `test_disk_safety.py` and `test_health_monitor.py` 413 passed, and `make check` passed.
+- `make e2e-local` with `E2E_CHROMIUM_PATH`: 669 passed and 16 skips on listed conditions, and
+  `files.spec.ts` "uploads files from the keyboard" failed once (the file chooser did not open
+  within 15 s) while a second stand-in ran on other ports; `files.spec.ts` and `apps.spec.ts`
+  alone then passed (65), as that test did in the other full runs of the day. Not changed: if it
+  fails again without such a load, it becomes an entry of its own.
+
 ### 2026-11-10: the stats message of the WebSocket has one shape
 
 - `system.no-legacy-basic-stats`, at the owner's word to go on ("Continue", in translation),

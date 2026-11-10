@@ -8,16 +8,8 @@
 </script>
 
 {#if app.data_outside_pools.length > 0}
-	<Alert
-		variant="warning"
-		class={$$props.class || ''}
-		title={app.pool ? $t('apps.storage.unavailableTitle') : $t('apps.storage.systemDiskTitle')}
-	>
-		{#if app.pool}
-			<p>{$t('apps.storage.unavailable', { name: app.name })}</p>
-		{:else}
-			<p>{$t('apps.storage.systemDisk', { name: app.name })}</p>
-		{/if}
+	<Alert variant="warning" class={$$props.class || ''} title={$t('apps.storage.unavailableTitle')}>
+		<p>{$t('apps.storage.unavailable', { name: app.name })}</p>
 		<ul class="mt-2 space-y-1">
 			{#each app.data_outside_pools as path}
 				<li class="mono text-xs break-all">{path}</li>
