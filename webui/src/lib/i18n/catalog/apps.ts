@@ -72,9 +72,6 @@ export const en = {
 	'apps.storage.unavailableTitle': 'Data folders are not available',
 	'apps.storage.unavailable':
 		'Some data folders of {name} are not on a mounted storage pool. Mount the pool that holds them on the Storage page, then start the app.',
-	'apps.storage.systemDiskTitle': 'App data is on the system disk',
-	'apps.storage.systemDisk':
-		'{name} was installed by an older UNOS version and keeps its data on the system disk instead of a storage pool, so it fills the system disk. UNOS does not start it again. To move it, uninstall the app (its data is kept), move these folders to a pool, then install the app on that pool.',
 
 	'apps.detail.installed': 'Installed',
 	'apps.detail.website': 'Website',
@@ -219,9 +216,6 @@ export const ru: Translation<typeof en> = {
 	'apps.storage.unavailableTitle': 'Папки с данными недоступны',
 	'apps.storage.unavailable':
 		'Некоторые папки с данными приложения {name} находятся вне смонтированного пула хранения. Смонтируйте пул, в котором они лежат, на странице «Хранилище», затем запустите приложение.',
-	'apps.storage.systemDiskTitle': 'Данные приложения находятся на системном диске',
-	'apps.storage.systemDisk':
-		'Приложение {name} установлено старой версией UNOS и хранит данные на системном диске, а не в пуле хранения, поэтому заполняет системный диск. UNOS больше не запускает его. Чтобы перенести приложение, удалите его (данные сохранятся), перенесите эти папки в пул, затем установите приложение в этот пул.',
 
 	'apps.detail.installed': 'Установлено',
 	'apps.detail.website': 'Сайт',

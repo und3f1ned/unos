@@ -260,12 +260,13 @@ and this index, and `make check-fast` runs it.
 
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
-| [0039](0039-app-data-only-on-a-mounted-pool.md) | App data lives only inside a selected, mounted pool | accepted | 2026-11-05 |
+| [0039](0039-app-data-only-on-a-mounted-pool.md) | App data lives only inside a selected, mounted pool | superseded by [0318](0318-app-data-lives-only-on-a-mounted-pool-without-handling-for-apps-of-older-versions.md) | 2026-11-05 |
 | [0219](0219-transmission-requires-a-web-login.md) | The transmission app requires a web login | accepted | 2026-11-07 |
 | [0254](0254-docker-calls-run-in-worker-threads-and-conflicts-answer-409.md) | Docker calls of the containers and apps APIs run in worker threads within the Docker client's timeout, and the containers API answers Docker's conflicts with 409 | accepted | 2026-11-07 |
 | [0255](0255-container-logs-stream-in-the-drawer-and-images-get-a-tab.md) | The container drawer follows the log over the logs socket, and the Images tab pulls by name and removes only what no container uses | accepted | 2026-11-07 |
 | [0256](0256-the-apps-api-acts-only-on-apps-and-uninstall-keeps-their-data.md) | The Apps API starts, stops, restarts and uninstalls only the containers of apps, and uninstall keeps their data | accepted | 2026-11-07 |
 | [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | Apps of linuxserver.io images can be installed to run in the group unos-smb, and only such an app is given a share's folder | accepted | 2026-11-08 |
+| [0318](0318-app-data-lives-only-on-a-mounted-pool-without-handling-for-apps-of-older-versions.md) | App data lives only on a mounted pool, without handling for apps of older versions | accepted | 2026-11-10 |
 
 ## Backup
 

@@ -142,15 +142,12 @@ class InstalledApp(BaseModel):
     status: str
     web_port: int | None = None
     created_at: str
-    # Pool chosen at install time. None for apps without data on a pool and
-    # for apps installed by versions that did not let you choose a pool.
+    # Pool chosen at install time. None for apps without data on a pool.
     pool: str | None = None
     # The container's bind mounts as Docker reports them (real host paths).
     volumes: list[AppVolume] = []
-    # Host paths of data folders that are not on a mounted storage pool: the
-    # app writes them to the system disk (apps installed by older versions
-    # under /mnt/pools/default), or its pool is not mounted. UNOS does not
-    # start such an app.
+    # Host paths of data folders that are not on a mounted storage pool, because
+    # their pool is not mounted. UNOS does not start such an app.
     data_outside_pools: list[str] = []
     # The app runs in the group unos-smb: its container's PGID is 70000
     # (ADR-0274). Only such an app is given a share's folder.

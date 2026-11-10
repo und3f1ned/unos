@@ -1,14 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-05
 area: apps
 decided-by: agent
+superseded-by: ADR-0318
 ---
 
 # ADR-0039: App data lives only inside a selected, mounted pool
 
 ## Context
 
+Superseded by ADR-0318: the same rules, without the handling of apps that older versions installed.
 In 1.0.0 every app kept its data under `/mnt/pools/default`, a plain folder on the SD card that no pool created; the device's transmission wrote its configuration and downloads there.
 
 ## Decision

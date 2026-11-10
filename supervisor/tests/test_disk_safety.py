@@ -449,7 +449,7 @@ class TestCreatePoolGuards:
         assert "/mnt/pools/tank" in nas.immutable
 
     def test_refuses_a_mountpoint_that_holds_files_before_mkfs(self, nas):
-        # An older version kept app data in /mnt/pools/default on the SD card.
+        # A folder under the pools base that holds files, such as app data on the system disk.
         nas.dirs.add("/mnt/pools/default")
         nas.contents["/mnt/pools/default"] = ["transmission"]
         with pytest.raises(pools.PoolConflictError, match=r"/mnt/pools/default is not empty.*transmission"):
