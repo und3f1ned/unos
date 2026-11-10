@@ -3,8 +3,8 @@
 #
 # Prints the device's system and uptime (not its host name), the device lock's holder, the
 # containers (state, health, restarts), every container's log configuration (driver and
-# options, such as the max-size and max-file of a rotation set in the host's
-# /etc/docker/daemon.json, ADR-0178), the images, errors in the supervisor's log of the last 24
+# options: the max-size and max-file that deploy/docker-compose.yml and the containers UNOS
+# creates set, ADR-0330), the images, errors in the supervisor's log of the last 24
 # hours, smbd, network discovery (wsdd2 and avahi-daemon; nmbd off, as NetBIOS is: ADR-0275),
 # the API's health answer, the inbound IPv6 filter (ADR-0301), the system disk's writes since
 # boot (and its wear data where the card reports it), free RAM and the mounted pools. Exits 0 when unos-supervisor and unos-webui run and are

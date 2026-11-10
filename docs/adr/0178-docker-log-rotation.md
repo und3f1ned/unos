@@ -1,5 +1,6 @@
 ---
-status: proposed
+status: superseded
+superseded-by: ADR-0330
 date: 2026-11-06
 area: deploy
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0178: Rotate Docker's json-file logs when they grow
 
 ## Context
+
+Superseded by ADR-0330: Docker rotates the logs of every container that UNOS creates at 10 MB, keeping 3 files.
 
 Docker keeps the containers' logs in json-file logs on the system disk, without rotation: neither the compose files nor the install script set a log size. The November 2026 audit proposed rotation in the host's `/etc/docker/daemon.json` as a quick win. Measured on the device, the logs grew by about 24 KB in 12 hours.
 

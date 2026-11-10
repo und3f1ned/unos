@@ -216,6 +216,19 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: Docker rotates the containers' logs
+
+- `deploy.docker-log-rotation` (ADR-0330, which supersedes the proposal ADR-0178): the
+  containers' json-file logs grew without a limit on the system disk. Now the compose file caps
+  the logs of `unos-supervisor` and `unos-webui` at 10 MB with 3 files, and the App Store and
+  the Containers page create their containers with the same cap. Tests first:
+  `test_deploy_scripts.py`, `test_containers.py`, `test_apps.py`. The device check after the
+  next deploy: `check.sh` lists the options.
+- A fresh-context review found the code right (docker-py 7.2.0 passes `log_config` to the
+  HostConfig of `run` and `create`); fixed: an upgrade note in CHANGELOG.md, the ADR's
+  consequences (the container's options override the host's defaults), `check.sh`'s comment,
+  and a test of every service of the compose file.
+
 ### 2026-11-10: Sessions end on the server
 
 - `auth.session-revocation` (ADR-0329): a JWT stayed valid for 24 hours whatever happened. Now a

@@ -413,6 +413,9 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- Docker rotates the logs of the UNOS containers, and of the apps and containers
+  that UNOS creates, at 10 MB and keeps 3 files: a container that logs much no
+  longer fills the system disk.
 - The stats message of `/ws/v1/events` sends each value once, in its object
   (`cpu`, `memory`, `network`, `disk_io`): the flat `cpu_*`, `memory_*` and
   `network_*` fields are gone, and so are the `disk_*` fields of the container's

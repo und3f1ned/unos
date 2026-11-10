@@ -665,6 +665,19 @@ def client_threads(docker_client, monkeypatch) -> list[bool]:
     return made
 
 
+class TestCreatedContainersLogs:
+    def test_a_created_container_gets_a_capped_log(self, api, docker_client):
+        """ADR-0330: as the UNOS containers, a container made on the Containers page."""
+        _answering_docker(docker_client)
+
+        response = api.post("/api/v1/containers", json={"name": "web", "image": "nginx:latest"})
+
+        assert response.status_code == 200, response.text
+        assert docker_client.containers.run.call_args.kwargs["log_config"] == {
+            "Type": "json-file", "Config": {"max-size": "10m", "max-file": "3"},
+        }
+
+
 class TestDockerCallsOffTheEventLoop:
     def test_the_table_has_every_route_of_the_containers_api(self):
         routes = {
