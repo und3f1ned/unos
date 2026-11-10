@@ -82,7 +82,8 @@ SKIP_CONDITIONS = {
     "scratch === null",
     # The supervisor's emergency command line runs against the stand-in's data on this machine
     # (scripts/standin/emergency.py, E2E_STANDIN_STATE of e2e.sh); the test stack's supervisor is
-    # in a container (emergency-reset.spec.ts).
+    # in a container (emergency-reset.spec.ts). Only the stand-in has no Docker; the test stack
+    # reaches the host's (containers.spec.ts).
     "!process.env.E2E_STANDIN_STATE",
 }
 

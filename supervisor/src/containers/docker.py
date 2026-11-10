@@ -1,5 +1,7 @@
 import docker
-from docker.errors import NotFound
+import requests
+import urllib3
+from docker.errors import APIError, DockerException, NotFound
 from docker.models.containers import Container
 from ..config import get_settings
 from .schemas import ContainerInfo, ContainerCreate, ContainerState, PortMapping, ImageInfo
@@ -41,9 +43,43 @@ def is_system_image(tags: list[str]) -> bool:
     return False
 
 
+class DockerUnavailable(DockerException):
+    """Docker did not answer when a client was made: its socket is missing or refuses the connection."""
+
+
+# The errors of a request that Docker did not answer: no client could be made, no connection
+# came about (requests' ConnectTimeout is a ConnectionError too), or the connection broke during
+# the answer, which docker-py passes on from requests or, for a stream such as a pull, from
+# urllib3. The container and app routes answer them with 503 and the reason (ADR-0323). An
+# answer that did not come within DOCKER_TIMEOUT_SECONDS (ReadTimeout) is not one of them: a
+# stop waits for the container, which can take longer (ADR-0254).
+NO_ANSWER = (
+    DockerUnavailable,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.ChunkedEncodingError,
+    urllib3.exceptions.ProtocolError,
+)
+
+
+def no_answer_detail(error: BaseException) -> str:
+    """The detail of the 503 for an error of NO_ANSWER."""
+    return f"Docker is not available: {error}"
+
+
 def get_client() -> docker.DockerClient:
-    """Get a Docker client. Its calls block: make them in a worker thread (ADR-0021)."""
-    return docker.from_env(timeout=DOCKER_TIMEOUT_SECONDS)
+    """Get a Docker client. Its calls block: make them in a worker thread (ADR-0021).
+
+    docker.from_env asks Docker for its API version: DockerUnavailable when that request got no
+    answer. An error that Docker answered it with, or an answer without the version, is passed on
+    as docker-py raises it.
+    """
+    try:
+        return docker.from_env(timeout=DOCKER_TIMEOUT_SECONDS)
+    except DockerException as e:
+        # docker-py raises a DockerException from within its handler of what went wrong.
+        if isinstance(e.__context__, (APIError, KeyError)):
+            raise
+        raise DockerUnavailable(str(e)) from e
 
 
 def list_containers(all: bool = True) -> list[ContainerInfo]:

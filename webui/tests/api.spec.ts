@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { E2E_ADMIN } from './fixtures';
 import { TEST_STACK_TOO, targetUrl } from './target';
 
@@ -11,7 +11,17 @@ let token = '';
 // compose test stack, which sets E2E_STAND_IN=1 too (TEST_STACK_TOO).
 const NO_DISKS = 'The stand-in is not a NAS host: it has no disks to list (lsblk)' + TEST_STACK_TOO;
 const NO_POOLS = 'The stand-in is not a NAS host: it has no btrfs filesystems to list (btrfs)' + TEST_STACK_TOO;
-const NO_DOCKER = 'The stand-in has no Docker, which runs the containers and the installed apps' + TEST_STACK_TOO;
+// The stand-in has no Docker socket (e2e.sh sets E2E_STANDIN_STATE for it alone): the container
+// and app routes answer 503 with the reason (ADR-0323). The test stack reaches the host's Docker
+// and skips these checks, as it skips the specs that need Docker (ADR-0215); the backend tests
+// hold the lists that Docker answers (test_containers.py, test_apps.py).
+const ONLY_THE_STAND_IN = "Only the stand-in has no Docker: the test stack reaches the host's";
+
+/** 503 with the reason that docker-py gives for a missing Docker socket. */
+async function expectNoDocker(response: APIResponse) {
+  expect(response.status(), await response.text()).toBe(503);
+  expect((await response.json()).detail).toMatch(/^Docker is not available: Error while fetching server API version: /);
+}
 const NO_HOST_NETWORK =
   "The stand-in cannot read the host's network: the network API enters the host's namespaces (nsenter, ip, ss)" +
   TEST_STACK_TOO;
@@ -193,24 +203,21 @@ test.describe('API Tests', () => {
   });
 
   // ==================== Containers ====================
-  test('GET /api/v1/containers should return containers', async ({ request }) => {
-    test.skip(process.env.E2E_STAND_IN === '1', NO_DOCKER);
+  test('GET /api/v1/containers answers 503 without Docker', async ({ request }) => {
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
     const response = await request.get(`${BASE_URL}/api/v1/containers`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    expect(Array.isArray(data)).toBeTruthy();
+    await expectNoDocker(response);
   });
 
-  test('GET /api/v1/containers/images should return images', async ({ request }) => {
-    test.skip(process.env.E2E_STAND_IN === '1', NO_DOCKER);
+  test('GET /api/v1/containers/images answers 503 without Docker', async ({ request }) => {
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
     const response = await request.get(`${BASE_URL}/api/v1/containers/images`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     // Not 404: /containers/{container_id} once took "images" for the name of a container.
-    expect(response.status(), await response.text()).toBe(200);
-    expect(Array.isArray(await response.json())).toBeTruthy();
+    await expectNoDocker(response);
   });
 
   // ==================== Apps ====================
@@ -224,14 +231,12 @@ test.describe('API Tests', () => {
     expect(data.length).toBeGreaterThan(0);
   });
 
-  test('GET /api/v1/apps/installed should return installed apps', async ({ request }) => {
-    test.skip(process.env.E2E_STAND_IN === '1', NO_DOCKER);
+  test('GET /api/v1/apps/installed answers 503 without Docker', async ({ request }) => {
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
     const response = await request.get(`${BASE_URL}/api/v1/apps/installed`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    expect(response.ok()).toBeTruthy();
-    const data = await response.json();
-    expect(Array.isArray(data)).toBeTruthy();
+    await expectNoDocker(response);
   });
 
   // ==================== Files ====================

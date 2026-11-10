@@ -49,6 +49,10 @@
 	let containers: Container[] = [];
 	let loading = true;
 	let error = '';
+	// Why the list could not be loaded (Docker did not answer: 503, ADR-0323). The tab then shows
+	// this error alone: no counts, search or empty list, and no Create button. The actions' and the
+	// Create dialog's errors are `error`.
+	let loadError = '';
 	let showCreateModal = false;
 	let submitting = false;
 
@@ -96,10 +100,11 @@
 	async function loadData() {
 		loading = true;
 		error = '';
+		loadError = '';
 		try {
 			containers = await getContainers();
 		} catch (e: any) {
-			error = e.message;
+			loadError = e.message;
 		} finally {
 			loading = false;
 		}
@@ -328,7 +333,7 @@
 				<RefreshCw class="w-4 h-4 {activeTab === 'containers' && loading ? 'animate-spin' : ''}" />
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
-			{#if activeTab === 'containers'}
+			{#if activeTab === 'containers' && !loadError}
 				<Button variant="primary" icon={Plus} on:click={openCreateModal}
 					>{$t('containers.create.button')}</Button
 				>
@@ -367,6 +372,9 @@
 		hidden={activeTab !== 'containers'}
 		class="space-y-6"
 	>
+		{#if loadError}
+			<Alert variant="error">{loadError}</Alert>
+		{:else}
 		<!-- Stats Cards -->
 		<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
 			<button
@@ -676,6 +684,7 @@
 					</div>
 				{/each}
 			</div>
+		{/if}
 		{/if}
 	</div>
 

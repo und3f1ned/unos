@@ -641,6 +641,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- When Docker cannot be reached, the container and app API answers 503
+  `Docker is not available: <reason>` (it answered 500), and the Containers
+  tab shows that error alone, without counts, search, an empty list or the
+  Create button. An error that Docker answers, and an operation that fails
+  after Docker answered, keep their own status.
 - After a power cut, or on a host without the `unos` service, the web
   interface also waits at boot until the supervisor answers: Docker then
   starts both containers at once, without the order of `docker compose up`,

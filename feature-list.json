@@ -1889,10 +1889,18 @@
       "steps": [
         "Stop Docker on a test host: the container and app endpoints answer 503 with the reason, and the pages show it"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0175"
-      ]
+        "ADR-0175",
+        "ADR-0323"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_containers.py",
+        "supervisor/tests/test_apps.py",
+        "webui/tests/containers.spec.ts",
+        "webui/tests/api.spec.ts"
+      ],
+      "notes": "Passed 2026-11-10 (ADR-0323). The test host is the stand-in, which has no Docker socket: on the dev device a stopped Docker stops UNOS with it. The containers API answers 503 \"Docker is not available: <docker-py's reason>\" on every route when Docker cannot be reached (no socket, a refused or broken connection); the Apps API does so for the first request of each route to Docker (the listing, the lookup of an app, the name check of an install), and an operation that fails after it keeps its 500 \"Failed to ...\" (ADR-0254, ADR-0256). A read timeout and an error that Docker answers keep their status (TestADockerThatDoesNotAnswer of test_containers.py and test_apps.py; 41 of its first tests failed before). On the stand-in, api.spec.ts finds the 503 and the reason for GET /containers, /containers/images and /apps/installed, which skipped there before, and the \"Containers without Docker (stand-in)\" specs of containers.spec.ts find the reason alone on the Containers tab (no counts, search, empty list or Create button), on its Images tab and, with the 503, on the Apps page; both skip on the test stack. A fresh-context review found the step met for a Docker that is down, and: the tab's shared error variable, which the Create dialog cleared, a broken stream or chunked answer that gave 500, a read timeout of a long stop called unavailable, an error answer to the version query called unavailable, the Apps API's operations, which ADR-0254 and ADR-0256 keep at 500, the API checks on the test stack against ADR-0215, an Apps-page spec that passed before, and overstated records. All fixed as ADR-0323 says; left: the Apps page's empty texts under the error (apps.catalog-without-docker) and the dashboard, which does not show the 503. Not host-level: it changes the answers, not the host's containers."
     },
     {
       "id": "apps.no-legacy-default-pool",

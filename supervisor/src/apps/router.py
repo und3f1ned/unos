@@ -13,13 +13,14 @@ from docker.errors import DockerException, NotFound
 from docker.types import Mount
 from fastapi import APIRouter, Depends, HTTPException
 from requests.exceptions import RequestException
+from urllib3.exceptions import HTTPError as Urllib3Error
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.models import User
 from ..auth.utils import require_admin, verify_token
 from ..config import get_settings
-from ..containers.docker import get_client
+from ..containers.docker import NO_ANSWER, get_client, no_answer_detail
 from ..database import get_db
 from ..files.router import TRASH
 from ..security.validators import open_dir_nofollow, pools_base, validate_pools_path
@@ -48,8 +49,18 @@ UNOS_APP_LABEL = "unos.app"
 APP_POOL_LABEL = "unos.app.pool"
 
 # docker-py raises DockerException subclasses, but connection problems can
-# surface as plain requests exceptions.
-_DOCKER_ERRORS = (DockerException, RequestException)
+# surface as plain requests exceptions, and those of a stream (a pull) as urllib3's.
+_DOCKER_ERRORS = (DockerException, RequestException, Urllib3Error)
+
+
+def _docker_error(error: Exception) -> HTTPException:
+    """The answer to an error of the first request of a route to Docker (the listing, the lookup
+    of the app, the name check of an install): 503 with the reason when Docker did not answer
+    (NO_ANSWER), 500 otherwise (ADR-0323). An operation that fails after it keeps its own 500
+    "Failed to ..." (ADR-0254, ADR-0256)."""
+    if isinstance(error, NO_ANSWER):
+        return HTTPException(503, no_answer_detail(error))
+    return HTTPException(500, f"Docker failed: {error}")
 
 # Defaults that templates and tutorials commonly ship. A secret set to one of
 # these protects nothing, so installs that use them are refused.
@@ -114,7 +125,7 @@ def _list_installed() -> list[InstalledApp]:
             all=True, filters={"label": UNOS_APP_LABEL}, ignore_removed=True
         )
     except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Docker is not available: {e}")
+        raise _docker_error(e)
     pools = list_mounted_pools()
     bases = _pools_bases()
 
@@ -846,7 +857,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
     except NotFound:
         pass
     except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Docker is not available: {e}")
+        raise _docker_error(e)
     else:
         raise HTTPException(409, f"A container named '{name}' already exists")
 
@@ -1038,7 +1049,7 @@ def _get_app(container_id: str) -> Any:
     except NotFound:
         raise HTTPException(404, f"App {container_id} not found")
     except _DOCKER_ERRORS as e:
-        raise HTTPException(500, f"Docker is not available: {e}")
+        raise _docker_error(e)
     if UNOS_APP_LABEL not in container.labels:
         raise HTTPException(400, "Not a UNOS managed app")
     return container
