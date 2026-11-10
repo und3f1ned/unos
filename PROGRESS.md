@@ -262,6 +262,17 @@ Open owner actions:
   makes the check refuse more, and the Unit Tests job of the CI workflow (off, ADR-0230) installs
   no web UI packages, so the checks would skip there. The forms test holds 36 uses in five files,
   which the scan before failed on; `test_standin.py` 54 passed.
+- A fifth fresh-context review found that the scan still took a set of forms: a key, a method,
+  an enum member, a class field or a declaration named after one of the names (`{ fixme: 0 }`
+  read by a `for ... in`, `class { expectedStatus = 'failed' }`, `enum Mark { expectedStatus }`
+  passed to `Object.assign`), and JSX, passed unseen, and that `test.describe.skip(!httpUrl, body)`
+  read as a skip on a listed condition, though it takes a title. Fixed: the scan reports every
+  token whose text is one of the names, an identifier, a string, a template or a part of one, and the check
+  refuses all of them but a skip on a listed condition; a skip of `test.describe` or `test.step`
+  gives `(a title)` and is refused; a file with JSX fails the check
+  (`test_jsx_in_a_spec_fails_the_check`); the variable `fail` of `health.spec.ts` is
+  `listingFails`. ADR-0317 and step 2 say so, and that modules outside `webui/tests` are not
+  read. The forms test holds 53 uses in six files; `test_standin.py` 55 passed.
 
 ### 2026-11-10: install.sh recognizes the smb.conf of UNOS by its header alone
 

@@ -55,12 +55,12 @@ DATA_PATH = re.compile(r"^/data(/|$)")
 # The skip of a feature that the stand-in lacks (ADR-0215).
 STAND_IN_SKIP = "process.env.E2E_STAND_IN === '1'"
 
-# The conditions a spec may skip on (test.skip, in its test.describe, test.step
-# and TestInfo forms too), each with why. A condition is something a local
-# target lacks or must keep; never the version of the supervisor it runs
-# (ADR-0207: no compatibility skips) and never a known failure (ADR-0215):
-# test.fixme and test.fail are refused on any condition. A new kind of skip is
-# added here, with its reason.
+# The conditions a spec may skip on (test.skip, testInfo.skip), each with why. A
+# condition is something a local target lacks or must keep; never the version of
+# the supervisor it runs (ADR-0207: no compatibility skips) and never a known
+# failure (ADR-0215): test.fixme, test.fail and expectedStatus are refused on any
+# condition, and test.describe.skip and test.step.skip, which take a title, on
+# every one. A new kind of skip is added here, with its reason.
 SKIP_CONDITIONS = {
     # A feature the stand-in lacks: the reason starts with "The stand-in" and names it, and
     # ends with TEST_STACK_TOO (webui/tests/target.ts): the compose test stack takes it too.
@@ -586,21 +586,20 @@ STRING = re.compile(r"""'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|
 TYPESCRIPT = REPO / "webui" / "node_modules" / "typescript"
 
 # Run by node with the path of TYPESCRIPT and the files: prints as JSON every use of the names skip,
-# fixme, fail and expectedStatus that TypeScript's parser finds in them, and their syntax errors. It
-# reports each one that the code writes out: a member of any object (test, test.describe,
-# test.step, a TestInfo under any name, test.info(), an alias) through ., ?. or brackets, with
-# parentheses, a non-null assertion or a cast around the object or the key, called (with its
-# condition and reason; also test.fail.only) or not; a destructured name; a key expectedStatus; an
-# import alias; and any other string of the name alone, an annotation's type among them. A name
-# that the code builds, or reads from data, is not seen.
+# fixme, fail and expectedStatus that TypeScript's parser finds in them, and what keeps it from
+# reading them (a syntax error, JSX). Every token whose text is one of the names is a use: a name
+# (of a member, a variable, a key, a parameter, a declaration, an import or a type), a string and
+# a template or a part of one. The member of a call through ., ?. or brackets, with
+# parentheses, a non-null assertion or a cast around the object or the key, and also through
+# .only, gives its condition and reason; a skip of test.describe or test.step gives "(a title)",
+# as it takes a title and no condition. A name that the code builds, or reads from data, is not
+# seen.
 SKIP_SCAN = r"""
 const [typescript, ...files] = process.argv.slice(1);
 const ts = require(typescript);
 // The methods of a skip, a fixme and a fail, and the field of a TestInfo that test.fail sets.
-const METHODS = new Set(['skip', 'fixme', 'fail']);
-const EXPECTED_STATUS = 'expectedStatus';
-const NAMES = new Set([...METHODS, EXPECTED_STATUS]);
-const options = { allowJs: true, noLib: true, noResolve: true, noEmit: true, types: [] };
+const NAMES = new Set(['skip', 'fixme', 'fail', 'expectedStatus']);
+const options = { allowJs: true, noLib: true, noResolve: true, noEmit: true, types: [], jsx: ts.JsxEmit.Preserve };
 // With the parent of every node set, which the parser alone leaves out.
 const program = ts.createProgram(files, options, ts.createCompilerHost(options, true));
 // Parentheses, a non-null assertion and casts, which leave the value inside as it is.
@@ -614,28 +613,20 @@ const outer = (node) => {
   while (node.parent && WRAPPERS.some((is) => is(node.parent)) && node.parent.expression === node) node = node.parent;
   return node;
 };
-const isString = (node) => !!node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node));
-// The strings that are the name of a member, a binding or a property: reported there, if at all.
-const named = new Set();
-// The name of a member, a binding or a property: written out, quoted, or a computed string.
-const nameOf = (name) => {
-  if (!name) return undefined;
-  const node = ts.isComputedPropertyName(name) ? inner(name.expression) : name;
-  if (isString(node)) named.add(node);
-  return node && (ts.isIdentifier(node) || isString(node)) ? node.text : undefined;
-};
-// Whether an object literal is the target of a destructuring assignment, also inside another one.
-const assigned = (node) => {
-  for (;;) {
-    node = outer(node);
-    const parent = node.parent;
-    if (ts.isBinaryExpression(parent)) return parent.left === node && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
-    if (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) return parent.initializer === node;
-    if (ts.isPropertyAssignment(parent) && parent.initializer === node) node = parent.parent;
-    else if (ts.isArrayLiteralExpression(parent)) node = parent;
-    else if (ts.isSpreadElement(parent)) node = parent.parent;
-    else return false;
+const isString = (node) => ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+// A part of a template with substitutions: its text alone may also be one of the names.
+const isTemplatePart = (node) => ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node);
+const isJsx = (node) => ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node) || ts.isJsxFragment(node);
+// The member access whose name or key the token is, if any.
+const accessOf = (token) => {
+  if (ts.isIdentifier(token) && ts.isPropertyAccessExpression(token.parent) && token.parent.name === token) {
+    return token.parent;
   }
+  const holder = outer(token).parent;
+  if (isString(token) && holder && ts.isElementAccessExpression(holder) && inner(holder.argumentExpression) === token) {
+    return holder;
+  }
+  return undefined;
 };
 const found = [];
 const problems = [];
@@ -645,6 +636,7 @@ for (const file of files) {
     problems.push(`${file}: not read`);
     continue;
   }
+  const where = (node) => `${file}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}`;
   for (const diagnostic of program.getSyntacticDiagnostics(source)) {
     const { line } = source.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
     problems.push(`${file}:${line + 1}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`);
@@ -654,54 +646,35 @@ for (const file of files) {
     found.push({ file, line: line + 1, method, condition, reason });
   };
   const visit = (node) => {
-    let member;
-    if (ts.isPropertyAccessExpression(node)) member = nameOf(node.name);
-    else if (ts.isElementAccessExpression(node)) {
-      const key = inner(node.argumentExpression);
-      if (isString(key)) {
-        named.add(key);
-        member = key.text;
-      }
+    if (isJsx(node)) {
+      problems.push(`${where(node)}: JSX, which the check does not read`);
+      return;
     }
-    if (member === EXPECTED_STATUS) {
-      add(node, member, '(a member)');
-    } else if (METHODS.has(member)) {
-      // A call, also through .only; anything else is a reference.
-      let use = outer(node);
-      const only = use.parent;
-      if (ts.isPropertyAccessExpression(only) && only.expression === use && nameOf(only.name) === 'only') use = outer(only);
-      const call = use.parent;
-      if (ts.isCallExpression(call) && call.expression === use) {
+    if ((ts.isIdentifier(node) || isString(node) || isTemplatePart(node)) && NAMES.has(node.text)) {
+      const access = accessOf(node);
+      let use = access && outer(access);
+      const only = use && use.parent;
+      if (only && ts.isPropertyAccessExpression(only) && only.expression === use && only.name.text === 'only') use = outer(only);
+      const call = use && use.parent;
+      if (access && ts.isCallExpression(call) && call.expression === use) {
+        const object = inner(access.expression);
+        const titled = node.text === 'skip' && ts.isPropertyAccessExpression(object)
+          && ['describe', 'step'].includes(object.name.text);
         const [condition, reason] = call.arguments;
-        add(call, member, condition ? condition.getText(source).split(/\s+/).join(' ') : '',
-          reason ? reason.getText(source) : null);
+        add(call, node.text, titled ? '(a title)' : condition ? condition.getText(source).split(/\s+/).join(' ') : '',
+          titled ? null : reason ? reason.getText(source) : null);
+      } else if (access) {
+        add(access, node.text, '(a reference)');
+      } else if (isString(node) || isTemplatePart(node)) {
+        // An annotation's type, or a name that the code passes on.
+        const value = outer(node);
+        const holder = value.parent;
+        const annotation = (ts.isPropertyAssignment(holder) || ts.isPropertyDeclaration(holder))
+          && holder.initializer === value && ts.isIdentifier(holder.name) && holder.name.text === 'type';
+        add(node, node.text, annotation ? '(an annotation)' : '(a string)');
       } else {
-        add(node, member, '(a reference)');
+        add(node, node.text, '(a name)');
       }
-    } else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
-      const bound = nameOf(node.propertyName ?? node.name);
-      if (NAMES.has(bound)) add(node, bound, '(a destructured name)');
-    } else if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node))
-               && ts.isObjectLiteralExpression(node.parent)) {
-      const key = nameOf(node.name);
-      if (NAMES.has(key) && assigned(node.parent)) add(node, key, '(a destructured name)');
-      else if (key === EXPECTED_STATUS) add(node, key, '(a property)');
-    } else if (ts.isImportEqualsDeclaration(node) && ts.isEntityName(node.moduleReference)) {
-      // import alias = test.skip
-      for (let name = node.moduleReference; name; name = ts.isQualifiedName(name) ? name.left : undefined) {
-        const segment = ts.isQualifiedName(name) ? name.right : name;
-        if (NAMES.has(segment.text)) {
-          add(node, segment.text, '(an import alias)');
-          break;
-        }
-      }
-    } else if (isString(node) && NAMES.has(node.text) && !named.has(node)) {
-      // Any other string of a name alone: an annotation's type, or a name that the code passes on.
-      const value = outer(node);
-      const holder = value.parent;
-      const annotation = (ts.isPropertyAssignment(holder) || ts.isPropertyDeclaration(holder))
-        && holder.initializer === value && nameOf(holder.name) === 'type';
-      add(node, node.text, annotation ? '(an annotation)' : '(a string)');
     }
     ts.forEachChild(node, visit);
   };
@@ -711,10 +684,9 @@ process.stdout.write(JSON.stringify({ found, problems }));
 """
 
 
-# The conditions that SKIP_SCAN gives a use of the names that is not a call; none is a condition
-# of TypeScript.
-NOT_A_CALL = {"(a reference)", "(a destructured name)", "(a property)", "(a member)", "(an import alias)",
-              "(an annotation)", "(a string)"}
+# The conditions that SKIP_SCAN gives a use of the names that is not a call with a condition; none
+# is an expression of TypeScript.
+NOT_A_CALL = {"(a reference)", "(a name)", "(an annotation)", "(a string)", "(a title)"}
 
 
 @functools.cache
@@ -730,15 +702,14 @@ def _scan(folder: Path) -> tuple[dict, ...]:
     )
     assert result.returncode == 0, result.stderr[-3000:]
     scan = json.loads(result.stdout)
-    assert scan["problems"] == [], "TypeScript cannot parse these files, so their skips are not known"
+    assert scan["problems"] == [], "these files cannot be checked (a syntax error, JSX), so their skips are not known"
     return tuple(scan["found"])
 
 
 def _skip_calls(folder: Path = SPECS):
-    """(spec, line, method, condition, reason expression, spec text) of every skip, fixme and fail
-    of Playwright that SKIP_SCAN finds in ``folder``. The condition of a call is the text of its
-    first argument; that of a reference, a destructured name and an annotation says which it is,
-    such as "(a reference)"."""
+    """(spec, line, name, condition, reason expression, spec text) of every use of the names skip,
+    fixme, fail and expectedStatus that SKIP_SCAN finds in ``folder``. The condition of a call is
+    the text of its first argument; that of any other use says what it is (NOT_A_CALL)."""
     texts: dict[Path, str] = {}
     for item in _scan(folder):
         spec = Path(item["file"])
@@ -935,11 +906,11 @@ class TestSpecsAndRunner:
     def test_every_skip_form_in_every_spec_file_is_seen(self, tmp_path):
         """Every use of the names skip, fixme, fail and expectedStatus that a file of webui/tests
         and its folders writes out is seen and refused, but a skip on a listed condition
-        (testing.no-compat-skips, ADR-0317): a member of any object, also inside casts, called or
-        not, a destructured name, an import alias and a string of the name alone, an annotation's
-        type among them. One that the checks above missed would pass them unseen. TypeScript's
-        parser reads the files, so neither a comment nor a division or a regular expression literal
-        that a heuristic might misread hides what follows it."""
+        (testing.no-compat-skips, ADR-0317): every name and every string of one of them, the
+        member of a call through any object, key or cast among them, and an annotation's type. One
+        that the checks above missed would pass them unseen. TypeScript's parser reads the files,
+        so neither a comment nor a division or a regular expression literal that a heuristic might
+        misread hides what follows it."""
         (tmp_path / "sub").mkdir()
         (tmp_path / "a.spec.ts").write_text(
             "test('x', async ({}, info) => {\n  info.skip(smbStatus === 404, 'old');\n});\n"
@@ -985,25 +956,48 @@ class TestSpecsAndRunner:
             "Reflect.get(test, 'skip')(viaReflect, 'r');\n"
             "test[old ? 'skip' : 'only'](ternary, 'r');\n",
             encoding="utf-8")
+        (tmp_path / "f.spec.ts").write_text(
+            "for (const name in { 'skip': 0 }) (test as any)[name](version < 2, 'old supervisor');\n"
+            "for (const name in { fixme: 0 }) (test as any)[name](true, 'r');\n"
+            "Object.assign(info, new (class { expectedStatus = 'failed'; })());\n"
+            "Object.assign(info, { get expectedStatus() { return 'failed'; } });\n"
+            "enum Mark { expectedStatus = 'failed' }\n"
+            "new (class { constructor(public expectedStatus = 'failed') {} })();\n"
+            "export const expectedStatus = 'failed';\n"
+            "namespace M { export const expectedStatus = 'failed'; }\n"
+            "function fail() {}\n"
+            "const keys = { ['fail']: 0, skip() {} };\n"
+            "class Y { static fixme = 0; }\n"
+            "enum Name { skip }\n"
+            "test[`${''}skip`](templatePart, 'r');\n",
+            encoding="utf-8")
         found = sorted((spec.relative_to(tmp_path).as_posix(), method, condition)
                        for spec, _line, method, condition, *_ in _skip_calls(tmp_path))
         assert found == [
             ("a.spec.ts", "fail", "failing"), ("a.spec.ts", "fixme", "bracketed"), ("a.spec.ts", "fixme", "old === true"),
-            ("a.spec.ts", "skip", "'a step'"), ("a.spec.ts", "skip", "(a reference)"), ("a.spec.ts", "skip", "(an annotation)"),
-            ("a.spec.ts", "skip", "optional"), ("a.spec.ts", "skip", "smbStatus === 404"), ("a.spec.ts", "skip", "spaced"),
-            ("a.spec.ts", "skip", "viaUrl"), ("c.spec.js", "skip", "x"),
-            ("d.spec.ts", "fixme", "(a destructured name)"), ("d.spec.ts", "fixme", "(an annotation)"),
-            ("d.spec.ts", "skip", "(a destructured name)"), ("d.spec.ts", "skip", "(a reference)"),
+            ("a.spec.ts", "skip", "(a reference)"), ("a.spec.ts", "skip", "(a title)"),
+            ("a.spec.ts", "skip", "(an annotation)"), ("a.spec.ts", "skip", "optional"),
+            ("a.spec.ts", "skip", "smbStatus === 404"), ("a.spec.ts", "skip", "spaced"), ("a.spec.ts", "skip", "viaUrl"),
+            ("c.spec.js", "skip", "x"),
+            ("d.spec.ts", "fixme", "(a name)"), ("d.spec.ts", "fixme", "(an annotation)"),
+            # const { skip } = test, the call skip(...), typeof test.skip and the key of { skip: true }
+            ("d.spec.ts", "skip", "(a name)"), ("d.spec.ts", "skip", "(a name)"), ("d.spec.ts", "skip", "(a name)"),
+            ("d.spec.ts", "skip", "(a name)"), ("d.spec.ts", "skip", "(a reference)"),
             ("d.spec.ts", "skip", "afterDivision"), ("d.spec.ts", "skip", "afterRegex"), ("d.spec.ts", "skip", "cast"),
             ("d.spec.ts", "skip", "optionalBracket"), ("d.spec.ts", "skip", "parenthesized"),
             ("d.spec.ts", "skip", "templated"),
-            ("e.spec.ts", "expectedStatus", "(a member)"), ("e.spec.ts", "expectedStatus", "(a property)"),
-            ("e.spec.ts", "fail", "(an annotation)"), ("e.spec.ts", "fixme", "(an import alias)"),
+            ("e.spec.ts", "expectedStatus", "(a name)"), ("e.spec.ts", "expectedStatus", "(a reference)"),
+            ("e.spec.ts", "fail", "(an annotation)"), ("e.spec.ts", "fixme", "(a name)"),
             ("e.spec.ts", "fixme", "nonNullKey"), ("e.spec.ts", "fixme", "optionalCastKey"),
-            ("e.spec.ts", "skip", "(a destructured name)"), ("e.spec.ts", "skip", "(a string)"),
+            ("e.spec.ts", "skip", "(a name)"), ("e.spec.ts", "skip", "(a string)"), ("e.spec.ts", "skip", "(a string)"),
             ("e.spec.ts", "skip", "(a string)"), ("e.spec.ts", "skip", "(an annotation)"),
-            ("e.spec.ts", "skip", "(an import alias)"), ("e.spec.ts", "skip", "angleKey"),
-            ("e.spec.ts", "skip", "castKey"), ("e.spec.ts", "skip", "satisfiesKey"),
+            ("e.spec.ts", "skip", "angleKey"), ("e.spec.ts", "skip", "castKey"), ("e.spec.ts", "skip", "satisfiesKey"),
+            # The class field, the getter, the enum member, the parameter property and both exports
+            *[("f.spec.ts", "expectedStatus", "(a name)")] * 6,
+            ("f.spec.ts", "fail", "(a name)"), ("f.spec.ts", "fail", "(a string)"),
+            ("f.spec.ts", "fixme", "(a name)"), ("f.spec.ts", "fixme", "(a name)"),
+            ("f.spec.ts", "skip", "(a name)"), ("f.spec.ts", "skip", "(a name)"), ("f.spec.ts", "skip", "(a string)"),
+            ("f.spec.ts", "skip", "(a string)"),
             ("sub/b.spec.mts", "fail", "version < 2"),
         ]
         assert len(_unexpected_skips(tmp_path)) == len(found)
@@ -1019,7 +1013,7 @@ class TestSpecsAndRunner:
         assert _unexpected_skips(tmp_path) == [
             "a.spec.ts:1: test.fail on process.env.E2E_STAND_IN === '1': a known failure (ADR-0215)",
             "a.spec.ts:2: test.fixme on process.env.E2E_STAND_IN === '1': a known failure (ADR-0215)",
-            "a.spec.ts:4: expectedStatus (a member): a known failure (ADR-0215)",
+            "a.spec.ts:4: expectedStatus (a reference): a known failure (ADR-0215)",
         ]
 
     def test_a_file_that_typescript_cannot_parse_fails_the_check(self, tmp_path):
@@ -1027,7 +1021,14 @@ class TestSpecsAndRunner:
         skips that can be read are on listed conditions."""
         (tmp_path / "a.spec.ts").write_text(
             "test.skip(!httpUrl, 'set HTTP_URL to the plain-HTTP address');\nconst = 1;\n", encoding="utf-8")
-        with pytest.raises(AssertionError, match="TypeScript cannot parse"):
+        with pytest.raises(AssertionError, match="cannot be checked"):
+            list(_skip_calls(tmp_path))
+
+    def test_jsx_in_a_spec_fails_the_check(self, tmp_path):
+        """JSX can spell a name in ways that the check does not read, such as an entity in a text:
+        the specs use none."""
+        (tmp_path / "a.spec.tsx").write_text("const props = (<a type=\"sk&#105;p\" />).props;\n", encoding="utf-8")
+        with pytest.raises(AssertionError, match="cannot be checked"):
             list(_skip_calls(tmp_path))
 
     def test_every_skip_gives_its_reason(self):
