@@ -331,7 +331,7 @@
       "adr": [
         "ADR-0025"
       ],
-      "notes": "Stored certificates are listed, but Caddy serves only its local CA: nothing hands them to the web UI container."
+      "notes": "Stored certificates are listed, but Caddy serves only its local CA: nothing hands them to the web UI container. The review of security.no-legacy-certificate-fixups on 2026-11-10 found these gaps of the current code: no test of the 400 for a delete that is not custom, of the 500 of an upload or a delete, or of a self-signed generation whose openssl raises; organization and country of a self-signed certificate are not validated (a country of two letters, an organization of at most 64 characters); openssl runs on the event loop without a timeout (ADR-0021); a symlink at a certificate's file path is followed (ADR-0042)."
     },
     {
       "id": "security.no-legacy-certificate-fixups",
@@ -342,10 +342,14 @@
         "Every stored certificate and key goes through the one current path: validated, and keys written 0600",
         "tests/test_security.py passes without tests of the old cases"
       ],
+      "verified_by": [
+        "supervisor/tests/test_security.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207"
-      ]
+      ],
+      "notes": "Done in the code 2026-11-10. Step 1: the fchmod of _write_private_key and the chmod before openssl, for keys that older versions left 0644, are gone, and so is the delete of any id inside CERTS_DIR, for names that older versions stored without validation (TestPrivateKeyMode test_no_key_mode_is_fixed_up). Step 2: an upload stores under the validated subject CN and a self-signed certificate under its validated domain; openssl prints the self-signed key and _write_private_key stores it like an uploaded one, 0600 whatever openssl's own file modes, and only after openssl succeeded, so a failure keeps the stored key (test_self_signed_key_file_is_0600, test_a_failed_self_signed_certificate_leaves_the_stored_key, test_uploaded_key_file_is_0600, test_a_new_upload_replaces_the_whole_key_file); the delete takes only the names that those two store (test_delete_refuses_an_id_that_names_no_certificate_name), and the listing shows only those, with the chain stored as <name>.chain.pem so that it is no certificate of its own (test_every_listed_certificate_can_be_deleted). Step 3: the tests of 0644 keys and of the name My NAS are gone. Open: make e2e-local (feature-pass step 6), since the web UI calls the delete and the listing; it cannot start Chromium on this workstation now (owner action 2 in PROGRESS.md). Not host-level: the files are in the supervisor's data volume."
     },
     {
       "id": "auth.first-run-setup",
