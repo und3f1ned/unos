@@ -265,7 +265,7 @@ def test_whole_cycle(cycle):
 
 
 def test_a_host_without_samba_writes_the_audit_log_only_for_changes(cycle):
-    """ADR-0157: problems alone (the stand-in) write no audit entry."""
+    """ADR-0320: problems alone (the stand-in) write no audit entry."""
     fake, world = cycle.fake, cycle.world
     fake.missing = set(ALL_SAMBA_TOOLS)
 
@@ -281,7 +281,7 @@ def test_a_host_without_samba_writes_the_audit_log_only_for_changes(cycle):
 
 
 def test_smb_is_turned_on_only_once_unos_wrote_smb_conf(cycle, monkeypatch):
-    """ADR-0130: the first apply after the upgrade fails (here testparm refuses the file),
+    """ADR-0130: the first apply of UNOS fails (here testparm refuses the file),
     so Samba still serves the device's old smb.conf, whose [DATA] gives write access to every
     Samba user. Turning SMB on is refused (no smbpasswd, no passdb entry) until an apply
     succeeded; revocations are not blocked."""

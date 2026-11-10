@@ -37,6 +37,7 @@ class AuditAction(str, Enum):
     SMB_SHARES_IMPORTED = "smb_shares_imported"
     SMB_RECONCILED = "smb_reconciled"
     SMB_RESTORED = "smb_restored"
+    # NFS exports (ADR-0321)
     NFS_EXPORT_CREATED = "nfs_export_created"
     NFS_EXPORT_DELETED = "nfs_export_deleted"
 

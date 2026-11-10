@@ -753,8 +753,8 @@ class TestCreateUserWithSmb:
 
 
 def orphan_rows_of(world: "World", name: str) -> int:
-    """An older release deleted the user ``name`` (the highest id) and left its SMB rows,
-    its Samba entry and its host account. Returns the id, which SQLite gives to the next user."""
+    """A restored or hand-edited database lost the user ``name`` (the highest id) but kept its SMB
+    rows, its Samba entry and its host account. Returns the id, which SQLite gives to the next user."""
     user_id = world.ids[name]
     with Session(world.engine) as session:
         session.execute(delete(User).where(User.id == user_id))
@@ -1088,8 +1088,8 @@ NOT_UNOS = "SMB cannot be turned on until UNOS has installed its own smb.conf"
 
 
 class TestActivationNeedsUnosSmbConf:
-    """ADR-0130: while Samba still serves an smb.conf that UNOS did not write (the first
-    apply after the upgrade failed), no Samba password is set: the new account would get
+    """ADR-0130: while Samba still serves an smb.conf that UNOS did not write (its first
+    apply failed), no Samba password is set: the new account would get
     what the old file gives every Samba user. Revocations are never blocked."""
 
     @pytest.fixture(autouse=True)
@@ -1435,7 +1435,7 @@ class TestPasswordChange:
         argvs = world.fake.argvs()
         assert argvs.index(["smbpasswd", "-s", "-a", "alice"]) < commit
         assert argvs[commit:] == [["smbstatus", "--json"], ["smbcontrol", str(pid), "shutdown"]]
-        # ADR-0157: the SMB password set by an administrator has its own audit entry.
+        # ADR-0320: the SMB password set by an administrator has its own audit entry.
         assert world.smb_audit() == [("alice", "SMB password set by an administrator", "info")]
 
     @pytest.mark.parametrize("via", ["self", "admin"])

@@ -203,13 +203,17 @@ Open owner actions:
 4. Sign in as the dev device's regular account `test`: main eceead5, deployed on 2026-11-09 at
    21:07 UTC, checks passwords as given (ADR-0315), so if its password is longer than 72 bytes it
    no longer signs in, and an administrator sets a new one on the Users page.
+5. Make the supervisor image's root filesystem in the dev device's `/dev/shm` again, gone since
+   the reboot (the command that `scripts/dev/linux-tests.sh` prints; it runs a container and
+   writes about 2 MB to the SD card): the Linux-only tests wait for it, `test_share_repair.py` of
+   `shares.rollback-era-safeguards` among them.
 
 ## Log
 
 ### 2026-11-10: SMB changes are audited with actions of their own
 
 - `shares.rollback-era-safeguards`, at the owner's word to go on ("Continue", in translation),
-  under ADR-0207: the SMB code audited with `other` and `user_updated` only, because a release
+  under ADR-0207: the SMB code audited with `other`, `user_updated` and `share_updated` only, because a release
   after an update's rollback dropped the whole audit log at an action it did not know. The
   audit loader of this release skips a line it cannot read and keeps the rest, so SMB changes
   have actions of their own now: `smb_account_updated`, `smb_shares_imported`,
@@ -223,7 +227,17 @@ Open owner actions:
   permissions' test runs on Linux only). 1075 tests of those files and of the audit log, the
   share API and the SMB integration passed; svelte-check and the text check passed. Not
   host-level.
-- RESULTS
+- The fresh-context review (ADR-0017) found no blocker. Fixed: ADR-0292 still said that NFS
+  changes are audited as share changes, so ADR-0321 supersedes it with that sentence changed;
+  ADR-0320 names all changes of an SMB account (also disallowed and revoked at a promotion),
+  says that a user's deletion keeps one `user_deleted` entry, and says what a release before an
+  action does with it after an update's rollback: it keeps it when it appends or rotates, but a
+  deletion of old entries by date rewrites the file without it; the code and tests that applied
+  the rule cite ADR-0320; remarks on older releases in tests and a stale comment on the audit's
+  writes are gone; USER_GUIDE.md lists the NFS exports and the SMB state after a restore among
+  the recorded changes. Open: `test_share_repair.py` is Linux-only, and `linux-tests.sh` needs
+  the supervisor's root filesystem in the device's `/dev/shm`, gone since the reboot; making it
+  again is an owner action, so `passes` stays false until that run.
 
 ### 2026-11-10: a restore refuses backups without SMB tables, and backups hold no smb.conf
 

@@ -983,8 +983,8 @@ async def _import_locked(db: AsyncSession) -> _ImportPlan | None:
     for line in plan.report:
         logger.info("smb.conf import: %s", line)
     if plan.shares:
-        # An import of no share (a fresh install, a missing file) is not audited: every
-        # audit entry rewrites the whole audit log on the system disk.
+        # An import of no share (a fresh install, a missing file) is not audited: an entry
+        # records a change, and each is a write to the system disk (ADR-0320).
         await _audit(AuditAction.SMB_SHARES_IMPORTED, f"Imported {len(plan.shares)} shares from smb.conf",
                      resource_type="share")
     return plan
@@ -1459,7 +1459,7 @@ def _same_gid_conflict(group_problem: str | None, gid: str | None) -> bool:
 
 @dataclass
 class ShareChange:
-    """What a share mutation did: the answer, and the audit entry (ADR-0157, written by the router)."""
+    """What a share mutation did: the answer, and the audit entry (ADR-0320, written by the router)."""
 
     name: str                                   # resource_id of the audit entry
     details: str | None                         # None: nothing changed, no audit entry

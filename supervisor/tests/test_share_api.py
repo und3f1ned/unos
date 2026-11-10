@@ -1160,7 +1160,7 @@ def test_the_e2e_fakes_answer_with_the_servers_texts(api, monkeypatch):
     assert "`Share ${share} is not served: ${problem}`" in fakes
 
 
-# --- audit (ADR-0157) ------------------------------------------------------------------------------------
+# --- audit (ADR-0320) ------------------------------------------------------------------------------------
 
 
 class TestAudit:

@@ -983,8 +983,8 @@ def _require_unos_smb_conf() -> None:
     """Raise SmbConfNotUnos unless the live smb.conf is UNOS's rendering (it starts with HEADER).
 
     Until UNOS has installed its own file (its first apply failed, or the file
-    was replaced by hand), Samba
-    serves the old one, which may give every Samba account access to its shares:
+    was replaced by hand), Samba serves the old one, which may give every Samba
+    account access to its shares:
     no Samba password may be set then. Read-only; revocations never call it.
     """
     try:

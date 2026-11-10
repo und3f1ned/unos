@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-08
 area: shares
 decided-by: agent
 supersedes: [ADR-0163]
+superseded-by: ADR-0321
 ---
 
 # ADR-0292: UNOS keeps its NFS exports in its own export file on the host, reads every export file as exportfs reads it, and applies them with the host's exportfs
 
 ## Context
+
+Superseded by ADR-0321: the same rules, with NFS changes audited as `nfs_export_created` and `nfs_export_deleted`.
 
 `supervisor/src/shares/nfs.py` wrote the supervisor container's own `/etc/exports`, which no bind mount shares with the host: a file on the container's writable layer on the system disk, lost when the container is recreated. It ran `exportfs` in the container, which has none, and its parser kept only the first client of each line, so a delete rewrote the file without comments, other clients and the lines it misread (`shares.nfs-exports`, `shares.nfs-exports-parser`). ADR-0163 had left the parser for later, and ADR-0175 lists it for review. Where a web export may point and to whom is ADR-0293.
 

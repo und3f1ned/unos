@@ -3,7 +3,7 @@
 SMB shares are rows of the UNOS database; shares/service.py changes them
 under smb_lock() and renders smb.conf from them. NFS exports are the lines
 of the host's export files; shares/nfs.py changes only the lines that UNOS
-wrote into its own file (ADR-0292). Every mutation is audited (ADR-0157).
+wrote into its own file (ADR-0292). Every mutation is audited (ADR-0320).
 PUT /shares/smb/{name} is gone (405): PATCH changes only the fields it sends.
 """
 
@@ -82,7 +82,7 @@ async def _call(func, *args, not_found_status: int = 400):
 
 
 async def _audit(request: Request, actor: str | None, action: AuditAction, change: service.ShareChange) -> None:
-    """The audit entry of a share mutation (ADR-0157); none when nothing changed."""
+    """The audit entry of a share mutation (ADR-0320); none when nothing changed."""
     if change.details is None:
         return
     await log_action(
