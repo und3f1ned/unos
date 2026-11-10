@@ -1904,6 +1904,28 @@ class TestStartChecks:
         assert "Mount the pool ('beta' holds the app's data)" in response.json()["detail"]
         container.start.assert_not_called()
 
+    def test_data_under_a_pools_base_reached_through_a_link_is_checked(self, api, pools, installed, tmp_path,
+                                                                       monkeypatch):
+        """An install gives Docker the pool sources under the resolved pools base (validate_pools_path):
+        with the pools base set to a path through a symbolic link, they are still data, listed as not
+        on a mounted pool and refused at the start while their pool is not mounted."""
+        link = tmp_path / "pools-link"
+        link.symlink_to(pools.base)
+        monkeypatch.setattr(get_settings(), "pools_base_path", str(link))
+        pools.mounted.clear()
+        pools.mounted.add(str(link / "beta"))
+        container = installed(_jellyfin(pools))
+
+        [app_info] = api.get(INSTALLED).json()
+        response = api.post(START.format("jellyfin"))
+
+        assert sorted(app_info["data_outside_pools"]) == [
+            str(pools.alpha / "apps/jellyfin/cache"), str(pools.alpha / "apps/jellyfin/config"), str(pools.alpha / "media"),
+        ]
+        assert response.status_code == 409
+        assert "Mount the pool ('alpha' holds the app's data)" in response.json()["detail"]
+        container.start.assert_not_called()
+
     def test_no_code_for_apps_of_older_versions(self):
         """apps.no-legacy-default-pool (ADR-0207): no check, message or text for apps that older
         versions installed under /mnt/pools/default without a pool label."""
@@ -1911,9 +1933,10 @@ class TestStartChecks:
         for path in ("supervisor/src/apps/router.py", "supervisor/src/apps/schemas.py",
                      "supervisor/src/health/router.py", "webui/src/lib/api/apps.ts",
                      "webui/src/lib/components/apps/AppStorageWarning.svelte",
-                     "webui/src/lib/i18n/catalog/apps.ts"):
+                     "webui/src/lib/i18n/catalog/apps.ts", "webui/tests/apps.spec.ts"):
             text = (repo / path).read_text(encoding="utf-8")
-            for old in ("older version", "older UNOS version", "pools/default", "systemDisk"):
+            for old in ("older version", "older install", "older UNOS version", "pools/default", "systemDisk",
+                        "'default'", "системном диске"):
                 assert old not in text, f"{path}: {old}"
 
     def test_missing_folder_on_another_pool_is_not_created(self, api, pools, installed):

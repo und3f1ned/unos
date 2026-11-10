@@ -222,10 +222,20 @@ Open owner actions:
   `test_no_code_for_apps_of_older_versions` failed before the change; the tests of an app under
   `/mnt/pools/default` and of an override outside the pools base are gone. `test_apps.py`,
   `test_containers.py` and `test_health_monitor.py` 340 passed; svelte-check and the text check
-  passed. `passes` stays false: `apps.spec.ts` cannot run on the stand-in now (owner action 2),
-  and the entry is host-level (the host's containers), with its device check by hand in the
-  notes.
-- RESULTS
+  passed. `passes` stays false: the entry is host-level (the host's containers), with its device
+  check by hand in the notes. ADR-0318 supersedes ADR-0039: the same rules without the handling
+  of apps of older versions.
+- The fresh-context review (ADR-0017) found one blocker and fixed it: the Russian test of
+  `apps.spec.ts` still faked an app of an older version and looked for the removed warning; it
+  now fakes an app whose pool is not mounted, and the text check also reads the spec. Also fixed:
+  with the pools base set to a path through a symbolic link, the pool volumes, which an install
+  gives Docker under the resolved base, no longer counted as data, so an app whose pool was not
+  mounted would start; data is now what lies under either form of the base
+  (`test_data_under_a_pools_base_reached_through_a_link_is_checked`, which failed on the code
+  that the review read); remarks on older installs in `router.py` and `test_disk_safety.py` are
+  gone. Recorded in ADR-0318, not changed: a container that UNOS did not install and that binds
+  the pools base itself is told to mount the pools base. `test_apps.py`, `test_containers.py`,
+  `test_disk_safety.py` and `test_health_monitor.py` 413 passed.
 
 ### 2026-11-10: the stats message of the WebSocket has one shape
 

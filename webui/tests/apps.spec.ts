@@ -488,8 +488,8 @@ test.describe('App details', () => {
 test.describe('The App Store in Russian', () => {
   const POOL = SIZED_POOL;
 
-  function installed(name: string, templateId: string, status: string, pool: string | null) {
-    const config = `/mnt/pools/${pool ?? 'default'}/apps/${templateId}/config`;
+  function installed(name: string, templateId: string, status: string, pool: string, mounted = true) {
+    const config = `/mnt/pools/${pool}/apps/${templateId}/config`;
     return {
       id: `${name}-id`,
       template_id: templateId,
@@ -500,8 +500,8 @@ test.describe('The App Store in Russian', () => {
       created_at: '2026-11-08T10:00:00Z',
       pool,
       volumes: [{ host: config, container: '/config', readonly: false }],
-      // An app of an older version keeps its data on the system disk.
-      data_outside_pools: pool ? [] : [config],
+      // The folders of an app whose pool is not mounted.
+      data_outside_pools: mounted ? [] : [config],
       runs_in_unos_smb: false,
     };
   }
@@ -509,7 +509,7 @@ test.describe('The App Store in Russian', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     const apps = [
       installed('e2e-jellyfin', 'jellyfin', 'running', POOL.name),
-      installed('e2e-syncthing', 'syncthing', 'exited', null),
+      installed('e2e-syncthing', 'syncthing', 'exited', 'e2e_backup', false),
     ];
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/installed',
@@ -580,7 +580,7 @@ test.describe('The App Store in Russian', () => {
     await dialog.getByRole('button', { name: 'Отмена', exact: true }).click();
     await expect(dialog).toHaveCount(0);
 
-    // The installed apps: their states and actions, and the warning of an app on the system disk.
+    // The installed apps: their states and actions, and the warning of an app whose pool is not mounted.
     await main.getByRole('button', { name: 'Установленные (2)', exact: true }).click();
     const installedCard = (name: string) => main.locator('.card', { has: page.locator('h3', { hasText: name }) });
     const jellyfin = installedCard('e2e-jellyfin');
@@ -592,7 +592,7 @@ test.describe('The App Store in Russian', () => {
     const syncthing = installedCard('e2e-syncthing');
     await expect(syncthing.getByText('Остановлено', { exact: true })).toBeVisible();
     await expect(syncthing.getByRole('button', { name: 'Запустить', exact: true })).toBeVisible();
-    await expect(syncthing.getByText('Данные приложения находятся на системном диске')).toBeVisible();
+    await expect(syncthing.getByText('Папки с данными недоступны')).toBeVisible();
 
     let question = '';
     page.once('dialog', (dialog) => {
