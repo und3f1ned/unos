@@ -3017,10 +3017,8 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     finally:
         conn.close()
     if absent:
-        names = sorted(absent)
-        listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
         raise BackupValidationError(
-            f"unos.db in the backup lacks the SMB table{'s' if len(names) > 1 else ''} {listed}: "
+            f"unos.db in the backup lacks SMB tables ({', '.join(sorted(absent))}): "
             "it was made by an older UNOS, whose backups this one does not restore"
         )
     if missing or extra:

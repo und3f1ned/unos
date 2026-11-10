@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-05
 area: backup
 decided-by: agent
+superseded-by: ADR-0319
 ---
 
 # ADR-0040: Restore checks archives and regenerates smb.conf instead of installing the archived file
 
 ## Context
+
+Superseded by ADR-0319: the same checks of the archive and the database, a backup holds no smb.conf, and none is read.
 
 In 1.0.0 a restore ran `tar.extractall` without a filter and installed the archived `unos.db` and `smb.conf`, so a crafted archive could replace files on the host, and regular accounts could run a restore. Backups can be uploaded, so an archive is untrusted input.
 

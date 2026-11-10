@@ -2095,17 +2095,21 @@
       ],
       "verified_by": [
         "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_scheduler_validation.py",
         "supervisor/tests/test_share_import.py",
         "supervisor/tests/test_smb_models.py"
       ],
       "passes": false,
       "adr": [
         "ADR-0207",
+        "ADR-0040",
+        "ADR-0077",
+        "ADR-0139",
         "ADR-0142",
         "ADR-0143",
         "ADR-0319"
       ],
-      "notes": "Done in the code 2026-11-10 (ADR-0319, which supersedes ADR-0142 and ADR-0143). Step 1: a restore checks the four SMB tables of the extracted database and creates none; one that lacks them is refused with 400 and nothing changes (TestNotAuthoritative test_a_backup_without_the_smb_tables_is_refused, which failed before: the tables were created and the shares imported). Step 2: the import of the archive's smb.conf is gone, with the source 'backup' and smb_state.pending_import_conf; a database without the import marker imports the live smb.conf, never with guest access (test_the_smb_conf_of_an_older_backup_is_not_read, test_the_shares_of_the_live_file_are_imported, test_guest_access_is_not_restored), and its tests are gone or read the live file. Step 3: a backup carries no smb.conf and BackupConfig has no include_shares (test_a_backup_restores_the_shares_of_its_database); a restore ignores an smb.conf in an archive. The web UI's BackupConfig has no include_shares either. Open: host-level (GLOSSARY.md: the smb.conf that a restore leads to): on the dev device, a backup made after the deploy holds no smb.conf, and its restore keeps the shares and writes smb.conf byte for byte as before, with the device check and the re-check after a reboot (ADR-0018), as for backup.restore."
+      "notes": "Done in the code 2026-11-10 (ADR-0319, which supersedes ADR-0040, ADR-0077, ADR-0139, ADR-0142 and ADR-0143). Step 1: a restore checks the four SMB tables of the extracted database and creates none; one that lacks them is refused with 400 and nothing changes (TestNotAuthoritative test_a_backup_without_the_smb_tables_is_refused, which failed before: the tables were created and the shares imported). Step 2: the import of the archive's smb.conf is gone, with the source 'backup' and smb_state.pending_import_conf; a database without the import marker imports the live smb.conf, never with guest access (test_the_smb_conf_of_an_older_backup_is_not_read, test_the_shares_of_the_live_file_are_imported, test_guest_access_is_not_restored), and its tests are gone or read the live file. Step 3: no backup, manual or scheduled, carries smb.conf, and BackupConfig has no include_shares (test_a_backup_holds_no_smb_conf and test_a_backup_task_stores_encrypted_backups, with the host's smb.conf in place, which failed before for scheduled backups; test_a_backup_restores_the_shares_of_its_database); a restore ignores an smb.conf in an archive, and a database of the previous layout, with pending_import_conf, restores (test_a_database_of_the_previous_layout_restores). The web UI's BackupConfig has no include_shares either. Open: host-level (GLOSSARY.md: the smb.conf that a restore leads to): on the dev device, a backup made after the deploy and a scheduled one hold no smb.conf, and a restore of the first keeps the shares and writes smb.conf byte for byte as before, with the device check and the re-check after a reboot (ADR-0018), as for backup.restore."
     },
     {
       "id": "backup.encrypted-scheduled-backups",

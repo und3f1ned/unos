@@ -2,8 +2,8 @@
 
 New tables only: init_db() runs create_all, which creates missing tables in
 existing databases (there is no migration framework, and columns are never
-added to existing tables). A restore creates them in the extracted backup
-database before that database replaces the live one (ADR-0077). SQLite does
+added to existing tables). A restore checks them in the extracted backup
+database and refuses one that lacks them (ADR-0319). SQLite does
 not enforce foreign keys here (no PRAGMA foreign_keys): code that deletes a
 user or a share deletes the dependent rows itself, in the same transaction
 (SQLite reuses the highest rowid, so an orphan row would attach to the next

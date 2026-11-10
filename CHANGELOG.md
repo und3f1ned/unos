@@ -503,7 +503,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   it, and a backup holds no smb.conf: the option `include_shares` is gone. A
   restore refuses a backup whose database has no SMB tables (of an older
   UNOS), and a database that never imported its shares gets those of the
-  current smb.conf.
+  current smb.conf, without guest access. Scheduled backups hold no smb.conf
+  either.
 - E2E specs run only against a local stand-in: Playwright's default target is
   the stand-in that `scripts/standin/e2e.sh` (`make e2e-local`) starts, and
   `webui/playwright.config.ts` refuses a `BASE_URL` or `HTTP_URL` whose host is

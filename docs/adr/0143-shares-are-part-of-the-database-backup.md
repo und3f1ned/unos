@@ -11,6 +11,7 @@ superseded-by: ADR-0319
 ## Context
 
 Superseded by ADR-0319: backups carry no smb.conf, and include_shares is gone.
+
 With shares and their access in SQLite (ADR-0074), every backup carries them in unos.db. The
 backup option `include_shares` therefore no longer protects shares from being restored.
 

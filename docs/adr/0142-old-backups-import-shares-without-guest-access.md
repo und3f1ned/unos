@@ -11,6 +11,7 @@ superseded-by: ADR-0319
 ## Context
 
 Superseded by ADR-0319: a restore refuses backups without SMB tables, and a database without the import marker imports the live smb.conf.
+
 Backups of releases before slice 2 have no SMB tables: their shares exist only in the
 archived smb.conf. The same holds for a backup whose database never ran the import. Such a
 backup must not bring guest access back.

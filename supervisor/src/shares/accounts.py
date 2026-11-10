@@ -2134,7 +2134,7 @@ def prepare_restored_accounts(
             conn.execute("UPDATE smb_accounts SET created_at = CURRENT_TIMESTAMP WHERE user_id = ?", (user_id,))
 
     # Carry-over: a database that is not authoritative for SMB (taken before
-    # the shares were imported, or without SMB tables) keeps the accounts of
+    # its shares were imported) keeps the accounts of
     # the users it has, under the same proof. A live account keeps its uid: a
     # restored row of another name that had it lost it above.
     if not authoritative:

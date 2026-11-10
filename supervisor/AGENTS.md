@@ -50,7 +50,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 - A module-level path under `/data` must also be redirected by `scripts/standin/run_supervisor.py`:
   `tests/test_standin.py` fails for one that is not.
 - New tables come from `create_all` in `init_db`; existing tables and columns are never altered,
-  and there is no migration framework (ADR-0077). SQLite does not enforce foreign keys here, so
+  and there is no migration framework (ADR-0319). SQLite does not enforce foreign keys here, so
   code deletes the dependent rows in the same transaction.
 
 ## SMB (`src/shares/`)
