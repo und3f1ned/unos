@@ -1048,7 +1048,8 @@ before a change locks nothing. Anyone on the network who knows a username can
 lock its SMB account in this way, again and again; the web interface and the
 other accounts are not affected, and UNOS does not show the lock; a new
 password does not end it either. **System** → **Logs** names the computer
-whose sign-ins fail (see [Logs](#logs)).
+whose sign-ins fail (see [Logs](#logs)). An administrator who turns the user's
+SMB off and on again ends the lock at once.
 
 SMB cannot be turned on while Samba still uses an smb.conf that UNOS did not
 write (HTTP 409): on a host that had an smb.conf before, UNOS imports its

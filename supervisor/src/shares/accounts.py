@@ -1671,12 +1671,22 @@ def _reconcile_host(plan: _HostPlan) -> _HostOutcome:
     passwd_changed = False
 
     # Samba's account policies (ADR-0278, ADR-0334): each read at every start and set only when it
-    # differs; a policy that fails is a problem, and the others go on.
+    # differs; a policy that fails is a problem, and the others go on. The lockout's threshold is
+    # set only when both of its times are UNOS's: with the host's (30 minutes, or 0, which never
+    # ends a lock or forgets a failure) it would lock accounts on other terms.
+    times_ok = True
     for policy, value in ACCOUNT_POLICIES:
+        if policy == BAD_LOCKOUT_POLICY and not times_ok:
+            out.problems.append(
+                f"Samba's {BAD_LOCKOUT_POLICY} was not set: the lockout needs its duration and reset time first"
+            )
+            continue
         try:
             change = ensure_account_policy(policy, value)
         except SmbHostError as error:
             out.problems.append(error.message)
+            if policy in (LOCKOUT_DURATION_POLICY, RESET_COUNT_POLICY):
+                times_ok = False
         else:
             if change is not None:
                 out.changes.append(change)

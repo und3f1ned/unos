@@ -24,8 +24,10 @@ clients found in the journal needs that firewall and a daemon that reads the jou
   `reset count minutes` 5 and `bad lockout attempt` 5 beside `password history` 3, as it keeps the
   history: `pdbedit -P "<policy>"` at every start and `pdbedit -P "<policy>" -C <value>` only for a
   value that differs, so that account_policy.tdb is written only on a change. A policy that cannot
-  be read or set is a problem of the reconcile, and the others go on. The threshold is set after
-  the two times, so that the lockout starts with them rather than Samba's 30 minutes. The values
+  be read or set is a problem of the reconcile, and the others go on; but the threshold is set
+  only when both times are UNOS's (read as 5 or set to 5), and after them: with the host's times
+  (Samba's 30 minutes, or 0, which never ends a lock or forgets a failure) the lockout would lock
+  on other terms, so it stays as it was and the reconcile says why. The values
   are `LOCKOUT_MINUTES`, `RESET_COUNT_MINUTES` and `BAD_LOCKOUT_ATTEMPTS` in
   `supervisor/src/shares/accounts.py` (`ACCOUNT_POLICIES`, `ensure_account_policy`); tests:
   `supervisor/tests/test_smb_reconcile.py` (TestLockout, TestPasswordHistory) against
@@ -67,8 +69,10 @@ clients found in the journal needs that firewall and a daemon that reads the jou
   does not stop, so SMB-bound passwords keep their rules (ADR-0279) and administrators still never
   have SMB (ADR-0117).
 - UNOS shows no lock: neither the Users page nor the Account page says that an SMB account is
-  locked, and the web interface cannot end a lock before its 5 minutes; a password change does
-  not end it either.
+  locked. A password change does not end a lock; turning the user's SMB off and on again does, as
+  it deletes the passdb entry and makes a new one (with an empty password history).
+- The policies are Samba's own, for every account of its passdb: an account that UNOS did not
+  make (ADR-0108) is locked in the same way, and UNOS cannot end its lock.
 - The statements of ADR-0280 that SMB sign-ins are unthrottled, and of ADR-0310 that a failed
   sign-in writes nothing to passdb.tdb, no longer hold. `docs/USER_GUIDE.md` says that 5 wrong
   passwords lock the SMB account for 5 minutes.

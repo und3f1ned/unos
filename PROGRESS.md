@@ -250,6 +250,12 @@ Open owner actions:
   step 2 (a counted failure writes passdb.tdb), until the smb check passes with the lockout
   before and after a reboot. Open: the deploy and the device checks of both entries, and the
   review in a fresh context (ADR-0017).
+- A fresh-context review found the threshold set even when one of the lockout's times failed,
+  which would lock on the host's terms (30 minutes, or 0, which never unlocks): now the
+  threshold waits for both. Also fixed: turning SMB off and on ends a lock (ADR-0334 said the
+  web interface could not), the policy locks accounts that UNOS did not make too, and the
+  reworded step of `shares.samba-runtime-writes` names the one write of a retry that clears an
+  old count.
 
 ### 2026-11-10: Limits on open connections and header blocks
 
