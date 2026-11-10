@@ -104,7 +104,7 @@ check_health_timeout() {
 }
 
 # One update at a time. A second run (another SSH session, or cron and a
-# manual run) would interleave its compose down/up with this one's, and its
+# manual run) would interleave its compose up with this one's, and its
 # rollback (git reset --hard) would hit this one's build. The lock is held on
 # fd 9 and released when the script ends. Opened for appending: its content
 # does not matter, and nothing is truncated.
@@ -430,13 +430,10 @@ build_images() {
 restart_services() {
     log_info "Restarting UNOS with the new images..."
 
-    # down, not only up: compose reuses an existing network as it is, and the
-    # network of releases without the fixed subnet (172.31.254.0/24) has to be
-    # recreated for the containers' fixed addresses.
-    if ! compose down --remove-orphans; then
-        rollback "Stopping the running containers failed"
-    fi
-    if ! compose up -d --no-build "${COMPOSE_UP_WAIT[@]}"; then
+    # up recreates the containers whose image changed and removes those of
+    # services that the release dropped or renamed; webui starts once the
+    # supervisor is healthy.
+    if ! compose up -d --no-build --remove-orphans "${COMPOSE_UP_WAIT[@]}"; then
         rollback "Starting the new containers failed. If the error above says \"dependency failed to start\", \"is unhealthy\", \"exited\" or \"timeout waiting for dependencies\" (the wording depends on the Compose version), the supervisor stopped or did not become healthy in time: see its log below. If the error mentions an overlapping address pool, see \"Network subnet\" in docs/INSTALL.md."
     fi
 }
@@ -513,7 +510,7 @@ rollback() {
 # what it changed so far, as after a failed build or health check. Without
 # this, a session closed during the build left the checkout at the new
 # version while the old one kept running (and the next run reported "already
-# up to date"), and one closed between `down` and `up` left UNOS stopped.
+# up to date"), and one closed during the restart left UNOS stopped.
 on_interrupt() {
     trap '' INT TERM HUP
     set +e

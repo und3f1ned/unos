@@ -224,7 +224,6 @@ cd /opt/unos
 sudo git pull --ff-only
 cd deploy
 sudo docker compose build
-sudo docker compose down
 sudo systemctl restart unos   # docker compose up -d with /etc/unos/secrets.env
 ```
 

@@ -504,7 +504,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   not local.
 - `update.sh` stops when the checkout has local changes or is on another
   branch, builds the new images while UNOS keeps running, restarts with
-  `docker compose down` and `up -d`, and prunes old images only after the
+  `docker compose up -d --remove-orphans`, and prunes old images only after the
   health check passes. It refuses to start while another `update.sh` runs
   (flock on `/run/unos-update.lock`).
 - `install.sh` no longer writes a JWT secret to `/etc/unos/secrets.env`, and
