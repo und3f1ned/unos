@@ -351,7 +351,7 @@ and this index, and `make check-fast` runs it.
 | [0181](0181-downgrade-guidance-for-the-smb-release.md) | Rolling back to the release before SMB accounts is documented, not engineered | superseded by [0207](0207-no-backward-compatibility.md) | 2026-11-06 |
 | [0305](0305-base-images-pinned-by-tag-and-digest.md) | The Dockerfiles pin each base image by tag and digest, and Dependabot moves the digest | accepted | 2026-11-08 |
 | [0307](0307-the-web-ui-waits-for-the-api-also-when-docker-starts-it-at-boot.md) | The web UI waits for the supervisor's API also when Docker starts it at boot | accepted | 2026-11-09 |
-| [0316](0316-the-install-script-recognizes-the-smb-conf-of-unos-by-its-header-line-alone.md) | The install script recognizes the smb.conf of UNOS by its header line alone | accepted | 2026-11-10 |
+| [0316](0316-the-install-script-recognizes-the-smb-conf-of-unos-by-its-header-alone.md) | The install script recognizes the smb.conf of UNOS by its header alone | accepted | 2026-11-10 |
 
 ## Device
 
