@@ -82,8 +82,9 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   dependency is the owner's call: it needs the network and a lockfile change.
 - The Node.js version of `webui/Dockerfile`, of `engines` in `package.json` and of CI agree;
   `supervisor/tests/test_deploy_scripts.py` checks them.
-- `webui/Caddyfile` is the copy the image uses. `deploy/Caddyfile` stays identical to it, and
-  `scripts/standin/front.mjs` sends the same security headers (`supervisor/tests/test_standin.py`).
+- `webui/Caddyfile` is the image's Caddy configuration and its only copy
+  (`deploy.one-caddyfile`), and `scripts/standin/front.mjs` sends the same security headers
+  (`supervisor/tests/test_standin.py`).
 
 ## E2E specs (`webui/tests/`)
 

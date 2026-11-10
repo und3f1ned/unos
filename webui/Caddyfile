@@ -13,7 +13,7 @@
 # volume, reinstall), every browser that had trusted the old root would be
 # locked out of the device until its HSTS entry expires.
 #
-# Keep deploy/Caddyfile identical to this file; the image uses this copy.
+# webui/Dockerfile copies this file into the image as /etc/caddy/Caddyfile.
 {
 	# A LAN appliance must never ask a public ACME CA for certificates.
 	local_certs

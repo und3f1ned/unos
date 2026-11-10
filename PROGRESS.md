@@ -73,7 +73,8 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
 - Runs main eceead5, deployed on 2026-11-09 at 21:07 UTC: both images built from its runtime
   files, the supervisor on the base that ADR-0305 pins. The device checkout `/opt/unos` equals
-  the tree of main eceead5; main's later commits change no runtime file.
+  the tree of main eceead5; main's later commits change runtime files of the supervisor and the
+  web UI (28 files of `supervisor/src` and `webui/src` by 8886fe3), which the next deploy brings.
   The deploys' backup and rollback copies are in the main
   checkout's `tmp/dev/`. The device has no `unos` unit: `deploy.sh up` starts its containers, and
   at boot dockerd does, by their restart policy. Rebooted from the API twice on the morning of
@@ -209,6 +210,31 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-10: The web UI's Caddyfile exists once
+
+- `deploy.one-caddyfile` (ADR-0201), under the owner's delegation ("work on through the
+  features, ask no questions; I allow everything", in translation): the copy of
+  `webui/Caddyfile` in `deploy/` is deleted. Nothing used it: the web UI image copies
+  `webui/Caddyfile` (`webui/Dockerfile`), and neither compose file mounts a Caddyfile. Its
+  references went with it: the deploy component's runtime files of `scripts/dev/tree.py`, the
+  copy's header check in `test_standin.py`, the web UI container of `test_apps.py` (a bind of the
+  copy that the real container never had), the comment of `webui/Caddyfile`, `deploy/AGENTS.md`,
+  `webui/AGENTS.md` and ADR-0025, whose decision is unchanged, corrected in place (the adr
+  skill's first case).
+- Test first (ADR-0186): `test_the_web_ui_has_one_caddyfile` of `test_deploy_scripts.py` failed
+  with the copy, which it listed beside `webui/Caddyfile`; it also checks that `webui/Dockerfile`
+  copies the file and that no compose file mounts one.
+- A fresh-context review found both steps met, but step 2 without a test, and the record of the
+  checks missing: `test_nothing_refers_to_a_copy_of_the_caddyfile_in_deploy` runs `git grep`
+  for the copy's path, which only this entry's steps name. `make check` passed; `make e2e-local`
+  did not run: the stand-in serves the web UI through `scripts/standin/front.mjs`, never through
+  `webui/Caddyfile`, and the build does not read it. The review also found that the Dev device
+  section said main's later commits change no runtime file: corrected.
+- The dev device's checkout keeps the copy until the next sync of `deploy.sh`, which deletes the
+  files that the tree no longer has; nothing on the device reads it. The new comment of
+  `webui/Caddyfile` is a change of the web UI's runtime files, as the web UI changes merged since
+  the last deploy are. Not host-level.
 
 ### 2026-11-10: The E2E specs fail where an API answers an error
 

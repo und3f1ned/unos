@@ -73,7 +73,6 @@ RUNTIME: dict[str, tuple[str, ...]] = {
     ),
     "deploy": (
         "deploy/docker-compose.yml",
-        "deploy/Caddyfile",
         "deploy/install.sh",
         "deploy/update.sh",
         "deploy/uninstall.sh",

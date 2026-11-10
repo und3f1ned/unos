@@ -2125,9 +2125,7 @@ def _on_event_loop() -> bool:
 
 def _webui() -> MagicMock:
     """The web UI's own container: no app of the catalog (no unos.app label)."""
-    return _container(
-        "unos-webui", status="running", mounts=[_bind("/opt/unos/deploy/Caddyfile", "/etc/caddy/Caddyfile")]
-    )
+    return _container("unos-webui", status="running")
 
 
 def _stops(container: MagicMock) -> MagicMock:
