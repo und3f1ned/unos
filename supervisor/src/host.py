@@ -42,8 +42,9 @@ logger = logging.getLogger(__name__)
 # and the shadow tools, smbpasswd, pdbedit, smbstatus), health/router.py and
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf), power/router.py (shutdown,
-# busctl, systemctl, ip, ethtool: ADR-0233) and logs/router.py (journalctl, under
-# timeout: ADR-0257, ADR-0258). cat, od (the export files: shares/nfs.py), test,
+# busctl, systemctl, ip, ethtool: ADR-0233), logs/router.py (journalctl, under
+# timeout: ADR-0257, ADR-0258) and system/router.py (timedatectl under timeout, hostname:
+# ADR-0331). cat, od (the export files: shares/nfs.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
 # scheduler/router.py, ADR-0266) and sh also run there but come from essential
 # packages. The startup check (main.check_host_tools) warns about the ones the
@@ -75,6 +76,7 @@ HOST_TOOLS: dict[str, str] = {
     "ss": "iproute2",
     "systemd-run": "systemd",
     "hostnamectl": "systemd",
+    "timedatectl": "systemd",
     "shutdown": "systemd-sysv",
     "busctl": "systemd",
     "ethtool": "ethtool",

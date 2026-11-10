@@ -327,6 +327,7 @@ and this index, and `make check-fast` runs it.
 | [0267](0267-custom-task-commands-end-with-every-process-of-their-session.md) | A custom task's run records the command's output and exit status, and the command ends within 24 hours with every process of its session | accepted | 2026-11-08 |
 | [0268](0268-a-run-that-a-stop-of-the-supervisor-interrupts-is-recorded-as-failed.md) | A task run that a stop of the supervisor interrupts is recorded as failed | accepted | 2026-11-08 |
 | [0326](0326-notification-channels-their-history-and-damaged-files-of-them.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, the history lists every notification sent, and damaged files of them are kept | accepted | 2026-11-10 |
+| [0331](0331-the-time-zone-routes-run-timedatectl-on-the-host.md) | The time zone and hostname routes ask the host, and PUT /network/hostname alone sets the name | accepted | 2026-11-10 |
 
 ## Web UI
 

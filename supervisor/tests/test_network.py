@@ -652,14 +652,23 @@ class TestDnsGatewayRoutesConnections:
         assert stats == [{"interface": "eth0", "rx_bytes": 123456, "tx_bytes": 654321, "rx_packets": 789,
                           "tx_packets": 987, "rx_errors": 1, "tx_errors": 2}]
 
-    def test_the_hostname_is_the_hosts(self, client, fake_host, monkeypatch, tmp_path):
-        router = importlib.import_module("src.network.router")
-        monkeypatch.setattr(router, "HOSTNAME_FILE", str(tmp_path / "missing"))
-
+    def test_the_hostname_is_the_hosts(self, client, fake_host):
         assert client.get(f"{API}/hostname").json() == {"hostname": "unos"}
         assert client.put(f"{API}/hostname", json={"hostname": "nas"}).status_code == 200
         assert fake_host.hostname == "nas"
         assert ["hostnamectl", "set-hostname", "nas"] in fake_host.calls
+        # Read on the host again: the new name, not a copy taken when the container started.
+        assert client.get(f"{API}/hostname").json() == {"hostname": "nas"}
+
+    def test_a_hostname_that_hostnamectl_refuses_is_not_set_for_the_kernel_alone(self, client, fake_host):
+        """`hostname NAME` would last until the next boot only (ADR-0331)."""
+        fake_host.fail[("hostnamectl",)] = (1, "Could not set static hostname: Access denied")
+
+        response = client.put(f"{API}/hostname", json={"hostname": "nas"})
+
+        assert response.status_code == 500
+        assert "Access denied" in response.json()["detail"]
+        assert ["hostname", "nas"] not in fake_host.calls
 
 
 # ---------------------------------------------------------------------------

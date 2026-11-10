@@ -53,9 +53,10 @@ RESERVED_SMB_NAMES = frozenset({
     'global', 'globals', 'homes', 'printers', 'print$', 'ipc$', 'admin$', 'c$', 'd$'
 })
 
-# List of known valid timezones (subset - full list would be loaded from system)
-# This is a fallback validation; primary validation uses timedatectl
-TIMEZONE_PATTERN = re.compile(r'^[A-Za-z_]+(/[A-Za-z_]+)*\Z')
+# The form of a tzdata name (Etc/GMT-3, America/Port-au-Prince, EST5EDT and the like): never an
+# option (no leading '-'), an absolute path or '..'. The host's list of zones checks it first
+# where timedatectl answers (system/router.py, ADR-0331).
+TIMEZONE_PATTERN = re.compile(r'^[A-Za-z_][A-Za-z0-9_+-]*(/[A-Za-z_][A-Za-z0-9_+-]*)*\Z')
 
 
 class ValidationError(Exception):

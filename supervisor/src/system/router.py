@@ -4,8 +4,10 @@ import json
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from .. import host
 from ..auth.utils import require_admin, verify_token
-from ..security.validators import validate_hostname, validate_timezone, validate_interface_name
+from ..host import HostResult
+from ..security.validators import validate_timezone, validate_interface_name
 
 # Read-only endpoints are available to every signed-in user;
 # anything that changes the host requires an administrator.
@@ -29,15 +31,15 @@ def get_distro_name() -> str:
     return platform.system()
 
 
-def get_host_hostname() -> str:
-    """Get the host's hostname."""
-    # Try host's hostname first (mounted at /host/hostname)
+async def get_host_hostname() -> str:
+    """The host's name, as `hostname` prints it on the host: a name set since the container
+    started too (ADR-0331). The container's when the host cannot answer."""
     try:
-        with open("/host/hostname", "r") as f:
-            return f.read().strip()
-    except Exception:
+        result = await host.run_on_host_async(["hostname"], timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
         pass
-    # Fallback to platform.node()
     return platform.node()
 
 
@@ -66,7 +68,7 @@ class SystemStats(BaseModel):
 @router.get("/info", response_model=SystemInfo)
 async def get_system_info(_=Depends(verify_token)):
     return SystemInfo(
-        hostname=get_host_hostname(),
+        hostname=await get_host_hostname(),
         kernel=platform.release(),
         os=get_distro_name(),
         architecture=platform.machine(),
@@ -110,10 +112,6 @@ class NetworkInterface(BaseModel):
     mac_address: str | None
     speed: int | None
     is_up: bool
-
-
-class HostnameUpdate(BaseModel):
-    hostname: str
 
 
 class TimezoneUpdate(BaseModel):
@@ -200,76 +198,51 @@ async def get_network_interfaces(_=Depends(verify_token)):
     return interfaces
 
 
+async def _timedatectl(*args: str) -> HostResult | None:
+    """timedatectl on the host (ADR-0020, ADR-0331): in the container it has no systemd to ask.
+    It runs under the host's timeout, so that it never acts after the answer (ADR-0258). None
+    when it gave no answer in time."""
+    try:
+        result = await host.run_on_host_async(["timeout", "10", "timedatectl", *args], timeout=15)
+    except subprocess.TimeoutExpired:
+        return None
+    except OSError as exc:  # no program to start: the stand-in, which runs commands as they are
+        return HostResult(127, "", str(exc))
+    return None if result.returncode == 124 else result
+
+
 @router.get("/timezone")
 async def get_timezone(_=Depends(verify_token)):
-    """Get current timezone."""
-    try:
-        result = subprocess.run(
-            ["timedatectl", "show", "--property=Timezone", "--value"],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return {"timezone": result.stdout.strip()}
-    except Exception:
-        pass
+    """The host's time zone; "Unknown" when timedatectl cannot tell."""
+    result = await _timedatectl("show", "--property=Timezone", "--value")
+    if result is not None and result.returncode == 0 and result.stdout.strip():
+        return {"timezone": result.stdout.strip()}
     return {"timezone": "Unknown"}
+
+
+async def _zones() -> list[str]:
+    result = await _timedatectl("list-timezones")
+    if result is None or result.returncode != 0:
+        return []
+    return [line for line in result.stdout.splitlines() if line.strip()]
 
 
 @router.get("/timezones")
 async def list_timezones(_=Depends(verify_token)):
-    """List available timezones."""
-    try:
-        result = subprocess.run(
-            ["timedatectl", "list-timezones"],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            return {"timezones": result.stdout.strip().split('\n')}
-    except Exception:
-        pass
-    return {"timezones": []}
+    """The time zones the host knows."""
+    return {"timezones": await _zones()}
 
 
 @router.put("/timezone")
 async def set_timezone(data: TimezoneUpdate, _=Depends(require_admin)):
-    """Set system timezone."""
-    # Get valid timezones for validation
-    valid_tz = set()
-    try:
-        tz_result = subprocess.run(
-            ["timedatectl", "list-timezones"],
-            capture_output=True, text=True, timeout=10
-        )
-        if tz_result.returncode == 0:
-            valid_tz = set(tz_result.stdout.strip().split('\n'))
-    except Exception:
-        pass
-
-    # Validate timezone (with known valid list if available)
-    validated_tz = validate_timezone(data.timezone, valid_tz if valid_tz else None)
-
-    result = subprocess.run(
-        ["timedatectl", "set-timezone", validated_tz],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise HTTPException(500, detail="Failed to set timezone")
+    """Set the host's time zone; the Scheduler follows it (ADR-0264)."""
+    zones = set(await _zones())
+    validated_tz = validate_timezone(data.timezone, zones or None)
+    result = await _timedatectl("set-timezone", validated_tz)
+    if result is None or result.returncode != 0:
+        reason = "no answer in time" if result is None else (result.stderr.strip() or f"exit status {result.returncode}")
+        raise HTTPException(500, detail=f"Failed to set the time zone: {reason}")
     return {"status": "ok", "timezone": validated_tz}
-
-
-@router.put("/hostname")
-async def set_hostname(data: HostnameUpdate, _=Depends(require_admin)):
-    """Set system hostname."""
-    # Validate hostname
-    validated_hostname = validate_hostname(data.hostname)
-
-    result = subprocess.run(
-        ["hostnamectl", "set-hostname", validated_hostname],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise HTTPException(500, detail="Failed to set hostname")
-    return {"status": "ok", "hostname": validated_hostname}
 
 
 class PCIeDevice(BaseModel):

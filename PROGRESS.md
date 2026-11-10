@@ -224,6 +224,23 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: The time zone routes ask the host
+
+- `system.hostname-and-time-zone` (ADR-0331), found while checking the device: the time zone
+  routes of `/api/v1/system` ran timedatectl inside the supervisor container, which has no
+  systemd, so the zone read as Unknown and could not be set; `PUT /system/hostname` ran
+  hostnamectl there too. Now timedatectl runs on the host through `host.py`, and the duplicate
+  hostname route is gone (`PUT /network/hostname` sets the host's name). Tests first:
+  `test_system_time_zone.py` (all six failed before), and `api.spec.ts` on the stand-in. No page
+  of the web UI sets the hostname or the zone yet: that, the device check and the reboot check
+  stay open.
+- A fresh-context review found, all fixed: the zone pattern refused 45 of the host's zones
+  (`Etc/GMT-3`, `America/Port-au-Prince`); both GETs of the hostname read a bind mount of
+  /etc/hostname, stale after a change (now `hostname` on the host, and the mount is gone); a
+  failed hostnamectl fell back to `hostname NAME`, lost at the next boot (now 500); the old
+  `TestTimezone` of `test_system.py` passed for either code (removed); timedatectl runs under the
+  host's `timeout` (ADR-0258); the ADR's wording.
+
 ### 2026-11-10: The device after the second deploy and a reboot
 
 - Main f68c7c1 deployed and the device rebooted from the API at the owner's word; before and
