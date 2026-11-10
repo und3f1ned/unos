@@ -361,6 +361,9 @@ secrets from the git-ignored `dev.env` (ADR-0212):
   the inbound IPv6 filter, SD writes since boot), read-only.
 - `scripts/dev/api.py METHOD PATH`: what the API on the device answers. Methods other than GET
   change the device.
+- `scripts/dev/upload-speed.py [--mib N] [--runs R]`: how fast this workstation uploads to the
+  device through Caddy and the upload route; it makes and deletes a folder `unoscheck<6 hex>` on
+  the pool and signs in and out (about 0.1 MiB on the SD card).
 - `scripts/dev/linux-tests.sh`: the backend tests on Linux in the device's RAM.
 - `scripts/dev/deploy.sh`: `status`, `sync --dry-run` and `backup` only read the device
   (ADR-0223). `backup` copies the device's fstab, smb.conf and `unos-data` volume into the
