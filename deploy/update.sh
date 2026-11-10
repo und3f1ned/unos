@@ -430,9 +430,10 @@ build_images() {
 restart_services() {
     log_info "Restarting UNOS with the new images..."
 
-    # up recreates the containers whose image changed; webui starts once the
+    # up recreates the containers whose image changed and removes those of
+    # services that the release dropped or renamed; webui starts once the
     # supervisor is healthy.
-    if ! compose up -d --no-build "${COMPOSE_UP_WAIT[@]}"; then
+    if ! compose up -d --no-build --remove-orphans "${COMPOSE_UP_WAIT[@]}"; then
         rollback "Starting the new containers failed. If the error above says \"dependency failed to start\", \"is unhealthy\", \"exited\" or \"timeout waiting for dependencies\" (the wording depends on the Compose version), the supervisor stopped or did not become healthy in time: see its log below. If the error mentions an overlapping address pool, see \"Network subnet\" in docs/INSTALL.md."
     fi
 }
@@ -509,7 +510,7 @@ rollback() {
 # what it changed so far, as after a failed build or health check. Without
 # this, a session closed during the build left the checkout at the new
 # version while the old one kept running (and the next run reported "already
-# up to date"), and one closed between `down` and `up` left UNOS stopped.
+# up to date"), and one closed during the restart left UNOS stopped.
 on_interrupt() {
     trap '' INT TERM HUP
     set +e

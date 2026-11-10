@@ -448,7 +448,9 @@ start_unos() {
         docker compose build
 
     # Start containers: webui once the supervisor is healthy.
-    if ! docker compose up "${COMPOSE_UP_ARGS[@]}"; then
+    # --remove-orphans: a re-run removes the containers of services that a
+    # release dropped or renamed.
+    if ! docker compose up --remove-orphans "${COMPOSE_UP_ARGS[@]}"; then
         log_error "Starting UNOS failed. If the error above says \"dependency failed to start\", \"is unhealthy\", \"exited\" or \"timeout waiting for dependencies\" (the wording depends on the Compose version), the supervisor stopped or did not become healthy in time: docker logs unos-supervisor. If it mentions an overlapping address pool, see \"Network subnet\" in docs/INSTALL.md."
         exit 1
     fi

@@ -65,7 +65,7 @@ DOCKER_STUB = textwrap.dedent(
     check_up_options() {
       while [ $# -gt 0 ]; do
         case "$1" in
-          -d | --no-build | --force-recreate) ;;
+          -d | --no-build | --force-recreate | --remove-orphans) ;;
           --wait-timeout)
             if has no-wait-timeout; then echo "unknown flag: --wait-timeout" >&2; return 1; fi
             if ! [[ ${2-} =~ ^[0-9]+$ ]]; then echo "invalid argument \"${2-}\" for \"--wait-timeout\" flag" >&2; return 1; fi
@@ -100,7 +100,7 @@ DOCKER_STUB = textwrap.dedent(
           # The version the images get (ADR-0234): one line per build.
           build) echo "UNOS_VERSION=${UNOS_VERSION-<unset>}" >> "$STUB_DIR/build-env"
                  interrupt_at build; has probe-lock && probe_lock; has build-fails && exit 1 ;;
-          down) interrupt_at down ;;
+          down) ;;
           up) # Part of the help: --wait since Compose 2.1.1, --wait-timeout since 2.17.
               if [ "$3" = --help ]; then
                 echo "  -d, --detach                   Detached mode: Run containers in the background"
@@ -561,7 +561,7 @@ class TestUpdateScript:
         result, calls = _run_update(sandbox, UNOS_HEALTH_TIMEOUT="0000000001000")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == ["docker compose up -d --no-build --wait-timeout 1000"]
+        assert _up_calls(calls) == ["docker compose up -d --no-build --remove-orphans --wait-timeout 1000"]
         assert "Waiting for UNOS to answer (up to 1000 seconds)" in result.stdout
 
     @pytest.mark.parametrize("signal", ["INT", "HUP", "TERM"])
@@ -709,18 +709,18 @@ class TestUpdateScript:
         "scenario, timeout, wait, options",
         [
             # The update.
-            ((), "42", SUPERVISOR_START, ["--no-build"]),
+            ((), "42", SUPERVISOR_START, ["--no-build --remove-orphans"]),
             # Rollback after compose gave up on the new supervisor.
-            (("up-fails",), "42", SUPERVISOR_START, ["--no-build", "--no-build --force-recreate"]),
+            (("up-fails",), "42", SUPERVISOR_START, ["--no-build --remove-orphans", "--no-build --force-recreate"]),
             # Rollback after the health check over HTTP and HTTPS failed (with
             # 0, the sandbox value, it fails at once). --wait-timeout 0 would
             # mean no limit.
-            (("unhealthy",), "0", SUPERVISOR_START, ["--no-build", "--no-build --force-recreate"]),
+            (("unhealthy",), "0", SUPERVISOR_START, ["--no-build --remove-orphans", "--no-build --force-recreate"]),
             # Rollback after an interrupted restart.
-            (("interrupt-at-up", "signal=INT"), "42", SUPERVISOR_START, ["--no-build", "--no-build --force-recreate"]),
+            (("interrupt-at-up", "signal=INT"), "42", SUPERVISOR_START, ["--no-build --remove-orphans", "--no-build --force-recreate"]),
             # A health timeout longer than the supervisor's start.
-            ((), "900", 900, ["--no-build"]),
-            (("up-fails",), "900", 900, ["--no-build", "--no-build --force-recreate"]),
+            ((), "900", 900, ["--no-build --remove-orphans"]),
+            (("up-fails",), "900", 900, ["--no-build --remove-orphans", "--no-build --force-recreate"]),
         ],
     )
     def test_every_compose_up_waits_for_the_supervisor_start_or_the_health_timeout(
@@ -770,7 +770,7 @@ class TestUpdateScript:
             sandbox, "no-wait-timeout", "compose-version=2.16.0", *scenario, UNOS_HEALTH_TIMEOUT="42"
         )
 
-        options = ["--no-build", "--no-build --force-recreate"] if scenario else ["--no-build"]
+        options = ["--no-build --remove-orphans", "--no-build --force-recreate"] if scenario else ["--no-build --remove-orphans"]
         assert _up_calls(calls) == [f"docker compose up -d {option}" for option in options]
         assert "Docker Compose 2.16.0 cannot limit its wait" in result.stdout
         if scenario:
@@ -785,7 +785,7 @@ class TestUpdateScript:
         result, calls = _run_update(sandbox, "compose-version=2.26.1", UNOS_HEALTH_TIMEOUT="42")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == [f"docker compose up -d --no-build --wait-timeout {SUPERVISOR_START}"]
+        assert _up_calls(calls) == [f"docker compose up -d --no-build --remove-orphans --wait-timeout {SUPERVISOR_START}"]
         assert "Docker Compose 2.26.1 cannot limit its wait" in result.stdout
         assert f"may wait longer than {SUPERVISOR_START} seconds" in result.stdout
 
@@ -1258,7 +1258,7 @@ class TestInstallScript:
         result, calls, exec_start = _start_install(tmp_path)
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == [f"docker compose up -d --wait-timeout {SUPERVISOR_START}"]
+        assert _up_calls(calls) == [f"docker compose up --remove-orphans -d --wait-timeout {SUPERVISOR_START}"]
         assert exec_start == [f"ExecStart=/usr/bin/docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert "WARN" not in result.stdout
 
@@ -1279,7 +1279,7 @@ class TestInstallScript:
         result, calls, exec_start = _start_install(tmp_path, "no-wait-timeout", "compose-version=2.16.0")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == ["docker compose up -d"]
+        assert _up_calls(calls) == ["docker compose up --remove-orphans -d"]
         assert exec_start == ["ExecStart=/usr/bin/docker compose up -d"]
         assert "Docker Compose 2.16.0 has no `up --wait-timeout`" in result.stdout
         assert "run install.sh again" in result.stdout
@@ -1288,7 +1288,7 @@ class TestInstallScript:
         result, calls, exec_start = _start_install(tmp_path, "compose-version=2.26.1")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == [f"docker compose up -d --wait-timeout {SUPERVISOR_START}"]
+        assert _up_calls(calls) == [f"docker compose up --remove-orphans -d --wait-timeout {SUPERVISOR_START}"]
         assert exec_start == [f"ExecStart=/usr/bin/docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert "Docker Compose 2.26.1 cannot limit its wait" in result.stdout
 
