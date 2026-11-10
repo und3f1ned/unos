@@ -21,7 +21,7 @@ from ..storage import disks as storage_disks
 from ..storage import pools as storage_pools
 from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
-from ..notifications.router import history_entry, save_logs, send_email, send_telegram
+from ..notifications.router import history_entry, save_logs, send_email, send_through
 from ..notifications.schemas import NotificationEvent, NotificationType, NotificationChannel
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -435,7 +435,7 @@ def _send_email_blocking(config, event: NotificationEvent):
 
 
 async def _deliver_alert(event: NotificationEvent) -> None:
-    """Send an alert through every enabled e-mail/Telegram channel; best effort.
+    """Send an alert through every enabled channel, of every kind; best effort.
 
     The senders report failures as (False, error) instead of raising; those are
     logged like timeouts and exceptions. The history of System > Notifications
@@ -452,10 +452,10 @@ async def _deliver_alert(event: NotificationEvent) -> None:
                 sending = loop.run_in_executor(
                     _ALERT_EXECUTOR, _send_email_blocking, config.email_config, event
                 )
-            elif config.channel == NotificationChannel.TELEGRAM and config.telegram_config:
-                sending = send_telegram(config.telegram_config, event)
             else:
-                continue
+                # Telegram, webhooks, Discord and Slack; a channel without its settings is
+                # recorded as failed, as its test send reports it.
+                sending = send_through(config, event)
             sent, error = await asyncio.wait_for(sending, ALERT_TIMEOUT)
         except TimeoutError:
             sent, error = False, f"no answer within {ALERT_TIMEOUT} s"

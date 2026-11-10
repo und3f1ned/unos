@@ -18,6 +18,7 @@ from src.notifications.schemas import (
     NotificationChannel,
     NotificationConfig,
     TelegramConfig,
+    WebhookConfig,
 )
 from src.storage import pools as storage_pools
 
@@ -219,11 +220,11 @@ class TestSmartTrendAlerts:
 
 
 class TestSmartAlertChannels:
-    """A rise of the reallocated or pending sectors reaches every enabled e-mail and Telegram channel."""
+    """A rise of the reallocated or pending sectors reaches every enabled channel, of every kind."""
 
     @pytest.fixture
     def channels(self, monkeypatch):
-        """Three channels, one of them disabled; returns what each sender got: (channel, address, event)."""
+        """Four channels, one of them disabled; returns what each sender got: (channel, address, event)."""
         mail = EmailConfig(smtp_host="mail.example", smtp_user="u", smtp_password="p",
                            from_address="nas@example", to_addresses=["me@example"])
         configs = [
@@ -232,6 +233,8 @@ class TestSmartAlertChannels:
                                telegram_config=TelegramConfig(bot_token="t", chat_id="42")),
             NotificationConfig(name="Old mail", channel=NotificationChannel.EMAIL, enabled=False,
                                email_config=mail.model_copy(update={"to_addresses": ["old@example"]})),
+            NotificationConfig(name="Hook", channel=NotificationChannel.WEBHOOK,
+                               webhook_config=WebhookConfig(url="https://hooks.example/nas")),
         ]
         monkeypatch.setattr(health_router, "load_notification_configs", lambda: configs)
         sent = []
@@ -240,12 +243,13 @@ class TestSmartAlertChannels:
             sent.append(("email", config.to_addresses, event))
             return True, None
 
-        async def send_telegram(config, event):
-            sent.append(("telegram", config.chat_id, event))
+        async def send_through(config, event):
+            address = config.telegram_config.chat_id if config.telegram_config else config.webhook_config.url
+            sent.append((config.channel.value, address, event))
             return True, None
 
         monkeypatch.setattr(health_router, "send_email", send_email)
-        monkeypatch.setattr(health_router, "send_telegram", send_telegram)
+        monkeypatch.setattr(health_router, "send_through", send_through)
         return sent
 
     @pytest.mark.parametrize(
@@ -276,7 +280,7 @@ class TestSmartAlertChannels:
         assert smart_disk.rounds == 3
         # Once each, at the pass that saw the rise; not the disabled channel.
         assert [(channel, address) for channel, address, _ in channels] == [
-            ("email", ["me@example"]), ("telegram", "42")]
+            ("email", ["me@example"]), ("telegram", "42"), ("webhook", "https://hooks.example/nas")]
         for _, _, event in channels:
             assert (event.type.value, event.title) == ("warning", "Disk Health Warning: /dev/sda")
             assert event.message == f"{message}\n\nRecommendation: {recommendation}"
