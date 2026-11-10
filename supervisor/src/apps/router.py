@@ -130,7 +130,6 @@ def _list_installed() -> list[InstalledApp]:
                 break
 
         binds = _bind_mounts(c)
-        volumes = _template_volumes(c)
         result.append(InstalledApp(
             id=c.short_id,
             template_id=template_id,
@@ -147,8 +146,7 @@ def _list_installed() -> list[InstalledApp]:
             data_outside_pools=[
                 b.source
                 for b in binds
-                if _is_data(b, volumes.get(b.target), base)
-                and _pool_containing(b.source, pools) is None
+                if _is_data(b, base) and _pool_containing(b.source, pools) is None
             ],
             runs_in_unos_smb=_runs_in_unos_smb(c),
         ))
@@ -290,14 +288,17 @@ def _template_volumes(container: Any) -> dict[str, VolumeMapping]:
     return {volume.container: volume for volume in template.volumes} if template else {}
 
 
-def _is_data(bind: _Bind, volume: VolumeMapping | None, base: str) -> bool:
-    """True for app data, which belongs on a mounted pool.
-
-    Everything under the pools base is pool data, and so is a catalog pool
-    volume that an older version put elsewhere. Other paths are fixed host
-    resources (docker.sock, /proc, /etc/localtime, ...).
+def _is_data(bind: _Bind, base: str) -> bool:
+    """True for app data, which belongs on a mounted pool: everything under the
+    pools base, where an install puts the pool volumes. Other paths are fixed
+    host resources (docker.sock, /proc, /etc/localtime, ...).
     """
-    return _is_within(bind.source, base) or (volume is not None and volume.on_pool)
+    return _is_within(bind.source, base)
+
+
+def _pool_folder(path: str, base: str) -> str:
+    """The pool that ``path`` lies on: its first folder below the pools base."""
+    return Path(path).relative_to(base).parts[0] if path != base else path
 
 
 @dataclass(frozen=True)
@@ -956,9 +957,7 @@ def _is_regular_file(path: str) -> bool:
 def _plan_installed_binds(container: Any, pools: list[AppPool]) -> list[_PlannedMount]:
     """Plan the data binds of an installed app from what Docker has stored.
 
-    Raises 409 for data that is not on a mounted pool: for an app installed
-    by an older version under /mnt/pools/default (a plain folder on the
-    system disk), or an app whose pool is not mounted.
+    Raises 409 for data that is not on a mounted pool, naming the pool to mount.
     """
     base = _pools_base()
     volumes = _template_volumes(container)
@@ -966,24 +965,15 @@ def _plan_installed_binds(container: Any, pools: list[AppPool]) -> list[_Planned
     planned: list[_PlannedMount] = []
     for bind in _bind_mounts(container):
         volume = volumes.get(bind.target)
-        if not _is_data(bind, volume, base):
+        if not _is_data(bind, base):
             continue  # fixed host path (docker.sock, /proc, ...)
         pool = _pool_containing(bind.source, pools)
         if pool is None:
-            where = f"{container.name} keeps the data for {bind.target} in {bind.source}"
-            if app_pool is not None:
-                raise HTTPException(
-                    409,
-                    f"{where}, which is not on a mounted storage pool. Mount the pool "
-                    f"('{app_pool}' holds the app's data) and start the app again.",
-                )
-            # Installed by an older version, without a pool label: its data is
-            # in plain folders on the system disk (/mnt/pools/default).
             raise HTTPException(
                 409,
-                f"{where}, which is not on a mounted storage pool, so it would write to "
-                "the system disk. To move it, uninstall the app (its data is kept), move "
-                "the data to a pool and install the app on that pool.",
+                f"{container.name} keeps the data for {bind.target} in {bind.source}, which is "
+                f"not on a mounted storage pool. Mount the pool ('{_pool_folder(bind.source, base)}' "
+                "holds the app's data) and start the app again.",
             )
         known = volume is not None and volume.on_pool
         planned.append(

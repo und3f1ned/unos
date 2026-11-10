@@ -56,31 +56,32 @@ test.describe('App Store', () => {
   });
 });
 
-// Apps installed by older versions keep their data in /mnt/pools/default, a
-// plain folder on the system SD card. The installed list and the app details
-// must show those real paths and a warning, never paths on a storage pool.
-// The supervisor's answers are faked, so nothing is started or changed.
+// An app whose pool is not mounted keeps its data in folders of that pool, which the
+// server lists as not on a mounted pool. The installed list and the app details must
+// show those real paths and a warning. The supervisor's answers are faked, so nothing
+// is started or changed.
 test.describe('App data outside the storage pools', () => {
-  const legacyTransmission = {
-    id: 'e2e-legacy',
+  const unmountedTransmission = {
+    id: 'e2e-unmounted',
     template_id: 'transmission',
     name: 'e2e-transmission',
-    container_id: 'e2e-legacy',
-    status: 'running',
+    container_id: 'e2e-unmounted',
+    status: 'exited',
     web_port: null,
     created_at: '2026-01-01T00:00:00Z',
-    pool: null,
+    pool: 'e2e_data',
     volumes: [
-      { host: '/mnt/pools/default/apps/transmission/config', container: '/config', readonly: false },
-      { host: '/mnt/pools/default/downloads', container: '/downloads', readonly: false },
+      { host: '/mnt/pools/e2e_data/apps/transmission/config', container: '/config', readonly: false },
+      { host: '/mnt/pools/e2e_data/downloads', container: '/downloads', readonly: false },
     ],
-    data_outside_pools: ['/mnt/pools/default/apps/transmission/config', '/mnt/pools/default/downloads'],
+    data_outside_pools: ['/mnt/pools/e2e_data/apps/transmission/config', '/mnt/pools/e2e_data/downloads'],
+    runs_in_unos_smb: false,
   };
 
   test.beforeEach(async ({ authenticatedPage: page }) => {
     await page.route(
       (url: URL) => url.pathname === '/api/v1/apps/installed',
-      (route: Route) => route.fulfill({ json: [legacyTransmission] }),
+      (route: Route) => route.fulfill({ json: [unmountedTransmission] }),
     );
     // Start/stop/restart/uninstall of the fake app never reach the supervisor.
     await page.route(
@@ -89,11 +90,11 @@ test.describe('App data outside the storage pools', () => {
     );
   });
 
-  test('installed list warns that the data is on the system disk', async ({ authenticatedPage: page }) => {
+  test('installed list warns that the data folders are not available', async ({ authenticatedPage: page }) => {
     await page.goto('/apps');
     await page.click('button:has-text("Installed")');
-    await expect(page.getByText('App data is on the system disk')).toBeVisible();
-    await expect(page.locator('li.mono', { hasText: '/mnt/pools/default/downloads' })).toBeVisible();
+    await expect(page.getByText('Data folders are not available')).toBeVisible();
+    await expect(page.locator('li.mono', { hasText: '/mnt/pools/e2e_data/downloads' })).toBeVisible();
   });
 
   test('details show the real host folders of the installed app', async ({ authenticatedPage: page }) => {
@@ -105,7 +106,7 @@ test.describe('App data outside the storage pools', () => {
     await page.locator('h3', { hasText: 'Transmission' }).first().click();
     await page.click('button:has-text("Volumes")');
     await expect(
-      page.locator('p.mono', { hasText: '/mnt/pools/default/apps/transmission/config' }),
+      page.locator('p.mono', { hasText: '/mnt/pools/e2e_data/apps/transmission/config' }),
     ).toBeVisible();
     await expect(page.getByText('Not on a pool').first()).toBeVisible();
     // No pool is chosen for an installed app, so pools are not even loaded.

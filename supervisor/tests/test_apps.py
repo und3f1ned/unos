@@ -1,8 +1,7 @@
 """App installs keep their data on a mounted storage pool.
 
-Regression tests for apps that wrote their data to /mnt/pools/default on the
-boot SD card: nothing ever created a pool named "default", so every install
-silently created those directories on the root filesystem.
+A folder of the pools base that is no mounted pool is a plain folder on the
+system disk: an install or a start that wrote there would fill it.
 
 Nothing here touches the real host: a temporary directory is the pools base,
 ``os.path.ismount`` decides which of its directories count as mounted pools,
@@ -1881,30 +1880,41 @@ class TestStartChecks:
         assert "Mount the pool ('alpha' holds the app's data)" in response.json()["detail"]
         container.restart.assert_not_called()
 
-    def test_old_app_with_data_on_the_system_disk_is_not_started(self, api, pools, installed):
-        # Installed by an older version: binds under /mnt/pools/default, a
-        # plain folder on the boot SD card, with -v binds Docker recreates.
-        legacy = pools.base / "default"
-        (legacy / "apps/transmission/config").mkdir(parents=True)
-        (legacy / "downloads/watch").mkdir(parents=True)
+    def test_the_answer_names_the_pool_that_holds_the_folder(self, api, pools, installed):
+        """A folder on another pool than the one the app was installed on, such as a share's folder
+        (ADR-0274): the 409 names the pool to mount (apps.no-legacy-default-pool)."""
+        (pools.alpha / "apps/jellyfin/config").mkdir(parents=True)
+        (pools.beta / "media").mkdir()
         container = installed(
             _container(
-                "transmission",
-                template="transmission",
+                "jellyfin",
+                template="jellyfin",
+                pool="alpha",
                 mounts=[
-                    _bind(legacy / "apps/transmission/config", "/config"),
-                    _bind(legacy / "downloads", "/downloads"),
-                    _bind(legacy / "downloads/watch", "/watch"),
+                    _bind(pools.alpha / "apps/jellyfin/config", "/config"),
+                    _bind(pools.beta / "media", "/media", rw=False),
                 ],
             )
         )
+        pools.mounted.discard(str(pools.beta))
 
-        response = api.post(START.format("transmission"))
+        response = api.post(START.format("jellyfin"))
 
         assert response.status_code == 409
-        detail = response.json()["detail"]
-        assert "system disk" in detail and "uninstall" in detail
+        assert "Mount the pool ('beta' holds the app's data)" in response.json()["detail"]
         container.start.assert_not_called()
+
+    def test_no_code_for_apps_of_older_versions(self):
+        """apps.no-legacy-default-pool (ADR-0207): no check, message or text for apps that older
+        versions installed under /mnt/pools/default without a pool label."""
+        repo = Path(__file__).resolve().parents[2]
+        for path in ("supervisor/src/apps/router.py", "supervisor/src/apps/schemas.py",
+                     "supervisor/src/health/router.py", "webui/src/lib/api/apps.ts",
+                     "webui/src/lib/components/apps/AppStorageWarning.svelte",
+                     "webui/src/lib/i18n/catalog/apps.ts"):
+            text = (repo / path).read_text(encoding="utf-8")
+            for old in ("older version", "older UNOS version", "pools/default", "systemDisk"):
+                assert old not in text, f"{path}: {old}"
 
     def test_missing_folder_on_another_pool_is_not_created(self, api, pools, installed):
         (pools.alpha / "apps/jellyfin/config").mkdir(parents=True)
@@ -2038,51 +2048,6 @@ class TestInstalledApps:
             {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock", "readonly": False},
         ]
         assert app_info["data_outside_pools"] == []
-
-    def test_old_app_with_data_on_the_system_disk_is_flagged(self, api, pools, installed):
-        legacy = pools.base / "default"
-        installed(
-            _container(
-                "transmission",
-                template="transmission",
-                status="running",
-                mounts=[
-                    _bind(legacy / "apps/transmission/config", "/config"),
-                    _bind(legacy / "downloads", "/downloads"),
-                    _bind(legacy / "downloads/watch", "/watch"),
-                ],
-            )
-        )
-
-        [app_info] = api.get(INSTALLED).json()
-
-        assert app_info["pool"] is None
-        assert app_info["data_outside_pools"] == [
-            str(legacy / "apps/transmission/config"),
-            str(legacy / "downloads"),
-            str(legacy / "downloads/watch"),
-        ]
-        # The modal shows these real paths, not paths on the first pool.
-        assert [v["host"] for v in app_info["volumes"]] == app_info["data_outside_pools"]
-
-    def test_pool_volume_outside_the_pools_base_is_flagged(self, api, pools, installed):
-        # Older versions accepted any host path as an override.
-        installed(
-            _container(
-                "transmission",
-                template="transmission",
-                pool="alpha",
-                mounts=[
-                    _bind(pools.alpha / "apps/transmission/config", "/config"),
-                    _bind(pools.outside / "downloads", "/downloads"),
-                    _bind("/etc/localtime", "/etc/localtime", rw=False),
-                ],
-            )
-        )
-
-        [app_info] = api.get(INSTALLED).json()
-
-        assert app_info["data_outside_pools"] == [str(pools.outside / "downloads")]
 
     def test_app_on_an_unmounted_pool_is_flagged(self, api, pools, installed):
         installed(_jellyfin(pools))

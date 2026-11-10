@@ -79,15 +79,11 @@ export interface InstalledApp {
   status: string;
   web_port: number | null;
   created_at: string;
-  /** Pool chosen at install time; null without pool data or for apps installed by older versions. */
+  /** Pool chosen at install time; null for an app without data on a pool. */
   pool: string | null;
   /** The container's bind mounts with the host paths it really uses. */
   volumes: AppVolume[];
-  /**
-   * Data folders that are not on a mounted pool: on the system disk (apps installed
-   * by older versions under /mnt/pools/default) or on a pool that is not mounted.
-   * The server refuses to start such an app.
-   */
+  /** Data folders that are not on a mounted pool, as their pool is not mounted. The server refuses to start such an app. */
   data_outside_pools: string[];
   /** The app runs in the group unos-smb (PUID 80000, PGID 70000): its container says so. */
   runs_in_unos_smb: boolean;

@@ -206,6 +206,27 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: the apps keep no code for apps of older versions under /mnt/pools/default
+
+- `apps.no-legacy-default-pool`, at the owner's word to go on ("Continue", in translation),
+  under ADR-0207 and ADR-0039: the start of an installed app had a 409 of its own for an app
+  without a pool label, whose data was in `/mnt/pools/default` on the system disk, and counted a
+  catalog pool volume outside the pools base as data; the web UI had a warning and texts for
+  such apps. They are gone: data is what lies under the pools base, where an install puts every
+  pool volume, and the one 409 for data that is not on a mounted pool names the pool that the
+  folder lies on, so a folder on another pool than the install's (a share's folder) names that
+  pool, not the install's. The comments of `apps/schemas.py`, `health/router.py` and
+  `webui/src/lib/api/apps.ts` no longer speak of older versions, and the fake of `apps.spec.ts`
+  is an app whose pool is not mounted.
+- Tests first (ADR-0186): `test_the_answer_names_the_pool_that_holds_the_folder` and
+  `test_no_code_for_apps_of_older_versions` failed before the change; the tests of an app under
+  `/mnt/pools/default` and of an override outside the pools base are gone. `test_apps.py`,
+  `test_containers.py` and `test_health_monitor.py` 340 passed; svelte-check and the text check
+  passed. `passes` stays false: `apps.spec.ts` cannot run on the stand-in now (owner action 2),
+  and the entry is host-level (the host's containers), with its device check by hand in the
+  notes.
+- RESULTS
+
 ### 2026-11-10: install.sh recognizes the smb.conf of UNOS by its header alone
 
 - `deploy.no-legacy-smb-conf-recognition`, at the owner's word to go on ("Continue", in

@@ -1891,12 +1891,16 @@
         "The web UI's types and texts for them are removed",
         "tests/test_apps.py passes without the cases of older versions"
       ],
+      "verified_by": [
+        "supervisor/tests/test_apps.py",
+        "webui/tests/apps.spec.ts"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0039"
       ],
-      "notes": "supervisor/src/apps/router.py, apps/schemas.py, health/router.py and webui/src/lib/api/apps.ts mention them."
+      "notes": "Done in the code 2026-11-10. Step 1: supervisor/src/apps no longer counts a catalog pool volume outside the pools base as data, and the start of an installed app has one 409 for data that is not on a mounted pool, which names the pool that the folder lies on (TestStartChecks test_the_answer_names_the_pool_that_holds_the_folder, which failed before: the answer named the install's pool); the 409 for apps without a pool label, whose data was in /mnt/pools/default, is gone, and so are the comments of apps/schemas.py and health/router.py on them (test_no_code_for_apps_of_older_versions, which failed before). Step 2: AppStorageWarning shows only the warning of a pool that is not mounted; the texts systemDisk and systemDiskTitle of the apps catalog and the comments of webui/src/lib/api/apps.ts on older versions are gone, and the fake of apps.spec.ts is an app whose pool is not mounted. Step 3: the tests of an app under /mnt/pools/default and of an override outside the pools base are gone; test_apps.py passes. Open: apps.spec.ts on the stand-in, which cannot start Chromium on this workstation now (owner action 2 in PROGRESS.md); and host-level (GLOSSARY.md: the host's containers): on the dev device, an app installed on a pool whose pool is not mounted is listed with its folders outside the pools and its start answers the 409 that names the pool, with the device check and the re-check after a reboot (ADR-0018), as for apps.manage-installed."
     },
     {
       "id": "apps.docker-calls-off-event-loop",
