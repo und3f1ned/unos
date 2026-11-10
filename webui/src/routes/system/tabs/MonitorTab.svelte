@@ -1,20 +1,10 @@
 <script lang="ts">
-  import { Cpu, MemoryStick, Network, HardDrive, Activity, Pause, Play, Wifi, WifiOff } from "lucide-svelte";
-  import {
-    stats,
-    wsConnected,
-    type WebSocketStats,
-    type CpuStats,
-    type MemoryStats,
-    type NetworkStats,
-    type DiskIOStats,
-    type ProcessInfo
-  } from "$lib/stores/stats";
+  import { Cpu, MemoryStick, Network, HardDrive, Activity, Wifi, WifiOff } from "lucide-svelte";
+  import { stats, wsConnected, type WebSocketStats } from "$lib/stores/stats";
   import { intlLocale, t } from "$lib/i18n";
 
   // Local history for charts (built from WebSocket updates)
   let cpuHistory: number[] = [];
-  let memoryHistory: number[] = [];
   const MAX_HISTORY = 30;
 
   // Subscribe to WebSocket stats
@@ -23,7 +13,6 @@
     currentStats = $stats;
     if ($stats?.cpu) {
       cpuHistory = [...cpuHistory, $stats.cpu.percent].slice(-MAX_HISTORY);
-      memoryHistory = [...memoryHistory, $stats.memory.percent].slice(-MAX_HISTORY);
     }
   }
 
@@ -32,9 +21,8 @@
   const RATE_UNITS = ["monitor.rate.b", "monitor.rate.kb", "monitor.rate.mb", "monitor.rate.gb"];
 
   // The numbers in the format of the page and the units of the catalog (webui/AGENTS.md, Data):
-  // a size or a rate in the largest unit that keeps it at 1 or more, with up to two decimals, as
-  // formatBytes and formatBytesPerSecond of $lib/stores/stats write it in English; a percentage
-  // with one decimal.
+  // a size or a rate in the largest unit that keeps it at 1 or more, with up to two decimals; a
+  // percentage with one decimal.
   $: amount = (bytes: number, units: string[]): string => {
     const power = bytes >= 1 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1) : 0;
     const value = Number((bytes / 1024 ** power).toFixed(2));

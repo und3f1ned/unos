@@ -22,7 +22,6 @@ const STATS = {
   processes: [
     { pid: 812, name: 'smbd', cpu_percent: 3.5, memory_percent: 0.5, memory_mb: 42, status: 'sleeping', username: 'root' },
   ],
-  history: { cpu: [], memory: [], network: [], disk_io: [] },
   temperatures: {},
   timestamp: '2026-11-08T10:00:00',
 };
@@ -94,7 +93,7 @@ test.describe('Resource Monitor', () => {
     await expect(page.locator('button').first()).toBeVisible();
   });
 
-  // The sizes and rates as formatBytes and formatBytesPerSecond of $lib/stores/stats write them,
+  // The sizes and rates in the largest unit that keeps them at 1 or more, with up to two decimals,
   // and the percentages with one decimal.
   test('the stats in English: sizes, rates and percentages', async ({ authenticatedPage: page }) => {
     const sendStats = await openWithFakeStream(page);

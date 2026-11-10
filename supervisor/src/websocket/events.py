@@ -32,7 +32,6 @@ import functools
 import json
 import logging
 import time
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
@@ -69,35 +68,6 @@ _prev_disk_io = None
 _prev_time = None
 _prev_net_per_iface = {}
 
-# History storage (60 points = ~2 minutes at 2s interval)
-HISTORY_SIZE = 60
-cpu_history: deque = deque(maxlen=HISTORY_SIZE)
-memory_history: deque = deque(maxlen=HISTORY_SIZE)
-network_history: deque = deque(maxlen=HISTORY_SIZE)
-disk_io_history: deque = deque(maxlen=HISTORY_SIZE)
-
-
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    def register(self, websocket: WebSocket) -> None:
-        """Track an accepted, authenticated socket."""
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                self.disconnect(connection)
-
-
-manager = ConnectionManager()
 
 
 def get_system_stats() -> dict:
@@ -216,12 +186,7 @@ def get_system_stats() -> dict:
     except Exception:
         pass
 
-    # Update history
     timestamp = datetime.now().isoformat()
-    cpu_history.append({"timestamp": timestamp, "value": cpu_percent})
-    memory_history.append({"timestamp": timestamp, "value": memory.percent})
-    network_history.append({"timestamp": timestamp, "sent": bytes_sent_rate, "recv": bytes_recv_rate})
-    disk_io_history.append({"timestamp": timestamp, "read": read_rate, "write": write_rate})
 
     # Store previous values for next calculation
     _prev_net_io = net_io
@@ -280,14 +245,6 @@ def get_system_stats() -> dict:
 
             # Top processes
             "processes": top_processes,
-
-            # History data
-            "history": {
-                "cpu": list(cpu_history),
-                "memory": list(memory_history),
-                "network": list(network_history),
-                "disk_io": list(disk_io_history),
-            },
 
             # Timestamp
             "timestamp": timestamp,
@@ -404,7 +361,6 @@ async def websocket_endpoint(websocket: WebSocket):
     if token is None:
         return
 
-    manager.register(websocket)
     # Reading the socket notices a closed client right away (not only when the
     # next send fails) and drains anything the client sends.
     disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
@@ -428,7 +384,6 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         _finish(disconnected)
         _finish(revoked)
-        manager.disconnect(websocket)
 
 
 @router.websocket("/ws/v1/logs/{container_id}")
@@ -438,11 +393,7 @@ async def container_logs_endpoint(websocket: WebSocket, container_id: str):
     if token is None:
         return
 
-    manager.register(websocket)
-    try:
-        await _stream_container_logs(websocket, container_id, token)
-    finally:
-        manager.disconnect(websocket)
+    await _stream_container_logs(websocket, container_id, token)
 
 
 async def _wait_for_disconnect(websocket: WebSocket) -> None:

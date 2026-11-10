@@ -206,6 +206,36 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: the stats message and the web UI's stats code carry nothing unread
+
+- `system.stats-without-unread-parts`, which the review of `system.no-legacy-basic-stats`
+  found, at the owner's word to go on ("Continue", in translation), under ADR-0207 and
+  ADR-0006: the stats message sent the history of the last two minutes, about 17 of its 25 KB
+  every 2 seconds, which no page read; `stats.ts` had a `temperatures` store that nothing set
+  and derived stores that nothing read, and `api/system.ts` clients of `/system/stats` and
+  `/system/temperatures` that nothing called. They are gone; the endpoints stay. The spec fakes
+  of the message have no history, webui/AGENTS.md names the stats store as it is, and
+  CHANGELOG.md says so.
+- Tests first (ADR-0186): `test_ws_stats.py` checks that the message has no history and the
+  rule for the web UI's code: every module of `$lib/api` and `$lib/stores` has a reader, every
+  value of the stats store is imported somewhere, and no client asks for `/system/stats` or
+  `/system/temperatures`; both failed before the change. Not host-level.
+- The fresh-context review (ADR-0017) found no blocker. Fixed: the first test only looked for
+  the removed names, so a new unread store would have passed it; it now checks the rule. Also
+  gone with it: `webui/src/lib/api/monitor.ts`, a client of the ten `/api/v1/monitor/*`
+  endpoints that nothing imported since the move to the socket, `formatBytesPerSecond`, which
+  no page calls (webui/AGENTS.md no longer names it), the connection manager of `events.py`,
+  whose `broadcast` nothing called, and unused imports and a memory history that no chart drew
+  in `MonitorTab.svelte`. Kept and recorded: the fields of the message that the Resource Monitor
+  may show; `system.resource-monitor` builds its history in the tab, from the message, so it
+  needs no history of the socket. ADR-0006 and ADR-0297 keep their text on the derived stores and
+  the formatters as written then. `/api/v1/system/stats` still answers the flat shape and has no
+  caller in the web UI; it is the example of `scripts/dev/api.py`, and removing it would be an
+  entry of its own. `getPCIeDevices` of `api/system.ts` has no caller either, and is no stats
+  code.
+- On the stand-in with `E2E_CHROMIUM_PATH`, `make e2e-local` passed (670, 16 skips on listed
+  conditions), and so did `make check`: the entry passes.
+
 ### 2026-11-10: the apps keep no code for apps of older versions under /mnt/pools/default
 
 - `apps.no-legacy-default-pool`, at the owner's word to go on ("Continue", in translation),

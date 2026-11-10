@@ -405,7 +405,7 @@ manager, encrypted backup uploads, health checks, CI checks).
 - The stats message of `/ws/v1/events` sends each value once, in its object
   (`cpu`, `memory`, `network`, `disk_io`): the flat `cpu_*`, `memory_*` and
   `network_*` fields are gone, and so are the `disk_*` fields of the container's
-  root, which no page read.
+  root and the `history` of the last two minutes, which no page read.
 - The logs API reads every source through `GET /api/v1/logs/entries?source=...`:
   the old `GET /api/v1/logs/dmesg` and `/logs/journal` are gone (404).
 - On a narrow screen the System tabs are listed above the open tab, the file

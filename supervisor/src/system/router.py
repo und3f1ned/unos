@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from ..auth.utils import require_admin, verify_token
 from ..security.validators import validate_hostname, validate_timezone, validate_interface_name
 
-# Read-only endpoints are available to every signed-in user (dashboard);
+# Read-only endpoints are available to every signed-in user;
 # anything that changes the host requires an administrator.
 router = APIRouter(prefix="/system", tags=["system"])
 

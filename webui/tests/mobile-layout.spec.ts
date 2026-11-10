@@ -469,7 +469,6 @@ const STATS = {
     { pid: 1022, name: 'kworker/u8:2-events_unbound', cpu_percent: 0.4, memory_percent: 0, memory_mb: 0, status: 'idle',
       username: 'root' },
   ],
-  history: { cpu: [], memory: [], network: [], disk_io: [] },
   temperatures: {},
   timestamp: '2026-11-08T10:00:00',
 };
