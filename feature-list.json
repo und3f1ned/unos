@@ -2665,11 +2665,32 @@
         "The legacy SystemStats interface is gone from webui/src/lib/stores/stats.ts, and every widget reads the current shape",
         "tests/test_system.py and the dashboard specs pass"
       ],
+      "verified_by": [
+        "supervisor/tests/test_ws_stats.py",
+        "webui/tests/dashboard.spec.ts"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0207",
+        "ADR-0006"
+      ],
+      "notes": "Step 1: get_system_stats of supervisor/src/websocket/events.py no longer sends cpu_percent, cpu_count, memory_total, memory_used, memory_percent, network_sent and network_recv, which repeated values of the cpu, memory and network objects, nor disk_total, disk_used and disk_percent, the usage of the container's root that no page read; temperatures stays, the only copy of the sensors (test_ws_stats.py test_the_stats_message_has_one_shape, which failed before the change and pins the keys of the cpu, memory and network objects that the web UI reads). Step 2: the legacy SystemStats interface and the flat fields of WebSocketStats are gone from webui/src/lib/stores/stats.ts, and the dashboard reads cpu.percent and memory.percent, used and total, as the Monitor tab does; the fake stats message of dashboard.spec.ts has the current shape (svelte-check passes). Step 3: test_system.py passes, and on the stand-in (with E2E_CHROMIUM_PATH) dashboard.spec.ts, monitor.spec.ts, network.spec.ts, websocket.spec.ts and mobile-layout.spec.ts passed, 165 tests, and make e2e-local 670 passed with 16 skips on listed conditions. Passed 2026-11-10. Not host-level."
+    },
+    {
+      "id": "system.stats-without-unread-parts",
+      "category": "system",
+      "description": "The stats message and the web UI's stats code carry nothing that no page reads",
+      "steps": [
+        "The history of the stats message, which no page reads, is gone, or a page reads it",
+        "webui/src/lib/api/system.ts keeps no SystemStats client without a caller, and webui/src/lib/stores/stats.ts no store that nothing sets or reads",
+        "The dashboard and Resource Monitor specs pass"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0006"
-      ]
+      ],
+      "notes": "Found by the review of system.no-legacy-basic-stats on 2026-11-10: with a full history, the history of the stats message is about 17 of its 25 KB, sent every 2 seconds, and no page reads it; getSystemStats of webui/src/lib/api/system.ts, a client of GET /api/v1/system/stats, has no caller; the temperatures store of stats.ts is never set, and its derived stores (cpuStats to networkInterfaces) have no reader."
     },
     {
       "id": "system.opt-in-telemetry",

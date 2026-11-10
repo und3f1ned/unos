@@ -206,6 +206,28 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: the stats message of the WebSocket has one shape
+
+- `system.no-legacy-basic-stats`, at the owner's word to go on ("Continue", in translation),
+  under ADR-0207: the stats message of `/ws/v1/events` repeated the CPU, memory and network
+  values as flat fields kept for backward compatibility, and sent the usage of the container's
+  root as `disk_*`, which no page read. They are gone, with the legacy `SystemStats` type of
+  `webui/src/lib/stores/stats.ts`; `temperatures` stays, the only copy of the sensors. The
+  dashboard reads `cpu.percent` and `memory.percent`, `used` and `total`, as the Monitor tab
+  does, and the fake message of `dashboard.spec.ts` has the current shape.
+- Test first (ADR-0186): `test_ws_stats.py` checks the keys of the message and of the objects
+  that the web UI reads, and failed before the change. `test_ws_stats.py`, `test_ws_auth.py` and
+  `test_system.py` 58 passed; svelte-check found no error. On the stand-in, with
+  `E2E_CHROMIUM_PATH`, the specs that use the stats socket passed (165 tests), and so did
+  `make e2e-local` (670 passed, 16 skips on listed conditions). Not host-level.
+- The fresh-context review (ADR-0017) found no blocker. Fixed: CHANGELOG.md says that the flat
+  fields are gone, as a script that read them over an API token breaks; the test pins the
+  `memory` and `network` objects too; a comment of `stats.ts` still spoke of extended types.
+  Found beside the change and taken into the new entry `system.stats-without-unread-parts`:
+  the message's history, about 17 of its 25 KB every 2 seconds, which no page reads, the HTTP
+  stats client of `webui/src/lib/api/system.ts` without a caller, and stores of `stats.ts` that
+  nothing sets or reads.
+
 ### 2026-11-10: the skip detector sees every form, and testing.no-compat-skips passes
 
 - At the owner's word to go on ("Continue", in translation), after the review of 2026-11-09 had

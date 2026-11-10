@@ -180,10 +180,10 @@
     <!-- System Stats -->
     {#if currentStats}
       <SystemStatsWidget
-        cpuPercent={currentStats.cpu_percent || 0}
-        memoryPercent={currentStats.memory_percent || 0}
-        memoryUsed={currentStats.memory_used || 0}
-        memoryTotal={currentStats.memory_total || 0}
+        cpuPercent={currentStats.cpu?.percent || 0}
+        memoryPercent={currentStats.memory?.percent || 0}
+        memoryUsed={currentStats.memory?.used || 0}
+        memoryTotal={currentStats.memory?.total || 0}
         networkUp={currentStats.network?.bytes_sent_rate || 0}
         networkDown={currentStats.network?.bytes_recv_rate || 0}
         temperature={getFirstTemperature(currentStats.temperatures)}

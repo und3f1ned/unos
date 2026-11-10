@@ -118,9 +118,6 @@ def get_system_stats() -> dict:
     memory = psutil.virtual_memory()
     swap = psutil.swap_memory()
 
-    # Disk usage
-    disk = psutil.disk_usage("/")
-
     # Network stats with rate calculation
     net_io = psutil.net_io_counters()
     bytes_sent_rate = 0.0
@@ -234,20 +231,9 @@ def get_system_stats() -> dict:
     return {
         "type": "stats",
         "data": {
-            # Basic stats (backward compatible)
-            "cpu_percent": cpu_percent,
-            "cpu_count": cpu_threads,
-            "memory_total": memory.total,
-            "memory_used": memory.used,
-            "memory_percent": memory.percent,
-            "disk_total": disk.total,
-            "disk_used": disk.used,
-            "disk_percent": disk.percent,
-            "network_sent": net_io.bytes_sent,
-            "network_recv": net_io.bytes_recv,
             "temperatures": temps,
 
-            # Extended CPU stats
+            # CPU stats
             "cpu": {
                 "percent": cpu_percent,
                 "per_core": per_core,
@@ -258,7 +244,7 @@ def get_system_stats() -> dict:
                 "threads": cpu_threads,
             },
 
-            # Extended memory stats
+            # Memory stats
             "memory": {
                 "total": memory.total,
                 "used": memory.used,
@@ -270,7 +256,7 @@ def get_system_stats() -> dict:
                 "swap_percent": swap.percent,
             },
 
-            # Extended network stats
+            # Network stats
             "network": {
                 "bytes_sent": net_io.bytes_sent,
                 "bytes_recv": net_io.bytes_recv,
