@@ -1294,7 +1294,9 @@ Access via **System** in the sidebar.
   **Save hostname** sets the name (letters, digits and hyphens, at most 63);
   **Save time zone** sets one of the zones the host lists, and scheduled tasks
   then run at the times of that zone. When the host refuses a change, the page
-  shows its message and keeps the old value.
+  shows its message and keeps the old value. Samba and network discovery (the
+  name Windows and macOS show) take a new hostname when they start: until the
+  NAS restarts they show the old one.
 
 ### Updates
 

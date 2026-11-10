@@ -63,7 +63,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-10, 19:30 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-10, 20:20 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -71,8 +71,14 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main e6a44d5 (the time zone and hostname on the host), deployed on 2026-11-10 at 19:25
-  UTC: SD MiB sync 1.129, build-supervisor 12.488, up 3.219 (the supervisor recreated without
+- Runs main 70dfec4 (System > General sets the hostname and the time zone), its web UI
+  deployed at 20:13 UTC: SD MiB sync 0.973, build-webui 18.367, up webui 2.988. For the reboot
+  check of `system.hostname-and-time-zone` the zone was set to Etc/GMT-3 (0.137 MiB) and the
+  hostname to unoscheck-name (0.148 MiB), and the device was rebooted from the API at 20:14:04
+  UTC (the boot of 20:15:21 UTC); both were kept on the host and in the API, then put back
+  (0.074 and 0.102 MiB), and smbd, wsdd2 and avahi-daemon were restarted to take the old name
+  again (0.105 MiB); `check.sh` OK. Before it, main e6a44d5 (the time zone and hostname on the
+  host), deployed on 2026-11-10 at 19:25 UTC: SD MiB sync 1.129, build-supervisor 12.488, up 3.219 (the supervisor recreated without
   the bind mount of /etc/hostname), check.sh 0.016. Before it, main f68c7c1 (session revocation
   and log rotation), deployed on 2026-11-10 at 18:50 UTC:
   SD MiB sync 2.395 (41 files), build-supervisor 12.266 (pip's layer cached), build-webui
@@ -226,6 +232,14 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-10: The hostname and the time zone pass
+
+- `system.hostname-and-time-zone` passes: System > General's card sets both (E2E), the API
+  changed both on the device, and a zone and a hostname set before a reboot were still the
+  host's after it (the Dev device section has the MiB). Samba and wsdd2 take the hostname when
+  they start: after a change of the name they show the old one until they restart or the host
+  reboots.
 
 ### 2026-11-10: System > General sets the hostname and the time zone
 
