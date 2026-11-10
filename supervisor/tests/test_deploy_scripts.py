@@ -65,7 +65,7 @@ DOCKER_STUB = textwrap.dedent(
     check_up_options() {
       while [ $# -gt 0 ]; do
         case "$1" in
-          -d | --no-build | --force-recreate) ;;
+          -d | --no-build | --force-recreate | --remove-orphans) ;;
           --wait-timeout)
             if has no-wait-timeout; then echo "unknown flag: --wait-timeout" >&2; return 1; fi
             if ! [[ ${2-} =~ ^[0-9]+$ ]]; then echo "invalid argument \"${2-}\" for \"--wait-timeout\" flag" >&2; return 1; fi
@@ -100,7 +100,7 @@ DOCKER_STUB = textwrap.dedent(
           # The version the images get (ADR-0234): one line per build.
           build) echo "UNOS_VERSION=${UNOS_VERSION-<unset>}" >> "$STUB_DIR/build-env"
                  interrupt_at build; has probe-lock && probe_lock; has build-fails && exit 1 ;;
-          down) interrupt_at down ;;
+          down) ;;
           up) # Part of the help: --wait since Compose 2.1.1, --wait-timeout since 2.17.
               if [ "$3" = --help ]; then
                 echo "  -d, --detach                   Detached mode: Run containers in the background"
@@ -111,6 +111,7 @@ DOCKER_STUB = textwrap.dedent(
                 exit 0
               fi
               check_up_options "${@:3}" || exit 1
+              interrupt_at up
               [[ " $* " == *" --force-recreate "* ]] && touch "$STUB_DIR/rolled-back"
               has probe-lock && probe_lock
               # A process that outlives the update, as a detached one does.
@@ -377,8 +378,11 @@ class TestUpdateScript:
         assert calls.index("docker image tag sha256:running-supervisor deploy-supervisor:previous") < _index(
             calls, "docker compose build"
         )
-        assert _index(calls, "docker compose build") < _index(calls, "docker compose down")
-        assert _index(calls, "docker compose down") < _index(calls, "docker compose up -d --no-build")
+        assert _index(calls, "docker compose build") < _index(calls, "docker compose up -d --no-build")
+        # No compose down first (deploy.no-legacy-network-recreate, ADR-0207): up recreates the
+        # containers of the new images, and the network of a release without the fixed subnet
+        # (ADR-0048) is no installation's.
+        assert not any(call.startswith("docker compose down") for call in calls)
         assert _index(calls, "curl") < _index(calls, "docker image prune")
         backup = next((sandbox / "backups").iterdir())
         assert sorted(p.name for p in backup.iterdir()) == ["data.tar.gz", "unos.db"]
@@ -557,7 +561,7 @@ class TestUpdateScript:
         result, calls = _run_update(sandbox, UNOS_HEALTH_TIMEOUT="0000000001000")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == ["docker compose up -d --no-build --wait-timeout 1000"]
+        assert _up_calls(calls) == ["docker compose up -d --no-build --remove-orphans --wait-timeout 1000"]
         assert "Waiting for UNOS to answer (up to 1000 seconds)" in result.stdout
 
     @pytest.mark.parametrize("signal", ["INT", "HUP", "TERM"])
@@ -575,10 +579,11 @@ class TestUpdateScript:
 
     @pytest.mark.parametrize("signal", ["INT", "HUP"])
     def test_interrupted_restart_starts_the_previous_version(self, sandbox, signal):
-        # Before: interrupted between `down` and `up`, UNOS stayed stopped.
+        # Interrupted while compose starts the new containers: the rollback starts the previous
+        # version, as it did when an interrupt came between the compose down and up of before.
         before = _head(sandbox)
 
-        result, calls = _run_update(sandbox, "interrupt-at-down", f"signal={signal}")
+        result, calls = _run_update(sandbox, "interrupt-at-up", f"signal={signal}")
 
         assert result.returncode == 1
         retag = calls.index("docker image tag deploy-webui:previous deploy-webui")
@@ -598,7 +603,7 @@ class TestUpdateScript:
 
     def test_second_update_stops_before_it_runs_git_or_docker(self, sandbox):
         # Two SSH sessions, or cron and a manual run: the second one would
-        # interleave its compose down/up with the first one's, and its rollback
+        # interleave its compose up with the first one's, and its rollback
         # (git reset --hard) would hit the first one's build.
         before = _head(sandbox)
 
@@ -619,7 +624,7 @@ class TestUpdateScript:
             # A prefix, as elsewhere: options may follow (--wait-timeout).
             assert any(call.startswith("docker compose up -d --no-build") for call in calls)
             assert _git_calls(sandbox)
-            # Held during the build and during the restart (compose down/up),
+            # Held during the build and during the restart (compose up),
             # which a second update must not interleave with.
             assert (sandbox / "stub" / "lock-state").read_text() == "held\nheld\n"
             # Neither git nor docker got the lock's descriptor: the process
@@ -704,18 +709,18 @@ class TestUpdateScript:
         "scenario, timeout, wait, options",
         [
             # The update.
-            ((), "42", SUPERVISOR_START, ["--no-build"]),
+            ((), "42", SUPERVISOR_START, ["--no-build --remove-orphans"]),
             # Rollback after compose gave up on the new supervisor.
-            (("up-fails",), "42", SUPERVISOR_START, ["--no-build", "--no-build --force-recreate"]),
+            (("up-fails",), "42", SUPERVISOR_START, ["--no-build --remove-orphans", "--no-build --force-recreate"]),
             # Rollback after the health check over HTTP and HTTPS failed (with
             # 0, the sandbox value, it fails at once). --wait-timeout 0 would
             # mean no limit.
-            (("unhealthy",), "0", SUPERVISOR_START, ["--no-build", "--no-build --force-recreate"]),
+            (("unhealthy",), "0", SUPERVISOR_START, ["--no-build --remove-orphans", "--no-build --force-recreate"]),
             # Rollback after an interrupted restart.
-            (("interrupt-at-down", "signal=INT"), "42", SUPERVISOR_START, ["--no-build --force-recreate"]),
+            (("interrupt-at-up", "signal=INT"), "42", SUPERVISOR_START, ["--no-build --remove-orphans", "--no-build --force-recreate"]),
             # A health timeout longer than the supervisor's start.
-            ((), "900", 900, ["--no-build"]),
-            (("up-fails",), "900", 900, ["--no-build", "--no-build --force-recreate"]),
+            ((), "900", 900, ["--no-build --remove-orphans"]),
+            (("up-fails",), "900", 900, ["--no-build --remove-orphans", "--no-build --force-recreate"]),
         ],
     )
     def test_every_compose_up_waits_for_the_supervisor_start_or_the_health_timeout(
@@ -765,7 +770,7 @@ class TestUpdateScript:
             sandbox, "no-wait-timeout", "compose-version=2.16.0", *scenario, UNOS_HEALTH_TIMEOUT="42"
         )
 
-        options = ["--no-build", "--no-build --force-recreate"] if scenario else ["--no-build"]
+        options = ["--no-build --remove-orphans", "--no-build --force-recreate"] if scenario else ["--no-build --remove-orphans"]
         assert _up_calls(calls) == [f"docker compose up -d {option}" for option in options]
         assert "Docker Compose 2.16.0 cannot limit its wait" in result.stdout
         if scenario:
@@ -780,7 +785,7 @@ class TestUpdateScript:
         result, calls = _run_update(sandbox, "compose-version=2.26.1", UNOS_HEALTH_TIMEOUT="42")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == [f"docker compose up -d --no-build --wait-timeout {SUPERVISOR_START}"]
+        assert _up_calls(calls) == [f"docker compose up -d --no-build --remove-orphans --wait-timeout {SUPERVISOR_START}"]
         assert "Docker Compose 2.26.1 cannot limit its wait" in result.stdout
         assert f"may wait longer than {SUPERVISOR_START} seconds" in result.stdout
 
@@ -1253,9 +1258,20 @@ class TestInstallScript:
         result, calls, exec_start = _start_install(tmp_path)
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == [f"docker compose up -d --wait-timeout {SUPERVISOR_START}"]
+        assert _up_calls(calls) == [f"docker compose up --remove-orphans -d --wait-timeout {SUPERVISOR_START}"]
         assert exec_start == [f"ExecStart=/usr/bin/docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert "WARN" not in result.stdout
+
+    def test_the_start_runs_no_compose_down_before_up(self, tmp_path):
+        """deploy.no-legacy-network-recreate (ADR-0207): install.sh starts UNOS with compose up
+        alone; the compose down for the network of a release without the fixed subnet (ADR-0048)
+        is gone, with its comment."""
+        result, calls, _ = _start_install(tmp_path)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not any(call.startswith("docker compose down") for call in calls), calls
+        for script in ("install.sh", "update.sh"):
+            assert "fixed subnet" not in (REPO_ROOT / "deploy" / script).read_text(encoding="utf-8"), script
 
     def test_compose_without_wait_timeout_gets_the_plain_command(self, tmp_path):
         # Compose before 2.17 rejects the option: the start, and the unit at
@@ -1263,7 +1279,7 @@ class TestInstallScript:
         result, calls, exec_start = _start_install(tmp_path, "no-wait-timeout", "compose-version=2.16.0")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == ["docker compose up -d"]
+        assert _up_calls(calls) == ["docker compose up --remove-orphans -d"]
         assert exec_start == ["ExecStart=/usr/bin/docker compose up -d"]
         assert "Docker Compose 2.16.0 has no `up --wait-timeout`" in result.stdout
         assert "run install.sh again" in result.stdout
@@ -1272,7 +1288,7 @@ class TestInstallScript:
         result, calls, exec_start = _start_install(tmp_path, "compose-version=2.26.1")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert _up_calls(calls) == [f"docker compose up -d --wait-timeout {SUPERVISOR_START}"]
+        assert _up_calls(calls) == [f"docker compose up --remove-orphans -d --wait-timeout {SUPERVISOR_START}"]
         assert exec_start == [f"ExecStart=/usr/bin/docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert "Docker Compose 2.26.1 cannot limit its wait" in result.stdout
 

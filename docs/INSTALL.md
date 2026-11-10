@@ -672,7 +672,8 @@ The script:
    supervisor's image carries the version of the new checkout
    (`git describe --tags --always`, with the tags fetched in step 1), which
    **System → Updates** shows.
-4. Restarts UNOS (`docker compose down`, then `up -d`). `docker compose up`
+4. Restarts UNOS (`docker compose up -d --remove-orphans`, which recreates
+   the containers of the new images). `docker compose up`
    starts the web interface once the supervisor answers its health check. The
    supervisor first mounts the pools the host has not mounted, up to two
    minutes each. With Docker Compose 2.30 or later, `up` waits for it up to
@@ -688,8 +689,8 @@ The script:
    images; the previous ones stay tagged `:previous`.
 
 An interrupted update (Ctrl+C, a closed SSH session, `kill`) is undone the same
-way: during the build the checkout returns to the previous revision, and after
-UNOS was stopped the previous version is started again. After a closed SSH
+way: during the build the checkout returns to the previous revision, and once
+the restart has begun the previous version is started again. After a closed SSH
 session the messages are in `/var/lib/unos/backups/update-interrupted.log`.
 The rollback restores the program, not the data; the backup is listed in the
 error message. To put the backup's `unos.db` back by hand, stop UNOS and delete
@@ -708,9 +709,8 @@ sudo git pull --ff-only
 cd deploy
 sudo docker compose build --no-cache
 
-# Stop and remove the containers and the network (recreated with the
-# current settings), then start with /etc/unos/secrets.env
-sudo docker compose down
+# Start with /etc/unos/secrets.env: compose recreates the containers of the
+# new images
 sudo systemctl restart unos
 ```
 
