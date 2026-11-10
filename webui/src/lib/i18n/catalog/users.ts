@@ -83,7 +83,12 @@ export const en = {
 	'users.delete.after': '? This action cannot be undone.',
 	'users.delete.failed': 'User was not deleted',
 	'users.delete.submit': 'Delete user',
-	'users.delete.done': 'User "{name}" deleted'
+	'users.delete.done': 'User "{name}" deleted',
+
+	// End sessions (ADR-0329): signs the user out on every device; API tokens stay.
+	'users.endSessionsOf': 'End the sessions of {name}',
+	'users.endSessions.done': 'Sessions of "{name}" ended: {n}',
+	'users.endSessions.failed': 'Sessions were not ended'
 };
 
 export const ru: Translation<typeof en> = {
@@ -171,5 +176,9 @@ export const ru: Translation<typeof en> = {
 	'users.delete.after': '? Это действие нельзя отменить.',
 	'users.delete.failed': 'Пользователь не удалён',
 	'users.delete.submit': 'Удалить пользователя',
-	'users.delete.done': 'Пользователь «{name}» удалён'
+	'users.delete.done': 'Пользователь «{name}» удалён',
+
+	'users.endSessionsOf': 'Завершить сессии пользователя {name}',
+	'users.endSessions.done': 'Сессии пользователя «{name}» завершены: {n}',
+	'users.endSessions.failed': 'Сессии не завершены'
 };

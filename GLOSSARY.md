@@ -191,7 +191,8 @@ get SMB access (ADR-0030). Avoid: normal user, guest (guests have no account).
 accounts; UNOS leaves every other one alone (ADR-0108). Avoid: user.
 
 **Session token**: The token that signing in returns; the web UI sends it with every request until
-it expires (ADR-0009, ADR-0028). Avoid: cookie, API token.
+it expires or its session ends: Logout, a password change, an administrator (ADR-0009, ADR-0028,
+ADR-0329). Avoid: cookie, API token.
 
 **API token**: A long-lived token that a user creates for scripts, with that user's rights, shown
 once (ADR-0239); only a session token creates, disables and deletes API tokens (ADR-0253). Avoid:

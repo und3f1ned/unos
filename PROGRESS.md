@@ -63,7 +63,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-09, 21:20 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-10, 18:20 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -71,10 +71,15 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main eceead5, deployed on 2026-11-09 at 21:07 UTC: both images built from its runtime
-  files, the supervisor on the base that ADR-0305 pins. The device checkout `/opt/unos` equals
-  the tree of main eceead5; main's later commits change runtime files of the supervisor and the
-  web UI (28 files of `supervisor/src` and `webui/src` by 8886fe3), which the next deploy brings.
+- Runs main 91ebf48, deployed on 2026-11-10 at 17:55 UTC: both images built from its runtime
+  files, the supervisor on the base that ADR-0305 pins (pip's layer cached). The device checkout
+  `/opt/unos` equals the tree of main 91ebf48. SD MiB: sync 5.074 (128 files written; deleted: the
+  Caddyfile copy that `deploy/` had, and `webui/src/lib/api/monitor.ts`), build-supervisor 14.082,
+  build-webui 18.727, up 6.066, check.sh 0.016. Then `scripts/dev/scenario.sh all`: every area
+  OK, 88 steps: files 16 (0.867 MiB), volumes 7 (0.582), smart 5 (0.125), backups 8 (0.445),
+  smb 27 (3.207), smbconf 15 (2.363), scrub 10 (0.629). The reboot check of these entries waits
+  for the owner's reboot. Before the deploy the SD card had 44.5 MiB written in 20.7 hours
+  since its boot (2.15 MiB an hour).
   The deploys' backup and rollback copies are in the main
   checkout's `tmp/dev/`. The device has no `unos` unit: `deploy.sh up` starts its containers, and
   at boot dockerd does, by their restart policy. Rebooted from the API twice on the morning of
@@ -92,8 +97,8 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   07:17 UTC deleted the 11 dangling images (the old builds' layers) and reclaimed only 134.9 kB,
   where this file had said about 351 MB.
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
-  Images: deploy-supervisor:latest (`ba92f8e6...` of 2026-11-09, 21:07 UTC, `f6eff77a...` as
-  `:rollback`), deploy-webui:latest (`44bd3f12...` of 21:07 UTC, `c6dd8cdc...` as `:rollback`),
+  Images: deploy-supervisor:latest (`11729d7d...` of 2026-11-10, 17:55 UTC, `ba92f8e6...` as
+  `:rollback`), deploy-webui:latest (`232cf5db...` of 17:55 UTC, `44bd3f12...` as `:rollback`),
   lscr.io/linuxserver/transmission, alpine (the
   final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base: Caddy 2.10.2 of
   January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files were deleted on
@@ -210,6 +215,31 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-10: Sessions end on the server
+
+- `auth.session-revocation` (ADR-0329): a JWT stayed valid for 24 hours whatever happened. Now a
+  sign-in stores its session as a row of `user_sessions`, in the commit it made before, and a
+  session token is valid only while its row exists. Logout ends the session on the server, a
+  password change the user's other sessions, and a password set by an administrator, the
+  deletion of the user, `reset-admin` and the Users page's End sessions button all of them; a
+  live-data socket closes at its next check. API tokens stay as they are. Tokens of before the
+  update are refused: everyone signs in once more.
+- Tests first: `tests/test_sessions.py`, the ended-session case of `test_ws_auth.py` and of
+  `test_emergency.py`; the specs `auth.spec.ts` (a copy of the token gets 401 after Logout) and
+  `users.spec.ts` (End sessions). Database only: not host-level.
+- A fresh-context review found, all fixed: a sign-in on a full `/data` answered with a token
+  that did not work (ADR-0251): the session is kept in memory then; the deletes ran before a
+  password's guarded commit: they go with it now; a restore brought the backup's sessions back:
+  it ends every session but the restoring administrator's, who sees the result (the full E2E
+  run showed the four restore specs failing without that); four more pages per sign-in: the
+  table is `WITHOUT ROWID` without indexes; `two-factor.spec.ts` reused a session after Logout;
+  an administrator setting their own password lost their session. E2E: 675 passed in the full
+  run, then the restore, scheduler, two-factor, auth, users and backup specs, 93 passed. The SD
+  MiB of a sign-in is measured after the deploy.
+- The full E2E run of `security.tamper-evident-audit-log` had one failure, "uploads files from
+  the keyboard" of `files.spec.ts` (no file chooser within 15 s while backend tests ran beside
+  it); it passed three times alone. A flake to fix, not a regression of that branch.
 
 ### 2026-11-10: Each audit entry carries the hash of the one before
 

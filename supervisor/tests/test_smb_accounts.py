@@ -32,7 +32,6 @@ from sqlalchemy.pool import NullPool
 from src.auth import router as auth_router
 from src.auth import utils as auth_utils
 from src.auth.models import User
-from src.auth.utils import create_access_token
 from src.database import Base, get_db
 from src.host import HostResult
 from src.main import app
@@ -42,6 +41,7 @@ from src.shares.models import SmbAccount, SmbShare, SmbShareAccess, SmbState
 
 from .samba_fake import FakeSambaHost, install_fake_samba_host
 from .audit_helpers import audit_entries
+from .session_tokens import session_headers
 
 API = "/api/v1"
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -280,7 +280,7 @@ class World:
     # -- API --------------------------------------------------------------------
 
     def headers(self, name: str) -> dict[str, str]:
-        return {"Authorization": f"Bearer {create_access_token({'sub': name})}"}
+        return session_headers(self.engine, name)
 
     def self_enable(self, name: str = "alice", password: str = ALICE_PW, **extra):
         return self.client.post(f"{API}/auth/me/smb/enable", json={"current_password": password, **extra},

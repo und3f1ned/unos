@@ -12,6 +12,12 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- Sessions end on the server: **Logout** ends the session, a password change
+  the user's other sessions, and a password set by an administrator, the
+  deletion of the user, the emergency `reset-admin`, a restore (but for the
+  administrator who restored) and the new **End sessions** button of the
+  **Users** page all of them. Tokens from before the
+  update are refused: everyone signs in once more.
 - Each audit entry carries the hash of the one before it. An entry edited in
   the log file, and the entry after one that was removed, are marked **Chain
   broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest

@@ -309,14 +309,16 @@ class TestReset:
         stored = world.user("admin").hashed_password
         assert stored.startswith("$2b$12$") and verify_password(NEW_PW, stored)
 
-    def test_sessions_signed_in_before_stay_valid_until_they_expire(self, world, run):
-        # UNOS cannot end a session on the server yet (auth.session-revocation): docs/RECOVERY.md
-        # says so, and how a new JWT secret ends them all.
-        session = world.headers("admin")
+    def test_the_sessions_of_the_administrator_end_and_those_of_others_stay(self, world, run):
+        # In the commit of the new password (ADR-0329); a new JWT secret ends every session.
+        admin, alice = world.headers("admin"), world.headers("alice")
 
-        assert run("reset-admin", "admin")[0] == 0
+        status, out, _ = run("reset-admin", "admin")
 
-        assert world.client.get(f"{API}/auth/me", headers=session).status_code == 200
+        assert status == 0
+        assert world.client.get(f"{API}/auth/me", headers=admin).status_code == 401
+        assert world.client.get(f"{API}/auth/me", headers=alice).status_code == 200
+        assert "Its sessions are ended" in out
 
 
 class TestPassword:
@@ -943,7 +945,8 @@ class TestRunbook:
         for action in ("password_change", "totp_disabled"):
             assert f"`{action}`" in text
         assert f"`{emergency.AUDIT_USER}`" in text
-        assert "auth.session-revocation" in text
+        # _store ends the administrator's sessions in the commit of the new password (ADR-0329).
+        assert "The reset ends every session of the administrator" in _flat(text)
 
     def test_says_how_to_shut_out_whoever_knew_the_old_password(self):
         # Whoever signed in with the old password had every right of an administrator: the

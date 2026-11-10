@@ -11,6 +11,7 @@ import sqlite3
 import tarfile
 import tempfile
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from src.auth import utils as auth_utils
+from src.auth.models import UserSession
 from src.auth.utils import verify_token
 from src.host import HostResult
 from src.main import app
@@ -233,6 +236,52 @@ def test_restore_database_and_shares(env):
     with closing(sqlite3.connect(env.db_path)) as conn:
         assert conn.execute("SELECT shares_imported_at, pending_import_source FROM smb_state").fetchall() == [
             (None, "live")]
+
+
+def test_a_restore_ends_every_session(env, tmp_path, monkeypatch):
+    """ADR-0329: the backup's sessions are not this installation's, and the live ones, also those
+    kept in memory, end with the database they belong to."""
+    path = tmp_path / "with-sessions.db"
+    _make_db(path, users=[("admin2", 1)])
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine, tables=[UserSession.__table__])
+    with engine.begin() as conn:
+        conn.execute(UserSession.__table__.insert().values(
+            id="from-the-backup", user_id=1, expires_at=datetime(2999, 1, 1)))
+    engine.dispose()
+    monkeypatch.setattr(auth_utils, "_unstored_sessions", {"kept-in-memory": 1})
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", path.read_bytes())])
+
+    # The caller is admin, whose id the restored database gives to admin2: their session ends too.
+    token = auth_utils.create_access_token({"sub": "admin", "jti": "the-callers"})
+    response = env.client.post(f"/api/v1/backup/restore/{name}", json={},
+                               headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200, response.text
+    with closing(sqlite3.connect(env.db_path)) as conn:
+        assert conn.execute("SELECT id FROM user_sessions").fetchall() == []
+    assert auth_utils._unstored_sessions == {}
+
+
+def test_the_administrator_who_restores_keeps_their_session(env, tmp_path, monkeypatch):
+    """When the restored database has them as an administrator under the same id and name
+    (ADR-0329): they see the result of the restore and go on."""
+    path = tmp_path / "with-sessions.db"
+    _make_db(path, users=[("admin2", 1)])
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine, tables=[UserSession.__table__])
+    engine.dispose()
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", path.read_bytes())])
+    monkeypatch.setitem(app.dependency_overrides, verify_token,
+                        lambda: SimpleNamespace(id=1, username="admin2", is_admin=True))
+    token = auth_utils.create_access_token({"sub": "admin2", "jti": "the-callers"})
+
+    response = env.client.post(f"/api/v1/backup/restore/{name}", json={},
+                               headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200, response.text
+    with closing(sqlite3.connect(env.db_path)) as conn:
+        assert conn.execute("SELECT id, user_id FROM user_sessions").fetchall() == [("the-callers", 1)]
 
 
 def test_create_then_restore_roundtrip(env):

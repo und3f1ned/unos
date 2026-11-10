@@ -44,12 +44,13 @@ from src.auth.models import APIToken, User
 from src.auth.router import MAX_API_TOKENS_PER_USER, TOO_MANY_API_TOKENS
 from src.auth.router import limiter as auth_limiter
 from src.auth.schemas import API_TOKEN_NAME_CHARS
-from src.auth.utils import SESSION_NEEDED, create_access_token, require_admin, verify_token
+from src.auth.utils import SESSION_NEEDED, require_admin, verify_token
 from src.database import Base, get_db
 from src.main import app
 from src.main import limiter as app_limiter
 from src.security.models import LoginAttempt
 from .audit_helpers import audit_entries
+from .session_tokens import session_token
 
 try:
     from fastapi.routing import iter_route_contexts
@@ -71,6 +72,7 @@ PUBLIC = {
 USER_ALLOWED = {
     # Own account and credentials
     ("GET", f"{API}/auth/me"),
+    ("POST", f"{API}/auth/logout"),  # ends the caller's own session (ADR-0329)
     ("POST", f"{API}/auth/change-password"),
     ("POST", f"{API}/auth/totp/setup"),
     ("POST", f"{API}/auth/totp/enable"),
@@ -206,18 +208,18 @@ def client(authz_db):
 
 
 @pytest.fixture
-def admin_headers():
-    return _auth(create_access_token({"sub": "admin"}))
+def admin_headers(authz_db):
+    return _auth(session_token(authz_db.engine, "admin"))
 
 
 @pytest.fixture
-def alice_headers():
-    return _auth(create_access_token({"sub": "alice"}))
+def alice_headers(authz_db):
+    return _auth(session_token(authz_db.engine, "alice"))
 
 
 @pytest.fixture
-def bob_headers():
-    return _auth(create_access_token({"sub": "bob"}))
+def bob_headers(authz_db):
+    return _auth(session_token(authz_db.engine, "bob"))
 
 
 class TestRouteMatrix:
@@ -284,12 +286,13 @@ class TestRouteMatrix:
                 problems.append(f"{method} {path}: anonymous request got {response.status_code}")
         assert problems == []
 
-    def test_regular_user_only_reaches_user_routes(self, client, alice_headers):
+    def test_regular_user_only_reaches_user_routes(self, client, authz_db):
         problems = []
         for method, path, _ in _http_operations():
             if (method, path) in PUBLIC:
                 continue
-            response = _call(client, method, path, alice_headers)
+            # A session of its own for each route: signing out ends the one it is called with.
+            response = _call(client, method, path, _auth(session_token(authz_db.engine, "alice")))
             if (method, path) in USER_ALLOWED:
                 if response.status_code in (401, 403):
                     problems.append(f"{method} {path}: user route returned {response.status_code}")

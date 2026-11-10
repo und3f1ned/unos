@@ -119,7 +119,7 @@
 	}
 
 	function endSession() {
-		logout();
+		void logout();
 		disconnectWebSocket();
 		clearCurrentUser();
 		goto('/login');

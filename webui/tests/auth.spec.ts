@@ -113,12 +113,18 @@ test.describe('Authentication', () => {
     await page.fill('input[type="password"]', E2E_ADMIN.password);
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/');
-    expect(await page.evaluate(() => localStorage.getItem('token'))).toBeTruthy();
+    const token = await page.evaluate(() => localStorage.getItem('token'));
+    expect(token).toBeTruthy();
 
+    const signedOut = page.waitForResponse((response) => response.url().endsWith('/api/v1/auth/logout'));
     await page.getByRole('button', { name: 'Logout' }).click();
+    expect((await signedOut).status()).toBe(200);
     await expect(page).toHaveURL('/login');
     await expect(page.locator('#username')).toBeVisible();
     expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
+    // The server ended the session (ADR-0329): a copy of the token is refused too.
+    const me = await page.request.get('/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } });
+    expect(me.status()).toBe(401);
     // Without the token, a page that needs a session sends to the sign-in page.
     await page.goto('/storage');
     await expect(page).toHaveURL(/\/login/);

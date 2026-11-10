@@ -223,9 +223,8 @@ Afterwards:
 2. Turn two-factor authentication on again (**System** → **Security**) and generate new recovery
    codes.
 
-The reset does not end the sessions that were signed in before: they stay valid until they
-expire, 24 hours after their sign-in by default (UNOS cannot end a session on the server yet,
-feature-list entry `auth.session-revocation`), and the account's API tokens keep working.
+The reset ends every session of the administrator that was signed in before; the account's API
+tokens keep working, and the sessions of other accounts too.
 
 ### When Someone Else May Know the Old Password
 

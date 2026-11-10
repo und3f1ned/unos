@@ -824,3 +824,51 @@ test.describe('SMB activation (stand-in)', () => {
     await expect(userRow(page, username)).toHaveCount(0);
   });
 });
+
+// ---- Sessions on the real server (ADR-0329) ----
+
+test.describe('Sessions', () => {
+  let token = '';
+  const created: string[] = [];
+  const headers = () => ({ Authorization: `Bearer ${token}` });
+
+  test.beforeAll(async ({ request }) => {
+    token = await apiLogin(request, E2E_ADMIN);
+  });
+
+  test.afterAll(async ({ request }) => {
+    const response = await request.get('/api/v1/auth/users', { headers: headers() });
+    const users = (await response.json()) as { id: number; username: string }[];
+    for (const user of users.filter((u) => created.includes(u.username))) {
+      const name = encodeURIComponent(user.username);
+      await request.delete(`/api/v1/auth/users/${user.id}?username=${name}`, { headers: headers() });
+    }
+  });
+
+  test('End sessions signs a user out of every session, and the administrator stays signed in', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    const username = `e2e_sessions_${Date.now().toString(36)}`;
+    const password = 'e2e-Sessions-Password-1';
+    const response = await request.post('/api/v1/auth/users', { headers: headers(), data: { username, password } });
+    expect(response.ok(), `create ${username}: HTTP ${response.status()}`).toBeTruthy();
+    created.push(username);
+    const sessions = [await apiLogin(request, { username, password }), await apiLogin(request, { username, password })];
+    const me = (session: string) =>
+      request.get('/api/v1/auth/me', { headers: { Authorization: `Bearer ${session}` } });
+    for (const session of sessions) expect((await me(session)).status()).toBe(200);
+
+    await page.goto('/users');
+    await userRow(page, username).getByRole('button', { name: `End the sessions of ${username}` }).click();
+
+    await expect(page.getByText(`Sessions of "${username}" ended: 2`)).toBeVisible();
+    for (const session of sessions) expect((await me(session)).status()).toBe(401);
+    await page.reload();
+    await expect(userRow(page, username)).toBeVisible();
+    // An administrator's own row has no such button: signing out is the Logout button.
+    await expect(
+      userRow(page, E2E_ADMIN.username).getByRole('button', { name: `End the sessions of ${E2E_ADMIN.username}` }),
+    ).toHaveCount(0);
+  });
+});

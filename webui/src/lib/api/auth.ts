@@ -135,8 +135,20 @@ export async function getAuthStatus(): Promise<AuthStatus> {
   return api.get<AuthStatus>("/auth/status");
 }
 
-export function logout(): void {
+/**
+ * Sign out: forget the token, then end its session on the server (ADR-0329). The request carries
+ * the token it ends and skips the API client's handling of 401, so a session that has already
+ * ended signs out all the same; when the server cannot be reached, the session ends at its expiry.
+ */
+export async function logout(): Promise<void> {
+  const token = getToken();
   clearToken();
+  if (!token) return;
+  try {
+    await fetch("/api/v1/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    // Unreachable: nothing more to do here.
+  }
 }
 
 export function isAuthenticated(): boolean {
@@ -154,6 +166,14 @@ export async function createUser(data: UserCreate): Promise<User> {
 
 export async function updateUser(userId: number, data: UserUpdate): Promise<User> {
   return api.put<User>(`/auth/users/${userId}`, data);
+}
+
+/** End every session of a user (ADR-0329); `username` is the name the request was prepared for. */
+export async function endSessions(userId: number, username: string): Promise<{ status: string; ended: number }> {
+  return api.post<{ status: string; ended: number }>(
+    `/auth/users/${userId}/end-sessions?username=${encodeURIComponent(username)}`,
+    {}
+  );
 }
 
 /**

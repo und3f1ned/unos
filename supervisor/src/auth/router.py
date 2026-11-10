@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select, func, update
@@ -29,7 +30,9 @@ from .schemas import (
     SmbEnableRequest, SmbDisableRequest, SmbSelfEnableRequest, MySmbShare, MySmbStatus, MySmbChange,
 )
 from .utils import (
-    hash_password, verify_password, create_access_token, verify_token,
+    hash_password, verify_password, start_session, purge_expired_sessions, end_sessions, end_session,
+    keep_unstored_session, session_id_of,
+    verify_token, security,
     require_admin, require_session, generate_api_token, generate_recovery_codes,
     TOTP_CODE_REUSED, TotpCheck, check_totp_code, forget_totp_steps,
     RECOVERY_CODE_INVALID, recovery_code_hash, recovery_code_hashes, recovery_codes_left,
@@ -244,10 +247,17 @@ async def login(
             )
 
     # A login attempt that cannot be stored rolls the session back, which expires the user.
-    username = user.username
+    username, user_id = user.username, user.id
+
+    # The session's row, and the purge of expired ones, go into the commit of the login history
+    # (ADR-0329): a sign-in writes no more than before (ADR-0308).
+    await purge_expired_sessions(db)
+    access_token = start_session(db, user)
 
     # Record successful login
     await record_login_attempt(db, login_request.username, True, request)
+    # A full /data could not store the session's row either: the session works all the same (ADR-0251).
+    await keep_unstored_session(db, access_token, user_id)
 
     # Audit log
     await _audit_sign_in(
@@ -259,8 +269,22 @@ async def login(
         severity=AuditSeverity.WARNING if used_recovery_code else AuditSeverity.INFO,
     )
 
-    access_token = create_access_token(data={"sub": username})
     return Token(access_token=access_token, requires_totp=False)
+
+
+@router.post("/logout")
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    current_user: User = Depends(verify_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """End the session of this token on the server (ADR-0329); an API token is not a session."""
+    session_id = session_id_of(credentials.credentials)
+    if session_id is None:
+        raise HTTPException(status_code=400, detail="An API token is no session: delete it to end it")
+    await end_session(db, session_id)
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -279,6 +303,7 @@ async def get_auth_status(db: AsyncSession = Depends(get_db)):
 @router.post("/change-password")
 async def change_password(
     data: PasswordChange,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
@@ -288,6 +313,7 @@ async def change_password(
     account's open SMB sessions end after the commit (ADR-0121, ADR-0123). A self flow:
     its warnings are fixed texts (the details are logged).
     """
+    keep = session_id_of(credentials.credentials)  # read before anything changes
     verified_hash = current_user.hashed_password
     if not await asyncio.to_thread(verify_password, data.current_password, verified_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
@@ -304,6 +330,8 @@ async def change_password(
             db, user, row, data.new_password, current_password=data.current_password
         )
         user.hashed_password = new_hash
+        # The user's other sessions end with the old password (ADR-0329), in the same commit.
+        await end_sessions(db, user.id, keep=keep)
         warnings = await accounts.store_password(db, smb_update)
     # store_password() only ends the account's sessions.
     fixed = [accounts.SELF_SESSIONS_WARNING] if warnings else []
@@ -489,6 +517,7 @@ async def update_user(
     request: Request,
     user_id: int,
     data: UserUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -500,6 +529,7 @@ async def update_user(
     """
     new_hash = await asyncio.to_thread(hash_password, data.password) if data.password else None
     admin_name = current_user.username
+    own_session = session_id_of(credentials.credentials) if current_user.id == user_id else None
     warnings: list[str] = []
 
     async with service.smb_lock():
@@ -523,6 +553,9 @@ async def update_user(
             )
             user.hashed_password = new_hash
             changes.append("password changed (also for SMB)" if smb_update else "password changed")
+            # Every session of the user ends in this commit (ADR-0329), but the administrator's
+            # own one when they set their own password.
+            await end_sessions(db, user.id, keep=own_session)
 
         if demoting_admin:
             await _ensure_an_admin_remains(db)
@@ -530,8 +563,9 @@ async def update_user(
         if promotion is not None:
             # No SMB password went to Samba: a new administrator has no active
             # account, so update_password_before_store() returned None. No
-            # statement ran since revoke_for_promotion() (its writes are
-            # guarded); commit_revocation() guards the commit.
+            # write ran since revoke_for_promotion() (its writes are guarded,
+            # and end_sessions only reads before the commit); commit_revocation()
+            # guards the commit.
             await accounts.commit_revocation(db, promotion)
             warnings += await accounts.finish_promotion(db, promotion)
         else:
@@ -594,6 +628,7 @@ async def delete_user(
             # Loads the user's API tokens (delete cascade); that query
             # autoflushes the account row's DELETE.
             await db.delete(user)
+            await end_sessions(db, user_id)  # SQLite enforces no foreign keys (ADR-0319)
             if was_admin:
                 await _ensure_an_admin_remains(db)
             await db.commit()
@@ -615,6 +650,37 @@ async def delete_user(
     )
 
     return {"status": "ok", "message": "User deleted", "warnings": warnings}
+
+
+@router.post("/users/{user_id}/end-sessions")
+async def end_user_sessions(
+    request: Request,
+    user_id: int,
+    # The username the request was built for (ids are reused): 409 when it is not the user's.
+    username: str = Query(max_length=255),
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """End every session of a user (admin only, ADR-0329): their tokens answer 401 from now on, and
+    their live-data socket closes at its next check. Their API tokens stay."""
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=accounts.USER_NOT_FOUND)
+    if username != user.username:
+        raise _user_is_now(user_id, user)
+    username, admin_name = user.username, current_user.username
+    ended = await end_sessions(db, user_id)
+    await db.commit()
+    await log_action(
+        action=AuditAction.USER_UPDATED,
+        request=request,
+        username=admin_name,
+        resource_type="user",
+        resource_id=username,
+        details=f"Ended the sessions of {username}: {ended}",
+        severity=AuditSeverity.WARNING,
+    )
+    return {"status": "ok", "ended": ended}
 
 
 @router.post("/users/{user_id}/smb/enable", response_model=UserResponse)
