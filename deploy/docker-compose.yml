@@ -40,7 +40,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/samba:/etc/samba
       - /etc/os-release:/host/os-release:ro
-      - /etc/hostname:/host/hostname:ro
       - type: bind
         source: /mnt
         target: /mnt

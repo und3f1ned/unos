@@ -19,7 +19,6 @@ from ..security.validators import validate_interface_name
 router = APIRouter(prefix="/network", tags=["network"])
 
 # The host's /etc/hostname, mounted into the container (deploy/docker-compose.yml).
-HOSTNAME_FILE = "/host/hostname"
 
 
 class NetworkInterface(BaseModel):
@@ -245,28 +244,19 @@ async def get_dns_config(_=Depends(verify_token)):
 
 @router.get("/hostname", response_model=HostnameConfig)
 async def get_hostname(_=Depends(verify_token)):
-    """The host's name: its /etc/hostname, else what `hostname` says on the host."""
-    try:
-        with open(HOSTNAME_FILE) as f:
-            name = f.read().strip()
-        if name:
-            return HostnameConfig(hostname=name)
-    except OSError:
-        pass
+    """The host's name, as `hostname` prints it on the host (ADR-0331)."""
     result = await links.run(["hostname"])
     return HostnameConfig(hostname=result.stdout.strip() if result.ok else "unknown")
 
 
 @router.put("/hostname")
 async def set_hostname(config: HostnameConfig, _=Depends(verify_token)):
-    """Set the host's name (hostnamectl, else hostname)."""
+    """Set the host's name with hostnamectl, which also writes /etc/hostname: it lasts (ADR-0331)."""
     if not re.fullmatch(r"[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", config.hostname):
         raise HTTPException(400, "Invalid hostname format")
     result = await links.run(["hostnamectl", "set-hostname", config.hostname])
     if not result.ok:
-        result = await links.run(["hostname", config.hostname])
-        if not result.ok:
-            raise HTTPException(500, f"Failed to set hostname: {links.reason(result)}")
+        raise HTTPException(500, f"Failed to set hostname: {links.reason(result)}")
     return {"status": "success", "hostname": config.hostname}
 
 

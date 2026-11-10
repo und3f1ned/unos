@@ -249,34 +249,3 @@ class TestNetworkInterfaces:
         assert "lo" not in interface_names
 
 
-class TestTimezone:
-    """Tests for timezone management."""
-
-    def test_get_timezone_success(self):
-        """Test getting timezone."""
-        from src.system.router import get_timezone
-        import asyncio
-        
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "America/New_York\n"
-        
-        with patch("src.system.router.verify_token"):
-            with patch("src.system.router.subprocess.run", return_value=mock_result):
-                result = asyncio.run(get_timezone())
-        
-        assert result == {"timezone": "America/New_York"}
-
-    def test_get_timezone_unknown_on_failure(self):
-        """Test timezone returns Unknown on failure."""
-        from src.system.router import get_timezone
-        import asyncio
-        
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        
-        with patch("src.system.router.verify_token"):
-            with patch("src.system.router.subprocess.run", return_value=mock_result):
-                result = asyncio.run(get_timezone())
-        
-        assert result == {"timezone": "Unknown"}

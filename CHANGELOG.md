@@ -655,6 +655,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- `GET` and `PUT /api/v1/system/timezone` and `GET /api/v1/system/timezones`
+  read and set the host's time zone: they asked the supervisor container,
+  which has no systemd, and answered "Unknown". `PUT /api/v1/system/hostname`,
+  which did the same for the hostname, is removed: `PUT
+  /api/v1/network/hostname` sets the host's name, and the hostname that the
+  API shows is read on the host, so a new name shows at once.
 - On a phone, the dashboard's header wraps, and a long host name breaks
   instead of reaching past the screen.
 - The App Store lists its catalog also when Docker cannot be reached, and

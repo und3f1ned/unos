@@ -234,7 +234,7 @@ class TestRouteMatrix:
         assert {
             ("GET", f"{API}/storage/pools"),
             ("GET", f"{API}/auth/users"),
-            ("PUT", f"{API}/system/hostname"),
+            ("PUT", f"{API}/system/timezone"),
             ("GET", f"{API}/audit/logs"),
             ("GET", f"{API}/security/firewall"),
             ("GET", f"{API}/health/full"),
