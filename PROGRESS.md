@@ -206,6 +206,21 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: the stats message of the WebSocket has one shape
+
+- `system.no-legacy-basic-stats`, at the owner's word to go on ("Continue", in translation),
+  under ADR-0207: the stats message of `/ws/v1/events` repeated the CPU, memory and network
+  values as flat fields kept for backward compatibility, and sent the usage of the container's
+  root as `disk_*`, which no page read. They are gone, with the legacy `SystemStats` type of
+  `webui/src/lib/stores/stats.ts`; `temperatures` stays, the only copy of the sensors. The
+  dashboard reads `cpu.percent` and `memory.percent`, `used` and `total`, as the Monitor tab
+  does, and the fake message of `dashboard.spec.ts` has the current shape.
+- Test first (ADR-0186): `test_ws_stats.py` checks the keys of the message and failed before the
+  change. `test_ws_stats.py`, `test_ws_auth.py` and `test_system.py` 58 passed; svelte-check
+  found no error. `passes` stays false: the dashboard specs cannot run on the stand-in now, as
+  Chromium 1200 is missing (owner action 2). Not host-level.
+- RESULTS
+
 ### 2026-11-10: install.sh recognizes the smb.conf of UNOS by its header alone
 
 - `deploy.no-legacy-smb-conf-recognition`, at the owner's word to go on ("Continue", in

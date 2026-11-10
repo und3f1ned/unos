@@ -2665,11 +2665,16 @@
         "The legacy SystemStats interface is gone from webui/src/lib/stores/stats.ts, and every widget reads the current shape",
         "tests/test_system.py and the dashboard specs pass"
       ],
+      "verified_by": [
+        "supervisor/tests/test_ws_stats.py",
+        "webui/tests/dashboard.spec.ts"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0006"
-      ]
+      ],
+      "notes": "Done in the code 2026-11-10. Step 1: get_system_stats of supervisor/src/websocket/events.py no longer sends cpu_percent, cpu_count, memory_total, memory_used, memory_percent, network_sent and network_recv, which repeated values of the cpu, memory and network objects, nor disk_total, disk_used and disk_percent, the usage of the container's root that no page read; temperatures stays, the only copy of the sensors (test_ws_stats.py test_the_stats_message_has_one_shape, which failed before the change). Step 2: the legacy SystemStats interface and the flat fields of WebSocketStats are gone from webui/src/lib/stores/stats.ts, and the dashboard reads cpu.percent and memory.percent, used and total, as the Monitor tab does; the fake stats message of dashboard.spec.ts has the current shape (svelte-check passes). Step 3: test_system.py passes. Open: the dashboard specs (dashboard.spec.ts, mobile-layout.spec.ts) on the stand-in, which cannot start Chromium on this workstation now (owner action 2 in PROGRESS.md). Not host-level."
     },
     {
       "id": "system.opt-in-telemetry",
