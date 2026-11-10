@@ -272,6 +272,7 @@ and this index, and `make check-fast` runs it.
 | [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | Apps of linuxserver.io images can be installed to run in the group unos-smb, and only such an app is given a share's folder | accepted | 2026-11-08 |
 | [0318](0318-app-data-lives-only-on-a-mounted-pool-without-handling-for-apps-of-older-versions.md) | App data lives only on a mounted pool, without handling for apps of older versions | accepted | 2026-11-10 |
 | [0323](0323-the-container-and-app-routes-answer-503-with-the-reason-when-docker-does-not-answer.md) | The container and app routes answer 503 with the reason when Docker does not answer | accepted | 2026-11-10 |
+| [0327](0327-the-app-store-lists-its-catalog-when-the-installed-apps-cannot-be-loaded.md) | The App Store lists its catalog when the installed apps cannot be loaded | accepted | 2026-11-10 |
 
 ## Backup
 

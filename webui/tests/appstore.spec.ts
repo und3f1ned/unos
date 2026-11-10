@@ -1,5 +1,4 @@
 import { test, expect } from './fixtures';
-import { TEST_STACK_TOO } from './target';
 
 test.describe('App Store', () => {
   test('should navigate to app store page', async ({ authenticatedPage: page }) => {
@@ -22,12 +21,31 @@ test.describe('App Store', () => {
     await expect(page.locator('button:has-text("Installed")')).toBeVisible();
   });
 
+  test('the catalog does not wait for the installed apps', async ({ authenticatedPage: page }) => {
+    // The installed apps' answer is held, as by a Docker that takes long: the catalog, which
+    // needs no Docker, is listed meanwhile, without a count of installed apps (ADR-0327).
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route('**/api/v1/apps/installed', async (route) => {
+      await held;
+      // The supervisor's 503 (ADR-0323), with a reason of the test's.
+      await route.fulfill({ status: 503, json: { detail: 'Docker is not available: held by the test' } });
+    });
+    await page.goto('/apps');
+
+    await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
+    await expect(page.getByText(/^\d+ apps available$/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Installed', exact: true })).toBeVisible();
+
+    release();
+    await expect(
+      page.getByText('The installed apps could not be loaded: Docker is not available: held by the test'),
+    ).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
+  });
+
   test('should show app cards in catalog', async ({ authenticatedPage: page }) => {
-    test.skip(
-      process.env.E2E_STAND_IN === '1',
-      'The stand-in has no Docker: the App Store shows its catalog only once the installed apps (containers) have loaded' +
-        TEST_STACK_TOO,
-    );
+    // Also on the stand-in, which has no Docker: the catalog does not wait for the installed apps.
     await page.goto('/apps');
     await page.waitForTimeout(2000);
     

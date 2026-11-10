@@ -641,6 +641,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- The App Store lists its catalog also when Docker cannot be reached, and
+  says that the installed apps could not be loaded, with the reason; before,
+  one error hid the whole catalog.
 - When Docker cannot be reached, the container and app API answers 503
   `Docker is not available: <reason>` (it answered 500), and the Containers
   tab shows that error alone, without counts, search, an empty list or the

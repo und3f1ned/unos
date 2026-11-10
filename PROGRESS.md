@@ -211,6 +211,33 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: The App Store lists its catalog without Docker
+
+- `apps.catalog-without-docker`, under the owner's delegation: the Apps page loaded the catalog
+  and the installed apps in one `Promise.all`, so a Docker that could not be reached hid the
+  catalog too. Now each loads on its own, with a state each. The catalog is listed as soon as it
+  came, a count shows only from a load that succeeded, and a failed load says so with the
+  server's message, as the 503 of ADR-0323 (ADR-0327).
+- Test first (ADR-0186): on the stand-in, which has no Docker, "should show app cards in
+  catalog" of `appstore.spec.ts` runs without its skip. The Apps page check of
+  `containers.spec.ts` expects the catalog and the message; both failed before.
+- A fresh-context review found both steps met, and five points:
+  - the catalog still waited for Docker's answer, under one loading flag;
+  - counts of 0 during a refresh;
+  - a spec that matched the Installed tab with its count;
+  - a catalog error without its name;
+  - the record.
+
+  Fixed with "the catalog does not wait for the installed apps" (a held answer on a route
+  fake), exact tab names, and the texts. The notes of `apps.install-on-a-pool` still say that
+  the catalog cards skip on the stand-in, which no longer holds.
+- The App Store, container, app and phone layout specs on the stand-in: 163 passed. The whole
+  of `make e2e-local`: 674 passed, 14 skipped, and 2 failed. The two are the phone layout's menu
+  checks of the dashboard, whose header does not wrap the workstation's host name
+  (beast.tail.home.arpa) beside "Updated" and Refresh: a bug of the dashboard on main, not of
+  this change, which the next change fixes (`webui.mobile-layout`). `make check` passed. Not
+  host-level.
+
 ### 2026-11-10: JSON state files are replaced whole, and a damaged one is kept as .bad
 
 - `architecture.atomic-state-files`, under the owner's delegation: ten of the supervisor's 14
