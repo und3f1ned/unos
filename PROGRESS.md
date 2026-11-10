@@ -211,6 +211,32 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: Uninstall restarts smbd once and restores smb.conf through a temporary file
+
+- `deploy.uninstall-samba-restore`, under the owner's delegation ("work on through the
+  features, ask no questions; I allow everything", in translation): with `smb.conf.original`,
+  `deploy/uninstall.sh` restarted smbd twice when it removed a Samba password, and copied the
+  file straight over smb.conf, so that a copy that stopped halfway left a part of a file
+  (ADR-0175). Now `remove_samba_passwords` leaves the restart to `restore_samba_config`, whose
+  restart with the restored file also ends the removed passwords' connections; when the restore
+  fails, it runs the `try-restart` itself. The restore copies the file to
+  `.smb.conf.unos-restore` next to smb.conf and renames it over smb.conf, and a failed restart
+  after it is reported (ADR-0322, which supersedes ADR-0180).
+- Test first (ADR-0186): `test_with_smb_conf_original_smbd_restarts_once`,
+  `test_a_restart_that_fails_after_the_restore_is_reported` and
+  `test_a_copy_that_fails_halfway_leaves_smb_conf_whole` failed on the script before.
+- A fresh-context review found both steps met in the code, but the rename and its order before
+  the restart unasserted, a failed removal of the temporary file that ended the script under
+  `set -e`, a new file's mode taken from the umask, a warning that named one cause of a failed
+  restart of two units, a CHANGELOG line that said the restart only comes when smbd runs, and the
+  entry passed without the device check of a host-level change. Fixed: three more tests (the
+  copy, the rename and the restart in order, a rename that fails, a temporary file that cannot
+  go), `rm -f ... || true`, `cp -p`, the warning and the CHANGELOG line; the temporary file takes
+  a name of the supervisor's temporary files, which a new installation removes. The entry stays
+  open as host-level (GLOSSARY.md), in the by-hand row of the feature-pass skill: uninstall.sh
+  never runs on the dev device, as for `deploy.uninstall-script`, which names ADR-0322 now. The
+  uninstall tests, 36 passed.
+
 ### 2026-11-10: The web UI's Caddyfile exists once
 
 - `deploy.one-caddyfile` (ADR-0201), under the owner's delegation ("work on through the

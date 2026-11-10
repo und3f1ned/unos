@@ -351,11 +351,12 @@ and this index, and `make check-fast` runs it.
 | [0177](0177-tmpfs-cap-for-small-boards.md) | Size the /tmp tmpfs for boards with 1 GB of RAM | proposed | 2026-11-06 |
 | [0178](0178-docker-log-rotation.md) | Rotate Docker's json-file logs when they grow | proposed | 2026-11-06 |
 | [0179](0179-uninstall-removes-smb-accounts.md) | Uninstall removes the SMB host accounts | superseded by [0180](0180-uninstall-keeps-smb-host-accounts.md) | 2026-11-06 |
-| [0180](0180-uninstall-keeps-smb-host-accounts.md) | Uninstall keeps the SMB host accounts and removes only their exact passdb entries | accepted | 2026-11-06 |
+| [0180](0180-uninstall-keeps-smb-host-accounts.md) | Uninstall keeps the SMB host accounts and removes only their exact passdb entries | superseded by [0322](0322-uninstall-restarts-smbd-once-and-restores-smb-conf-through-a-temporary-file.md) | 2026-11-06 |
 | [0181](0181-downgrade-guidance-for-the-smb-release.md) | Rolling back to the release before SMB accounts is documented, not engineered | superseded by [0207](0207-no-backward-compatibility.md) | 2026-11-06 |
 | [0305](0305-base-images-pinned-by-tag-and-digest.md) | The Dockerfiles pin each base image by tag and digest, and Dependabot moves the digest | accepted | 2026-11-08 |
 | [0307](0307-the-web-ui-waits-for-the-api-also-when-docker-starts-it-at-boot.md) | The web UI waits for the supervisor's API also when Docker starts it at boot | accepted | 2026-11-09 |
 | [0316](0316-the-install-script-recognizes-the-smb-conf-of-unos-by-its-header-alone.md) | The install script recognizes the smb.conf of UNOS by its header alone | accepted | 2026-11-10 |
+| [0322](0322-uninstall-restarts-smbd-once-and-restores-smb-conf-through-a-temporary-file.md) | Uninstall keeps the SMB host accounts, removes only their exact passdb entries, restarts smbd once and restores smb.conf through a temporary file | accepted | 2026-11-10 |
 
 ## Device
 

@@ -3086,7 +3086,8 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0180"
+        "ADR-0180",
+        "ADR-0322"
       ],
       "notes": "The tests read the script; it has not run in this phase. Open: the device check and the re-check after a reboot (ADR-0018)."
     },
@@ -3182,8 +3183,13 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0175"
-      ]
+        "ADR-0175",
+        "ADR-0322"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "notes": "Done in the code 2026-11-10 (ADR-0322, which supersedes ADR-0180). Step 1: with smb.conf.original, remove_samba_passwords leaves the restart to restore_samba_config, whose restart of smbd and nmbd with the restored file also ends the removed passwords' connections; when the restore fails, it runs systemctl try-restart smbd instead (test_with_smb_conf_original_smbd_restarts_once, test_a_copy_that_fails_halfway_leaves_smb_conf_whole, test_a_rename_that_fails_leaves_smb_conf_whole), and a failed restart after the restore is reported (test_a_restart_that_fails_after_the_restore_is_reported). Step 2: the restore copies the file with cp -p to .smb.conf.unos-restore.unos-tmp in /etc/samba and renames it over smb.conf before Samba restarts (test_the_restore_copies_next_to_smb_conf_and_renames_before_samba_restarts); a copy or rename that fails leaves smb.conf as UNOS wrote it and no temporary file, and a removal of the temporary file that fails does not end the script (test_a_temporary_file_that_cannot_go_does_not_stop_the_uninstallation). The first three tests failed on the script before. Open: host-level (GLOSSARY.md: it restarts smbd and replaces /etc/samba/smb.conf), so the check on a host and the re-check after a reboot (ADR-0018), by hand with the device-checks skill: uninstall.sh never runs on the dev device, as for deploy.uninstall-script."
     },
     {
       "id": "deploy.no-legacy-network-recreate",

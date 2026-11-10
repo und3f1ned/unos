@@ -26,6 +26,9 @@ SMB_PASSWORDS_LEFT=()
 # "failed" when smb.conf.original could not be copied back (print_completion
 # says so).
 SAMBA_CONF_RESTORE=""
+# "yes" while the connections of the Samba passwords that remove_samba_passwords
+# removed wait for the restart of smbd that restore_samba_config makes.
+SMBD_RESTART_PENDING=""
 # The export file of UNOS (Shares > NFS); /etc/exports and the other files of
 # /etc/exports.d are not UNOS's and stay.
 NFS_EXPORTS_FILE="/etc/exports.d/unos.exports"
@@ -245,13 +248,25 @@ remove_samba_passwords() {
     done
 
     # An open SMB connection keeps its session when the password is gone. One
-    # restart of smbd, if it runs, ends them all.
+    # restart of smbd ends them all: with smb.conf.original, the one that
+    # restore_samba_config makes with that file (ADR-0322).
     if [ "$removed" = yes ]; then
-        if systemctl try-restart smbd; then
-            log_success "Restarted Samba (smbd): open SMB connections were ended"
+        if [ -f "$SAMBA_DIR/smb.conf.original" ]; then
+            SMBD_RESTART_PENDING=yes
         else
-            log_warn "Could not restart Samba (smbd): open SMB connections end when the computers disconnect, or with: systemctl restart smbd"
+            end_smb_connections
         fi
+    fi
+}
+
+# The restart of smbd, if it runs, that ends the connections of the removed
+# Samba passwords; it starts no stopped smbd.
+end_smb_connections() {
+    SMBD_RESTART_PENDING=""
+    if systemctl try-restart smbd; then
+        log_success "Restarted Samba (smbd): open SMB connections were ended"
+    else
+        log_warn "Could not restart Samba (smbd): open SMB connections end when the computers disconnect, or with: systemctl restart smbd"
     fi
 }
 
@@ -259,22 +274,34 @@ restore_samba_config() {
     log_info "Restoring Samba configuration..."
 
     if [ -f "$SAMBA_DIR/smb.conf.original" ]; then
-        # In a condition: under set -e a failed copy (a read-only or full /etc)
+        # Copied next to smb.conf with its mode, owner and times, then renamed
+        # over it: a copy that fails (a read-only or full /etc) leaves smb.conf
+        # as UNOS wrote it, never a part of the file (ADR-0322). The name is
+        # one of the supervisor's temporary files, which a new installation
+        # removes when one is left. In a condition: under set -e a failure
         # would end the uninstallation before its last text, which names the
-        # Samba passwords that may be left. Samba is not restarted then: the
-        # file may be incomplete.
-        if cp "$SAMBA_DIR/smb.conf.original" "$SAMBA_DIR/smb.conf"; then
+        # Samba passwords that may be left.
+        local staged="$SAMBA_DIR/.smb.conf.unos-restore.unos-tmp"
+        if cp -p "$SAMBA_DIR/smb.conf.original" "$staged" && mv -f "$staged" "$SAMBA_DIR/smb.conf"; then
             # The file from before UNOS leaves NetBIOS on: nmbd, which
             # install.sh turned off (ADR-0275), runs again, also at boot.
             systemctl enable nmbd 2>/dev/null || true
-            systemctl restart smbd nmbd 2>/dev/null || true
+            # Also the restart that ends the removed passwords' connections.
+            SMBD_RESTART_PENDING=""
+            if ! systemctl restart smbd nmbd 2>/dev/null; then
+                log_warn "Could not restart Samba (smbd and nmbd): until they are restarted, Samba may still use UNOS's smb.conf and keep open SMB connections. Restart them with: systemctl restart smbd nmbd"
+            fi
             log_success "Original Samba configuration restored"
         else
+            rm -f "$staged" 2>/dev/null || true
             SAMBA_CONF_RESTORE=failed
             log_warn "Could not restore $SAMBA_DIR/smb.conf from smb.conf.original; copy it back by hand (see the end of the uninstallation)"
         fi
     else
         log_info "No original Samba configuration to restore: $SAMBA_DIR/smb.conf stays"
+    fi
+    if [ "$SMBD_RESTART_PENDING" = yes ]; then
+        end_smb_connections
     fi
 }
 
@@ -330,8 +357,8 @@ print_smb_leftovers() {
     echo ""
     if [ "$SAMBA_CONF_RESTORE" = failed ]; then
         echo "Samba configuration: $SAMBA_DIR/smb.conf could not be replaced by the file"
-        echo "from before UNOS ($SAMBA_DIR/smb.conf.original): it may still be the file"
-        echo "UNOS wrote, or be incomplete. Copy it back, then restart Samba:"
+        echo "from before UNOS ($SAMBA_DIR/smb.conf.original): it is still the file"
+        echo "UNOS wrote. Copy it back, then restart Samba:"
         echo "  cp $SAMBA_DIR/smb.conf.original $SAMBA_DIR/smb.conf"
         echo "  systemctl enable nmbd"
         echo "  systemctl restart smbd nmbd"

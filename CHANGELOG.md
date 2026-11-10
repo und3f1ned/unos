@@ -626,8 +626,10 @@ manager, encrypted backup uploads, health checks, CI checks).
 - `uninstall.sh` removes the Samba passwords of the SMB accounts that UNOS
   created on the host (GECOS `UNOS SMB user`, uid 70000–79999, group 70000),
   only entries stored under exactly the account's name, and when it removed
-  one, restarts smbd once (if it runs), so that open connections end. It keeps
-  these host accounts (without password or login shell) and the group
+  one, restarts smbd once, so that open connections end: when it restores
+  `smb.conf.original`, the restart of smbd and nmbd with the restored file
+  (which starts a stopped smbd too), otherwise a restart of smbd if it runs.
+  It keeps these host accounts (without password or login shell) and the group
   `unos-smb`: files on the pools belong to them, and while the accounts exist
   a new installation of UNOS gives its SMB accounts other uids. Its last
   message says how to remove them, names the accounts whose Samba password it
@@ -635,7 +637,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   `/etc/samba/smb.conf` stays, with the shares it lists (guest shares too),
   naming `smb.conf.unos-import-backup`, the smb.conf that UNOS replaced with
   its own, unless `install.sh` kept the file it replaced (`smb.conf.original`),
-  which is restored.
+  which is restored through a temporary file: a copy that fails leaves
+  smb.conf as UNOS wrote it.
 
 ### Fixed
 - After a power cut, or on a host without the `unos` service, the web

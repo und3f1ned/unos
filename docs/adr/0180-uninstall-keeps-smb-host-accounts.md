@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0322
 date: 2026-11-06
 area: deploy
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0179]
 # ADR-0180: Uninstall keeps the SMB host accounts and removes only their exact passdb entries
 
 ## Context
+
+Superseded by ADR-0322: smbd restarts once, also with `smb.conf.original`, which is restored through a temporary file.
 
 Removing UNOS's SMB host accounts at uninstall (ADR-0179) let a later installation hand their uids, and the files on the pools that belong to them, to someone else (ADR-0109). tdbsam deletes an entry by its lower-cased name, so `pdbedit -x` for a name can remove a foreign entry stored in another letter case (ADR-0108). The generated smb.conf keeps serving its shares after an uninstall, guest shares included, and a copy that failed under `set -e` ended the uninstallation before its last message, which tells the administrator what is left.
 
