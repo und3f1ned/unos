@@ -217,9 +217,17 @@ Open owner actions:
 - Test first (ADR-0186): `test_every_skip_form_in_every_spec_file_is_seen` failed on the old
   detector, which found one of its five skips. With the new one no real spec has a skip on an
   unlisted condition (`test_standin.py` 51 passed); `logs.spec.ts` on the stand-in, 19 passed.
-- `testing.no-compat-skips` passes: its step 1 since 2e4306d, its step 2 as the note says. The
-  review's skips that can still pass over a broken API became the entry
+- `testing.no-compat-skips` passes: its step 1 since 2e4306d, its step 2 as ADR-0316 rewords it.
+  The review's skips that can still pass over a broken API became the entry
   `testing.no-skips-that-hide-api-errors`. Not host-level.
+- A second fresh-context review found that step 2 as written was not met (eight of the nine
+  listed conditions are properties of the target, not missing stand-in features), forms that
+  the detector still missed (a skip after a `//` in a string, `?.`, `['skip']`, `.only`, aliases,
+  annotations) and that a `test.fail` on the stand-in's condition passed. Fixed: ADR-0316 rewords
+  the entry to what the check holds; comments are blanked with strings and regular expression
+  literals kept, and the detector finds those forms and refuses every `test.fail`
+  (`test_an_expected_failure_is_refused_on_any_condition`); the new entry has the review's
+  further checks. Not caught: a skip through a destructured `{ skip }` of a TestInfo.
 - RESULTS
 
 ### 2026-11-09: storage.scrub passes on the scenario check scrub, before and after a reboot

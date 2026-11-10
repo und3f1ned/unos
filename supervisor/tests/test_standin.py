@@ -571,11 +571,19 @@ class TestTargets:
         assert {name: command for name, command in scripts.items() if re.search(r"\bplaywright\b", command)} == {}
 
 
-# A skip, fixme or fail call on any object: test, test.describe(.serial), test.step, a TestInfo
-# under any name, test.info(). A helper of a spec names no method skip, fixme or fail.
+# A skip, fixme or fail of Playwright on any object (test, test.describe, test.step, a TestInfo
+# under any name, test.info()), also through ?., ['skip'] or .only and with spaces before its
+# parenthesis; a reference to one without a call (an alias); and an annotation of that type. A
+# helper of a spec names no method skip, fixme or fail.
+_CHAIN = r"[A-Za-z_$][\w$]*(?:\(\))?(?:\s*\??\.\s*[A-Za-z_$][\w$]*(?:\(\))?)*"
 SKIP_CALL = re.compile(
-    r"(?<![\w$.])[A-Za-z_$][\w$]*(?:\(\))?(?:\.[A-Za-z_$][\w$]*(?:\(\))?)*\.(?:skip|fixme|fail)\("
+    rf"(?<![\w$.])(?:{_CHAIN})\s*(?:\??\.\s*(?P<method>skip|fixme|fail)"
+    r"|\[\s*(?P<q>[\x27\x22])(?P<bracket>skip|fixme|fail)(?P=q)\s*\])(?:\s*\.\s*only)?\s*\("
 )
+SKIP_REFERENCE = re.compile(
+    rf"(?<![\w$.])(?:{_CHAIN})\s*\??\.\s*(?P<method>skip|fixme|fail)\b(?!\s*(?:\(|\.\s*only\s*\())"
+)
+SKIP_ANNOTATION = re.compile(r"\btype\s*:\s*(?P<q>[\x27\x22])(?P<method>skip|fixme|fail)(?P=q)")
 # The files Playwright may load from webui/tests: specs and the modules they import, in every folder.
 SPEC_SUFFIXES = {".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"}
 
@@ -643,18 +651,100 @@ def _call_arguments(text: str, open_paren: int) -> list[str]:
     return [argument.strip() for argument in arguments if argument.strip()]
 
 
+# A "/" that follows one of these, or one of the words, starts a regular expression; after a
+# name, a number or a closing bracket it divides.
+_REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^")
+_REGEX_AFTER_WORDS = {"return", "typeof", "case", "do", "else", "in", "of", "void", "yield", "await", "delete"}
+
+
+def _regex_end(text: str, i: int) -> int | None:
+    """The index after the regular expression literal whose "/" is at ``i``; None if its line has
+    no closing "/"."""
+    j, in_class = i + 1, False
+    while j < len(text) and text[j] != "\n":
+        char = text[j]
+        if char == "\\":
+            j += 2
+            continue
+        if char == "[":
+            in_class = True
+        elif char == "]":
+            in_class = False
+        elif char == "/" and not in_class:
+            j += 1
+            while j < len(text) and text[j].isalpha():  # the flags
+                j += 1
+            return j
+        j += 1
+    return None
+
+
+def _starts_regex(last: str, before: str) -> bool:
+    """Whether a "/" after the code ``before``, whose last character is ``last``, starts a regular
+    expression literal."""
+    if not last or last in _REGEX_AFTER:
+        return True
+    word = re.search(r"(\w+)\s*$", before)
+    return word is not None and word[1] in _REGEX_AFTER_WORDS
+
+
+def _without_comments(text: str) -> str:
+    """``text`` with every comment blanked, its newlines kept; strings and regular expression
+    literals stay as they are."""
+    parts: list[str] = []
+    last = ""  # the last character of code, not white space
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if text.startswith(("//", "/*"), i):
+            end = _skip_over(text, i)
+            parts.append(re.sub(r"[^\n]", " ", text[i:end]))
+            i = end
+            continue
+        if char in "'\"`":
+            end = _skip_over(text, i)
+        elif char == "/" and _starts_regex(last, "".join(parts[-40:])):
+            end = _regex_end(text, i) or i + 1
+        else:
+            end = i + 1
+        parts.append(text[i:end])
+        if text[i:end].strip():
+            last = text[i:end].rstrip()[-1]
+        i = end
+    return "".join(parts)
+
+
 def _skip_calls(folder: Path = SPECS):
-    """(spec, line, condition, reason expression, spec text) of every skip, fixme and fail call in webui/tests."""
+    """(spec, line, method, condition, reason expression, spec text) of every skip, fixme and fail
+    of Playwright in webui/tests, in every form that SKIP_CALL, SKIP_REFERENCE and SKIP_ANNOTATION
+    find outside comments; a reference's condition is "(a reference)", an annotation's
+    "(an annotation)"."""
     for spec in _spec_files(folder):
-        text = spec.read_text(encoding="utf-8")
+        original = spec.read_text(encoding="utf-8")
+        text = _without_comments(original)
+        line = lambda match: text.count("\n", 0, match.start()) + 1  # noqa: E731
         for match in SKIP_CALL.finditer(text):
-            before = text[text.rfind("\n", 0, match.start()) + 1 : match.start()].lstrip()
-            if before.startswith(("*", "/*")) or "//" in before:
-                continue  # in a comment
             arguments = _call_arguments(text, match.end() - 1)
             condition = " ".join(arguments[0].split()) if arguments else ""
             reason = arguments[1] if len(arguments) > 1 else None
-            yield spec, text.count("\n", 0, match.start()) + 1, condition, reason, text
+            yield spec, line(match), match["method"] or match["bracket"], condition, reason, original
+        for match in SKIP_REFERENCE.finditer(text):
+            yield spec, line(match), match["method"], "(a reference)", None, original
+        for match in SKIP_ANNOTATION.finditer(text):
+            yield spec, line(match), match["method"], "(an annotation)", None, original
+
+
+def _unexpected_skips(folder: Path = SPECS) -> list[str]:
+    """The skips that test_specs_skip_only_on_the_listed_conditions refuses: one on a condition
+    that SKIP_CONDITIONS does not list, and every test.fail, a known failure (ADR-0215)."""
+    unexpected = []
+    for spec, line, method, condition, _reason, _text in _skip_calls(folder):
+        where = f"{spec.relative_to(folder).as_posix()}:{line}"
+        if method == "fail":
+            unexpected.append(f"{where}: test.fail on {condition or '(no condition)'}: a known failure (ADR-0215)")
+        elif condition not in SKIP_CONDITIONS:
+            unexpected.append(f"{where}: {condition or '(no condition)'}")
+    return unexpected
 
 
 NAME = re.compile(r"[A-Za-z_$][\w$]*")
@@ -791,11 +881,8 @@ class TestSpecsAndRunner:
         assert hosts and re.findall(r"'([^']*)'", hosts[1]) == ["localhost", "127.0.0.1", "[::1]", "webui"]
 
     def test_specs_skip_only_on_the_listed_conditions(self):
-        found, unexpected = set(), []
-        for spec, line, condition, _reason, _text in _skip_calls():
-            found.add(condition)
-            if condition not in SKIP_CONDITIONS:
-                unexpected.append(f"{spec.name}:{line}: {condition or '(no condition)'}")
+        found = {condition for _spec, _line, _method, condition, _reason, _text in _skip_calls()}
+        unexpected = _unexpected_skips()
         assert unexpected == [], (
             "a skip on a condition that SKIP_CONDITIONS does not list: specs skip for what a local target "
             "lacks, never for an older supervisor (ADR-0207) or a known failure (ADR-0215)"
@@ -803,28 +890,50 @@ class TestSpecsAndRunner:
         assert SKIP_CONDITIONS <= found, f"stale SKIP_CONDITIONS entries: {sorted(SKIP_CONDITIONS - found)}"
 
     def test_every_skip_form_in_every_spec_file_is_seen(self, tmp_path):
-        """A skip, fixme or fail call on any object, in any file of webui/tests and its folders, is
-        seen (testing.no-compat-skips): one that the checks above missed would pass them unseen."""
+        """A skip, fixme or fail call on any object, in any form and in any file of webui/tests and
+        its folders, is seen (testing.no-compat-skips, ADR-0316), and so are a reference to one (an
+        alias) and an annotation of that type: one that the checks above missed would pass them
+        unseen. A comment hides nothing that follows code on its line."""
         (tmp_path / "sub").mkdir()
         (tmp_path / "a.spec.ts").write_text(
             "test('x', async ({}, info) => {\n  info.skip(smbStatus === 404, 'old');\n});\n"
             "test.step.skip('a step', async () => {});\n"
-            "test.describe.serial.fixme(old === true, 'old');\n", encoding="utf-8")
+            "test.describe.fixme(old === true, 'old');\n"
+            "if (url.startsWith('https://')) test.skip(viaUrl, 'r'); // a comment\n"
+            "test.skip (spaced, 'r');\n"
+            "test?.skip(optional, 'r');\n"
+            "test['fixme'](bracketed, 'r');\n"
+            "test.fail.only(failing, 'r');\n"
+            "const skipLater = test.skip;\n"
+            "test('annotated', { annotation: { type: 'skip', description: 'r' } }, async () => {});\n",
+            encoding="utf-8")
         (tmp_path / "sub" / "b.spec.mts").write_text("test.fail(version < 2, 'old');\n", encoding="utf-8")
-        (tmp_path / "c.spec.js").write_text("// test.skip(commented, 'no')\ntest.info().skip(x, 'y');\n",
-                                            encoding="utf-8")
-        found = sorted((spec.relative_to(tmp_path).as_posix(), condition)
-                       for spec, _line, condition, *_ in _skip_calls(tmp_path))
-        assert found == [("a.spec.ts", "'a step'"), ("a.spec.ts", "old === true"), ("a.spec.ts", "smbStatus === 404"),
-                         ("c.spec.js", "x"), ("sub/b.spec.mts", "version < 2")]
+        (tmp_path / "c.spec.js").write_text("// test.skip(commented, 'no')\n/* test.skip(blocked, 'no') */\n"
+                                            "test.info().skip(x, 'y');\n", encoding="utf-8")
+        found = sorted((spec.relative_to(tmp_path).as_posix(), method, condition)
+                       for spec, _line, method, condition, *_ in _skip_calls(tmp_path))
+        assert found == [
+            ("a.spec.ts", "fail", "failing"), ("a.spec.ts", "fixme", "bracketed"), ("a.spec.ts", "fixme", "old === true"),
+            ("a.spec.ts", "skip", "'a step'"), ("a.spec.ts", "skip", "(a reference)"), ("a.spec.ts", "skip", "(an annotation)"),
+            ("a.spec.ts", "skip", "optional"), ("a.spec.ts", "skip", "smbStatus === 404"), ("a.spec.ts", "skip", "spaced"),
+            ("a.spec.ts", "skip", "viaUrl"), ("c.spec.js", "skip", "x"), ("sub/b.spec.mts", "fail", "version < 2"),
+        ]
+
+    def test_an_expected_failure_is_refused_on_any_condition(self, tmp_path):
+        """test.fail marks a known failure, which ADR-0215 rules out, also on the stand-in's condition."""
+        (tmp_path / "a.spec.ts").write_text(
+            "test.fail(process.env.E2E_STAND_IN === '1', 'The stand-in has no disks' + TEST_STACK_TOO);\n",
+            encoding="utf-8")
+        assert _unexpected_skips(tmp_path) == [
+            "a.spec.ts:1: test.fail on process.env.E2E_STAND_IN === '1': a known failure (ADR-0215)"]
 
     def test_every_skip_gives_its_reason(self):
         calls = list(_skip_calls())
-        assert any(call[2] == STAND_IN_SKIP for call in calls), "no skip on E2E_STAND_IN found"
+        assert any(call[3] == STAND_IN_SKIP for call in calls), "no skip on E2E_STAND_IN found"
         test_stack_too = _string_value("TEST_STACK_TOO", (SPECS / "target.ts").read_text(encoding="utf-8"))
         assert "compose test stack" in test_stack_too, "webui/tests/target.ts: no TEST_STACK_TOO"
         missing = []
-        for spec, line, condition, reason, text in calls:
+        for spec, line, _method, condition, reason, text in calls:
             value = _string_value(reason, text)
             if not value.strip():
                 missing.append(f"{spec.name}:{line}: no reason (string literals and string constants joined by +)")
