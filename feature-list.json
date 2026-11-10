@@ -1980,11 +1980,16 @@
         "With Docker down, Apps lists the catalog and says that the installed apps cannot be loaded",
         "On the stand-in, which has no Docker, the catalog-cards test of webui/tests/appstore.spec.ts runs instead of being skipped"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
-        "ADR-0215"
+        "ADR-0215",
+        "ADR-0327"
       ],
-      "notes": "webui/src/routes/apps/+page.svelte loads the catalog and the installed apps in one Promise.all, so a failure of either hides both."
+      "notes": "webui/src/routes/apps/+page.svelte loaded the catalog and the installed apps in one Promise.all, so a failure of either hid both. Passed 2026-11-10 (ADR-0327): the page loads them each on its own, with a state each, lists the catalog as soon as it came, and shows a count only from a load that succeeded. Step 1: on the stand-in, whose supervisor answers GET /apps/installed with 503 (ADR-0323), the Apps page lists the catalog, says \"The installed apps could not be loaded: Docker is not available: ...\", gives only the number of apps available, and its Installed tab has no count and no \"No apps installed\" (containers.spec.ts, \"the Apps page lists the catalog and says that the installed apps cannot be loaded\"); with the answer held on a route fake, the catalog is listed meanwhile (appstore.spec.ts, \"the catalog does not wait for the installed apps\"). Step 2: \"should show app cards in catalog\" of appstore.spec.ts runs on the stand-in without its skip. Both of the first checks failed before the change. A fresh-context review found both steps met, and: the catalog still waited for Docker's answer under one loading flag; counts of 0 during a refresh; a spec that matched the tab with its count; an unnamed catalog error; and the record. All fixed. Not host-level.",
+      "verified_by": [
+        "webui/tests/appstore.spec.ts",
+        "webui/tests/containers.spec.ts"
+      ]
     },
     {
       "id": "backup.create-and-download",

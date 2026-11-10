@@ -42,9 +42,18 @@
 
 	let catalog: AppTemplate[] = [];
 	let installed: InstalledApp[] = [];
-	let loading = true;
+	// The catalog and the installed apps load each on its own: the catalog needs no Docker, and is
+	// listed as soon as it came, while the installed apps wait for Docker's answer, or fail as when
+	// Docker cannot be reached (503, ADR-0323). A count is shown only from a load that succeeded,
+	// and each failed load says so (ADR-0327). `error` is for the actions on an app.
+	type LoadState = 'loading' | 'loaded' | 'failed';
+	let catalogState: LoadState = 'loading';
+	let installedState: LoadState = 'loading';
+	let catalogError = '';
+	let installedError = '';
 	let error = '';
 	let notice = '';
+	$: loading = catalogState === 'loading' || installedState === 'loading';
 	let searchQuery = '';
 	let selectedCategory = '';
 	let activeTab: 'catalog' | 'installed' = 'catalog';
@@ -102,15 +111,36 @@
 		await refresh();
 	});
 
-	async function refresh() {
-		loading = true;
-		error = '';
+	const reasonOf = (reason: unknown) => (reason instanceof Error ? reason.message : String(reason));
+
+	async function loadCatalog() {
+		catalogState = 'loading';
 		try {
-			[catalog, installed] = await Promise.all([getAppCatalog(), getInstalledApps()]);
-		} catch (e: any) {
-			error = e.message;
+			catalog = await getAppCatalog();
+			catalogError = '';
+			catalogState = 'loaded';
+		} catch (e) {
+			catalogError = reasonOf(e);
+			catalogState = 'failed';
 		}
-		loading = false;
+	}
+
+	async function loadInstalled() {
+		installedState = 'loading';
+		try {
+			installed = await getInstalledApps();
+			installedError = '';
+			installedState = 'loaded';
+		} catch (e) {
+			installed = [];
+			installedError = reasonOf(e);
+			installedState = 'failed';
+		}
+	}
+
+	async function refresh() {
+		error = '';
+		await Promise.all([loadCatalog(), loadInstalled()]);
 	}
 
 	function openDetail(app: AppTemplate) {
@@ -213,7 +243,11 @@
 			<div>
 				<h1 class="page-title">{$t('apps.title')}</h1>
 				<p class="text-sm text-secondary">
-					{$t('apps.summary', { available: catalog.length, installed: installed.length })}
+					{#if catalogState === 'loaded' && installedState === 'loaded'}
+						{$t('apps.summary', { available: catalog.length, installed: installed.length })}
+					{:else if catalogState === 'loaded'}
+						{$t('apps.summaryAvailable', { available: catalog.length })}
+					{/if}
 				</p>
 			</div>
 		</div>
@@ -224,6 +258,14 @@
 
 	{#if error}
 		<Alert variant="error">{error}</Alert>
+	{/if}
+
+	{#if catalogError}
+		<Alert variant="error">{$t('apps.catalogLoadError', { error: catalogError })}</Alert>
+	{/if}
+
+	{#if installedError}
+		<Alert variant="error">{$t('apps.installed.loadError', { error: installedError })}</Alert>
 	{/if}
 
 	{#if notice}
@@ -251,13 +293,17 @@
 		>
 			<span class="flex items-center gap-2">
 				<CheckCircle2 class="w-4 h-4" />
-				{$t('apps.tabs.installed', { count: installed.length })}
+				{installedState === 'loaded'
+					? $t('apps.tabs.installed', { count: installed.length })
+					: $t('apps.tabs.installedUnknown')}
 			</span>
 		</button>
 	</div>
 
-	{#if loading}
+	{#if activeTab === 'catalog' && catalogState === 'loading' && catalog.length === 0}
 		<p class="loading-text">{$t('apps.loading')}</p>
+	{:else if activeTab === 'catalog' && catalogState === 'failed' && catalog.length === 0}
+		<!-- The error above says why nothing is listed. -->
 	{:else if activeTab === 'catalog'}
 		<!-- Featured Apps Section -->
 		{#if featuredApps.length > 0 && !searchQuery && !selectedCategory}
@@ -437,7 +483,11 @@
 		</div>
 	{:else}
 		<!-- Installed Apps -->
-		{#if installed.length === 0}
+		{#if installedState === 'loading'}
+			<p class="loading-text">{$t('apps.loading')}</p>
+		{:else if installedState === 'failed'}
+			<!-- The error above says why nothing is listed. -->
+		{:else if installed.length === 0}
 			<EmptyState
 				icon={Package}
 				title={$t('apps.noneInstalled')}

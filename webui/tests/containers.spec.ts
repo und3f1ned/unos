@@ -228,12 +228,24 @@ test.describe('Containers without Docker (stand-in)', () => {
     await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
   });
 
-  test('the Apps page says that Docker is not available', async ({ authenticatedPage: page }) => {
+  test('the Apps page lists the catalog and says that the installed apps cannot be loaded', async ({
+    authenticatedPage: page,
+  }) => {
     const answer = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/apps/installed');
     await page.goto('/apps');
 
     expect((await answer).status()).toBe(503);
-    await expect(page.locator('.alert').getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    const alert = page.locator('.alert', { hasText: 'The installed apps could not be loaded' });
+    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    // The catalog does not wait for Docker (apps.catalog-without-docker).
+    await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
+    await expect(page.getByText(/^\d+ apps available$/)).toBeVisible();
+    await expect(page.getByText(/installed$/)).toHaveCount(0);
+
+    // The Installed tab has no count, and says why it lists nothing, instead of "No apps installed".
+    await page.getByRole('button', { name: 'Installed', exact: true }).click();
+    await expect(page.getByText('No apps installed')).toHaveCount(0);
+    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
   });
 });
 
