@@ -351,6 +351,7 @@ and this index, and `make check-fast` runs it.
 | [0181](0181-downgrade-guidance-for-the-smb-release.md) | Rolling back to the release before SMB accounts is documented, not engineered | superseded by [0207](0207-no-backward-compatibility.md) | 2026-11-06 |
 | [0305](0305-base-images-pinned-by-tag-and-digest.md) | The Dockerfiles pin each base image by tag and digest, and Dependabot moves the digest | accepted | 2026-11-08 |
 | [0307](0307-the-web-ui-waits-for-the-api-also-when-docker-starts-it-at-boot.md) | The web UI waits for the supervisor's API also when Docker starts it at boot | accepted | 2026-11-09 |
+| [0316](0316-the-install-script-recognizes-the-smb-conf-of-unos-by-its-header-alone.md) | The install script recognizes the smb.conf of UNOS by its header alone | accepted | 2026-11-10 |
 
 ## Device
 
@@ -392,7 +393,7 @@ and this index, and `make check-fast` runs it.
 | [0189](0189-smb-code-tested-against-a-fake-host.md) | SMB code is tested against a fake host layer, real testparm and the local stand-in | accepted | 2026-11-06 |
 | [0215](0215-e2e-only-against-a-local-stand-in.md) | E2E tests run only against local targets, never against the device | accepted | 2026-11-07 |
 | [0261](0261-the-stand-ins-test-administrator-is-created-through-the-setup-page.md) | The stand-in's test administrator is created through the setup page, by a first Playwright run | accepted | 2026-11-07 |
-| [0316](0316-the-e2e-specs-skip-only-on-listed-conditions-of-the-local-target-and-expect-no-failure.md) | The E2E specs skip only on listed conditions of the local target, and expect no failure | accepted | 2026-11-10 |
+| [0317](0317-the-e2e-specs-skip-only-on-listed-conditions-of-the-local-target-and-expect-no-failure.md) | The E2E specs skip only on listed conditions of the local target, and expect no failure | accepted | 2026-11-10 |
 
 ## CI
 

@@ -217,20 +217,20 @@ Open owner actions:
 - Test first (ADR-0186): `test_every_skip_form_in_every_spec_file_is_seen` failed on the old
   detector, which found one of its five skips. With the new one no real spec has a skip on an
   unlisted condition (`test_standin.py` 51 passed); `logs.spec.ts` on the stand-in, 19 passed.
-- `testing.no-compat-skips` passes: its step 1 since 2e4306d, its step 2 as ADR-0316 rewords it.
+- `testing.no-compat-skips` passes: its step 1 since 2e4306d, its step 2 as ADR-0317 rewords it.
   The review's skips that can still pass over a broken API became the entry
   `testing.no-skips-that-hide-api-errors`. Not host-level.
 - A second fresh-context review found that step 2 as written was not met (eight of the nine
   listed conditions are properties of the target, not missing stand-in features), forms that
   the detector still missed (a skip after a `//` in a string, `?.`, `['skip']`, `.only`, aliases,
-  annotations) and that a `test.fail` on the stand-in's condition passed. Fixed: ADR-0316 rewords
+  annotations) and that a `test.fail` on the stand-in's condition passed. Fixed: ADR-0317 rewords
   the entry to what the check holds; comments are blanked with strings and regular expression
   literals kept, and the detector finds those forms and refuses every `test.fail`
   (`test_an_expected_failure_is_refused_on_any_condition`); the new entry has the review's
   further checks.
 - A third fresh-context review found step 2's "in any form" still not met: a `{ skip }`
   destructured from `test`, a template literal or `?.` in brackets, a parenthesized `(test)` and a
-  template literal annotation passed unseen. It also found that ADR-0316 called the listed
+  template literal annotation passed unseen. It also found that ADR-0317 called the listed
   conditions permanent while `testing.no-skips-that-hide-api-errors` changes one, and, as nits, a
   division or a regular expression literal that the heuristic misread and that hid the skip after
   it, two quadratic paths on long words and chains, a stale count in the notes and a `test.fixme`
@@ -238,7 +238,7 @@ Open owner actions:
   parser (`SKIP_SCAN`, run by node with `webui/node_modules/typescript`), which finds a skip,
   fixme or fail called or referenced on any object, destructured or as an annotation, and fails
   on a file that does not parse; the regex detector and its tokenizer are gone, and with them the
-  misreads and the quadratic paths; every `test.fixme` is refused like `test.fail`; ADR-0316 and
+  misreads and the quadratic paths; every `test.fixme` is refused like `test.fail`; ADR-0317 and
   step 2 say what the check holds and what it does not see (a name that the code computes or
   passes as a value), and the notes give the counts of the new test.
 - Tests first (ADR-0186): `test_every_skip_form_in_every_spec_file_is_seen`, now with 22 skips in
@@ -254,14 +254,70 @@ Open owner actions:
   scan no longer looks for forms one by one; it reports every use of the names skip, fixme, fail
   and expectedStatus that a file writes out, a member, a destructured name, a key
   `expectedStatus`, an import alias or any other string of a name alone, and the check refuses
-  all of them but a skip on a listed condition (ADR-0316 and step 2 say so). Also fixed from its
+  all of them but a skip on a listed condition (ADR-0317 and step 2 say so). Also fixed from its
   nits: the reason check takes a folder and has a test of its own
   (`test_a_skip_without_its_reason_is_refused`), the parse test feeds a file whose readable skip
   is on a listed condition, and the notes say that the skip on `E2E_OLD_SUPERVISOR` was a manual
-  run. Recorded in ADR-0316: conditions are compared as text, a comment in a condition or a reason
+  run. Recorded in ADR-0317: conditions are compared as text, a comment in a condition or a reason
   makes the check refuse more, and the Unit Tests job of the CI workflow (off, ADR-0230) installs
   no web UI packages, so the checks would skip there. The forms test holds 36 uses in five files,
   which the scan before failed on; `test_standin.py` 54 passed.
+
+### 2026-11-10: install.sh recognizes the smb.conf of UNOS by its header alone
+
+- `deploy.no-legacy-smb-conf-recognition`, at the owner's word to go on ("Continue", in
+  translation), under ADR-0207: `configure_samba` of `deploy/install.sh` kept any smb.conf with
+  `server string = UNOS NAS`, for installations whose shares were not imported into the database
+  yet. It now keeps only a file whose first two lines are the header that the supervisor writes
+  (ADR-0074), as the supervisor's own check does; any other file, one with only that server
+  string included, is replaced, and kept as `smb.conf.original` only when there is none yet
+  (ADR-0316). The text it writes is the function `unos_smb_conf`, which the check compares with.
+  CHANGELOG.md says so; the server string stays in the `[global]` of ADR-0281 but marks nothing.
+- Tests first (ADR-0186): a re-run over a file with the header and without the server string
+  keeps it; a file with only the server string is replaced; these failed before the change. A
+  file with a part of the header, the header below its first line, indented, after a byte order
+  mark or with CRLF line ends is replaced too, and a re-run keeps no copy of a file it replaces
+  when `smb.conf.original` exists. 182 tests of `test_deploy_scripts.py` passed. The entry is
+  host-level (GLOSSARY.md: Samba's smb.conf on the host), so `passes` stays false until a run of
+  `install.sh` on a host with the reboot check (ADR-0018), like `deploy.install-script`; the
+  feature-pass skill lists it among the checks by hand, and the notes give the steps.
+- The fresh-context review (ADR-0017) found no blocker. Fixed: the texts said that a replaced
+  file is always kept as `smb.conf.original`, but after the first run that file exists and a
+  re-run keeps no copy (now said, and tested); a comment of `test_smbconf.py` still named the old
+  recognition; the check read a prefix of the first line, looser than the supervisor's, so it
+  kept a file cut off in its header, and no test pinned that it must be the first line: it now
+  compares the whole header, and the tests cover those cases. Recorded in ADR-0316, not changed:
+  a file of UNOS whose first lines someone changed is replaced without a copy, where the
+  supervisor would have kept its hand-made sections (ADR-0092). ADR-0281 keeps its remark on the
+  server string, which ADR-0316 says no longer holds, as ADR-0281's decision of the values stands.
+  `make check` passed.
+
+### 2026-11-10: the certificate code keeps no fix-ups for files of older versions
+
+- `security.no-legacy-certificate-fixups`, at the owner's word to go on ("Continue", in
+  translation), under ADR-0207: `_write_private_key` no longer tightens an existing key file, the
+  self-signed generation no longer chmods one before openssl, and the delete no longer takes any
+  id inside `CERTS_DIR` for names that older versions stored: it takes only the names that an
+  upload and a self-signed certificate store.
+- Tests first (ADR-0186): the delete of `My NAS`, `*`, `a b.local` and `-x.local` answers 400
+  and keeps the file, and the certificate code has no chmod; both failed before the change. The
+  tests of 0644 keys and of the name `My NAS` are gone.
+- The fresh-context review (ADR-0017) found no blocker and three things that are fixed: the
+  removed tests were the only ones of a key file that a new upload replaces whole
+  (`test_a_new_upload_replaces_the_whole_key_file`); the self-signed key was 0600 only because
+  OpenSSL creates its key files so (LibreSSL's are 0644), and openssl wrote the new key over the
+  stored one before it refused the subject, so openssl now prints the key and
+  `_write_private_key` stores it after openssl succeeded; the listing showed each chain file
+  `<name>.chain.crt` as a certificate, whose id the delete now refused for some names, so the
+  chain is stored as `<name>.chain.pem` and the listing shows only the names that the delete
+  takes (`test_every_listed_certificate_can_be_deleted`). Both new tests failed on the code
+  before. Recorded, not changed: an IP address id in another form (`custom_0:0::1`) answers 400
+  instead of 404, which the web UI never sends; older gaps of the certificate code (untested
+  error paths, the unchecked organization and country, openssl on the event loop, symlinks
+  followed) went into the notes of `security.custom-certificates`. `test_security.py` 119
+  passed.
+- `passes` stays false: `make e2e-local` cannot start Chromium on this workstation now (owner
+  action 2), and the web UI calls the delete and the listing. Not host-level.
 
 ### 2026-11-10: install.sh and update.sh start UNOS without a compose down first
 

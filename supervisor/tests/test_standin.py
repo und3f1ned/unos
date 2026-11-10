@@ -935,7 +935,7 @@ class TestSpecsAndRunner:
     def test_every_skip_form_in_every_spec_file_is_seen(self, tmp_path):
         """Every use of the names skip, fixme, fail and expectedStatus that a file of webui/tests
         and its folders writes out is seen and refused, but a skip on a listed condition
-        (testing.no-compat-skips, ADR-0316): a member of any object, also inside casts, called or
+        (testing.no-compat-skips, ADR-0317): a member of any object, also inside casts, called or
         not, a destructured name, an import alias and a string of the name alone, an annotation's
         type among them. One that the checks above missed would pass them unseen. TypeScript's
         parser reads the files, so neither a comment nor a division or a regular expression literal

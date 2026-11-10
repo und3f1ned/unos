@@ -101,7 +101,7 @@ class TestGlobal:
         assert "   smb3 unix extensions = no\n" in text
         assert "   invalid users = root\n" in text
         assert "   cache directory = /run/samba\n" in text
-        assert "   server string = UNOS NAS\n" in text  # install.sh recognizes a UNOS file by it
+        assert "   server string = UNOS NAS\n" in text  # pinned by ADR-0281
 
     @pytest.mark.parametrize("guest", [False, True])
     def test_samba_writes_its_own_log_file_into_ram(self, guest):

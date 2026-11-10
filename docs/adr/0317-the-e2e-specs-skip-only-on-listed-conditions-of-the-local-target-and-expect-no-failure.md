@@ -5,7 +5,7 @@ area: testing
 decided-by: agent
 ---
 
-# ADR-0316: The E2E specs skip only on listed conditions of the local target, and expect no failure
+# ADR-0317: The E2E specs skip only on listed conditions of the local target, and expect no failure
 
 ## Context
 
@@ -56,7 +56,7 @@ check refuse every use of the names instead of looking for forms.
 - No spec, fake or helper of `webui/tests` uses the names skip, fixme, fail or expectedStatus,
   as a member or as such a string, for anything else; a plain variable of that name stays
   allowed.
-- A name that the code builds (`'sk' + 'ip'`) or reads from data is not seen.
+- A name that the code builds (`'sk' + 'ip'`), reads from data or runs from a string (`eval`) is not seen.
 - A listed condition is compared as text: what its names stand for (a constant that a spec
   defines) and a comment inside a condition or a reason are the review's, and a comment there
   makes the check refuse more, never less.

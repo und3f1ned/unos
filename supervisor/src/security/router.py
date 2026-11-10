@@ -393,7 +393,7 @@ def _certificate_files(name: str) -> tuple[Path, Path, Path]:
     files = (
         certs_path / f"{name}.crt",
         certs_path / f"{name}.key",
-        certs_path / f"{name}.chain.crt",
+        certs_path / f"{name}.chain.pem",
     )
     if any(path.parent != certs_path for path in files):
         raise ValueError(f"Invalid certificate name: {name!r}")
@@ -413,12 +413,9 @@ def _uploaded_certificate_name(common_name: str) -> str | None:
 
 
 def _write_private_key(path: Path, key: str) -> None:
-    """Write ``key`` to ``path``, readable and writable by the owner only (0600)."""
+    """Write ``key`` to ``path``, a file created readable and writable by the owner only (0600)."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
     with os.fdopen(fd, "w") as fh:
-        # open() applies the mode only to a new file: tighten one that already
-        # existed (older versions wrote uploaded keys 0644) before writing.
-        os.fchmod(fd, 0o600)
         fh.write(key)
 
 
@@ -548,6 +545,10 @@ def get_custom_certificates() -> list[Certificate]:
         return certs
 
     for cert_file in certs_path.glob("*.crt"):
+        # Only what an upload or a self-signed certificate stored: the names
+        # that the delete takes.
+        if _uploaded_certificate_name(cert_file.stem) != cert_file.stem:
+            continue
         info = get_certificate_info(str(cert_file))
         if info:
             # Check if it's self-signed (issuer matches subject)
@@ -645,19 +646,14 @@ async def generate_self_signed_certificate(
         if request.country:
             subject += f"/C={_subject_value(request.country)}"
 
-        # openssl creates a new key file 0600, but writes into an existing one
-        # without changing its mode: tighten a key an older version left 0644.
-        try:
-            key_file.chmod(0o600)
-        except FileNotFoundError:
-            pass
-
-        # Generate self-signed certificate
+        # Generate self-signed certificate. openssl prints the new key, which
+        # is stored like an uploaded one once openssl has succeeded: one writer
+        # of keys (0600), and a failure leaves the stored key as it was.
         result = subprocess.run([
             "openssl", "req", "-x509", "-nodes",
             "-days", str(request.validity_days),
             "-newkey", "rsa:2048",
-            "-keyout", str(key_file),
+            "-keyout", "-",
             "-out", str(cert_file),
             "-subj", subject,
             "-addext", f"subjectAltName={san}"
@@ -665,6 +661,7 @@ async def generate_self_signed_certificate(
 
         if result.returncode != 0:
             raise HTTPException(500, f"Failed to generate certificate: {result.stderr}")
+        _write_private_key(key_file, result.stdout)
 
         return {
             "status": "ok",
@@ -744,12 +741,12 @@ async def delete_certificate(
     if not cert_id.startswith("custom_"):
         raise HTTPException(400, "Can only delete custom certificates")
 
-    # Not re-validated as a host name: certificates stored by older versions
-    # under other names must stay deletable. The files must be in CERTS_DIR.
-    try:
-        cert_file, key_file, chain_file = _certificate_files(cert_id.removeprefix("custom_"))
-    except ValueError:
-        raise HTTPException(400, "Invalid certificate id") from None
+    # Certificates are stored under the names that an upload and a self-signed
+    # certificate take, which also keeps the files in CERTS_DIR.
+    name = cert_id.removeprefix("custom_")
+    if _uploaded_certificate_name(name) != name:
+        raise HTTPException(400, "Invalid certificate id")
+    cert_file, key_file, chain_file = _certificate_files(name)
 
     if not cert_file.exists():
         raise HTTPException(404, "Certificate not found")
