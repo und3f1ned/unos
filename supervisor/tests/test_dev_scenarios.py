@@ -7,8 +7,9 @@ over one model in memory of a pool with its folders, trash and volumes, the shar
 users, the SMB host accounts and Samba's passdb, the disks and the backups. Its Samba serves
 sessions as the device's does for the checks: access per share, a closed tree connect when a
 share's access shrinks (ADR-0103), the end of an account's sessions at a password change or a
-deletion (ADR-0104), and a failed sign-in that changes passdb.tdb only while a lockout counts
-failures, and then not for one of the two passwords that the history holds (ADR-0278, ADR-0310).
+deletion (ADR-0104), a failed sign-in that Samba counts in passdb.tdb but for one of the two
+passwords that the history holds (ADR-0278), and the lock of an account after 5 of them, which
+refuses the right password as well and writes nothing (ADR-0334).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 * every area (files, volumes, smart, backups, smb, smbconf, scrub) passes against the fake, prints a
@@ -149,10 +150,9 @@ class FakeSmbSession:
         self.share = share
         self.local: dict[str, str] = {"data.txt": scenario.DATA, "data2.txt": scenario.DATA2}
         self.problem = None
-        account = nas.passdb.get(user)
-        if account is None or account["password"] != password:
-            nas.failed_sign_in(user, password)
-            self.problem = "session setup failed: NT_STATUS_LOGON_FAILURE"
+        status = nas.sign_in(user, password)
+        if status is not None:
+            self.problem = f"session setup failed: {status}"
         elif nas.level(share, user) is None:
             self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
         self.level = nas.level(share, user)  # what the tree connect was granted
@@ -242,7 +242,9 @@ class FakeNas:
         self.quotas = False
         self.sessions: list[FakeSmbSession] = []
         self.passdb_mtime = 1
-        self.lockout = "0"  # Samba's "bad lockout attempt": none, as UNOS leaves it (ADR-0280)
+        # Samba's account policies as UNOS's reconcile sets them (ADR-0278, ADR-0334), by the keys of
+        # scenario.SAMBA_POLICIES.
+        self.policies = {"history": "3", "duration": "5", "reset": "5", "lockout": "5"}
         self.log: list[str] = []
         self.sector_count = 1000
         self.calls: list[tuple] = []
@@ -407,16 +409,33 @@ class FakeNas:
             if session.share == share:
                 session.tree_closed = True
 
-    def failed_sign_in(self, user: str, password: str) -> None:
-        """Samba stores the account's entry again after a wrong password; while no lockout counts
-        failures its bytes stay the same, which tdb does not write (ADR-0310). With a lockout,
-        each counted failure writes it, but for the two previous passwords (ADR-0278)."""
+    def sign_in(self, user: str, password: str) -> str | None:
+        """Samba's check of a sign-in (source3/auth/check_samsec.c): None when it is taken, else
+        its NT status. A locked account is refused before its password is checked, which writes
+        nothing; a wrong password counts while a lockout is set, but for the two previous
+        passwords (ADR-0278), and the count is written to passdb.tdb; the failure that reaches the
+        threshold locks the account (ADR-0334). The right password sets a count back to 0, which
+        is written too. Without a lockout a failure writes nothing (ADR-0310)."""
         account = self.passdb.get(user)
         if account is None:
-            return
-        counted = self.lockout_value() != "0" and password not in account["history"]
-        if counted or "wrong-password-writes" in self.bugs:
+            return "NT_STATUS_LOGON_FAILURE"
+        if account["locked"]:
+            if "locked-writes" in self.bugs:
+                self.passdb_mtime += 1
+            return "NT_STATUS_ACCOUNT_LOCKED_OUT"
+        if account["password"] == password:
+            if account["bad"]:
+                account["bad"] = 0
+                self.passdb_mtime += 1
+            return None
+        threshold = int(self.policy_values()["lockout"])
+        counted = threshold > 0 and password not in account["history"]
+        if counted:
+            account["bad"] += 2 if "counts-twice" in self.bugs else 1
+            account["locked"] = account["bad"] >= threshold and "lockout-ignored" not in self.bugs
+        if (counted and "count-unwritten" not in self.bugs) or "wrong-password-writes" in self.bugs:
             self.passdb_mtime += 1
+        return "NT_STATUS_LOGON_FAILURE"
 
     # --- the API
 
@@ -755,7 +774,8 @@ class FakeNas:
             self.users[uid] = {"username": body["username"], "is_admin": False}
             if body.get("smb_enabled"):
                 self.accounts[body["username"]] = 70000 + uid
-                self.passdb[body["username"]] = {"password": body["password"], "history": []}
+                self.passdb[body["username"]] = {"password": body["password"], "history": [], "bad": 0,
+                                                 "locked": False}
             if "log-password" in self.bugs:
                 self.log.append(f"created {body['username']} with {body['password']}")
             return self.user_info(uid)
@@ -844,10 +864,16 @@ class FakeNas:
 
     def passdb_entries(self):
         self.device_call("passdb_entries")
-        return sorted(self.passdb), "0" if "no-history" in self.bugs else "3", self.lockout_value()
+        return sorted(self.passdb), self.policy_values()
 
-    def lockout_value(self) -> str:
-        return "3" if "lockout" in self.bugs else self.lockout
+    def policy_values(self) -> dict[str, str]:
+        """Samba's account policies, with those of a device that UNOS's reconcile did not set."""
+        values = dict(self.policies)
+        for bug, key, value in (("no-history", "history", "0"), ("no-lockout", "lockout", "0"),
+                                ("long-lockout", "duration", "30")):
+            if bug in self.bugs:
+                values[key] = value
+        return values
 
     def subvolume(self, action, path):
         self.device_call("subvolume")
@@ -876,10 +902,9 @@ class FakeNas:
 
     def smb_list(self, user, password):
         self.device_call("smb_list")
-        account = self.passdb.get(user)
-        if account is None or account["password"] != password:
-            self.failed_sign_in(user, password)
-            return scenario.SmbListing(1, "session setup failed: NT_STATUS_LOGON_FAILURE")
+        status = self.sign_in(user, password)
+        if status is not None:
+            return scenario.SmbListing(1, f"session setup failed: {status}")
         disks = [f"Disk|{name}|" for name in sorted(self.shares) if self.level(name, user)]
         return scenario.SmbListing(0, "\n".join(disks + ["IPC|IPC$|IPC Service"]))
 
@@ -1033,7 +1058,8 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
     assert status == 0, output
     text = "\n".join(step_lines(output))
     for words in ("marked host account", "2770 root:unos-smb", "660 root:unos-smb", "signed session", "read",
-                  "during the session", "NT_STATUS_LOGON_FAILURE", "passdb.tdb", "anonymous", "mandatory",
+                  "during the session", "NT_STATUS_LOGON_FAILURE", "passdb.tdb", "anonymous",
+                  "5 wrong passwords in a row lock the account", "NT_STATUS_ACCOUNT_LOCKED_OUT", "mandatory",
                   "/run/samba/log.samba", "no password", "smb.conf", "host account"):
         assert words in text, words
     # The temporary account had read-write access, then read, then none, then read-write again.
@@ -1455,8 +1481,13 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "share-folder-mode", "2770 root:unos-smb"),
     ("smb", "upload-mode", "660 root:unos-smb"),
     ("smb", "no-history", "Samba's password history is '0', not 3"),
+    ("smb", "no-lockout", "Samba's bad lockout attempt is '0', not 5"),
+    ("smb", "long-lockout", "Samba's lockout duration is '30', not 5"),
     ("smb", "wrong-password-writes", "the replaced password is refused"),
-    ("smb", "lockout", "Samba's bad lockout attempt is '3', not 0"),
+    ("smb", "count-unwritten", "a wrong password is refused"),
+    ("smb", "lockout-ignored", "after 5 wrong passwords the right one answered status 0"),
+    ("smb", "counts-twice", "wrong password 4 of 5 answered NT_STATUS_ACCOUNT_LOCKED_OUT"),
+    ("smb", "locked-writes", "while the account was locked"),
     ("smb", "log-password", "no password of the check"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
@@ -1532,22 +1563,42 @@ def test_the_smart_check_refuses_a_partition_where_a_disk_has_one(nas):
     assert f"/health/disk/{DISK}1" in [path for _, path, _, _ in nas.calls] and f"mmcblk1, sdz, {DISK}1" in output
 
 
-def test_the_smb_check_compares_passdb_at_a_password_the_account_never_had(nas, monkeypatch):
-    """shares.samba-runtime-writes, step 2 (ADR-0310): a wrong password that the account never had
-    leaves passdb.tdb as it was too, which the check compares at its step with a wrong password."""
-    real = nas.failed_sign_in
+def test_the_smb_check_expects_unos_s_account_policies():
+    """Step 3 of the smb check expects Samba's account policies as UNOS's reconcile sets them
+    (ADR-0278, ADR-0334), and its helper on the device reads each of them."""
+    from src.shares import accounts
 
-    def writes_for_a_new_password(user, password):
-        real(user, password)
-        account = nas.passdb.get(user)
-        if account is not None and password not in account["history"]:
-            nas.passdb_mtime += 1
+    assert dict(scenario.SAMBA_POLICIES.values()) == dict(accounts.ACCOUNT_POLICIES)
+    assert scenario.LOCKOUT_ATTEMPTS == accounts.BAD_LOCKOUT_ATTEMPTS == 5
+    for key, (name, _) in scenario.SAMBA_POLICIES.items():
+        assert f'echo "{key} $(pdbedit -P "{name}" 2> /dev/null | tail -n 1)"' in scenario.REMOTE_SAMBA_USERS
 
-    monkeypatch.setattr(nas, "failed_sign_in", writes_for_a_new_password)
-    status, output = run_check("smb", nas)
-    assert status == 1
-    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
-    assert len(failed) == 1 and "a wrong password is refused" in failed[0] and "passdb.tdb" in failed[0], output
+
+def test_the_smb_check_locks_its_account_last_and_deletes_it_locked(nas):
+    """ADR-0334: the lock lasts 5 minutes, so the lockout step is the last that signs in, and the
+    check deletes its account while it is still locked."""
+    out = io.StringIO()
+    check = scenario.Check("smb", nas, nas, out=out, run_id="unoscheck1a2b3c")
+    signed_in, deleted = [], []
+    sign_in, request = nas.sign_in, nas.request
+
+    def signing_in(user, password):
+        signed_in.append(check.number)
+        return sign_in(user, password)
+
+    def requesting(method, path, **kw):
+        if method == "DELETE" and path.startswith("/auth/users/"):
+            deleted.append(sorted(name for name, entry in nas.passdb.items() if entry["locked"]))
+        return request(method, path, **kw)
+
+    nas.sign_in, nas.request = signing_in, requesting
+    status = check.execute(scenario.CHECKS["smb"])
+    output = out.getvalue()
+    assert status == 0, output
+    lock = [int(line.split(".")[0].split()[1]) for line in step_lines(output)
+            if "5 wrong passwords in a row lock the account" in line]
+    assert lock and max(signed_in) == lock[0], output
+    assert deleted == [["unoscheck1a2b3c"]]
 
 
 def test_with_a_guest_share_the_smb_check_tries_no_null_session(nas, monkeypatch):
@@ -1749,10 +1800,14 @@ def test_the_device_gets_the_script_and_the_secrets_on_standard_input_only(stub)
 def test_the_device_reads_pdbedit_without_the_read_only_namespace(stub):
     """tdbsam opens passdb.tdb read-write, which a read-only root refuses (ADR-0304)."""
     device = device_with_stub(stub)
-    (stub.log / "reply").write_text("user test\nuser unoscheck1a2b3c\nhistory account policy value is: 3\n"
-                                    "lockout account policy value is: 0\n")
-    names, history, lockout = device.passdb_entries()
-    assert names == ["test", "unoscheck1a2b3c"] and (history, lockout) == ("3", "0")
+    (stub.log / "reply").write_text("user test\nuser unoscheck1a2b3c\n"
+                                    'history account policy "password history" value is: 3\n'
+                                    'duration account policy "lockout duration" value is: 5\n'
+                                    "reset No account policy by that name!\n"
+                                    'lockout account policy "bad lockout attempt" value is: 5\n')
+    names, policies = device.passdb_entries()
+    assert names == ["test", "unoscheck1a2b3c"]
+    assert policies == {"history": "3", "duration": "5", "reset": "No account policy by that name!", "lockout": "5"}
     argv = (stub.log / "argv").read_text()
     assert "unshare" not in argv and argv.rstrip("\n").endswith("\0bash -s --")
     assert scenario.RO_ROOT not in (stub.log / "stdin").read_text()

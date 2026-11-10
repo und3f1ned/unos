@@ -84,8 +84,9 @@ class FakeSambaHost:
         # lower-cased name -> {"name": stored name, "password": str, "uid": int}
         self.passdb: dict[str, dict] = {}
         # Samba's account policies (pdbedit -P), with Samba's defaults: a fresh host keeps no
-        # password history.
-        self.policies: dict[str, int] = {"password history": 0}
+        # password history and locks no account (the lockout's times are 30 minutes each).
+        self.policies: dict[str, int] = {"password history": 0, "lockout duration": 30, "reset count minutes": 30,
+                                         "bad lockout attempt": 0}
         self.sessions: list[dict] = []
         self.fstab = DEFAULT_FSTAB
         self.busy: dict[str, int] = {}
@@ -334,7 +335,12 @@ class FakeSambaHost:
         return self._result(stdout=f"Added user {name}.\n")
 
     # What pdbedit says about an account policy (source3/utils/pdbedit.c).
-    _POLICY_DESCRIPTIONS = {"password history": "Length of Password History Entries (0 = off)"}
+    _POLICY_DESCRIPTIONS = {
+        "password history": "Length of Password History Entries (0 = off)",
+        "lockout duration": "Lockout duration in minutes (default: 30, -1 => forever)",
+        "reset count minutes": "Reset time after lockout in minutes (default: 30)",
+        "bad lockout attempt": "Lockout users after bad logon attempts (default: 0 => off)",
+    }
 
     def _policy(self, argv):
         """``pdbedit -P <policy>`` prints the value; with ``-C <value>`` it sets it, writing even an

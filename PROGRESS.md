@@ -233,6 +233,24 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: Samba locks an SMB account after 5 failed sign-ins
+
+- `shares.smb-login-protection`, step 1 (ADR-0334, which supersedes ADR-0280 and ADR-0310): the
+  startup reconcile keeps Samba's account policies "lockout duration" 5 (minutes), "reset count
+  minutes" 5 and "bad lockout attempt" 5 beside the password history of 3, each read at every
+  start and set only when it differs (`accounts.ensure_account_policy`). After 5 wrong passwords
+  in a row Samba refuses the account, the right password too, with NT_STATUS_ACCOUNT_LOCKED_OUT
+  for 5 minutes. Tests first: 19 tests of `test_smb_reconcile.py` and 27 of
+  `test_dev_scenarios.py` failed before the change.
+- The smb scenario check: step 3 reads the four policies, the step with a wrong password expects
+  passdb.tdb to change, and a new step, the last that signs in, locks the check's account and
+  expects the refused right password to leave passdb.tdb as it was; the account is deleted
+  while it is locked.
+- `shares.samba-runtime-writes` is back to `passes: false`: ADR-0334 rewords its description and
+  step 2 (a counted failure writes passdb.tdb), until the smb check passes with the lockout
+  before and after a reboot. Open: the deploy and the device checks of both entries, and the
+  review in a fresh context (ADR-0017).
+
 ### 2026-11-10: Limits on open connections and header blocks
 
 - `security.server-limits` (ADR-0333): uvicorn took any number of connections and Caddy header

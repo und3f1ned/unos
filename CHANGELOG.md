@@ -12,6 +12,11 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- After 5 wrong SMB passwords in a row, Samba locks the SMB account for 5
+  minutes, for every computer and for the right password too; the two
+  passwords before the current one do not count. The supervisor sets Samba's
+  lockout policies at its start when they differ. Anyone on the network who
+  knows a username can lock that SMB account in this way.
 - The supervisor serves at most 128 open connections (503 beyond them) and
   64 WebSockets, 16 of them waiting for their sign-in, and Caddy refuses a
   header block over 16 KB (431).

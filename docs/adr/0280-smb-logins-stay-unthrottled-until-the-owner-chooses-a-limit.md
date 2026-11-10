@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-08
 area: shares
 decided-by: agent
 supersedes: [ADR-0102]
+superseded-by: ADR-0334
 ---
 
 # ADR-0280: SMB logins have no rate limit and no lockout, as an accepted risk until the owner chooses how to limit them
 
 ## Context
+
+Superseded by ADR-0334: Samba locks an SMB account for 5 minutes after 5 failed sign-ins, set by the startup reconcile.
 
 ADR-0102 accepted two gaps of SMB sign-ins as a risk: no rate limit or lockout, and no check of SMB-bound passwords against a list of common passwords. ADR-0279 closes the second gap. Closing the first needs a choice with a security cost either way: Samba's lockout per account lets any client on the LAN lock an account out by failing on purpose, and a rate limit per client is a change of the host's firewall, which UNOS does not manage (ADR-0194, `shares.smb-login-protection`).
 

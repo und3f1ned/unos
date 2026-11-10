@@ -429,8 +429,9 @@ are overwritten.
 - **Each share has its own access list:** for each user **No access**,
   **Read only** or **Read & write**. New users have no access to any share.
 - **Administrators cannot use SMB.** Their password controls the whole NAS,
-  and SMB has neither two-factor authentication nor a limit on login
-  attempts. Use a regular account for your files.
+  and SMB has no two-factor authentication: its lock after wrong passwords
+  (see [SMB Access](#smb-access)) only slows down guessing. Use a regular
+  account for your files.
 - Everyone with **Read & write** on a share can create, change, rename and
   delete every file in it, and everyone with **Read only** can read all of
   it. For files that only some people may see, use separate shares.
@@ -1037,6 +1038,18 @@ then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 
+After 5 wrong SMB passwords in a row, Samba locks the user's SMB account for 5
+minutes: until they are over, every computer is refused, with the right
+password too, and then the right password signs in again. Wrong passwords
+count together from every computer; after 5 minutes without one, or a
+successful sign-in, the count starts again. The two passwords before the
+current one do not count, so a computer that still tries the password of
+before a change locks nothing. Anyone on the network who knows a username can
+lock its SMB account in this way, again and again; the web interface and the
+other accounts are not affected, and UNOS does not show the lock; a new
+password does not end it either. **System** → **Logs** names the computer
+whose sign-ins fail (see [Logs](#logs)).
+
 SMB cannot be turned on while Samba still uses an smb.conf that UNOS did not
 write (HTTP 409): on a host that had an smb.conf before, UNOS imports its
 shares and writes its own at its first start. When importing the shares of
@@ -1083,7 +1096,9 @@ common password; see [SMB Access](#smb-access)). Update the saved password on
 every computer and app that connects over SMB (mapped drives, media players,
 sync apps, `cifs` credential files). A device that keeps trying an old
 password is refused each time, and each refusal adds a line to the system's
-log; SMB has no limit on sign-in attempts. If
+log. The two passwords before the current one do not count toward the lock of
+the SMB account; an older one does, and a device that keeps trying it keeps
+the account locked (see [SMB Access](#smb-access)). If
 open SMB connections could not be ended, **Change Password** shows a warning
 that stays until you dismiss it.
 
@@ -1447,6 +1462,7 @@ level Notice, which the source **Samba** lists. Search for `Auth:` to list
 only these lines.
 Each one names the account the computer tried (`user [WORKGROUP]\[alice]`),
 the reason (`status [NT_STATUS_WRONG_PASSWORD]` for a wrong password,
+`[NT_STATUS_ACCOUNT_LOCKED_OUT]` while the account is locked after 5 of them,
 `[NT_STATUS_NO_SUCH_USER]` for a name without SMB) and the computer
 (`remote host [ipv4:192.168.1.50:50122]`, its address and port). To see what
 one computer keeps trying, search for its part, such as
@@ -1772,8 +1788,10 @@ yet: every enabled channel receives every alert, and no other event
 2. ✅ Enable two-factor authentication (2FA), and keep its recovery codes
    somewhere safe
 3. ✅ Use strong, unique passwords, above all for accounts with SMB: SMB has
-   no limit on login attempts and no two-factor authentication. UNOS refuses
-   common passwords for SMB, but not every password that is easy to guess
+   no two-factor authentication, and its lock after 5 wrong passwords still
+   lets anyone on the network try 5 passwords per account every 5 minutes.
+   UNOS refuses common passwords for SMB, but not every password that is easy
+   to guess
 4. ✅ After a password change, update the saved password on every computer
    and app that connects over SMB: a computer with the old one fails to sign
    in again and again. **System** → **Logs**, source **Samba**, shows the
