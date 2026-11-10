@@ -57,5 +57,10 @@ EXPOSE 8080
 # one read from the socket before the application reads the first, so
 # compressed messages (86 bytes on the wire for 65,000) would still let one
 # unauthenticated socket make the supervisor hold hundreds of MiB.
-# Keep both options in supervisor/Dockerfile.test the same.
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--ws-max-size", "65536", "--ws-per-message-deflate", "false"]
+# --limit-concurrency 128: while 128 connections are open, uvicorn answers 503 to
+# a new request instead of letting idle or slow clients hold every file
+# descriptor and the memory of the supervisor; it serves again once they are
+# gone. Room for every tab's live-data socket and Caddy's pooled connections
+# (ADR-0333). Caddy limits the header block to 16 KB (webui/Caddyfile).
+# Keep these options in supervisor/Dockerfile.test the same.
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--ws-max-size", "65536", "--ws-per-message-deflate", "false", "--limit-concurrency", "128"]

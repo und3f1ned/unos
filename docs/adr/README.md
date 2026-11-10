@@ -87,6 +87,7 @@ and this index, and `make check-fast` runs it.
 | [0286](0286-the-audit-logs-lock-holds-across-processes.md) | The audit log's lock holds across processes, through a file lock that the emergency command line takes too | accepted | 2026-11-08 |
 | [0315](0315-pyjwt-and-bcrypt-check-passwords-as-given-and-dependencies-are-pinned.md) | PyJWT and bcrypt check passwords as given, and dependencies are pinned | accepted | 2026-11-09 |
 | [0328](0328-each-audit-entry-carries-the-hash-of-the-one-before-and-the-listing-says-where-the-chain-breaks.md) | Each audit entry carries the hash of the one before, and the listing says where the chain breaks | accepted | 2026-11-10 |
+| [0333](0333-the-supervisor-serves-128-open-connections-and-caddy-16-kb-of-headers.md) | The supervisor serves at most 128 open connections and 64 sockets, and Caddy refuses header blocks over 16 KB | accepted | 2026-11-10 |
 
 ## Auth
 

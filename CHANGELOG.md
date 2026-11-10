@@ -12,6 +12,9 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- The supervisor serves at most 128 open connections (503 beyond them) and
+  64 WebSockets, 16 of them waiting for their sign-in, and Caddy refuses a
+  header block over 16 KB (431).
 - Sessions end on the server: **Logout** ends the session, a password change
   the user's other sessions, and a password set by an administrator, the
   deletion of the user, the emergency `reset-admin`, a restore (but for the

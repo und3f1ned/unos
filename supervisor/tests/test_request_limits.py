@@ -539,6 +539,49 @@ def test_both_images_limit_websocket_messages_alike():
     assert len(auth.encode()) < 1024
 
 
+# --- Open connections (security.server-limits, ADR-0333) ------------------------------
+#
+# Uvicorn answers 503 to a request that comes while as many connections are open as
+# --limit-concurrency allows (its own connection counted): many idle or slow clients cannot
+# hold every file descriptor and the memory of the supervisor, and the server serves again
+# once they are gone.
+
+
+def test_both_images_limit_the_open_connections_alike():
+    limits = {name: _uvicorn_options(name)["limit_concurrency"] for name in DOCKERFILES}
+    assert len(set(limits.values())) == 1, limits
+    # Room for the live-data socket of every open tab and for Caddy's pooled connections, far
+    # below what the supervisor's file descriptors (1024 by default) allow.
+    assert 64 <= limits["Dockerfile"] <= 512
+
+
+def _health(port: int) -> int:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        connection.request("GET", "/api/v1/health")
+        return connection.getresponse().status
+    finally:
+        connection.close()
+
+
+def test_a_request_over_the_connection_limit_is_refused_and_served_again_later():
+    with _uvicorn(app, limit_concurrency=3) as port:
+        assert _health(port) == 200
+        idle = [socket.create_connection(("127.0.0.1", port), timeout=10) for _ in range(2)]
+        try:
+            deadline = time.monotonic() + 5
+            while _health(port) != 503:  # uvicorn counts a connection once it has accepted it
+                assert time.monotonic() < deadline, "uvicorn served a request over its limit"
+                time.sleep(0.05)
+        finally:
+            for connection in idle:
+                connection.close()
+        deadline = time.monotonic() + 5
+        while _health(port) != 200:
+            assert time.monotonic() < deadline, "uvicorn did not serve again once the clients were gone"
+            time.sleep(0.05)
+
+
 class _Recorder:
     """Records what the application receives on each WebSocket (the size of a message, not its text)."""
 

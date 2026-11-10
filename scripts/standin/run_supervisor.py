@@ -230,6 +230,7 @@ def main(argv: list[str] | None = None) -> None:
         # As in supervisor/Dockerfile.
         ws_max_size=65536,
         ws_per_message_deflate=False,
+        limit_concurrency=128,
     )
 
 

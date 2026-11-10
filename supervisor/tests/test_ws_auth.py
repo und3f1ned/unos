@@ -853,3 +853,49 @@ class TestTheProblemsOnTheEventsSocket:
             while len(fast_recheck) < checked + 2:
                 assert ws.receive_json()["type"] == "stats"
                 assert time.monotonic() < deadline, "credentials were not re-checked"
+
+
+class TestSocketCaps:
+    """Uvicorn's --limit-concurrency never refuses a WebSocket upgrade, while every open socket
+    counts toward it: the supervisor caps its sockets itself, before it accepts one (ADR-0333)."""
+
+    @staticmethod
+    def _refused(client):
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/ws/v1/events") as ws:
+                ws.receive_json()
+
+    def test_sockets_waiting_for_their_auth_message_are_capped(self, client, user_token, monkeypatch):
+        monkeypatch.setattr(events, "MAX_SOCKETS_BEFORE_AUTH", 2)
+        with client.websocket_connect("/ws/v1/events") as first, client.websocket_connect("/ws/v1/events"):
+            _wait_for(lambda: events._sockets_before_auth == 2)
+            self._refused(client)
+            # One that signs in no longer waits: there is room again.
+            _auth(first, user_token)
+            assert first.receive_json() == {"type": "auth_ok"}
+            _wait_for(lambda: events._sockets_before_auth == 1)
+            with client.websocket_connect("/ws/v1/events") as third:
+                _auth(third, user_token)
+                assert third.receive_json() == {"type": "auth_ok"}
+        _wait_for(lambda: (events._open_sockets, events._sockets_before_auth) == (0, 0))
+
+    def test_open_sockets_are_capped_and_counted_out_when_they_close(self, client, user_token, monkeypatch):
+        monkeypatch.setattr(events, "MAX_OPEN_SOCKETS", 2)
+        with client.websocket_connect("/ws/v1/events") as first:
+            _auth(first, user_token)
+            assert first.receive_json() == {"type": "auth_ok"}
+            with client.websocket_connect("/ws/v1/events") as second:
+                _auth(second, user_token)
+                assert second.receive_json() == {"type": "auth_ok"}
+                self._refused(client)
+            _wait_for(lambda: events._open_sockets == 1)
+            with client.websocket_connect("/ws/v1/events") as again:
+                _auth(again, user_token)
+                assert again.receive_json() == {"type": "auth_ok"}
+        _wait_for(lambda: events._open_sockets == 0)
+
+    def test_a_refused_sign_in_counts_out_at_once(self, client):
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, "not-a-token")
+            _expect_close(ws, 4401)
+        _wait_for(lambda: (events._open_sockets, events._sockets_before_auth) == (0, 0))

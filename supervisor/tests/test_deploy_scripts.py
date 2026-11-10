@@ -2453,6 +2453,16 @@ class TestBuildContexts:
             volumes = _compose_file(compose)["services"]["webui"].get("volumes", [])
             assert not [volume for volume in volumes if "Caddyfile" in str(volume)], compose
 
+    def test_caddy_refuses_a_header_block_over_16_kb(self):
+        """Caddy is the web UI's and the API's only entry from the network (port 8080 is not
+        published): its limit bounds what a client can make the proxy and uvicorn hold before
+        any credentials are checked (security.server-limits, ADR-0333)."""
+        caddyfile = (REPO_ROOT / "webui" / "Caddyfile").read_text()
+        servers = re.search(r"^\tservers \{\n(.*?)^\t\}", caddyfile, re.MULTILINE | re.DOTALL)
+
+        assert servers, "the global options have no servers block"
+        assert re.search(r"^\t\tmax_header_size 16KB$", servers.group(1), re.MULTILINE), servers.group(1)
+
     def test_nothing_refers_to_a_copy_of_the_caddyfile_in_deploy(self):
         """Only the ledger entry that deleted it names the copy that deploy/ kept of webui/Caddyfile
         (deploy.one-caddyfile, step 2): no script, test, document or ADR."""
