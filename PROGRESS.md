@@ -206,6 +206,22 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: the skip detector sees every form, and testing.no-compat-skips passes
+
+- At the owner's word to go on ("Continue", in translation), after the review of 2026-11-09 had
+  stopped the pass: `test_standin.py`'s detector of skips matched only `test.skip` and its
+  `test.describe` and `testInfo` forms in the top folder's `.ts` files. It now sees a skip, fixme
+  or fail call on any object (`test.step`, a TestInfo under any name, `test.info()`) in every file
+  of `webui/tests` and its folders, of every extension Playwright loads; the fake of
+  `logs.spec.ts` names its method `failWith`, so that no helper looks like a skip.
+- Test first (ADR-0186): `test_every_skip_form_in_every_spec_file_is_seen` failed on the old
+  detector, which found one of its five skips. With the new one no real spec has a skip on an
+  unlisted condition (`test_standin.py` 51 passed); `logs.spec.ts` on the stand-in, 19 passed.
+- `testing.no-compat-skips` passes: its step 1 since 2e4306d, its step 2 as the note says. The
+  review's skips that can still pass over a broken API became the entry
+  `testing.no-skips-that-hide-api-errors`. Not host-level.
+- RESULTS
+
 ### 2026-11-09: storage.scrub passes on the scenario check scrub, before and after a reboot
 
 - At the owner's word to work on through the features ("I allow everything", in translation),

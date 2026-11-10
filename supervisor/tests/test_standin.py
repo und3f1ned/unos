@@ -571,9 +571,17 @@ class TestTargets:
         assert {name: command for name, command in scripts.items() if re.search(r"\bplaywright\b", command)} == {}
 
 
+# A skip, fixme or fail call on any object: test, test.describe(.serial), test.step, a TestInfo
+# under any name, test.info(). A helper of a spec names no method skip, fixme or fail.
 SKIP_CALL = re.compile(
-    r"\b(?:test(?:\.describe(?:\.serial|\.parallel)?)?|testInfo|test\.info\(\))\.(?:skip|fixme|fail)\("
+    r"(?<![\w$.])[A-Za-z_$][\w$]*(?:\(\))?(?:\.[A-Za-z_$][\w$]*(?:\(\))?)*\.(?:skip|fixme|fail)\("
 )
+# The files Playwright may load from webui/tests: specs and the modules they import, in every folder.
+SPEC_SUFFIXES = {".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".cjs", ".jsx"}
+
+
+def _spec_files(folder: Path = SPECS) -> list[Path]:
+    return sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix in SPEC_SUFFIXES)
 CLOSING = {"(": ")", "[": "]", "{": "}"}
 STRING = re.compile(r"""'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`""", re.S)
 
@@ -635,9 +643,9 @@ def _call_arguments(text: str, open_paren: int) -> list[str]:
     return [argument.strip() for argument in arguments if argument.strip()]
 
 
-def _skip_calls():
+def _skip_calls(folder: Path = SPECS):
     """(spec, line, condition, reason expression, spec text) of every skip, fixme and fail call in webui/tests."""
-    for spec in sorted(SPECS.glob("*.ts")):
+    for spec in _spec_files(folder):
         text = spec.read_text(encoding="utf-8")
         for match in SKIP_CALL.finditer(text):
             before = text[text.rfind("\n", 0, match.start()) + 1 : match.start()].lstrip()
@@ -657,7 +665,7 @@ def _constant(name: str, text: str) -> tuple[str, str] | None:
     own = re.search(rf"^\s*(?:export\s+)?const {re.escape(name)}\s*=\s*(.*?);\s*$", text, re.M | re.S)
     if own:
         return own[1], text
-    for path in sorted(SPECS.glob("*.ts")):
+    for path in _spec_files():
         other = path.read_text(encoding="utf-8")
         exported = re.search(rf"^export const {re.escape(name)}\s*=\s*(.*?);\s*$", other, re.M | re.S)
         if exported:
@@ -794,6 +802,22 @@ class TestSpecsAndRunner:
         )
         assert SKIP_CONDITIONS <= found, f"stale SKIP_CONDITIONS entries: {sorted(SKIP_CONDITIONS - found)}"
 
+    def test_every_skip_form_in_every_spec_file_is_seen(self, tmp_path):
+        """A skip, fixme or fail call on any object, in any file of webui/tests and its folders, is
+        seen (testing.no-compat-skips): one that the checks above missed would pass them unseen."""
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "a.spec.ts").write_text(
+            "test('x', async ({}, info) => {\n  info.skip(smbStatus === 404, 'old');\n});\n"
+            "test.step.skip('a step', async () => {});\n"
+            "test.describe.serial.fixme(old === true, 'old');\n", encoding="utf-8")
+        (tmp_path / "sub" / "b.spec.mts").write_text("test.fail(version < 2, 'old');\n", encoding="utf-8")
+        (tmp_path / "c.spec.js").write_text("// test.skip(commented, 'no')\ntest.info().skip(x, 'y');\n",
+                                            encoding="utf-8")
+        found = sorted((spec.relative_to(tmp_path).as_posix(), condition)
+                       for spec, _line, condition, *_ in _skip_calls(tmp_path))
+        assert found == [("a.spec.ts", "'a step'"), ("a.spec.ts", "old === true"), ("a.spec.ts", "smbStatus === 404"),
+                         ("c.spec.js", "x"), ("sub/b.spec.mts", "version < 2")]
+
     def test_every_skip_gives_its_reason(self):
         calls = list(_skip_calls())
         assert any(call[2] == STAND_IN_SKIP for call in calls), "no skip on E2E_STAND_IN found"
@@ -843,7 +867,7 @@ class TestSpecsAndRunner:
         # The specs take the password from E2E_ADMIN: one copy to change.
         copies = [
             spec.name
-            for spec in sorted(SPECS.glob("*.ts"))
+            for spec in _spec_files()
             if spec.name != "fixtures.ts" and admin[2] in spec.read_text(encoding="utf-8")
         ]
         assert copies == []
@@ -888,7 +912,7 @@ class TestSpecsAndRunner:
     def test_no_spec_falls_back_to_the_device(self):
         offenders = [
             spec.name
-            for spec in sorted((REPO / "webui" / "tests").glob("*.ts"))
+            for spec in _spec_files()
             if re.search(r"\b10\.1\.1\.\d+\b|process\.env\.BASE_URL\s*\|\|", spec.read_text(encoding="utf-8"))
             and spec.name != "target.ts"
         ]

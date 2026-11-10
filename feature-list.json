@@ -3329,11 +3329,31 @@
         "The skip for a target that runs a supervisor without the SMB API of this release is gone from webui/tests/api.spec.ts",
         "tests/test_standin.py fails on a skip that names no missing stand-in feature"
       ],
+      "verified_by": [
+        "supervisor/tests/test_standin.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0207",
+        "ADR-0215"
+      ],
+      "notes": "Passed 2026-11-10. Step 1: 2e4306d removed both skips of the SMB API's specs for a supervisor without that API, and the early return of their afterAll; no skip of webui/tests names a version of the supervisor. Step 2, as test_standin.py checks it: a skip on a condition that SKIP_CONDITIONS does not list fails test_specs_skip_only_on_the_listed_conditions (each listed condition is a property of the local target, such as a stand-in's missing feature or a restore that only a local target allows, never a version of the supervisor; a skip of the SMB API on E2E_OLD_SUPERVISOR, added for one run, failed it), and a stand-in skip whose reason does not start with what the stand-in lacks fails test_every_skip_gives_its_reason. Since 2026-11-10 the detector sees a skip, fixme or fail call on any object (test, test.describe, test.step, a TestInfo under any name, test.info()) in every file of webui/tests and its folders, .ts, .mts, .cts, .tsx, .js, .mjs, .cjs and .jsx (test_every_skip_form_in_every_spec_file_is_seen, which failed on the old detector: it found one of five), and the fake of logs.spec.ts names its method failWith. Skips on listed conditions that can still pass over a broken API: testing.no-skips-that-hide-api-errors. Not host-level."
+    },
+    {
+      "id": "testing.no-skips-that-hide-api-errors",
+      "category": "testing",
+      "description": "No E2E skip or check passes over an API that answers an error: a skip fires only on what the local target lacks",
+      "steps": [
+        "The File Browser specs of files.spec.ts skip only when no folder of the pools takes a new one, and fail when POST /files/mkdir answers an error for another reason",
+        "The import-notes specs of shares.spec.ts fail on a fresh stand-in whose seeded share has no import notes, instead of skipping",
+        "The GET /files/list check of api.spec.ts expects 200, as files.spec.ts does"
+      ],
       "passes": false,
       "adr": [
         "ADR-0207",
         "ADR-0215"
-      ]
+      ],
+      "notes": "Found by the fresh-context review of testing.no-compat-skips on 2026-11-09: files.spec.ts (scratch === null) skips the whole describe whenever POST /files/mkdir fails, 404 and 5xx included; shares.spec.ts (notes.length === 0) names an earlier run that dismissed the notes, which never applies on a stand-in that e2e.sh starts fresh, so the skip fires only when the import stops writing notes; api.spec.ts accepts a 404 for GET /files/list."
     },
     {
       "id": "testing.remove-dead-stub-checks",
