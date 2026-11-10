@@ -63,7 +63,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-10, 18:20 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-10, 19:15 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -71,14 +71,22 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 91ebf48, deployed on 2026-11-10 at 17:55 UTC: both images built from its runtime
-  files, the supervisor on the base that ADR-0305 pins (pip's layer cached). The device checkout
-  `/opt/unos` equals the tree of main 91ebf48. SD MiB: sync 5.074 (128 files written; deleted: the
+- Runs main f68c7c1 (session revocation and log rotation), deployed on 2026-11-10 at 18:50 UTC:
+  SD MiB sync 2.395 (41 files), build-supervisor 12.266 (pip's layer cached), build-webui
+  18.480, up 5.938, check.sh 0.016; the UNOS containers' logs now show json-file
+  `{"max-file":"3","max-size":"10m"}` (transmission keeps `{}`, created before). The first
+  sign-in after the start, with its session row, and a GET: 0.086 MiB. Rebooted from the API at
+  the owner's word ("do everything yourself", in translation): requested at 18:51:26 UTC, the
+  boot of 18:52:42 UTC, ssh answered by 18:53:15, both containers healthy, `check.sh` OK with
+  the log options kept, and `scenario.sh all` OK again, 88 steps: files 0.543 MiB, volumes 0.566,
+  smart 0.098, backups 0.512, smb 3.199, smbconf 2.516, scrub 0.645. Before it, main 91ebf48 was
+  deployed at 17:55 UTC: both images built from its runtime
+  files, the supervisor on the base that ADR-0305 pins (pip's layer cached). SD MiB: sync 5.074 (128 files written; deleted: the
   Caddyfile copy that `deploy/` had, and `webui/src/lib/api/monitor.ts`), build-supervisor 14.082,
   build-webui 18.727, up 6.066, check.sh 0.016. Then `scripts/dev/scenario.sh all`: every area
   OK, 88 steps: files 16 (0.867 MiB), volumes 7 (0.582), smart 5 (0.125), backups 8 (0.445),
-  smb 27 (3.207), smbconf 15 (2.363), scrub 10 (0.629). The reboot check of these entries waits
-  for the owner's reboot. Before the deploy the SD card had 44.5 MiB written in 20.7 hours
+  smb 27 (3.207), smbconf 15 (2.363), scrub 10 (0.629). Before the deploy the SD card had 44.5
+  MiB written in 20.7 hours
   since its boot (2.15 MiB an hour).
   The deploys' backup and rollback copies are in the main
   checkout's `tmp/dev/`. The device has no `unos` unit: `deploy.sh up` starts its containers, and
@@ -215,6 +223,15 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-10: The device after the second deploy and a reboot
+
+- Main f68c7c1 deployed and the device rebooted from the API at the owner's word; before and
+  after the reboot every scenario area passed, 88 steps (the Dev device section has the MiB).
+  `deploy.docker-log-rotation` passes: `check.sh` lists the capped log options of both UNOS
+  containers after the deploy and after the reboot. A sign-in with its session row wrote 0.086
+  MiB. The other open host-level entries need checks by hand (their notes), spare disks, the
+  install scripts on a fresh host, or the owner (the firewall, a security setting, ADR-0024).
 
 ### 2026-11-10: Docker rotates the containers' logs
 

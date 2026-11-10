@@ -3207,12 +3207,17 @@
         "The compose file, or the host's daemon.json, caps each log at a set size and number of files",
         "The measured log growth stays under the cap"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0178",
         "ADR-0330"
       ],
-      "notes": "Built (ADR-0330): deploy/docker-compose.yml gives unos-supervisor and unos-webui the json-file driver with max-size 10m and max-file 3, and the containers UNOS creates (App Store installs, the Containers page) get the same LogConfig, CAPPED_LOG of supervisor/src/containers/docker.py. Step 1: TestContainerLogs of test_deploy_scripts.py, TestCreatedContainersLogs of test_containers.py and the install test of test_apps.py. Step 2, a device check after a deploy: scripts/dev/check.sh lists both UNOS containers with json-file {max-file 3, max-size 10m}; Docker then keeps at most three files of 10 MB each."
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_containers.py",
+        "supervisor/tests/test_apps.py"
+      ],
+      "notes": "Built (ADR-0330): deploy/docker-compose.yml gives unos-supervisor and unos-webui the json-file driver with max-size 10m and max-file 3, and the containers UNOS creates (App Store installs, the Containers page) get the same LogConfig, CAPPED_LOG of supervisor/src/containers/docker.py. Step 1: TestContainerLogs of test_deploy_scripts.py, TestCreatedContainersLogs of test_containers.py and the install test of test_apps.py. Step 2, a device check after a deploy: scripts/dev/check.sh lists both UNOS containers with json-file {max-file 3, max-size 10m}; Docker then keeps at most three files of 10 MB each. Device check 2026-11-10 after the deploy of main f68c7c1 and after the reboot of 18:52 UTC: check.sh lists unos-supervisor and unos-webui with json-file {\"max-file\":\"3\",\"max-size\":\"10m\"}."
     },
     {
       "id": "deploy.uninstall-samba-restore",
