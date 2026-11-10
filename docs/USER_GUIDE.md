@@ -1290,8 +1290,11 @@ Access via **System** in the sidebar.
 
 - Shows the host name, the operating system, the kernel and the architecture
 - Shows the UNOS version, as the Updates tab does
-- The host name and the time zone cannot be changed in the web interface yet
-  (feature-list entry `system.hostname-and-time-zone`)
+- **Name and time zone**: the host's name and time zone, set on the host.
+  **Save hostname** sets the name (letters, digits and hyphens, at most 63);
+  **Save time zone** sets one of the zones the host lists, and scheduled tasks
+  then run at the times of that zone. When the host refuses a change, the page
+  shows its message and keeps the old value.
 
 ### Updates
 

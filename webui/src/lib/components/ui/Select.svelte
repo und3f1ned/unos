@@ -103,9 +103,48 @@
 					scrollToHighlighted();
 				}
 				break;
+			case 'PageDown':
+			case 'PageUp':
+				if (open) {
+					e.preventDefault();
+					const page = e.key === 'PageDown' ? 10 : -10;
+					const target = Math.min(Math.max(highlightedIndex + page, 0), options.length - 1);
+					highlightedIndex = findNextIndex(target - Math.sign(page), Math.sign(page));
+					scrollToHighlighted();
+				}
+				break;
 			case 'Tab':
 				open = false;
 				break;
+			default:
+				if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+					e.preventDefault();
+					if (!open) toggle();
+					typeAhead(e.key);
+				}
+		}
+	}
+
+	// Type-ahead (ADR-0197): the letters typed within a second pick the first option whose label
+	// starts with them, from the highlighted one on, so that a long list (the host's ~600 time
+	// zones) is reached in a few keys.
+	let typed = '';
+	let typedAt = 0;
+
+	function typeAhead(key: string) {
+		const now = Date.now();
+		typed = now - typedAt > 1000 ? key : typed + key;
+		typedAt = now;
+		const prefix = typed.toLowerCase();
+		const start = typed.length === 1 ? highlightedIndex + 1 : Math.max(highlightedIndex, 0);
+		for (let step = 0; step < options.length; step++) {
+			const index = (start + step) % options.length;
+			const option = options[index];
+			if (!option.disabled && option.label.toLowerCase().startsWith(prefix)) {
+				highlightedIndex = index;
+				scrollToHighlighted();
+				return;
+			}
 		}
 	}
 
@@ -159,6 +198,7 @@
 		aria-haspopup="listbox"
 		aria-expanded={open}
 		aria-controls="{inputId}-listbox"
+		aria-activedescendant={open && highlightedIndex >= 0 ? `${inputId}-option-${highlightedIndex}` : undefined}
 		aria-labelledby={label ? `${inputId}-label` : undefined}
 		{disabled}
 		class="select-trigger"
@@ -185,6 +225,7 @@
 		>
 			{#each options as option, index}
 				<li
+					id="{inputId}-option-{index}"
 					role="option"
 					aria-selected={option.value === value}
 					aria-disabled={option.disabled}

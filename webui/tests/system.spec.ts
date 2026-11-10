@@ -10,7 +10,7 @@ test.describe('System Settings', () => {
 
   test('should display General tab by default', async ({ authenticatedPage: page }) => {
     await page.goto('/system');
-    await expect(page.locator('text=Hostname')).toBeVisible();
+    await expect(page.getByText('Hostname:', { exact: true })).toBeVisible();
   });
 
   test('should switch to Resource Monitor tab', async ({ authenticatedPage: page }) => {

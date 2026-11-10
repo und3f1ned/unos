@@ -1,17 +1,88 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getSystemInfo, type SystemInfo } from "$lib/api/system";
+  import { getSystemInfo, getTimezone, getTimezones, setTimezone, type SystemInfo } from "$lib/api/system";
+  import { getHostname, setHostname } from "$lib/api/network";
   import { getCurrentVersion, type CurrentVersion } from "$lib/api/updates";
   import { user } from "$lib/stores/auth";
-  import { Badge, Button, Card } from "$lib/components/ui";
+  import { Alert, Badge, Button, Card, Input, Select } from "$lib/components/ui";
   import { t } from "$lib/i18n";
-  import { Server, User, Package } from "lucide-svelte";
+  import { Server, User, Package, Globe } from "lucide-svelte";
 
   let systemInfo: SystemInfo | null = null;
   let currentVersion: CurrentVersion | null = null;
   let loading = true;
 
+  // The name and time zone of the host (ADR-0331): each read and saved on its own.
+  let hostname = "";
+  let savedHostname = "";
+  let zone = "";
+  let savedZone = "";
+  let zones: string[] = [];
+  let hostLoading = true;
+  let hostLoadFailed = false;
+  let savingHostname = false;
+  let savingZone = false;
+  let hostNotice = "";
+  let hostError = "";
+
+  let hostnameLoaded = false;
+  let zoneLoaded = false;
+
+  // The host's zone first when the host does not list it, so that the page shows it.
+  $: zoneOptions = [
+    ...(savedZone && savedZone !== "Unknown" && !zones.includes(savedZone) ? [savedZone] : []),
+    ...zones,
+  ].map((name) => ({ value: name, label: name }));
+
+  async function loadHost() {
+    // Each row from its own answers: one that fails leaves the other usable.
+    const [name, current, listed] = await Promise.allSettled([getHostname(), getTimezone(), getTimezones()]);
+    if (name.status === "fulfilled") {
+      hostname = savedHostname = name.value.hostname;
+      hostnameLoaded = true;
+    }
+    if (current.status === "fulfilled") {
+      zone = savedZone = current.value.timezone;
+      zoneLoaded = true;
+    }
+    if (listed.status === "fulfilled") zones = listed.value.timezones;
+    hostLoadFailed = !hostnameLoaded && !zoneLoaded;
+    hostLoading = false;
+  }
+
+  async function saveHostname() {
+    const name = hostname.trim();
+    savingHostname = true;
+    hostNotice = hostError = "";
+    try {
+      const answer = await setHostname(name);
+      hostname = savedHostname = answer.hostname;
+      if (systemInfo) systemInfo = { ...systemInfo, hostname: answer.hostname };
+      hostNotice = $t("general.host.hostnameSaved", { name: answer.hostname });
+    } catch (e) {
+      hostError = e instanceof Error ? e.message : $t("general.host.saveFailed");
+    } finally {
+      savingHostname = false;
+    }
+  }
+
+  async function saveZone() {
+    savingZone = true;
+    hostNotice = hostError = "";
+    try {
+      const answer = await setTimezone(zone);
+      zone = savedZone = answer.timezone;
+      hostNotice = $t("general.host.zoneSaved", { zone: answer.timezone });
+    } catch (e) {
+      hostError = e instanceof Error ? e.message : $t("general.host.saveFailed");
+      zone = savedZone; // the host kept its zone
+    } finally {
+      savingZone = false;
+    }
+  }
+
   onMount(async () => {
+    loadHost();
     try {
       const [info, version] = await Promise.all([
         getSystemInfo(),
@@ -82,6 +153,71 @@
       <p class="text-slate-500">{$t("general.info.loadFailed")}</p>
     {/if}
   </div>
+
+  <!-- The name and time zone of the host, set on the host (ADR-0331) -->
+  <Card>
+    <h3 class="section-title mb-4">
+      <Globe class="w-5 h-5" />
+      {$t("general.host.title")}
+    </h3>
+
+    {#if hostLoading}
+      <p class="text-sm text-muted">{$t("common.loading")}</p>
+    {:else if hostLoadFailed}
+      <p class="text-sm text-muted">{$t("general.host.loadFailed")}</p>
+    {:else}
+      <div class="space-y-4">
+        {#if hostnameLoaded}
+          <div>
+            <form class="flex flex-wrap items-end gap-3" on:submit|preventDefault={saveHostname}>
+              <div class="min-w-0 flex-1 basis-56">
+                <Input id="general-hostname" label={$t("general.host.hostname")} bind:value={hostname} maxlength={63} />
+              </div>
+              <Button
+                type="submit"
+                variant="secondary"
+                loading={savingHostname}
+                disabled={!hostname.trim() || hostname.trim() === savedHostname}
+              >
+                {$t("general.host.saveHostname")}
+              </Button>
+            </form>
+            <p class="form-hint">{$t("general.host.hostnameHint")}</p>
+          </div>
+        {/if}
+        {#if zoneLoaded}
+          <div>
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="min-w-0 flex-1 basis-56">
+                <Select
+                  id="general-zone"
+                  label={$t("general.host.zone")}
+                  bind:value={zone}
+                  options={zoneOptions}
+                  placeholder={$t("general.host.unknownZone")}
+                  disabled={zones.length === 0}
+                />
+              </div>
+              <Button variant="secondary" loading={savingZone} disabled={!zone || zone === savedZone} on:click={saveZone}>
+                {$t("general.host.saveZone")}
+              </Button>
+            </div>
+            <p class="form-hint">{zones.length === 0 ? $t("general.host.noZones") : $t("general.host.zoneHint")}</p>
+          </div>
+        {/if}
+        <div role="status">
+          {#if hostNotice}
+            <Alert variant="success" dismissible on:dismiss={() => (hostNotice = "")}>{hostNotice}</Alert>
+          {/if}
+        </div>
+        <div role="alert">
+          {#if hostError}
+            <Alert variant="error" dismissible on:dismiss={() => (hostError = "")}>{hostError}</Alert>
+          {/if}
+        </div>
+      </div>
+    {/if}
+  </Card>
 
   <!-- UNOS Version: the version the supervisor image was built with (ADR-0234) -->
   <Card>

@@ -240,6 +240,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- **System** → **General** sets the host's name and time zone.
 - The web interface works on a phone: below 768 px a menu button in the top
   bar opens the navigation, and every page, tab and dialog fits a 375 px wide
   screen without scrolling sideways. Wide tables scroll on their own, and a
