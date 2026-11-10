@@ -59,7 +59,7 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
         <div>
           <span class="text-slate-400">{$t("general.info.hostname")}</span>
-          <span class="ml-2 font-medium">{systemInfo.hostname}</span>
+          <span class="ml-2 font-medium break-words">{systemInfo.hostname}</span>
         </div>
         <div>
           <span class="text-slate-400">{$t("general.info.os")}</span>

@@ -141,12 +141,13 @@
 </script>
 
 <div class="space-y-6">
-  <!-- Header -->
-  <div class="flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <Server class="w-8 h-8 text-blue-500" />
-      <div>
-        <h1 class="text-2xl font-bold">{systemInfo?.hostname || $t("common.product")}</h1>
+  <!-- Header: on a narrow screen the live stats' time and Refresh go below the host name, and a
+       long host name breaks (ADR-0302). -->
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3 min-w-0">
+      <Server class="w-8 h-8 text-blue-500 flex-shrink-0" />
+      <div class="min-w-0">
+        <h1 class="text-2xl font-bold break-words">{systemInfo?.hostname || $t("common.product")}</h1>
         {#if systemInfo}
           <p class="text-sm text-slate-400">
             {$t("dashboard.osUptime", { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}

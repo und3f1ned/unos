@@ -158,6 +158,9 @@ async function serve(page: Page, answers: Record<string, unknown>): Promise<void
 // As the API answers them (the interfaces of webui/src/lib/api), with long names where a NAS has
 // them: image names of a registry, folders of people, Samba's log lines.
 
+// A host name with no hyphen, so no place where a browser breaks it on its own (ADR-0302).
+const LONG_HOST_NAME = 'nasinthelivingroomoftheoldhouse.home.arpa';
+
 const SYSTEM_INFO = {
   hostname: 'nas-living-room.home.arpa',
   kernel: '6.12.48+deb13-arm64',
@@ -539,6 +542,24 @@ const VIEWS: View[] = [
       await serve(page, { ...DOCKER, '/api/v1/system/info': SYSTEM_INFO });
     },
     shows: (page) => page.getByText('e2e-immich-machine-learning'),
+  },
+  {
+    // A long host name with no place to break beside the live stats' time and Refresh (on the
+    // stand-in, the workstation's name reached past the screen this way): the header wraps.
+    name: 'Dashboard with a long host name',
+    path: '/',
+    fake: async (page) => {
+      await fakeStorageApi(page);
+      await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
+      await serve(page, {
+        ...DOCKER,
+        '/api/v1/system/info': { ...SYSTEM_INFO, hostname: LONG_HOST_NAME },
+      });
+    },
+    // The name and the time come in apart: the page lists the host after all its requests, and
+    // the time with the first live stats.
+    open: (page) => expect(page.getByRole('heading', { name: LONG_HOST_NAME })).toBeVisible(),
+    shows: (page) => page.getByText(/(Updated|Обновлено) \d/),
   },
   {
     name: 'Storage',
