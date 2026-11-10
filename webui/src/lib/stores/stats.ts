@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { getToken, handleUnauthorized } from '$lib/api/client';
+import { problems, type Problem } from '$lib/stores/problems';
 
 // The parts of the stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface CpuStats {
@@ -172,7 +173,7 @@ export function connectWebSocket() {
   };
 
   socket.onmessage = (event) => {
-    let message: { type?: string; data?: WebSocketStats };
+    let message: { type?: string; data?: unknown };
     try {
       message = JSON.parse(event.data);
     } catch {
@@ -184,7 +185,10 @@ export function connectWebSocket() {
     } else if (message.type === 'stats' && message.data) {
       if (!authenticatedAt) authenticatedAt = Date.now();
       wsConnected.set(true);
-      stats.set(message.data);
+      stats.set(message.data as WebSocketStats);
+    } else if (message.type === 'problems' && Array.isArray(message.data)) {
+      // Administrators only: the problems that are still there (ADR-0332).
+      problems.set(message.data as Problem[]);
     }
   };
 
@@ -218,6 +222,7 @@ export function disconnectWebSocket() {
   wsConnected.set(false);
   wsForbidden.set(false);
   stats.set(null);
+  problems.set([]);
 }
 
 export function formatBytes(bytes: number): string {

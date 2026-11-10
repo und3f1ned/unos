@@ -233,6 +233,46 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: Problems reach every channel once and show in a banner
+
+- `system.alert-events` (ADR-0332, which supersedes the proposal ADR-0047): the branch's first
+  commit sent the SMART and RAID alerts through every enabled channel (`send_through`). Now
+  `supervisor/src/health/problems.py` keeps the problems that are still there in RAM, by source:
+  the RAID monitor's pass reports the managed pools (not mounted or no disk found, degraded,
+  read-only after an error, 90% and 95% full), the SMART monitor's the disks (health FAILED, a
+  failed self-test) and a new check every 5 minutes the scheduled tasks (last run failed, a missed
+  run). A new problem is alerted once through every enabled channel; one that is gone is dropped
+  without an alert. The events socket sends administrators the list after auth_ok and when it
+  changes, and the web UI shows it above every page (`ProblemsBanner.svelte`, `problems.ts`).
+- Beyond the brief, with the reasons in ADR-0332: a managed pool none of whose disks is
+  connected is reported as not mounted, from the same read of the host's fstab
+  (`pools_and_managed_names`); a failed self-test is a problem beside health FAILED; a missed run
+  counts only the times after the task's new field `schedule_since` (set when it is created,
+  enabled again or given another schedule, in writes made anyway) and after a change of the
+  host's zone, and a run that still runs counts as its start; a managed pool's new-errors alert
+  is left out in the pass whose new pool_degraded or pool_read_only alert names the errors. A
+  socket whose user is no longer an administrator gets an empty list.
+- Tests first: `test_alert_events.py` and the new loop of `test_lifespan.py` failed before.
+  `test_storage.py`'s Telegram timeout test patched `send_telegram`, which the first commit took
+  out of the health router, and failed on the branch: it patches `send_through` now. E2E:
+  `health-banner.spec.ts` (English, Russian, a regular user), the banner's view of
+  `mobile-layout.spec.ts`, and `websocket.spec.ts` expects the problems message between auth_ok
+  and the stats. The first `make check` failed `test_dev_scenarios.py`'s signal test: a thread of
+  the alerts' pool, left alive by a new test that ran before it, took the SIGINT that the test
+  sends its process while the main thread blocks it; that test now ends a pool of its own.
+- A fresh-context review found, fixed with a test that failed first: a task enabled again or
+  rescheduled was reported as missed after a restart (the time it was seen so lived in RAM: now
+  `schedule_since`); an NVMe disk only beyond its temperature threshold counted as failing; a
+  pool hovering at 90% was alerted at each crossing (now it stays low on space until below 85%);
+  a check of GET /health/raid could hand the RAID monitor another read of the pools (the read is
+  now kept on the event loop as its check returns); a pool made read-only with new errors got two
+  alerts; a managed pool whose state cannot be read was no longer alerted (the RAID monitor
+  alerts it, once from healthy); a disk replaced at a path while asleep kept the old verdict. Not
+  fixed: a host command that does not answer within its timeout fails the RAID monitor's whole
+  pass, as before this change (storage.commands-time-out-cleanly); a disk that comes back at
+  another path is alerted again (verdicts by path). Open: the device check of the real pools,
+  disks and tasks, and a reboot.
+
 ### 2026-11-10: The hostname and the time zone pass
 
 - `system.hostname-and-time-zone` passes: System > General's card sets both (E2E), the API

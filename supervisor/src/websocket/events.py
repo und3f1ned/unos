@@ -26,12 +26,19 @@ when the socket closes runs to its end, and its answer is dropped.
 A logs socket is closed with 1000 once the container's log ended (the
 container stopped) or could not be read, after a ``{"type": "error"}`` message
 with the reason.
+
+The events socket sends administrators ``{"type": "problems", "data": [...]}``,
+the problems of the NAS that are still there (``health.problems``), right after
+auth_ok and whenever the list changes; regular users never get it, and a
+socket whose user is no longer an administrator at a re-check gets an empty
+list once and no more (ADR-0332).
 """
 import asyncio
 import functools
 import json
 import logging
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
@@ -43,6 +50,7 @@ from ..auth.models import User
 from ..auth.utils import authenticate_token
 from ..config import get_settings
 from ..database import async_session
+from ..health import problems
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -285,14 +293,16 @@ async def _user_for_token(token: str) -> User | None:
         return None
 
 
-async def authenticate_websocket(websocket: WebSocket, *, admin_only: bool = False) -> str | None:
+async def authenticate_websocket(
+    websocket: WebSocket, *, admin_only: bool = False
+) -> tuple[str, User] | None:
     """Accept ``websocket`` and run the auth handshake described above.
 
     Returns the accepted token (``_watch_credential`` checks it again while
-    the socket is open), or ``None`` after the socket has been closed (or the
-    client went away). The socket must be accepted before it can be closed
-    with an application close code, so rejected clients are accepted first
-    and then closed with 4401/4403.
+    the socket is open) and its user, or ``None`` after the socket has been
+    closed (or the client went away). The socket must be accepted before it
+    can be closed with an application close code, so rejected clients are
+    accepted first and then closed with 4401/4403.
     """
     await websocket.accept()
 
@@ -318,7 +328,7 @@ async def authenticate_websocket(websocket: WebSocket, *, admin_only: bool = Fal
         return None
 
     await websocket.send_json({"type": "auth_ok"})
-    return token
+    return token, user
 
 
 # Re-checks that a closed socket left running (ADR-0312): the event loop keeps only weak
@@ -326,11 +336,14 @@ async def authenticate_websocket(websocket: WebSocket, *, admin_only: bool = Fal
 _checks_left_running: set["asyncio.Task[Any]"] = set()
 
 
-async def _watch_credential(token: str, *, admin_only: bool = False) -> tuple[int, str]:
+async def _watch_credential(
+    token: str, *, admin_only: bool = False, on_user: Callable[[User], None] | None = None
+) -> tuple[int, str]:
     """Check ``token`` every WS_REAUTH_INTERVAL_SECONDS while a socket is open.
 
-    Returns the close code and reason once the socket must be closed. Each
-    check uses a new short-lived database session (see ``_user_for_token``).
+    Returns the close code and reason once the socket must be closed; a check
+    that keeps it open gives ``on_user`` the user as it is now. Each check
+    uses a new short-lived database session (see ``_user_for_token``).
     Cancelling the watch ends it at once, but a check in progress runs to its
     end and its answer is dropped (ADR-0312): cancelled in its database query,
     a check discards the session's connection, and when that connection's
@@ -353,21 +366,46 @@ async def _watch_credential(token: str, *, admin_only: bool = False) -> tuple[in
             return WS_CLOSE_UNAUTHORIZED, "unauthorized"
         if admin_only and not user.is_admin:
             return WS_CLOSE_FORBIDDEN, "forbidden"
+        if on_user is not None:
+            on_user(user)
+
+
+async def _send_problems(websocket: WebSocket, is_admin: bool, sent: int | None) -> int | None:
+    """Send an administrator the problems when they changed since the version ``sent`` (None:
+    none sent yet), and someone who is no longer one an empty list once; returns what was sent."""
+    if not is_admin:
+        if sent is not None:
+            await websocket.send_json({"type": "problems", "data": []})
+        return None
+    version = problems.version()
+    if version != sent:
+        await websocket.send_json(
+            {"type": "problems", "data": [problem.model_dump() for problem in problems.current()]}
+        )
+    return version
 
 
 @router.websocket("/ws/v1/events")
 async def websocket_endpoint(websocket: WebSocket):
-    token = await authenticate_websocket(websocket)
-    if token is None:
+    signed_in = await authenticate_websocket(websocket)
+    if signed_in is None:
         return
+    token, user = signed_in
+    # Whether the user is an administrator, as the last check of the token found (ADR-0332).
+    role = {"admin": user.is_admin}
+
+    def note_role(user: User) -> None:
+        role["admin"] = user.is_admin
 
     # Reading the socket notices a closed client right away (not only when the
     # next send fails) and drains anything the client sends.
     disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
-    revoked = asyncio.ensure_future(_watch_credential(token))
+    revoked = asyncio.ensure_future(_watch_credential(token, on_user=note_role))
+    sent_problems: int | None = None
     try:
         # Start sending stats
         while not (disconnected.done() or revoked.done()):
+            sent_problems = await _send_problems(websocket, role["admin"], sent_problems)
             stats = get_system_stats()
             await websocket.send_json(stats)
             await asyncio.wait(
@@ -389,11 +427,11 @@ async def websocket_endpoint(websocket: WebSocket):
 @router.websocket("/ws/v1/logs/{container_id}")
 async def container_logs_endpoint(websocket: WebSocket, container_id: str):
     """Stream container logs in real-time (administrators only)."""
-    token = await authenticate_websocket(websocket, admin_only=True)
-    if token is None:
+    signed_in = await authenticate_websocket(websocket, admin_only=True)
+    if signed_in is None:
         return
 
-    await _stream_container_logs(websocket, container_id, token)
+    await _stream_container_logs(websocket, container_id, signed_in[0])
 
 
 async def _wait_for_disconnect(websocket: WebSocket) -> None:

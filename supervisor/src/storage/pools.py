@@ -643,6 +643,16 @@ def list_pools() -> list[PoolInfo]:
     is on a boot or virtual device or on the system disk: Mount refuses it.
     When lsblk cannot tell, it is listed, and Mount checks again.
     """
+    return pools_and_managed_names()[0]
+
+
+def pools_and_managed_names() -> tuple[list[PoolInfo], set[str] | None]:
+    """list_pools(), and the names of the pools that UNOS mounts at boot (their entries in the host's
+    fstab), from the same reads of the host; None for the names when the fstab could not be read.
+
+    A managed pool none of whose disks is connected has a name here and no PoolInfo: btrfs finds
+    no filesystem of it (the RAID monitor reports it, ADR-0332).
+    """
     filesystems = btrfs_filesystems()
     mounts = _mounts_or_none()
     managed = _managed_entries_or_none()
@@ -655,11 +665,13 @@ def list_pools() -> list[PoolInfo]:
     except Exception as exc:
         logger.warning("Could not check the devices of the pools found on the disks: %s", exc)
         refused = {}
-    return [
+    pools = [
         _pool_info(fs, mounts, managed)
         for fs in filesystems
         if fs.label and chosen.get(fs.label) is fs and fs.uuid not in refused
     ]
+    names = None if managed is None else {name for name, entry in managed.items() if entry.has_entry}
+    return pools, names
 
 
 def get_pool(name: str) -> PoolInfo:

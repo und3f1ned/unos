@@ -486,6 +486,32 @@ async function fakeStatsStream(page: Page): Promise<void> {
   });
 }
 
+// The problems of the health banner above every page of an administrator (supervisor/src/health/
+// problems.py, ADR-0332), with a pool's name that has no place to break and a long task name.
+const LONG_POOL = 'family_photos_and_videos_of_the_whole_household';
+const PROBLEMS = [
+  { key: `pool_degraded:${LONG_POOL}`, severity: 'error', kind: 'pool_degraded', subject: LONG_POOL,
+    title: `Pool '${LONG_POOL}' is degraded`, detail: '1 device(s) of the pool are missing.',
+    since: '2026-11-08T09:00:00+00:00' },
+  { key: `pool_low_space:${LONG_POOL}`, severity: 'warning', kind: 'pool_low_space', subject: LONG_POOL,
+    title: `Pool '${LONG_POOL}' is 93% full`, detail: '3.72 TB of the 4.00 TB of the pool are used.',
+    since: '2026-11-08T09:00:00+00:00' },
+  { key: `task_missed:${BACKUP_TASK.id}`, severity: 'warning', kind: 'task_missed', subject: BACKUP_TASK.name,
+    title: `Task '${BACKUP_TASK.name}' missed its run`, detail: 'It did not run at 2026-11-08 02:00 CET.',
+    since: '2026-11-08T09:00:00+00:00' },
+];
+
+/** Answer the stats stream with the problems and STATS once the page has authenticated it. */
+async function fakeProblemsStream(page: Page): Promise<void> {
+  await page.routeWebSocket('**/ws/v1/events', (ws: WebSocketRoute) => {
+    ws.onMessage(() => {
+      ws.send(JSON.stringify({ type: 'auth_ok' }));
+      ws.send(JSON.stringify({ type: 'problems', data: PROBLEMS }));
+      ws.send(JSON.stringify({ type: 'stats', data: STATS }));
+    });
+  });
+}
+
 const USERS = [
   fakeUser(1, 'admin', 'unavailable', { is_admin: true }),
   fakeUser(2, 'alice', 'active', { totp_enabled: true }),
@@ -560,6 +586,19 @@ const VIEWS: View[] = [
     // the time with the first live stats.
     open: (page) => expect(page.getByRole('heading', { name: LONG_HOST_NAME })).toBeVisible(),
     shows: (page) => page.getByText(/(Updated|Обновлено) \d/),
+  },
+  {
+    // The banner shows above every page of an administrator: here above the dashboard.
+    name: 'The health banner',
+    path: '/',
+    fake: async (page) => {
+      await fakeStorageApi(page);
+      await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
+      await serve(page, { ...DOCKER, '/api/v1/system/info': SYSTEM_INFO });
+      await fakeProblemsStream(page);
+    },
+    shows: (page) =>
+      page.getByRole('region', { name: /^(3 problems need attention|3 проблемы требуют внимания)$/ }),
   },
   {
     name: 'Storage',

@@ -51,6 +51,7 @@ import psutil
 
 from .. import host, state_files
 from ..auth.utils import require_admin, verify_token
+from ..health import problems
 from ..backup.router import (
     BACKUP_KEY_SIZE,
     ENCRYPTED_EXTENSION,
@@ -116,6 +117,11 @@ STOPPED_DURING_RUN = "The supervisor stopped during the run"
 # of the hours it skipped (ADR-0266).
 CATCH_UP = timedelta(minutes=5)
 MINUTE = timedelta(minutes=1)
+# Seconds between the checks of the tasks for their problems (ADR-0332), and how long after a time
+# of a task's schedule without a run that run counts as missed.
+TASK_CHECK_INTERVAL = 300
+MISSED_AFTER = timedelta(minutes=10)
+TASK_PROBLEMS = "tasks"  # their source in health.problems
 
 TASKS_FILE = "/data/scheduled_tasks.json"
 RUNS_FILE = "/data/task_runs.json"
@@ -132,6 +138,7 @@ _backup_keys_lock = threading.Lock()
 # In-memory scheduler state
 _scheduler_running = False
 _scheduler_task: Optional[asyncio.Task] = None
+_task_check_task: Optional[asyncio.Task] = None
 # The runs the loop started and that have not ended: the event loop keeps only
 # weak references to tasks. stop_scheduler ends them.
 _runs: set[asyncio.Task] = set()
@@ -1050,27 +1057,136 @@ async def scheduler_loop():
         checked = now
 
 
+class ZoneSeen(NamedTuple):
+    """The time zone of the host that the checks of the tasks saw last, and since when (ADR-0332)."""
+
+    zone: str
+    # None for the zone of the first check after the start, which the schedules may have followed
+    # while the supervisor was stopped.
+    since: datetime | None
+
+
+def _instant(text: str | None) -> datetime | None:
+    """An instant of the tasks' or the runs' file (ISO 8601; one without an offset is UTC); None for none."""
+    if not text:
+        return None
+    try:
+        at = datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
+def task_problems(
+    tasks: list[ScheduledTask],
+    runs: list[TaskRun],
+    zone: tzinfo,
+    now: datetime,
+    zone_since: datetime | None = None,
+) -> dict[str, problems.Problem]:
+    """The problems of the enabled tasks, by key (ADR-0332).
+
+    A task whose last run failed is a warning. So is a task that missed a run: a time of its
+    schedule, on the clock of ``zone``, that came MISSED_AFTER ago or longer, after the task's
+    last start (also of a run that still runs, from ``runs``: a task's last run is recorded when
+    the run ends) and after its schedule_since, when it was created, enabled again or given
+    another schedule. So the times while it was disabled, before it existed or under another
+    schedule are no runs it missed, and neither are the times before ``zone_since``, when the
+    checks saw the host's time zone change; a time that fell while the supervisor was stopped is
+    one, since runs are not made up after a stop (ADR-0266). A task without a start or a
+    schedule_since, and one whose schedule has no next time, miss nothing.
+    """
+    found: dict[str, problems.Problem] = {}
+    starts: dict[str, list[datetime]] = {}
+    last_runs: dict[str, TaskRun] = {}
+    for run in runs:  # oldest first
+        last_runs[run.task_id] = run
+        if (start := _instant(run.started_at)) is not None:
+            starts.setdefault(run.task_id, []).append(start)
+    for task in tasks:
+        if not task.enabled or not task.id:
+            continue
+        if task.last_status == "failed":
+            run = last_runs.get(task.id)
+            error = run.error if run is not None and run.status == "failed" else None
+            found[f"task_failed:{task.id}"] = problems.Problem(
+                key=f"task_failed:{task.id}", severity="warning", kind="task_failed", subject=task.name,
+                title=f"Task '{task.name}' failed",
+                detail=f"The last run of the scheduled task {task.name} failed"
+                + (f": {error}" if error else ". System > Scheduler shows its runs."),
+            )
+        known = (_instant(task.last_run), *starts.get(task.id, ()), _instant(task.schedule_since))
+        since = max((at for at in known if at is not None), default=None)
+        if since is None:
+            continue
+        if zone_since is not None:
+            since = max(since, zone_since)
+        try:
+            due = next_run_after(task, since, zone)
+        except Exception:  # no next time, as due_tasks finds too
+            continue
+        if due <= now - MISSED_AFTER:
+            found[f"task_missed:{task.id}"] = problems.Problem(
+                key=f"task_missed:{task.id}", severity="warning", kind="task_missed", subject=task.name,
+                title=f"Task '{task.name}' missed its run",
+                detail=f"The scheduled task {task.name} was due at {due.astimezone(zone):%Y-%m-%d %H:%M %Z} "
+                "and did not run: a run whose time falls while the supervisor is stopped is not made up. "
+                "Run it now from System > Scheduler, or it runs at its next time.",
+            )
+    return found
+
+
+def _tasks_runs_and_zone() -> tuple[list[ScheduledTask], list[TaskRun], tzinfo]:
+    """The tasks, their runs and the host's time zone (blocking: the files, and a host command)."""
+    return load_tasks(), load_runs(), schedule_zone()
+
+
+async def check_tasks(seen: ZoneSeen | None) -> ZoneSeen:
+    """One check of the tasks: report their problems (task_problems), and return the zone it saw
+    for the next check (None: this is the first). Raises when the tasks cannot be read; the
+    problems found before stay."""
+    tasks, runs, zone = await asyncio.to_thread(_tasks_runs_and_zone)
+    now = _utc_now()
+    if seen is None or seen.zone != str(zone):
+        seen = ZoneSeen(str(zone), None if seen is None else now)
+    await problems.update(TASK_PROBLEMS, task_problems(tasks, runs, zone, now, seen.since))
+    return seen
+
+
+async def task_check_loop():
+    """Check the tasks for their problems at the start and every TASK_CHECK_INTERVAL seconds (ADR-0332)."""
+    seen: ZoneSeen | None = None
+    while _scheduler_running:
+        try:
+            seen = await check_tasks(seen)
+        except Exception:
+            logger.exception("Could not check the scheduled tasks for their problems")
+        await _sleep(TASK_CHECK_INTERVAL)
+
+
 async def start_scheduler():
-    """Start the scheduler on app startup, once the runs that a stop interrupted are recorded."""
-    global _scheduler_running, _scheduler_task
+    """Start the scheduler on app startup, once the runs that a stop interrupted are recorded,
+    and the checks of the tasks for their problems (ADR-0332)."""
+    global _scheduler_running, _scheduler_task, _task_check_task
     try:
         await asyncio.to_thread(finish_interrupted_runs)
     except Exception:  # a state file that cannot be read or written must not stop the supervisor
         logger.exception("The scheduler could not record the runs that a stop interrupted")
     _scheduler_running = True
     _scheduler_task = asyncio.create_task(scheduler_loop())
+    _task_check_task = asyncio.create_task(task_check_loop())
 
 
 async def stop_scheduler():
-    """Stop the scheduler on app shutdown, and end the runs that it started: each is
-    recorded as failed, with the processes of a command killed (run_task, ADR-0268)."""
-    global _scheduler_running, _scheduler_task
+    """Stop the scheduler and its checks on app shutdown, and end the runs that it started: each
+    is recorded as failed, with the processes of a command killed (run_task, ADR-0268)."""
+    global _scheduler_running, _scheduler_task, _task_check_task
     _scheduler_running = False
-    stopping = [t for t in (_scheduler_task, *_runs) if t is not None]
+    stopping = [t for t in (_scheduler_task, _task_check_task, *_runs) if t is not None]
     for t in stopping:
         t.cancel()
     await asyncio.gather(*stopping, return_exceptions=True)
-    _scheduler_task = None
+    _scheduler_task = _task_check_task = None
 
 
 def _task_info(task: ScheduledTask, has_key: bool | None, zone: tzinfo, now: datetime) -> ScheduledTaskInfo:
@@ -1113,6 +1229,7 @@ async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
 
     # Random suffix: tasks created in the same second must not share an id.
     task.id = f"task_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}"
+    task.schedule_since = _utc_now().isoformat()  # it missed no run before it existed (ADR-0332)
 
     # The key first: a task that is then not saved leaves only an unused key.
     if key is not None:
@@ -1145,6 +1262,9 @@ async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verif
             task.id = task_id
             # Results of the runs, not of the edit (ADR-0175).
             task.last_run, task.last_status = t.last_run, t.last_status
+            # With a new schedule, or enabled again, it misses runs from now on only (ADR-0332).
+            kept = (get_cron_expression(task), task.enabled) == (get_cron_expression(t), t.enabled)
+            task.schedule_since = t.schedule_since if kept else _utc_now().isoformat()
             tasks[i] = task
             save_tasks(tasks)
             # A backup task has the new key now, or kept the one it had.
@@ -1184,6 +1304,8 @@ async def toggle_task(task_id: str, _: dict = Depends(verify_token)):
     for task in tasks:
         if task.id == task_id:
             task.enabled = not task.enabled
+            if task.enabled:  # the runs of the time it was disabled are none it missed (ADR-0332)
+                task.schedule_since = _utc_now().isoformat()
             save_tasks(tasks)
             return {"status": "toggled", "enabled": task.enabled}
 

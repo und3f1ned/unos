@@ -64,8 +64,19 @@ its runs record the command's output and exit status (ADR-0044, ADR-0267). Avoid
 chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0326).
 Avoid: notifier, integration.
 
-**Alert**: A notification that a monitor sends on its own, for a pool's RAID errors or a disk's
-rising SMART counters, to every enabled e-mail and Telegram channel (ADR-0047). Avoid: alarm.
+**Alert**: A notification that UNOS sends on its own to every enabled notification channel: once
+for each problem when it is found, for new error counts of a pool's devices, for a change of the
+health of a pool that UNOS does not manage, and for a disk's rising SMART counters (ADR-0332).
+Avoid: alarm.
+
+**Problem**: A condition of the NAS that needs an administrator while it lasts: a managed pool
+that is not mounted, degraded, read-only after an error or almost full, a failing disk, a
+scheduled task whose last run failed or that missed a run. It is alerted once when it is found and
+shown in the health banner until it is gone; UNOS keeps it in RAM only (ADR-0332). Avoid: issue,
+incident, event.
+
+**Health banner**: The list of the current problems above every page of an administrator, in the
+language of the page (ADR-0332). Avoid: alert bar, notification banner.
 
 **Notification history**: The latest 100 notifications sent, tests and alerts included, with the
 channel and the result of each: History in System > Notifications (ADR-0326). Avoid: log (the

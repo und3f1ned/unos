@@ -106,7 +106,10 @@ print in the tables of the **Network** tab, such as a connection's state
 
 ## Dashboard
 
-The dashboard provides an at-a-glance view of your NAS:
+The dashboard provides an at-a-glance view of your NAS. Above it, as above
+every page, administrators see the health banner while UNOS knows of a
+problem: a pool not mounted, degraded or almost full, a failing disk, a task
+that failed or missed its run (see [Alerts](#alerts)).
 
 ### System Stats
 - **CPU** - Current processor usage
@@ -397,7 +400,7 @@ counters: **SMART data** shows their health log, and their health turns
 **FAILED** when the disk reports a critical warning.
 
 A counter that rose since the disk's previous record sends an alert to every
-enabled e-mail and Telegram channel (see [Notifications](#notifications)):
+enabled channel (see [Notifications](#notifications)):
 "Disk Health Warning: <path>" with the counter, its old and new value and a
 recommendation; a warning, or an error when a sector count rose by more than
 10 (other counters: by more than 100). The same rise is not alerted again an
@@ -1660,8 +1663,47 @@ restore does not restore.
 
 ## Notifications
 
-UNOS sends two kinds of alerts on its own: pool (RAID) errors and disk health
-(SMART) warnings. They go to every enabled e-mail and Telegram channel.
+UNOS sends alerts on its own, to every enabled channel of every kind (e-mail,
+Telegram, webhooks, Discord and Slack): one for each problem it finds (see
+[Alerts](#alerts)), one for new error counts of a pool's devices, and one for
+a disk's rising SMART counters (see [Disk Health](#disk-health)).
+
+### Alerts
+
+UNOS watches for these problems, and sends one alert for each, through every
+enabled channel, when it finds it:
+
+| Problem | Alert | Checked |
+| --- | --- | --- |
+| A pool that UNOS manages is not mounted, or none of its disks is connected | warning | every 5 minutes |
+| A managed pool is degraded: a disk is missing, or its disks count errors (also errors a scrub found) | error | every 5 minutes |
+| btrfs made a managed pool read-only after a serious error | error | every 5 minutes |
+| A mounted managed pool is 90% full: the banner shows it as an error from 95%, and keeps it until the pool is below 85% | warning | every 5 minutes |
+| A disk fails its SMART health self-assessment (health FAILED; for an NVMe disk not when it is only too hot) | error | every hour |
+| The latest SMART self-test of a disk failed | error | every hour |
+| The last run of an enabled scheduled task failed | warning | every 5 minutes |
+| An enabled task missed a run: its time passed 10 minutes ago, and it did not run | warning | every 5 minutes |
+
+A problem is alerted once, not at every check, and stays known while it
+lasts: administrators see it in the health banner above every page, in the
+language of the page, with errors first. When it is gone (the pool is mounted
+again, the task ran), the banner drops it and UNOS sends nothing; the banner
+goes once no problem is left. A problem that comes back is alerted again. UNOS
+keeps the problems in memory, not on the system disk: after a restart of the
+supervisor (an update, a reboot) it alerts each problem that is still there
+once more. The RAID monitor also alerts each rise of a pool's device error
+counts, unless the problem that the rise causes is alerted at the same check,
+and once when it cannot read the state of a managed pool. For a pool that UNOS
+does not manage, it alerts the changes of its health instead: a status that is
+no longer healthy, a filesystem made read-only.
+
+A disk that sleeps is not woken for the check and keeps what UNOS knew of it,
+unless another disk is at its place. Runs are not made up after the supervisor
+was stopped: a task whose time came while it was stopped is reported as
+missed; run it from **System** → **Scheduler**, or it runs at its next time.
+A task misses no run before it was created, enabled again or given another
+time, and neither before a change of the host's time zone. A recovery sends
+nothing.
 
 ### Adding a Channel
 
@@ -1714,16 +1756,11 @@ summary above counts the active channels and the notifications sent,
 delivered and failed. An entry that UNOS cannot read, for example one
 damaged from outside, is left out, and the supervisor's log says so.
 
-Webhook, Discord and Slack channels receive test notifications and what
-`POST /api/v1/notifications/send` sends, but no alerts yet (feature-list
-entry `system.alert-events`).
-
 ### Notification Events
 
 The form's **Notify on events** choices are stored, but they have no effect
-yet: every enabled e-mail and Telegram channel receives both kinds of alerts,
-and no other event (container status, temperatures, backups) sends a
-notification.
+yet: every enabled channel receives every alert, and no other event
+(container status, temperatures, backups) sends a notification.
 
 ---
 

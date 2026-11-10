@@ -1179,6 +1179,7 @@ class TestAlertsOffTheEventLoop:
         async def slow_telegram(config, event):
             await asyncio.sleep(5)
 
-        monkeypatch.setattr(health_router, "send_telegram", slow_telegram)
+        # Telegram, webhooks, Discord and Slack go through send_through (ADR-0332).
+        monkeypatch.setattr(health_router, "send_through", slow_telegram)
         await health_router.send_raid_alert("data", "error", 1, "details")
         assert "Could not send alert" in caplog.text
