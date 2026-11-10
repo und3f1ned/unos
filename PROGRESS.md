@@ -63,7 +63,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-10, 20:20 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-10, 22:10 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -71,7 +71,22 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 70dfec4 (System > General sets the hostname and the time zone), its web UI
+- Runs main bcc4eff, deployed in three steps on 2026-11-10, and rebooted from the API at 22:00:26
+  UTC (the boot of 22:01:43 UTC; ssh answered by 22:02:17): `check.sh` OK after it, with the
+  capped log options, Samba's lockout policies, uvicorn's `--limit-concurrency 128` and Caddy's
+  431 for a 22 KB header block all kept, and `scenario.sh smb` OK, 28 steps (3.418 MiB).
+  - 20:51 UTC, main 4b08419 (`system.alert-events`): sync 1.746, build-supervisor 12.695,
+    build-webui 18.801, up 5.656, check.sh 0.016 MiB; no ERROR or Traceback in the log.
+  - 21:22 UTC, main c1328ab (`security.server-limits`): sync 1.211, build-supervisor 12.090,
+    build-webui 18.535, up 5.637, check.sh 0.031 MiB.
+  - 21:58 UTC, main bcc4eff (`shares.smb-login-protection`): sync 1.652, build-supervisor
+    12.184, up supervisor 3.344, check.sh 0.016 MiB; then `scenario.sh smb` OK, 28 steps
+    (3.895 MiB).
+  - Upload speed from the workstation (10GBASE-T) to the device's 2.5 GbE port,
+    `scripts/dev/upload-speed.py`: 256 MiB at 239 MiB/s (2.01 Gbit/s), 4 GiB at 79 to 105 MiB/s,
+    the write rate of the pool's 7200 rpm disk (sda, WDC WD6400AACS); 0.09 to 0.19 MiB on the SD
+    card for its sign-in and sign-out.
+- Before them, main 70dfec4 (System > General sets the hostname and the time zone), its web UI
   deployed at 20:13 UTC: SD MiB sync 0.973, build-webui 18.367, up webui 2.988. For the reboot
   check of `system.hostname-and-time-zone` the zone was set to Etc/GMT-3 (0.137 MiB) and the
   hostname to unoscheck-name (0.148 MiB), and the device was rebooted from the API at 20:14:04
@@ -232,6 +247,15 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-10: SMB lockout, server limits and the upload speed pass on the device
+
+- `shares.smb-login-protection`, `shares.samba-runtime-writes` and `security.server-limits`
+  pass: the smb scenario check, with its new lockout step, passed before and after the reboot of
+  22:01 UTC; the policies, uvicorn's limit and Caddy's 431 were kept after it; the upload speed
+  was measured from the workstation (the Dev device section has the figures and the MiB). The
+  new `scripts/dev/upload-speed.py` measures it: it signs in from dev.env without showing the
+  password, uploads through Caddy into a folder of the pool, deletes it and signs out.
 
 ### 2026-11-10: Samba locks an SMB account after 5 failed sign-ins
 
