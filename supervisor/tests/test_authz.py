@@ -86,7 +86,7 @@ USER_ALLOWED = {
     ("GET", f"{API}/auth/me/smb"),
     ("POST", f"{API}/auth/me/smb/enable"),
     ("POST", f"{API}/auth/me/smb/disable"),
-    # Read-only system information for the dashboard
+    # Read-only system information, which every signed-in user may read
     ("GET", f"{API}/system/info"),
     ("GET", f"{API}/system/stats"),
     ("GET", f"{API}/system/network"),

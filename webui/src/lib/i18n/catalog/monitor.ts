@@ -1,8 +1,7 @@
 import type { Translation } from '../translate';
 
 // System > Resource Monitor: src/routes/system/tabs/MonitorTab.svelte. It writes its sizes, rates
-// and percentages itself, the numbers in the format of the page: in English as formatBytes and
-// formatBytesPerSecond of $lib/stores/stats write them.
+// and percentages itself, the numbers in the format of the page and the units of this catalog.
 
 export const en = {
 	'monitor.title': 'Resource Monitor',

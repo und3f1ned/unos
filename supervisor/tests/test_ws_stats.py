@@ -24,15 +24,28 @@ def test_the_stats_message_has_one_shape():
 
 
 def test_the_web_ui_keeps_no_unread_stats_code():
-    """system.stats-without-unread-parts (ADR-0207): no client of an API that no page calls and no
-    store that nothing sets or reads."""
+    """system.stats-without-unread-parts (ADR-0207): every module of $lib/api and $lib/stores has a
+    reader, every value that the stats store exports is imported somewhere, and no client asks for
+    /system/stats or /system/temperatures, which no page reads."""
+    import re
     from pathlib import Path
 
-    webui = Path(__file__).resolve().parents[2] / "webui" / "src" / "lib"
-    stores = (webui / "stores" / "stats.ts").read_text(encoding="utf-8")
-    for name in ("statsHistory", "StatsHistory", "cpuStats", "memoryStats", "networkStats", "diskIOStats",
-                 "networkInterfaces", "export const processes", "export const temperatures"):
-        assert name not in stores, name
-    system = (webui / "api" / "system.ts").read_text(encoding="utf-8")
-    for name in ("getSystemStats", "interface SystemStats", "getTemperatures"):
-        assert name not in system, name
+    src = Path(__file__).resolve().parents[2] / "webui" / "src"
+    texts = {path: path.read_text(encoding="utf-8") for path in src.rglob("*")
+             if path.is_file() and path.suffix in (".ts", ".svelte")}
+    lib = src / "lib"
+    for folder in ("api", "stores"):
+        for module in sorted((lib / folder).glob("*.ts")):
+            names = [f"$lib/{folder}/{module.stem}"]
+            readers = [path for path, text in texts.items() if path != module and (
+                any(f"'{name}'" in text or f'"{name}"' in text for name in names)
+                or (path.parent == module.parent and re.search(rf"""from ['"]\./{module.stem}['"]""", text)))]
+            assert readers, f"$lib/{folder}/{module.name} has no reader"
+    store = lib / "stores" / "stats.ts"
+    for name in re.findall(r"^export (?:const|let|function|async function) (\w+)", texts[store], re.M):
+        importers = [path for path, text in texts.items() if path != store and re.search(
+            rf"""import\s*\{{[^}}]*\b{name}\b[^}}]*\}}\s*from\s*['"]\$lib/stores/stats['"]""", text)]
+        assert importers, f"$lib/stores/stats.ts exports {name}, which nothing imports"
+    system = texts[lib / "api" / "system.ts"]
+    for endpoint in ("/system/stats", "/system/temperatures"):
+        assert endpoint not in system, endpoint

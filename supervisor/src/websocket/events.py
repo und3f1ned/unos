@@ -69,28 +69,6 @@ _prev_time = None
 _prev_net_per_iface = {}
 
 
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-
-    def register(self, websocket: WebSocket) -> None:
-        """Track an accepted, authenticated socket."""
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                self.disconnect(connection)
-
-
-manager = ConnectionManager()
-
 
 def get_system_stats() -> dict:
     """Get comprehensive system statistics for WebSocket broadcast."""
@@ -268,7 +246,6 @@ def get_system_stats() -> dict:
             # Top processes
             "processes": top_processes,
 
-
             # Timestamp
             "timestamp": timestamp,
         },
@@ -384,7 +361,6 @@ async def websocket_endpoint(websocket: WebSocket):
     if token is None:
         return
 
-    manager.register(websocket)
     # Reading the socket notices a closed client right away (not only when the
     # next send fails) and drains anything the client sends.
     disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
@@ -408,7 +384,6 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         _finish(disconnected)
         _finish(revoked)
-        manager.disconnect(websocket)
 
 
 @router.websocket("/ws/v1/logs/{container_id}")
@@ -418,11 +393,7 @@ async def container_logs_endpoint(websocket: WebSocket, container_id: str):
     if token is None:
         return
 
-    manager.register(websocket)
-    try:
-        await _stream_container_logs(websocket, container_id, token)
-    finally:
-        manager.disconnect(websocket)
+    await _stream_container_logs(websocket, container_id, token)
 
 
 async def _wait_for_disconnect(websocket: WebSocket) -> None:
