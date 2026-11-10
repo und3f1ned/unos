@@ -210,6 +210,28 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: The E2E specs fail where an API answers an error
+
+- `testing.no-skips-that-hide-api-errors`, under the owner's delegation ("work on through the
+  features, ask no questions; I allow everything", in translation): four checks of the E2E specs
+  passed over an API that answered an error, as the reviews of `testing.no-compat-skips` found.
+- `files.spec.ts`: the File Browser specs skipped whenever POST /files/mkdir failed in every
+  folder of the pools. A folder that takes no new folder answers 403 (an unmounted pool's
+  mountpoint is immutable); any other answer now fails the test with its status and text, and the
+  skip fires only when every folder answered 403.
+- `shares.spec.ts`: the seeded share's import-notes specs skipped without notes, which e2e.sh's
+  new stand-in always has; they fail now. Run twice on one stand-in (`--repeat-each 2`), both
+  failed in the second round, where the old skip passed over them. On the test stack a second
+  run fails them until `down -v` gives it a new database (docs/TESTING.md). The IPv6 hints skip
+  only when nothing answers on `[::1]`, and an answer that is not OK fails.
+- `api.spec.ts`: GET /files/list expects 200, and GET /snapshots/ of the pool folder testpool 200
+  with no snapshots. GET /containers/images and GET /snapshots/subvolumes, which the stand-in
+  answers with 500 (no Docker; no findmnt), skip there with their reasons and expect 200 and a
+  list on other targets. `test_standin.py`'s `SKIP_CONDITIONS` lists `health === null` in place
+  of `!reachable`, and `notes.length === 0` no more, as ADR-0317 foresaw.
+- The three specs on the stand-in: 134 passed, 17 skipped (the stand-in skips of `api.spec.ts`).
+  Not host-level.
+
 ### 2026-11-10: SMB changes are audited with actions of their own
 
 - `shares.rollback-era-safeguards`, at the owner's word to go on ("Continue", in translation),

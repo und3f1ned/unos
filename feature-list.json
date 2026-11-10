@@ -3415,12 +3415,18 @@
         "The GET /files/list check of api.spec.ts expects 200, as files.spec.ts does, and no check of api.spec.ts accepts a 404 or a 500 where the stand-in answers otherwise",
         "The IPv6 hints of shares.spec.ts skip only when the stand-in does not answer on [::1], not on any answer of /api/v1/health that is not OK"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0207",
         "ADR-0215"
       ],
-      "notes": "Found by the fresh-context review of testing.no-compat-skips on 2026-11-09: files.spec.ts (scratch === null) skips the whole describe whenever POST /files/mkdir fails, 404 and 5xx included; shares.spec.ts (notes.length === 0) names an earlier run that dismissed the notes, which never applies on a stand-in that e2e.sh starts fresh, so the skip fires only when the import stops writing notes; api.spec.ts accepts a 404 for GET /files/list. The review of 2026-11-10 added: api.spec.ts accepts a 500 (two checks) and a 404 (one more), and shares.spec.ts's !reachable is only that /api/v1/health answered OK."
+      "notes": "Found by the fresh-context review of testing.no-compat-skips on 2026-11-09: files.spec.ts (scratch === null) skips the whole describe whenever POST /files/mkdir fails, 404 and 5xx included; shares.spec.ts (notes.length === 0) names an earlier run that dismissed the notes, which never applies on a stand-in that e2e.sh starts fresh, so the skip fires only when the import stops writing notes; api.spec.ts accepts a 404 for GET /files/list. The review of 2026-11-10 added: api.spec.ts accepts a 500 (two checks) and a 404 (one more), and shares.spec.ts's !reachable is only that /api/v1/health answered OK. Passed 2026-11-10. Step 1: the beforeEach of the File Browser specs takes the first folder of the pools that takes a new folder and expects 403 from each folder before it (an unmounted pool's mountpoint is immutable: EPERM); any other answer fails the test with its status and text, and NO_POOL_FOLDER skips only when every folder answered 403. Step 2: expectNotes fails without import notes; the Seeded specs run twice on one stand-in (--repeat-each 2) failed both notes specs in the second round, where the old skip passed over them; on the test stack a second run fails them until down -v (docs/TESTING.md). Step 3: GET /files/list expects 200, and GET /snapshots/?subvolume=<pools>/testpool 200 with no snapshots; GET /containers/images and GET /snapshots/subvolumes, which the stand-in answers with 500 (no Docker; no findmnt), skip on E2E_STAND_IN=1 with their reasons (NO_DOCKER, NO_MOUNTED_POOLS) and expect 200 and a list elsewhere. Step 4: the IPv6 hints skip only when the request to [::1] gets no answer (health === null), and an answer that is not OK fails the test. SKIP_CONDITIONS of test_standin.py lists health === null in place of !reachable, and notes.length === 0 no more, as ADR-0317 foresaw. Not host-level.",
+      "verified_by": [
+        "webui/tests/files.spec.ts",
+        "webui/tests/shares.spec.ts",
+        "webui/tests/api.spec.ts",
+        "supervisor/tests/test_standin.py"
+      ]
     },
     {
       "id": "testing.keyboard-upload-opens-the-file-chooser",

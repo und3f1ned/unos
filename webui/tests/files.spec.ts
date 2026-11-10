@@ -279,7 +279,8 @@ test.describe('File Browser operations', () => {
     const response = await page.request.get('/api/v1/files/list', { headers: auth() });
     expect(response.ok(), `list pools: HTTP ${response.status()}`).toBeTruthy();
     const name = `e2e-files-${Date.now().toString(36)}`;
-    // The first pool that takes a new folder (an unmounted pool's directory is write-protected).
+    // The first pool that takes a new folder. A pool that takes none refuses it with 403 (an
+    // unmounted pool's directory is write-protected); any other answer is an error of the API.
     for (const pool of (await response.json()).items as Entry[]) {
       if (pool.type !== 'directory') continue;
       const made = await page.request.post('/api/v1/files/mkdir', {
@@ -290,6 +291,7 @@ test.describe('File Browser operations', () => {
         scratch = { pool, name, path: (await made.json()).path };
         break;
       }
+      expect(made.status(), `a new folder in ${pool.path}: HTTP ${made.status()} ${await made.text()}`).toBe(403);
     }
     test.skip(scratch === null, NO_POOL_FOLDER);
   });

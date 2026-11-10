@@ -75,9 +75,8 @@ SKIP_CONDITIONS = {
     "!httpUrl",
     # The IPv6 connection hints need a stand-in on this machine that answers on [::1] (shares.spec.ts).
     "!['localhost', '127.0.0.1'].includes(base.hostname)",
-    "!reachable",
-    # An earlier run on the same stand-in dismissed the import notes of the seeded share (shares.spec.ts).
-    "notes.length === 0",
+    # Nothing answers on [::1]; an answer that is not OK fails the test (shares.spec.ts).
+    "health === null",
     # No folder of the pools directory takes a new one: the test stack has none (files.spec.ts).
     "scratch === null",
     # The supervisor's emergency command line runs against the stand-in's data on this machine
