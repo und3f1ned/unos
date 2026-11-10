@@ -111,6 +111,7 @@ DOCKER_STUB = textwrap.dedent(
                 exit 0
               fi
               check_up_options "${@:3}" || exit 1
+              interrupt_at up
               [[ " $* " == *" --force-recreate "* ]] && touch "$STUB_DIR/rolled-back"
               has probe-lock && probe_lock
               # A process that outlives the update, as a detached one does.
@@ -377,8 +378,11 @@ class TestUpdateScript:
         assert calls.index("docker image tag sha256:running-supervisor deploy-supervisor:previous") < _index(
             calls, "docker compose build"
         )
-        assert _index(calls, "docker compose build") < _index(calls, "docker compose down")
-        assert _index(calls, "docker compose down") < _index(calls, "docker compose up -d --no-build")
+        assert _index(calls, "docker compose build") < _index(calls, "docker compose up -d --no-build")
+        # No compose down first (deploy.no-legacy-network-recreate, ADR-0207): up recreates the
+        # containers of the new images, and the network of a release without the fixed subnet
+        # (ADR-0048) is no installation's.
+        assert not any(call.startswith("docker compose down") for call in calls)
         assert _index(calls, "curl") < _index(calls, "docker image prune")
         backup = next((sandbox / "backups").iterdir())
         assert sorted(p.name for p in backup.iterdir()) == ["data.tar.gz", "unos.db"]
@@ -575,10 +579,11 @@ class TestUpdateScript:
 
     @pytest.mark.parametrize("signal", ["INT", "HUP"])
     def test_interrupted_restart_starts_the_previous_version(self, sandbox, signal):
-        # Before: interrupted between `down` and `up`, UNOS stayed stopped.
+        # Interrupted while compose starts the new containers: the rollback starts the previous
+        # version, as it did when an interrupt came between the compose down and up of before.
         before = _head(sandbox)
 
-        result, calls = _run_update(sandbox, "interrupt-at-down", f"signal={signal}")
+        result, calls = _run_update(sandbox, "interrupt-at-up", f"signal={signal}")
 
         assert result.returncode == 1
         retag = calls.index("docker image tag deploy-webui:previous deploy-webui")
@@ -598,7 +603,7 @@ class TestUpdateScript:
 
     def test_second_update_stops_before_it_runs_git_or_docker(self, sandbox):
         # Two SSH sessions, or cron and a manual run: the second one would
-        # interleave its compose down/up with the first one's, and its rollback
+        # interleave its compose up with the first one's, and its rollback
         # (git reset --hard) would hit the first one's build.
         before = _head(sandbox)
 
@@ -619,7 +624,7 @@ class TestUpdateScript:
             # A prefix, as elsewhere: options may follow (--wait-timeout).
             assert any(call.startswith("docker compose up -d --no-build") for call in calls)
             assert _git_calls(sandbox)
-            # Held during the build and during the restart (compose down/up),
+            # Held during the build and during the restart (compose up),
             # which a second update must not interleave with.
             assert (sandbox / "stub" / "lock-state").read_text() == "held\nheld\n"
             # Neither git nor docker got the lock's descriptor: the process
@@ -712,7 +717,7 @@ class TestUpdateScript:
             # mean no limit.
             (("unhealthy",), "0", SUPERVISOR_START, ["--no-build", "--no-build --force-recreate"]),
             # Rollback after an interrupted restart.
-            (("interrupt-at-down", "signal=INT"), "42", SUPERVISOR_START, ["--no-build --force-recreate"]),
+            (("interrupt-at-up", "signal=INT"), "42", SUPERVISOR_START, ["--no-build", "--no-build --force-recreate"]),
             # A health timeout longer than the supervisor's start.
             ((), "900", 900, ["--no-build"]),
             (("up-fails",), "900", 900, ["--no-build", "--no-build --force-recreate"]),
@@ -1256,6 +1261,17 @@ class TestInstallScript:
         assert _up_calls(calls) == [f"docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert exec_start == [f"ExecStart=/usr/bin/docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert "WARN" not in result.stdout
+
+    def test_the_start_runs_no_compose_down_before_up(self, tmp_path):
+        """deploy.no-legacy-network-recreate (ADR-0207): install.sh starts UNOS with compose up
+        alone; the compose down for the network of a release without the fixed subnet (ADR-0048)
+        is gone, with its comment."""
+        result, calls, _ = _start_install(tmp_path)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not any(call.startswith("docker compose down") for call in calls), calls
+        for script in ("install.sh", "update.sh"):
+            assert "fixed subnet" not in (REPO_ROOT / "deploy" / script).read_text(encoding="utf-8"), script
 
     def test_compose_without_wait_timeout_gets_the_plain_command(self, tmp_path):
         # Compose before 2.17 rejects the option: the start, and the unit at

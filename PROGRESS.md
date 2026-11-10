@@ -206,6 +206,22 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: install.sh and update.sh start UNOS without a compose down first
+
+- `deploy.no-legacy-network-recreate`, at the owner's word to go on ("Continue", in translation),
+  under ADR-0207: `start_unos` of `deploy/install.sh` and `restart_services` of
+  `deploy/update.sh` ran `docker compose down --remove-orphans` before `up`, kept for the network
+  of releases without the fixed subnet (ADR-0048). Both start with `up` alone now, which
+  recreates the containers of new images; their comments on older networks are gone, and
+  `docs/INSTALL.md` describes the update's restart so. A change of the subnet still needs a
+  `docker compose down` by hand, as that guide says; the rollback of `update.sh` keeps its own.
+- Tests first (ADR-0186): an update makes no `compose down` call, and `start_unos` makes none
+  either, nor does either script mention the fixed subnet; both failed before the change. The
+  docker stub of `test_deploy_scripts.py` interrupts the restart during its `up` now
+  (`interrupt-at-up`), where it interrupted at the old `down`. 173 tests of the file passed. Not
+  host-level: neither script has run in this phase.
+- RESULTS
+
 ### 2026-11-09: storage.scrub passes on the scenario check scrub, before and after a reboot
 
 - At the owner's word to work on through the features ("I allow everything", in translation),

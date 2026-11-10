@@ -672,7 +672,8 @@ The script:
    supervisor's image carries the version of the new checkout
    (`git describe --tags --always`, with the tags fetched in step 1), which
    **System → Updates** shows.
-4. Restarts UNOS (`docker compose down`, then `up -d`). `docker compose up`
+4. Restarts UNOS (`docker compose up -d`, which recreates the containers of
+   the new images). `docker compose up`
    starts the web interface once the supervisor answers its health check. The
    supervisor first mounts the pools the host has not mounted, up to two
    minutes each. With Docker Compose 2.30 or later, `up` waits for it up to

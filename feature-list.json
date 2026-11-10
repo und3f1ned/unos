@@ -3137,11 +3137,15 @@
         "install.sh starts UNOS without docker compose down --remove-orphans, and its comment about older installs is gone",
         "tests/test_deploy_scripts.py checks both starts"
       ],
-      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": true,
       "adr": [
         "ADR-0207",
         "ADR-0048"
-      ]
+      ],
+      "notes": "Done 2026-11-10. Step 1: restart_services of update.sh runs docker compose up -d --no-build alone, which recreates the containers of the new images; the comment on the networks of releases without the fixed subnet is gone (TestUpdateScript test_builds_while_running_then_switches_and_prunes_after_health: no compose down in an update). Step 2: start_unos of install.sh runs no compose down --remove-orphans before compose up, and its comment on older installs is gone (TestInstallScript test_the_start_runs_no_compose_down_before_up, also that neither script mentions the fixed subnet). Both tests failed before the change. An interrupt of the restart now comes during its compose up (the docker stub's interrupt-at-up), and the rollback starts the previous version as before; the rollback itself still runs compose down first. A change of the subnet needs docker compose down by hand, as docs/INSTALL.md says (ADR-0048). Not host-level: neither script has run in this phase (deploy.install-script, deploy.update-script)."
     },
     {
       "id": "deploy.one-caddyfile",
