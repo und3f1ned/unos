@@ -876,7 +876,7 @@ class TestEndpoints:
         api.client.post(URL.format("Media"))
 
         [entry] = _audit(api)
-        assert entry["action"] == "share_updated"
+        assert entry["action"] == "share_permissions_repaired"
         assert (entry["resource_type"], entry["resource_id"]) == ("share", "Media")
         assert entry["username"] == "admin"
         assert entry["details"] == "Repaired permissions: 2 changed, 1 skipped, 0 errors (done)"

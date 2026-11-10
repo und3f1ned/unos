@@ -23,7 +23,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   `src.host.run_on_host`, and a name imported with `from ..host import run_on_host` escapes them.
 - A program new to the host joins `HOST_TOOLS` with its Debian package, or `OPTIONAL_HOST_TOOLS`
   when `deploy/install.sh` does not install it: the startup check leaves those out, and the feature
-  that runs one says when the host lacks it (exportfs, ADR-0292). Blocking work (host
+  that runs one says when the host lacks it (exportfs, ADR-0321). Blocking work (host
   commands, smartctl, bcrypt, Docker, e-mail) runs off the event loop with a timeout (ADR-0021).
   The timeout of `run_on_host` ends only nsenter, not the command on the host: a command that
   can run long runs under the host's `timeout` (ADR-0258).
@@ -62,7 +62,7 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 | `service.py` | `smb_lock()`, the import, apply, the share API's logic, the startup reconcile, the restore steps, `share_path_problem` |
 | `smbconf.py`, `smb.py` | smb.conf as text (pure); the file on the host, testparm, reload, close-share |
 | `router.py`, `schemas.py`, `interfaces.py`; `repair.py`, `repair_router.py` | the share API and the types the modules share; Repair permissions (ADR-0155) |
-| `exports.py`, `nfs.py` | NFS: export files as exportfs reads them (pure); UNOS's own export file on the host, exportfs and the export rules (ADR-0292, ADR-0293) |
+| `exports.py`, `nfs.py` | NFS: export files as exportfs reads them (pure); UNOS's own export file on the host, exportfs and the export rules (ADR-0321, ADR-0293) |
 
 The SMB flows of users (allow, turn on, password changes) are in `src/auth/router.py`. Rules:
 - UNOS alone writes smb.conf, rendered from the database (ADR-0074); every apply is staged,
@@ -75,7 +75,7 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
 - Only marked host accounts and their passdb entries are touched (ADR-0108), each after a fresh
   read right before a destructive command (ADR-0192).
 - An unchanged state renders byte-identical text and writes nothing (ADR-0082); audit entries
-  record real changes only, with existing `AuditAction` values (ADR-0157).
+  record real changes only, with the SMB actions of `AuditAction` (ADR-0320).
 - Administrators never have SMB (ADR-0117); a user's own SMB flows answer fixed texts (ADR-0131).
 
 ## Tests

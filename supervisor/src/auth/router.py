@@ -109,7 +109,7 @@ async def _smb_audit(
     severity: AuditSeverity = AuditSeverity.INFO,
 ) -> None:
     await log_action(
-        action=AuditAction.USER_UPDATED,
+        action=AuditAction.SMB_ACCOUNT_UPDATED,
         request=request,
         username=current_user_name,
         resource_type="smb_account",
@@ -420,8 +420,8 @@ async def create_user(
     """Create a new user (admin only), optionally with SMB access (the same password).
 
     The insert runs under smb_lock: SQLite gives the new user the highest rowid
-    plus one, so an older release (or a restored database) may have left SMB rows
-    with that id, which the reconcile and the restore remove under the lock. In
+    plus one, so a restored or hand-edited database may have left SMB rows with
+    that id, which the reconcile and the restore remove under the lock. In
     the same transaction they are deleted: a new user never inherits SMB state.
     """
     username = validate_new_username(user.username)

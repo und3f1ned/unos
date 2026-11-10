@@ -1241,9 +1241,10 @@ regular users have no access to it.
   `architecture.times-with-time-zones`).
 - Recorded today: sign-ins and failed sign-ins (a wrong two-factor code
   appears only in the login history), users created, changed and deleted, the
-  SMB access of users, shares created, changed, deleted and repaired, shares
-  imported from smb.conf and the corrections of the SMB check at startup (by
-  the user `system`), API tokens created and deleted, new recovery codes, the
+  SMB access of users, shares created, changed, deleted and repaired, NFS
+  exports created and deleted, shares imported from smb.conf, the corrections
+  of the SMB check at startup and the SMB state after a restore (by the user
+  `system`), API tokens created and deleted, new recovery codes, the
   reset of an administrator on the NAS's command line (`password_change` and
   `totp_disabled` by the user `root`, see
   [Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)),

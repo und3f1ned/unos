@@ -540,7 +540,7 @@ class TestHostRepairs:
 
     def test_a_row_whose_linux_name_is_not_the_username(self, world):
         consistent(world)
-        # An older release deleted alice and gave her id to a new user "eve".
+        # A restored or hand-edited database gave alice's id to another user, "eve".
         raw(world, f"UPDATE users SET username = 'eve' WHERE id = {world.ids['alice']}")
         pid = world.fake.add_session("alice", ["media"])
 

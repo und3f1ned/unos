@@ -208,7 +208,7 @@ async def _repair_and_record(
     _last_results[share_name.lower()] = result
     skipped = sum(result.skipped.values())
     await log_action(
-        action=AuditAction.SHARE_UPDATED,
+        action=AuditAction.SHARE_PERMISSIONS_REPAIRED,
         request=request,
         username=username,
         resource_type="share",

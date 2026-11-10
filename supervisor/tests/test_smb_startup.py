@@ -202,7 +202,7 @@ class TestConsistentState:
         add_share(env, "docs", "docs", access=[(ALICE, "write")])
         await start()
         (entry,) = audit_entries(env.audit)
-        assert (entry["action"], entry["username"], entry["resource_type"]) == ("other", "system", "smb")
+        assert (entry["action"], entry["username"], entry["resource_type"]) == ("smb_reconciled", "system", "smb")
         assert entry["details"] == "SMB startup reconcile: smb.conf was rewritten"
 
 

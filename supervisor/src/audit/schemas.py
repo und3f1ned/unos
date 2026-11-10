@@ -30,6 +30,16 @@ class AuditAction(str, Enum):
     SHARE_CREATED = "share_created"
     SHARE_UPDATED = "share_updated"
     SHARE_DELETED = "share_deleted"
+    SHARE_PERMISSIONS_REPAIRED = "share_permissions_repaired"
+    # SMB (ADR-0320): a user's SMB account, the import of smb.conf, the startup reconcile and
+    # the SMB state after a restore
+    SMB_ACCOUNT_UPDATED = "smb_account_updated"
+    SMB_SHARES_IMPORTED = "smb_shares_imported"
+    SMB_RECONCILED = "smb_reconciled"
+    SMB_RESTORED = "smb_restored"
+    # NFS exports (ADR-0321)
+    NFS_EXPORT_CREATED = "nfs_export_created"
+    NFS_EXPORT_DELETED = "nfs_export_deleted"
 
     # Containers
     CONTAINER_STARTED = "container_started"
