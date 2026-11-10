@@ -9,7 +9,7 @@
 * The stand-in cannot reach this machine's Docker, and drops the caller's
   UNOS_* and DOCKER_* variables.
 * The security headers of scripts/standin/front.mjs equal those of the
-  Caddyfile it stands in for (webui/Caddyfile, and its copy deploy/Caddyfile).
+  Caddyfile it stands in for (webui/Caddyfile).
 * The specs never run against the device: node loads webui/playwright.config.ts,
   and with it webui/tests/target.ts, over a table of targets, and it refuses
   every BASE_URL and HTTP_URL whose host is not local; a copy of
@@ -359,9 +359,6 @@ class TestFrontHeaders:
         caddy = _caddy_headers(REPO / "webui" / "Caddyfile")
         assert "content-security-policy" in caddy and "strict-transport-security" not in caddy
         assert _front_headers() == caddy
-
-    def test_deploy_caddyfile_has_the_same_headers(self):
-        assert _caddy_headers(REPO / "deploy" / "Caddyfile") == _caddy_headers(REPO / "webui" / "Caddyfile")
 
 
 # Loads webui/playwright.config.ts as Playwright does, without Playwright: a

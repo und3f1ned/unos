@@ -3212,10 +3212,14 @@
         "deploy/Caddyfile, a copy that nothing uses, is deleted, and webui/Caddyfile stays",
         "Nothing in the repository refers to the deleted copy"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0201"
-      ]
+      ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "notes": "Passed 2026-11-10. Step 1: the copy in deploy/ is deleted, and webui/Caddyfile stays: webui/Dockerfile copies it into the image, and neither compose file mounts a Caddyfile. test_the_web_ui_has_one_caddyfile lists the repository's files named Caddyfile (two before the change) and checks the COPY line and the compose volumes. Step 2: git grep finds the copy's path only in this entry's steps (test_nothing_refers_to_a_copy_of_the_caddyfile_in_deploy, added after the review). The deploy component's runtime files of scripts/dev/tree.py, the copy's header check in test_standin.py, the web UI container of test_apps.py (a bind of the copy that the real container never had), the comment of webui/Caddyfile, deploy/AGENTS.md, webui/AGENTS.md and ADR-0025 (its decision unchanged, corrected in place) no longer name it. The device's checkout keeps the copy until the next sync of deploy.sh deletes it; nothing reads it there. make check passed; make e2e-local did not run: the stand-in serves the web UI through scripts/standin/front.mjs, never through webui/Caddyfile, whose headers test_standin.py compares, and the build does not read it. A fresh-context review found both steps met, step 2 without a test (added), and the record of the checks missing. Not host-level."
     },
     {
       "id": "deploy.no-legacy-smb-conf-recognition",

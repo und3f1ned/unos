@@ -2306,6 +2306,29 @@ class TestBuildContexts:
         testing = (REPO_ROOT / "docs" / "TESTING.md").read_text()
         assert "tests/mocks" not in testing and "UNOS_TEST_MODE" not in testing
 
+    def test_the_web_ui_has_one_caddyfile(self):
+        """webui/Caddyfile, which webui/Dockerfile copies into the image, is the repository's only
+        Caddyfile, and no compose file mounts one over it (deploy.one-caddyfile, ADR-0201)."""
+        listed = subprocess.run(["git", "ls-files", "-z", "-co", "--exclude-standard"], cwd=REPO_ROOT,
+                                capture_output=True, text=True, timeout=60)
+        if listed.returncode != 0:
+            pytest.skip(f"git ls-files failed: {listed.stderr.strip()}")
+        assert [name for name in listed.stdout.split("\0") if Path(name).name == "Caddyfile"] == ["webui/Caddyfile"]
+        assert "COPY Caddyfile /etc/caddy/Caddyfile" in (REPO_ROOT / "webui" / "Dockerfile").read_text()
+        for compose in ("docker-compose.yml", "docker-compose.test.yml"):
+            volumes = _compose_file(compose)["services"]["webui"].get("volumes", [])
+            assert not [volume for volume in volumes if "Caddyfile" in str(volume)], compose
+
+    def test_nothing_refers_to_a_copy_of_the_caddyfile_in_deploy(self):
+        """Only the ledger entry that deleted it names the copy that deploy/ kept of webui/Caddyfile
+        (deploy.one-caddyfile, step 2): no script, test, document or ADR."""
+        copy = "deploy/" + "Caddyfile"  # put together, so that this test does not name it itself
+        found = subprocess.run(["git", "grep", "--untracked", "-l", "-F", copy], cwd=REPO_ROOT,
+                               capture_output=True, text=True, timeout=60)
+        if found.returncode not in (0, 1):
+            pytest.skip(f"git grep failed: {found.stderr.strip()}")
+        assert found.stdout.splitlines() == ["feature-list.json"]
+
     def test_dockerignore_drops_local_build_output(self):
         assert {"node_modules", "build", ".svelte-kit"} <= _dockerignore("webui")
         assert {"**/__pycache__", "**/*.pyc"} <= _dockerignore("supervisor")
