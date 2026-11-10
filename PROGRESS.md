@@ -272,7 +272,8 @@ Open owner actions:
   gives `(a title)` and is refused; a file with JSX fails the check
   (`test_jsx_in_a_spec_fails_the_check`); the variable `fail` of `health.spec.ts` is
   `listingFails`. ADR-0317 and step 2 say so, and that modules outside `webui/tests` are not
-  read. The forms test holds 53 uses in six files; `test_standin.py` 55 passed.
+  read. The forms test holds 53 uses in six files; `test_standin.py` 55 passed, `health.spec.ts`
+  on the stand-in 14 passed (with `E2E_CHROMIUM_PATH`), and `make check` passed.
 
 ### 2026-11-10: install.sh recognizes the smb.conf of UNOS by its header alone
 
