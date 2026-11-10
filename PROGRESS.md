@@ -227,6 +227,22 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-10: System > General sets the hostname and the time zone
+
+- `system.hostname-and-time-zone`: the page only showed the name. Now its card Name and time
+  zone sets the hostname (`PUT /network/hostname`) and the time zone, chosen from the host's
+  list (`PUT /system/timezone`), with the host's message when it refuses a change. Test first:
+  `system-general.spec.ts` on route fakes (the stand-in has neither hostnamectl nor
+  timedatectl), in English and Russian; the phone layout spec passes (121). What is left: the
+  deploy and the re-check after a reboot.
+- A fresh-context review found nothing serious; fixed: an Unknown or unlisted zone showed
+  "Select an option" (now the zone, or Unknown); the Select of ~600 zones had no type-ahead (the
+  shared `Select` now jumps to the first option with the typed letters, with PageUp and
+  PageDown and `aria-activedescendant`); a refused zone stayed selected; one failed GET hid
+  both rows; the notices lacked `role="status"` and `role="alert"`; the zone's hint pushed
+  Save down; a Russian calque; the spec now covers a refused hostname, typing a zone and an
+  unknown zone.
+
 ### 2026-11-10: The time zone and the hostname change on the device
 
 - Main e6a44d5 deployed: through the API the device's zone changed to Etc/GMT-3 on the host and
