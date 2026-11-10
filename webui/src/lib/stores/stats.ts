@@ -1,7 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import { getToken, handleUnauthorized } from '$lib/api/client';
 
-// Extended types for WebSocket stats
+// The parts of the stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface CpuStats {
   percent: number;
   per_core: number[];
