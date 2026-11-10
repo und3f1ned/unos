@@ -63,7 +63,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-10, 19:15 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-10, 19:30 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -71,7 +71,10 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main f68c7c1 (session revocation and log rotation), deployed on 2026-11-10 at 18:50 UTC:
+- Runs main e6a44d5 (the time zone and hostname on the host), deployed on 2026-11-10 at 19:25
+  UTC: SD MiB sync 1.129, build-supervisor 12.488, up 3.219 (the supervisor recreated without
+  the bind mount of /etc/hostname), check.sh 0.016. Before it, main f68c7c1 (session revocation
+  and log rotation), deployed on 2026-11-10 at 18:50 UTC:
   SD MiB sync 2.395 (41 files), build-supervisor 12.266 (pip's layer cached), build-webui
   18.480, up 5.938, check.sh 0.016; the UNOS containers' logs now show json-file
   `{"max-file":"3","max-size":"10m"}` (transmission keeps `{}`, created before). The first
@@ -223,6 +226,13 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-10: The time zone and the hostname change on the device
+
+- Main e6a44d5 deployed: through the API the device's zone changed to Etc/GMT-3 on the host and
+  in the Scheduler, and back to Etc/UTC; its hostname changed and showed at once in both GETs,
+  and went back to its old name (the MiB are in the entry's notes). `system.hostname-and-time-zone`
+  stays open for the controls on System > General and the reboot check.
 
 ### 2026-11-10: The time zone routes ask the host
 
