@@ -625,9 +625,9 @@ The stack has no fake disks, pools or containers. The supervisor sees:
 
 - smb.conf: `supervisor/tests/fixtures/init-test-data.sh` writes `/data/smb.conf` at every start
   of the container, with the seeded share `e2e_seed` that UNOS imports at its first start (the
-  "Seeded SMB share" specs of `tests/shares.spec.ts`). Samba does not run in the test image. The
-  last of those specs dismisses the share's import notes, which the first ones expect: a second
-  run of them fails until `down -v` gives the stack a new database.
+  "Seeded SMB share" specs of `tests/shares.spec.ts`). Samba does not run in the test image.
+  Those specs expect the share's import notes, and the last of them dismisses them: a second run
+  fails until `down -v` gives the stack a new database.
 - Pools: the folder `/mnt/pools/testpool` of the `test-pools` volume, for the file manager and
   share specs. It is not a pool that UNOS manages, and the unprivileged supervisor cannot make one.
 - Disks: those of the machine that runs Docker, as `lsblk` sees them inside the container.

@@ -1116,8 +1116,12 @@ test.describe('SMB shares page (fake data)', () => {
     const base = new URL(baseURL ?? 'https://localhost');
     test.skip(!['localhost', '127.0.0.1'].includes(base.hostname), 'only for a stand-in on this machine');
     const origin = `${base.protocol}//[::1]${base.port ? `:${base.port}` : ''}`;
-    // Only no answer at all skips: an answer that is not OK is an error of the stand-in.
-    const health = await page.request.get(`${origin}/api/v1/health`).catch(() => null);
+    // Only no answer skips: nothing listens on [::1], or this machine has no IPv6 loopback. Any
+    // other failure of the request, and an answer that is not OK, is an error of the stand-in.
+    const health = await page.request.get(`${origin}/api/v1/health`).catch((error: Error) => {
+      if (/\b(ECONNREFUSED|EADDRNOTAVAIL|ENETUNREACH|EAFNOSUPPORT)\b/.test(error.message)) return null;
+      throw error;
+    });
     test.skip(health === null, `nothing answers on ${origin}`);
     expect(health?.ok(), `${origin}/api/v1/health: HTTP ${health?.status()}`).toBeTruthy();
 

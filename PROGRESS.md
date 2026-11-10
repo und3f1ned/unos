@@ -216,21 +216,33 @@ Open owner actions:
   features, ask no questions; I allow everything", in translation): four checks of the E2E specs
   passed over an API that answered an error, as the reviews of `testing.no-compat-skips` found.
 - `files.spec.ts`: the File Browser specs skipped whenever POST /files/mkdir failed in every
-  folder of the pools. A folder that takes no new folder answers 403 (an unmounted pool's
-  mountpoint is immutable); any other answer now fails the test with its status and text, and the
-  skip fires only when every folder answered 403.
+  folder of the pools. A folder that takes no new folder answers 403 "Permission denied" (an
+  unmounted pool's mountpoint is immutable); any other answer, a 403 for another reason included,
+  now fails the test with its status and text, and the skip fires only when every folder refused
+  so.
 - `shares.spec.ts`: the seeded share's import-notes specs skipped without notes, which e2e.sh's
   new stand-in always has; they fail now. Run twice on one stand-in (`--repeat-each 2`), both
   failed in the second round, where the old skip passed over them. On the test stack a second
   run fails them until `down -v` gives it a new database (docs/TESTING.md). The IPv6 hints skip
-  only when nothing answers on `[::1]`, and an answer that is not OK fails.
+  only when the request to `[::1]` is refused or this machine has no IPv6 loopback; any other
+  failure of the request, and an answer that is not OK, fails.
 - `api.spec.ts`: GET /files/list expects 200, and GET /snapshots/ of the pool folder testpool 200
   with no snapshots. GET /containers/images and GET /snapshots/subvolumes, which the stand-in
-  answers with 500 (no Docker; no findmnt), skip there with their reasons and expect 200 and a
-  list on other targets. `test_standin.py`'s `SKIP_CONDITIONS` lists `health === null` in place
-  of `!reachable`, and `notes.length === 0` no more, as ADR-0317 foresaw.
-- The three specs on the stand-in: 134 passed, 17 skipped (the stand-in skips of `api.spec.ts`).
-  Not host-level.
+  answers with 500 (no Docker; no findmnt), skip with their reasons on `E2E_STAND_IN=1`, which
+  both local targets set, so that no E2E check runs them now: the backend tests hold their
+  answers (`test_containers.py`, `test_snapshots.py`), and `apps.docker-down-503` is to give the
+  images' answer on the stand-in, 503, a check of its own. `test_standin.py`'s
+  `SKIP_CONDITIONS` lists `health === null` in place of `!reachable`, and `notes.length === 0`
+  no more, as ADR-0317 foresaw.
+- The three specs on the stand-in: 134 passed, 17 skipped (the stand-in skips of `api.spec.ts`);
+  the whole of `make e2e-local`, 668 passed and 18 skipped, the two new skips more than before.
+- A fresh-context review found every step met and five points, none blocking: a 403 for another
+  reason than "Permission denied" (a path refused as outside the pools, a symbolic link) also let
+  the File Browser specs skip; the two skipped checks run on no local target; any failure of the
+  request to `[::1]` skipped the IPv6 hints; two comments still said that the test stack's pools
+  folder is empty; and a word of docs/TESTING.md. Fixed: the first by the detail, the third by
+  the reasons of no answer, the fourth and fifth in place; the second is recorded above. Not
+  host-level.
 
 ### 2026-11-10: SMB changes are audited with actions of their own
 

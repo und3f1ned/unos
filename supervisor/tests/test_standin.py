@@ -77,7 +77,8 @@ SKIP_CONDITIONS = {
     "!['localhost', '127.0.0.1'].includes(base.hostname)",
     # Nothing answers on [::1]; an answer that is not OK fails the test (shares.spec.ts).
     "health === null",
-    # No folder of the pools directory takes a new one: the test stack has none (files.spec.ts).
+    # No folder of the pools directory takes a new one: each answers 403 Permission denied, as the
+    # directory of an unmounted pool does (files.spec.ts).
     "scratch === null",
     # The supervisor's emergency command line runs against the stand-in's data on this machine
     # (scripts/standin/emergency.py, E2E_STANDIN_STATE of e2e.sh); the test stack's supervisor is
