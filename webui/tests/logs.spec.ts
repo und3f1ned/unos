@@ -81,7 +81,7 @@ const ANSWERS: Record<string, Entry[]> = {
  * the more severe ones, a search the entries whose message holds the text in any case, and the
  * limit the newest entries. Other requests of the logs API are aborted. Returns the query of every
  * entries request, lets a test hold the answers for one source until it releases them, and makes
- * the server fail with a detail until `fail(null)`.
+ * the server fail with a detail until `failWith(null)`.
  */
 async function fakeLogsApi(page: Page) {
   const requests: URLSearchParams[] = [];
@@ -116,7 +116,7 @@ async function fakeLogsApi(page: Page) {
       released = new Promise((resolve) => (release = resolve));
     },
     release: () => release(),
-    fail(detail: string | null) {
+    failWith(detail: string | null) {
       failure = detail;
     },
   };
@@ -381,7 +381,7 @@ test.describe('System Logs with a fake journal', () => {
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
 
     // A search through a large journal that journalctl cannot finish in time.
-    api.fail(DID_NOT_ANSWER);
+    api.failWith(DID_NOT_ANSWER);
     const box = page.getByPlaceholder('Search in logs');
     await box.fill('python3');
     await box.press('Enter');
@@ -392,7 +392,7 @@ test.describe('System Logs with a fake journal', () => {
     await expect(page.getByText('No logs found')).toHaveCount(0);
 
     // The next answer lists its entries again.
-    api.fail(null);
+    api.failWith(null);
     await page.getByRole('button', { name: 'Kernel', exact: true }).click();
     await expect(cells(page, 4)).toHaveText([OOM]);
     await expect(page.locator('main table mark')).toHaveText(['python3']);
@@ -472,7 +472,7 @@ test.describe('System Logs with a fake journal', () => {
     await expect(page.getByText('Период: За последний час')).toBeVisible();
 
     // The server's message stays in English, under a Russian title.
-    api.fail(DID_NOT_ANSWER);
+    api.failWith(DID_NOT_ANSWER);
     await page.getByRole('button', { name: 'Сбросить фильтры' }).click();
     await expect(page.getByText('Ошибка загрузки журналов')).toBeVisible();
     await expect(page.getByText(DID_NOT_ANSWER)).toBeVisible();

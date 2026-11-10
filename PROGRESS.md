@@ -228,6 +228,75 @@ Open owner actions:
   stats client of `webui/src/lib/api/system.ts` without a caller, and stores of `stats.ts` that
   nothing sets or reads.
 
+### 2026-11-10: the skip detector sees every form, and testing.no-compat-skips passes
+
+- At the owner's word to go on ("Continue", in translation), after the review of 2026-11-09 had
+  stopped the pass: `test_standin.py`'s detector of skips matched only `test.skip` and its
+  `test.describe` and `testInfo` forms in the top folder's `.ts` files. It now sees a skip, fixme
+  or fail call on any object (`test.step`, a TestInfo under any name, `test.info()`) in every file
+  of `webui/tests` and its folders, of every extension Playwright loads; the fake of
+  `logs.spec.ts` names its method `failWith`, so that no helper looks like a skip.
+- Test first (ADR-0186): `test_every_skip_form_in_every_spec_file_is_seen` failed on the old
+  detector, which found one of its five skips. With the new one no real spec has a skip on an
+  unlisted condition (`test_standin.py` 51 passed); `logs.spec.ts` on the stand-in, 19 passed.
+- `testing.no-compat-skips` passes: its step 1 since 2e4306d, its step 2 as ADR-0317 rewords it.
+  The review's skips that can still pass over a broken API became the entry
+  `testing.no-skips-that-hide-api-errors`. Not host-level.
+- A second fresh-context review found that step 2 as written was not met (eight of the nine
+  listed conditions are properties of the target, not missing stand-in features), forms that
+  the detector still missed (a skip after a `//` in a string, `?.`, `['skip']`, `.only`, aliases,
+  annotations) and that a `test.fail` on the stand-in's condition passed. Fixed: ADR-0317 rewords
+  the entry to what the check holds; comments are blanked with strings and regular expression
+  literals kept, and the detector finds those forms and refuses every `test.fail`
+  (`test_an_expected_failure_is_refused_on_any_condition`); the new entry has the review's
+  further checks.
+- A third fresh-context review found step 2's "in any form" still not met: a `{ skip }`
+  destructured from `test`, a template literal or `?.` in brackets, a parenthesized `(test)` and a
+  template literal annotation passed unseen. It also found that ADR-0317 called the listed
+  conditions permanent while `testing.no-skips-that-hide-api-errors` changes one, and, as nits, a
+  division or a regular expression literal that the heuristic misread and that hid the skip after
+  it, two quadratic paths on long words and chains, a stale count in the notes and a `test.fixme`
+  that passed on a listed condition. Fixed: `test_standin.py` reads the files with TypeScript's
+  parser (`SKIP_SCAN`, run by node with `webui/node_modules/typescript`), which finds a skip,
+  fixme or fail called or referenced on any object, destructured or as an annotation, and fails
+  on a file that does not parse; the regex detector and its tokenizer are gone, and with them the
+  misreads and the quadratic paths; every `test.fixme` is refused like `test.fail`; ADR-0317 and
+  step 2 say what the check holds and what it does not see (a name that the code computes or
+  passes as a value), and the notes give the counts of the new test.
+- Tests first (ADR-0186): `test_every_skip_form_in_every_spec_file_is_seen`, now with 22 skips in
+  four files, failed on the regex detector (it stopped with an error at the regular expression
+  literal after `if (ok)`, and without that line missed the new forms and the skip after a
+  division), and so did the fixme case of `test_an_expected_failure_is_refused_on_any_condition`
+  and `test_a_file_that_typescript_cannot_parse_fails_the_check`. In the real specs the parser
+  finds the same 28 skips, all on listed conditions, in 0.3 s; `test_standin.py` 53 passed.
+- A fourth fresh-context review found step 2 still not met as written: a cast around a key
+  (`test['skip' as const]`, `'fixme'!`, `<const>'skip'`, `satisfies`), an import alias
+  (`import s = test.skip`), a class field `type = 'skip'` as an annotation, and
+  `expectedStatus = 'failed'`, which marks an expected failure as `test.fail` does. Fixed: the
+  scan no longer looks for forms one by one; it reports every use of the names skip, fixme, fail
+  and expectedStatus that a file writes out, a member, a destructured name, a key
+  `expectedStatus`, an import alias or any other string of a name alone, and the check refuses
+  all of them but a skip on a listed condition (ADR-0317 and step 2 say so). Also fixed from its
+  nits: the reason check takes a folder and has a test of its own
+  (`test_a_skip_without_its_reason_is_refused`), the parse test feeds a file whose readable skip
+  is on a listed condition, and the notes say that the skip on `E2E_OLD_SUPERVISOR` was a manual
+  run. Recorded in ADR-0317: conditions are compared as text, a comment in a condition or a reason
+  makes the check refuse more, and the Unit Tests job of the CI workflow (off, ADR-0230) installs
+  no web UI packages, so the checks would skip there. The forms test holds 36 uses in five files,
+  which the scan before failed on; `test_standin.py` 54 passed.
+- A fifth fresh-context review found that the scan still took a set of forms: a key, a method,
+  an enum member, a class field or a declaration named after one of the names (`{ fixme: 0 }`
+  read by a `for ... in`, `class { expectedStatus = 'failed' }`, `enum Mark { expectedStatus }`
+  passed to `Object.assign`), and JSX, passed unseen, and that `test.describe.skip(!httpUrl, body)`
+  read as a skip on a listed condition, though it takes a title. Fixed: the scan reports every
+  token whose text is one of the names, an identifier, a string, a template or a part of one, and the check
+  refuses all of them but a skip on a listed condition; a skip of `test.describe` or `test.step`
+  gives `(a title)` and is refused; a file with JSX fails the check
+  (`test_jsx_in_a_spec_fails_the_check`); the variable `fail` of `health.spec.ts` is
+  `listingFails`. ADR-0317 and step 2 say so, and that modules outside `webui/tests` are not
+  read. The forms test holds 53 uses in six files; `test_standin.py` 55 passed, `health.spec.ts`
+  on the stand-in 14 passed (with `E2E_CHROMIUM_PATH`), and `make check` passed.
+
 ### 2026-11-10: install.sh recognizes the smb.conf of UNOS by its header alone
 
 - `deploy.no-legacy-smb-conf-recognition`, at the owner's word to go on ("Continue", in
