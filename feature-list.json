@@ -1258,6 +1258,7 @@
       "adr": [
         "ADR-0096",
         "ADR-0098",
+        "ADR-0339",
         "ADR-0100"
       ],
       "notes": "Device check: 2026-11-07 (slice 2 deploy). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (a wrong password refused with NT_STATUS_LOGON_FAILURE, never as a guest, the null session refused, server signing mandatory without a guest share)."
@@ -1280,6 +1281,7 @@
       "adr": [
         "ADR-0096",
         "ADR-0098",
+        "ADR-0339",
         "ADR-0100"
       ],
       "notes": "The slice 2 device checks made no guest share. Device check 2026-11-11 with main b290ada: scripts/dev/scenario.sh shares (run unoscheckc21bbe, 15:27:26 to 15:28:23 UTC, 2.941 MiB for the whole check, which passed 25 steps and skipped 1) found no guest share on the device (step 3, 0.000 MiB), then turned guest access on for its share with a PATCH: the answer carried the guest warning, GET /shares/smb-status named the share, and [global] had map to guest = Bad User, restrict anonymous = 1 and server signing = default, which testparm accepted (step 20, 0.176 MiB); an anonymous (null) smbclient session to the share listed it and read its file, and its write was refused with NT_STATUS_ACCESS_DENIED, no file made (step 21, 0.000 MiB); Delete of that last guest share removed its section and kept the folder with its files (step 22, 0.199 MiB), after which [global] had server signing = mandatory, map to guest = Never and restrict anonymous = 2 again and the status named no guest share (step 23, 0.020 MiB). A null session's share list (smbclient -L) succeeded but named no share while the guest share existed (\"SMB1 disabled -- no workgroup available\" and no Disk line): restrict anonymous = 1 lets Samba's srvsvc refuse anonymous callers, although ADR-0098 says that the share list still works with it. The check's first run (15:24:18 to 15:25:58 UTC, after the smb check, 2.859 MiB), which expected the share in that list, failed at that step and removed what it had made; the check now asserts the session to the share and only reports the list. Not checked on the device: the share dialog's warning (webui/tests/shares.spec.ts on the stand-in) and a Windows client. Open: the re-check after a reboot (ADR-0018), and whether ADR-0098's text on the share list or the setting changes (the owner's call)."

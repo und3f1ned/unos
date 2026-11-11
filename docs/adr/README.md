@@ -175,7 +175,7 @@ and this index, and `make check-fast` runs it.
 | [0095](0095-smb-answers-lan-addresses-only.md) | SMB answers only LAN addresses, through hosts allow in [global] | accepted | 2026-11-06 |
 | [0096](0096-guest-access-off-and-guest-shares-read-only.md) | Guest access is off by default, and guest shares are read-only | accepted | 2026-11-06 |
 | [0097](0097-restrict-anonymous-0-with-guest-shares.md) | A guest share sets restrict anonymous = 0 and map to guest = Bad User | superseded by [0098](0098-guest-globals-follow-guest-shares.md) | 2026-11-06 |
-| [0098](0098-guest-globals-follow-guest-shares.md) | The guest-related globals follow whether any guest share exists | accepted | 2026-11-06 |
+| [0098](0098-guest-globals-follow-guest-shares.md) | The guest-related globals follow whether any guest share exists | superseded by [0339](0339-the-guest-globals-follow-guest-shares-and-an-anonymous-share-list-names-no-share.md) | 2026-11-06 |
 | [0099](0099-server-signing-at-samba-default.md) | Server signing stays at Samba's default | superseded by [0100](0100-signing-mandatory-unless-a-guest-share-exists.md) | 2026-11-06 |
 | [0100](0100-signing-mandatory-unless-a-guest-share-exists.md) | Server signing is mandatory unless a guest share exists | accepted | 2026-11-06 |
 | [0101](0101-smb3-unix-extensions-off.md) | SMB3 Unix extensions stay off, so app folders may be shared | accepted | 2026-11-06 |
@@ -264,6 +264,7 @@ and this index, and `make check-fast` runs it.
 | [0320](0320-smb-changes-are-audited-with-actions-of-their-own-and-the-rollback-era-safeguards-stay-for-restores-and-hand-edits.md) | SMB changes are audited with actions of their own, and the safeguards of the rollback era stay for restores and hand edits | accepted | 2026-11-10 |
 | [0321](0321-nfs-exports-in-their-own-file-read-as-exportfs-reads-them-audited-with-actions-of-their-own.md) | UNOS keeps its NFS exports in its own export file on the host, reads every export file as exportfs reads it, applies them with the host's exportfs, and audits them with actions of their own | accepted | 2026-11-10 |
 | [0334](0334-samba-locks-an-smb-account-for-five-minutes-after-five-failed-sign-ins.md) | Samba locks an SMB account for 5 minutes after 5 failed sign-ins, and passdb.tdb stays on the system disk | accepted | 2026-11-10 |
+| [0339](0339-the-guest-globals-follow-guest-shares-and-an-anonymous-share-list-names-no-share.md) | The guest-related globals follow whether any guest share exists, and an anonymous share list names no share | accepted | 2026-11-11 |
 
 ## Apps
 
@@ -403,6 +404,7 @@ and this index, and `make check-fast` runs it.
 | [0304](0304-the-scenario-checks-of-the-dev-device-are-scripts-that-remove-what-they-make.md) | The scenario checks of the dev device are scripts that remove what they make and report each step's SD writes | accepted | 2026-11-08 |
 | [0309](0309-the-smbconf-scenario-check-edits-smb-conf-by-hand-and-restarts-the-supervisor.md) | The smbconf scenario check edits smb.conf by hand and restarts the supervisor | accepted | 2026-11-09 |
 | [0314](0314-the-scrub-scenario-check-scrubs-the-pool-cancels-a-scrub-and-runs-a-scheduled-one.md) | The scrub scenario check scrubs the pool, cancels a scrub and runs a scheduled one | accepted | 2026-11-09 |
+| [0340](0340-the-shares-scenario-check-makes-a-guest-share-a-users-own-smb-activation-and-a-repair.md) | The shares scenario check makes a guest share, a user's own SMB activation and a repair | accepted | 2026-11-11 |
 
 ## Testing
 

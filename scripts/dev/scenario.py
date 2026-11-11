@@ -184,7 +184,7 @@ NOT_SHARES = ("global", "homes", "printers", "print$")
 # The start of the guest warning in the answer of a change that turns guest access on
 # (GUEST_WARNING of src/shares/service.py, ADR-0096; test_dev_scenarios.py compares).
 GUEST_WARNS = "Anyone on your network can read this share without a password"
-# The [global] lines that follow whether a guest share exists (ADR-0098, ADR-0100): without one,
+# The [global] lines that follow whether a guest share exists (ADR-0339, ADR-0100): without one,
 # with one.
 GUEST_GLOBALS = {"map to guest": ("Never", "Bad User"), "restrict anonymous": ("2", "1"),
                  "server signing": ("mandatory", "default")}
@@ -1743,7 +1743,7 @@ def smb_check(c: Check) -> None:
         c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"it answered {listing.status}")
         after = passdb_time(c)
         c.expect(after != before, f"passdb.tdb is as it was ({after}): Samba did not count the failure")
-        if guests:  # restrict anonymous = 1 and map to guest = Bad User: guests may list (ADR-0098)
+        if guests:  # restrict anonymous = 1 and map to guest = Bad User: guests may connect (ADR-0339)
             s.text += "; a null session is not tried, as the device has guest shares"
         else:
             listing = c.device.smb_anonymous()
@@ -2247,14 +2247,14 @@ def shares_check(c: Check) -> None:
         off = c.post("/auth/me/smb/disable", api=mine)
         c.expect(smb_state(off) == "password_needed, allowed True, two-factor code False", f"it says {smb_state(off)}")
         c.expect(user not in c.device.passdb_entries()[0], "pdbedit -L still lists it")
-        if guests:  # map to guest = Bad User: Samba takes a user without an account as a guest (ADR-0098)
+        if guests:  # map to guest = Bad User: Samba takes a user without an account as a guest (ADR-0339)
             s.text += "; a sign-in is not tried, as the device has guest shares"
         else:
             listing = c.device.smb_list(user, password)
             c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"it answered {listing.status}")
             s.text += f": {listing.status}"
 
-    # shares.read-only-guest-share (ADR-0096, ADR-0098, ADR-0100).
+    # shares.read-only-guest-share (ADR-0096, ADR-0339, ADR-0100).
     with c.step("guest access turned on for the share: the answer warns, the Shares page names it a guest share, and "
                 "[global] has map to guest = Bad User, restrict anonymous = 1 and server signing = default"):
         c.upload(folder, "guest.txt", DATA)
@@ -2271,8 +2271,7 @@ def shares_check(c: Check) -> None:
         c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
 
     # A null session's share list (smbclient -L) is only reported: restrict anonymous = 1 lets
-    # Samba's srvsvc refuse anonymous callers, so it names no share on the device (2026-11-11),
-    # although ADR-0098 says that the share list still works.
+    # Samba's srvsvc refuse anonymous callers, so it names no share (ADR-0339).
     with c.step("an anonymous (null) session to the share lists it and reads its file, and a write is refused") as s:
         with c.device.smb_guest_session(share) as smb:
             done = smb.run("ls")

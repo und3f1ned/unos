@@ -506,7 +506,7 @@ class FakeNas:
                 "pool_mounted": True, "permissions_ok": True, "import_notes": [], "warnings": []}
 
     def guests_rendered(self) -> list[str]:
-        """The served shares with guest access, which give [global] its guest lines (ADR-0098)."""
+        """The served shares with guest access, which give [global] its guest lines (ADR-0339)."""
         return sorted(name for name, info in self.shares.items()
                       if info.get("guest_ok") and self.path_problem(info["path"]) is None)
 
@@ -1659,7 +1659,7 @@ def test_the_shares_check_covers_the_sticky_parent_repair_permissions_the_user_s
 
 def test_with_another_guest_share_the_shares_check_says_so_in_place_of_the_signing_step(nas):
     """With another guest share the guest lines of [global] stay after the check's share is gone
-    (ADR-0098): the step that would show signing mandatory again says why it cannot, and the check
+    (ADR-0339): the step that would show signing mandatory again says why it cannot, and the check
     tries no sign-in with a password that Samba has no account for, which map to guest = Bad User
     would take as a guest."""
     nas.shares["DATA"]["guest_ok"] = True
@@ -2208,8 +2208,8 @@ def test_the_smb_check_locks_its_account_last_and_deletes_it_locked(nas):
 
 
 def test_with_a_guest_share_the_smb_check_tries_no_null_session(nas, monkeypatch):
-    """A guest share renders restrict anonymous = 1 and map to guest = Bad User (ADR-0098): a
-    null session may then list the guest shares, so the check does not expect its refusal, and
+    """A guest share renders restrict anonymous = 1 and map to guest = Bad User (ADR-0339): a
+    null session may then connect to the guest shares, so the check does not expect its refusal, and
     the [global] step of the shares without guests is skipped."""
     nas.guest_shares = ["DATA"]
     monkeypatch.setattr(nas, "smb_anonymous", lambda: pytest.fail("a null session was tried"))

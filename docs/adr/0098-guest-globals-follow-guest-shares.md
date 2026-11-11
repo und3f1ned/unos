@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0339
 date: 2026-11-06
 area: shares
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0097]
 # ADR-0098: The guest-related globals follow whether any guest share exists
 
 ## Context
+
+Superseded by ADR-0339: an anonymous share list names no share while a guest share exists.
 
 A guest share needs `[global]` settings that let clients without a password in; without a guest share, nothing should. The first design (ADR-0097) set `restrict anonymous = 0` while a guest share existed, which let anyone list the account names without a password.
 
