@@ -1124,7 +1124,7 @@ def compose_seconds(duration: str) -> int:
 def test_deploy_up_waits_until_docker_has_decided_the_health():
     """deploy.sh up gives up after UNOS_DEV_UP_TIMEOUT: never before Docker has decided whether a
     container of deploy/docker-compose.yml is healthy, which takes up to start_period +
-    (retries + 1) x (interval + timeout) (ADR-0176; the same budget as SUPERVISOR_START_TIMEOUT
+    (retries + 1) x (interval + timeout) (ADR-0338; the same budget as SUPERVISOR_START_TIMEOUT
     of the install scripts in test_deploy_scripts.py)."""
     yaml = pytest.importorskip("yaml")
     services = yaml.safe_load((REPO_ROOT / "deploy" / "docker-compose.yml").read_text())["services"]

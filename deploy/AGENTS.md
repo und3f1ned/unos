@@ -8,7 +8,7 @@
 - Its comments explain its values: the `/tmp` and `/var/lib/btrfs` tmpfs keep volatile writes
   off the system disk (ADR-0171); the health checks and `depends_on: service_healthy` take
   up to 680 s, which `SUPERVISOR_START_TIMEOUT` in `install.sh` and `update.sh` must equal and
-  `UNOS_DEV_UP_TIMEOUT` of `scripts/dev/deploy.sh` (700) must exceed (ADR-0176); the web UI's
+  `UNOS_DEV_UP_TIMEOUT` of `scripts/dev/deploy.sh` (700) must exceed (ADR-0338); the web UI's
   `command` waits for the API before it runs the CMD of `webui/Dockerfile`, because at boot
   dockerd starts the containers it still has at once, without `depends_on`: after a power cut,
   and on a host without the `unos` unit, such as the dev device (ADR-0307);

@@ -278,14 +278,15 @@ for _router in (
 HEALTH_PATH = "/api/v1/health"
 
 
-class _SuccessfulHealthCheckFilter(logging.Filter):
-    """Keeps successful health checks out of uvicorn's access log.
+class _RefusedOrFailedRequestFilter(logging.Filter):
+    """Keeps uvicorn's access log to the requests that were refused or failed.
 
-    The Docker healthchecks (deploy/docker-compose.yml) call HEALTH_PATH every
-    10 seconds (supervisor) and every 30 seconds (webui, through Caddy):
-    thousands of lines a day that would bury everything else in
-    `docker logs unos-supervisor`. Every other request, and a check that
-    fails, is still logged.
+    Every access line is a write to the system disk through the container's
+    json-file log (ADR-0214), and the Docker health checks alone
+    (deploy/docker-compose.yml) call HEALTH_PATH every 10 seconds
+    (supervisor) and every 30 seconds (webui, through Caddy). A request that
+    answered below 400 is left out; every 4xx and 5xx answer, a failed health
+    check included, is still logged (ADR-0338).
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -294,15 +295,15 @@ class _SuccessfulHealthCheckFilter(logging.Filter):
         # status code.
         args = record.args
         if isinstance(args, tuple) and len(args) == 5:
-            _client, method, path, _version, status = args
-            if method == "GET" and path == HEALTH_PATH and status == 200:
+            status = args[4]
+            if isinstance(status, int) and status < 400:
                 return False
         return True
 
 
 # uvicorn configures its loggers before it imports this module; dictConfig
 # keeps the filters of a logger anyway.
-logging.getLogger("uvicorn.access").addFilter(_SuccessfulHealthCheckFilter())
+logging.getLogger("uvicorn.access").addFilter(_RefusedOrFailedRequestFilter())
 
 
 @app.get(HEALTH_PATH)

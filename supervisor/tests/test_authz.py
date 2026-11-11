@@ -1110,10 +1110,12 @@ class TestHealthchecks:
             assert ("GET", path) in PUBLIC, name
             assert client.get(path).status_code == 200, name
 
-    def test_successful_checks_stay_out_of_the_access_log(self):
-        # The checks call the route every 10 seconds (supervisor) and every 30
-        # (webui, through Caddy): without the filter of src.main, thousands of
-        # lines a day in `docker logs unos-supervisor`. A real uvicorn server
+    def test_only_refused_and_failed_requests_reach_the_access_log(self):
+        # Every line of the access log is a write to the system disk through
+        # the container's json-file log (ADR-0214), and the health checks
+        # alone call every 10 seconds (supervisor) and every 30 (webui,
+        # through Caddy): src.main keeps the requests that answered below 400
+        # out of it (ADR-0338). A real uvicorn server
         # (the pinned version, as in the image) answers through a stub app
         # with the status the request asks for, and logs the requests through
         # the "uvicorn.access" logger that src.main filters.
@@ -1146,9 +1148,16 @@ class TestHealthchecks:
                 ("GET", "/api/v1/health", 200),
                 ("GET", "/api/v1/health", 503),
                 ("POST", "/api/v1/health", 200),
-                ("GET", "/api/v1/health?verbose=1", 200),
                 ("GET", "/api/v1/health/full", 200),
-                ("GET", "/api/v1/auth/status", 200),
+                ("GET", "/api/v1/auth/me", 200),
+                ("PUT", "/api/v1/shares/1", 204),
+                ("GET", "/api/v1/files/download", 302),
+                ("GET", "/api/v1/files/download", 304),
+                ("POST", "/api/v1/auth/login", 401),
+                ("DELETE", "/api/v1/users/7", 403),
+                ("GET", "/api/v1/nothing", 404),
+                ("POST", "/api/v1/auth/login", 429),
+                ("GET", "/api/v1/system/info", 500),
             ]:
                 request = urllib.request.Request(base + path, method=method, headers={"X-Status": str(status)})
                 try:
@@ -1163,11 +1172,13 @@ class TestHealthchecks:
             access_log.setLevel(level)
             sock.close()
 
-        # A failed check is still logged, and so is every other request.
+        # A failed check is still logged, and so is every request that was
+        # refused or failed; nothing that answered below 400.
         assert lines == [
             '"GET /api/v1/health HTTP/1.1" 503',
-            '"POST /api/v1/health HTTP/1.1" 200',
-            '"GET /api/v1/health?verbose=1 HTTP/1.1" 200',
-            '"GET /api/v1/health/full HTTP/1.1" 200',
-            '"GET /api/v1/auth/status HTTP/1.1" 200',
+            '"POST /api/v1/auth/login HTTP/1.1" 401',
+            '"DELETE /api/v1/users/7 HTTP/1.1" 403',
+            '"GET /api/v1/nothing HTTP/1.1" 404',
+            '"POST /api/v1/auth/login HTTP/1.1" 429',
+            '"GET /api/v1/system/info HTTP/1.1" 500',
         ]
