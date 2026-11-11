@@ -159,7 +159,7 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
 
 
 def render_global(guest_enabled: bool) -> str:
-    """The ``[global]`` section (ADR-0281); three lines depend on whether a guest share exists (ADR-0098)."""
+    """The ``[global]`` section (ADR-0281); three lines depend on whether a guest share exists (ADR-0339)."""
     return "[global]\n" + "".join(_line(key, value) for key, value in global_settings(guest_enabled))
 
 

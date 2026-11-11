@@ -1275,12 +1275,13 @@ def test_api_cli_forget_token_asks_the_relay_to_delete_the_cache(device):
 
 class FakeApi:
     """The UNOS API as the relay meets it on the device, over plain HTTP on 127.0.0.1. POST
-    /auth/login with the administrator's password hands out a new token (token-1, token-2, ...);
+    /auth/login with the password of a user of `users` (the administrator's) hands out a new token (token-1, token-2, ...);
     any other request answers 200 when it carries a token of `valid` (and `accept` is true), else
     401. Every request's method, path and Authorization header are recorded."""
 
     def __init__(self, password: str) -> None:
         self.password = password
+        self.users = {"admin": password}
         self.logins = 0
         self.valid: set[str] = set()
         self.accept = True
@@ -1306,7 +1307,8 @@ class FakeApi:
                 fake.requests.append((self.command, self.path, bearer))
                 fake.bodies.append((self.headers.get("Content-Type"), body))
                 if (self.command, self.path) == ("POST", "/api/v1/auth/login"):
-                    if json.loads(body) != {"username": "admin", "password": fake.password}:
+                    login = json.loads(body)
+                    if set(login) != {"username", "password"} or fake.users.get(login["username"]) != login["password"]:
                         return self.reply(401, {"detail": "Invalid credentials"})
                     fake.logins += 1
                     fake.valid.add(f"token-{fake.logins}")
@@ -1393,6 +1395,31 @@ def test_the_relay_keeps_the_token_private_and_signs_in_only_when_needed(relay):
     assert not cache.exists()
     client.forget_token()  # nothing left to delete
     assert not any(fake.password in path for _, path, _ in fake.requests)
+
+
+def test_as_user_signs_in_as_that_user_with_a_token_cache_of_its_own(relay):
+    """The scenario checks' temporary user signs in through the same relay with its own password
+    and keeps its token in a cache of its own, apart from the administrator's; forget_token
+    deletes only that one, and dev.env's secrets stay redacted in its errors."""
+    client, fake, cache = relay
+    fake.users["unoscheck1a2b3c"] = "pw-of-the-check-user"
+    own = cache.parent / "unos-scenario-unoscheck1a2b3c.token"
+    mine = client.as_user("unoscheck1a2b3c", "pw-of-the-check-user", str(own))
+    assert client.get("/system/stats").status_code == 200
+    assert mine.get("/auth/me").status_code == 200
+    assert fake.logins == 2 and cache.read_text() == "token-1" and own.read_text() == "token-2"
+    assert oct(stat.S_IMODE(own.lstat().st_mode)) == "0o600"
+    assert fake.tokens_sent() == ["Bearer token-1", "Bearer token-2"]
+    logins = [json.loads(body) for (method, path, _), (_, body) in zip(fake.requests, fake.bodies)
+              if path == "/api/v1/auth/login"]
+    assert [login["username"] for login in logins] == ["admin", "unoscheck1a2b3c"]
+    assert set(client.secrets) < set(mine.secrets) and "pw-of-the-check-user" in mine.secrets
+    assert (mine.timeout, mine.ssh, mine.base_url) == (client.timeout, client.ssh, client.base_url)
+    mine.forget_token()
+    assert not own.exists() and cache.read_text() == "token-1"
+    fake.users["unoscheck1a2b3c"] = "another"
+    with pytest.raises(api.ApiError, match="login as unoscheck1a2b3c failed: HTTP 401"):
+        mine.get("/auth/me")
 
 
 @pytest.mark.parametrize("planted", ["mode 644", "symlink", "fifo"])

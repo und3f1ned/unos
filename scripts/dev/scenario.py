@@ -43,6 +43,27 @@ SD writes of each check (ADR-0214). The areas:
            access refused without a new folder and saved with one; Delete keeping the folder with
            its files and smb.conf byte for byte as found; then, with the copy deleted, a restart
            of the supervisor that writes no file in /etc/samba and leaves no problem.
+  shares   The Shares and Account pages beyond slice 2 (ADR-0340): a sticky folder of root with a
+           sticky folder "theirs" of another account in it, made over ssh on the pool, where a new share
+           folder in "theirs" is refused with 409 and the reason, and a share of "theirs" itself
+           is accepted with the warning that names its owner, reported on the Shares page and
+           refused by Repair permissions (ADR-0193); a share on a new folder with entries of
+           other groups and modes made over ssh, which Repair permissions gives the group
+           unos-smb, group read and write and setgid on folders, keeping their owners, while a
+           private file and folder, a symbolic link and the file outside the share that it
+           points to stay as they were, and an ACL entry (where the device has setfacl) stays
+           with the group bits as its mask (ADR-0155); the last run with its counts on the Shares
+           API, and Repair refused while the share's folder is a symbolic link; a regular user
+           without SMB, signed in with its own token, whose password of 7 characters (which
+           UNOS's own rules allow) and one with a tab SMB refuses with the reason, while UNOS
+           itself refuses one over 72 bytes (422), who turns SMB on with its password and no
+           two-factor code, after an administrator allowed it, writes in a signed session, and
+           turns SMB off again; guest access turned on for the share, with the answer's warning
+           and the guest lines of [global], an anonymous session to the share that lists it and
+           reads a file while a write is refused (what a null session's share list shows is only
+           reported), and the Delete of that last guest share, after which signing is mandatory
+           again (where the device has other guest shares, that step says so instead); no
+           password of the check in an answer or a log; and the user's Delete.
   scrub    Scrubs of the pool (ADR-0314): its last scrub as found (none after a restart of the
            supervisor, ADR-0171); a scrub of a folder below the pools' base with nothing mounted
            on it refused with 409, and a scheduled scrub of that folder failing with the same
@@ -80,13 +101,16 @@ without the lock of scenario.sh or a dev.env that cannot be read, 130 after an i
 The API is called through api.py's relay (ADR-0222). The commands on the device run through
 ssh.sh, in a private mount namespace with the root filesystem read-only (ADR-0221), with scratch
 files in /dev/shm: stat, the account files' digests, testparm, Samba's log sizes, smbclient with
-a client configuration of its own in RAM, the scan for passwords; only pdbedit runs without that
+a client configuration of its own in RAM, the scan for passwords, the shares check's entries on
+the pool (which the namespace leaves writable) and getfacl; only pdbedit runs without that
 namespace, since tdbsam opens passdb.tdb read-write, and the smbconf check's edit of smb.conf by
 hand, which writes /etc/samba (ADR-0309), and the scrub check's folder below the pools'
 base, on the root filesystem (ADR-0314). The passwords of the temporary user and the
 backup's passphrase are made here, go to the device only on standard input (to the relay, and
-into an auth file of mode 600 in RAM that smbclient reads), and are never printed. The checks
-start no container (ADR-0183); the smbconf check restarts the supervisor's (ADR-0309).
+into an auth file of mode 600 in RAM that smbclient reads), and are never printed. The shares
+check's user signs in through the relay with a token cache of its own in RAM (USER_TOKEN, mode
+600 like the administrator's, ADR-0222), which its clean-up deletes. The checks start no
+container (ADR-0183); the smbconf check restarts the supervisor's (ADR-0309).
 
 Settings: dev.env (env.sh); UNOS_DEV_SHM, the RAM folder of the SMB helper on the device
 (/dev/shm; the tests run it here). Standard library only; Python 3.9 or later.
@@ -119,7 +143,7 @@ import api as relay  # noqa: E402  scripts/dev/api.py
 
 SSH = HERE / "ssh.sh"
 SD = HERE / "sd.sh"
-AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "scrub", "offsite")
+AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "shares", "scrub", "offsite")
 MARK = "unoscheck"
 LEFTOVER = re.compile(MARK + r"[0-9a-f]{6}")
 POOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -157,6 +181,40 @@ CONF_NOT_UNOS = "smb.conf was replaced or removed after UNOS wrote it"
 UNOS_SHARE_LINES = (("veto files", "/.snapshots/.unos-trash/"), ("force group", "unos-smb"), ("create mask", "0660"),
                     ("force create mode", "0660"), ("directory mask", "2770"), ("force directory mode", "2770"))
 NOT_SHARES = ("global", "homes", "printers", "print$")
+# The start of the guest warning in the answer of a change that turns guest access on
+# (GUEST_WARNING of src/shares/service.py, ADR-0096; test_dev_scenarios.py compares).
+GUEST_WARNS = "Anyone on your network can read this share without a password"
+# The [global] lines that follow whether a guest share exists (ADR-0339, ADR-0100): without one,
+# with one.
+GUEST_GLOBALS = {"map to guest": ("Never", "Bad User"), "restrict anonymous": ("2", "1"),
+                 "server signing": ("mandatory", "default")}
+# Why SMB refuses a password (smb_password_problem of src/shares/constants.py, ADR-0279) under 8
+# characters, and with a control character; UNOS itself refuses a new password over 72 bytes
+# (MAX_PASSWORD_BYTES of src/auth/schemas.py, ADR-0315) with 422.
+SMB_TOO_SHORT = "SMB passwords must have at least 8 characters"
+SMB_CONTROL = "SMB passwords must not contain control characters such as tabs or line breaks"
+UNOS_PASSWORD_BYTES = 72
+# The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
+USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
+# What REMOTE_ENTRIES repair makes in the shares check's share folder, and how Repair permissions
+# leaves it (ADR-0155, ADR-0156): name -> (mode and owner as made, after the repair), where
+# {user} and {group} are the other account's. Owners never change; private entries, which only
+# their owner can use, and link.txt, a symbolic link to <folder>-outside/target.txt, stay.
+REPAIR_ENTRIES = {
+    "wrong": ("755 root:root", "2770 root:unos-smb"),
+    "wrong/inner.txt": ("644 root:root", "660 root:unos-smb"),
+    "run.sh": ("750 root:root", "770 root:unos-smb"),
+    "legacy.txt": ("666 {user}:{group}", "660 {user}:unos-smb"),
+    "acl.txt": ("640 root:root", "660 root:unos-smb"),
+    "private.txt": ("600 root:root", "600 root:root"),
+    "private": ("700 root:root", "700 root:root"),
+    "private/inner.txt": ("644 root:root", "644 root:root"),
+    "link.txt": ("777 root:root", "777 root:root"),
+}
+# The entries that the repair visits besides the share's folder (it does not enter private/), and
+# those it changes.
+REPAIR_VISITS = len(REPAIR_ENTRIES) - 1
+REPAIR_CHANGES = sum(1 for made, after in REPAIR_ENTRIES.values() if made != after)
 
 # The read-only root of env.sh's DEV_RO_ROOT (ADR-0221), for every command but pdbedit.
 RO_ROOT = 'mount -o remount,bind,ro,noatime / || { echo "could not make / read-only in a private mount namespace" >&2; exit 1; }'
@@ -181,7 +239,7 @@ if [ -f "$1" ]; then echo "file $(base64 < "$1" | tr -d "\n")"; else echo missin
 REMOTE_FACTS = r'''
 set -uo pipefail
 echo "now $(date +%s)"
-for t in getent pdbedit smbclient stdbuf testparm; do
+for t in getent getfacl pdbedit setfacl smbclient stdbuf testparm; do
     if command -v "$t" > /dev/null 2>&1; then echo "tool $t"; fi
 done
 for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/samba/smb.conf; do
@@ -261,15 +319,16 @@ fi'''
 
 # smbclient on the device, against its own smbd (127.0.0.1, which hosts allow admits). $1: list
 # (a share list, -L), anonymous (the same as a null session: no user, no password, and no
-# signing required by the client, so that a refusal can only come from the server) or session;
-# $2: the user; $3: the share. The first line of standard input is the password: it goes into an
-# auth file of mode 600 in a private folder in RAM, deleted at the end, with a client
-# configuration that requires signing (client signing for a share, client ipc signing for the
-# IPC$ of a share list) and keeps smbclient's own files there. list and anonymous print
-# "end <status> <output in base64>". session reads commands from standard input and passes them
-# to one smbclient session; "pause N" waits until smbclient has run what came before and prints
-# "at N <its output>", or "ended N <output>" when smbclient has ended; after the last line,
-# "end <status> <output>".
+# signing required by the client, so that a refusal can only come from the server), session, or
+# guest (a session to a share as a null session, as anonymous signs in); $2: the user; $3: the
+# share. The first line of standard input is the password: it goes into an auth file of mode 600
+# in a private folder in RAM, deleted at the end, with a client configuration that requires
+# signing (client signing for a share, client ipc signing for the IPC$ of a share list) and
+# keeps smbclient's own files there. list and anonymous print "end <status> <output in
+# base64>". session and guest read commands from standard input and pass them to one smbclient
+# session; "pause N" waits until smbclient has run what came before and prints "at N <its
+# output>", or "ended N <output>" when smbclient has ended; after the last line, "end <status>
+# <output>".
 REMOTE_SMB = r'''
 set -uo pipefail
 trap "" PIPE
@@ -281,7 +340,7 @@ trap '[ -z "$pid" ] || kill "$pid" 2> /dev/null; rm -rf "$dir"' EXIT
 cd "$dir" || exit 1
 IFS= read -r password || password=
 signing=required
-[ "$mode" != anonymous ] || signing=default
+case $mode in anonymous | guest) signing=default ;; esac
 {
     echo "[global]"
     echo "   client min protocol = SMB2_02"
@@ -292,7 +351,7 @@ signing=required
     done
     echo "   log level = 0"
 } > smb.conf
-if [ "$mode" = anonymous ]; then
+if [ "$mode" = anonymous ] || [ "$mode" = guest ]; then
     auth=(-N -U%)
 else
     printf "username = %s\npassword = %s\n" "$user" "$password" > auth
@@ -302,7 +361,7 @@ password=
 printf "unos scenario check\n" > data.txt
 printf "unos scenario check, changed\n" > data2.txt
 b64() { base64 | tr -d "\n"; }
-if [ "$mode" != session ]; then
+if [ "$mode" = list ] || [ "$mode" = anonymous ]; then
     rc=0
     out=$(smbclient -s "$dir/smb.conf" "${auth[@]}" -g -L //127.0.0.1 < /dev/null 2>&1) || rc=$?
     echo "end $rc $(printf "%s" "$out" | b64)"
@@ -438,6 +497,75 @@ case $action in
 esac
 if [ -L "$path" ]; then echo link; elif [ -d "$path" ]; then echo folder; else echo missing; fi'''
 
+# The shares check's entries on the pool, which the read-only namespace leaves writable. $1:
+# repair, sticky or acl. repair ($2: a share folder of a scenario check, <pools>/<pool>/unoscheck<6
+# hex digits>; $3: acl or noacl) makes REPAIR_ENTRIES in it, with these owners and modes, and
+# <folder>-outside/target.txt (644 root:root), to which link.txt points: entries made in the
+# share's setgid folder get its group, so each one gets its own owner, group and mode here; with
+# acl, acl.txt gets an ACL entry that lets the other account read it. sticky ($2: <that
+# folder>-sticky) makes the folder 1777 root:root and in it the folder theirs, 1777 of the other
+# account. Both refuse a folder that exists and print "account <user>:<group> <uid>" of the other
+# account, UNOS_DEV_OTHER_ACCOUNT (nobody:nogroup). acl ($2: an entry of such a share folder) only
+# reads: "acl <entry>" for each entry of the path's ACL (getfacl).
+REMOTE_ENTRIES = r'''
+set -uo pipefail
+action=$1 path=$2 acl=${3:-noacl}
+base=${UNOS_DEV_POOLS:-/mnt/pools}
+other=${UNOS_DEV_OTHER_ACCOUNT:-nobody:nogroup}
+folder='[A-Za-z0-9][A-Za-z0-9_-]{0,63}/unoscheck[0-9a-f]{6}'
+case $action in
+    repair) pattern="^$folder\$" ;;
+    sticky) pattern="^$folder-sticky\$" ;;
+    acl) pattern="^$folder/[A-Za-z0-9_-]+(\\.[A-Za-z0-9]+)?\$" ;;
+    *) echo "not an action: $action" >&2; exit 2 ;;
+esac
+rest=${path#"$base"/}
+if [ "$rest" = "$path" ] || ! [[ $rest =~ $pattern ]]; then
+    echo "not a folder of a scenario check: $path" >&2
+    exit 2
+fi
+if [ "$action" = acl ]; then
+    out=$(getfacl -c -E -- "$path") || exit 1
+    printf "%s\n" "$out" | sed -n "s/^\([a-z]\)/acl \1/p"
+    exit 0
+fi
+user=${other%%:*}
+uid=$(id -u "$user") || exit 1
+umask 022
+if [ "$action" = sticky ]; then
+    # theirs gets its mode while its parent is still 755 root:root: in the open sticky folder its
+    # owner could put a symbolic link in its place, which chmod would follow.
+    mkdir -- "$path" && mkdir -- "$path/theirs" &&
+        chown root:root "$path" && chown "$other" "$path/theirs" && chmod 01777 "$path/theirs" &&
+        chmod 01777 "$path" || exit 1
+    echo "account $other $uid"
+    exit 0
+fi
+outside=$path-outside
+if [ -L "$path" ] || [ ! -d "$path" ] || [ -e "$outside" ] || [ -L "$outside" ]; then
+    echo "$path is not a plain folder, or $outside exists" >&2
+    exit 1
+fi
+cd -- "$path" || exit 1
+for name in wrong private run.sh legacy.txt private.txt acl.txt link.txt; do
+    if [ -e "$name" ] || [ -L "$name" ]; then echo "$path/$name exists" >&2; exit 1; fi
+done
+write() { printf "unos scenario check\n" > "$1"; }
+mkdir -- "$outside" && write "$outside/target.txt" &&
+    mkdir wrong private && write wrong/inner.txt && write private/inner.txt &&
+    write run.sh && write legacy.txt && write private.txt && write acl.txt &&
+    ln -s -- "../${outside##*/}/target.txt" link.txt &&
+    chown -h root:root "$outside" "$outside/target.txt" wrong wrong/inner.txt private private/inner.txt \
+        run.sh private.txt acl.txt link.txt &&
+    chown "$other" legacy.txt &&
+    chmod 00755 "$outside" wrong && chmod 00700 private &&
+    chmod 644 "$outside/target.txt" wrong/inner.txt private/inner.txt &&
+    chmod 750 run.sh && chmod 666 legacy.txt && chmod 600 private.txt && chmod 640 acl.txt || exit 1
+if [ "$acl" = acl ]; then
+    setfacl -m "u:$user:r" acl.txt || exit 1
+fi
+echo "account $other $uid"'''
+
 # A folder of the check below the pools' base, where nothing is mounted (ADR-0311): on the root
 # filesystem, so it runs without the read-only namespace. $1: make, remove or list; $2: the
 # folder's name, unoscheck and six hex digits. Prints the folders of the base, one per line.
@@ -494,6 +622,12 @@ def b64text(text: str) -> str:
 
 def unb64(text: str) -> str:
     return base64.b64decode(text.encode()).decode("utf-8", "replace") if text else ""
+
+
+def secret_forms(secret: str) -> set[str]:
+    """SECRET as it may be printed: as is, as JSON writes it (a tab as \\t) and as tail() joins
+    its whitespace (a tab as a space)."""
+    return {form for form in (secret, json.dumps(secret)[1:-1], " ".join(secret.split())) if form}
 
 
 def tail(data: bytes | str, size: int = 400) -> str:
@@ -669,6 +803,10 @@ class Device:
     def smb_session(self, user: str, password: str, share: str) -> SmbSession:
         return SmbSession(self, user, password, share)
 
+    def smb_guest_session(self, share: str) -> SmbSession:
+        """A session to SHARE without a user and a password, as a null session signs in."""
+        return SmbSession(self, "", "", share, mode="guest")
+
     def samba_files(self) -> dict[str, dict[str, str]]:
         """The files of /etc/samba: name -> sha256, mtime and mode."""
         found: dict[str, dict[str, str]] = {}
@@ -689,6 +827,20 @@ class Device:
     def unserve(self, action: str, path: str) -> str:
         return self.run(REMOTE_UNSERVE, action, path).strip()
 
+    def entries(self, action: str, path: str, acl: bool = False) -> dict[str, str]:
+        """REMOTE_ENTRIES repair or sticky: the other account, {"user", "group", "uid"}."""
+        out = self.run(REMOTE_ENTRIES, action, path, "acl" if acl else "noacl")
+        for line in out.splitlines():
+            parts = line.split(" ")
+            if len(parts) == 3 and parts[0] == "account" and ":" in parts[1] and parts[2].isdigit():
+                user, _, group = parts[1].partition(":")
+                return {"user": user, "group": group, "uid": parts[2]}
+        raise Failed(f"the helper on the device answered {tail(out)!r}")
+
+    def acl(self, path: str) -> list[str]:
+        """The entries of PATH's ACL as getfacl prints them ("user:nobody:r--")."""
+        return [line[4:] for line in self.run(REMOTE_ENTRIES, "acl", path).splitlines() if line.startswith("acl ")]
+
     def pool_folders(self, action: str = "list", name: str = "") -> list[str]:
         """REMOTE_POOL_FOLDER: make and remove run without the read-only namespace, since the pools'
         base is a folder of the root filesystem. The folders of the base afterwards."""
@@ -706,14 +858,15 @@ class SmbSession:
     """One smbclient session on the device (REMOTE_SMB's session mode), held open while the
     check calls the API: run() sends commands and waits for their output."""
 
-    def __init__(self, device: Device, user: str, password: str, share: str, timeout: int = 90) -> None:
+    def __init__(self, device: Device, user: str, password: str, share: str, timeout: int = 90,
+                 mode: str = "session") -> None:
         self.timeout = timeout
         self.n = 0
         self.ended = False
         self.buffer = b""
         self.errors = tempfile.TemporaryFile()  # the helper's standard error, for a failure's message
         self.proc = subprocess.Popen(
-            [str(device.ssh), device.command(("session", user, share))],
+            [str(device.ssh), device.command((mode, user, share))],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors,
         )
         self._send(device.payload(REMOTE_SMB) + password + "\n")
@@ -813,8 +966,8 @@ class InSteps:
 class Check:
     """One area's check: its steps, its clean-ups and the comparison with its baseline.
 
-    api: api.DeviceApi (or what has its request(), upload() and secrets); device: Device;
-    interrupts: the exceptions that count as an interruption."""
+    api: api.DeviceApi (or what has its request(), upload(), as_user() and secrets); device:
+    Device; interrupts: the exceptions that count as an interruption."""
 
     def __init__(self, area: str, api: Any, device: Any, pool: str | None = None, out: Any = None,
                  run_id: str | None = None, interrupts: tuple = (KeyboardInterrupt,), signals: bool = False) -> None:
@@ -840,7 +993,10 @@ class Check:
     # output
 
     def redact(self, text: str) -> str:
-        return relay.redact_text(text, list(getattr(self.api, "secrets", [])) + self.temporary)
+        """TEXT without a secret, also as JSON writes one (a password with a tab) and as tail()
+        joins its whitespace: the longest first, so that no part of a longer one is left."""
+        found = {form for p in [*getattr(self.api, "secrets", []), *self.temporary] for form in secret_forms(p)}
+        return relay.redact_text(text, sorted(found, key=len, reverse=True))
 
     def say(self, text: str) -> None:
         """Print a line. A closed terminal or pipe (after SIGHUP, say) loses the line, never the clean-up."""
@@ -859,9 +1015,10 @@ class Check:
             return "SD unknown"
         return f"SD {(now - last) * 512 / 1048576:.3f} MiB"
 
-    def secret(self) -> str:
-        """A new temporary password: redacted wherever it would be printed."""
-        value = secrets.token_urlsafe(18)
+    def secret(self, value: str | None = None) -> str:
+        """A new temporary password, or VALUE, one made of random text here: redacted wherever it
+        would be printed, and looked for in the answers and the logs."""
+        value = secrets.token_urlsafe(18) if value is None else value
         self.temporary.append(value)
         return value
 
@@ -918,11 +1075,13 @@ class Check:
 
     # the API
 
-    def call(self, method: str, path: str, body: Any = None, params: dict | None = None, expect: Any = 200) -> Any:
+    def call(self, method: str, path: str, body: Any = None, params: dict | None = None, expect: Any = 200,
+             api: Any = None) -> Any:
+        """API: another user's (self.api.as_user), else the administrator's."""
         expected = (expect,) if isinstance(expect, int) else tuple(expect)
         if not self.inside:
             raise AssertionError(f"the check calls {method} {path} outside a step")
-        answer = self.api.request(method, path, json_body=body, params=params)
+        answer = (api or self.api).request(method, path, json_body=body, params=params)
         self.answers.append(answer.text)
         if answer.status_code not in expected:
             raise Failed(f"{method} {path} answered HTTP {answer.status_code}{self.detail(answer)}"
@@ -942,11 +1101,11 @@ class Check:
             return ""
         return ": " + tail(detail if isinstance(detail, str) else json.dumps(detail), 300)
 
-    def get(self, path: str, params: dict | None = None, expect: Any = 200) -> Any:
-        return self.call("GET", path, params=params, expect=expect)
+    def get(self, path: str, params: dict | None = None, expect: Any = 200, api: Any = None) -> Any:
+        return self.call("GET", path, params=params, expect=expect, api=api)
 
-    def post(self, path: str, body: Any = None, params: dict | None = None, expect: Any = 200) -> Any:
-        return self.call("POST", path, body, params, expect)
+    def post(self, path: str, body: Any = None, params: dict | None = None, expect: Any = 200, api: Any = None) -> Any:
+        return self.call("POST", path, body, params, expect, api)
 
     def upload(self, folder: str, name: str, text: str) -> None:
         if not self.inside:
@@ -975,9 +1134,11 @@ class Check:
                 self.delete_user(user["id"], name)
 
     def scanned(self, since: int, sources: tuple[str, ...]) -> None:
-        """No temporary secret in an answer of the API, nor in the device's logs SOURCES since SINCE."""
-        self.expect(not [a for a in self.answers for p in self.temporary if p in a], "an answer of the API holds one")
-        found = self.device.scan(self.temporary, since)
+        """No temporary secret in an answer of the API, nor in the device's logs SOURCES since SINCE,
+        also as JSON writes it (a password with a tab)."""
+        forms = sorted({form for p in self.temporary for form in secret_forms(p)})
+        self.expect(not [a for a in self.answers for p in forms if p in a], "an answer of the API holds one")
+        found = self.device.scan(forms, since)
         unread = [k for k in sources if found.get(k, -1) < 0]
         self.expect(not unread, f"{', '.join(unread)} could not be read")
         hits = {k: found[k] for k in sources if found[k]}
@@ -1396,6 +1557,17 @@ def smb_global(conf: str) -> dict[str, str]:
     return found
 
 
+def marked_account(c: Check, user: str) -> None:
+    """USER has a marked host account (UNOS's uid range, the group unos-smb, no login) and a
+    Samba account."""
+    lines = [line for line in c.device.facts()["accounts"] if line.split(":")[0] == user]
+    c.expect(lines, "getent passwd has no such account")
+    fields = lines[0].split(":")
+    c.expect(int(fields[2]) in SMB_UIDS and fields[3] == str(SMB_GID) and fields[4] == "UNOS SMB user"
+             and fields[6].endswith("nologin"), f"its account is {lines[0]}")
+    c.expect(user in c.device.passdb_entries()[0], "pdbedit -L does not list it")
+
+
 def passdb_time(c: Check) -> str:
     """passdb.tdb's modification time (stat %y, in nanoseconds): a time, or the step fails, so that
     a comparison never passes on two answers that are not one."""
@@ -1461,12 +1633,7 @@ def smb_check(c: Check) -> None:
         uid = made["id"]
         c.expect((made.get("smb") or {}).get("state") == "active",
                  f"its SMB state is {(made.get('smb') or {}).get('state')}: {made.get('warnings')}")
-        lines = [line for line in c.device.facts()["accounts"] if line.split(":")[0] == user]
-        c.expect(lines, "getent passwd has no such account")
-        fields = lines[0].split(":")
-        c.expect(int(fields[2]) in SMB_UIDS and fields[3] == str(SMB_GID) and fields[4] == "UNOS SMB user"
-                 and fields[6].endswith("nologin"), f"its account is {lines[0]}")
-        c.expect(user in c.device.passdb_entries()[0], "pdbedit -L does not list it")
+        marked_account(c, user)
 
     with c.step("the new user's share list holds no share"):
         listing = c.device.smb_list(user, password)
@@ -1585,7 +1752,7 @@ def smb_check(c: Check) -> None:
         c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"it answered {listing.status}")
         after = passdb_time(c)
         c.expect(after != before, f"passdb.tdb is as it was ({after}): Samba did not count the failure")
-        if guests:  # restrict anonymous = 1 and map to guest = Bad User: guests may list (ADR-0098)
+        if guests:  # restrict anonymous = 1 and map to guest = Bad User: guests may connect (ADR-0339)
             s.text += "; a null session is not tried, as the device has guest shares"
         else:
             listing = c.device.smb_anonymous()
@@ -1839,6 +2006,323 @@ def smbconf_check(c: Check) -> None:
         problems = problems_of(c)
         c.expect(problems == [], f"the Shares page reports {problems}")
         s.text += f": healthy after about {took} s"
+
+
+# --- shares: the sticky parent, Repair permissions, the user's own SMB, a guest share ---------
+
+
+def smb_state(answer: dict) -> str:
+    """The state of GET /auth/me/smb's answer, with whether SMB is allowed and the code is asked."""
+    account = answer["account"]
+    return f"{account['state']}, allowed {account['allowed']}, two-factor code {answer['totp_required']}"
+
+
+def shares_check(c: Check) -> None:
+    """A guest share, a user's own SMB activation, Repair permissions and the sticky rule of
+    share folders (ADR-0340)."""
+    with c.step("a pool is mounted read-write and managed by UNOS") as s:
+        pool = c.pick_pool()
+        root = pool["mountpoint"]
+        s.text += f": {pool['name']} at {root}"
+    share = user = c.run
+    folder = f"{root}/{c.run}"
+    outside = f"{folder}-outside"
+    sticky = f"{folder}-sticky"
+    theirs = f"{sticky}/theirs"
+    # The user's passwords: 7 characters, which UNOS allows a user without SMB; one with a tab; one
+    # of 73 bytes, which UNOS refuses; and the one it keeps.
+    short = c.secret(secrets.token_urlsafe(8)[:7])
+    tabbed = c.secret(secrets.token_urlsafe(9) + "\t" + secrets.token_urlsafe(9))
+    too_long = c.secret(secrets.token_urlsafe(60)[:UNOS_PASSWORD_BYTES + 1])
+    password = c.secret()
+
+    def state() -> dict:
+        facts = c.device.facts()
+        return {
+            "the users": sorted(f"{u['username']} {'admin' if u['is_admin'] else (u.get('smb') or {}).get('state')}"
+                                for u in c.get("/auth/users")),
+            "the shares": sorted(f"{s['name']} {s['path']} guest {s['guest_ok']} "
+                                 + ",".join(f"{a['username']}:{a['level']}" for a in s["access"])
+                                 for s in c.get("/shares/smb")),
+            "the pool's top folder": sorted(i["name"] for i in c.get("/files/list", params={"path": root})["items"]),
+            "smb.conf": facts["sha256"].get(SMB_CONF),
+            "the account files": {f: facts["sha256"].get(f) for f in ACCOUNT_FILES},
+            "the SMB host accounts": facts["accounts"],
+            "Samba's accounts": c.device.passdb_entries()[0],
+            "the problems on the Shares page": problems_of(c),
+        }
+
+    with c.step("the device holds nothing of an earlier check"):
+        c.baseline(state)
+
+    with c.step("Samba runs UNOS's smb.conf without problems, and the device has smbclient, stdbuf, testparm, pdbedit "
+                "and getent") as s:
+        status = c.get("/shares/smb-status")
+        c.expect(not status.get("problems"), "the Shares page reports: " + "; ".join(status.get("problems") or []))
+        facts = c.device.facts()
+        missing = sorted({"smbclient", "stdbuf", "testparm", "pdbedit", "getent"} - set(facts["tools"]))
+        c.expect(not missing, f"the device lacks {', '.join(missing)} (installing one is an owner action)")
+        c.expect(facts["testparm"], "testparm refuses smb.conf")
+        since = facts["now"]
+        acl = {"setfacl", "getfacl"} <= set(facts["tools"])
+        guests = sorted(status.get("guest_shares") or [])
+        s.text += ("; it has setfacl and getfacl" if acl else "; it has no setfacl or getfacl")
+        s.text += f"; its guest shares: {', '.join(guests)}" if guests else "; it has no guest share"
+
+    # shares.acl-aware-parent-check (ADR-0193): a share folder in a sticky folder.
+    with c.step(f"over ssh on the pool: {sticky}, 1777 root:root, with a folder theirs of another account in it, "
+                "1777 too") as s:
+        c.on_cleanup(f"delete {sticky} for good", lambda: c.delete_for_good(sticky))
+        other = c.device.entries("sticky", sticky)
+        owner = f"{other['user']}:{other['group']}"
+        facts = c.device.stat([sticky, theirs])
+        stat_is(c, facts, sticky, "1777 root:root")
+        stat_is(c, facts, theirs, f"1777 {owner}")
+        s.text += f": {owner}, uid {other['uid']}"
+    foreign = f"can be changed by other accounts (owner uid {other['uid']}, mode 1777)"
+    excused = f"can be changed by other accounts (mode 1777, the share folder belongs to uid {other['uid']})"
+
+    with c.step("a new share folder in theirs, a sticky folder of another account, is refused with 409 and the reason, "
+                "and nothing is made") as s:
+        c.on_cleanup(f"delete the share {share}n", lambda: c.delete_share(share + "n"))
+        refused = c.post("/shares/smb", {"name": share + "n", "path": f"{theirs}/new"}, expect=409)
+        detail = refused.get("detail") if isinstance(refused, dict) else refused
+        c.expect(isinstance(detail, str) and f"{theirs} {foreign}" in detail, f"it answered {detail!r}")
+        stat_is(c, c.device.stat([f"{theirs}/new"]), f"{theirs}/new", "missing")
+        c.expect(share + "n" not in [x["name"] for x in c.get("/shares/smb")], "the share was saved")
+        s.text += f": {detail}"
+
+    with c.step("a share of theirs, a folder of another account in the sticky folder of root, is accepted with the "
+                "warning that names its owner, the Shares page reports it, and Repair permissions refuses it with "
+                "409; after its Delete the Shares page reports nothing") as s:
+        c.on_cleanup(f"delete the share {share}t", lambda: c.delete_share(share + "t"))
+        made = c.post("/shares/smb", {"name": share + "t", "path": theirs})
+        warnings = made.get("warnings") or []
+        c.expect(any(f"{sticky} {excused}" in w for w in warnings), f"its warnings are {warnings}")
+        problems = problems_of(c)
+        c.expect([p for p in problems if p.startswith(f"Share {share}t: {sticky} {excused}")],
+                 f"the Shares page reports {problems}")
+        refused = c.post(f"/shares/smb/{share}t/repair-permissions", expect=409)
+        detail = refused.get("detail") if isinstance(refused, dict) else refused
+        c.expect(isinstance(detail, str) and f"{sticky} {excused}" in detail, f"Repair permissions answered {detail!r}")
+        stat_is(c, c.device.stat([theirs]), theirs, f"1777 {owner}")
+        c.call("DELETE", f"/shares/smb/{share}t")
+        problems = problems_of(c)
+        c.expect(problems == [], f"the Shares page reports {problems}")
+        s.text += f": {detail}"
+
+    # shares.repair-permissions (ADR-0155, ADR-0156).
+    with c.step(f"the share {share} on a new folder makes the folder 2770 root:unos-smb, and smb.conf gets its "
+                "section, closed (available = no) while nobody has access"):
+        c.on_cleanup(f"delete {folder} for good", lambda: c.delete_for_good(folder))
+        c.on_cleanup(f"delete the share {share}", lambda: c.delete_share(share))
+        made = c.post("/shares/smb", {"name": share, "path": folder})
+        c.expect(made.get("served"), f"it is not served: {made.get('path_problem')}")
+        c.expect(made.get("available") is False, f"available is {made.get('available')!r} for a share without access")
+        stat_is(c, c.device.stat([folder]), folder, "2770 root:unos-smb")
+        c.expect(f"\n[{share}]\n" in (c.device.read(SMB_CONF) or ""), "smb.conf lacks the share's section")
+
+    names = {"user": other["user"], "group": other["group"]}
+    entries = {f"{folder}/{name}": (before.format(**names), after.format(**names))
+               for name, (before, after) in REPAIR_ENTRIES.items()}
+    entries[f"{outside}/target.txt"] = ("644 root:root", "644 root:root")
+
+    with c.step("over ssh in the share's folder: a folder and files of the group root with other modes, a file of "
+                "another account for everyone, a private file and folder, a symbolic link to a file outside the "
+                "share" + (", and an ACL entry for the other account" if acl else "")):
+        c.on_cleanup(f"delete {outside} for good", lambda: c.delete_for_good(outside))
+        c.device.entries("repair", folder, acl)
+        facts = c.device.stat(sorted(entries))
+        for path, (want, _) in entries.items():
+            stat_is(c, facts, path, want)
+        if acl:
+            found = c.device.acl(f"{folder}/acl.txt")
+            c.expect(f"user:{other['user']}:r--" in found and "mask::r--" in found, f"its ACL is {found}")
+
+    with c.step("Repair permissions gives them the group unos-smb, group read and write, and setgid on the folder, "
+                "and keeps their owners") as s:
+        result = c.post(f"/shares/smb/{share}/repair-permissions")
+        c.expect(result.get("state") == "done" and not result.get("errors"),
+                 f"it ended {result.get('state')}: {result.get('message')} {result.get('error_samples')}")
+        facts = c.device.stat(sorted(entries) + [folder])
+        stat_is(c, facts, folder, "2770 root:unos-smb")
+        for path, (want, after) in entries.items():
+            if want != after:
+                stat_is(c, facts, path, after)
+        s.text += f": {result.get('message')}"
+
+    with c.step("it leaves the private file and folder, what the folder holds, the symbolic link and the file outside "
+                "the share that the link points to as they were"):
+        facts = c.device.stat(sorted(entries))
+        for path, (want, after) in entries.items():
+            if want == after:
+                stat_is(c, facts, path, want)
+
+    if acl:
+        with c.step("the ACL entry stays, and the group permissions become the ACL's mask") as s:
+            found = c.device.acl(f"{folder}/acl.txt")
+            c.expect(f"user:{other['user']}:r--" in found and "group::r--" in found and "mask::rw-" in found,
+                     f"its ACL is {found}")
+            s.text += f": {', '.join(found)}"
+    else:
+        c.skip("the ACL entry stays, and the group permissions become the ACL's mask",
+               "the device has no setfacl or getfacl (installing acl is an owner action)")
+
+    with c.step("the Shares API shows the last run with its counts and errors") as s:
+        last = c.get(f"/shares/smb/{share}/repair-permissions")
+        c.expect(last == result, f"it shows {last}, not the run's {result}")
+        skipped = result.get("skipped") or {}
+        c.expect(result.get("visited") == REPAIR_VISITS + 1 and result.get("changed") == REPAIR_CHANGES
+                 and skipped.get("symlink") == 1 and skipped.get("private") == 2 and not result.get("errors"),
+                 f"its counts: visited {result.get('visited')}, changed {result.get('changed')}, skipped {skipped}, "
+                 f"errors {result.get('errors')}")
+        s.text += (f": visited {result['visited']}, changed {result['changed']}, skipped "
+                   + ", ".join(f"{k} {v}" for k, v in skipped.items() if v) + f", errors {result['errors']}")
+
+    with c.step("with its folder replaced by a symbolic link, the share is not served, and Repair permissions refuses "
+                "it with 409 and the reason") as s:
+        c.on_cleanup(f"put the folder {folder} back in place of its symbolic link", lambda: c.expect(
+            c.device.unserve("restore", folder) != "link", f"{folder} is still a symbolic link"))
+        c.expect(c.device.unserve("link", folder) == "link", f"{folder} is not a symbolic link")
+        info = c.get(f"/shares/smb/{share}")
+        problem = info.get("path_problem")
+        c.expect(info.get("served") is False and problem, f"it is served {info.get('served')}: {problem}")
+        refused = c.post(f"/shares/smb/{share}/repair-permissions", expect=409)
+        detail = refused.get("detail") if isinstance(refused, dict) else refused
+        c.expect(detail == f"Share {share} is not served: {problem}; change its folder first", f"it answered {detail!r}")
+        c.expect(c.get(f"/shares/smb/{share}/repair-permissions") == result, "the last run is another")
+        c.expect(c.device.unserve("restore", folder) == "folder", f"{folder} is not a folder again")
+        c.expect(c.get(f"/shares/smb/{share}").get("served"), "the share is not served with its folder back")
+        s.text += f": {problem}"
+
+    # shares.self-activation (ADR-0118, ADR-0068, ADR-0122/0279, ADR-0131).
+    with c.step(f"a regular user {user} without SMB, with a password of 7 characters, which UNOS's own rules allow, "
+                "signs in with its own token, and the Account page's API says that SMB is off") as s:
+        c.on_cleanup(f"delete the user {user}", lambda: c.delete_user_named(user))
+        made = c.post("/auth/users", {"username": user, "password": short, "smb_enabled": False})
+        uid = made["id"]
+        mine = c.api.as_user(user, short, USER_TOKEN.format(c.run))
+        c.on_cleanup(f"delete the token of {user} in the device's RAM", mine.forget_token)
+        me = c.get("/auth/me", api=mine)
+        c.expect(me.get("username") == user and me.get("is_admin") is False, f"the token is of {me}")
+        found = smb_state(c.get("/auth/me/smb", api=mine))
+        c.expect(found == "off, allowed False, two-factor code False", f"it says {found}")
+        s.text += f": {found}"
+
+    with c.step("an administrator allows SMB: the Account page's API says that it is allowed, without a two-factor "
+                "code") as s:
+        c.post(f"/auth/users/{uid}/smb/enable", {"username": user})
+        found = smb_state(c.get("/auth/me/smb", api=mine))
+        c.expect(found == "password_needed, allowed True, two-factor code False", f"it says {found}")
+        s.text += f": {found}"
+
+    with c.step("SMB refuses the user's password of 7 characters and then one with a tab, each with the reason; UNOS "
+                f"itself refuses a new password over {UNOS_PASSWORD_BYTES} bytes (422), so that SMB's own limit of "
+                f"{UNOS_PASSWORD_BYTES} bytes cannot be reached") as s:
+        refused = c.post("/auth/me/smb/enable", {"current_password": short}, expect=400, api=mine)
+        c.expect(refused.get("detail") == SMB_TOO_SHORT, f"7 characters answered {refused}")
+        c.post("/auth/change-password", {"current_password": short, "new_password": tabbed}, api=mine)
+        refused = c.post("/auth/me/smb/enable", {"current_password": tabbed}, expect=400, api=mine)
+        c.expect(refused.get("detail") == SMB_CONTROL, f"a tab answered {refused}")
+        refused = c.post("/auth/change-password", {"current_password": tabbed, "new_password": too_long}, expect=422,
+                         api=mine)
+        c.expect(f"{UNOS_PASSWORD_BYTES} bytes" in json.dumps(refused.get("detail")),
+                 f"{UNOS_PASSWORD_BYTES + 1} bytes answered {refused}")
+        found = smb_state(c.get("/auth/me/smb", api=mine))
+        c.expect(found.startswith("password_needed,"), f"it says {found}")
+        c.expect(user not in c.device.passdb_entries()[0], "Samba has an account for it")
+        s.text += f": {SMB_TOO_SHORT}; {SMB_CONTROL}"
+
+    with c.step("with a password that SMB can use, the user turns SMB on on the Account page's API without a "
+                "two-factor code, and gets a marked host account and a Samba account"):
+        c.post("/auth/change-password", {"current_password": tabbed, "new_password": password}, api=mine)
+        on = c.post("/auth/me/smb/enable", {"current_password": password}, api=mine)
+        c.expect(on["account"]["state"] == "active", f"it says {smb_state(on)}: {on.get('warnings')}")
+        marked_account(c, user)
+
+    with c.step("with write access to the share, the user's signed session lists it and writes a file, which gets the "
+                "group unos-smb"):
+        version = c.get(f"/shares/smb/{share}")["version"]
+        c.call("PATCH", f"/shares/smb/{share}",
+               {"expected_version": version, "access": [{"user_id": uid, "username": user, "level": "write"}]})
+        listing = c.device.smb_list(user, password)
+        c.expect(listing.ok and share in listing.disks, f"smbclient -L: {listing.status}, {listing.disks}")
+        with c.device.smb_session(user, password, share) as smb:
+            done = smb.run("ls", "put data.txt self.txt")
+        c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
+        written = c.device.stat([f"{folder}/self.txt"])[f"{folder}/self.txt"]
+        c.expect(written.endswith(":" + SMB_GROUP), f"self.txt is {written}")
+        mine_shares = [(x["name"], x["level"], x["usable"]) for x in c.get("/auth/me/smb", api=mine)["shares"]]
+        c.expect((share, "write", True) in mine_shares, f"the Account page's API lists {mine_shares}")
+
+    with c.step("the user turns SMB off again on the same API: its Samba account is gone, SMB stays allowed, and its "
+                "password is refused over SMB") as s:
+        off = c.post("/auth/me/smb/disable", api=mine)
+        c.expect(smb_state(off) == "password_needed, allowed True, two-factor code False", f"it says {smb_state(off)}")
+        c.expect(user not in c.device.passdb_entries()[0], "pdbedit -L still lists it")
+        if guests:  # map to guest = Bad User: Samba takes a user without an account as a guest (ADR-0339)
+            s.text += "; a sign-in is not tried, as the device has guest shares"
+        else:
+            listing = c.device.smb_list(user, password)
+            c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"it answered {listing.status}")
+            s.text += f": {listing.status}"
+
+    # shares.read-only-guest-share (ADR-0096, ADR-0339, ADR-0100).
+    with c.step("guest access turned on for the share: the answer warns, the Shares page names it a guest share, and "
+                "[global] has map to guest = Bad User, restrict anonymous = 1 and server signing = default"):
+        c.upload(folder, "guest.txt", DATA)
+        version = c.get(f"/shares/smb/{share}")["version"]
+        changed = c.call("PATCH", f"/shares/smb/{share}", {"expected_version": version, "guest_ok": True})
+        warnings = changed.get("warnings") or []
+        c.expect(changed.get("guest_ok") is True and [w for w in warnings if w.startswith(GUEST_WARNS)],
+                 f"guest access {changed.get('guest_ok')}, warnings {warnings}")
+        named = c.get("/shares/smb-status").get("guest_shares") or []
+        c.expect(share in named, f"the guest shares are {named}")
+        conf = smb_global(c.device.read(SMB_CONF) or "")
+        for key, (_, want) in GUEST_GLOBALS.items():
+            c.expect(conf.get(key) == want, f"{key} = {conf.get(key)}, not {want}")
+        c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
+
+    # A null session's share list (smbclient -L) is only reported: restrict anonymous = 1 lets
+    # Samba's srvsvc refuse anonymous callers, so it names no share (ADR-0339).
+    with c.step("an anonymous (null) session to the share lists it and reads its file, and a write is refused") as s:
+        with c.device.smb_guest_session(share) as smb:
+            done = smb.run("ls")
+            c.expect(done.ok and "guest.txt" in done.output, f"ls: {done.status} {tail(done.output, 200)}")
+            done = smb.run("get guest.txt got.txt", "!cat got.txt")
+            c.expect(done.ok and DATA.strip() in done.output, f"smbclient: {done.status} {tail(done.output, 200)}")
+            done = smb.run("put data.txt anonymous.txt")
+        c.expect(done.status.startswith("NT_STATUS_"), f"the write answered {done.status}: {tail(done.output, 200)}")
+        stat_is(c, c.device.stat([f"{folder}/anonymous.txt"]), f"{folder}/anonymous.txt", "missing")
+        listing = c.device.smb_anonymous()
+        s.text += (f": {done.status}; a null session's share list (smbclient -L) ends with {listing.status} and names "
+                   + (", ".join(listing.disks) or f"no share ({tail(listing.output, 160) or 'no output'})"))
+
+    with c.step("Delete removes the guest share's section from smb.conf and keeps its folder with its files"):
+        c.call("DELETE", f"/shares/smb/{share}")
+        c.expect(f"[{share}]" not in (c.device.read(SMB_CONF) or ""), "smb.conf still has the section")
+        c.expect(c.device.read(f"{folder}/guest.txt") == DATA, "guest.txt is gone")
+
+    signing = ("with the last guest share gone, server signing is mandatory again, with map to guest = Never and "
+               "restrict anonymous = 2")
+    if guests:
+        c.skip(signing, f"the device has other guest shares: {', '.join(guests)}")
+    else:
+        with c.step(signing):
+            named = c.get("/shares/smb-status").get("guest_shares") or []
+            c.expect(not named, f"the guest shares are {named}")
+            conf = smb_global(c.device.read(SMB_CONF) or "")
+            for key, (want, _) in GUEST_GLOBALS.items():
+                c.expect(conf.get(key) == want, f"{key} = {conf.get(key)}, not {want}")
+
+    with c.step("no password of the check is in an answer, the supervisor's log, the journal, Samba's log or the audit log"):
+        c.scanned(since, ("the supervisor's log", "the journal", "Samba's log", "the audit log"))
+
+    with c.step("deleting the user removes its host account"):
+        c.delete_user(uid, user)
+        c.expect(not [line for line in c.device.facts()["accounts"] if line.split(":")[0] == user],
+                 "getent passwd still has it")
+        c.expect(user not in c.device.passdb_entries()[0], "pdbedit -L lists it")
 
 
 # --- scrub -----------------------------------------------------------------------------------
@@ -2174,6 +2658,7 @@ CHECKS: dict[str, Callable[[Check], None]] = {
     "backups": backups_check,
     "smb": smb_check,
     "smbconf": smbconf_check,
+    "shares": shares_check,
     "scrub": scrub_check,
     "offsite": offsite_check,
 }
@@ -2210,7 +2695,7 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("area", choices=AREAS)
     parser.add_argument("--pool", type=pool_name,
-                        help="the pool of the files, volumes, smb, smbconf, scrub and offsite checks")
+                        help="the pool of the files, volumes, smb, smbconf, shares, scrub and offsite checks")
     args = parser.parse_args(argv)
     if not lock_holder_alive(os.environ.get("UNOS_DEV_LOCK_HELD", "")):
         print("scenario.py: run it through scripts/dev/scenario.sh, which holds the device lock (ADR-0210)", file=sys.stderr)

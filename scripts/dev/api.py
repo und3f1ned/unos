@@ -33,7 +33,8 @@ status, 2 for a usage error or when the device could not be asked.
 
 Importable: DeviceApi().get("/system/stats").json(); also post, put, patch, delete, request, and
 upload, which sends a file as the form field "file" (multipart/form-data, as the web UI's uploads
-do; the relay gets its bytes in base64 on standard input).
+do; the relay gets its bytes in base64 on standard input); as_user gives the same API signed in
+as another user, with a token cache of its own (the scenario checks' temporary user).
 Standard library only; Python 3.9 or later.
 """
 
@@ -409,6 +410,15 @@ class DeviceApi:
 
     def forget_token(self) -> None:
         self._relay({"forget": True})
+
+    def as_user(self, username: str, password: str, token_cache: str) -> DeviceApi:
+        """The same API, signed in as USERNAME with PASSWORD (a user of UNOS without two-factor
+        login), whose token the relay keeps in TOKEN_CACHE in the device's RAM, apart from the
+        administrator's; forget_token deletes it. dev.env's secrets stay redacted."""
+        other = DeviceApi(settings={"UNOS_DEV_ADMIN_USER": username, "UNOS_DEV_ADMIN_PASSWORD": password},
+                          timeout=self.timeout, ssh=self.ssh, base_url=self.base_url, token_cache=token_cache)
+        other.secrets = sorted(set(self.secrets) | set(other.secrets), key=len, reverse=True)
+        return other
 
     def __enter__(self) -> DeviceApi:
         return self

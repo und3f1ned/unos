@@ -1258,6 +1258,7 @@
       "adr": [
         "ADR-0096",
         "ADR-0098",
+        "ADR-0339",
         "ADR-0100"
       ],
       "notes": "Device check: 2026-11-07 (slice 2 deploy). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): scripts/dev/scenario.sh smb passed all 27 steps (a wrong password refused with NT_STATUS_LOGON_FAILURE, never as a guest, the null session refused, server signing mandatory without a guest share)."
@@ -1280,9 +1281,11 @@
       "adr": [
         "ADR-0096",
         "ADR-0098",
-        "ADR-0100"
+        "ADR-0339",
+        "ADR-0100",
+        "ADR-0340"
       ],
-      "notes": "The slice 2 device checks made no guest share. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "The slice 2 device checks made no guest share. Device check 2026-11-11 with main b290ada: scripts/dev/scenario.sh shares (run unoscheckc21bbe, 15:27:26 to 15:28:23 UTC, 2.941 MiB for the whole check, which passed 25 steps and skipped 1) found no guest share on the device (step 3, 0.000 MiB), then turned guest access on for its share with a PATCH: the answer carried the guest warning, GET /shares/smb-status named the share, and [global] had map to guest = Bad User, restrict anonymous = 1 and server signing = default, which testparm accepted (step 20, 0.176 MiB); an anonymous (null) smbclient session to the share listed it and read its file, and its write was refused with NT_STATUS_ACCESS_DENIED, no file made (step 21, 0.000 MiB); Delete of that last guest share removed its section and kept the folder with its files (step 22, 0.199 MiB), after which [global] had server signing = mandatory, map to guest = Never and restrict anonymous = 2 again and the status named no guest share (step 23, 0.020 MiB). A null session's share list (smbclient -L) succeeded but named no share while the guest share existed (\"SMB1 disabled -- no workgroup available\" and no Disk line): restrict anonymous = 1 lets Samba's srvsvc refuse anonymous callers, which ADR-0339 records, superseding ADR-0098's text that the share list still works with it. The check's first run (15:24:18 to 15:25:58 UTC, after the smb check, 2.859 MiB), which expected the share in that list, failed at that step and removed what it had made; the check now asserts the session to the share and only reports the list. Not checked on the device: the share dialog's warning (webui/tests/shares.spec.ts on the stand-in) and a Windows client. Open: the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "shares.smb-conf-and-status",
@@ -1376,9 +1379,10 @@
       "passes": false,
       "adr": [
         "ADR-0155",
-        "ADR-0156"
+        "ADR-0156",
+        "ADR-0340"
       ],
-      "notes": "Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Device check 2026-11-11 with main b290ada: scripts/dev/scenario.sh shares (run unoscheckc21bbe, 15:27:26 to 15:28:23 UTC, 2.941 MiB for the whole check, which passed 25 steps and skipped 1) made over ssh, in its share's folder on the pool data: wrong/ 755 with wrong/inner.txt 644, run.sh 750, acl.txt 640, private.txt 600 and private/ 700 with private/inner.txt 644, all root:root, legacy.txt 666 nobody:nogroup, and link.txt, a symbolic link to a file 644 root:root outside the share (step 8, 0.000 MiB). Repair permissions answered done, \"Permissions repaired.\", and gave wrong/ 2770 root:unos-smb, wrong/inner.txt and acl.txt 660 root:unos-smb, run.sh 770 root:unos-smb and legacy.txt 660 nobody:unos-smb, its owner kept (step 9, 0.020 MiB); the private file and folder, what the folder holds, the link and the file outside the share that it points to stayed as they were (step 10, 0.000 MiB); GET .../repair-permissions answered the same run: visited 9, changed 5, skipped symlink 1 and private 2, errors 0 (step 12, 0.000 MiB); with the share's folder replaced by a symbolic link, the share was not served and Repair answered 409 \"Share <name> is not served: Share path must not contain symbolic links (<folder> is one); change its folder first\", the last run unchanged (step 13, 0.020 MiB). Step 3 (ACL entries) was not checked: the device has no setfacl or getfacl (the package acl; installing it is an owner action), so the check skipped it (step 11). Not checked on the device: app data, snapshots and mount points (test_share_repair.py) and the Shares page's display of the last run (webui/tests/shares.spec.ts). Open: step 3 on the device once it has setfacl, and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "shares.smb-accounts",
@@ -1425,9 +1429,10 @@
         "ADR-0068",
         "ADR-0118",
         "ADR-0122",
-        "ADR-0131"
+        "ADR-0131",
+        "ADR-0340"
       ],
-      "notes": "The user's own activation ran only on the stand-in, which has no Samba; on the device an administrator turned SMB on. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "The user's own activation ran only on the stand-in, which has no Samba; on the device an administrator turned SMB on. Device check 2026-11-11 with main b290ada: scripts/dev/scenario.sh shares (run unoscheckc21bbe, 15:27:26 to 15:28:23 UTC, 2.941 MiB for the whole check, which passed 25 steps and skipped 1) made a regular user without SMB with a password of 7 characters, which UNOS's own rules allow a user without SMB (ADR-0122), and signed in as that user with its own token (api.py's relay kept it in the device's RAM, and the clean-up deleted it): GET /auth/me/smb said off, not allowed (step 14, 0.121 MiB); after an administrator's allow it said password_needed, allowed, and asked for no two-factor code (step 15, 0.074 MiB); POST /auth/me/smb/enable refused the 7 characters with \"SMB passwords must have at least 8 characters\" and, after the user's change to a password with a tab, that one with \"SMB passwords must not contain control characters such as tabs or line breaks\", while POST /auth/change-password refused a new password of 73 bytes with 422 (UNOS's own limit, ADR-0315), so that SMB's reason for passwords over 72 bytes cannot be reached; Samba got no account (step 16, 0.066 MiB); with a password that SMB can use, the user's own enable without a two-factor code made the account active, with a marked host account and a Samba account (step 17, 0.617 MiB); with write access to the check's share, the user's signed smbclient session listed it and wrote a file of the group unos-smb, and GET /auth/me/smb listed the share as write and usable (step 18, 0.191 MiB); POST /auth/me/smb/disable kept SMB allowed (password_needed) and removed the Samba account, and the password was then refused with NT_STATUS_LOGON_FAILURE (step 19, 0.227 MiB); no password of the check was in an answer, the supervisor's log, the journal, Samba's log or the audit log (step 24, 0.016 MiB), and the user's Delete removed its host account (step 25, 0.613 MiB). Not checked on the device: the Account page itself (webui/tests/account-smb.spec.ts on the stand-in) and a two-factor code (test_totp_once.py). Open: the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "shares.password-follows-unos",
@@ -1534,9 +1539,10 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0193"
+        "ADR-0193",
+        "ADR-0340"
       ],
-      "notes": "Implemented and tested; ADR-0193 waits for confirmation. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Implemented and tested; ADR-0193 waits for confirmation. Device check of step 3, 2026-11-11 with main b290ada: scripts/dev/scenario.sh shares (run unoscheckc21bbe, 15:27:26 to 15:28:23 UTC, 2.941 MiB for the whole check, which passed 25 steps and skipped 1) made over ssh <pool>/unoscheck<hex>-sticky, 1777 root:root, with theirs in it, 1777 nobody:nogroup (uid 65534) (step 4, 0.000 MiB); a new share folder in theirs, a sticky folder of another account, was refused with 409 \"Share folders must be inside folders that only root can change: <...>/theirs can be changed by other accounts (owner uid 65534, mode 1777). Run 'chown root:root <...>/theirs' on the NAS, then try again.\", and nothing was made (step 5, 0.020 MiB); a share of theirs itself, a folder of another account in the sticky folder of root, was accepted with the warning that names \"<...>-sticky can be changed by other accounts (mode 1777, the share folder belongs to uid 65534)\", GET /shares/smb-status reported it, and Repair permissions refused it with 409 and that reason, theirs keeping its owner and mode; after its Delete the status reported nothing (step 6, 0.281 MiB). The first case is ADR-0153's rule of the owner, the second the sticky rule of ADR-0193. Open: the owner's confirmation of ADR-0193, and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "shares.group-access",
