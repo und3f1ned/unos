@@ -7,17 +7,20 @@ sensor.
 import psutil
 
 # The sensor groups of a CPU or SoC, as psutil names them, in order of preference, each with the
-# label of the reading that stands for the whole chip (None: the group's first reading; so is a
-# group without that label). psutil names a group after its hwmon device; the kernel names the
-# hwmon device of a thermal zone after the zone, with "_" for "-" (soc-thermal is soc_thermal).
-# On a host without hwmon psutil names the groups after the thermal zones themselves, so a name is
-# compared with "-" read as "_".
-CPU_SENSORS: tuple[tuple[str, str | None], ...] = (
-    ("coretemp", "Package id 0"),  # Intel
-    ("k10temp", "Tctl"),  # AMD
-    ("cpu_thermal", None),  # Raspberry Pi, Allwinner, Amlogic, RK3399 and other ARM boards
-    ("soc_thermal", None),  # RK3588 under Rockchip's kernel: the sensor of the whole chip
-    ("package_thermal", None),  # RK3588 under the mainline kernel: the same sensor
+# labels of the readings that stand for the whole chip, in order of preference; a group without
+# labels here, or without a reading of one of them, gives its first reading. psutil names a group
+# after its hwmon device; the kernel names the hwmon device of a thermal zone after the zone, with
+# "_" for "-" (soc-thermal is soc_thermal). On a host without hwmon psutil names the groups after
+# the thermal zones themselves, so a name is compared with "-" read as "_".
+CPU_SENSORS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("coretemp", ("Package id 0",)),  # Intel
+    # AMD. On the Ryzen X CPUs of the first two generations and the Threadripper 1000 and 2000,
+    # Tctl is the die's temperature plus an offset of 10 to 27 degrees, and k10temp also lists
+    # Tdie, the die's own. Elsewhere Tctl alone is listed, and it is the die's temperature.
+    ("k10temp", ("Tdie", "Tctl")),
+    ("cpu_thermal", ()),  # Raspberry Pi, Allwinner, Amlogic, RK3399 and other ARM boards
+    ("soc_thermal", ()),  # RK3588 under Rockchip's kernel: the sensor of the whole chip
+    ("package_thermal", ()),  # RK3588 under the mainline kernel: the same sensor
 )
 
 
@@ -31,8 +34,9 @@ def cpu_temperature() -> float | None:
                   for name, readings in psutil.sensors_temperatures().items() if readings}
     except Exception:
         return None
-    for name, label in CPU_SENSORS:
+    for name, labels in CPU_SENSORS:
         readings = groups.get(name)
         if readings:
-            return next((r for r in readings if r.label == label), readings[0]).current
+            labelled = (r for label in labels for r in readings if r.label == label)
+            return next(labelled, readings[0]).current
     return next((readings[0].current for readings in groups.values()), None)

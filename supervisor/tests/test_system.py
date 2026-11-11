@@ -279,6 +279,13 @@ class TestDashboardTemperature:
                 {"nvme": _NVME, "k10temp": [_reading("Tccd1", 61.5), _reading("Tctl", 57.4)]},
                 57.4, id="amd-tctl",
             ),
+            # On the Ryzen X CPUs of the first two generations and the Threadripper 1000 and 2000,
+            # Tctl is the die's temperature plus an offset, and k10temp lists Tdie, the die's own,
+            # after it.
+            pytest.param(
+                {"k10temp": [_reading("Tctl", 65.0), _reading("Tdie", 45.0)]},
+                45.0, id="amd-tdie-before-tctl",
+            ),
             pytest.param(
                 {"drivetemp": [_reading("", 33.0)], "cpu_thermal": [_reading("", 48.3)]},
                 48.3, id="raspberry-pi",

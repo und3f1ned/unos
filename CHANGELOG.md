@@ -718,9 +718,10 @@ manager, encrypted backup uploads, health checks, CI checks).
 
 ### Fixed
 - The dashboard's Temperature card shows the CPU's temperature (Intel's
-  package, AMD's Tctl) or the SoC's (`cpu_thermal`, and the RK3588's
-  `soc_thermal` or `package_thermal`): it showed the first sensor that the host
-  listed, on many hosts an ACPI zone or a disk. A host whose CPU sensor UNOS
+  package; AMD's Tdie, or Tctl where the CPU has no Tdie) or the SoC's
+  (`cpu_thermal`, and the RK3588's `soc_thermal` or `package_thermal`): it
+  showed the first sensor that the host listed, on many hosts an ACPI zone or a
+  disk. A host whose CPU sensor UNOS
   does not recognize still shows that first sensor.
 - **Run now** of a scheduled task no longer holds a stop of the supervisor
   until the run ends: the stop ends the run and records it as stopped, as it
@@ -908,8 +909,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   failed: Device or resource busy`. It is refused with 409, as a delete of
   it is: `'<name>' is a separate subvolume or filesystem (such as a snapshot
   or a mount point) and cannot be renamed in the file manager` (moved for a
-  move). Any other file operation that the system refuses as busy answers
-  409 too.
+  move). A move checks every item first, so such a folder among several
+  items moves none of them, and a move that stops part way says how many
+  items moved before it. Any other file operation that the system refuses
+  as busy answers 409 too.
 - Names that are not valid UTF-8, which apps and SMB users can give to
   folders and subvolumes in a pool, broke storage operations: a subvolume
   with such a name made listing volumes fail (HTTP 500). Such names are now

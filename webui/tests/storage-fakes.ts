@@ -198,6 +198,14 @@ export const stillInUse = (pool: string, reason: string) =>
 /** The reason of stillInUse when the mount namespace of a process has the pool mounted elsewhere. */
 export const mountedElsewhere = (pid: number, at: string) => `process ${pid} has it mounted at ${at}`;
 
+/**
+ * The 503 of an unmount or a removal of a mounted pool when Docker cannot be asked whether a
+ * running container uses it (_containers_using in supervisor/src/storage/pools.py, ADR-0344):
+ * nothing was changed. The reason is what the Docker client said.
+ */
+export const dockerUnavailable = (pool: string, reason: string) =>
+  `Pool '${pool}' was left mounted: Docker did not answer, so it is not known whether a running container keeps data on it. Try again when Docker is running (${reason}).`;
+
 export interface RecordedWrite {
   method: string;
   path: string;

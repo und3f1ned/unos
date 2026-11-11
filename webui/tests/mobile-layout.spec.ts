@@ -517,7 +517,10 @@ const CHANNELS: Channel[] = [
 // One message of the stats stream (supervisor/src/websocket/events.py), with the processes of a
 // NAS and their long names.
 const STATS = {
-  cpu: { percent: 12.5, per_core: [10, 15, 20, 5, 12, 18, 9, 11], load_1: 0.5, load_5: 0.4, load_15: 0.3, cores: 8, threads: 8 },
+  cpu: {
+    percent: 12.5, per_core: [10, 15, 20, 5, 12, 18, 9, 11], load_1: 0.5, load_5: 0.4, load_15: 0.3, cores: 8, threads: 8,
+    temperature: 45.8,
+  },
   memory: {
     total: 8 * 1024 ** 3, used: 2.5 * 1024 ** 3, free: 5.5 * 1024 ** 3, available: 5.5 * 1024 ** 3, percent: 31.25,
     swap_total: 0, swap_used: 0, swap_percent: 0,
@@ -536,7 +539,6 @@ const STATS = {
     { pid: 1022, name: 'kworker/u8:2-events_unbound', cpu_percent: 0.4, memory_percent: 0, memory_mb: 0, status: 'idle',
       username: 'root' },
   ],
-  temperatures: {},
   timestamp: '2026-11-08T10:00:00',
 };
 

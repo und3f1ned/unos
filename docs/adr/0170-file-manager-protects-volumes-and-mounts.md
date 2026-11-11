@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0348
 date: 2026-11-06
 area: files
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0170: The file manager never deletes, renames or moves volumes, subvolumes or mounts
 
 ## Context
+
+Superseded by ADR-0348: an entry that is a mount point itself, a bind mount from the same filesystem included, is refused before a rename or a move within its pool too, and any other EBUSY answers 409.
 
 In 1.0.0, deleting a volume (`/mnt/pools/<pool>/<volume>`) in the file manager removed all its files and then the volume itself, also while an app, an SMB share or an NFS export used it, and volumes could be moved, or renamed through the API. Deleting a folder that contained a subvolume or a mount, or moving it to another filesystem (a copy, then a delete), went into that subvolume or mount and deleted its files too.
 

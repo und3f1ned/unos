@@ -414,7 +414,8 @@ async def enable_totp(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Enable 2FA after verifying TOTP code; a totp_enabled entry records it (ADR-0343)."""
+    """Enable 2FA after verifying TOTP code. Only the request that turned it on writes a
+    totp_enabled entry (ADR-0343)."""
     if not current_user.totp_secret:
         raise HTTPException(status_code=400, detail="Run /totp/setup first")
 
@@ -428,10 +429,19 @@ async def enable_totp(
         )
 
     username = current_user.username
-    current_user.totp_enabled = True
-    # A new setup starts without recovery codes: none of an earlier one comes back (ADR-0238).
-    current_user.recovery_codes = None
+    # Written only while 2FA is still off (NULL counts as off, as above): of two requests that
+    # both found it off, each with a code of its own time step, the second changes nothing
+    # and answers as when 2FA was already on (ADR-0343). A new setup starts without recovery
+    # codes: none of an earlier one comes back (ADR-0238).
+    result = await db.execute(
+        update(User)
+        .where(User.id == current_user.id, User.totp_enabled.is_not(True))
+        .values(totp_enabled=True, recovery_codes=None)
+        .execution_options(synchronize_session=False)
+    )
     await db.commit()
+    if result.rowcount != 1:
+        raise HTTPException(status_code=400, detail="2FA is already enabled")
     await _own_account_audit(
         request, AuditAction.TOTP_ENABLED, username, "Two-factor authentication turned on by the user"
     )
@@ -446,7 +456,8 @@ async def disable_totp(
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Disable 2FA; a totp_disabled entry of severity warning records it (ADR-0343)."""
+    """Disable 2FA. Only the request that turned it off writes a totp_disabled entry, of
+    severity warning (ADR-0343)."""
     if not current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="2FA is not enabled")
 
@@ -460,12 +471,17 @@ async def disable_totp(
     # One statement writes all three columns. Assigning None to the loaded user would leave
     # recovery_codes out of the UPDATE when it was loaded as None, and then codes that a
     # generation stored after that load would outlive 2FA: they belong to this setup (ADR-0238).
-    await db.execute(
+    # Written only while 2FA is still on: of two requests that both found it on, the second
+    # changes nothing and answers as when 2FA was already off (ADR-0343).
+    result = await db.execute(
         update(User)
-        .where(User.id == current_user.id)
+        .where(User.id == current_user.id, User.totp_enabled.is_(True))
         .values(totp_enabled=False, totp_secret=None, recovery_codes=None)
+        .execution_options(synchronize_session=False)
     )
     await db.commit()
+    if result.rowcount != 1:
+        raise HTTPException(status_code=400, detail="2FA is not enabled")
     await _own_account_audit(
         request, AuditAction.TOTP_DISABLED, username,
         "Two-factor authentication turned off by the user, with its recovery codes",

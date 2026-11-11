@@ -9,7 +9,7 @@ decided-by: agent
 
 ## Context
 
-Neither uvicorn nor Caddy limits the time a request body takes, and Caddy streams the body to the supervisor. A client that stopped sending in the middle of a file manager or backup upload, its connection still open, held the request and the upload's destination file, with the space of what had arrived, for as long as that connection stayed open (ADR-0167). The entry `files.upload-edge-cases` asks for a read timeout, but not its value or what it covers.
+Neither uvicorn nor Caddy limits the time a request body takes, and Caddy streams the body to the supervisor. A client that stopped sending in the middle of a file manager or backup upload, its connection still open, held the request and the upload's destination file, with the space of what had arrived, for as long as that connection stayed open (ADR-0167). The entry `files.upload-edge-cases` asks for a read timeout, but not its value or what it covers. Working on through the features under the owner's delegation ("work on through the features, ask no questions; I allow everything", in translation), the agent chose them: 120 seconds without data, then 408 with the upload discarded, for both uploads.
 
 ## Decision
 
@@ -17,7 +17,7 @@ Neither uvicorn nor Caddy limits the time a request body takes, and Caddy stream
 - When it expires, the upload answers HTTP 408 "The upload timed out: the client sent nothing for 120 seconds" with `Connection: close` (RFC 9110), and the sink's `discard()` runs as after any other failure: the unnamed or hidden file of a file manager upload, or the temporary file of a backup upload, is gone. The rest of the body is never read.
 - It applies to both uploads, since both go through `receive_upload` (ADR-0169), and to no other request: their bodies are limited to 1 MiB before the credentials are checked (ADR-0062).
 - 120 seconds leaves room for a Wi-Fi roam, a short network outage that TCP retransmissions cover, or a busy client, and frees a stalled upload's space within minutes.
-- Tests: `supervisor/tests/test_upload_streaming.py` (a client that stops before the body or in the file gets 408 and leaves nothing, also through uvicorn; one that sends a chunk every quarter of the timeout is stored).
+- Tests: `supervisor/tests/test_upload_streaming.py` (a client that stops before the body or in the file gets 408 and leaves nothing, also through uvicorn, which then closes the connection; one that sends a chunk every quarter of the timeout is stored).
 
 ## Consequences
 

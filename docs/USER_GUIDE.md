@@ -741,7 +741,10 @@ in your storage pools from the web interface. It starts in the pools directory
   very large file needs that much free memory on your computer.
 - **Copy and Move** - Select the items and click **Copy** or **Move**, open
   the destination folder, then click **Copy here** or **Move here**. If an
-  item with the same name is already there, nothing is copied or moved.
+  item with the same name is already there, nothing is copied or moved, and a
+  move that one of the items cannot make (such as a folder that is a mount
+  point) moves none of them. When a move stops at an item after others moved,
+  the message says how many moved before it.
 - **Rename** - Select one item and click **Rename**: its name becomes a field
   with the name selected. Type the new name, then press Enter or click
   elsewhere; Escape keeps the old name. Switching to another window or tab
@@ -1304,11 +1307,12 @@ regular users have no access to it.
   reset of an administrator on the NAS's command line (`password_change` and
   `totp_disabled` by the user `root`, see
   [Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)),
-  and the clearing of the log. A refused attempt, such as a wrong current
-  password or code, writes no entry. Storage, snapshots, containers, apps,
-  backups, restarts and shutdowns, scheduled tasks, the network and system
-  settings write no entries yet, although **Action** lists such actions
-  (feature-list entry `security.audit-admin-actions`).
+  and the clearing of the log. A refused change of your own account, such as
+  a wrong current password or two-factor code, writes no entry. Storage,
+  snapshots, containers, apps, backups, restarts and shutdowns, scheduled
+  tasks, the network and system settings write no entries yet, although
+  **Action** lists such actions (feature-list entry
+  `security.audit-admin-actions`).
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
 (with `limit` from 1 and `offset` from 0), `GET /api/v1/audit/logs/count` and

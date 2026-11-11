@@ -24,6 +24,7 @@ ADR-0070 let an unmount go ahead when Docker could not be asked which containers
 ## Consequences
 
 - An administrator stops the containers that use a pool before unmounting or deleting it. While Docker does not answer, a mounted pool cannot be unmounted or removed in UNOS: the message says to try again when Docker is running.
+- The mount-namespace check after the umount (ADR-0288) is no longer reached when Docker cannot be asked, since nothing is unmounted then.
 - A name that is not UTF-8 is shown with replacement characters and cannot be selected as a volume.
 - The comparison of a Docker volume's bound folder with the pool is still lexical (ADR-0073).
 

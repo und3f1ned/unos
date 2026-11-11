@@ -988,19 +988,37 @@ def test_a_client_that_stops_sending_to_a_real_server_is_cut_off(env, target, mo
     head = _part_head(b"file", target.filename)
     with _uvicorn(app, http="httptools") as port:
         conn = _connect(port, target.url, len(head) + 8 * MIB)
+        # getresponse() takes the socket from conn; a duplicate is left to see the server's end.
+        sock = socket.socket(fileno=os.dup(conn.sock.fileno()))
         try:
             conn.send(head + os.urandom(3 * MIB))
             _wait_for(lambda: _temporary_bytes(env) >= 2 * MIB, "the destination file holds data")
             conn.sock.settimeout(10)  # without the timeout no answer comes
             response = conn.getresponse()
             body = response.read()
+            closed = _closed_by_server(sock)
         finally:
+            sock.close()
             conn.close()
         _wait_for(lambda: _temporary_files(env) == [], "the temporary file is removed (an unnamed one closed)")
 
     assert (response.status, json.loads(body)) == (408, {"detail": _idle_detail(idle)})
+    assert closed, "the server kept the connection open after the 408"
     assert response.getheader("Connection") == "close"
     assert target.stored() == []
+
+
+def _closed_by_server(sock: socket.socket, within: float = 3.0) -> bool:
+    """Whether a read of ``sock``, after the answer, gets the end of the connection within ``within`` seconds.
+
+    3 seconds is less than uvicorn's keep-alive timeout of 5 seconds, after
+    which it would close a connection that it kept open.
+    """
+    sock.settimeout(within)
+    try:
+        return sock.recv(1) == b""
+    except TimeoutError:
+        return False
 
 
 # --- the file of a file upload: unnamed, or a hidden temporary file ---------------------------

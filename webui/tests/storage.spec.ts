@@ -16,6 +16,7 @@ import {
   FAKE_POOLS,
   HEALTHY_POOL,
   SWAPPED_DISKS,
+  dockerUnavailable,
   fakeStorageApi,
   mountedElsewhere,
   noScrub,
@@ -420,6 +421,48 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(dialog).toBeHidden();
     await expect(pool.locator('.badge', { hasText: /^Mounted at boot$/ })).toBeVisible();
     expect(writes).toEqual([{ method: 'DELETE', path: '/pools/e2e_data', body: null }]);
+  });
+
+  // ADR-0344: while Docker cannot be asked whether a running container keeps data on the pool,
+  // Unmount and Remove Pool are refused with 503 before anything changes. The text is the
+  // server's (supervisor/tests/test_pool_persistence.py checks it).
+  test('an unmount or a removal while Docker cannot be asked says why, and the pool stays mounted', async ({
+    authenticatedPage: page,
+  }) => {
+    const unasked = dockerUnavailable('e2e_data', 'Error while fetching server API version');
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      poolActionResponse: () => ({ status: 503, json: { detail: unasked } }),
+    });
+    await page.goto('/storage');
+    const pool = poolCard(page, 'e2e_data');
+
+    await pool.getByRole('button', { name: 'Unmount', exact: true }).click();
+    const unmount = page.getByRole('dialog', { name: 'Unmount Pool' });
+    await unmount.getByRole('button', { name: 'Unmount', exact: true }).click();
+    await expect(unmount.locator('.alert', { hasText: 'Unmount failed' })).toContainText(unasked);
+    expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/unmount', body: {} }]);
+    await unmount.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(unmount).toBeHidden();
+    await expect(badge(pool, 'Mounted at boot')).toBeVisible();
+    await expect(field(pool, 'Mount')).toHaveText('Mount: /mnt/pools/e2e_data');
+
+    await pool.getByRole('button', { name: 'Remove pool e2e_data', exact: true }).click();
+    const remove = page.getByRole('dialog', { name: 'Remove Pool' });
+    await remove.getByRole('button', { name: 'Continue', exact: true }).click();
+    await remove.getByLabel('Type pool name to confirm').fill('e2e_data');
+    await remove.getByRole('button', { name: 'Remove Pool', exact: true }).click();
+    await expect(remove.locator('.alert', { hasText: 'Pool was not removed' })).toContainText(unasked);
+    expect(writes).toEqual([
+      { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
+      { method: 'DELETE', path: '/pools/e2e_data', body: null },
+    ]);
+    await page.keyboard.press('Escape');
+    await expect(remove).toBeHidden();
+    await expect(badge(pool, 'Healthy')).toBeVisible();
+    await expect(badge(pool, 'Mounted at boot')).toBeVisible();
+    await expect(field(pool, 'Mount')).toHaveText('Mount: /mnt/pools/e2e_data');
+    await expect(pool.getByRole('button', { name: 'Unmount', exact: true })).toBeVisible();
   });
 });
 

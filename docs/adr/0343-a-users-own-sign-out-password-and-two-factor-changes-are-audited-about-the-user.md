@@ -32,8 +32,16 @@ entries to real changes; ADR-0251 lets only a sign-in answer when its entry cann
   wrong or reused code, 2FA already on or off, an API token at the sign-out, a password Samba
   refused), and a sign-out writes its entry only when it ended the session: `end_session` of
   `supervisor/src/auth/utils.py` says whether a row or a session kept in memory was there, so
-  of two sign-outs of one session only the first writes. Each code is accepted once (ADR-0067),
-  so two requests cannot both turn 2FA on or off.
+  of two sign-outs of one session only the first writes. Turning 2FA on writes the user's row
+  only while 2FA is still off (`User.totp_enabled.is_not(True)` in the UPDATE, so NULL counts
+  as off, as the check before it does), and turning it off only while it is still on
+  (`User.totp_enabled.is_(True)`); only the request whose UPDATE changed the row writes the
+  entry. Each code is accepted once (ADR-0067), but two requests can each take a code of its
+  own time step after both found 2FA off (or on): the second then changes nothing and answers
+  400 "2FA is already enabled" (or "2FA is not enabled"), as when it finds 2FA on (or off)
+  before its code.
+- The entry follows the commit: a change whose commit fails, such as on a full `/data`,
+  answers an error and writes no entry, neither in the audit log nor in the supervisor's log.
 - An entry that cannot be written, such as on a full `/data`, is in the supervisor's log
   (`log_action`, ADR-0251) and the request answers what it did: the change is stored, and a 500
   would tell the user it was not. A sign-out of a session that a full `/data` kept in memory

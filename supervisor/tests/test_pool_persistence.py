@@ -1723,8 +1723,9 @@ class TestMountNamespaces:
 
 def test_the_e2e_fakes_answer_with_the_servers_texts(data_pool):
     """webui/tests/storage-fakes.ts refuses an unmount or a removal of a pool in use with these
-    texts word for word (ADR-0189): running containers that Docker reports, and a mount namespace
-    that has the pool mounted elsewhere after the host's umount (ADR-0288)."""
+    texts word for word (ADR-0189): running containers that Docker reports, a mount namespace
+    that has the pool mounted elsewhere after the host's umount (ADR-0288), and, with 503, a
+    Docker that cannot be asked (ADR-0344)."""
     fakes = (Path(__file__).resolve().parents[2] / "webui" / "tests" / "storage-fakes.ts").read_text(encoding="utf-8")
     pools.mount_pool("data")
 
@@ -1744,6 +1745,15 @@ def test_the_e2e_fakes_answer_with_the_servers_texts(data_pool):
     template = str(held.value).replace("'data'", "'${pool}'").replace(reason, "${reason}")
     assert f"`{template}`" in fakes
     assert "`process ${pid} has it mounted at ${at}`" in fakes
+
+    data_pool.docker.unavailable = True
+    for operation in (pools.unmount_pool, pools.delete_pool):
+        with pytest.raises(pools.DockerUnavailableError) as unasked:
+            operation("data")
+        reason = "Error while fetching server API version"  # what the Docker client said
+        assert reason in str(unasked.value)
+        template = str(unasked.value).replace("'data'", "'${pool}'").replace(reason, "${reason}")
+        assert f"`{template}`" in fakes
 
 
 class TestMountpointGuard:
