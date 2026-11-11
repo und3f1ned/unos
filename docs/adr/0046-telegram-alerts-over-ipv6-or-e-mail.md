@@ -1,13 +1,16 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-05
 area: system
 decided-by: agent
+superseded-by: ADR-0336
 ---
 
 # ADR-0046: Deliver Telegram alerts over Docker IPv6, or send them by e-mail
 
 ## Context
+
+Superseded by ADR-0336: neither IPv6 for the compose network nor e-mail instead; an HTTP notification that cannot connect from the container goes once more from the host's network, with the host's curl.
 
 From the dev device's network, IPv4 traffic to Telegram's API (`api.telegram.org`) does not get through, and the UNOS containers have no IPv6, so Telegram alerts cannot be delivered from the device. A change of the Docker network was outside Phase 0's scope.
 

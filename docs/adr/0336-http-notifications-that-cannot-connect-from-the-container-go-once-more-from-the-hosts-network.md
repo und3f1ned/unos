@@ -1,0 +1,43 @@
+---
+status: accepted
+date: 2026-11-11
+area: system
+decided-by: agent
+supersedes: [ADR-0046]
+---
+
+# ADR-0336: An HTTP notification that cannot connect from the container goes once more from the host's network, with the host's curl
+
+## Context
+
+From the dev device's network Telegram's API answers over IPv6 only: on 2026-11-11 `curl -4 https://api.telegram.org/` failed there and `curl -6` answered 302 in 0.2 s, over the host's default IPv6 route. The UNOS containers have no IPv6 (the compose network `unos-net`, IPv4 `172.31.254.0/24`), so every Telegram alert of the supervisor failed with ConnectTimeout: the device's notification history records the alert "Task 'unoscheck-fail' failed" to the owner's Telegram channel as failed, ConnectTimeout, while the same alert to a webhook in the LAN arrived. ADR-0046 proposed IPv6 for the compose network or e-mail instead; the ledger entry is `system.telegram-from-the-device`. The owner's standing instruction is "work on the features, ask no questions; I allow everything", with the goal "a safe, working MVP as soon as possible".
+
+## Decision
+
+- Every HTTP channel of `supervisor/src/notifications/router.py` (`send_telegram`, `send_webhook`, `send_discord`, `send_slack`) builds its request once (method, URL, headers, body) and sends it from the container with httpx, as before. Only when no connection could be made, `httpx.ConnectError` (which also stands for a failed name lookup and a failed TLS handshake or certificate check) or `httpx.ConnectTimeout`, so that the request was not sent, the same request goes once more from the host's network: `host.run_on_host_async(["curl", ...], input=<curl's config>)` enters the host's namespaces (ADR-0020), so curl uses the host's routes, IPv6 included, its name servers and its CA certificates. An HTTP answer of any status, a read or write timeout and a connection that broke after the request was sent are never repeated: the message could arrive twice.
+- curl's command line holds fixed options only: `--disable` (first, where alone it works: no curlrc of the host adds options), `--silent --show-error`, `--globoff` (the URL is one URL as it is, not a pattern of several), `--max-time <s>`, `--proto =https,http`, `--config -` and `--write-out` with the HTTP status after the separator `unos-http-status:`; the body and the status are read from its stdout. The request is curl's config on standard input: `url` (as httpx sends it, its path escaped the same way), `request`, one `header` per header (`Name;` for one without a value, as curl takes it) and `data-raw` for the body, each value in double quotes with backslash, double quote, line break, carriage return and tab escaped, and every other character, UTF-8 included, as it is. `data-raw`, not `data-binary`: curl would read a body that starts with "@" from a file of the host. A request that such a config cannot carry as httpx would send it is not sent from the host: a NUL character anywhere, or a header that httpx's h11 refuses once connected, a name of other characters than RFC 9110's token characters or a value with a line break, a NUL or whitespace other than spaces and tabs between its characters (curl would send a line break as two headers, and read the headers of a name that starts with "@" from a file of the host). HTTPS is verified against the host's CA certificates; there is no `--insecure`.
+- The secrets, Telegram's bot token (in the URL's path), a webhook's URL with its path and query, where its key is, the values of its headers, and the webhook URLs of Discord and Slack with their paths, reach curl only on its standard input, never on its command line (ADR-0125). What httpx, curl and the services say is reported with every one of them replaced by `***`, in the test's answer, the history and the log; a value shorter than 8 characters is left, since no key is that short and replacing it would garble the text.
+- Both attempts judge an answer alike: Telegram's is a delivery with HTTP 200 and `"ok": true` (before, HTTP 200 alone), otherwise the first 200 characters of its body, or `HTTP <status>`; a webhook's, Discord's and Slack's with a 2xx status, otherwise `HTTP <status>: <start of the body>` (ADR-0326). A failure of both names both attempts: `no connection from the container (<httpx's error>); from the host: <curl's last line of errors, the answer judged, or why it was not sent>`, and `the host has no curl (package curl)` when nsenter cannot start it (status 127).
+- Time: the container's attempt waits `CONNECT_TIMEOUT` = 5 s for its connection, which httpcore gives to the name lookup and TCP and again to TLS, so up to 10 s; it keeps the channel's time for the rest (`SEND_TIMEOUT` = 15 s for Telegram, `HOOK_TIMEOUT` = 30 s for the others, each network operation). curl's `--max-time` is what is left of the channel's time when the container gives up, in tenths of a second and at least 1 s, name lookup included, and the supervisor waits `HOST_WAIT_MARGIN` = 5 s longer for nsenter and curl. So a send that connects nowhere ends after the channel's time, as before, and at the latest 5 s later: within an alert's `ALERT_TIMEOUT` of 60 s, which `_deliver_alert` of `supervisor/src/health/router.py` sets on each channel's send. A test send has no limit of its own beyond these.
+- curl joins `HOST_TOOLS` of `supervisor/src/host.py` with the package curl: `deploy/install.sh` installs it already, as the package list of `docs/INSTALL.md` does, so a fresh installation has it, and the startup check names a host that lacks it. That is simpler than `OPTIONAL_HOST_TOOLS`, which is for programs that `install.sh` does not install.
+- E-mail is unchanged: smtplib from the container.
+- The steps of `system.telegram-from-the-device` are rewritten to this decision; the entry passes after its device check and the re-check after a reboot (ADR-0018).
+- Tests: `TestFromTheHostsNetwork` of `supervisor/tests/test_notifications.py` against `FakeHost` of `supervisor/tests/test_pool_persistence.py`, whose curl reads its config as curl does and answers from the network a test sets: which outcomes of the container's attempt lead to the host's, the same request, the escapes of the config, the secrets, both paths judged alike, a host without curl, a request the config cannot carry, the time limits, and an alert's history entry on each path; one test sends through the real curl of the machine running the tests to a local receiver, and skips without curl.
+
+## Consequences
+
+- On the dev device a Telegram message arrives about 5 seconds after it is sent, the container's connect timeout, and the history records it as delivered; a failure names both attempts.
+- The compose network and the host's routing stay as they are on every installation: no IPv6 for Docker, no IPv6 forwarding, no change to the published ports.
+- curl runs as root in the host's namespaces with the supervisor's environment, as every host command does: a proxy set in the supervisor's environment applies to it as to httpx. It runs in a thread of asyncio's default pool, as every `run_on_host_async` does.
+- The same URL can name another place on the host's network: `localhost` or `127.0.0.1` is the host, not the container, and the names of the compose network's containers do not resolve there. A webhook to a loopback address that the container refuses goes to the host's port of that number.
+- A connection that the container made is final: a service that answers the container with an error, or slowly, is not tried from the host.
+- A webhook in the LAN whose certificate the container refuses gets a second try from the host, which may trust it: the host's CA certificates decide then.
+- A service that names a webhook's key other than by its URL, its path with the query or a header's value, such as a part of the path alone, is reported as it says it.
+- Sending from the host is a host-level change (it uses the host's network): the device check and the re-check after a reboot are open (ADR-0018).
+
+## Considered options
+
+- IPv6 for the compose network (ADR-0046): it changes the routing of every installation; Docker turns on IPv6 forwarding on the host, the IPv6 path of the published ports changes from docker-proxy to forwarding, and `up` fails on hosts with IPv6 turned off.
+- E-mail instead of Telegram (ADR-0046): it does not deliver to the channel the owner chose.
+- Every HTTP notification from the host: the container reaches most services and the LAN on its own, and would then depend on nsenter and the host's curl for every message.
+- A second try after a read timeout or an HTTP error: the service may have taken the message, which would then arrive twice.

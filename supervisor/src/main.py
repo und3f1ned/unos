@@ -95,9 +95,10 @@ def _running_containers() -> int:
 async def check_host_tools() -> None:
     """Log one warning naming the host programs UNOS runs but the host lacks.
 
-    Pool, mount, share, network and power operations run these programs on the host
-    (not in this container), so they fail until the packages are installed
-    there. Never raises.
+    Pool, mount, share, network and power operations, and the notifications'
+    attempt from the host's network (curl), run these programs on the host (not
+    in this container), so they fail until the packages are installed there.
+    Never raises.
     """
     try:
         missing = await asyncio.to_thread(
@@ -110,7 +111,7 @@ async def check_host_tools() -> None:
         packages = sorted({host.HOST_TOOLS[name] for name in missing})
         logger.warning(
             "The host is missing programs that UNOS runs for storage pools, mounts, "
-            "shares, the network and power actions: %s. Install them on the host (apt-get install %s); "
+            "shares, the network, power actions and notifications: %s. Install them on the host (apt-get install %s); "
             "until then those operations fail.",
             ", ".join(missing),
             " ".join(packages),

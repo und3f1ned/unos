@@ -1758,6 +1758,13 @@ nothing.
    buttons wait, so that the outcome shown is that of the settings the test
    was sent with.
 
+Telegram, webhook, Discord and Slack messages leave from the supervisor's
+container. When it cannot connect to the service at all, as on a network that
+lets the service through over IPv6 only (the containers have no IPv6), UNOS
+sends the same message once more from the host's own network with the host's
+`curl`, after about 5 seconds; a message that fails both ways names both tries.
+E-mail always leaves from the container.
+
 The list shows a webhook's URL by its host only, since the rest of the URL
 is its key. Editing a channel keeps the settings that only the API sets: a
 webhook's headers, body template and content type, and the names and icons
