@@ -33,6 +33,7 @@ ADR-0098 said that with a guest share, `restrict anonymous = 1` keeps the anonym
 - Turning guest access on for one share, or off for the last one, changes these three lines for the whole server.
 - A wrong username is mapped to the guest account only while a guest share exists, and a wrong password never is.
 - A guest needs the share's name: an anonymous share list does not offer it.
+- The guest warning of ADR-0096 still says that the share's name is visible to anyone on the network: a share's name is no secret (every user with SMB lists it, and names are guessed), so the warning keeps to the wider exposure.
 
 ## Considered options
 

@@ -43,8 +43,8 @@ SD writes of each check (ADR-0214). The areas:
            access refused without a new folder and saved with one; Delete keeping the folder with
            its files and smb.conf byte for byte as found; then, with the copy deleted, a restart
            of the supervisor that writes no file in /etc/samba and leaves no problem.
-  shares   The Shares and Account pages beyond slice 2: a sticky folder of root with a sticky
-           folder "theirs" of another account in it, made over ssh on the pool, where a new share
+  shares   The Shares and Account pages beyond slice 2 (ADR-0340): a sticky folder of root with a
+           sticky folder "theirs" of another account in it, made over ssh on the pool, where a new share
            folder in "theirs" is refused with 409 and the reason, and a share of "theirs" itself
            is accepted with the warning that names its owner, reported on the Shares page and
            refused by Repair permissions (ADR-0193); a share on a new folder with entries of
@@ -533,8 +533,11 @@ user=${other%%:*}
 uid=$(id -u "$user") || exit 1
 umask 022
 if [ "$action" = sticky ]; then
+    # theirs gets its mode while its parent is still 755 root:root: in the open sticky folder its
+    # owner could put a symbolic link in its place, which chmod would follow.
     mkdir -- "$path" && mkdir -- "$path/theirs" &&
-        chown root:root "$path" && chown "$other" "$path/theirs" && chmod 01777 "$path" "$path/theirs" || exit 1
+        chown root:root "$path" && chown "$other" "$path/theirs" && chmod 01777 "$path/theirs" &&
+        chmod 01777 "$path" || exit 1
     echo "account $other $uid"
     exit 0
 fi
@@ -619,6 +622,12 @@ def b64text(text: str) -> str:
 
 def unb64(text: str) -> str:
     return base64.b64decode(text.encode()).decode("utf-8", "replace") if text else ""
+
+
+def secret_forms(secret: str) -> set[str]:
+    """SECRET as it may be printed: as is, as JSON writes it (a tab as \\t) and as tail() joins
+    its whitespace (a tab as a space)."""
+    return {form for form in (secret, json.dumps(secret)[1:-1], " ".join(secret.split())) if form}
 
 
 def tail(data: bytes | str, size: int = 400) -> str:
@@ -984,9 +993,9 @@ class Check:
     # output
 
     def redact(self, text: str) -> str:
-        """TEXT without a secret, also as JSON writes one (a password with a tab): the longest
-        first, so that no part of a longer one is left."""
-        found = set(getattr(self.api, "secrets", [])) | {form for p in self.temporary for form in (p, json.dumps(p)[1:-1])}
+        """TEXT without a secret, also as JSON writes one (a password with a tab) and as tail()
+        joins its whitespace: the longest first, so that no part of a longer one is left."""
+        found = {form for p in [*getattr(self.api, "secrets", []), *self.temporary] for form in secret_forms(p)}
         return relay.redact_text(text, sorted(found, key=len, reverse=True))
 
     def say(self, text: str) -> None:
@@ -1127,7 +1136,7 @@ class Check:
     def scanned(self, since: int, sources: tuple[str, ...]) -> None:
         """No temporary secret in an answer of the API, nor in the device's logs SOURCES since SINCE,
         also as JSON writes it (a password with a tab)."""
-        forms = sorted({form for p in self.temporary for form in (p, json.dumps(p)[1:-1])})
+        forms = sorted({form for p in self.temporary for form in secret_forms(p)})
         self.expect(not [a for a in self.answers for p in forms if p in a], "an answer of the API holds one")
         found = self.device.scan(forms, since)
         unread = [k for k in sources if found.get(k, -1) < 0]
@@ -2009,6 +2018,8 @@ def smb_state(answer: dict) -> str:
 
 
 def shares_check(c: Check) -> None:
+    """A guest share, a user's own SMB activation, Repair permissions and the sticky rule of
+    share folders (ADR-0340)."""
     with c.step("a pool is mounted read-write and managed by UNOS") as s:
         pool = c.pick_pool()
         root = pool["mountpoint"]
@@ -2101,11 +2112,13 @@ def shares_check(c: Check) -> None:
         s.text += f": {detail}"
 
     # shares.repair-permissions (ADR-0155, ADR-0156).
-    with c.step(f"the share {share} on a new folder makes the folder 2770 root:unos-smb, and Samba serves it"):
+    with c.step(f"the share {share} on a new folder makes the folder 2770 root:unos-smb, and smb.conf gets its "
+                "section, closed (available = no) while nobody has access"):
         c.on_cleanup(f"delete {folder} for good", lambda: c.delete_for_good(folder))
         c.on_cleanup(f"delete the share {share}", lambda: c.delete_share(share))
         made = c.post("/shares/smb", {"name": share, "path": folder})
         c.expect(made.get("served"), f"it is not served: {made.get('path_problem')}")
+        c.expect(made.get("available") is False, f"available is {made.get('available')!r} for a share without access")
         stat_is(c, c.device.stat([folder]), folder, "2770 root:unos-smb")
         c.expect(f"\n[{share}]\n" in (c.device.read(SMB_CONF) or ""), "smb.conf lacks the share's section")
 

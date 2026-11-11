@@ -47,7 +47,7 @@ vendor's firmware and is never written, so every write counts (ADR-0214, ADR-022
   named `unoscheck<6 hex digits>` and two backups, remove them again and compare the device with
   how they found it; the smbconf check also edits smb.conf by hand and restarts the supervisor
   (ADR-0309), the shares check makes entries of other owners and modes on the pool over ssh, signs
-  in as its user and turns guest access on for its share, the scrub check scrubs the pool
+  in as its user and turns guest access on for its share (ADR-0340), the scrub check scrubs the pool
   (ADR-0314), and the offsite check sets up an off-device copy to a folder of the pool and forgets
   it (ADR-0337). They change the device for their duration, so they run on the owner's request;
   the feature-pass skill names the check of each host-level entry, and after a reboot

@@ -24,6 +24,6 @@ decided-by: agent
 
 ## Consequences
 
-- While the check runs, the device serves a guest share of one file that anyone on the network can read, and its `[global]` allows unsigned connections.
+- While the check runs, anyone on the network can read the check's share without a password: the files its earlier steps made, which hold only the check's fixed text, and `guest.txt`; and its `[global]` allows unsigned connections.
 - The ACL step stays a SKIP on the dev device until the `acl` package is installed there, an owner action (ADR-0211).
 - The Account page, the share dialog and two-factor codes stay with the backend tests and the E2E specs.

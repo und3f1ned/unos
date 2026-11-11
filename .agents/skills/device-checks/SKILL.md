@@ -67,7 +67,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    remove them again; `smbconf` also edits smb.conf by hand and restarts the supervisor once
    (ADR-0309), `shares` makes entries of other owners and modes on the pool over ssh, signs in as
    its user and turns guest access on for its share, which lowers signing for the whole server
-   while it runs (ADR-0100), `scrub` scrubs the pool, three times on a small pool, and leaves its last
+   while it runs (ADR-0100, ADR-0340), `scrub` scrubs the pool, three times on a small pool, and leaves its last
    scrub result (ADR-0314), and `offsite` sets up an off-device copy to a folder of the pool and
    forgets it again (ADR-0337); it refuses to start on a device that has one set up.
    `all` takes several minutes: run it in the background as
@@ -135,8 +135,9 @@ use the main checkout's. Output shows secrets as `<redacted>`.
 - The smb check needs smbclient and stdbuf on the device (its first steps say which is
   missing): installing a package is an owner action (ADR-0211).
 - A run of the shares check that lost its connection can leave, besides its share, user and
-  folders (removed as above; the folders `<pool>/unoscheck<6 hex digits>-outside` and `-sticky`
-  hold entries of `nobody`, which the files API deletes too), its share's folder as a symbolic link
+  folders (removed as above; its share's folder `<pool>/unoscheck<6 hex digits>` holds `legacy.txt`
+  of `nobody`, `-sticky` holds the folder `theirs` of `nobody` and `-outside` is root's, all of
+  which the files API deletes), its share's folder as a symbolic link
   to `-moved` (put back as for the smbconf check) and its user's token in
   `/dev/shm/unos-scenario-unoscheck<6 hex digits>.token`, which the user's Delete makes useless:
   `scripts/dev/ssh.sh 'rm -f /dev/shm/unos-scenario-unoscheck<6 hex digits>.token'`. Its ACL step

@@ -11,7 +11,7 @@
 # share, a volume, a Scheduler task and folders whose names start with "unoscheck", and two
 # backups; smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; shares
 # makes entries of other owners and modes on the pool over ssh, signs in as its user and turns
-# guest access on for its share; scrub scrubs the pool, ADR-0314; offsite sets up an off-device
+# guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0314; offsite sets up an off-device
 # copy to a folder of the pool and forgets it again, ADR-0337), prints PASS or FAIL for every
 # step with the MiB written to the SD card meanwhile, removes what it made, also after a FAIL or
 # Ctrl-C, and compares the device with how it found it. The checks change the device:

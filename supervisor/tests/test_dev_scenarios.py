@@ -183,8 +183,11 @@ class FakeSmbSession:
         self.share = share
         self.local: dict[str, str] = {"data.txt": scenario.DATA, "data2.txt": scenario.DATA2}
         self.problem = None
-        if guest:  # a null session: only a guest share, read-only for guests (ADR-0096)
-            self.level = ("write" if "anonymous-writes" in nas.bugs else "read") if share in nas.guests_rendered() else None
+        if guest:  # a null session: only a guest share, read-only for guests (ADR-0096), and only
+            # while [global] lets anonymous sessions in (restrict anonymous = 1, ADR-0339)
+            admitted = (share in nas.guests_rendered() and "guest-refused" not in nas.bugs
+                        and "restrict anonymous = 2" not in nas.installed)
+            self.level = ("write" if "anonymous-writes" in nas.bugs else "read") if admitted else None
         else:
             status = nas.sign_in(user, password)
             if status is not None:
@@ -294,8 +297,9 @@ class FakeUserApi:
 class FakeNas:
     """The dev device for scenario.py: request() and upload() as api.DeviceApi has them, and the
     methods of scenario.Device. fail_at and interrupt_at name an API call (0-based) that answers
-    500 or raises Interrupt; refuse_device names a device method that fails; bugs names defects
-    to inject."""
+    500 or raises Interrupt; refuse_device names a device method that fails, and refuse_after a
+    device command ("entries sticky") that fails after it made its thing; bugs names defects to
+    inject."""
 
     def __init__(self) -> None:
         self.fs: dict[str, Node] = {
@@ -332,6 +336,7 @@ class FakeNas:
         self.partitions: list[str] = []  # the partitions of the disk
         self.guest_shares: list[str] = []
         self.refuse_device: str | None = None
+        self.refuse_after: str | None = None
         self.bugs: set[str] = set()
         self.secrets: list[str] = []  # api.DeviceApi's: dev.env's secrets
         # /etc/samba: smb.conf as installed (UNOS's rendering, or as edited by hand), the other
@@ -515,8 +520,10 @@ class FakeNas:
         fixed = "".join(f"   {key} = {value}\n" for key, value in scenario.UNOS_SHARE_LINES)
         sections = "".join(f"\n[{name}]\n   path = {info['path']}\n" + fixed
                            for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None)
-        # The defect guest-globals-stay keeps the guest lines once a guest share was rendered.
-        guest = bool(self.guests_rendered()) or ("guest-globals-stay" in self.bugs and getattr(self, "guest_once", False))
+        # The defect guest-globals-stay keeps the guest lines once a guest share was rendered, and
+        # no-guest-globals never writes them.
+        guest = ((bool(self.guests_rendered()) and "no-guest-globals" not in self.bugs)
+                 or ("guest-globals-stay" in self.bugs and getattr(self, "guest_once", False)))
         return (HEADER + "\n[global]\n" + "".join(f"   {key} = {values[guest]}\n" for key, values in scenario.GUEST_GLOBALS.items())
                 + "   log file = /run/samba/log.samba\n   max log size = 100\n" + sections)
 
@@ -1264,6 +1271,11 @@ class FakeNas:
         if self.refuse_device == name:
             raise scenario.Failed(f"the device answered status 1 for {name}")
 
+    def device_made(self, command: str) -> None:
+        """A command that fails halfway: it made its thing, then answered status 1."""
+        if self.refuse_after == command:
+            raise scenario.Failed(f"the device answered status 1 after {command}")
+
     def sectors(self):
         self.sector_count += 8
         return self.sector_count
@@ -1386,6 +1398,7 @@ class FakeNas:
                     scenario.DATA if kind == "file" else "")
                 self.fs[f"{path}/{name}"] = Node(kind, int(mode, 8), user, group, content,
                                                  ["user:nobody:r--"] if acl and name == "acl.txt" else None)
+        self.device_made(f"entries {action}")
         return {"user": "nobody", "group": "nogroup", "uid": "65534"}
 
     def acl(self, path):
@@ -1439,6 +1452,7 @@ class FakeNas:
                 raise scenario.Failed(f"the device answered status 1: {path} is not a plain folder")
             self.move(path, moved)
             self.fs[path] = Node("link", 0o777, content=moved.rsplit("/", 1)[1])
+            self.device_made("unserve link")
         else:
             if node is not None and node.kind == "link":
                 del self.fs[path]
@@ -1827,6 +1841,19 @@ def test_a_refusal_of_the_device_fails_the_step_and_the_check_still_cleans_up(na
     assert nas.snapshot() == before, output
 
 
+@pytest.mark.parametrize("area, command", [("shares", "entries sticky"), ("shares", "entries repair"),
+                                           ("shares", "unserve link"), ("smbconf", "unserve link")])
+def test_a_device_command_that_fails_after_making_its_thing_leaves_nothing(nas, area, command):
+    """ADR-0304: each clean-up is registered before the call that makes its thing, so a command
+    over ssh that fails halfway, after its mkdir or its move, leaves nothing on the device."""
+    before = nas.snapshot()
+    nas.refuse_after = command
+    status, output = run_check(area, nas)
+    assert status == 1
+    assert f"the device answered status 1 after {command}" in output
+    assert nas.snapshot() == before, output
+
+
 def test_a_failed_clean_up_is_reported_and_fails_the_check(nas, monkeypatch):
     real = nas.api_shares
 
@@ -1959,10 +1986,11 @@ def test_the_subvolume_helper_touches_only_a_scenario_check_s_folder(tmp_path, a
         assert result.returncode == 2 and calls == "" and "not a subvolume of a scenario check" in result.stderr
 
 
-@pytest.mark.parametrize("area", ["files", "volumes", "smb", "smbconf", "offsite"])
+@pytest.mark.parametrize("area", ["files", "volumes", "smb", "smbconf", "shares", "offsite"])
 def test_a_check_refuses_to_start_beside_leftovers_of_an_earlier_one(nas, area):
     nas.users[9] = {"username": "unoscheck0a1b2c", "is_admin": False}
     nas.fs[f"{ROOT}/unoscheck0a1b2c"] = Node("dir", 0o755)
+    nas.fs[f"{ROOT}/unoscheck0a1b2c-sticky"] = Node("dir", 0o1777)
     nas.shares["unoscheck0a1b2c"] = {"path": f"{ROOT}/unoscheck0a1b2c", "comment": "", "access": [], "version": 1}
     before = nas.snapshot()
     status, output = run_check(area, nas)
@@ -2106,6 +2134,8 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("shares", "smb-takes-short-password", "SMB refuses the user's password of 7 characters"),
     ("shares", "self-off-keeps-samba", "the user turns SMB off again"),
     ("shares", "no-guest-warning", "guest access turned on for the share: the answer warns"),
+    ("shares", "no-guest-globals", "guest access turned on for the share: the answer warns"),
+    ("shares", "guest-refused", "an anonymous (null) session to the share lists it"),
     ("shares", "anonymous-writes", "an anonymous (null) session to the share lists it"),
     ("shares", "log-password", "no password of the check"),
 ])
@@ -2352,6 +2382,17 @@ def test_no_temporary_secret_reaches_the_output(nas):
         out.append(output)
     assert len(set(seen)) >= 4 and all(len(s) >= 16 for s in seen)
     assert not any(s in text for s in seen for text in out)
+
+
+def test_a_password_with_a_tab_is_redacted_also_as_tail_joins_its_whitespace(nas):
+    """A refusal's text goes through tail(), which turns a tab into a space."""
+    out = io.StringIO()
+    check = scenario.Check("shares", nas, nas, out=out, run_id="unoscheck1a2b3c")
+    password = check.secret("first-half\tsecond-half")
+    nas.secrets = ["dev-env\tsecret"]
+    check.say("FAIL  1. it answered HTTP 422: " + scenario.tail(f"refused {password} and dev-env\tsecret"))
+    assert "first-half" not in out.getvalue() and "second-half" not in out.getvalue(), out.getvalue()
+    assert "dev-env" not in out.getvalue(), out.getvalue()
 
 
 def test_the_output_shows_the_api_s_text_of_a_refusal_redacted(nas):
@@ -2665,6 +2706,9 @@ def run_entries(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
         for tool in ("chown", "setfacl"):
             (stubs / tool).write_text(f'#!/usr/bin/env bash\necho "{tool} $*" >> "{tmp_path}/tools.log"\n')
             (stubs / tool).chmod(0o755)
+        (stubs / "chmod").write_text(f'#!/usr/bin/env bash\necho "chmod $*" >> "{tmp_path}/tools.log"\n'
+                                     'exec /bin/chmod "$@"\n')
+        (stubs / "chmod").chmod(0o755)
         (stubs / "getfacl").write_text('#!/usr/bin/env bash\nprintf "user::rw-\\nuser:nobody:r--\\ngroup::r--\\n'
                                        'mask::r--\\nother::---\\n\\n"\n')
         (stubs / "getfacl").chmod(0o755)
@@ -2710,7 +2754,10 @@ def test_the_entries_helper_makes_the_sticky_folders_without_an_acl_on_request(t
     assert result.returncode == 0 and result.stdout == "account someone:somegroup 4242\n", result.stderr
     assert oct(stat.S_IMODE(sticky.stat().st_mode)) == oct(stat.S_IMODE((sticky / "theirs").stat().st_mode)) == "0o1777"
     log = (tmp_path / "tools.log").read_text().splitlines()
-    assert log == [f"chown root:root {sticky}", f"chown someone:somegroup {sticky}/theirs"]
+    # theirs gets its mode while its parent is root's 755: once the parent is open, the owner of
+    # theirs could replace it with a symbolic link, which chmod would follow.
+    assert log == [f"chown root:root {sticky}", f"chown someone:somegroup {sticky}/theirs",
+                   f"chmod 01777 {sticky}/theirs", f"chmod 01777 {sticky}"]
     folder = sticky.parent / "unoscheck1a2b3c"
     folder.mkdir()
     assert run_entries(tmp_path, "repair", str(folder), "noacl").returncode == 0
