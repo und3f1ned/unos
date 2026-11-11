@@ -268,6 +268,7 @@ and this index, and `make check-fast` runs it.
 | [0334](0334-samba-locks-an-smb-account-for-five-minutes-after-five-failed-sign-ins.md) | Samba locks an SMB account for 5 minutes after 5 failed sign-ins, and passdb.tdb stays on the system disk | accepted | 2026-11-10 |
 | [0339](0339-the-guest-globals-follow-guest-shares-and-an-anonymous-share-list-names-no-share.md) | The guest-related globals follow whether any guest share exists, and an anonymous share list names no share | accepted | 2026-11-11 |
 | [0342](0342-samba-refuses-every-password-change-over-samr-so-smb-passwords-change-only-through-unos.md) | Samba refuses every password change over SAMR with a check password script that always fails, so SMB passwords change only through UNOS | accepted | 2026-11-11 |
+| [0349](0349-a-restore-refuses-a-backup-whose-database-gives-one-smb-uid-to-two-accounts.md) | A restore refuses a backup whose database gives one SMB uid to two accounts | accepted | 2026-11-11 |
 
 ## Apps
 
@@ -290,7 +291,7 @@ and this index, and `make check-fast` runs it.
 | [0040](0040-restore-checks-archives-and-regenerates-smb-conf.md) | Restore checks archives and regenerates smb.conf instead of installing the archived file | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-05 |
 | [0041](0041-off-device-backup-slice.md) | Give off-device backup of user data its own slice | superseded by [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | 2026-11-05 |
 | [0165](0165-backup-restore-flows-and-unique-names.md) | Backups restore from the tab, accept encrypted uploads and get unique names | accepted | 2026-11-06 |
-| [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | accepted | 2026-11-06 |
+| [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | superseded by [0345](0345-backups-hold-neither-fstab-nor-netplan-and-an-encrypted-upload-that-is-gzip-data-is-refused.md) | 2026-11-06 |
 | [0167](0167-deferred-backup-and-upload-edge-cases.md) | Fix the deferred backup and upload edge cases of slice 1 | proposed | 2026-11-06 |
 | [0240](0240-scheduled-backups-encrypted-with-a-key-derived-from-the-passphrase.md) | Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own | superseded by [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | 2026-11-07 |
 | [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | Backup tasks encrypt every backup with a key derived from their passphrase, stored in a file of its own that is set aside when damaged | accepted | 2026-11-10 |

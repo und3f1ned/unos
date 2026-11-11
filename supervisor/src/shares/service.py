@@ -2996,10 +2996,10 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     without a default (every ORM insert would fail), is refused naming the
     tables and columns: the live database never receives SMB tables of an
     unknown layout. Extra columns that are nullable or have a default are
-    accepted. An smb_accounts table that gives one uid to two or more rows is
-    refused too (shares.restore-uid-guards): a uid owns its files on the
-    pools, and belongs to one account (ADR-0109, ADR-0112); UNOS's table keeps
-    it unique, a backup's need not. Raises BackupValidationError.
+    accepted. An smb_accounts table that gives one non-NULL uid to two or more
+    rows is refused too (ADR-0349): a uid owns its files on the pools, and
+    belongs to one account (ADR-0109, ADR-0112); UNOS's table keeps it unique,
+    a backup's need not. Raises BackupValidationError.
     """
     from ..backup.router import BackupValidationError  # backup.router imports this module
 

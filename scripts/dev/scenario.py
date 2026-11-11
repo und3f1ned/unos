@@ -223,17 +223,27 @@ GUEST_GLOBALS = {"map to guest": ("Never", "Bad User"), "restrict anonymous": ("
 SMB_TOO_SHORT = "SMB passwords must have at least 8 characters"
 SMB_CONTROL = "SMB passwords must not contain control characters such as tabs or line breaks"
 UNOS_PASSWORD_BYTES = 72
-# What smbpasswd -r prints for the NT status of a password change that the server refused: Samba's
-# text for it (get_friendly_nt_error_msg, libcli/util/nterr.c), for the statuses a refused change
-# carries. The check password script of UNOS's [global] refuses with the first (ADR-0342).
-FRIENDLY_NT_STATUS = {
-    "Password restriction": "NT_STATUS_PASSWORD_RESTRICTION",
-    "Account restriction": "NT_STATUS_ACCOUNT_RESTRICTION",
-    "Wrong Password": "NT_STATUS_WRONG_PASSWORD",
-    "Account locked out": "NT_STATUS_ACCOUNT_LOCKED_OUT",
-    "Access denied": "NT_STATUS_ACCESS_DENIED",
-    "Logon failure": "NT_STATUS_LOGON_FAILURE",
-}
+# What smbpasswd -r prints for the NT status of a password change that the server refused, for the
+# statuses a refused change carries: Samba's description of the status (get_friendly_nt_error_msg
+# of libcli/util/nterr.c), or its name when it has none. Samba 4.22 prints MS-ERREF's description
+# (libcli/util/ntstatus_err_table.txt) after "rejected to change the password with error: ", and
+# this names each by a phrase of it; older releases print a short text of Samba's own table after
+# "Error was : ". Read without regard to case. The check password script of UNOS's [global] refuses
+# with the first (ADR-0342).
+FRIENDLY_NT_STATUS = (
+    ("some password update rule has been violated", "NT_STATUS_PASSWORD_RESTRICTION"),
+    ("value provided as the current password is not correct", "NT_STATUS_WRONG_PASSWORD"),
+    ("automatically locked because too many invalid logon", "NT_STATUS_ACCOUNT_LOCKED_OUT"),
+    ("some user account restriction has prevented", "NT_STATUS_ACCOUNT_RESTRICTION"),
+    ("The attempted logon is invalid", "NT_STATUS_LOGON_FAILURE"),
+    ("{Access Denied}", "NT_STATUS_ACCESS_DENIED"),
+    ("Error was : Password restriction.", "NT_STATUS_PASSWORD_RESTRICTION"),
+    ("Error was : Wrong Password.", "NT_STATUS_WRONG_PASSWORD"),
+    ("Error was : Account locked out.", "NT_STATUS_ACCOUNT_LOCKED_OUT"),
+    ("Error was : Account restriction.", "NT_STATUS_ACCOUNT_RESTRICTION"),
+    ("Error was : Logon failure.", "NT_STATUS_LOGON_FAILURE"),
+    ("Error was : Access denied.", "NT_STATUS_ACCESS_DENIED"),
+)
 # The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
 USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
 # What REMOTE_ENTRIES repair makes in the shares check's share folder, and how Repair permissions
@@ -790,16 +800,21 @@ class SmbListing:
 
 
 class SmbPasswordChange(SmbListing):
-    """smbpasswd -r: its exit status and output. It names a refusal of the server by Samba's text
-    for the NT status ("Error was : Password restriction."), an error of its own by the status."""
+    """smbpasswd -r: its exit status and output. It names a refusal of the server by Samba's
+    description of the NT status (FRIENDLY_NT_STATUS; in Samba 4.22 "rejected to change the password
+    with error: When trying to update a password, this status indicates that some password update
+    rule has been violated. ..."), or by the status's name for one without a description, and an
+    error of its own by the status. Status N, smbpasswd's exit status, stands for a text that is
+    neither."""
 
     @property
     def status(self) -> str:
         found = re.findall(r"NT_STATUS_[A-Z_]+", self.output)
         if found:
             return found[-1]
-        for text, status in FRIENDLY_NT_STATUS.items():
-            if re.search(rf"\b{re.escape(text)}\b", self.output):
+        output = self.output.casefold()
+        for text, status in FRIENDLY_NT_STATUS:
+            if text.casefold() in output:
                 return status
         return f"status {self.rc}"
 

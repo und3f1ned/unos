@@ -45,7 +45,9 @@ entries to real changes; ADR-0251 lets only a sign-in answer when its entry cann
 - An entry that cannot be written, such as on a full `/data`, is in the supervisor's log
   (`log_action`, ADR-0251) and the request answers what it did: the change is stored, and a 500
   would tell the user it was not. A sign-out of a session that a full `/data` kept in memory
-  (ADR-0329) answers 200 as before.
+  (ADR-0329) answers 200 as before. This extends ADR-0251's rule for a sign-in to these four
+  requests; its consequence that most other audited actions answer 500 when their entry cannot
+  be written still holds for the rest.
 - Tests: `supervisor/tests/test_audit_own_account.py`.
 
 ## Consequences

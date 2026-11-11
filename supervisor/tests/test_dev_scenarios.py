@@ -48,7 +48,7 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   entry, drops an ACL entry or repairs a share that is not served, SMB that takes a password of
   7 characters or keeps the account the user turned off, a guest share without the warning,
   an anonymous write, guest lines that stay after the last guest share, a password change over
-  SAMR that Samba takes;
+  SAMR that Samba takes, or refuses while it writes passdb.tdb or stores the new password;
 * no temporary password reaches the output, a command line or the environment: scenario.Device
   sends them on standard input, and the SMB helper keeps them in a file of mode 600 in RAM that
   it deletes, or gives them to smbpasswd -r on its standard input;
@@ -121,6 +121,13 @@ GUEST_WARNING = (scenario.GUEST_WARNS + ", and its name is visible to anyone on 
                  "refuses guest access by default, and guest connections are neither signed nor encrypted.")
 PERMISSIONS_WARNING = ("The folder's permissions are not set up for SMB users (group unos-smb, mode 2770): use Repair "
                        "permissions")
+# What Samba 4.22's smbpasswd -r prints when the server refuses the change (remote_password_change of
+# source3/libsmb/passchange.c): the status's description of MS-ERREF (get_friendly_nt_error_msg,
+# libcli/util/ntstatus_err_table.txt), here the one of NT_STATUS_PASSWORD_RESTRICTION, which the check
+# password script of UNOS's [global] gives (ADR-0342).
+SAMR_REFUSED = "machine 127.0.0.1 rejected to change the password with error: "
+SAMR_REFUSAL = (SAMR_REFUSED + "When trying to update a password, this status indicates that some password update rule "
+                "has been violated. For example, the password might not meet length criteria.")
 
 
 def digest(text: str) -> str:
@@ -1507,21 +1514,27 @@ class FakeNas:
     def smb_change_password(self, user, old, new):
         """smbpasswd -r 127.0.0.1: a session signed in with OLD, then Samba's SAMR change to NEW,
         which its check password script /bin/false refuses before Samba stores anything (ADR-0342);
-        smbpasswd names the refusal by Samba's text for NT_STATUS_PASSWORD_RESTRICTION. The defect
-        samr-change-accepted takes the change, as Samba does without that line: the new password,
-        the old one in the history, passdb.tdb written."""
+        smbpasswd names the refusal by MS-ERREF's description of NT_STATUS_PASSWORD_RESTRICTION, as
+        Samba 4.22 prints it (SAMR_REFUSAL). The defect samr-change-accepted takes the change, as
+        Samba does without that line: the new password, the old one in the history, passdb.tdb
+        written. Two defects answer the refusal all the same: samr-refusal-writes writes
+        passdb.tdb, and samr-refusal-changes-password stores the new password, without a change of
+        passdb.tdb's time, so that only the sign-in after the refusal shows it."""
         self.device_call("smb_change_password")
         status = self.sign_in(user, old)
         if status is not None:
             return scenario.SmbPasswordChange(1, f"Could not connect to machine 127.0.0.1: {status}\n")
+        account = self.passdb[user]
         if "samr-change-accepted" in self.bugs:
-            account = self.passdb[user]
             account["history"] = ([account["password"]] + account["history"])[:2]
             account["password"] = new
             self.passdb_mtime += 1
             return scenario.SmbPasswordChange(0, f"Password changed for user {user} on 127.0.0.1.\n")
-        return scenario.SmbPasswordChange(
-            1, "machine 127.0.0.1 rejected the password change: Error was : Password restriction.\n")
+        if "samr-refusal-writes" in self.bugs:
+            self.passdb_mtime += 1
+        if "samr-refusal-changes-password" in self.bugs:
+            account["password"] = new
+        return scenario.SmbPasswordChange(1, SAMR_REFUSAL)
 
     def smb_session(self, user, password, share):
         self.device_call("smb_session")
@@ -2289,6 +2302,8 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "counts-twice", "wrong password 4 of 5 answered NT_STATUS_ACCOUNT_LOCKED_OUT"),
     ("smb", "locked-writes", "while the account was locked"),
     ("smb", "samr-change-accepted", "smbpasswd -r answered status 0"),
+    ("smb", "samr-refusal-writes", "passdb.tdb changed at"),
+    ("smb", "samr-refusal-changes-password", "the password answered NT_STATUS_LOGON_FAILURE after the refused change"),
     ("smb", "log-password", "no password of the check"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
@@ -2451,20 +2466,59 @@ def test_the_smb_check_asks_for_a_samr_password_change_that_samba_refuses(nas):
     assert "the new password signs in" in steps[samr[0] - 1] and "a wrong password" in steps[samr[0] + 1], output
 
 
+def test_the_smb_check_reports_an_answer_of_smbpasswd_that_it_cannot_read_with_its_output(nas):
+    """A refusal in a text that the check does not know, such as a later Samba's, fails the SAMR
+    step with smbpasswd's exit status and the end of its output, so that the report shows what
+    Samba said; the check still removes what it made."""
+    before, change = nas.snapshot(), nas.smb_change_password
+    text = SAMR_REFUSED + "A text that a later Samba prints."
+
+    def changing(user, old, new):
+        change(user, old, new)
+        return scenario.SmbPasswordChange(1, text)
+
+    nas.smb_change_password = changing
+    status, output = run_check("smb", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "through SAMR" in failed[0], output
+    assert f"smbpasswd -r answered status 1: {text}" in failed[0], output
+    assert nas.snapshot() == before, output
+
+
 @pytest.mark.parametrize("rc, output, status", [
+    # Samba 4.22: MS-ERREF's description of the status.
+    (1, SAMR_REFUSAL, "NT_STATUS_PASSWORD_RESTRICTION"),
+    (1, SAMR_REFUSAL.upper(), "NT_STATUS_PASSWORD_RESTRICTION"),
+    (1, SAMR_REFUSED + "When trying to update a password, this return status indicates that the value provided as the "
+     "current password is not correct.", "NT_STATUS_WRONG_PASSWORD"),
+    (1, SAMR_REFUSED + "The user account has been automatically locked because too many invalid logon attempts or "
+     "password change attempts have been requested.", "NT_STATUS_ACCOUNT_LOCKED_OUT"),
+    (1, SAMR_REFUSED + "Indicates a referenced user name and authentication information are valid, but some user "
+     "account restriction has prevented successful authentication (such as time-of-day restrictions).",
+     "NT_STATUS_ACCOUNT_RESTRICTION"),
+    (1, SAMR_REFUSED + "The attempted logon is invalid. This is either due to a bad username or authentication "
+     "information.", "NT_STATUS_LOGON_FAILURE"),
+    (1, SAMR_REFUSED + "{Access Denied} A process has requested access to an object but has not been granted those "
+     "access rights.", "NT_STATUS_ACCESS_DENIED"),
+    (1, SAMR_REFUSED + "{Network Access Denied} Network access is denied.", "status 1"),
+    (1, SAMR_REFUSED + "NT_STATUS_PASSWORD_RESTRICTION", "NT_STATUS_PASSWORD_RESTRICTION"),
+    # Older releases: the short text of Samba's own table.
     (1, "machine 127.0.0.1 rejected the password change: Error was : Password restriction.\n",
      "NT_STATUS_PASSWORD_RESTRICTION"),
     (1, "machine 127.0.0.1 rejected the password change: Error was : Account restriction.\n",
      "NT_STATUS_ACCOUNT_RESTRICTION"),
-    (1, "machine 127.0.0.1 rejected to change the password with error: NT_STATUS_PASSWORD_RESTRICTION",
-     "NT_STATUS_PASSWORD_RESTRICTION"),
+    # An error of smbpasswd's own connection, a text that the check does not know, a change.
     (1, "Could not connect to machine 127.0.0.1: NT_STATUS_LOGON_FAILURE\n", "NT_STATUS_LOGON_FAILURE"),
+    (1, SAMR_REFUSED + "A text that a later Samba prints.", "status 1"),
     (1, "Mismatch - password unchanged.\n", "status 1"),
     (0, "Password changed for user unoscheck1a2b3c on 127.0.0.1.\n", "status 0"),
 ])
 def test_a_samr_password_change_is_read_as_its_nt_status(rc, output, status):
-    """smbpasswd -r names a refusal of the server by Samba's text for its NT status
-    (get_friendly_nt_error_msg), and an error of its own connection by the status itself."""
+    """smbpasswd -r names a refusal of the server by Samba's description of its NT status
+    (get_friendly_nt_error_msg): MS-ERREF's in Samba 4.22, a short text in older releases, the
+    status's name for a status without one; it names an error of its own connection by the status
+    itself. A text that the check does not know is read as smbpasswd's exit status."""
     assert scenario.SmbPasswordChange(rc, output).status == status
     assert scenario.SmbPasswordChange(rc, output).ok is (rc == 0)
 
@@ -3066,9 +3120,7 @@ def test_a_samr_password_change_sends_both_passwords_on_standard_input_only(stub
     """ADR-0342: the old and the new password of smbpasswd -r reach the device after the script,
     on standard input, in the read-only namespace."""
     device = device_with_stub(stub)
-    (stub.log / "reply").write_text(
-        "end 1 " + scenario.b64text("machine 127.0.0.1 rejected the password change: Error was : "
-                                    "Password restriction.\n") + "\n")
+    (stub.log / "reply").write_text("end 1 " + scenario.b64text(SAMR_REFUSAL) + "\n")
     old, new = "pw-" + os.urandom(8).hex(), "pw-" + os.urandom(8).hex()
     change = device.smb_change_password("unoscheck1a2b3c", old, new)
     assert change.rc == 1 and change.status == "NT_STATUS_PASSWORD_RESTRICTION"
@@ -3470,8 +3522,8 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
 
 # The smbpasswd of the SMB helper's change test: it checks the client configuration in RAM, logs
 # its arguments, its standard input (the old password, then the new one twice), the files of its
-# folder and whether IPC signing is required, and refuses the change as Samba refuses it when its
-# check password script fails (ADR-0342).
+# folder and whether IPC signing is required, and refuses the change as Samba 4.22 refuses it when
+# its check password script fails, with SAMR_REFUSAL on its standard error (ADR-0342).
 STUB_SMBPASSWD = textwrap.dedent(
     """\
     #!@PYTHON@
@@ -3488,10 +3540,10 @@ STUB_SMBPASSWD = textwrap.dedent(
         log.write("files " + " ".join(sorted(os.listdir(folder))) + "\\n")
         log.write("ipc signing " + ("required" if "client ipc signing = required" in text else "not required") + "\\n")
         log.write("dir " + folder + "\\n")
-    sys.stderr.write("machine 127.0.0.1 rejected the password change: Error was : Password restriction.\\n")
+    sys.stderr.write(@REFUSAL@)
     sys.exit(1)
     """
-)
+).replace("@REFUSAL@", repr(SAMR_REFUSAL))
 
 
 def test_the_smb_helper_asks_for_a_samr_password_change_with_the_passwords_on_standard_input(local_stub):

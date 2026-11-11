@@ -1057,8 +1057,10 @@ An SMB password changes only in UNOS: the user under **Account** →
 **Change Password**, or an administrator in the edit dialog of the **Users**
 page. Samba refuses every password change that a computer asks for over the
 network, such as **Change a password** in Windows (Ctrl+Alt+Del) aimed at the
-NAS, as a password that does not meet its rules, whatever the new password
-is; the old password keeps working.
+NAS, whatever the new password is, and the old password keeps working. Samba
+answers that the new password breaks a password rule, so Windows is expected
+to say that the new password does not meet the length, complexity or history
+requirements; this has not been tried with a Windows computer yet.
 
 After 5 wrong SMB passwords in a row, Samba locks the user's SMB account for 5
 minutes: until they are over, every computer is refused, with the right
@@ -1644,10 +1646,11 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
 - **Create Backup** - Makes an unencrypted backup (`.tar.gz`).
 - **Upload Backup** - Adds a backup file of at most 256 MiB: `.tar.gz`, or
   `.tar.gz.enc` for an encrypted backup. It is stored under a new name,
-  `uploaded_<date>_<time>` with the same extension. A file named
-  `.tar.gz.enc` that is not encrypted, an unencrypted backup or any other
-  gzip file, is refused. An upload that gets no data for 2 minutes fails,
-  and nothing of it is kept.
+  `uploaded_<date>_<time>` with the same extension. A `.tar.gz.enc` file
+  that is gzip data to its end, such as an unencrypted backup, is refused.
+  Any other `.tar.gz.enc` file is stored, and its content is checked only
+  when it is restored with the passphrase. An upload that gets no data for
+  2 minutes fails, and nothing of it is kept.
 - **Restore** - Type the backup's file name to confirm; an encrypted backup
   also needs its passphrase. Restoring replaces the database with the one in
   the backup: the user accounts with their passwords, two-factor

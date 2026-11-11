@@ -409,9 +409,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   download, and are stored as `uploaded_<date>_<time>[_<n>].tar.gz.enc`.
   Without the passphrase their content cannot be checked (the format has no
   header); it is checked when the backup is restored with its passphrase. A
-  file uploaded under a `.tar.gz.enc` name that is gzip data, an unencrypted
-  backup or any other gzip file, is refused (400) instead of failing only at
-  its restore.
+  file uploaded under a `.tar.gz.enc` name that is gzip data to its end, such
+  as an unencrypted backup, is refused (400) instead of failing only at its
+  restore.
 - Docker health checks for both containers: `docker ps` shows whether the
   supervisor answers `/api/v1/health`, and whether the web interface reaches
   it through Caddy. Failed checks of the supervisor count only after 10
