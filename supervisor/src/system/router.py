@@ -8,6 +8,7 @@ from .. import host
 from ..auth.utils import require_admin, verify_token
 from ..host import HostResult
 from ..security.validators import validate_timezone, validate_interface_name
+from .sensors import cpu_temperature
 
 # Read-only endpoints are available to every signed-in user;
 # anything that changes the host requires an administrator.
@@ -62,7 +63,9 @@ class SystemStats(BaseModel):
     disk_percent: float
     network_sent: int
     network_recv: int
-    temperatures: dict
+    # The CPU's or SoC's temperature in degrees Celsius, None without sensors (ADR-0342);
+    # GET /system/temperatures lists every sensor.
+    cpu_temperature: float | None
 
 
 @router.get("/info", response_model=SystemInfo)
@@ -82,15 +85,6 @@ async def get_system_stats(_=Depends(verify_token)):
     disk = psutil.disk_usage("/")
     network = psutil.net_io_counters()
 
-    temps = {}
-    try:
-        sensors = psutil.sensors_temperatures()
-        for name, entries in sensors.items():
-            if entries:
-                temps[name] = entries[0].current
-    except Exception:
-        pass
-
     return SystemStats(
         cpu_percent=psutil.cpu_percent(interval=0.1),
         cpu_count=psutil.cpu_count(),
@@ -102,7 +96,7 @@ async def get_system_stats(_=Depends(verify_token)):
         disk_percent=disk.percent,
         network_sent=network.bytes_sent,
         network_recv=network.bytes_recv,
-        temperatures=temps,
+        cpu_temperature=cpu_temperature(),
     )
 
 

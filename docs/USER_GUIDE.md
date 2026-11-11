@@ -115,7 +115,10 @@ that failed or missed its run (see [Alerts](#alerts)).
 - **CPU** - Current processor usage
 - **Memory** - RAM usage and total
 - **Network** - Current upload/download speeds
-- **Temperature** - System temperature (if sensors available)
+- **Temperature** - The temperature of the CPU (Intel, AMD) or of the SoC of
+  an ARM board, such as a Raspberry Pi or an RK3588. On a host where UNOS does
+  not recognize the CPU's sensor, the first sensor the host lists, which may be
+  a disk's; **N/A** on a host without sensors.
 
 ### Storage Overview
 Shows all your storage pools with:

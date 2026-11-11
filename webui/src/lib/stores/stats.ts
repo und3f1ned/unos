@@ -11,6 +11,9 @@ export interface CpuStats {
   load_15: number;
   cores: number;
   threads: number;
+  // The CPU's or SoC's temperature in °C, which the server chooses among the host's sensors;
+  // null without sensors (ADR-0342).
+  temperature: number | null;
 }
 
 export interface MemoryStats {
@@ -75,7 +78,6 @@ export interface ProcessInfo {
 
 // The stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface WebSocketStats {
-  temperatures: Record<string, number>;
   cpu: CpuStats;
   memory: MemoryStats;
   network: NetworkStats;

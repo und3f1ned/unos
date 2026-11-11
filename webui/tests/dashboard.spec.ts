@@ -36,26 +36,29 @@ const CONTAINERS = [
 
 // Live stats as the server sends them over /ws/v1/events (supervisor/src/websocket/events.py),
 // with the part that the dashboard's stats cards show: 12.5% CPU, 768 MiB of 2 GiB memory, 1.2 MiB/s
-// received and 512 bytes/s sent, and a sensor at 45.8 degrees, which the card rounds.
+// received and 512 bytes/s sent, and the CPU at 45.8 degrees, which the card rounds. The server
+// chooses the CPU's sensor among the host's (ADR-0342).
 const LIVE_STATS = {
-  cpu: { percent: 12.5, per_core: [12.5, 12.5, 12.5, 12.5], load_1: 0.5, load_5: 0.4, load_15: 0.3, cores: 4, threads: 4 },
+  cpu: {
+    percent: 12.5, per_core: [12.5, 12.5, 12.5, 12.5], load_1: 0.5, load_5: 0.4, load_15: 0.3, cores: 4, threads: 4,
+    temperature: 45.8,
+  },
   memory: {
     total: 2 * 1024 ** 3, used: 768 * 1024 ** 2, free: 1280 * 1024 ** 2, available: 1280 * 1024 ** 2, percent: 37.5,
     swap_total: 0, swap_used: 0, swap_percent: 0,
   },
-  temperatures: { cpu_thermal: 45.8 },
   network: {
     bytes_sent: 0, bytes_recv: 0, bytes_sent_rate: 512, bytes_recv_rate: 1.2 * 1024 ** 2,
     packets_sent: 0, packets_recv: 0, interfaces: [],
   },
 };
 
-/** Answer the live stats socket like the server: auth_ok to the page's first message, then LIVE_STATS. */
-async function fakeLiveStats(page: Page) {
+/** Answer the live stats socket like the server: auth_ok to the page's first message, then `data`. */
+async function fakeLiveStats(page: Page, data: object = LIVE_STATS) {
   await page.routeWebSocket('**/ws/v1/events', (ws) => {
     ws.onMessage(() => {
       ws.send(JSON.stringify({ type: 'auth_ok' }));
-      ws.send(JSON.stringify({ type: 'stats', data: LIVE_STATS }));
+      ws.send(JSON.stringify({ type: 'stats', data }));
     });
   });
 }
@@ -120,6 +123,18 @@ test.describe('Dashboard', () => {
     // Received, then sent.
     await expect(card('Network').locator('.text-lg')).toHaveText(['1.2 MB/s', '512 B/s']);
     await expect(card('Temperature').locator('.stat-card-value')).toHaveText('46°C');
+  });
+
+  // system.temperatures: on a host without sensors the server sends no temperature, and the card
+  // says that none is available.
+  test('the temperature card says N/A on a host without sensors', async ({ authenticatedPage: page }) => {
+    await fakeLiveStats(page, { ...LIVE_STATS, cpu: { ...LIVE_STATS.cpu, temperature: null } });
+    await page.goto('/');
+
+    const card = (label: string) => page.locator('main .card', { has: page.getByText(label, { exact: true }) });
+    await expect(card('CPU').locator('.stat-card-value')).toHaveText('12.5%');
+    await expect(card('Temperature').locator('.stat-card-value')).toHaveText('N/A');
+    await expect(card('Temperature').locator('.stat-card-value')).toHaveClass(/text-muted/);
   });
 
   test('storage widget shows the health the API reports', async ({ authenticatedPage: page }) => {
