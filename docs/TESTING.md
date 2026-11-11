@@ -114,7 +114,10 @@ hooks:
   rule and the tool, never the command) to the git-ignored `tmp/guard/denials.log`. It guards the
   device backups of `tmp/dev/backup` as it guards `dev.env`, and from a linked worktree also the
   main checkout's `dev.env` and backups, which the worktree's scripts use. For a push without a
-  refspec it asks git where the push would go (`@{push}`, the upstream, `push.default`).
+  refspec it asks git where the push would go (`@{push}`, the upstream, `push.default`). A
+  command that the Bash tool runs in the background must be one call of `timeout` with a
+  deadline of at most 2 hours, with loops and pipelines inside `timeout <seconds> bash -c '...'`
+  (ADR-0335): the session wakes only when it ends.
 - The same settings deny the Read tool every `dev.env` and every file below a `tmp/dev/backup`,
   by paths from the filesystem's root (`Read(//**/dev.env)`), so that a worktree's session cannot
   read the main checkout's either, and every tool of the Desktop Commander plugin.

@@ -68,9 +68,11 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    (ADR-0309), `scrub` scrubs the pool, three times on a small pool, and leaves its last
    scrub result (ADR-0314), and `offsite` sets up an off-device copy to a folder of the pool and
    forgets it again (ADR-0336); it refuses to start on a device that has one set up.
-   `all` takes several minutes: run it in the background, or with a timeout long enough, since a
-   check that is killed cannot clean up, and read its whole output (not `| head`: a check whose
-   output closes stops its steps). Result: a PASS line for every step, each with its SD
+   `all` takes several minutes: run it in the background as
+   `timeout 3600 scripts/dev/scenario.sh all > <log> 2>&1` (a background command has a deadline,
+   ADR-0335), or in the foreground with a tool timeout long enough, since a check that is killed
+   cannot clean up, and read its whole output (not `| head`: a check whose output closes stops
+   its steps). Result: a PASS line for every step, each with its SD
    MiB, `scenario <area>: OK`, and its own `SD writes scenario <area>` line. A FAIL ends the steps
    of its check; the lines after it say what the clean-up removed and whether the device is as
    the check found it.

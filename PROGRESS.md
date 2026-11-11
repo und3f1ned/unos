@@ -269,9 +269,38 @@ Open owner actions:
 - `backup.off-device-copies-over-sftp` records the SFTP and REST targets that ADR-0336 leaves out.
 - Open: the deploy, whose supervisor build runs apt-get for restic's layer (tell the owner first,
   and measure its SD MiB), `scripts/dev/scenario.sh offsite` before and after a reboot (ADR-0018),
-  a copy to a USB disk and to an S3 store, and the review in a fresh context (ADR-0017). The ADR
-  numbered 0335 comes from another branch: until it is merged, `test_adrs.py` reports the gap
-  before 0336.
+  a copy to a USB disk and to an S3 store, and the review in a fresh context (ADR-0017).
+
+### 2026-11-11: Every background command of an agent has a deadline
+
+- `process.background-commands-have-deadlines` (ADR-0335): on 2026-11-10 a wait loop written for
+  bash, `until [ "$(date -u +%H%M%S)" \> "222340" ]; do sleep 15; done; ...`, ran in the
+  background in the Bash tool's zsh, whose `[` does not know `\>`: the loop never ended, so
+  nothing woke the session, which stalled for nine hours. The guard's new rule
+  background-deadline refuses a command that the Bash tool runs in the background unless it is
+  one call of `timeout` with a deadline of more than 0 and at most 7200 s, after at most
+  `cd DIR &&`, assignments and redirections, with nothing after it and no `$(...)`, backticks
+  or `<(...)` outside single quotes; loops and pipelines go inside
+  `timeout <seconds> bash -c '...'`. The SIGKILL of `-k` counts into the 7200 s, `-s` names a
+  signal that ends a process, and `--foreground` is refused. The rule reads the line with the
+  guard's own lexer, so a quoted heredoc may follow the call, and a line with an unbalanced quote
+  passes: the shell refuses it and runs nothing. Foreground commands and the terminal tool are
+  not affected.
+- Tests first: on the guard of main 75 tests of `test_agent_guard.py` failed, the 53 refused
+  cases of `BACKGROUND_CASES` (the loop of 2026-11-10 among them), 17 checks of the messages,
+  the 3 lexer cases of `CASES`, the docstring check and the denials log check.
+- AGENTS.md (Hard rules), `docs/TESTING.md` and GLOSSARY.md (Background command) state the
+  rule, and the device-checks skill runs `scenario.sh all` in the background under
+  `timeout 3600`.
+- The review in a fresh context (ADR-0017) found commands of the outer shell that the guard's
+  lexer missed, for every rule: the substitutions inside `$((...))`, a heredoc delimiter
+  `<<$'EOF'` and a carriage return before `#`; and in the new rule signals of `-s` that do not
+  end a command, `--foreground`, an unbounded `-k`, words of the command echoed in its messages
+  and a trailing `;` refused. All fixed, with cases in both tables. Kept as they are, with the
+  reasons in ADR-0335: a command that ignores SIGTERM runs on unless `-k` is given (`-k` is not
+  required, since its SIGKILL would cut the clean-up of a scenario check), and a redirection of
+  a FIFO waits without a deadline; the rule also refuses the rare forms `1e3`, `+60`,
+  `--kill=10` and `-vk 10` that GNU timeout takes.
 
 ### 2026-11-10: SMB lockout, server limits and the upload speed pass on the device
 

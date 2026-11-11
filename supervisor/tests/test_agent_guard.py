@@ -8,7 +8,8 @@ git where a push goes and writes its denials into the project directory it is gi
 (tmp/guard/denials.log). Its git commands and the fixtures' get an environment without the
 GIT_* variables of an outer git and without the user's git configuration.
 The table holds, for each rule, the commands it was made for and the everyday variants an
-agent could type by accident; what the guard cannot see is in its docstring.
+agent could type by accident; what the guard cannot see is in its docstring. The commands of the
+Bash tool run in the background (rule background-deadline, ADR-0335) have a table of their own.
 """
 
 from __future__ import annotations
@@ -487,10 +488,122 @@ CASES = [
     ("tar -cf /tmp/x.tar --exclude-vcs-ignores . && rsync -a --exclude=dev.env --exclude=tmp/ ./ /tmp/copy/", None,
      "checkout"),
     ("grep -rn PASS --exclude=dev.env --exclude-dir=tmp . && git check-ignore -v tmp/dev/backup", None, "checkout"),
+    # The lexer reads a line as bash and zsh do: the substitutions inside arithmetic run,
+    # <<$'EOF' is a quoted heredoc that ends at EOF, and a carriage return is part of a word.
+    ("echo $(( $(git push origin main) + 1 ))", "push-main", "ws"),
+    ("cat <<$'EOF'\nbody\nEOF\ngit push origin main", "push-main", "ws"),
+    ("git status \r#; git push origin main", "push-main", "ws"),
+    ("echo $(( 6 * 7 )) && cat <<$'EOF'\ngit push origin main\nEOF", None, "ws"),
 ]
 
 RULES = ("push-main", "device-push", "force-push", "delete-branch", "skip-hooks", "e2e-target", "disk-wipe",
          "device-docker", "device-packages", "power", "secret-argv", "dev-env")
+
+# Claude Code wakes the session when a command of the Bash tool run with run_in_background ends,
+# so such a command is one call of timeout with a deadline of at most 7200 s, with loops and
+# pipelines inside `timeout <seconds> bash -c '...'` (ADR-0335). (command, the rule that blocks
+# it or None, run_in_background), each run in the workspace "ws".
+BACKGROUND_RULE = "background-deadline"
+BACKGROUND_CASES = [
+    # The stall of 2026-11-10: a wait loop written for bash ran in the Bash tool's zsh, whose [
+    # does not know \>, so its test failed at every pass and the loop never ended.
+    ("until [ \"$(date -u +%H%M%S)\" \\> \"222340\" ]; do sleep 15; done; echo ready", BACKGROUND_RULE, True),
+    ("sleep 600", BACKGROUND_RULE, True),
+    ("make check > /tmp/check.log 2>&1", BACKGROUND_RULE, True),
+    ("nohup make check > /tmp/check.log 2>&1", BACKGROUND_RULE, True),
+    ("env timeout 60 x", BACKGROUND_RULE, True),
+    ("/usr/local/bin/timeout 60 x", BACKGROUND_RULE, True),
+    # One call of timeout, after cd DIR && if need be, with assignments and redirections.
+    ("timeout 600 make check > /tmp/check.log 2>&1", None, True),
+    ("cd sub && timeout 1800 make check > /tmp/check.log 2>&1", None, True),
+    ("cd sub && cd .. && timeout 60 x", None, True),
+    ("# the gate\ncd sub &&\n  timeout 1800 make check > /tmp/check.log 2>&1", None, True),
+    ("timeout 900 bash -c 'until [ \"$(date -u +%H%M%S)\" \\> \"222340\" ]; do sleep 15; done; echo ready'",
+     None, True),
+    ("timeout 60 bash -c 'a | b; c && d || e; echo `date` $(date)'", None, True),
+    ("timeout 60 bash -c \"until false; do sleep 1; done; echo $HOME\"", None, True),
+    ("E2E_HTTPS_PORT=46443 timeout 2400 scripts/standin/e2e.sh tests/shares.spec.ts > /tmp/e2e.log 2>&1", None, True),
+    ("timeout -k 10 600 make check", None, True),
+    ("timeout --kill-after=10 600 make check", None, True),
+    ("timeout -k 10 7190 x", None, True),
+    ("timeout -s KILL --preserve-status -v 60 x", None, True),
+    ("timeout --signal INT --kill-after 5 -k5 -sTERM -p --verbose -- 60 x", None, True),
+    ("timeout --signal=SIGHUP -s 9 -s sigquit 60 x", None, True),
+    ("gtimeout 60 x", None, True),
+    ("/opt/homebrew/bin/timeout 60 x", None, True),
+    ("/opt/homebrew/bin/gtimeout 60 x", None, True),
+    ("timeout 2h x", None, True),
+    ("timeout 120m x &> /tmp/x.log < /dev/null", None, True),
+    ("timeout 1.5m x 2>&1 > /tmp/x.log", None, True),
+    ("timeout 0.5 x", None, True),
+    ("timeout .5 x", None, True),
+    ("timeout 60. x", None, True),
+    ("timeout 600 make check # the gate\n", None, True),
+    ("timeout 600 make check;", None, True),
+    # A quoted heredoc is the input of the command that timeout runs.
+    ("timeout 600 bash <<'SH'\nuntil false; do sleep 1; done\nSH", None, True),
+    # A line with an unbalanced quote is a syntax error: the shell runs nothing and ends at once.
+    ("timeout 60 bash -c 'unbalanced", None, True),
+    # Nothing outside timeout: a second command, a pipe, the shell's own background.
+    ("timeout 60 a; b", BACKGROUND_RULE, True),
+    ("timeout 60 a && b", BACKGROUND_RULE, True),
+    ("timeout 2h x && timeout 60 y", BACKGROUND_RULE, True),
+    ("timeout 60 a || b", BACKGROUND_RULE, True),
+    ("timeout 60 a | tail -5", BACKGROUND_RULE, True),
+    ("timeout 60 a |& tail -5", BACKGROUND_RULE, True),
+    ("timeout 60 a &", BACKGROUND_RULE, True),
+    ("timeout 60 a\nuntil false; do :; done", BACKGROUND_RULE, True),
+    ("timeout 600 bash <<'SH'\nsleep 1\nSH\nsleep 99999", BACKGROUND_RULE, True),
+    ("cd sub; timeout 60 x", BACKGROUND_RULE, True),
+    ("(timeout 60 x)", BACKGROUND_RULE, True),
+    ("timeout 600 bash <<$'SH'\necho step\nSH\nuntil false; do sleep 15; done", BACKGROUND_RULE, True),
+    ("timeout 60 x \r#; sleep 99999", BACKGROUND_RULE, True),
+    # Substitutions outside single quotes run in the outer shell, before timeout starts.
+    ("timeout 60 echo $(until false; do sleep 1; done)", BACKGROUND_RULE, True),
+    ("timeout 60 echo `sleep 99999`", BACKGROUND_RULE, True),
+    ("timeout 60 bash -c \"$(cat steps.sh)\"", BACKGROUND_RULE, True),
+    ("timeout 60 diff <(sleep 99999) /dev/null", BACKGROUND_RULE, True),
+    ("timeout 600 bash <<SH\n$(sleep 99999)\nSH", BACKGROUND_RULE, True),
+    ("X=$(sleep 99999) timeout 60 x", BACKGROUND_RULE, True),
+    ("cd \"$(git rev-parse --show-toplevel)\" && timeout 60 x", BACKGROUND_RULE, True),
+    ("timeout 60 echo $(( $(sleep 99999) + 1 ))", BACKGROUND_RULE, True),
+    ("timeout 60 echo \"$(( `sleep 99999` ))\"", BACKGROUND_RULE, True),
+    ("timeout 600 cat <<EOF\n$(( $(sleep 99999) ))\nEOF", BACKGROUND_RULE, True),
+    # The deadline: more than 0 and at most 7200 s with the SIGKILL of -k, a literal.
+    ("timeout 99999 x", BACKGROUND_RULE, True),
+    ("timeout 7201 x", BACKGROUND_RULE, True),
+    ("timeout 3h x", BACKGROUND_RULE, True),
+    ("timeout 1d x", BACKGROUND_RULE, True),
+    ("timeout -k 1d 60 x", BACKGROUND_RULE, True),
+    ("timeout -k 120 7100 x", BACKGROUND_RULE, True),
+    ("timeout 0 x", BACKGROUND_RULE, True),
+    ("timeout 0s x", BACKGROUND_RULE, True),
+    ("timeout abc x", BACKGROUND_RULE, True),
+    ("timeout \"$DEADLINE\" x", BACKGROUND_RULE, True),
+    ("timeout ６０ x", BACKGROUND_RULE, True),
+    ("timeout 600", BACKGROUND_RULE, True),
+    ("timeout 600 > /tmp/x.log", BACKGROUND_RULE, True),
+    ("timeout -k 10", BACKGROUND_RULE, True),
+    ("timeout -k abc 60 x", BACKGROUND_RULE, True),
+    ("timeout --badopt 60 x", BACKGROUND_RULE, True),
+    # A signal that ends the command, sent to its whole process group.
+    ("timeout -s CHLD 60 sleep 99999", BACKGROUND_RULE, True),
+    ("timeout -s 0 60 x", BACKGROUND_RULE, True),
+    ("timeout --signal=CONT 60 x", BACKGROUND_RULE, True),
+    ("timeout -sSTOP 60 x", BACKGROUND_RULE, True),
+    ("timeout --foreground 60 bash -c 'sleep 99999'", BACKGROUND_RULE, True),
+    ("timeout -f 60 x", BACKGROUND_RULE, True),
+    # A message shows no word of the command that may hold a secret.
+    (f"timeout https://admin:{FAKE_SECRET}@example.org x", BACKGROUND_RULE, True),
+    (f"admin:{FAKE_SECRET} 60 x", BACKGROUND_RULE, True),
+    # The other rules hold in the background too.
+    ("timeout 60 git push origin main", "push-main", True),
+    # In the foreground the rule does not apply.
+    ("until [ a \\> b ]; do sleep 15; done", None, False),
+    ("sleep 600", None, False),
+    ("timeout 60 a; b", None, False),
+    ("timeout 99999 x | tail -5", None, False),
+]
 
 
 def without_git_variables(environ) -> dict:
@@ -607,7 +720,7 @@ def test_the_docstring_lists_every_rule():
     docstring = ast.get_docstring(ast.parse(GUARD.read_text()))
     listed = re.findall(r"^  ([a-z0-9]+(?:-[a-z]+)+|power)\s", docstring, re.M)
 
-    assert sorted(listed) == sorted(RULES)
+    assert sorted(listed) == sorted((*RULES, BACKGROUND_RULE))
 
 
 def test_the_guard_does_not_import_beyond_the_standard_library():
@@ -727,3 +840,95 @@ def test_a_large_heredoc_is_parsed_quickly(places):
     assert code == 2 and "(push-main)" in stderr
     # A tenth of a second here; Claude Code waits 60 seconds for a hook before it gives up.
     assert elapsed < 5, f"{elapsed:.1f} s"
+
+
+# --- background commands (rule background-deadline, ADR-0335) -------------------------------
+
+
+def background_input(command, cwd: Path, background=True, tool: str = "Bash") -> str:
+    return hook_input(command, cwd, tool=tool, extra={"run_in_background": background})
+
+
+@pytest.fixture(scope="module")
+def background_results(places):
+    """The guard's answer to every case of BACKGROUND_CASES, run in parallel: {index: (exit code, stderr)}."""
+
+    def run(case):
+        command, _, background = case
+        return run_guard(background_input(command, places["ws"], background), places["ws"], places["ws"])
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return dict(enumerate(pool.map(run, BACKGROUND_CASES)))
+
+
+@pytest.mark.parametrize("index", range(len(BACKGROUND_CASES)),
+                         ids=[f"{rule or 'allow'}:{'background' if background else 'foreground'}:{command[:60]}"
+                              for command, rule, background in BACKGROUND_CASES])
+def test_background_case(background_results, index):
+    command, rule, _ = BACKGROUND_CASES[index]
+    code, stderr = background_results[index]
+
+    if rule is None:
+        assert (code, stderr) == (0, ""), command
+    else:
+        assert code == 2, command
+        assert stderr.startswith(f"Blocked by .claude/hooks/guard.py ({rule}): "), stderr
+        assert stderr.endswith(".\n") and stderr.count("\n") == 1, stderr
+        assert re.search(r"\(ADR-\d{4}(, ADR-\d{4})*\)", stderr), stderr
+        assert FAKE_SECRET not in stderr
+    if rule == BACKGROUND_RULE:
+        # What to write instead.
+        assert "(ADR-0335)" in stderr and "`timeout <seconds> bash -c '<command>'`" in stderr, stderr
+        assert "a deadline of at most 7200 s" in stderr, stderr
+
+
+def test_the_background_table_covers_both_modes():
+    answers = {(rule == BACKGROUND_RULE, background) for _, rule, background in BACKGROUND_CASES}
+
+    assert {(True, True), (False, True), (False, False)} <= answers
+    assert not any(rule == BACKGROUND_RULE for _, rule, background in BACKGROUND_CASES if not background)
+    assert sum(rule == BACKGROUND_RULE for _, rule, _ in BACKGROUND_CASES) >= 20
+    assert sum(rule is None and background for _, rule, background in BACKGROUND_CASES) >= 15
+
+
+@pytest.mark.parametrize("command, problem", [
+    ("sleep 600", "`sleep` is not timeout"),
+    ("X=1 ./wait.sh", "`./wait.sh` is not timeout"),
+    ("timeout 60 a; b", "`;` after the call of timeout"),
+    ("timeout 60 a | tail -5", "`|` after the call of timeout"),
+    ("timeout 60 a &", "`&` after the call of timeout"),
+    ("timeout 60 a\nb", "a newline after the call of timeout"),
+    ("timeout 60 echo $(date)", "outside single quotes run in the outer shell"),
+    ("timeout 7201 x", "a deadline of 7201 s is longer than 7200 s"),
+    ("timeout -k 120 7100 x", "a deadline of 7220 s, with the SIGKILL of -k, is longer than 7200 s"),
+    ("timeout 0 x", "a deadline of 0"),
+    ("timeout abc x", "timeout's duration `abc` is not a number"),
+    (f"timeout https://admin:{FAKE_SECRET}@example.org x", "timeout's duration is not a number"),
+    (f"admin:{FAKE_SECRET} 60 x", "its first word is not timeout"),
+    ("timeout 600 > /tmp/x.log", "no command"),
+    ("timeout --badopt 60 x", "`--badopt` is not an option of timeout"),
+    ("timeout -s CHLD 60 x", "the signal `CHLD` may not end the command"),
+    ("timeout --foreground 60 x", "`--foreground` leaves the children of the command running"),
+])
+def test_a_background_denial_says_what_is_wrong(places, command, problem):
+    code, stderr = run_guard(background_input(command, places["ws"]), places["ws"], places["ws"])
+
+    assert code == 2 and problem in stderr, stderr
+
+
+@pytest.mark.parametrize("command", ["sleep 600", "until [ a \\> b ]; do sleep 15; done"])
+def test_the_terminal_tool_has_no_background_commands(places, command):
+    """The terminal tool runs a line in a tab of the desktop app, and no session waits for it."""
+    payload = background_input(command, places["ws"], tool="mcp__terminal__run_in_terminal")
+
+    assert run_guard(payload, places["ws"], places["ws"]) == (0, "")
+
+
+def test_a_background_denial_is_logged_like_the_others(tmp_path, places):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    code, _ = run_guard(background_input("sleep 600", places["ws"]), places["ws"], project)
+
+    assert code == 2
+    assert [line.split()[1:] for line in _denials(project)] == [[BACKGROUND_RULE, "Bash"]]

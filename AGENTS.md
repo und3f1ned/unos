@@ -129,6 +129,13 @@ A denial by the guard or the permission system is an answer: ask the owner how t
 - You push only your own branch; main and master belong to the owner, and pushed history is never
   rewritten (ADR-0208). Enforced by the guard (pushes to main or master, force pushes,
   `--no-verify`); commit messages by the commit-msg hook (ADR-0209).
+- A command run in the background (the Bash tool's `run_in_background`) is one call of `timeout`
+  with a deadline of at most 2 hours, such as `timeout 1800 make check > <log> 2>&1`, with loops
+  and pipelines inside `timeout <seconds> bash -c '...'`: the session wakes only when it ends,
+  and the Bash tool runs zsh (ADR-0335). Rewriting a refused command that way is the answer to
+  this denial. A session does not end its turn waiting only on a background command while other
+  work remains. Enforced by the guard's background-deadline rule
+  (`supervisor/tests/test_agent_guard.py`); no tool checks the turn.
 - Packages come from `make setup`, which the owner runs. The workstation's network filter blocks
   agents: report a blocked request to the owner as it is (ADR-0211).
 - Security audit notes and exploit details stay in the owner's private audit folder (ADR-0213).

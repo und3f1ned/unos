@@ -279,6 +279,10 @@ Avoid: self-review.
 
 **Guard**: The hook that blocks risky agent commands before they run (ADR-0211). Avoid: git hook.
 
+**Background command**: A command that an agent's Bash tool runs with `run_in_background`; the
+session wakes when it ends, so it is one call of `timeout` with a deadline of at most 2 hours
+(ADR-0335). Avoid: background job (what a shell starts with `&`).
+
 **Local stand-in**: The real supervisor and a stand-in for Caddy, run on the workstation with all
 their data in a git-ignored folder: the default target of the E2E specs (ADR-0215).
 Avoid: mock server, staging, test stack.
