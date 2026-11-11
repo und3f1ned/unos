@@ -100,11 +100,10 @@
   // In the language of the page.
   $: formatTime = (date: Date): string => date.toLocaleTimeString($intlLocale);
 
-  // Get first temperature value from temperatures object
-  function getFirstTemperature(temps: Record<string, number> | undefined): number | null {
-    if (!temps) return null;
-    const values = Object.values(temps);
-    return values.length > 0 ? Math.round(values[0]) : null;
+  // The CPU's temperature, which the server chooses among the host's sensors (ADR-0346), in whole
+  // degrees; null on a host without sensors.
+  function wholeDegrees(celsius: number | null | undefined): number | null {
+    return celsius == null ? null : Math.round(celsius);
   }
 
   // Transform pools for widget
@@ -187,7 +186,7 @@
         memoryTotal={currentStats.memory?.total || 0}
         networkUp={currentStats.network?.bytes_sent_rate || 0}
         networkDown={currentStats.network?.bytes_recv_rate || 0}
-        temperature={getFirstTemperature(currentStats.temperatures)}
+        temperature={wholeDegrees(currentStats.cpu?.temperature)}
       />
     {/if}
 

@@ -2505,10 +2505,11 @@
         "A host without sensors shows that none are available"
       ],
       "verified_by": [
-        "supervisor/tests/test_system.py"
+        "supervisor/tests/test_system.py",
+        "webui/tests/dashboard.spec.ts"
       ],
       "passes": false,
-      "notes": "No E2E test shows a temperature: the stand-in has no sensors. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "The code is done (ADR-0346): src/system/sensors.py chooses the CPU's or SoC's sensor by its name (coretemp Package id 0, k10temp Tctl, cpu_thermal, soc_thermal, package_thermal; '-' read as '_'), else the first group, for both /system/stats (cpu_temperature) and the stats message (cpu.temperature); tests/test_system.py TestDashboardTemperature, and dashboard.spec.ts shows the card with a temperature and N/A without one, through a fake socket (the stand-in has no sensors). Open: the device check (the RK3588's card shows soc_thermal or package_thermal, as GET /system/temperatures lists it) and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "system.network",

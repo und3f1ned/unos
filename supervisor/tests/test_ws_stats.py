@@ -13,8 +13,12 @@ def test_the_stats_message_has_one_shape():
     assert message["type"] == "stats"
     data = message["data"]
     # No history: no page read it (system.stats-without-unread-parts).
-    assert sorted(data) == ["cpu", "disk_io", "memory", "network", "processes", "temperatures", "timestamp"]
-    assert sorted(data["cpu"]) == ["cores", "load_1", "load_15", "load_5", "per_core", "percent", "threads"]
+    # One temperature, the CPU's (system.temperatures, ADR-0346), in place of the first reading of
+    # every sensor group.
+    assert sorted(data) == ["cpu", "disk_io", "memory", "network", "processes", "timestamp"]
+    assert sorted(data["cpu"]) == [
+        "cores", "load_1", "load_15", "load_5", "per_core", "percent", "temperature", "threads",
+    ]
     assert sorted(data["memory"]) == [
         "available", "free", "percent", "swap_percent", "swap_total", "swap_used", "total", "used",
     ]

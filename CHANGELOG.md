@@ -480,6 +480,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   (`cpu`, `memory`, `network`, `disk_io`): the flat `cpu_*`, `memory_*` and
   `network_*` fields are gone, and so are the `disk_*` fields of the container's
   root and the `history` of the last two minutes, which no page read.
+- The stats message of `/ws/v1/events` sends the CPU's temperature as
+  `cpu.temperature`, and `GET /api/v1/system/stats` as `cpu_temperature`
+  (degrees Celsius, or null without sensors); their `temperatures` objects,
+  which held the first reading of every sensor group, are gone.
+  `GET /api/v1/system/temperatures` lists every sensor.
 - The logs API reads every source through `GET /api/v1/logs/entries?source=...`:
   the old `GET /api/v1/logs/dmesg` and `/logs/journal` are gone (404).
 - On a narrow screen the System tabs are listed above the open tab, the file
@@ -712,6 +717,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- The dashboard's Temperature card shows the CPU's temperature (Intel's
+  package, AMD's Tctl) or the SoC's (`cpu_thermal`, and the RK3588's
+  `soc_thermal` or `package_thermal`): it showed the first sensor that the host
+  listed, on many hosts an ACPI zone or a disk. A host whose CPU sensor UNOS
+  does not recognize still shows that first sensor.
 - **Run now** of a scheduled task no longer holds a stop of the supervisor
   until the run ends: the stop ends the run and records it as stopped, as it
   does for the runs that the schedule starts.
