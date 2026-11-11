@@ -63,7 +63,7 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-10, 22:10 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-11, 13:10 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -71,7 +71,14 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main bcc4eff, deployed in three steps on 2026-11-10, and rebooted from the API at 22:00:26
+- Runs main 27b840b (its tree is the branch backup.off-device-copies at c926016, deployed at
+  13:08 UTC: SD MiB sync 1.012, build-supervisor 12.898, build-webui 18.852, up 5.742, check.sh
+  0.016), with restic 0.18.0 of Debian 13 in an image layer of its own since 09:34 UTC (81.227
+  MiB on the SD card that once). Rebooted from the API at 10:18:07 and at 12:51:45 UTC (the boots
+  of 10:19:25 and 12:53:02): `check.sh` and `scenario.sh all` (101 steps) OK before and after
+  both. Telegram alerts leave through the host's network (ADR-0336); the owner's Telegram channel
+  received the test notification and the alerts of the checks (Log, 2026-11-11).
+- Before it, on 2026-11-10: main bcc4eff, deployed in three steps, and rebooted from the API at 22:00:26
   UTC (the boot of 22:01:43 UTC; ssh answered by 22:02:17): `check.sh` OK after it, with the
   capped log options, Samba's lockout policies, uvicorn's `--limit-concurrency 128` and Caddy's
   431 for a 22 KB header block all kept, and `scenario.sh smb` OK, 28 steps (3.418 MiB).
@@ -247,6 +254,65 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-11: Telegram alerts, restores and off-device copies on the device
+
+- `system.alert-events`, device check of 2026-11-10 22:13 to 22:33 UTC (main a7aa7c9): a webhook
+  channel to a listener on the device's unos-net bridge got its test at 22:13:14; a custom task
+  `false` failed at 22:13:24, and the task check of 22:17 sent "Task 'unoscheck-fail' failed" once:
+  the checks of 22:22, 22:27 and 22:32 sent nothing more while it lasted. The same alert went to
+  the owner's enabled Telegram channel, which failed then (ConnectTimeout). The healthy pool and
+  disk raised no problem. SD MiB of the setup 0.141 and 0.094, the cleanup 0.168.
+- The wait of that check never ended (a bash-only test under zsh, with no deadline) and the session
+  stalled for nine hours: ADR-0335 since then.
+- `system.telegram-from-the-device`: Telegram answers the device's network over IPv6 only (`curl -6`
+  302 in 0.2 s, `curl -4` fails), and the containers have no IPv6. After the deploy of main 53396c0
+  (09:12 UTC: SD MiB sync 1.867, build-supervisor 12.512, up supervisor 3.383, check.sh 0.016) a
+  test notification to the owner's Telegram channel answered "sent" (09:12:52; the history's entry
+  at 09:12:58, after the container's 5 s connect timeout and the host's curl; SD 0.137 MiB), and
+  the owner confirmed it arrived. After the reboot below, the first alert of the start reached
+  Telegram the same way.
+- `backup.restore` on the device for the first time, on the branch backup.off-device-copies
+  (e663f14) at 09:36 UTC: the configuration snapshot of an off-device copy put into the backup list
+  as offsite_20261111_093643.tar.gz, and the regular restore of that backup: "success", database and
+  smb_config restored, and the users, SMB shares, API tokens, smb.conf (the same sha256) and Samba's
+  passdb users the same before and after (SD 0.906 MiB, the copy included); at 09:37 UTC an
+  encrypted backup made as the Backup & Restore tab makes it restored with its passphrase, with the
+  same result (SD 0.617 MiB). Its refusal without the passphrase or with a wrong one is in
+  `scenario.sh backups`. The restores ended the other sessions (ADR-0329).
+- `backup.off-device-copies`, the first runs of the real restic (0.18.0-1+b4 of Debian 13, its own
+  image layer: the deploy of e663f14 at 09:34 UTC wrote SD MiB sync 2.504, build-supervisor 81.227,
+  build-webui 19.074, up 5.648): `scenario.sh offsite` OK, 12 steps (1.160 MiB). The fresh review's
+  13 findings were fixed in 8fef386 (deployed at 11:21 UTC: sync 2.230, build-supervisor 12.949,
+  build-webui 19.266, up 5.812; `scenario.sh offsite` OK, 12 steps, 1.449 MiB). Save and test
+  refused a folder on the system disk and a wrong password at once, with their reasons, saving
+  nothing (0.371 and 0.238 MiB); it held an S3 store out of reach for its whole 10-minute timeout,
+  fixed in 38a6da5 (a connection test of 10 s, and 120 s for Save's restic): since then it answers 400 within a second.
+- The reboot from the API at 10:18:07 UTC (at 10:19:08; the kernel's start 10:19:25, ssh at
+  10:19:44): before it, `scenario.sh all` OK, 101 steps (SD MiB files 0.426, volumes 0.578, smart
+  0.098, backups 0.457, smb 3.137, smbconf 2.457, scrub 0.629, offsite 0.801); a failing task's
+  alert of 10:10:52 went to Telegram (delivered through the host's network) and to a webhook with
+  no listener (failed, both attempts named). After it the first task check of the start sent the
+  alert again at 10:19:51 (the problems are kept in RAM, ADR-0332), delivered to Telegram;
+  `check.sh` OK; `scenario.sh all` OK, 101 steps (0.469, 0.570, 0.141, 0.461, 3.258, 2.531, 0.660,
+  0.816). The supervisor was back before 10:20, so a task due then ran at its time, and the
+  missed-run alert needs a reboot asked at second 54.
+- The second reboot, on f4ecd22: before it a disk target, one copy (check and restore test
+  passed) and a custom task due at 12:53 UTC; the reboot asked at 12:51:45 (at 12:52:45; the
+  kernel's start 12:53:02, the API at 12:53:29), so the task's time fell while the supervisor was
+  stopped. After it the settings and the password were kept, a second copy succeeded and both
+  copies' snapshots were listed (SD 0.227 and 0.113 MiB), and the check of 13:03:29 UTC sent "Task
+  'unoscheck-miss' missed its run", delivered to Telegram; `check.sh` OK; `scenario.sh all` OK, 101
+  steps (0.441, 0.547, 0.125, 0.461, 3.191, 2.445, 0.641, 0.805).
+- A last review of 8fef386..f4ecd22 with three lenses and two refuters per finding: eight
+  findings, fixed in c926016 (restic's lock removed on a stop: SIGTERM, then SIGKILL after 5 s;
+  python -B for the host-name step; the disk rule when the disks of /mnt or /data cannot be found;
+  Delete Volume atomic with a copy; tests and docs). Deployed at 13:08 UTC: SD MiB sync 1.012,
+  build-supervisor 12.898, build-webui 18.852, up 5.742, check.sh 0.016; `scenario.sh offsite` OK,
+  12 steps (1.852 MiB). Merged as main 27b840b after `make check` passed on c926016 and the E2E specs
+  of the area 181 passed.
+- Passing now: `system.telegram-from-the-device`, `backup.restore`, `backup.off-device-copies`.
+  `system.alert-events` stays open for the kinds that need a fault or spare disks.
 
 ### 2026-11-11: Off-device copies with restic
 
