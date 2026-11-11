@@ -1744,7 +1744,9 @@ step that failed with restic's message; **Refresh** reads it again. A failed
 copy of a task is alerted to every notification channel. A copy that starts
 while another one or a restore runs is skipped and counts as a success: the
 first copy of a large pool to a cloud store can take days. A step that finds
-the repository locked by another program waits up to 10 minutes for it.
+the repository locked by another program waits up to 10 minutes for it. A
+copy that ends hard, at a power cut say, leaves the repository locked for up
+to 30 minutes: a copy in that time fails, and the next one runs again.
 
 While a copy or a restore runs, the disks it uses stay mounted: **Unmount** and
 **Remove Pool** on **Storage** refuse for its pools, and so does a plain

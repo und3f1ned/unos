@@ -16,11 +16,13 @@ comes back from ``dump``, ``restore`` and ``snapshots``:
 * global options anywhere: --no-cache, --cache-dir, --limit-upload, --limit-download, --json,
   --quiet, --no-lock and --retry-lock; backup prints its summary as restic does with --json
   --quiet, and keeps the host that --host names;
-* locks as restic takes them, files in ``locks/`` with their process id: cat, backup, dump,
-  restore and snapshots a shared one, forget and check an exclusive one, which conflicts with any
-  other lock, as a shared one does with an exclusive one. A conflict fails the command at once
-  with exit code 11, or after the time of --retry-lock; --no-lock takes none; unlock removes the
-  locks of processes that are gone;
+* locks as restic takes them, files in ``locks/`` with their host name, process id and time: cat,
+  backup, dump, restore and snapshots a shared one, forget and check an exclusive one, which
+  conflicts with any other lock, as a shared one does with an exclusive one. A conflict fails the
+  command at once with exit code 11, or after the time of --retry-lock; --no-lock takes none.
+  unlock removes the stale locks by restic's rule: older than 30 minutes, or of its own host name
+  with a process that is gone. SIGTERM and SIGINT end the fake as they end restic, which removes
+  its lock first; while a fault blocks or sleeps, it holds its lock;
 * backup of folders exits with 3 when files could not be read: it saves the snapshot without them
   and prints an error for each, a JSON line with message_type "error" on standard error. A file that
   vanished before restic opened it is left out without a word, as restic 0.18 does (filterNotExist);
@@ -52,6 +54,7 @@ import json
 import os
 import secrets
 import shlex
+import signal
 import stat
 import sys
 import time
@@ -214,6 +217,21 @@ def _alive(pid: int) -> bool:
     return True
 
 
+STALE_AFTER = 30 * 60  # seconds: restic's staleLockTimeout
+_hostname = os.uname().nodename
+
+
+def _stale(lock: dict) -> bool:
+    """restic's Lock.Stale: older than 30 minutes, or of this host name with its process gone."""
+    try:
+        taken = datetime.fromisoformat(str(lock["time"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        return False
+    if (datetime.now(timezone.utc) - taken).total_seconds() > STALE_AFTER:
+        return True
+    return lock.get("hostname") == _hostname and not _alive(int(lock.get("pid", 0)))
+
+
 def _locks(repo: Path) -> list[dict]:
     found = []
     for path in (repo / "locks").iterdir():
@@ -239,7 +257,8 @@ def locked(repo: Path, kind: str | None, values: dict, flags: set):
                         f"{conflict['pid']} on host unos by root (UID 0, GID 0)", 11)
         time.sleep(0.02)
     path = repo / "locks" / secrets.token_hex(32)
-    path.write_text(json.dumps({"exclusive": kind == EXCLUSIVE, "pid": os.getpid(), "time": now()}))
+    path.write_text(json.dumps({"exclusive": kind == EXCLUSIVE, "hostname": _hostname, "pid": os.getpid(),
+                                "time": now()}))
     try:
         yield
     finally:
@@ -291,7 +310,7 @@ def cmd_unlock(args, values, flags) -> None:
     removed = 0
     for path in (repo / "locks").iterdir():
         with contextlib.suppress(FileNotFoundError, ValueError):
-            if not _alive(json.loads(path.read_text())["pid"]):
+            if _stale(json.loads(path.read_text())):
                 path.unlink()
                 removed += 1
     print(f"successfully removed {removed} locks")
@@ -502,10 +521,18 @@ def fault() -> dict:
     return _fault
 
 
+def _stop(signum: int, frame: object) -> None:
+    """SIGTERM or SIGINT: end, as restic does, after its lock is removed (the finally of locked)."""
+    raise SystemExit(128 + signum)
+
+
 def main(argv: list[str]) -> int:
-    global _fault
+    global _fault, _hostname
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
     state = state_dir()
     hostname = (state / "hostname").read_text() if (state / "hostname").exists() else None
+    _hostname = hostname or _hostname
     with open(state / "calls.jsonl", "a") as log:
         log.write(json.dumps({"argv": argv, "env": dict(os.environ), "pid": os.getpid(), "hostname": hostname}) + "\n")
     try:
@@ -513,13 +540,18 @@ def main(argv: list[str]) -> int:
         name = "backup-stdin" if command == "backup" and "--stdin" in flags else command
         faults = json.loads((state / "faults.json").read_text()) if (state / "faults.json").exists() else {}
         _fault = faults.get(name, {})
-        if _fault.get("block"):
-            (state / f"blocked-{name}").write_text(str(os.getpid()))
-            deadline = time.monotonic() + 60
-            while not (state / f"release-{name}").exists() and time.monotonic() < deadline:
-                time.sleep(0.02)
-        if _fault.get("sleep"):
-            time.sleep(float(_fault["sleep"]))
+        waiting = contextlib.nullcontext()
+        if command in LOCKS and (_fault.get("block") or _fault.get("sleep")):
+            with contextlib.suppress(Fatal):  # no repository yet: it waits without a lock
+                waiting = locked(open_repository(), LOCKS[command], values, flags)
+        with waiting:
+            if _fault.get("block"):
+                (state / f"blocked-{name}").write_text(str(os.getpid()))
+                deadline = time.monotonic() + 60
+                while not (state / f"release-{name}").exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+            if _fault.get("sleep"):
+                time.sleep(float(_fault["sleep"]))
         if "code" in _fault:
             sys.stderr.write(_fault.get("stderr", "Fatal: failed") + "\n")
             return int(_fault["code"])

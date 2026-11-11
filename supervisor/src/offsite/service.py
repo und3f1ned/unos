@@ -42,6 +42,7 @@ import re
 import socket
 import ssl
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -290,6 +291,10 @@ class Activity:
 _activity: Optional[Activity] = None
 # The copies and restores that run in the background (Run now, Restore files): stop() ends them.
 _tasks: set[asyncio.Task] = set()
+# Held while a copy, a restore or Save names its folders (_use) and opens them, and by the Storage
+# page while it checks that no copy uses a volume and deletes it: either the deletion sees the copy,
+# or the copy finds the volume gone.
+FOLDERS_LOCK = threading.Lock()
 
 
 def _utc_now() -> datetime:
@@ -476,8 +481,6 @@ def on_system_disk(fd: int) -> bool:
     if on_system_filesystem(fd):
         return True
     system = system_disks()
-    if not system:
-        raise UnknownDisk("the disks of the system's filesystems are not known")
     disks = disks_of(fd)
     if not disks:
         raise UnknownDisk("its filesystem shows no disk")
@@ -605,17 +608,20 @@ def disks_of(fd: int) -> set[str]:
 
 def system_disks() -> set[str]:
     """The whole disks of the root filesystem (the filesystem of MOUNTS_BASE, a bind of the host's
-    /mnt) and of the data volume DATA_DIR."""
+    /mnt) and of the data volume DATA_DIR. UnknownDisk when those of either cannot be found."""
     found: set[str] = set()
     for path in (MOUNTS_BASE, DATA_DIR):
         try:
             fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-        except OSError:
-            continue
+        except OSError as e:
+            raise UnknownDisk(f"{path} cannot be opened: {e.strerror or e}") from None
         try:
-            found |= disks_of(fd)
+            disks = disks_of(fd)
         finally:
             os.close(fd)
+        if not disks:
+            raise UnknownDisk(f"the disks of {path} are not known")
+        found |= disks
     return found
 
 
@@ -961,10 +967,11 @@ def _secrets_for(request: SettingsRequest, settings: OffsiteSettings, stored: Op
     return Secrets(password=password, s3_secret_access_key=secret)
 
 
-def _prepare_folders(settings: OffsiteSettings) -> tuple[Optional[str], list[int]]:
+def _prepare_folders(settings: OffsiteSettings, activity: Activity) -> tuple[Optional[str], list[int]]:
     """Check the sources and a disk target on the filesystem, normalize the sources, and make the
     target's folder when it is missing: its path then, and the target held open for restic (_ready),
-    which the caller closes. 400 for what cannot be copied or hold the copy."""
+    which the caller closes; the target is named for ACTIVITY first, under FOLDERS_LOCK. 400 for what
+    cannot be copied or hold the copy."""
     sources = []
     for path in settings.sources:
         normalized, fd = _open_source(path)
@@ -977,7 +984,9 @@ def _prepare_folders(settings: OffsiteSettings) -> tuple[Optional[str], list[int
     if any(_inside(source, settings.path) for source in sources):
         raise _bad(f"{settings.path} holds a folder that it copies: choose a folder outside them, or one inside "
                    "a folder that it copies")
-    fd, created = _open_target(settings.path, create=True)
+    with FOLDERS_LOCK:
+        _use(activity, _paths_used(settings, sources=False))
+        fd, created = _open_target(settings.path, create=True)
     return created, [fd]
 
 
@@ -1069,8 +1078,7 @@ async def save_settings(request: SettingsRequest) -> dict:
         problem = await _unreachable(settings)
         if problem:
             raise _bad(problem)
-        _use(activity, _paths_used(settings, sources=False))
-        created, held = await asyncio.to_thread(_prepare_folders, settings)
+        created, held = await asyncio.to_thread(_prepare_folders, settings, activity)
         repo = _Repository(settings, secrets.password, secrets.s3_secret_access_key)
         try:
             await _open_or_create(repo, created)
@@ -1209,13 +1217,14 @@ async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: Optio
     return result
 
 
-def _ready(stored: Optional[OffsiteSettings], secrets: Secrets, *,
-           sources: bool) -> tuple[_Repository, list[int]]:
+def _ready(stored: Optional[OffsiteSettings], secrets: Secrets, *, sources: bool,
+           activity: Optional[Activity] = None) -> tuple[_Repository, list[int]]:
     """The repository of the stored settings, with its target checked (and the sources) and held open
     while restic runs, which the caller closes (_close): a folder held open keeps its filesystem busy,
     so that a plain unmount of its disk fails, and restic's local back end, which makes the folders
     that it misses, never writes onto the empty mount point, on the system disk. _Failed with step
-    settings when something is not stored, folders when a folder cannot be used. Blocking."""
+    settings when something is not stored, folders when a folder cannot be used. The folders are
+    named for ACTIVITY and opened under FOLDERS_LOCK. Blocking."""
     if stored is None:
         raise _Failed("settings", NOT_SET_UP)
     if not secrets.password:
@@ -1224,11 +1233,14 @@ def _ready(stored: Optional[OffsiteSettings], secrets: Secrets, *,
         raise _Failed("settings", NO_SECRET_KEY)
     held: list[int] = []
     try:
-        if stored.kind == Kind.DISK:
-            held.append(_open_target(_target_path(stored.path), create=False)[0])
-        if sources:
-            for path in stored.sources:
-                held.append(_open_source(path)[1])
+        with FOLDERS_LOCK:
+            if activity is not None:
+                _use(activity, _paths_used(stored, sources=sources))
+            if stored.kind == Kind.DISK:
+                held.append(_open_target(_target_path(stored.path), create=False)[0])
+            if sources:
+                for path in stored.sources:
+                    held.append(_open_source(path)[1])
     except HTTPException as e:
         _close(held)
         raise _Failed("folders", e.detail) from None
@@ -1243,10 +1255,8 @@ async def _repository(activity: Optional[Activity] = None) -> tuple[_Repository,
     the caller closes: 409 when nothing is set up, 503 when the target cannot be used. ACTIVITY, the
     restore, names the target's pool."""
     stored, secrets = _stored()
-    if activity is not None and stored is not None:
-        _use(activity, _paths_used(stored, sources=False))
     try:
-        return await asyncio.to_thread(_ready, stored, secrets, sources=False)
+        return await asyncio.to_thread(_ready, stored, secrets, sources=False, activity=activity)
     except _Failed as e:
         raise HTTPException(409 if e.step == "settings" else 503, e.message) from None
 
@@ -1383,10 +1393,8 @@ async def _copy(activity: Activity, result: CopyResult, unread: _Unread) -> str:
         stored, secrets = load_settings(), load_secrets()
     except OSError as e:
         raise _Failed("settings", f"The settings of the off-device copy cannot be read: {e}") from None
-    if stored is not None:
-        _use(activity, _paths_used(stored, sources=True))
     activity.step = "folders"
-    repo, held = await asyncio.to_thread(_ready, stored, secrets, sources=True)
+    repo, held = await asyncio.to_thread(_ready, stored, secrets, sources=True, activity=activity)
     try:
         problem = await _unreachable(repo.settings)
         if problem:

@@ -328,6 +328,16 @@ Open owner actions:
   unless a test asks for the reported case; (6) the scheduler tests' clients raise what a run
   raised, Forget removes a staged `.offsite_secrets.json.<hex>.tmp`, and Delete Volume answers
   409 naming the copy while it uses the volume.
+- f4ecd22 on the device: `scenario.sh offsite` OK, the S3 refusal answers at once; make check
+  6676 passed, the E2E specs 181. A three-lens review of 8fef386..f4ecd22 then found, each with a
+  test that failed first where one could: a stop or a timeout killed restic with SIGKILL, so its
+  lock, of its own host name now, stayed for 30 minutes and failed the next copy at forget: restic
+  gets SIGTERM first and SIGKILL 5 s later (the fake removes its lock on SIGTERM, and its unlock
+  follows restic's rule); the host-name step runs with `-B`; the system-disk rule refuses when
+  the disks of only one of /mnt and /data are known; Delete Volume checks and deletes under the
+  lock with which a copy names and opens its folders; tests of the fake's vanished files and of
+  the stand-in's overrides. The guide says that a copy ended hard leaves the repository locked
+  for up to 30 minutes.
 - Open: the deploy of these fixes, `scripts/dev/scenario.sh offsite` again before and after a
   reboot (ADR-0018), a copy to a USB disk and to an S3 store, and `passes`.
 

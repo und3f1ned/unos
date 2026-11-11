@@ -1257,6 +1257,26 @@ class TestVolumeInUse:
         )
         self.assert_kept(documents)
 
+    def test_the_check_and_the_delete_hold_the_lock_of_the_off_device_copys_folders(self, api, documents,
+                                                                                    monkeypatch):
+        """A copy names and opens its folders under the same lock (test_offsite.py): either the delete
+        sees the copy, or the copy finds the volume gone."""
+        offsite = importlib.import_module("src.offsite.service")
+        held = []
+        real = host_module.run_on_host
+
+        def run_on_host(argv, *args, **kwargs):
+            if argv[:3] == ["btrfs", "subvolume", "delete"]:
+                held.append(offsite.FOLDERS_LOCK.locked())
+            return real(argv, *args, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", run_on_host)
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 200, response.text
+        assert held == [True]
+
     def test_the_off_device_copy_of_the_whole_pool_does_not_count(self, api, documents, monkeypatch):
         # As a share of the pool: it keeps working without the volume.
         offsite = importlib.import_module("src.offsite.service")

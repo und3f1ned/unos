@@ -4,9 +4,10 @@ restic runs off the event loop as an asyncio subprocess, in a process group of i
 priority (``nice -n 10`` and the lowest level of the best-effort I/O class, ``ionice -c 2 -n 7``:
 nice and ionice exec it, so the group holds restic alone), in a UTS namespace of its own with a host
 name of its own (``command``), with the environment that the caller builds for it, never the
-supervisor's. At its timeout, and when the task that waits for it is
-cancelled (a stop of the supervisor), the whole group is killed. Its secrets come only in that
-environment, never in its arguments (ADR-0125).
+supervisor's. At its timeout, and when the task that waits for it is cancelled (a stop of the
+supervisor), the group gets SIGTERM, on which restic removes its lock and ends, and SIGKILL if it has
+not ended TERM_WAIT seconds later. Its secrets come only in that environment, never in its
+arguments (ADR-0125).
 """
 
 from __future__ import annotations
@@ -41,7 +42,10 @@ SET_HOSTNAME = (
 # the JSON of `snapshots` and the summary of `backup`; `dump` writes into a file instead.
 STDERR_KEPT = 64 * 1024
 STDOUT_LIMIT = 32 * 1024 * 1024
-# Seconds to wait for a killed restic to end.
+# Seconds that restic gets to end after SIGTERM (it removes its lock, which, with a host name of its
+# own, the next restic's unlock would remove only after 30 minutes), within the 10 seconds that Docker
+# gives a stop; then SIGKILL, and the seconds to wait for a killed restic to end.
+TERM_WAIT = 5
 KILL_WAIT = 10
 # The longest line of standard error that a caller's on_error_line gets; a longer one is dropped.
 LINE_LIMIT = 1024 * 1024
@@ -61,7 +65,8 @@ class Result:
 
 def command(args: list[str], hostname: str) -> list[str]:
     """The argv that runs restic with ARGS at a low priority, in a UTS namespace named HOSTNAME."""
-    return ["unshare", "--uts", "--", sys.executable, "-c", SET_HOSTNAME, HOSTNAME_FILE, hostname,
+    # -B: no .pyc file, which would go into the container's writable layer, on the system disk.
+    return ["unshare", "--uts", "--", sys.executable, "-B", "-c", SET_HOSTNAME, HOSTNAME_FILE, hostname,
             *PRIORITY, RESTIC, *args]
 
 
@@ -130,7 +135,12 @@ async def _communicate(process: asyncio.subprocess.Process, stdin: bytes | None,
 
 
 async def _kill(process: asyncio.subprocess.Process) -> None:
-    """Kill restic's process group and wait for it to end."""
+    """End restic's process group: SIGTERM, on which restic cancels its work and removes its lock,
+    then SIGKILL for what is left after TERM_WAIT seconds; wait for it to end."""
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(process.pid, signal.SIGTERM)
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(process.wait(), TERM_WAIT)
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGKILL)
     with contextlib.suppress(asyncio.TimeoutError):

@@ -56,7 +56,7 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -2312,13 +2312,18 @@ def _delete_volume(
             f"{subvol_id}) existed before it was created."
         )
     _check_volume_id(pool, target, name, subvol_id)
-    if refuse_if_used:
-        _refuse_used_volume(name, os.path.join(target, name))
-    result = host.run_on_host(
-        ["btrfs", "subvolume", "delete", "--subvolid", str(subvol_id), target],
-        timeout=VOLUME_TIMEOUT,
-        errors="replace",  # it prints the subvolume's path, which may have changed by then
-    )
+    from ..offsite import service as offsite  # it imports this module
+
+    # Under the lock with which a copy of the off-device copy names and opens its folders: either the
+    # check sees the copy, or the copy finds the volume gone (ADR-0337).
+    with offsite.FOLDERS_LOCK if refuse_if_used else nullcontext():
+        if refuse_if_used:
+            _refuse_used_volume(name, os.path.join(target, name))
+        result = host.run_on_host(
+            ["btrfs", "subvolume", "delete", "--subvolid", str(subvol_id), target],
+            timeout=VOLUME_TIMEOUT,
+            errors="replace",  # it prints the subvolume's path, which may have changed by then
+        )
     if not result.ok:
         message = result.stderr.strip() or f"exit status {result.returncode}"
         if "not empty" in message.lower():

@@ -15,9 +15,12 @@ Everything the supervisor writes goes under the state directory (default:
             does not manage, as on the Docker test stack
     tmp/    TMPDIR of the supervisor
     bin/    first on the supervisor's PATH: restic, the fake of
-            supervisor/tests/fake_restic.py, and a pass-through ionice, for the
-            off-device copy (ADR-0337); restic is not installed here
-    fake-restic/  the fake's calls and the stores of its s3: repositories
+            supervisor/tests/fake_restic.py, and a pass-through ionice and
+            unshare, for the off-device copy (ADR-0337); restic is not
+            installed here
+    fake-restic/  the fake's calls, the stores of its s3: repositories, and
+            hostname, where each restic writes its host name instead of
+            /proc/sys/kernel/hostname of a UTS namespace of its own
 
 The stand-in keeps the supervisor away from this machine's system:
 
@@ -31,7 +34,8 @@ The stand-in keeps the supervisor away from this machine's system:
   for /mnt, where its disk targets lie, as pools/ stands for /mnt/pools, and
   one filesystem holds all of it: the copy's check of the system disk is off
   (there is none to protect here), so that the specs can copy to a folder of
-  testpool.
+  testpool. No S3 store is connected to before restic runs: the fake keeps
+  its s3: repositories in fake-restic/.
 * Power actions are off: with host commands on this machine
   (UNOS_HOST_EXEC=local) the power API refuses to reboot, shut down or
   suspend it, to cancel its shutdowns and to change Wake-on-LAN (ADR-0233),

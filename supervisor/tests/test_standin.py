@@ -172,6 +172,9 @@ print(json.dumps({
         "on_system_filesystem": data_on_system_filesystem,
         "restic": shutil.which("restic"),
         "ionice": shutil.which("ionice"),
+        "unshare": shutil.which("unshare"),
+        "hostname_file": importlib.import_module("src.offsite.restic").HOSTNAME_FILE,
+        "probe": offsite.probe_store("https://127.0.0.1:9"),
     },
 }))
 """
@@ -307,15 +310,19 @@ class TestIsolation:
 
     def test_the_off_device_copy_runs_the_fake_restic_on_the_state_directory(self, configured):
         """restic is not installed here: the stand-in puts the fake of supervisor/tests/fake_restic.py
-        first on PATH, with a pass-through ionice. Its pools' folder stands for /mnt/pools, so disk
+        first on PATH, with a pass-through ionice and unshare. Each restic writes its host name into
+        a file of the fake's state, not into /proc. Its pools' folder stands for /mnt/pools, so disk
         targets lie below the state directory, and one filesystem holds all of it: the stand-in has no
-        system disk that the copy must stay off (ADR-0337)."""
+        system disk that the copy must stay off, and no S3 store to connect to first (ADR-0337)."""
         state, offsite = configured["state"], configured["offsite"]
         assert Path(offsite["mounts_base"]) == state
         assert offsite["on_system_disk"] is False and offsite["on_system_filesystem"] is False
-        for tool in ("restic", "ionice"):
+        for tool in ("restic", "ionice", "unshare"):
             assert offsite[tool] and _inside(offsite[tool], state), (tool, offsite[tool])
         assert "fake_restic.py" in Path(offsite["restic"]).read_text()
+        assert "fake unshare" in Path(offsite["unshare"]).read_text()
+        assert Path(offsite["hostname_file"]) == state / "fake-restic" / "hostname"
+        assert offsite["probe"] is None
 
     def test_state_directory_ignores_itself_and_seeds_the_e2e_share(self, configured):
         assert configured["gitignore"] == "*\n"

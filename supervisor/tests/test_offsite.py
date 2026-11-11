@@ -711,8 +711,9 @@ def test_a_stop_of_the_supervisor_ends_the_copy_and_records_it(env, monkeypatch)
 
 def test_restic_runs_at_a_low_priority_in_a_uts_namespace_of_its_own():
     assert runner.command(["unlock"], "unos-0123456789ab") == [
-        "unshare", "--uts", "--", sys.executable, "-c", runner.SET_HOSTNAME, runner.HOSTNAME_FILE,
+        "unshare", "--uts", "--", sys.executable, "-B", "-c", runner.SET_HOSTNAME, runner.HOSTNAME_FILE,
         "unos-0123456789ab", "nice", "-n", "10", "ionice", "-c", "2", "-n", "7", "restic", "unlock"]
+    assert runner.command(["unlock"], "unos-0123456789ab")[3:5] == [sys.executable, "-B"]
 
 
 # --- Run now and the status ----------------------------------------------------------------------
@@ -988,9 +989,10 @@ async def test_the_pools_that_a_copy_or_a_restore_uses_are_named(env):
 
 
 def lock(path: Path, *, exclusive: bool, pid: int | None = None) -> Path:
-    """A lock of another restic in the repository at PATH."""
+    """A lock of another restic in the repository at PATH, taken now."""
     found = path / "locks" / f"other-{exclusive}"
-    found.write_text(json.dumps({"exclusive": exclusive, "pid": pid or os.getpid(), "time": "2026-11-11T03:00:00Z"}))
+    found.write_text(json.dumps({"exclusive": exclusive, "hostname": "unos-0123456789ab", "pid": pid or os.getpid(),
+                                 "time": datetime.now(timezone.utc).isoformat()}))
     return found
 
 
@@ -1524,14 +1526,16 @@ def by_number(mapping: dict[Path, tuple[int, int]]):
     return by_folder({path: {number} for path, number in mapping.items()})
 
 
-@pytest.mark.parametrize("unknown", ["the target", "the system"])
+@pytest.mark.parametrize("unknown", ["the target", "the system", "the data volume"])
 async def test_a_target_whose_disks_cannot_be_found_is_refused(env, sysfs, monkeypatch, caplog, unknown):
     """(9, 9) is no device of sysfs: a network filesystem, ZFS or an overlay root, or sysfs that
-    cannot be read. The rule that the copy leaves the system disk cannot be kept then."""
+    cannot be read. The rule that the copy leaves the system disk cannot be kept then, nor when the
+    disks of only one of /mnt and /data are known."""
     monkeypatch.setattr(offsite, "on_system_disk", REAL_ON_SYSTEM_DISK)
-    system, target = ((8, 1), (9, 9)) if unknown == "the target" else ((9, 9), (8, 16))
+    root, data, target = {"the target": ((8, 1), (8, 1), (9, 9)), "the system": ((9, 9), (9, 9), (8, 16)),
+                          "the data volume": ((8, 1), (9, 9), (8, 16))}[unknown]
     monkeypatch.setattr(offsite, "_filesystem_devices", by_number(
-        {env.mnt: system, env.data: system, env.usb: target}), raising=False)
+        {env.mnt: root, env.data: data, env.usb: target}), raising=False)
 
     with caplog.at_level(logging.WARNING), pytest.raises(HTTPException) as refused:
         await save(env)
@@ -1540,3 +1544,59 @@ async def test_a_target_whose_disks_cannot_be_found_is_refused(env, sysfs, monke
     assert refused.value.detail.startswith(f"UNOS cannot tell which disk holds {env.target}"), refused.value.detail
     assert "UNOS cannot tell which disk holds" in caplog.text
     assert calls(env) == [] and not env.target.exists()
+
+
+# --- the three-lens review of 8fef386..f4ecd22 -------------------------------------------------------
+
+
+async def test_a_stopped_copy_leaves_no_lock_and_the_next_copy_passes(env, monkeypatch):
+    """A lock carries the host name of its restic's UTS namespace, so the next restic's unlock removes
+    it only after 30 minutes: a stop ends restic with SIGTERM first, on which it removes its lock,
+    and SIGKILL only after 5 seconds. (Here a lock waits 1 second, not 10 minutes.)"""
+    monkeypatch.setattr(offsite, "RETRY_LOCK", "1s")
+    await save(env)
+    fault(env, "backup", block=True)
+    copy = asyncio.create_task(offsite.run_copy("task"))
+    await wait_for(env.state / "blocked-backup")
+    assert list((env.target / "locks").iterdir())
+    copy.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await copy
+    (env.state / "faults.json").unlink()
+
+    ok, message = await offsite.run_copy("task")
+
+    assert ok, message
+
+
+async def test_a_copy_names_its_folders_and_opens_them_under_the_lock_of_the_folders(env, monkeypatch):
+    """Delete Volume checks and deletes under the same lock (test_volumes.py): either it sees the copy,
+    or the copy finds the volume gone."""
+    seen = []
+    real = offsite._open_source
+
+    def open_source(path):
+        seen.append((offsite.FOLDERS_LOCK.locked(), path in offsite._activity.paths))
+        return real(path)
+
+    await save(env)
+    monkeypatch.setattr(offsite, "_open_source", open_source)
+    assert (await offsite.run_copy("task"))[0]
+    assert seen == [(True, True)]
+
+
+@pytest.mark.parametrize("reported", [False, True])
+async def test_the_fake_restic_treats_a_vanished_file_as_restic_does(env, reported):
+    """restic 0.18 leaves out a file that vanished before its first open without a word
+    (filterNotExist): exit status 0 and no note. One that vanished between that open and the next
+    is reported, with exit status 3: a note."""
+    await save(env)
+    gone = str(env.pool / "docs" / "letter.txt")
+    fault(env, "backup", vanished=[gone], reported=reported)
+
+    ok, message = await offsite.run_copy("task")
+
+    assert ok, message
+    status = json.loads((env.data / "offsite_status.json").read_text())["last_copy"]
+    assert status["note"] == (f"1 file vanished during the copy: {gone}" if reported else None)
+    assert gone not in repository_files(env.target)[offsite.DATA_TAG]
