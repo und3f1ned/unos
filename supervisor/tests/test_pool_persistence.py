@@ -1298,13 +1298,13 @@ class TestUnmountAndDelete:
         ])
         assert not pools.unmount_pool("data").mounted
 
-    def test_docker_volume_that_cannot_be_inspected_leaves_the_check_after_unmounting(self, mounted, caplog):
+    def test_docker_volume_that_cannot_be_inspected_leaves_the_pool_mounted(self, mounted, caplog):
         mounted.docker.add("app", mounts=[mounted.docker.add_volume("media")])
         mounted.docker.volumes.clear()  # inspect_volume: 404
-        mounted.held.add(DATA_UUID)
-        with pytest.raises(pools.PoolBusyError, match="mounted again"):
+        with pytest.raises(pools.DockerUnavailableError, match="Docker did not answer"):
             pools.unmount_pool("data")
         assert "Could not list the running containers or their volumes" in caplog.text
+        assert mounted.changes == []
         self.assert_still_mounted_and_persistent(mounted)
 
     def test_refuses_while_an_app_is_labelled_with_the_pool(self, mounted):
@@ -1349,18 +1349,35 @@ class TestUnmountAndDelete:
         assert not info.mounted and not mounted.mounted("/mnt/pools/data")
         assert mounted.mounted("/srv/data")
 
-    def test_without_docker_the_check_after_unmounting_still_applies(self, mounted, caplog):
+    # When Docker cannot be asked, a Docker volume of the local driver that binds a folder of the
+    # pool keeps the filesystem mounted on the host at Docker's folder for the volume, which the
+    # check after the umount takes for the administrator's own mount ("also mounted elsewhere on
+    # the host"): the pool was reported unmounted while the container kept writing to it. The
+    # unmount and the removal are refused instead, before anything changes (ADR-0344).
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    def test_without_docker_the_pool_stays_mounted_and_nothing_changes(self, mounted, operation, caplog):
+        mounted.add_mount("/var/lib/docker/volumes/paperless_media/_data",
+                          "/dev/sda[/apps/paperless/media]", "btrfs", DATA_UUID)
+        options = {"type": "none", "o": "bind", "device": "/mnt/pools/data/apps/paperless/media"}
+        mounted.docker.add("paperless", mounts=[mounted.docker.add_volume("paperless_media", options=options)])
         mounted.docker.unavailable = True
-        mounted.held.add(DATA_UUID)
         with caplog.at_level(logging.WARNING, logger="src.storage.pools"):
-            with pytest.raises(pools.PoolBusyError, match="mounted again"):
-                pools.unmount_pool("data")
+            with pytest.raises(pools.DockerUnavailableError, match=re.escape(
+                "Pool 'data' was left mounted: Docker did not answer, so it is not known whether a "
+                "running container keeps data on it. Try again when Docker is running (Error while "
+                "fetching server API version)."
+            )):
+                operation("data")
         assert "Could not list the running containers" in caplog.text
+        assert mounted.changes == []
         self.assert_still_mounted_and_persistent(mounted)
+        assert "/mnt/pools/data" in mounted.dirs
 
-    def test_without_docker_an_unused_pool_is_unmounted(self, mounted):
-        mounted.docker.unavailable = True
-        assert not pools.unmount_pool("data").mounted
+    def test_without_docker_a_pool_that_is_not_mounted_is_still_removed(self, data_pool):
+        # Nothing is mounted, so no container can use the pool: Docker is not asked.
+        data_pool.docker.unavailable = True
+        pools.delete_pool("data")
+        assert "/mnt/pools/data" not in data_pool.dirs
 
     # -- services keep copies of the pool's mount in mount namespaces of their own --
 
@@ -1542,16 +1559,15 @@ class TestUnmountAndDelete:
 
     def test_without_docker_a_container_that_binds_the_pools_mountpoint_is_refused(self, services):
         # -v /mnt/pools/data:/mnt/pools/data: Docker would name the container up front, but cannot
-        # be asked, so the check after the umount must find it (ADR-0070).
+        # be asked, so nothing is unmounted, neither on the host nor in a namespace (ADR-0344).
         services.docker.add("app", sources=["/mnt/pools/data"])
         services.docker.unavailable = True
         services.container_namespace(1400)
         services.copy_into_namespace(1400)
-        with pytest.raises(pools.PoolBusyError, match=re.escape(
-            "(process 1400 has it mounted at /mnt/pools/data), so it was mounted again"
-        )):
+        with pytest.raises(pools.DockerUnavailableError, match="Docker did not answer"):
             pools.unmount_pool("data")
-        assert not [c for c in services.changes if c[:2] == ["umount", "--namespace"]]
+        assert services.changes == []
+        assert self.namespaces_holding(services) == [*self.SERVICES, 1400]
         self.assert_still_mounted_and_persistent(services)
 
     # The root that tells a service's namespace from a container's is the host's root filesystem
@@ -2628,6 +2644,27 @@ class TestPoolEndpoints:
         assert response.json() == {"status": "deleted"}
         assert not any(c[0] in ("mkfs.btrfs", "wipefs") for c in data_pool.calls)
         assert data_pool.fstab == BASE_FSTAB
+
+    def test_unmount_and_remove_without_docker_answer_503_and_change_nothing(self, api, data_pool):
+        # 503, as for a volume delete without Docker: it is not known whether a container uses
+        # the pool (ADR-0344).
+        pools.mount_pool("data")
+        wait_for_app_starts()
+        data_pool.changes.clear()
+        data_pool.docker.unavailable = True
+        for method, url in (
+            ("post", "/api/v1/storage/pools/data/unmount"),
+            ("delete", "/api/v1/storage/pools/data"),
+        ):
+            response = getattr(api, method)(url)
+            assert response.status_code == 503, response.text
+            assert response.json()["detail"].startswith(
+                "Pool 'data' was left mounted: Docker did not answer, so it is not known whether a "
+                "running container keeps data on it. Try again when Docker is running"
+            )
+        assert data_pool.changes == []
+        assert data_pool.mounted("/mnt/pools/data")
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
 
     def test_the_endpoints_that_change_the_managed_pools_apply_smb_conf(self, api, data_pool):
         """ADR-0248: the managed pools decide which SMB shares are served, so create, mount,

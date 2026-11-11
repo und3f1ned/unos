@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0344
 date: 2026-11-06
 area: storage
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0070: Pool unmount and delete respect Docker volumes, and odd names do not break storage
 
 ## Context
+
+Superseded by ADR-0344: an unmount or delete is refused (503) when Docker cannot be asked, instead of going ahead.
 
 A container that keeps data in a pool through a Docker volume of the local driver (one that binds a pool folder) keeps the filesystem mounted inside the container after the host's `umount` succeeds, so the pool looked unmounted and its disks safe to remove while they were still written. Names that are not valid UTF-8 (of subvolumes, labels or disk models) broke the storage pages.
 

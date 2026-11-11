@@ -244,7 +244,9 @@ def _refuse_separate_filesystem(dir_fd: int, st: os.stat_result, parts: list[str
     below a directory before it is deleted or moved to another filesystem.
     A bind mount from the same filesystem has the same st_dev:
     _refuse_nested_filesystems finds it in the mount table before a delete or
-    a move to another filesystem; renaming it fails with EBUSY.
+    a move to another filesystem; renaming it, or moving it on its
+    filesystem, fails with EBUSY, which _rename and _transfer answer with
+    this refusal (_refuse_busy).
     """
     if not stat.S_ISDIR(st.st_mode) or st.st_dev == os.fstat(dir_fd).st_dev:
         return
@@ -255,6 +257,15 @@ def _refuse_separate_filesystem(dir_fd: int, st: os.stat_result, parts: list[str
             "Volumes are deleted on the Storage page (Volumes).",
         )
     raise HTTPException(409, _separate_detail(parts[-1], action))
+
+
+def _refuse_busy(exc: OSError, name: str, action: str) -> None:
+    """Refuse (409) the rename of ``name`` that failed with ``exc``, when it is EBUSY: a mount point.
+
+    Any other error is left to the caller.
+    """
+    if exc.errno == errno.EBUSY:
+        raise HTTPException(409, _separate_detail(name, action)) from None
 
 
 def _read_mount_points() -> list[bytes]:
@@ -422,6 +433,8 @@ def _http_error(exc: OSError) -> HTTPException:
         return HTTPException(400, "Name too long")
     if code in (errno.ENOSPC, errno.EDQUOT):
         return HTTPException(507, "No space left on device")
+    if code == errno.EBUSY:
+        return HTTPException(409, "In use by the system, for example as a mount point, so the file manager cannot change it")
     reason = os.strerror(code) if code else "unknown error"
     return HTTPException(500, f"File operation failed: {reason}")
 
@@ -908,6 +921,9 @@ def _rename(path: str, new_name: str) -> FileInfo:
                 _rename_exclusive(dir_fd, parts[-1], dir_fd, new_name)
             except FileExistsError:
                 raise HTTPException(400, f"Already exists: {new_name}") from None
+            except OSError as exc:
+                _refuse_busy(exc, parts[-1], "renamed")
+                raise
         st = os.stat(new_name, dir_fd=dir_fd, follow_symlinks=False)
     finally:
         os.close(dir_fd)
@@ -1056,6 +1072,7 @@ def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str
                     try:
                         os.rename(name, name, src_dir_fd=src_dir_fd, dst_dir_fd=dest_fd)
                     except OSError as exc:
+                        _refuse_busy(exc, name, "moved")
                         if exc.errno != errno.EXDEV:
                             raise
                         # Different filesystem (e.g. another pool): copy, then delete.

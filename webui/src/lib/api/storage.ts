@@ -239,7 +239,10 @@ export async function mountPool(name: string): Promise<Pool> {
   return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/mount`, {});
 }
 
-/** Unmount on the host and remove the managed fstab entry; 409 while busy. */
+/**
+ * Unmount on the host and remove the managed fstab entry; 409 while busy, 503 when Docker
+ * cannot be asked which containers use the pool. Nothing is unmounted then.
+ */
 export async function unmountPool(name: string): Promise<Pool> {
   return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
 }
