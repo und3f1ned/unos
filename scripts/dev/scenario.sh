@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Scenario checks of the dev device (ADR-0304): scripts/dev/scenario.sh [--pool NAME] AREA...
 #
-#   AREA     files, volumes, smart, backups, smb, smbconf, shares, scrub or offsite; all: every area,
-#            in this order.
-#   --pool   the pool of the files, volumes, smb, smbconf, shares, scrub and offsite checks (default:
+#   AREA     files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite or restore; all:
+#            every area, in this order.
+#   --pool   the pool of the files, volumes, smb, smbconf, shares, scrub, offsite and restore checks (default:
 #            the one pool that is mounted read-write with UNOS's fstab entry).
 #
 # Each check runs the user scenario of its area on the device through the API and on the host
@@ -12,18 +12,19 @@
 # backups; smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; shares
 # makes entries of other owners and modes on the pool over ssh, signs in as its user and turns
 # guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0314; offsite sets up an off-device
-# copy to a folder of the pool and forgets it again, ADR-0337), prints PASS or FAIL for every
-# step with the MiB written to the SD card meanwhile, removes what it made, also after a FAIL or
-# Ctrl-C, and compares the device with how it found it. The checks change the device:
-# run them when the owner asks for a check of the device (ADR-0016), for example the re-check
-# after a reboot (ADR-0018). The feature-pass skill names the check of each host-level entry.
+# copy to a folder of the pool and forgets it again, ADR-0337; restore restores a backup it made
+# moments before, twice, which puts the device's database back as it was then, ADR-0341), prints
+# PASS or FAIL for every step with the MiB written to the SD card meanwhile, removes what it made,
+# also after a FAIL or Ctrl-C, and compares the device with how it found it. The checks change the
+# device: run them when the owner asks for a check of the device (ADR-0016), for example the
+# re-check after a reboot (ADR-0018). The feature-pass skill names the check of each host-level entry.
 #
 # Holds the device lock for the whole run (ADR-0210) and reports the SD writes of each check
 # (ADR-0214). Exit status: 0 when every check passed, 1 when one failed, 2 for a usage error.
 # Settings: dev.env (see env.sh); UNOS_DEV_PYTHON (python3) runs scenario.py.
 set -euo pipefail
 usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
-AREAS=(files volumes smart backups smb smbconf shares scrub offsite)
+AREAS=(files volumes smart backups smb smbconf shares scrub offsite restore)
 case ${1:-} in
     -h | --help) usage; exit 0 ;;
 esac
@@ -37,7 +38,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         all) areas+=("${AREAS[@]}"); shift ;;
-        files | volumes | smart | backups | smb | smbconf | shares | scrub | offsite) areas+=("$1"); shift ;;
+        files | volumes | smart | backups | smb | smbconf | shares | scrub | offsite | restore) areas+=("$1"); shift ;;
         *) usage >&2; exit 2 ;;
     esac
 done

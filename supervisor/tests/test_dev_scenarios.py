@@ -12,8 +12,13 @@ passwords that the history holds (ADR-0278), and the lock of an account after 5 
 refuses the right password as well and writes nothing (ADR-0334).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
-* every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite) passes against the fake,
-  prints a PASS line with its SD MiB for each step and a summary, and leaves the device as it found it;
+* every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite, restore) passes against
+  the fake, prints a PASS line with its SD MiB for each step and a summary, and leaves the device as it
+  found it;
+* the restore check (ADR-0341) restores only the backup it made, twice: its fake restore keeps a
+  restored SMB account only with the live password and uid (ADR-0141), keeps the live next uid
+  (ADR-0109), removes stale host accounts and renders smb.conf; its helper on the device lists
+  the members of a plain and of an encrypted backup as src/backup/router.py writes them;
 * the smbconf check (ADR-0309) shows what an smb.conf edited by hand does: the Shares page names
   the file before an apply, the apply copies it byte for byte to smb.conf.unos-replaced, a share
   that is not served gets access only with a new folder, and a restart of the supervisor writes
@@ -70,6 +75,7 @@ import subprocess
 import sys
 import textwrap
 import types
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -317,8 +323,21 @@ class FakeNas:
         self.next_user = 3
         self.accounts: dict[str, int] = {}  # marked host accounts: name -> uid
         self.passdb: dict[str, dict] = {}
+        # The SMB rows that need their password again (allowed, Samba has none), and the next uid
+        # (smb_state.next_uid, ADR-0109).
+        self.needed: set[str] = set()
+        self.next_smb_uid = 70003
         self.shares = {"DATA": {"path": f"{ROOT}/shared", "comment": "", "access": [], "version": 1}}
         self.backups = {"unos_backup_20261107_000000.tar.gz": None}  # name -> passphrase
+        # What the check's backups hold: the database (database()) and smb.conf at their time; the
+        # backups restored.
+        self.databases: dict[str, dict] = {}
+        self.restored: list[str] = []
+        # The copies of the database that the restores keep (the newest 5), and an API token.
+        self.copies: list[str] = []
+        self.api_tokens = [{"id": 1, "user_id": 1, "name": "home assistant", "token_prefix": "unos_ab12", "is_active": True,
+                            "permissions": "read", "created_at": "2026-11-01T09:00:00", "last_used_at": None,
+                            "expires_at": None}]
         self.quotas = False
         self.sessions: list[FakeSmbSession] = []
         self.passdb_mtime = 1
@@ -361,6 +380,7 @@ class FakeNas:
         self.pool_used = 1  # bytes of data in the pool data
         self.tasks: dict[str, dict] = {}
         self.runs: list[dict] = []
+        self.task_keys: dict[str, str] = {}  # the backup tasks' passphrases (scheduled_backup_keys.json)
         # The off-device copy (ADR-0337): its settings, password and state; the repository is a folder
         # of fs (config, keys/key, snapshots/<id>); what a copy or restore that runs makes is shown by
         # GET /offsite/status after offsite_left more requests.
@@ -392,14 +412,18 @@ class FakeNas:
             "users": copy.deepcopy(self.users),
             "accounts": dict(self.accounts),
             "passdb": sorted(self.passdb),
+            "the SMB rows that need a password": sorted(self.needed),
             "shares": copy.deepcopy(self.shares),
             "backups": dict(self.backups),
+            "the copies of the database": list(self.copies),
+            "the API tokens": copy.deepcopy(self.api_tokens),
             "smb.conf": self.installed,
             "/etc/samba": dict(self.samba),
             "the hand edit's copies": dict(self.saved),
             "the copy's problem": self.replaced_problem,
             "a scrub runs": self.scrub["status"] == "running",
             "the Scheduler's tasks": copy.deepcopy(self.tasks),
+            "the backup tasks' keys": dict(self.task_keys),
             "the off-device copy": (copy.deepcopy(self.offsite), self.offsite_password,
                                     copy.deepcopy(self.offsite_status), self.offsite_running),
             "the users' tokens in RAM": sorted(self.tokens),
@@ -442,8 +466,8 @@ class FakeNas:
             return {"state": "admin", "allowed": False}
         if user["username"] in self.passdb:
             return {"state": "active", "allowed": True, "uid": self.accounts[user["username"]]}
-        if user.get("smb_allowed"):
-            return {"state": "password_needed", "allowed": True}
+        if user.get("smb_allowed") or user["username"] in self.needed:
+            return {"state": "password_needed", "allowed": True, "uid": self.accounts.get(user["username"])}
         return {"state": "off", "allowed": False}
 
     def user_info(self, uid: int) -> dict:
@@ -516,9 +540,17 @@ class FakeNas:
                       if info.get("guest_ok") and self.path_problem(info["path"]) is None)
 
     def smb_conf(self) -> str:
-        """UNOS's rendering: a section per served share, each ending with UNOS's fixed lines."""
+        """UNOS's rendering: a section per served share with its active principals (root when none
+        has access), each ending with UNOS's fixed lines."""
         fixed = "".join(f"   {key} = {value}\n" for key, value in scenario.UNOS_SHARE_LINES)
-        sections = "".join(f"\n[{name}]\n   path = {info['path']}\n" + fixed
+
+        def principals(info: dict) -> str:
+            active = [a for a in info["access"] if a["username"] in self.passdb]
+            writers = ", ".join(sorted(a["username"] for a in active if a["level"] == "write"))
+            return (f"   valid users = {', '.join(sorted(a['username'] for a in active)) or 'root'}\n"
+                    + (f"   write list = {writers}\n" if writers else "   write list =\n"))
+
+        sections = "".join(f"\n[{name}]\n   path = {info['path']}\n" + principals(info) + fixed
                            for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None)
         # The defect guest-globals-stay keeps the guest lines once a guest share was rendered, and
         # no-guest-globals never writes them.
@@ -577,8 +609,8 @@ class FakeNas:
         threshold locks the account (ADR-0334). The right password sets a count back to 0, which
         is written too. Without a lockout a failure writes nothing (ADR-0310)."""
         account = self.passdb.get(user)
-        if account is None:
-            return "NT_STATUS_LOGON_FAILURE"
+        if account is None:  # map to guest = Bad User while a guest share exists (ADR-0339)
+            return None if self.guests_rendered() else "NT_STATUS_LOGON_FAILURE"
         if account["locked"]:
             if "locked-writes" in self.bugs:
                 self.passdb_mtime += 1
@@ -732,13 +764,25 @@ class FakeNas:
             return list(copy.deepcopy(self.tasks).values())
         if parts == ["tasks"] and method == "POST":
             task_id = f"task_{len(self.tasks) + len(self.runs) + 1}"
-            self.tasks[task_id] = {**body, "id": task_id}
-            return self.tasks[task_id]
+            task = {k: v for k, v in body.items() if k != "passphrase"}  # write-only (ADR-0325)
+            if body.get("task_type") == "backup":
+                if not body.get("passphrase"):
+                    raise Refused(400, "A backup task needs a passphrase: its backups are encrypted with it")
+                self.task_keys[task_id] = body["passphrase"]
+            self.tasks[task_id] = {**task, "id": task_id}
+            return {**self.tasks[task_id], "has_backup_key": task_id in self.task_keys if task.get("task_type") == "backup"
+                    else None}
         if parts[:1] == ["tasks"] and parts[2:] == ["run"]:
             task = self.tasks[parts[1]]
             run = {"id": f"run_{len(self.runs) + 1}", "task_id": task["id"], "task_name": task["name"],
                    "started_at": "2026-11-09T10:00:00+00:00", "finished_at": "2026-11-09T10:00:01+00:00",
                    "status": "success", "output": "Scrub started", "error": None, "exit_code": None}
+            if task["task_type"] == "backup":  # encrypted with the task's key (ADR-0325)
+                name = f"auto_backup_20261111_0300{len(self.backups):02d}.tar.gz.enc"
+                self.backups[name] = self.task_keys[task["id"]]
+                run["output"] = f"Backup {name} created."
+                self.runs.append(run)
+                return {"status": "started", "task_id": task["id"]}
             try:
                 if task["target_pool"] != "data":  # the one start, with its mount check (ADR-0311)
                     folder = f"/mnt/pools/{task['target_pool']}"
@@ -756,6 +800,7 @@ class FakeNas:
             if parts[1] not in self.tasks:
                 raise Refused(404, "Task not found")
             del self.tasks[parts[1]]
+            self.task_keys.pop(parts[1], None)
             if "runs-go-with-the-task" in self.bugs:
                 self.runs = [r for r in self.runs if r["task_id"] != parts[1]]
             return {"status": "deleted"}
@@ -866,13 +911,87 @@ class FakeNas:
                 raise Refused(409, f"{path} is a volume: delete it on the Storage page")
 
     def reconcile(self) -> None:
-        """The startup reconcile after a restart: an apply that writes only on a change."""
+        """The startup reconcile after a restart: the marked host accounts and Samba accounts that
+        no user's row has (stale) go, and an apply that writes only on a change."""
         if self.reconcile_pending:
             self.reconcile_pending = False
+            names = {user["username"] for user in self.users.values()}
+            for name in [n for n in self.accounts if n not in names]:
+                del self.accounts[name]
+                self.passdb.pop(name, None)
             if "restart-writes" in self.bugs:
                 self.mtimes["smb.conf"] += 1
             self.apply()
             self.last_apply_ok = True
+
+    def database(self) -> dict:
+        """What a backup holds of the database: the users (with their passwords, which stand in for
+        the hashes), the shares, the API tokens, the SMB rows (the users' names with a host account,
+        and its uid), those that need a password, the next uid; and smb.conf, which no backup should
+        hold."""
+        names = {user["username"] for user in self.users.values()}
+        return {"users": copy.deepcopy(self.users), "shares": copy.deepcopy(self.shares),
+                "tokens": copy.deepcopy(self.api_tokens),
+                "rows": {n: uid for n, uid in self.accounts.items() if n in names}, "needed": set(self.needed),
+                "next_smb_uid": self.next_smb_uid, "smb.conf": self.installed}
+
+    def restore(self, name: str) -> dict:
+        """A restore of the database of NAME (src/backup/router.py): a restored SMB row stays set
+        only when the live user of its name has an active account with its uid and its password
+        (ADR-0141); the next uid never goes below the live one (ADR-0109); then the post-restore
+        reconcile (ADR-0138): host accounts that no row has and the Samba passwords of rows that are
+        not active go, with their sessions, and smb.conf is rendered from the restored database."""
+        answer, reconcile = self.restore_database(name)
+        reconcile()
+        return answer
+
+    def restore_database(self, name: str) -> tuple[dict, Callable[[], None]]:
+        """The part of a restore of NAME up to the swap of the database, with its answer, and the
+        post-restore reconcile, which runs after it under the same smb_lock (_restore_and_reconcile)."""
+        db = copy.deepcopy(self.databases[name])
+        self.restored.append(name)
+        copied = f"unos.db.pre-restore-20261111_1300{len(self.restored):02d}_000000"
+        self.copies = sorted(self.copies + [copied])[-5:]  # PRE_RESTORE_COPIES
+        live = {user["username"]: user for user in self.users.values()}
+        asked = []
+        for user in db["users"].values():
+            username = user["username"]
+            if username not in db["rows"] or username in db["needed"]:
+                continue
+            now = live.get(username)
+            proven = (now is not None and username in self.passdb and self.accounts.get(username) == db["rows"][username]
+                      and now.get("password") == user.get("password"))
+            if "restore-proves-nothing" in self.bugs or ("restore-keeps-every-password" not in self.bugs and not proven):
+                db["needed"].add(username)
+                asked.append(f"SMB must be turned on again for {username}")
+        self.users, self.shares, self.needed = db["users"], db["shares"], db["needed"]
+        self.api_tokens = [] if "restore-drops-tokens" in self.bugs else db["tokens"]
+        self.next_smb_uid = db["next_smb_uid"] if "restore-next-uid" in self.bugs else max(self.next_smb_uid,
+                                                                                            db["next_smb_uid"])
+
+        def reconcile() -> None:
+            if "restore-keeps-stale-account" not in self.bugs:
+                for username in [n for n, uid in self.accounts.items() if db["rows"].get(n) != uid]:
+                    del self.accounts[username]
+                    self.passdb.pop(username, None)
+                    self.end_sessions(username)
+            for username in [n for n in self.passdb if n in self.needed]:
+                del self.passdb[username]
+                self.end_sessions(username)
+            if "restore-installs-the-archived-conf" in self.bugs:
+                if self.installed != db["smb.conf"]:
+                    self.installed = db["smb.conf"]
+                    self.mtimes["smb.conf"] += 1
+            elif "restore-apply-fails" not in self.bugs:
+                self.apply()
+            if "restore-rewrites-smb-conf" in self.bugs:
+                self.installed += "# rewritten by the restore\n"
+                self.mtimes["smb.conf"] += 1
+
+        items = ["database"] if "restore-apply-fails" in self.bugs else ["database", "smb_config"]
+        return {"status": "success", "restored": items, "warnings": asked,
+                "message": f"Backup restored: {', '.join(items)}.", "manifest": {"version": "1.0"},
+                "previous_database": f"/data/{copied}"}, reconcile
 
     def api_shares(self, method, parts, body, params, upload):
         if method != "GET":  # a change of SMB state waits for smb_lock
@@ -1010,10 +1129,21 @@ class FakeNas:
         visit(path)
         return tally
 
+    def activate(self, name: str, password: str) -> None:
+        """SMB on with PASSWORD: the row's uid, or a fresh one; Samba's password. The defect
+        reenable-new-uid gives a fresh uid also to a row that has one."""
+        if name not in self.accounts or "reenable-new-uid" in self.bugs:
+            self.accounts[name] = self.next_smb_uid
+            self.next_smb_uid += 1
+        self.passdb[name] = {"password": password, "history": [], "bad": 0, "locked": False}
+        self.needed.discard(name)
+
     def api_auth(self, method, parts, body, params, upload):
         if self.identity is not None:
             return self.api_own(method, "/".join(parts), body)
         assert parts[:1] != ["me"] and parts != ["change-password"], f"/auth/{'/'.join(parts)} with the administrator's token"
+        if parts == ["tokens"]:  # list_api_tokens: the caller's own, the relay's administrator's
+            return [copy.deepcopy(t) for t in self.api_tokens if t["user_id"] == 1]
         if parts == ["users"] and method == "GET":
             return [self.user_info(uid) for uid in sorted(self.users)]
         if parts == ["users"]:
@@ -1022,9 +1152,7 @@ class FakeNas:
             self.users[uid] = {"username": body["username"], "is_admin": False, "password": body["password"],
                                "smb_allowed": bool(body.get("smb_enabled"))}
             if body.get("smb_enabled"):
-                self.accounts[body["username"]] = 70000 + uid
-                self.passdb[body["username"]] = {"password": body["password"], "history": [], "bad": 0,
-                                                 "locked": False}
+                self.activate(body["username"], body["password"])
             if "log-password" in self.bugs:
                 self.log.append(f"created {body['username']} with {body['password']}")
             return self.user_info(uid)
@@ -1032,12 +1160,17 @@ class FakeNas:
         if uid not in self.users:
             raise Refused(404, "User not found")
         name = self.users[uid]["username"]
-        if parts[2:] == ["smb", "enable"]:  # an administrator allows SMB (ADR-0118)
+        if parts[2:] == ["smb", "enable"]:  # an administrator allows SMB, or turns it on with a password (ADR-0118)
             if body["username"] != name:
                 raise Refused(409, f"User {uid} is now {name}")
             self.users[uid]["smb_allowed"] = True
+            if body.get("password") is not None:
+                self.users[uid]["password"] = body["password"]
+                self.activate(name, body["password"])
+                self.apply()
             return self.user_info(uid)
         if method == "PUT":
+            self.users[uid]["password"] = body["password"]
             account = self.passdb.get(name)
             if account is not None:
                 account["history"] = ([account["password"]] + account["history"])[:2]
@@ -1049,6 +1182,7 @@ class FakeNas:
         del self.users[uid]
         self.accounts.pop(name, None)
         self.passdb.pop(name, None)
+        self.needed.discard(name)
         for share in self.shares.values():
             share["access"] = [a for a in share["access"] if a["username"] != name]
         self.end_sessions(name)
@@ -1098,10 +1232,9 @@ class FakeNas:
             problem = smb_password_problem(body["current_password"])
             if problem and "smb-takes-short-password" not in self.bugs:
                 raise Refused(400, problem)
-            if not user.get("smb_allowed"):
+            if not (user.get("smb_allowed") or name in self.needed):
                 raise Refused(403, "An administrator must allow SMB access for your account first")
-            self.accounts.setdefault(name, 70000 + uid)
-            self.passdb[name] = {"password": body["current_password"], "history": [], "bad": 0, "locked": False}
+            self.activate(name, body["current_password"])
             return {**status(), "warnings": []}
         if what == "me/smb/disable":  # the allowance and the host account stay (ADR-0118)
             if "self-off-keeps-samba" not in self.bugs:
@@ -1116,6 +1249,7 @@ class FakeNas:
         if parts == ["create"]:
             name = f"unos_backup_20261108_1200{len(self.backups):02d}.tar.gz" + (".enc" if body.get("encrypt") else "")
             self.backups[name] = body.get("passphrase") if body.get("encrypt") else None
+            self.databases[name] = self.database()
             return {"status": "success", "encrypted": bool(body.get("encrypt")), "backup": {"filename": name}}
         if parts[0] == "restore":
             if parts[1] not in self.backups:
@@ -1125,10 +1259,12 @@ class FakeNas:
                 raise Refused(400, "Passphrase required for encrypted backup")
             if passphrase != self.backups[parts[1]]:
                 raise Refused(400, "Wrong passphrase, or the backup is damaged")
-            raise AssertionError("the checks never restore a backup")
+            assert parts[1] in self.databases, "a restore of a backup that no check made"
+            return self.restore(parts[1])
         if parts[0] not in self.backups:
             raise Refused(404, "Backup not found")
         del self.backups[parts[0]]
+        self.databases.pop(parts[0], None)
         return {"status": "deleted", "filename": parts[0]}
 
     def offsite_answer(self) -> dict:
@@ -1475,6 +1611,28 @@ class FakeNas:
             self.fs.pop(path, None)
         return sorted(p.rsplit("/", 1)[1] for p in self.fs if os.path.dirname(p) == "/mnt/pools")
 
+    def archive_members(self, name, passphrase=""):
+        """REMOTE_ARCHIVE: the members of a backup, as src/backup/router.py and the Scheduler write
+        them; an encrypted one opens only with its passphrase."""
+        self.device_call("archive_members")
+        if name not in self.backups:
+            raise scenario.Failed(f"the device answered status 1: FileNotFoundError: /data/backups/{name}")
+        if self.backups[name] is not None and passphrase != self.backups[name]:
+            raise scenario.Failed("the device answered status 1: cryptography.exceptions.InvalidTag")
+        scheduled = name.startswith("auto_backup_")
+        members = ["manifest.json", "fstab", "unos.db"] + (["scheduled_tasks.json"] if scheduled else [])
+        if ("scheduled-backup-holds-smb-conf" if scheduled else "backup-holds-smb-conf") in self.bugs:
+            members.append("smb.conf")
+        return members
+
+    def db_copies(self, action="list", names=()):
+        """REMOTE_DB_COPIES: the copies of the database from before a restore, after removing NAMES."""
+        self.device_call("db_copies")
+        if action == "remove":
+            assert all(re.fullmatch(r"unos\.db\.pre-restore-\d{8}_\d{6}_\d{6}", n) for n in names), names
+            self.copies = [n for n in self.copies if n not in names]
+        return sorted(self.copies)
+
     def restart_supervisor(self):
         """docker restart unos-supervisor: the copy's problem goes with the process, and the API
         answers before the startup reconcile has applied (reconcile)."""
@@ -1819,7 +1977,7 @@ def test_a_failure_at_any_call_of_a_step_still_removes_what_the_check_made(area,
         assert not nas.sessions
 
 
-@pytest.mark.parametrize("area", ["files", "smb", "volumes", "smbconf", "shares"])
+@pytest.mark.parametrize("area", ["files", "smb", "volumes", "smbconf", "shares", "restore"])
 def test_an_interruption_still_removes_what_the_check_made(area):
     steps = calls_of_the_steps(area)
     nas = FakeNas()
@@ -1986,7 +2144,7 @@ def test_the_subvolume_helper_touches_only_a_scenario_check_s_folder(tmp_path, a
         assert result.returncode == 2 and calls == "" and "not a subvolume of a scenario check" in result.stderr
 
 
-@pytest.mark.parametrize("area", ["files", "volumes", "smb", "smbconf", "shares", "offsite"])
+@pytest.mark.parametrize("area", ["files", "volumes", "smb", "smbconf", "shares", "offsite", "restore"])
 def test_a_check_refuses_to_start_beside_leftovers_of_an_earlier_one(nas, area):
     nas.users[9] = {"username": "unoscheck0a1b2c", "is_admin": False}
     nas.fs[f"{ROOT}/unoscheck0a1b2c"] = Node("dir", 0o755)
@@ -2138,6 +2296,16 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("shares", "guest-refused", "an anonymous (null) session to the share lists it"),
     ("shares", "anonymous-writes", "an anonymous (null) session to the share lists it"),
     ("shares", "log-password", "no password of the check"),
+    ("restore", "backup-holds-smb-conf", "a backup made by hand holds no smb.conf"),
+    ("restore", "scheduled-backup-holds-smb-conf", "of a disabled scheduled backup task"),
+    ("restore", "restore-proves-nothing", "with nothing changed since"),
+    ("restore", "restore-keeps-every-password", "needs its password again"),
+    ("restore", "restore-installs-the-archived-conf", "UNOS's rendering of the restored database"),
+    ("restore", "restore-keeps-stale-account", "which no restored row has, are removed"),
+    ("restore", "restore-next-uid", "which the backup's next uid would have given again"),
+    ("restore", "restore-apply-fails", "with nothing changed since"),
+    ("restore", "restore-rewrites-smb-conf", "byte for byte"),
+    ("restore", "reenable-new-uid", "under its uid"),
 ])
 def test_the_checks_fail_on_the_defects_they_exist_for(nas, area, bug, words):
     before = nas.snapshot()
@@ -2356,6 +2524,331 @@ def test_the_offsite_check_does_not_start_beside_a_copy_that_is_set_up(nas):
     assert not [c for c in nas.calls if c[0] != "GET"]
 
 
+def test_the_restore_check_restores_its_own_backup_twice(nas):
+    """ADR-0341: the device steps of shares.restore-keeps-smb-with-proof and of
+    backup.no-old-backup-import, on a backup that the check made after its baseline, which is the
+    only one it restores; the scheduled backup task is disabled and keeps every backup (no
+    keep_count, which would delete the device's own scheduled backups)."""
+    status, output = run_check("restore", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("holds no smb.conf", "manifest.json, fstab, unos.db, scheduled_tasks.json", "Run now",
+                  "with nothing changed since", "byte for byte", "restored database, smb_config",
+                  "a new password, which signs in", "SMB must be turned on again for unoscheck1a2b3cc",
+                  "UNOS's rendering of the restored database", "which no restored row has, are removed",
+                  "its password of the backup", "NT_STATUS_LOGON_FAILURE", "set by an administrator",
+                  "which the backup's next uid would have given again", "no password of the check"):
+        assert words in text, words
+    calls = [(method, path) for method, path, _, _ in nas.calls]
+    created = calls.index(("POST", "/backup/create"))
+    restores = [i for i, (method, path) in enumerate(calls) if path.startswith("/backup/restore/")]
+    assert len(restores) == 2 and created < restores[0]
+    assert len(nas.restored) == 2 and nas.restored[0] == nas.restored[1]
+    assert nas.restored[0].startswith("unos_backup_") and nas.restored[0] not in FakeNas().backups
+    task = next(body for method, path, body, _ in nas.calls if (method, path) == ("POST", "/scheduler/tasks"))
+    assert (task["task_type"], task["enabled"]) == ("backup", False) and "keep_count" not in task
+    assert len(task["passphrase"]) >= 16
+    # The user made after the second restore got the uid after the dropped user's, not the dropped one's.
+    dropped = int(re.search(r"gets write access to the share: uid (\d+)", text).group(1))
+    fresh = int(re.search(r"would have given again \(ADR-0109\): (\d+)", text).group(1))
+    assert fresh == dropped + 1
+
+
+def test_the_restore_check_does_not_start_beside_a_share_whose_access_a_restore_removes(nas):
+    """The post-restore step removes the access of a share that is not served (ADR-0145): the check
+    restores the device's own database, so on such a device it would change a share of the owner."""
+    nas.fs[f"{ROOT}/linked"] = Node("link", 0o777, content="shared")
+    nas.shares["LINKED"] = {"path": f"{ROOT}/linked", "comment": "", "version": 1,
+                            "access": [{"user_id": 2, "username": "test", "level": "read"}]}
+    before = nas.snapshot()
+    status, output = run_check("restore", nas)
+    assert status == 1
+    assert re.search(r"^FAIL  3\. no share that is not served has access, .*: shares that are not served have access, "
+                     r"which a restore removes: LINKED", output, re.M), output
+    assert not [c for c in nas.calls if c[0] != "GET"] and nas.snapshot() == before
+
+
+@pytest.mark.parametrize("found, starts", [(3, True), (4, False)])
+def test_the_restore_check_pushes_out_none_of_the_copies_of_the_database_and_removes_its_own(nas, found, starts):
+    """Each restore keeps a copy of the database from before it, and UNOS keeps the newest 5
+    (src/backup/router.py): the check's two restores start only when they push out no copy that was
+    there before, and the clean-up removes their copies, also that of a restore whose answer was lost."""
+    nas.copies = [f"unos.db.pre-restore-20261101_0900{n:02d}_000000" for n in range(found)]
+    before = nas.snapshot()
+    status, output = run_check("restore", nas)
+    if starts:
+        assert status == 0, output
+        assert f"push out none of the copies of the database from before a restore, of which UNOS keeps 5: the device " \
+               f"has {found}" in output
+        assert len(nas.restored) == 2 and "done  clean up: remove the copies of the database that the check's " \
+                                          "restores made" in output
+    else:
+        assert status == 1
+        assert re.search(r"^FAIL  4\. the check's 2 restores push out none of .*: the device has 4, "
+                         r"unos.db.pre-restore-20261101_090000_000000, .*the check's restores would delete the oldest",
+                         output, re.M), output
+        assert not [c for c in nas.calls if c[0] != "GET"]
+    assert nas.snapshot() == before
+
+
+def test_a_restore_that_drops_what_is_not_the_check_s_fails_and_its_copy_stays(nas):
+    """The first restore, with nothing changed since the backup, must keep all that the check
+    compares: when it drops what is not the check's (here the owner's API token), the copy of the
+    database from before it holds what was lost, so the clean-up keeps it and leaves it to the
+    owner. A change of the check's own users or of smb.conf alone loses nothing of anyone's."""
+    nas.bugs.add("restore-drops-tokens")
+    status, output = run_check("restore", nas)
+    assert status == 1
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert "byte for byte" in failed[0] and "the API tokens: gone 1 home assistant" in failed[0], output
+    assert len(nas.restored) == 1 and len(nas.copies) == 1
+    assert re.search(rf"^FAIL  clean up: remove the copies .*: {nas.copies[0]} stay, as they hold the database from "
+                     r"before a restore and the first restore changed the API tokens that are not the check's.*: "
+                     r"removing them is the owner's decision", output, re.M), output
+
+
+def test_a_second_restore_that_takes_what_is_not_the_check_s_fails_and_its_copies_stay(nas, monkeypatch):
+    """What someone else makes after the check's backup, such as an API token, goes with the second
+    restore: the step says so, and the copies, which hold it, stay for the owner."""
+    real = nas.api_auth
+
+    def owner_adds_a_token(method, parts, body, params, upload):
+        answer = real(method, parts, body, params, upload)
+        if method == "PUT" and len(nas.api_tokens) == 1:  # while the check gives its user a new password
+            nas.api_tokens.append({**nas.api_tokens[0], "id": 2, "name": "the owner's new token",
+                                   "token_prefix": "unos_cd34"})
+        return answer
+
+    monkeypatch.setattr(nas, "api_auth", owner_adds_a_token)
+    status, output = run_check("restore", nas)
+    assert status == 1
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert "while what is not the check's stays: what is not the check's changed: the API tokens: gone 2 the " \
+           "owner's new token" in failed[0], output
+    assert len(nas.copies) == 2
+    assert re.search(r"^FAIL  clean up: remove the copies .* and the second restore changed the API tokens that are "
+                     r"not the check's: removing them is the owner's decision", output, re.M), output
+
+
+def lose_a_restore_answer(nas: FakeNas, monkeypatch, which: int) -> list:
+    """The restore number WHICH (0-based) loses its answer and runs on, as under asyncio.shield: its
+    database is swapped at once, and its reconcile runs at the next call that waits for smb_lock
+    (a change of a share, a user's Delete). A restart of the supervisor meanwhile fails the test.
+    Returns the reconciles still pending."""
+    pending: list[Callable[[], None]] = []
+    seen: list[str] = []
+    real_shares, real_auth, real_restart = nas.api_shares, nas.api_auth, nas.restart_supervisor
+    real_restore = nas.restore
+
+    def restore(name):
+        seen.append(name)
+        if len(seen) - 1 != which:
+            return real_restore(name)
+        _, reconcile = nas.restore_database(name)
+        pending.append(reconcile)
+        raise Refused(502, "the relay lost the answer")
+
+    def run_pending() -> None:
+        while pending:
+            pending.pop(0)()
+
+    def shares(method, parts, body, params, upload):
+        if method != "GET":
+            run_pending()
+        return real_shares(method, parts, body, params, upload)
+
+    def auth(method, parts, body, params, upload):
+        if method == "DELETE":
+            run_pending()
+        return real_auth(method, parts, body, params, upload)
+
+    def restart():
+        assert not pending, "the supervisor restarted while a restore held smb_lock"
+        return real_restart()
+
+    monkeypatch.setattr(nas, "restore", restore)
+    monkeypatch.setattr(nas, "api_shares", shares)
+    monkeypatch.setattr(nas, "api_auth", auth)
+    monkeypatch.setattr(nas, "restart_supervisor", restart)
+    return pending
+
+
+@pytest.mark.parametrize("which", [0, 1])
+def test_the_clean_up_waits_for_a_restore_whose_answer_was_lost(nas, monkeypatch, which):
+    """A restore whose answer was lost runs on, holding smb_lock to the end of its reconcile
+    (asyncio.shield): the clean-up waits for it before it lists the copies of the database or looks
+    for the dropped user's accounts, so it removes what that restore made, and restarts nothing in
+    the middle of its reconcile."""
+    before = nas.snapshot()
+    pending = lose_a_restore_answer(nas, monkeypatch, which)
+    status, output = run_check("restore", nas)
+    assert status == 1 and len(nas.restored) == which + 1 and not pending, output
+    assert "done  clean up: remove the copies of the database that the check's restores made" in output
+    assert nas.restarts == 0 and nas.snapshot() == before, output
+
+
+def test_a_lost_restore_that_drops_what_is_not_the_check_s_leaves_its_copy(nas, monkeypatch):
+    """The first restore loses its answer and drops the owner's API token: with no comparison
+    around it, the clean-up still finds the token missing against the baseline and keeps the copy."""
+    nas.bugs.add("restore-drops-tokens")
+    lose_a_restore_answer(nas, monkeypatch, 0)
+    status, output = run_check("restore", nas)
+    assert status == 1 and len(nas.copies) == 1
+    assert re.search(r"^FAIL  clean up: remove the copies .*: \S+ stay, as they hold the database from before a "
+                     r"restore and the API tokens that are not the check's differ from how they were at the baseline "
+                     r"or before a restore: removing them is the owner's decision", output, re.M), output
+
+
+def test_a_lost_second_restore_that_takes_what_someone_made_after_the_backup_leaves_its_copies(nas, monkeypatch):
+    """The owner makes an API token after the check's backup, and the second restore, whose answer
+    is lost, drops it: the baseline never had it, so the clean-up compares with how things were
+    before that restore, and keeps both copies, the second of which holds the token."""
+    lose_a_restore_answer(nas, monkeypatch, 1)
+    real = nas.api_auth
+
+    def owner_adds_a_token(method, parts, body, params, upload):
+        answer = real(method, parts, body, params, upload)
+        if method == "PUT" and len(nas.api_tokens) == 1:  # while the check gives its user a new password
+            nas.api_tokens.append({**nas.api_tokens[0], "id": 2, "name": "the owner's new token",
+                                   "token_prefix": "unos_cd34"})
+        return answer
+
+    monkeypatch.setattr(nas, "api_auth", owner_adds_a_token)
+    status, output = run_check("restore", nas)
+    assert status == 1 and len(nas.copies) == 2
+    assert re.search(r"^FAIL  clean up: remove the copies .* and the API tokens that are not the check's differ from "
+                     r"how they were at the baseline or before a restore: removing them", output, re.M), output
+
+
+def test_the_restore_check_leaves_out_the_refused_sign_ins_where_the_device_has_a_guest_share(nas):
+    """With a guest share Samba takes a user without a Samba account as a guest (map to guest = Bad
+    User, ADR-0339), so the sign-ins of the user whose SMB a restore turned off cannot be refused:
+    the check says so in place of that step, and passes."""
+    nas.shares["DATA"]["guest_ok"] = True
+    nas.apply()
+    status, output = run_check("restore", nas)
+    assert status == 0, output
+    assert re.search(r"^SKIP  \d+\. the password of unoscheck1a2b3cc at the backup and its newer one are both refused "
+                     r"with NT_STATUS_LOGON_FAILURE: the device has guest shares \(DATA\)", output, re.M), output
+
+
+def test_the_restore_check_expects_unos_s_texts():
+    """The texts the check reads: a restore's warning for an account that needs its password again
+    (src/shares/accounts.py) and the output of a scheduled backup's run (src/scheduler/router.py)."""
+    accounts_source = (REPO_ROOT / "supervisor" / "src" / "shares" / "accounts.py").read_text()
+    assert 'say(f"SMB must be turned on again for {_shown(username)}")' in accounts_source
+    assert scenario.TURN_ON_AGAIN == "SMB must be turned on again for "
+    scheduler_source = (REPO_ROOT / "supervisor" / "src" / "scheduler" / "router.py").read_text()
+    assert 'return True, f"Backup {backup_name} created.{cleanup_msg}"' in scheduler_source
+    assert 'publish_backup_file(tmp, "auto_backup", ENCRYPTED_EXTENSION)' in scheduler_source
+    assert scenario.SCHEDULED_BACKUP.match("Backup auto_backup_20261111_030000_1.tar.gz.enc created.").group(1) == (
+        "auto_backup_20261111_030000_1.tar.gz.enc")
+    # The copies of the database that a restore keeps, which the check's clean-up removes.
+    from src.backup.router import PRE_RESTORE_COPIES
+
+    assert scenario.PRE_RESTORE_COPIES == PRE_RESTORE_COPIES
+    source = (REPO_ROOT / "supervisor" / "src" / "backup" / "router.py").read_text()
+    assert 'copy_path = db_path.with_name(f"{db_path.name}.pre-restore-{timestamp}")' in source
+    assert 'timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")' in source
+
+
+@pytest.fixture
+def backups_folder(tmp_path):
+    """A plain backup and an encrypted one as src/backup/router.py writes them (the Scheduler's key),
+    and a fake docker whose exec runs the command with this Python, as the container's would."""
+    from src.backup.router import _write_archive, encrypt_with_key, new_backup_key
+
+    folder = tmp_path / "backups"
+    content = tmp_path / "content"
+    folder.mkdir()
+    content.mkdir()
+    (content / "manifest.json").write_text("{}")
+    (content / "unos.db").write_bytes(b"SQLite format 3\x00")
+    archive = io.BytesIO()
+    _write_archive(content, archive)
+    (folder / "unos_backup_20261111_120000.tar.gz").write_bytes(archive.getvalue())
+    key = new_backup_key("the passphrase of the task")
+    (folder / "auto_backup_20261111_030000.tar.gz.enc").write_bytes(encrypt_with_key(archive.getvalue(), key))
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo "$*" >> "{tmp_path}/docker.log"\n'
+        '[ "$1 $2 $3 $4" = "exec -i unos-supervisor python" ] || exit 99\n'
+        f'shift 4\nexec "{sys.executable}" "$@"\n')
+    (stubs / "docker").chmod(0o755)
+    return folder, {"PATH": f"{stubs}:/usr/bin:/bin", "UNOS_DEV_BACKUPS": str(folder)}
+
+
+@pytest.mark.parametrize("name, passphrase, code, members", [
+    ("unos_backup_20261111_120000.tar.gz", "", 0, ["manifest.json", "unos.db"]),
+    ("auto_backup_20261111_030000.tar.gz.enc", "the passphrase of the task", 0, ["manifest.json", "unos.db"]),
+    ("auto_backup_20261111_030000.tar.gz.enc", "a wrong passphrase", 1, []),
+    ("../unos.db", "", 2, []),
+    ("unos_backup_20261111_120000.tar.gz --rm", "", 2, []),
+])
+def test_the_archive_helper_lists_the_members_of_a_backup(backups_folder, name, passphrase, code, members):
+    """REMOTE_ARCHIVE runs python in the supervisor's container with the passphrase on standard
+    input, opens an encrypted backup as the backup router writes it, and takes only a backup's name."""
+    folder, env = backups_folder
+    payload = scenario.Device.payload(scenario.REMOTE_ARCHIVE, read_only=False) + passphrase + "\n"
+    result = subprocess.run(["bash", "-s", "--", name], input=payload, env=env, capture_output=True, text=True)
+    assert result.returncode == code, result.stderr
+    assert [line.split(" ", 1)[1] for line in result.stdout.splitlines() if line.startswith("member ")] == members
+    log = folder.parent / "docker.log"
+    assert log.exists() == (code != 2)
+    assert not passphrase or passphrase not in log.read_text()
+
+
+def test_the_copies_helper_removes_only_copies_of_the_database(tmp_path):
+    """REMOTE_DB_COPIES, which removes without the read-only namespace: only names of copies that a
+    restore keeps, unos.db.pre-restore-<time>; a symbolic link is no copy."""
+    data = tmp_path / "data"
+    data.mkdir()
+    names = ["unos.db.pre-restore-20261111_093655_615365", "unos.db.pre-restore-20261111_151329_766127"]
+    for name in names + ["unos.db"]:
+        (data / name).write_bytes(b"SQLite format 3\x00")
+    (data / "unos.db.pre-restore-20261111_000000_000000").symlink_to(data / "unos.db")
+    env = {"PATH": "/usr/bin:/bin", "UNOS_DEV_DATA": str(data)}
+
+    def run(*args):
+        result = subprocess.run(["bash", "-s", "--", *args], input=scenario.REMOTE_DB_COPIES, env=env,
+                                capture_output=True, text=True)
+        return result.returncode, [line[5:] for line in result.stdout.splitlines() if line.startswith("copy ")]
+
+    assert run("list") == (0, names)
+    for bad in ("unos.db", "../unos.db.pre-restore-20261111_093655_615365", "unos.db.pre-restore-*"):
+        assert run("remove", names[1], bad)[0] == 2, bad
+    assert run("list") == (0, names)
+    assert run("remove", names[1]) == (0, names[:1])
+    assert sorted(p.name for p in data.iterdir()) == sorted(["unos.db", names[0], "unos.db.pre-restore-20261111_000000_000000"])
+
+
+def test_the_device_removes_copies_without_the_read_only_namespace_and_lists_them_with_it(stub):
+    device = device_with_stub(stub)
+    (stub.log / "reply").write_text("copy unos.db.pre-restore-20261111_093655_615365\n")
+    assert device.db_copies("remove", ("unos.db.pre-restore-20261111_151329_766127",)) == [
+        "unos.db.pre-restore-20261111_093655_615365"]
+    argv = (stub.log / "argv").read_text()
+    assert "unshare" not in argv and "remove unos.db.pre-restore-20261111_151329_766127" in argv
+    for name in ("argv", "stdin"):
+        (stub.log / name).unlink()
+    assert device.db_copies() == ["unos.db.pre-restore-20261111_093655_615365"]
+    assert "unshare --mount --propagation private bash -s -- list" in (stub.log / "argv").read_text()
+
+
+def test_the_device_reads_a_backup_s_members_in_the_read_only_namespace_with_the_passphrase_on_standard_input(stub):
+    device = device_with_stub(stub)
+    (stub.log / "reply").write_text("member manifest.json\nmember unos.db\n")
+    passphrase = "pp-" + os.urandom(8).hex()
+    assert device.archive_members("auto_backup_20261111_030000.tar.gz.enc", passphrase) == ["manifest.json", "unos.db"]
+    argv = (stub.log / "argv").read_text()
+    assert passphrase not in argv and passphrase not in (stub.log / "env").read_text()
+    assert "unshare --mount --propagation private bash -s -- auto_backup_20261111_030000.tar.gz.enc" in argv
+    sent = (stub.log / "stdin").read_text()
+    assert sent.startswith("{\n" + scenario.RO_ROOT + "\n") and sent.endswith("\n}\n" + passphrase + "\n")
+
+
 def test_the_backups_check_refuses_restores_and_never_restores(nas):
     status, output = run_check("backups", nas)
     assert status == 0, output
@@ -2363,6 +2856,7 @@ def test_the_backups_check_refuses_restores_and_never_restores(nas):
     assert len(restores) == 3
     assert restores[0][0] == "/backup/restore/unoscheck1a2b3c.tar.gz"
     assert restores[1][1] == {} and set(restores[2][1]) == {"passphrase"}
+    assert nas.restored == []
 
 
 def test_no_temporary_secret_reaches_the_output(nas):
@@ -2376,7 +2870,7 @@ def test_no_temporary_secret_reaches_the_output(nas):
 
     nas.request = request
     out = []
-    for area in ("smb", "backups"):
+    for area in ("smb", "backups", "restore"):
         status, output = run_check(area, nas)
         assert status == 0, output
         out.append(output)

@@ -85,6 +85,29 @@ SD writes of each check (ADR-0214). The areas:
            the state. The clean-up waits for a copy or restore that still runs, and removes the
            check's folders, its restored folders and its offsite_ backups: while the check's
            target is the device's only one, no other copy or restore can make them.
+  restore  Restores of a backup that the check makes by hand moments before (ADR-0341), on a
+           device where no share that is not served has access, which a restore removes: two
+           users with SMB on and a share with write access for both; the backup by hand and one
+           that Run now of a disabled scheduled backup task makes, whose members (read in the
+           supervisor's container) hold no smb.conf, the second deleted with its task; a restore
+           with nothing changed since the backup, which keeps the users, the shares, the API
+           tokens, the SMB host accounts, Samba's accounts and smb.conf byte for byte; then a new
+           password for one user, which signs in, and a new user with SMB on and access to the
+           share, and the same restore again: the users and the share as at the backup, smb.conf
+           rendered from the restored database (only the first user in the share's section, and
+           testparm takes it), the new user's host account and Samba account removed with its row
+           (stale), the first user's password of the backup signing in a session that writes, the
+           second user's two passwords refused, and SMB on again for it with a password set by an
+           administrator under its uid; a user made after the restore gets a uid above the new
+           user's, which the backup's next uid would have given again (ADR-0109); no password of
+           the check in an answer or a log; the deletes. Each restore ends the device's sessions
+           but the relay's (ADR-0329) and keeps a copy of the database from before it, which the
+           clean-up removes once no restore can still run, unless a restore changed a user, a
+           share, an API token of the relay's administrator or an account that is not the check's:
+           then the copies stay, named by the clean-up's FAIL, for the owner. The check starts only
+           when its two restores push out none of the copies that UNOS keeps (the newest 5). Where
+           the device has a guest share, Samba takes a user without a Samba account as a guest
+           (ADR-0339), so the refused sign-ins of the second user are left out.
 
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
 of an earlier check. It makes what it needs through the API, under names made of "unoscheck"
@@ -104,13 +127,18 @@ files in /dev/shm: stat, the account files' digests, testparm, Samba's log sizes
 a client configuration of its own in RAM, the scan for passwords, the shares check's entries on
 the pool (which the namespace leaves writable) and getfacl; only pdbedit runs without that
 namespace, since tdbsam opens passdb.tdb read-write, and the smbconf check's edit of smb.conf by
-hand, which writes /etc/samba (ADR-0309), and the scrub check's folder below the pools'
-base, on the root filesystem (ADR-0314). The passwords of the temporary user and the
-backup's passphrase are made here, go to the device only on standard input (to the relay, and
-into an auth file of mode 600 in RAM that smbclient reads), and are never printed. The shares
-check's user signs in through the relay with a token cache of its own in RAM (USER_TOKEN, mode
-600 like the administrator's, ADR-0222), which its clean-up deletes. The checks start no
-container (ADR-0183); the smbconf check restarts the supervisor's (ADR-0309).
+hand, which writes /etc/samba (ADR-0309), the scrub check's folder below the pools'
+base, on the root filesystem (ADR-0314), and the restore check's removal of the copies of the
+database that its restores keep in the supervisor's data volume (ADR-0341). The restore check lists
+a backup's members with python in the supervisor's running container (docker exec, as deploy.sh's
+checks after up do, ADR-0183), which reads the backup in memory and writes nothing. The passwords of
+the temporary users and the backups' passphrases are made here, go to the device only on standard
+input (to the relay, into an auth file of mode 600 in RAM that smbclient reads, and to that python),
+and are never printed. The shares check's user signs in through the relay with a token cache of its
+own in RAM (USER_TOKEN, mode 600 like the administrator's, ADR-0222), which its clean-up deletes.
+The checks start no container (ADR-0183); the smbconf check restarts the supervisor's (ADR-0309),
+and so does the restore check's clean-up when a restore left a host account or Samba account that
+no row has, which the startup reconcile removes (ADR-0341).
 
 Settings: dev.env (env.sh); UNOS_DEV_SHM, the RAM folder of the SMB helper on the device
 (/dev/shm; the tests run it here). Standard library only; Python 3.9 or later.
@@ -143,7 +171,7 @@ import api as relay  # noqa: E402  scripts/dev/api.py
 
 SSH = HERE / "ssh.sh"
 SD = HERE / "sd.sh"
-AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "shares", "scrub", "offsite")
+AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "shares", "scrub", "offsite", "restore")
 MARK = "unoscheck"
 LEFTOVER = re.compile(MARK + r"[0-9a-f]{6}")
 POOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -604,6 +632,72 @@ done
 echo "unos-supervisor is not healthy 180 seconds after its restart" >&2
 exit 1'''
 
+# The members of a backup (the restore check, ADR-0341), read by python in the supervisor's
+# container, which has the backup and the cryptography package: argv: the backups' folder and the
+# backup's name; for an encrypted one (.tar.gz.enc), the first line of standard input is its
+# passphrase. The file is read into memory and decrypted there as src/backup/router.py writes it
+# (salt, nonce, AES-256-GCM; the key from PBKDF2 with SHA-256; test_dev_scenarios.py opens files
+# that router.py encrypts), and nothing is written (-B). Prints "member <name>" for each member.
+ARCHIVE_MEMBERS = r'''
+import hashlib, io, sys, tarfile
+folder, name = sys.argv[1:3]
+with open(folder + "/" + name, "rb") as f:
+    data = f.read()
+if name.endswith(".enc"):
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    passphrase = sys.stdin.readline().rstrip("\n").encode()
+    key = hashlib.pbkdf2_hmac("sha256", passphrase, data[:16], 100000, 32)
+    data = AESGCM(key).decrypt(data[16:28], data[28:], None)
+with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+    for member in tar:
+        print("member", member.name)'''
+
+# $1: the name of a backup in the supervisor's /data/backups. Runs ARCHIVE_MEMBERS there with
+# docker exec (no new container, ADR-0183), passing standard input on; UNOS_DEV_BACKUPS names
+# another folder of the container (the tests run it here).
+REMOTE_ARCHIVE = r'''
+set -uo pipefail
+name=$1
+if ! [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.tar\.gz(\.enc)?$ ]]; then
+    echo "not the name of a backup: $name" >&2
+    exit 2
+fi
+IFS= read -r -d '' py << 'PY'
+''' + ARCHIVE_MEMBERS.strip("\n") + r'''
+PY
+docker exec -i unos-supervisor python -I -B -c "$py" "${UNOS_DEV_BACKUPS:-/data/backups}" "$name"'''
+
+# The copies of the database that a restore keeps next to it, unos.db.pre-restore-<time>, of which
+# src/backup/router.py keeps the newest PRE_RESTORE_COPIES (the restore check, ADR-0341). $1: list,
+# or remove with the names of copies after it, which runs without the read-only namespace: the
+# supervisor's data volume is on the root filesystem. Removes only names of such copies; prints
+# "copy <name>" for each copy afterwards. UNOS_DEV_DATA names the folder (the tests run it here).
+REMOTE_DB_COPIES = r'''
+set -uo pipefail
+action=$1
+shift
+data=${UNOS_DEV_DATA:-}
+if [ -z "$data" ]; then
+    data=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' unos-supervisor) || data=
+fi
+[ -n "$data" ] && [ -d "$data" ] || { echo "the supervisor's data volume was not found" >&2; exit 1; }
+case $action in
+    list) ;;
+    remove)
+        for name in "$@"; do
+            if ! [[ $name =~ ^unos\.db\.pre-restore-[0-9]{8}_[0-9]{6}_[0-9]{6}$ ]]; then
+                echo "not a copy of the database from before a restore: $name" >&2
+                exit 2
+            fi
+        done
+        for name in "$@"; do rm -f -- "$data/$name" || exit 1; done
+        ;;
+    *) echo "not an action: $action" >&2; exit 2 ;;
+esac
+for f in "$data"/unos.db.pre-restore-*; do
+    if [ -f "$f" ] && [ ! -L "$f" ]; then echo "copy ${f##*/}"; fi
+done'''
+
 
 # --- results ---------------------------------------------------------------------------------
 
@@ -852,6 +946,18 @@ class Device:
         if len(out) != 2 or out[0] != "healthy" or not out[1].isdigit():
             raise Failed(f"the restart answered {' '.join(out)!r}")
         return int(out[1])
+
+    def archive_members(self, name: str, passphrase: str = "") -> list[str]:
+        """The members of the backup NAME (REMOTE_ARCHIVE); an encrypted one is opened with
+        PASSPHRASE, which goes on standard input."""
+        out = self.run(REMOTE_ARCHIVE, name, data=passphrase + "\n")
+        return [line[len("member "):] for line in out.splitlines() if line.startswith("member ")]
+
+    def db_copies(self, action: str = "list", names: tuple[str, ...] = ()) -> list[str]:
+        """REMOTE_DB_COPIES: the copies of the database from before a restore, after removing NAMES
+        (remove runs without the read-only namespace: it writes the data volume)."""
+        out = self.run(REMOTE_DB_COPIES, action, *names, read_only=action == "list")
+        return sorted(line[len("copy "):] for line in out.splitlines() if line.startswith("copy "))
 
 
 class SmbSession:
@@ -1543,18 +1649,25 @@ def backups_check(c: Check) -> None:
 # --- SMB -------------------------------------------------------------------------------------
 
 
-def smb_global(conf: str) -> dict[str, str]:
-    """The [global] lines of smb.conf."""
-    found: dict[str, str] = {}
+def smb_section(conf: str, name: str) -> dict[str, str] | None:
+    """The lines of smb.conf's section NAME (in any case), or None when it has none."""
+    found: dict[str, str] | None = None
     section = None
     for line in conf.splitlines():
         line = line.strip()
         if line.startswith("["):
             section = line.strip("[]").lower()
-        elif section == "global" and "=" in line and not line.startswith(("#", ";")):
+            if section == name.lower() and found is None:
+                found = {}
+        elif found is not None and section == name.lower() and "=" in line and not line.startswith(("#", ";")):
             key, _, value = line.partition("=")
             found[" ".join(key.split()).lower()] = value.strip()
     return found
+
+
+def smb_global(conf: str) -> dict[str, str]:
+    """The [global] lines of smb.conf."""
+    return smb_section(conf, "global") or {}
 
 
 def marked_account(c: Check, user: str) -> None:
@@ -1838,12 +1951,18 @@ def problems_of(c: Check) -> list[str]:
     return c.get("/shares/smb-status")["problems"]
 
 
+def wait_for_smb_lock(c: Check) -> None:
+    """Wait until no change of SMB state runs, such as a restore whose answer was lost, which
+    holds smb_lock to the end of its reconcile: a change of a share that does not exist waits for
+    it, answers 404 and changes nothing."""
+    c.call("PATCH", f"/shares/smb/{c.run}none", {}, expect=404)
+
+
 def restart_and_wait(c: Check) -> int:
     """Restart the supervisor, and wait for its startup reconcile, which holds smb_lock from
-    before the first request (src/main.py): a change of a share that does not exist waits for
-    it, answers 404 and writes nothing. The seconds until the container was healthy."""
+    before the first request (src/main.py). The seconds until the container was healthy."""
     took = c.device.restart_supervisor()
-    c.call("PATCH", f"/shares/smb/{c.run}none", {}, expect=404)
+    wait_for_smb_lock(c)
     return took
 
 
@@ -2651,6 +2770,399 @@ def offsite_check(c: Check) -> None:
         c.expect(not c.get("/offsite/settings")["configured"], "a copy is still set up")
 
 
+# --- restore ---------------------------------------------------------------------------------
+
+# The output of a scheduled backup's run that names its file (src/scheduler/router.py), and the
+# warning of a restore for a restored SMB account that needs its password again
+# (src/shares/accounts.py); test_dev_scenarios.py compares both with the code.
+SCHEDULED_BACKUP = re.compile(r"Backup (auto_backup_[0-9_]+\.tar\.gz\.enc) created\.")
+TURN_ON_AGAIN = "SMB must be turned on again for "
+# How many copies of the database from before a restore src/backup/router.py keeps: the newest.
+PRE_RESTORE_COPIES = 5
+# The check's restores: each keeps a copy, which the clean-up removes again unless a restore changed
+# what is not the check's (restore_check).
+RESTORES = 2
+
+
+def names_in(value: str | None) -> list[str]:
+    """The names of an smb.conf list (valid users, write list), sorted."""
+    return sorted(n.strip() for n in (value or "").split(",") if n.strip())
+
+
+def restore_check(c: Check) -> None:
+    """Restores of a backup that the check makes by hand moments before (ADR-0341):
+    shares.restore-keeps-smb-with-proof and the device part of backup.no-old-backup-import.
+
+    A restore puts the whole database back as it was at the backup, so the check restores only its
+    own backup, made after its baseline, and compares the users, the shares, the API tokens of the
+    relay's administrator (GET /auth/tokens lists only the caller's), smb.conf, the SMB host
+    accounts and Samba's accounts with it afterwards. What it makes after
+    the backup and a restore drops from the database is a user with SMB on: the post-restore
+    reconcile removes its host account and Samba account (stale, ADR-0110), and when a restore
+    left them, the clean-up restarts the supervisor, whose startup reconcile does. Each restore keeps
+    a copy of the database from before it, of which UNOS keeps the newest PRE_RESTORE_COPIES: the
+    check starts only when its restores push out no copy that was there before, and removes the
+    copies that are new since its baseline, which only restores make, once no restore can still run;
+    they stay when what is not the check's changed around a restore or since the baseline, as they
+    hold it from before the restore. A restored row with the uid of a live account of another name comes only from a backup of another
+    installation or a crafted archive (ADR-0112): uids are handed out once on one installation, also
+    across restores (ADR-0109), so the check shows the stale account's uid instead, and the backend
+    tests show that case (test_restore_accounts.py).
+    """
+    with c.step("a pool is mounted read-write and managed by UNOS") as s:
+        pool = c.pick_pool()
+        root = pool["mountpoint"]
+        s.text += f": {pool['name']} at {root}"
+    share = task = c.run
+    folder = f"{root}/{c.run}"
+    # same keeps its password of the backup, changed gets a new one after it; dropped is made after
+    # the backup, fresh after the second restore.
+    same, changed, dropped, fresh = (c.run + suffix for suffix in "scdf")
+    passwords = {name: c.secret() for name in (same, changed, dropped, fresh)}
+    newer, again, passphrase = c.secret(), c.secret(), c.secret()
+    ids: dict[str, int] = {}
+    uids: dict[str, int] = {}
+    made: list[str] = []  # the names the API gave the check's backups
+    task_ids: list[str] = []  # the ids of the check's backup tasks
+    kept: list[str] = []  # what the restores changed beyond the check's own: the copies hold it from before
+    seen: list[dict] = []  # others() right before each restore, also one whose answer is lost
+
+    def backups() -> list[str]:
+        return sorted(b["filename"] for b in c.get("/backup/list")["backups"])
+
+    def host_accounts() -> dict[str, int]:
+        fields = [line.split(":") for line in c.device.facts()["accounts"]]
+        return {f[0]: int(f[2]) for f in fields if len(f) > 2 and f[2].isdigit()}
+
+    def view() -> dict:
+        """What a restore of a backup made moments before must keep (and the end compares)."""
+        facts = c.device.facts()
+        return {
+            "the users": sorted(f"{u['username']} " + ("admin" if u["is_admin"] else
+                                                       f"{(u.get('smb') or {}).get('state')} {(u.get('smb') or {}).get('uid')}")
+                                for u in c.get("/auth/users")),
+            "the shares": sorted(f"{s['name']} {s['path']} {s['comment']!r} guest {s['guest_ok']} "
+                                 + ",".join(f"{a['username']}:{a['level']}" for a in s["access"])
+                                 for s in c.get("/shares/smb")),
+            "the API tokens": sorted(f"{t['id']} {t['name']} {t['token_prefix']} {t['is_active']} {t['permissions']} "
+                                     f"{t.get('expires_at')}" for t in c.get("/auth/tokens")),
+            "smb.conf": facts["sha256"].get(SMB_CONF),
+            "the SMB host accounts": facts["accounts"],
+            "Samba's accounts": c.device.passdb_entries()[0],
+        }
+
+    def others(found: dict) -> dict:
+        """What FOUND (a view() or the baseline) holds that is not the check's: the users, shares, API
+        tokens of the relay's administrator and accounts whose entries do not name the run. A restore
+        that changes them loses what only the copy of the database from before it still holds."""
+        return {key: [x for x in found[key] if c.run not in x]
+                for key in ("the users", "the shares", "the API tokens", "the SMB host accounts", "Samba's accounts")}
+
+    def state() -> dict:
+        facts = c.device.facts()
+        return {
+            **view(),
+            "the account files": {f: facts["sha256"].get(f) for f in ACCOUNT_FILES},
+            "the backups": backups(),
+            "the copies of the database from before a restore": c.device.db_copies(),
+            "the Scheduler's tasks": sorted(t.get("name", "") for t in c.get("/scheduler/tasks")),
+            "the pool's top folder": sorted(i["name"] for i in c.get("/files/list", params={"path": root})["items"]),
+        }
+
+    def own_tasks() -> list[dict]:
+        return [t for t in c.get("/scheduler/tasks") if t.get("name") == task]
+
+    def delete_own_tasks() -> None:
+        for t in own_tasks():
+            if t["id"] not in task_ids:  # one whose create answer was lost
+                task_ids.append(t["id"])
+            c.call("DELETE", f"/scheduler/tasks/{t['id']}", expect=(200, 404))
+
+    def task_backups() -> list[str]:
+        """The backups that the runs of the check's tasks name, once each run has ended: also one
+        whose Run now answer was lost. The runs stay in the Scheduler's history after the task."""
+        found = []
+        for task_id in task_ids:
+            if c.get(f"/scheduler/runs/{task_id}"):
+                run_until_it_ends(c, task_id)
+            for run in c.get(f"/scheduler/runs/{task_id}"):
+                found += SCHEDULED_BACKUP.findall(run.get("output") or "")
+        return found
+
+    def remove_backups() -> None:
+        """Delete the check's backups: those the API named, and those the runs of its tasks name. One
+        made by hand whose answer was lost has no name the check knows: it is named, never deleted,
+        since a backup made by hand meanwhile would look the same."""
+        for name in made:  # first: a failed look at the runs below leaves none of these
+            c.call("DELETE", f"/backup/{name}", expect=(200, 404))
+        for name in task_backups():
+            c.call("DELETE", f"/backup/{name}", expect=(200, 404))
+        assert c.before is not None
+        unknown = [n for n in backups() if n not in c.before["the backups"] and n not in made]
+        c.expect(not unknown, "new backups whose names the check never got, " + ", ".join(unknown)
+                 + ": delete each one that is the check's (scripts/dev/api.py DELETE /backup/<name>)")
+
+    def remove_copies() -> None:
+        """Remove the copies of the database that are new since the baseline: those of the check's
+        restores, also of one whose answer was lost, once it has ended. They stay while a restore
+        may have changed what is not the check's, which they hold from before it."""
+        assert c.before is not None
+        wait_for_smb_lock(c)
+        found = c.before["the copies of the database from before a restore"]
+        new = tuple(n for n in c.device.db_copies() if n not in found)
+        if not new:
+            return
+        now = others(view())
+        changed = sorted({key for then in [others(c.before), *seen] for key in now if now[key] != then[key]})
+        why = kept or ([f"{', '.join(changed)} that are not the check's differ from how they were at the baseline or "
+                        "before a restore"] if changed else [])
+        c.expect(not why, f"{', '.join(new)} stay, as they hold the database from before a restore and "
+                          f"{'; '.join(why)}: removing them is the owner's decision")
+        left = [n for n in c.device.db_copies("remove", new) if n in new]
+        c.expect(not left, f"{', '.join(left)} are still there")
+
+    def dropped_left() -> bool:
+        return dropped in host_accounts() or dropped in c.device.passdb_entries()[0]
+
+    def remove_dropped() -> None:
+        wait_for_smb_lock(c)  # a restore whose answer was lost, with its reconcile
+        c.delete_user_named(dropped)
+        if dropped_left():  # a restore dropped its row and left them: the startup reconcile removes them
+            restart_and_wait(c)
+            c.expect(not dropped_left(), f"{dropped} still has a host account or a Samba account after a restart of "
+                                         "the supervisor")
+
+    def make_user(name: str) -> None:
+        answer = c.post("/auth/users", {"username": name, "password": passwords[name], "smb_enabled": True})
+        smb = answer.get("smb") or {}
+        c.expect(smb.get("state") == "active" and isinstance(smb.get("uid"), int),
+                 f"the SMB of {name} is {smb.get('state')}, uid {smb.get('uid')}: {answer.get('warnings')}")
+        ids[name], uids[name] = answer["id"], smb["uid"]
+
+    def entry(name: str) -> dict:
+        return {"user_id": ids[name], "username": name, "level": "write"}
+
+    def principals(conf: str | None = None) -> tuple[list[str], list[str]]:
+        """The valid users and the write list of the share's section in smb.conf (CONF, or as read now)."""
+        if conf is None:
+            conf = c.device.read(SMB_CONF) or ""
+        section = smb_section(conf, share) or {}
+        return names_in(section.get("valid users")), names_in(section.get("write list"))
+
+    def holds_no_smb_conf(name: str, members: list[str]) -> None:
+        c.expect("manifest.json" in members and "unos.db" in members, f"{name} holds {members}")
+        conf = [m for m in members if "smb.conf" in m]
+        c.expect(not conf, f"{name} holds {', '.join(conf)}")
+
+    def restored(answer: dict) -> list[str]:
+        items = answer.get("restored") or []
+        c.expect(answer.get("status") == "success" and "database" in items and "smb_config" in items,
+                 f"it answered {answer.get('status')}, restored {items}: {answer.get('message')}")
+        return items
+
+    with c.step("the device holds nothing of an earlier check"):
+        c.baseline(state)
+
+    with c.step("no share that is not served has access, which a restore would remove (ADR-0145), Samba runs UNOS's "
+                "smb.conf without problems, and the device has smbclient, stdbuf, testparm and pdbedit"):
+        unserved = [s["name"] for s in c.get("/shares/smb") if not s.get("served") and (s.get("access") or s.get("guest_ok"))]
+        c.expect(not unserved, f"shares that are not served have access, which a restore removes: {', '.join(unserved)}")
+        status = c.get("/shares/smb-status")
+        c.expect(not status.get("problems"), "the Shares page reports: " + "; ".join(status.get("problems") or []))
+        facts = c.device.facts()
+        missing = sorted({"smbclient", "stdbuf", "testparm", "pdbedit", "getent"} - set(facts["tools"]))
+        c.expect(not missing, f"the device lacks {', '.join(missing)} (installing one is an owner action)")
+        c.expect(facts["testparm"], "testparm refuses smb.conf")
+        since = facts["now"]
+        guests = sorted(status.get("guest_shares") or [])
+
+    with c.step(f"the check's {RESTORES} restores push out none of the copies of the database from before a restore, "
+                f"of which UNOS keeps {PRE_RESTORE_COPIES}") as s:
+        assert c.before is not None
+        copies = c.before["the copies of the database from before a restore"]
+        c.expect(len(copies) + RESTORES <= PRE_RESTORE_COPIES,
+                 f"the device has {len(copies)}, {', '.join(copies)}, and the check's restores would delete the "
+                 "oldest: removing those that are not needed is the owner's decision")
+        s.text += f": the device has {len(copies)}"
+
+    with c.step(f"two users {same} and {changed} with SMB on get marked host accounts with their uids and Samba "
+                "accounts") as s:
+        for name in (same, changed):
+            c.on_cleanup(f"delete the user {name}", lambda name=name: c.delete_user_named(name))
+            make_user(name)
+        accounts = host_accounts()
+        c.expect(all(accounts.get(n) == uids[n] for n in (same, changed)), f"getent passwd has {accounts}")
+        found = c.device.passdb_entries()[0]
+        c.expect(same in found and changed in found, "pdbedit -L lacks one")
+        s.text += f": uids {uids[same]} and {uids[changed]}"
+
+    with c.step(f"the share {share} on a new folder with write access for both, which Samba serves with both in "
+                "its section"):
+        c.on_cleanup(f"delete {folder} for good", lambda: c.delete_for_good(folder))
+        c.on_cleanup(f"delete the share {share}", lambda: c.delete_share(share))
+        answer = c.post("/shares/smb", {"name": share, "path": folder, "access": [entry(same), entry(changed)]})
+        c.expect(answer.get("served") and answer.get("available"),
+                 f"it is served {answer.get('served')}, available {answer.get('available')}: {answer.get('path_problem')}")
+        valid, writers = principals()
+        c.expect(valid == writers == sorted([same, changed]), f"its section has valid users {valid}, write list {writers}")
+
+    with c.step("a backup made by hand holds no smb.conf") as s:
+        c.on_cleanup("delete the check's backups", remove_backups)
+        plain = c.post("/backup/create", {})["backup"]["filename"]
+        made.append(plain)
+        c.expect(plain in backups(), f"{plain} is not listed")
+        members = c.device.archive_members(plain)
+        holds_no_smb_conf(plain, members)
+        s.text += f": {plain} holds {', '.join(members)}"
+
+    with c.step(f"a backup made by Run now of a disabled scheduled backup task {task} holds no smb.conf, and it is "
+                "deleted with its task") as s:
+        c.on_cleanup(f"delete the Scheduler's task {task}", delete_own_tasks)
+        answer = c.post("/scheduler/tasks", {"name": task, "task_type": "backup", "enabled": False, "frequency": "daily",
+                                             "hour": 3, "minute": 0, "passphrase": passphrase})
+        task_ids.append(answer["id"])
+        c.expect(answer.get("has_backup_key") is True, f"the task has no key: {answer.get('has_backup_key')}")
+        c.post(f"/scheduler/tasks/{answer['id']}/run")
+        run = run_until_it_ends(c, answer["id"])
+        named = SCHEDULED_BACKUP.match(run.get("output") or "")
+        c.expect(run.get("status") == "success" and named,
+                 f"its run ended {run.get('status')}: {run.get('output') or run.get('error')}")
+        scheduled = named.group(1)  # type: ignore[union-attr]
+        members = c.device.archive_members(scheduled, passphrase)
+        holds_no_smb_conf(scheduled, members)
+        c.call("DELETE", f"/backup/{scheduled}")
+        c.call("DELETE", f"/scheduler/tasks/{answer['id']}")
+        c.expect(scheduled not in backups() and not own_tasks(), "the backup or the task is still there")
+        s.text += f": {scheduled} holds {', '.join(members)}"
+
+    with c.step(f"a restore of {plain}, with nothing changed since, keeps the users, the shares, the API tokens, the "
+                "SMB host accounts and Samba's accounts, and smb.conf byte for byte") as s:
+        before = view()
+        c.on_cleanup("remove the copies of the database that the check's restores made", remove_copies)
+        seen.append(others(before))
+        answer = c.post(f"/backup/restore/{plain}", {})
+        after = view()
+        differ = [key for key in before if after.get(key) != before[key]]
+        theirs, now = others(before), others(after)
+        if [key for key in theirs if now[key] != theirs[key]]:
+            kept.append(f"the first restore changed {', '.join(key for key in theirs if now[key] != theirs[key])} that "
+                        "are not the check's")
+        items = restored(answer)
+        asked = [w for w in answer.get("warnings") or [] if w.startswith(TURN_ON_AGAIN)]
+        c.expect(not asked, f"it answered {asked}")
+        c.expect(not differ, "; ".join(f"{key}: {describe(before[key], after.get(key))}" for key in differ))
+        s.text += f": restored {', '.join(items)}"
+
+    with c.step(f"after the backup, {changed} gets a new password, which signs in, and a new user {dropped} with SMB "
+                "on gets write access to the share") as s:
+        c.call("PUT", f"/auth/users/{ids[changed]}", {"password": newer, "username": changed})
+        listing = c.device.smb_list(changed, newer)
+        c.expect(listing.ok and share in listing.disks, f"smbclient -L: {listing.status}, {listing.disks}")
+        c.on_cleanup(f"delete the user {dropped}, and its host account and Samba account if a restore left them",
+                     remove_dropped)
+        make_user(dropped)
+        c.expect(uids[dropped] > max(uids[same], uids[changed]), f"it got uid {uids[dropped]}")
+        version = c.get(f"/shares/smb/{share}")["version"]
+        c.call("PATCH", f"/shares/smb/{share}", {"expected_version": version,
+                                                 "access": [entry(same), entry(changed), entry(dropped)]})
+        valid, _ = principals()
+        c.expect(valid == sorted([same, changed, dropped]), f"the share's section has valid users {valid}")
+        s.text += f": uid {uids[dropped]}"
+
+    with c.step(f"the same restore again puts the users and the share back as at the backup: {same} keeps SMB on, "
+                f"{changed} needs its password again, both with their uids, and {dropped} is gone, while what is not "
+                "the check's stays") as s:
+        theirs = others(view())
+        seen.append(theirs)
+        answer = c.post(f"/backup/restore/{plain}", {})
+        now = others(view())
+        differ = [key for key in theirs if now[key] != theirs[key]]
+        if differ:
+            kept.append(f"the second restore changed {', '.join(differ)} that are not the check's")
+        c.expect(not differ, "what is not the check's changed: "
+                 + "; ".join(f"{key}: {describe(theirs[key], now[key])}" for key in differ))
+        restored(answer)
+        asked = sorted(w for w in answer.get("warnings") or [] if w.startswith(TURN_ON_AGAIN))
+        c.expect(asked == [TURN_ON_AGAIN + changed], f"it asks {asked}")
+        users = {u["username"]: u.get("smb") or {} for u in c.get("/auth/users")}
+        c.expect(dropped not in users, f"{dropped} is still a user")
+        for name, want in ((same, "active"), (changed, "password_needed")):
+            got = users.get(name, {})
+            c.expect((got.get("state"), got.get("uid")) == (want, uids[name]),
+                     f"the SMB of {name} is {got.get('state')} with uid {got.get('uid')}, not {want} with {uids[name]}")
+        access = sorted((a["username"], a["level"]) for a in c.get(f"/shares/smb/{share}")["access"])
+        c.expect(access == [(changed, "write"), (same, "write")], f"the share's access is {access}")
+        s.text += f": {asked[0]}"
+
+    with c.step(f"smb.conf is UNOS's rendering of the restored database: the share's section lets in {same} alone, "
+                f"not {changed}, which needs its password, nor {dropped}, and testparm takes it"):
+        conf = c.device.read(SMB_CONF) or ""
+        c.expect(conf.startswith(SMB_HEADER), "smb.conf does not start with UNOS's header")
+        valid, writers = principals(conf)
+        c.expect(valid == writers == [same], f"the share's section has valid users {valid}, write list {writers}")
+        c.expect(dropped not in conf, f"smb.conf names {dropped}")
+        c.expect(c.device.facts()["testparm"], "testparm refuses smb.conf")
+
+    with c.step(f"the host account and Samba account of {dropped}, which no restored row has, are removed; {same} "
+                f"and {changed} keep their host accounts with their uids, and {same} alone its Samba account"):
+        accounts = host_accounts()
+        c.expect(dropped not in accounts, f"{dropped} still has its host account, uid {accounts.get(dropped)}")
+        c.expect(all(accounts.get(n) == uids[n] for n in (same, changed)),
+                 f"getent passwd has {', '.join(f'{n} {u}' for n, u in sorted(accounts.items()) if n.startswith(c.run))}")
+        found = [n for n in c.device.passdb_entries()[0] if n.startswith(c.run)]
+        c.expect(found == [same], f"pdbedit -L lists {found}")
+
+    with c.step(f"{same} signs in with its password of the backup, in a signed session that writes to the share"):
+        with c.device.smb_session(same, passwords[same], share) as smb:
+            done = smb.run("put data.txt s.txt")
+        c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
+        c.expect(c.device.read(f"{folder}/s.txt") == DATA, "s.txt holds other bytes")
+
+    refused = (f"the password of {changed} at the backup and its newer one are both refused with "
+               "NT_STATUS_LOGON_FAILURE")
+    if guests:  # map to guest = Bad User: Samba takes a user without a Samba account as a guest (ADR-0339)
+        c.skip(refused, f"the device has guest shares ({', '.join(guests)}), so Samba takes a user without a Samba "
+                        f"account as a guest (ADR-0339); pdbedit -L lists none of {changed}")
+    else:
+        with c.step(refused):
+            for which, password in (("the backup's", passwords[changed]), ("the newer", newer)):
+                listing = c.device.smb_list(changed, password)
+                c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE",
+                         f"{which} answered {listing.status}")
+
+    with c.step(f"{changed} gets SMB on again with a password set by an administrator, under its uid "
+                f"{uids[changed]}, and signs in with it"):
+        answer = c.post(f"/auth/users/{ids[changed]}/smb/enable", {"username": changed, "password": again})
+        smb_state = answer.get("smb") or {}
+        c.expect((smb_state.get("state"), smb_state.get("uid")) == ("active", uids[changed]),
+                 f"its SMB is {smb_state.get('state')} with uid {smb_state.get('uid')}: {answer.get('warnings')}")
+        listing = c.device.smb_list(changed, again)
+        c.expect(listing.ok and share in listing.disks, f"smbclient -L: {listing.status}, {listing.disks}")
+
+    with c.step(f"a new user {fresh} with SMB on gets a uid above {uids[dropped]} of {dropped}, which the backup's "
+                "next uid would have given again (ADR-0109)") as s:
+        c.on_cleanup(f"delete the user {fresh}", lambda: c.delete_user_named(fresh))
+        make_user(fresh)
+        c.expect(uids[fresh] > uids[dropped], f"it got uid {uids[fresh]}")
+        s.text += f": {uids[fresh]}"
+
+    with c.step("no password of the check is in an answer, the supervisor's log, the journal, Samba's log or the "
+                "audit log"):
+        c.scanned(since, ("the supervisor's log", "the journal", "Samba's log", "the audit log"))
+
+    with c.step("Delete removes the share's section from smb.conf, the users' Delete their host accounts and Samba "
+                "accounts, and the backup's Delete the backup"):
+        c.call("DELETE", f"/shares/smb/{share}")
+        c.expect(f"[{share}]" not in (c.device.read(SMB_CONF) or ""), "smb.conf still has the section")
+        for name in (fresh, changed, same):
+            c.call("DELETE", f"/auth/users/{ids[name]}", params={"username": name})
+        accounts, found = host_accounts(), c.device.passdb_entries()[0]
+        left = [n for n in (same, changed, fresh) if n in accounts or n in found]
+        c.expect(not left, f"{', '.join(left)} still have an account")
+        c.call("DELETE", f"/backup/{plain}")
+        c.expect(plain not in backups(), f"{plain} is still listed")
+
+
 CHECKS: dict[str, Callable[[Check], None]] = {
     "files": files_check,
     "volumes": volumes_check,
@@ -2661,6 +3173,7 @@ CHECKS: dict[str, Callable[[Check], None]] = {
     "shares": shares_check,
     "scrub": scrub_check,
     "offsite": offsite_check,
+    "restore": restore_check,
 }
 
 
@@ -2695,7 +3208,7 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("area", choices=AREAS)
     parser.add_argument("--pool", type=pool_name,
-                        help="the pool of the files, volumes, smb, smbconf, shares, scrub and offsite checks")
+                        help="the pool of the files, volumes, smb, smbconf, shares, scrub, offsite and restore checks")
     args = parser.parse_args(argv)
     if not lock_holder_alive(os.environ.get("UNOS_DEV_LOCK_HELD", "")):
         print("scenario.py: run it through scripts/dev/scenario.sh, which holds the device lock (ADR-0210)", file=sys.stderr)

@@ -59,8 +59,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    gone: the script prints the owner action that makes it again.
 
 6. **Run a scenario check, when the owner asked for one.** `scripts/dev/scenario.sh <area>`
-   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `offsite`, or `all`; `--pool <name>` where
-   several pools are mounted), the checks of the host-level entries that the feature-pass
+   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `offsite`, `restore`,
+   or `all`; `--pool <name>` where several pools are mounted), the checks of the host-level entries that the feature-pass
    skill's table names (ADR-0304). They change the device: they make a temporary user, share,
    volume, Scheduler task and folders named `unoscheck<6 hex digits>`, and two backups, through
    the API, and
@@ -68,8 +68,15 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    (ADR-0309), `shares` makes entries of other owners and modes on the pool over ssh, signs in as
    its user and turns guest access on for its share, which lowers signing for the whole server
    while it runs (ADR-0100, ADR-0340), `scrub` scrubs the pool, three times on a small pool, and leaves its last
-   scrub result (ADR-0314), and `offsite` sets up an off-device copy to a folder of the pool and
-   forgets it again (ADR-0337); it refuses to start on a device that has one set up.
+   scrub result (ADR-0314), `offsite` sets up an off-device copy to a folder of the pool and
+   forgets it again (ADR-0337); it refuses to start on a device that has one set up, and
+   `restore` restores a backup it made moments before, twice, which puts the device's database
+   back as it was then and ends the web sessions but the relay's (ADR-0341); it refuses to start
+   beside a share that is not served and has access, which a restore removes, or beside more than
+   3 copies `unos.db.pre-restore-*` of the database, of which UNOS keeps 5 (thinning them out is
+   the owner's decision), and removes the 2 that its restores make, unless a restore changed a
+   user, share, API token of the relay's administrator or account that is not the check's: then
+   they stay, named by its FAIL, as they hold that data, and removing them is the owner's decision.
    `all` takes several minutes: run it in the background as
    `timeout 3600 scripts/dev/scenario.sh all > <log> 2>&1` (a background command has a deadline,
    ADR-0335), or in the foreground with a tool timeout long enough, since a check that is killed
