@@ -308,6 +308,7 @@ and this index, and `make check-fast` runs it.
 | [0232](0232-file-manager-renames-in-the-row-and-never-replaces.md) | The file manager renames one selected item in its row and never replaces an entry | accepted | 2026-11-07 |
 | [0259](0259-deleted-items-go-to-the-trash-of-their-pool-or-volume-for-30-days.md) | Deleted items go to the trash of their pool or volume for 30 days, unless they are restored or deleted for good | accepted | 2026-11-07 |
 | [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | New folders and uploads of the file manager in a share folder get 2770 and 0660 | superseded by [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | 2026-11-08 |
+| [0347](0347-an-upload-that-gets-no-data-for-120-seconds-is-cut-off-with-408.md) | An upload that gets no data for 120 seconds is cut off with 408 | accepted | 2026-11-11 |
 
 ## System
 

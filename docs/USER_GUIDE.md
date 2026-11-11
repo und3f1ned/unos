@@ -766,7 +766,9 @@ in your storage pools from the web interface. It starts in the pools directory
 - **Upload** - Click the upload arrow at the top right and choose one or more
   files. They go to the folder that was open when you chose them, also if you
   open another folder while they upload. A file with the same name is
-  replaced.
+  replaced. An upload that gets no data for 2 minutes (the network dropped,
+  or the computer went to sleep) fails, and nothing of it is kept: upload
+  the file again.
 - **New Folder** - Click **+** at the top right, type the name, then press
   Enter or click **Create**.
 - **Keyboard and screen readers** - The name of each folder and file is a
@@ -1640,7 +1642,8 @@ backup in the list has **Restore**, **Download** and **Delete** buttons.
   `.tar.gz.enc` for an encrypted backup. It is stored under a new name,
   `uploaded_<date>_<time>` with the same extension. A file named
   `.tar.gz.enc` that is not encrypted, an unencrypted backup or any other
-  gzip file, is refused.
+  gzip file, is refused. An upload that gets no data for 2 minutes fails,
+  and nothing of it is kept.
 - **Restore** - Type the backup's file name to confirm; an encrypted backup
   also needs its passphrase. Restoring replaces the database with the one in
   the backup: the user accounts with their passwords, two-factor

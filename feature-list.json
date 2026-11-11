@@ -2388,10 +2388,14 @@
         "An upload whose client stops sending is cut off after a read timeout, and its space is freed",
         "Hidden .unos-upload-<hex> files left by a stop, on filesystems without O_TMPFILE, are found and removed with the owner's consent"
       ],
+      "verified_by": [
+        "supervisor/tests/test_upload_streaming.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0167"
-      ]
+      ],
+      "notes": "Step 1 done (ADR-0347): request_limits.receive_upload waits at most UPLOAD_IDLE_TIMEOUT (120) seconds for each chunk of the body, for file manager and backup uploads alike; then it answers 408 \"The upload timed out: the client sent nothing for 120 seconds\" with Connection: close, and the upload's discard frees its file. A client that keeps sending, however slowly, is not cut off. Tests: the stops_sending and keeps_sending tests of test_upload_streaming.py (ASGI and through uvicorn). Not checked on the dev device yet. Step 2 open: the hidden .unos-upload-<hex> files that a stop leaves on filesystems without O_TMPFILE."
     },
     {
       "id": "files.group-writable-entries-in-shares",
