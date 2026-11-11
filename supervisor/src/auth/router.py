@@ -398,8 +398,17 @@ async def setup_totp(
         raise HTTPException(status_code=400, detail="2FA is already enabled")
 
     secret = pyotp.random_base32()
-    current_user.totp_secret = secret
+    # Stored only while 2FA is still off: a confirmation that turned it on after the check above
+    # keeps the secret whose code it took, which this one would replace (ADR-0343).
+    result = await db.execute(
+        update(User)
+        .where(User.id == current_user.id, User.totp_enabled.is_not(True))
+        .values(totp_secret=secret)
+        .execution_options(synchronize_session=False)
+    )
     await db.commit()
+    if result.rowcount != 1:
+        raise HTTPException(status_code=400, detail="2FA is already enabled")
 
     totp = pyotp.TOTP(secret)
     uri = totp.provisioning_uri(name=current_user.username, issuer_name="UNOS")
@@ -422,26 +431,31 @@ async def enable_totp(
     if current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="2FA is already enabled")
 
-    check = check_totp_code(current_user.id, current_user.totp_secret, data.code)
+    secret = current_user.totp_secret
+    check = check_totp_code(current_user.id, secret, data.code)
     if check is not TotpCheck.OK:
         raise HTTPException(
             status_code=400, detail=TOTP_CODE_REUSED if check is TotpCheck.REUSED else "Invalid TOTP code"
         )
 
-    username = current_user.username
-    # Written only while 2FA is still off (NULL counts as off, as above): of two requests that
-    # both found it off, each with a code of its own time step, the second changes nothing
-    # and answers as when 2FA was already on (ADR-0343). A new setup starts without recovery
+    user_id, username = current_user.id, current_user.username
+    # Written only while 2FA is still off (NULL counts as off, as above) and the secret is still
+    # the one the code was checked against (ADR-0343). Of two requests that both found it off,
+    # each with a code of its own time step, the second changes nothing and answers as when 2FA
+    # was already on. After a setup in another tab replaced the secret, the code confirms
+    # nothing: 2FA stays off, not on with a secret the user may never have scanned, and the
+    # request answers as when there is no setup to confirm. A new setup starts without recovery
     # codes: none of an earlier one comes back (ADR-0238).
     result = await db.execute(
         update(User)
-        .where(User.id == current_user.id, User.totp_enabled.is_not(True))
+        .where(User.id == user_id, User.totp_enabled.is_not(True), User.totp_secret == secret)
         .values(totp_enabled=True, recovery_codes=None)
         .execution_options(synchronize_session=False)
     )
     await db.commit()
     if result.rowcount != 1:
-        raise HTTPException(status_code=400, detail="2FA is already enabled")
+        enabled = await db.scalar(select(User.totp_enabled).where(User.id == user_id))
+        raise HTTPException(status_code=400, detail="2FA is already enabled" if enabled else "Run /totp/setup first")
     await _own_account_audit(
         request, AuditAction.TOTP_ENABLED, username, "Two-factor authentication turned on by the user"
     )

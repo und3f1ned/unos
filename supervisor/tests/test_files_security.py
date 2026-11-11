@@ -1168,6 +1168,59 @@ def test_a_move_refuses_a_bind_mount_before_anything_is_moved(env, monkeypatch, 
     assert _tree(env.pool) == ["a.txt", "archive", *(["bound", "bound/f.txt"] if kind == "folder" else ["bound"])]
 
 
+@pytest.mark.parametrize("to", ["the same pool", "another pool"])
+def test_a_move_refuses_a_file_that_is_a_bind_mount_with_another_st_dev(env, monkeypatch, to):
+    """Its st_dev is not the destination's, and it has nothing below it, yet the mount table shows it (ADR-0348).
+
+    Within its pool, a file bind-mounted from another filesystem has that
+    filesystem's st_dev, and rename(2) refuses it with EBUSY. To another
+    pool, rename(2) fails with EXDEV: the move copies it, and then its
+    delete fails with EBUSY. Either only after the item before it moved.
+    """
+    (env.pool / "a.txt").write_text("a")
+    bound = env.pool / "f"
+    bound.write_text("f")
+    env.mounts.mount(bound, root="/elsewhere/f")
+    if to == "the same pool":
+        archive = env.pool / "archive"
+        archive.mkdir()
+        monkeypatch.setattr(files_router, "os", _OsWithSubvolumes([bound]))
+        _busy_rename(monkeypatch, "f")
+    else:
+        archive = env.base / "backup" / "archive"
+        archive.mkdir(parents=True)
+        monkeypatch.setattr(files_router, "os", _OsWithSubvolumes([env.base / "backup"]))
+        _cross_device_rename(monkeypatch, "a.txt", "f")
+        unlink = files_router.os.unlink
+
+        def busy_unlink(name, *, dir_fd=None):
+            if name == "f":
+                raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
+            return unlink(name, dir_fd=dir_fd)
+
+        monkeypatch.setattr(files_router.os, "unlink", busy_unlink)
+    assert files_router.os.stat(bound).st_dev != files_router.os.stat(archive).st_dev
+    copies = []
+    copy_entry = files_router._copy_entry
+
+    def recorded_copy(src_dir_fd, name, *args):
+        copies.append(name)
+        copy_entry(src_dir_fd, name, *args)
+
+    monkeypatch.setattr(files_router, "_copy_entry", recorded_copy)
+
+    response = _move(env.client, [env.pool / "a.txt", bound], archive)
+
+    assert (response.status_code, response.json()["detail"]) == (
+        409,
+        "'f' is a separate subvolume or filesystem (such as a snapshot or a mount point) "
+        "and cannot be moved in the file manager.",
+    )
+    assert copies == []
+    assert _tree(env.pool) == (["a.txt", "archive", "f"] if to == "the same pool" else ["a.txt", "f"])
+    assert _tree(archive) == []
+
+
 def test_a_move_that_fails_part_way_says_how_many_items_went_before(env, monkeypatch):
     """E.g. a bind mount made after the check, which rename(2) refuses (EBUSY): the first item has moved."""
     (env.pool / "a.txt").write_text("a")

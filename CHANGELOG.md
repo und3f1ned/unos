@@ -717,6 +717,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- Two-factor authentication set up in two tabs at once could be turned on
+  with a secret that the user had not scanned, and so lock them out: a setup
+  that stored its new secret while the other tab's code was being accepted,
+  or just after that code turned 2FA on. Turning 2FA on now needs the secret
+  its code was checked against to be still the stored one (otherwise 400
+  "Run /totp/setup first"), and a setup never replaces the secret of 2FA that
+  is on (400 "2FA is already enabled").
 - The dashboard's Temperature card shows the CPU's temperature (Intel's
   package; AMD's Tdie, or Tctl where the CPU has no Tdie) or the SoC's
   (`cpu_thermal`, and the RK3588's `soc_thermal` or `package_thermal`): it
@@ -909,10 +916,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   failed: Device or resource busy`. It is refused with 409, as a delete of
   it is: `'<name>' is a separate subvolume or filesystem (such as a snapshot
   or a mount point) and cannot be renamed in the file manager` (moved for a
-  move). A move checks every item first, so such a folder among several
-  items moves none of them, and a move that stops part way says how many
-  items moved before it. Any other file operation that the system refuses
-  as busy answers 409 too.
+  move). A move checks every item first, a file that is a bind mount too,
+  also one moved to another pool or volume (it was copied there before the
+  move failed), so such an item among several items moves none of them, and
+  a move that stops part way says how many items moved before it. Any other
+  file operation that the system refuses as busy answers 409 too.
 - Names that are not valid UTF-8, which apps and SMB users can give to
   folders and subvolumes in a pool, broke storage operations: a subvolume
   with such a name made listing volumes fail (HTTP 500). Such names are now

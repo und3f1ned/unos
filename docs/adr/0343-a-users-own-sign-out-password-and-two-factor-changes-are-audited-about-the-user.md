@@ -39,7 +39,13 @@ entries to real changes; ADR-0251 lets only a sign-in answer when its entry cann
   entry. Each code is accepted once (ADR-0067), but two requests can each take a code of its
   own time step after both found 2FA off (or on): the second then changes nothing and answers
   400 "2FA is already enabled" (or "2FA is not enabled"), as when it finds 2FA on (or off)
-  before its code.
+  before its code. The UPDATE that turns 2FA on also requires the secret its code was checked
+  against (`User.totp_secret == secret`), and a setup stores its new secret with an UPDATE only
+  while 2FA is off (`User.totp_enabled.is_not(True)`, else 400 "2FA is already enabled"): a
+  setup in another tab that replaced the secret after the check leaves 2FA off, and the request
+  answers 400 "Run /totp/setup first" while 2FA is still off, as when there is no setup to
+  confirm, instead of turning 2FA on with a secret the user may never have scanned, and a setup
+  never replaces the secret of 2FA that is on.
 - The entry follows the commit: a change whose commit fails, such as on a full `/data`,
   answers an error and writes no entry, neither in the audit log nor in the supervisor's log.
 - An entry that cannot be written, such as on a full `/data`, is in the supervisor's log

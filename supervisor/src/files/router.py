@@ -244,9 +244,9 @@ def _refuse_separate_filesystem(dir_fd: int, st: os.stat_result, parts: list[str
     below a directory before it is deleted or moved to another filesystem.
     A bind mount from the same filesystem has the same st_dev: the mount
     table shows it, to _refuse_nested_filesystems before a delete or a move
-    to another filesystem, and to _refuse_separate_filesystems before a move
-    on its filesystem; renaming it fails with EBUSY, which _rename answers
-    with this refusal (_refuse_busy, ADR-0348).
+    to another filesystem, and to _refuse_separate_filesystems before any
+    move; renaming it fails with EBUSY, which _rename answers with this
+    refusal (_refuse_busy, ADR-0348).
     """
     if not stat.S_ISDIR(st.st_mode) or st.st_dev == os.fstat(dir_fd).st_dev:
         return
@@ -392,11 +392,12 @@ def _refuse_separate_filesystems(plan: list[list[str]], action: str, *, moving_t
     Directories are also checked for subvolumes and mount points below them:
     all of them before a delete; before a move (``moving_to`` is the st_dev
     of the destination), those on another filesystem, which are copied and
-    then deleted. An entry moved within its filesystem is refused when it is
-    a mount point itself, such as a bind mount from the same filesystem,
-    which has the same st_dev (ADR-0348): rename(2) would refuse it with
-    EBUSY only after the entries before it had moved. Without the mount
-    table, that is left to rename(2) (_readable_mount_points, _refuse_busy).
+    then deleted. Before a move, every entry, a file too, is refused when it
+    is a mount point itself, such as a bind mount, whatever its st_dev
+    (ADR-0348): rename(2) would refuse it with EBUSY, or a move to another
+    filesystem would copy it and then fail to delete it (EBUSY), only after
+    the entries before it had moved. Without the mount table, that is left
+    to rename(2) and the delete (_readable_mount_points, _refuse_busy).
     """
     mount_points = None
     within = _readable_mount_points() if moving_to is not None else None
@@ -409,9 +410,9 @@ def _refuse_separate_filesystems(plan: list[list[str]], action: str, *, moving_t
             if st is None:
                 continue
             _refuse_separate_filesystem(dir_fd, st, parts, action)
+            if within is not None and os.fsencode(_display_path(parts)) in within:
+                raise HTTPException(409, _separate_detail(parts[-1], action))
             if moving_to is not None and st.st_dev == moving_to:
-                if within is not None and os.fsencode(_display_path(parts)) in within:
-                    raise HTTPException(409, _separate_detail(parts[-1], action))
                 continue
             if not stat.S_ISDIR(st.st_mode):
                 continue

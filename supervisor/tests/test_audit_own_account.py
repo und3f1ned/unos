@@ -9,24 +9,30 @@ code, an API token at the sign-out) and a request that found nothing to change w
 (ADR-0320: entries record real changes). An entry that cannot be written, as on a full /data, is in
 the supervisor's log, and the change, already stored, answers as it does otherwise (as a sign-in
 does, ADR-0251). The entry follows the commit: a change that cannot be stored writes none.
+Turning 2FA on also needs the secret its code was checked against to be still the stored one, and
+a setup never replaces the secret of 2FA that is on (TestTwoFactor).
 """
 from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from typing import Callable
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from src.audit import router as audit_router
 from src.auth import router as auth_router
 from src.auth import utils as auth_utils
 from src.auth.models import APIToken
 from src.auth.utils import decode_access_token, generate_api_token
 from src.main import app
 
-from .test_sign_in_full_disk import ENTRY_LOST, every_commit_fails, fill_data, reported, sign_in, the_audit_log_is_full
+from .test_sign_in_full_disk import (
+    ATTEMPT_LOST, ENTRY_LOST, every_commit_fails, fill_data, reported, sign_in, the_audit_log_is_full,
+)
 from .test_smb_accounts import ALICE_PW, API, NEW_PW, SECRETS, RecordingClient, World
 from .test_totp_once import SECRET, Clock
 
@@ -34,6 +40,10 @@ CLIENT = "192.0.2.20"  # the address the test client connects from
 BROWSER = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 FIELDS = ("action", "username", "ip_address", "user_agent", "resource_type", "resource_id", "details",
           "severity", "success")
+# The fields of an audit entry or a login attempt whose digits are their own: the microseconds of a
+# timestamp are six digits, as a two-factor code is, and an entry's id and hashes may hold six in a
+# row too. The teardown's scan for codes leaves them out (free_text).
+NOT_FREE_TEXT = ("id", "timestamp", "prev_hash", "hash")
 
 
 class RecordingClock(Clock):
@@ -49,6 +59,22 @@ class RecordingClock(Clock):
         self.secrets.add(secret)
         self.codes.add(code)
         return code
+
+
+def free_text(record: dict) -> str:
+    """``record``, an audit entry or a login attempt, as JSON without its fields NOT_FREE_TEXT."""
+    kept = {key: value for key, value in record.items() if key not in NOT_FREE_TEXT}
+    return json.dumps(kept, ensure_ascii=False)  # an escape such as \u2026 would add digits
+
+
+def free_message(message: str) -> str:
+    """A log record's ``message``, with the audit entry or login attempt that it reports in place
+    of storing it (ENTRY_LOST, ATTEMPT_LOST) as free_text."""
+    for prefix in (ENTRY_LOST, ATTEMPT_LOST):
+        if message.startswith(prefix):
+            record, end = json.JSONDecoder().raw_decode(message, len(prefix))
+            return prefix + free_text(record) + message[end:]
+    return message
 
 
 @pytest.fixture
@@ -72,10 +98,9 @@ def world(tmp_path, monkeypatch, caplog, clock):
     # In a fixture's teardown caplog.records holds only the teardown's records.
     records = [r for when in ("setup", "call", "teardown") for r in caplog.get_records(when)]
     assert records, "the log was not captured"
-    texts = [(f"the log ({r.name})", r.getMessage()) for r in records]
-    texts += [("an answer", body) for body in w.client.bodies if body not in w.setup_answers]
-    if w.audit_file.exists():
-        texts.append(("the audit log", w.audit_file.read_text()))
+    logged = [(f"the log ({r.name})", r.getMessage()) for r in records]
+    answers = [("an answer", body) for body in w.client.bodies if body not in w.setup_answers]
+    texts = logged + answers + ([("the audit log", w.audit_file.read_text())] if w.audit_file.exists() else [])
     for password in SECRETS:
         w.fake.assert_no_secret(password)
         assert [where for where, text in texts if password in text] == [], "a password"
@@ -86,6 +111,10 @@ def world(tmp_path, monkeypatch, caplog, clock):
     for secret in {*clock.secrets, *(json.loads(answer)["secret"] for answer in w.setup_answers)}:
         w.fake.assert_no_secret(secret)
         assert [where for where, text in texts if secret in text] == [], "a two-factor secret"
+    # Codes are looked for in the same places, with the audit entries and login attempts, in the
+    # audit log and where the log reports them, as free_text.
+    texts = [(where, free_message(text)) for where, text in logged if where != "the log (aiosqlite)"]
+    texts += answers + [("the audit log", free_text(entry)) for entry in w.audit()]
     for code in clock.codes:
         alone = re.compile(rf"(?<![0-9]){code}(?![0-9])")
         assert [where for where, text in texts if alone.search(text)] == [], "a two-factor code"
@@ -361,6 +390,89 @@ class TestTwoFactor:
         user = world.user("alice")
         assert (user.totp_enabled, user.totp_secret) == ((True, secret) if turn == "on" else (False, None))
         assert [entry["action"] for entry in world.audit()] == ["totp_enabled" if turn == "on" else "totp_disabled"]
+
+    def test_a_setup_that_replaced_the_secret_meanwhile_keeps_2fa_off(self, world, clock, monkeypatch):
+        """Two tabs: this one's code matched its secret, and then the other tab's setup stored a
+        new secret before this one turned 2FA on. 2FA stays off with the new secret, which only
+        the other tab's QR code shows, and this request answers as when there is no setup to
+        confirm: turned on, it would ask for codes of a secret the user may never have scanned,
+        and the recovery codes would be gone (ADR-0343)."""
+        auth = headers(world)
+        first = new_secret(world, auth)
+        real = auth_router.check_totp_code
+        newer = []
+
+        def a_setup_meanwhile(user_id, totp_secret, code):
+            check = real(user_id, totp_secret, code)
+            if not newer:  # a request of its own, answered before this one goes on
+                newer.append(new_secret(world, headers(world)))
+            return check
+
+        monkeypatch.setattr(auth_router, "check_totp_code", a_setup_meanwhile)
+        response = world.client.post(f"{API}/auth/totp/enable", json={"code": clock.code(first)}, headers=auth)
+
+        assert (response.status_code, response.json().get("detail")) == (400, "Run /totp/setup first")
+        user = world.user("alice")
+        assert (user.totp_enabled, user.totp_secret) == (False, newer[0])
+        assert world.audit() == []
+        # A code of the new secret turns it on.
+        clock.next_step()
+        enabled = world.client.post(f"{API}/auth/totp/enable", json={"code": clock.code(newer[0])}, headers=auth)
+        assert enabled.status_code == 200, enabled.text
+        assert (world.user("alice").totp_enabled, world.user("alice").totp_secret) == (True, newer[0])
+
+    def test_a_setup_never_replaces_the_secret_of_2fa_turned_on_meanwhile(self, world, clock, monkeypatch):
+        """This setup found 2FA off, and then the other tab's code turned it on before this setup
+        stored its new secret. 2FA keeps the secret whose code was typed, and this setup stores
+        and shows nothing and answers as when it finds 2FA on (ADR-0343)."""
+        auth = headers(world)
+        first = new_secret(world, auth)
+        real = auth_router.pyotp.random_base32
+        enabled = []
+
+        def turned_on_meanwhile():
+            secret = real()
+            clock.secrets.add(secret)  # this setup's secret, which no answer and no log may hold
+            if not enabled:  # a request of its own, answered before this one goes on
+                enabled.append(world.client.post(f"{API}/auth/totp/enable", json={"code": clock.code(first)},
+                                                 headers=headers(world)))
+            return secret
+
+        monkeypatch.setattr(auth_router.pyotp, "random_base32", turned_on_meanwhile)
+        response = world.client.post(f"{API}/auth/totp/setup", headers=auth)
+
+        assert enabled[0].status_code == 200, enabled[0].text
+        assert (response.status_code, response.json().get("detail")) == (400, "2FA is already enabled")
+        user = world.user("alice")
+        assert (user.totp_enabled, user.totp_secret) == (True, first)
+        assert [entry["action"] for entry in world.audit()] == ["totp_enabled"]
+
+    @pytest.mark.parametrize("entry", ["written", "lost"])
+    def test_a_timestamp_with_the_digits_of_a_code_is_not_a_code(self, world, clock, monkeypatch, entry):
+        """The microseconds of an entry's timestamp are six digits, as a code is: here they are
+        those of the code that turned 2FA on. The teardown's scan for codes leaves out an entry's
+        timestamp, id and hashes, in the audit log and where the supervisor's log reports an entry
+        that could not be written (NOT_FREE_TEXT), and finds no code."""
+        auth = headers(world)
+        secret = new_secret(world, auth)
+        while clock.code(secret) == "000000":  # isoformat() leaves out a microsecond of 0
+            clock.next_step()
+        code = clock.code(secret)
+
+        class AtTheCode(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 11, 7, 12, 0, 5, int(code), tzinfo=tz)
+
+        monkeypatch.setattr(audit_router, "datetime", AtTheCode)
+        if entry == "lost":
+            the_audit_log_is_full(monkeypatch)
+
+        response = world.client.post(f"{API}/auth/totp/enable", json={"code": code}, headers=auth)
+
+        assert response.status_code == 200, response.text
+        [stored] = world.audit() if entry == "written" else [lost for lost, _ in reported(world, ENTRY_LOST)]
+        assert (stored["action"], stored["timestamp"]) == ("totp_enabled", f"2026-11-07T12:00:05.{code}")
 
 
 class TestAnEntryThatCannotBeWritten:
