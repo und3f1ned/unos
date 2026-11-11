@@ -1514,16 +1514,18 @@
       ],
       "verified_by": [
         "supervisor/tests/test_restore_accounts.py",
-        "supervisor/tests/test_backup_restore.py"
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_dev_scenarios.py"
       ],
       "passes": false,
       "adr": [
         "ADR-0040",
         "ADR-0112",
         "ADR-0139",
-        "ADR-0141"
+        "ADR-0141",
+        "ADR-0341"
       ],
-      "notes": "Restores ran only on the stand-in, which has no Samba. Open: the device check and the re-check after a reboot (ADR-0018)."
+      "notes": "Restores with Samba ran on the device first for backup.restore (PROGRESS.md, Log, 2026-11-11, 09:36 UTC). The device check of this entry, 2026-11-11: scripts/dev/scenario.sh restore (ADR-0341), run from the workstation against the device running main b290ada, 15:38:59 to 15:39:58 UTC, OK in 20 steps, 7.207 MiB on the SD card in all; a first run at 15:13 UTC, before the step of the database copies, passed its 19 steps (7.504 MiB), and its two copies of the database were removed by hand afterwards (0.070 MiB). Two users with SMB on (uids 70025 and 70026; 1.148 MiB) and a share with write access for both (0.203 MiB); a backup by hand, which held no smb.conf (0.098 MiB); a restore of it with nothing changed since (0.484 MiB) kept the users, shares, API tokens, SMB host accounts, Samba's accounts and smb.conf byte for byte; then a new password for the second user, which signed in, and a third user with SMB on (uid 70027) and write access to the share (0.809 MiB), and the same restore again (1.152 MiB): \"success\", database and smb_config restored, the warning \"SMB must be turned on again for\" the second user alone, the first user active with 70025, the second waiting for its password with 70026, the third gone. Step 1: smb.conf with UNOS's header and the first user alone in the share's valid users and write list, which testparm took (0.000 MiB); the backup held no smb.conf to take it from. Step 2: the first user's password of the backup signed a session that wrote a file to the share (0.000 MiB), both passwords of the second, the backup's and the newer one, were refused with NT_STATUS_LOGON_FAILURE (0.000 MiB), and SMB on again for it with a password set by an administrator, under 70026, signed in (0.270 MiB). Step 3: the post-restore reconcile removed the third user's host account and Samba account, which no restored row had (stale, 0.016 MiB), and a user made after the restore got 70028, above 70027, which the backup's next uid would have given again (ADR-0109; 0.613 MiB); no password of the check was in an answer or a log (0.016 MiB); the deletes (1.883 MiB) and the clean-up, which removed the two copies of the database that the restores keep (0.078 MiB), left the device as the check found it. Not on the device: a restored row with the uid of a live account of another name, which only a backup of another installation or a crafted archive has, since one installation hands out each uid once, also across restores; building either would restore a database written outside UNOS (ADR-0341). test_restore_accounts.py TestLiveUids and TestWholePath show that case. Open: the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "shares.acl-aware-parent-check",
@@ -2214,7 +2216,8 @@
         "supervisor/tests/test_backup_restore.py",
         "supervisor/tests/test_scheduler_validation.py",
         "supervisor/tests/test_share_import.py",
-        "supervisor/tests/test_smb_models.py"
+        "supervisor/tests/test_smb_models.py",
+        "supervisor/tests/test_dev_scenarios.py"
       ],
       "passes": false,
       "adr": [
@@ -2224,9 +2227,10 @@
         "ADR-0139",
         "ADR-0142",
         "ADR-0143",
-        "ADR-0319"
+        "ADR-0319",
+        "ADR-0341"
       ],
-      "notes": "Done in the code 2026-11-10 (ADR-0319, which supersedes ADR-0040, ADR-0077, ADR-0139, ADR-0142 and ADR-0143). Step 1: a restore checks the four SMB tables of the extracted database and creates none; one that lacks them is refused with 400 and nothing changes (TestNotAuthoritative test_a_backup_without_the_smb_tables_is_refused, which failed before: the tables were created and the shares imported). Step 2: the import of the archive's smb.conf is gone, with the source 'backup' and smb_state.pending_import_conf; a database without the import marker imports the live smb.conf, never with guest access (test_the_smb_conf_of_an_older_backup_is_not_read, test_the_shares_of_the_live_file_are_imported, test_guest_access_is_not_restored), and its tests are gone or read the live file. Step 3: no backup, manual or scheduled, carries smb.conf, and BackupConfig has no include_shares (test_a_backup_holds_no_smb_conf and test_a_backup_task_stores_encrypted_backups, with the host's smb.conf in place, which failed before for scheduled backups; test_a_backup_restores_the_shares_of_its_database); a restore ignores an smb.conf in an archive, and a database of the previous layout, with pending_import_conf, restores (test_a_database_of_the_previous_layout_restores). The web UI's BackupConfig has no include_shares either. Open: host-level (GLOSSARY.md: the smb.conf that a restore leads to): on the dev device, a backup made after the deploy and a scheduled one hold no smb.conf, and a restore of the first keeps the shares and writes smb.conf byte for byte as before, with the device check and the re-check after a reboot (ADR-0018), as for backup.restore."
+      "notes": "Done in the code 2026-11-10 (ADR-0319, which supersedes ADR-0040, ADR-0077, ADR-0139, ADR-0142 and ADR-0143). Step 1: a restore checks the four SMB tables of the extracted database and creates none; one that lacks them is refused with 400 and nothing changes (TestNotAuthoritative test_a_backup_without_the_smb_tables_is_refused, which failed before: the tables were created and the shares imported). Step 2: the import of the archive's smb.conf is gone, with the source 'backup' and smb_state.pending_import_conf; a database without the import marker imports the live smb.conf, never with guest access (test_the_smb_conf_of_an_older_backup_is_not_read, test_the_shares_of_the_live_file_are_imported, test_guest_access_is_not_restored), and its tests are gone or read the live file. Step 3: no backup, manual or scheduled, carries smb.conf, and BackupConfig has no include_shares (test_a_backup_holds_no_smb_conf and test_a_backup_task_stores_encrypted_backups, with the host's smb.conf in place, which failed before for scheduled backups; test_a_backup_restores_the_shares_of_its_database); a restore ignores an smb.conf in an archive, and a database of the previous layout, with pending_import_conf, restores (test_a_database_of_the_previous_layout_restores). The web UI's BackupConfig has no include_shares either. Host-level (GLOSSARY.md: the smb.conf that a restore leads to). Device check of 2026-11-11: scripts/dev/scenario.sh restore (ADR-0341), run from the workstation against the device running main b290ada, 15:38:59 to 15:39:58 UTC, OK in 20 steps, 7.207 MiB on the SD card in all; a first run at 15:13 UTC, before the step of the database copies, passed its 19 steps (7.504 MiB), and its two copies of the database were removed by hand afterwards (0.070 MiB). A backup by hand made then, unos_backup_20261111_153913.tar.gz, held fstab, manifest.json and unos.db (0.098 MiB), and the backup of Run now of a disabled scheduled backup task, auto_backup_20261111_153914.tar.gz.enc, opened with its passphrase in the supervisor's container, held manifest.json, fstab, scheduled_tasks.json and unos.db (0.398 MiB, the task and that backup deleted again): neither held an smb.conf. A restore of the first, with the check's share and its access for two SMB users in place and nothing changed since, answered \"success\", database and smb_config, and kept the shares and smb.conf byte for byte (the same sha256), with the users, API tokens, SMB host accounts and Samba's accounts (0.484 MiB). Open: the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "backup.encrypted-scheduled-backups",
