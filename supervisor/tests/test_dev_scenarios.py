@@ -12,13 +12,19 @@ passwords that the history holds (ADR-0278), and the lock of an account after 5 
 refuses the right password as well and writes nothing (ADR-0334).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
-* every area (files, volumes, smart, backups, smb, smbconf, scrub, offsite) passes against the fake, prints a
-  PASS line with its SD MiB for each step and a summary, and leaves the device as it found it;
+* every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite) passes against the fake,
+  prints a PASS line with its SD MiB for each step and a summary, and leaves the device as it found it;
 * the smbconf check (ADR-0309) shows what an smb.conf edited by hand does: the Shares page names
   the file before an apply, the apply copies it byte for byte to smb.conf.unos-replaced, a share
   that is not served gets access only with a new folder, and a restart of the supervisor writes
   no file in /etc/samba; its hand edit runs without the read-only namespace, and its helpers on
   the device touch only a check's own section and share folder;
+* the shares check shows the device checks of shares.acl-aware-parent-check (step 3),
+  shares.repair-permissions, shares.self-activation (the user's own calls carry its own token,
+  which the clean-up deletes) and shares.read-only-guest-share, says so in place of the step of
+  mandatory signing where the device has other guest shares and in place of the ACL step without
+  setfacl; its entries helper makes the check's entries with their owners and modes and touches
+  only a check's own folders;
 * a failure at any API call of a step, before or after the call changed something (a lost
   answer), an interruption, an output that can no longer be written or a refusal of the device
   still removes what the check made, and the check fails; only a backup whose answer was lost is
@@ -31,7 +37,11 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   upload with the wrong mode, a volume that the File Manager deletes, a password in a log, an
   apply that drops a section added by hand without a copy, access granted to a share that is
   not served, a status that misses an smb.conf that is not UNOS's, a restart that writes
-  smb.conf;
+  smb.conf; a new share folder below a folder of another account, a sticky folder that excuses a
+  share folder of another account, a Repair permissions that follows a link, opens a private
+  entry, drops an ACL entry or repairs a share that is not served, SMB that takes a password of
+  7 characters or keeps the account the user turned off, a guest share without the warning,
+  an anonymous write, guest lines that stay after the last guest share;
 * no temporary password reaches the output, a command line or the environment: scenario.Device
   sends them on standard input, and the SMB helper keeps them in a file of mode 600 in RAM that
   it deletes;
@@ -55,6 +65,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import textwrap
@@ -94,6 +105,13 @@ CONF_REPLACED = ("smb.conf was replaced or removed after UNOS wrote it; it is wr
                  "restart, and SMB cannot be turned on until then")
 COPIED = ("smb.conf had shares that UNOS did not create ({}); they are kept in smb.conf.unos-replaced: "
           "create them again on the Shares page")
+# The warnings of a share change as UNOS words them (GUEST_WARNING and PERMISSIONS_WARNING of
+# src/shares/service.py; test_the_shares_check_expects_unos_s_texts compares).
+GUEST_WARNING = (scenario.GUEST_WARNS + ", and its name is visible to anyone on your network. Guests can never write. "
+                 "While a guest share exists, connections to this server are not required to be signed. Windows 11 "
+                 "refuses guest access by default, and guest connections are neither signed nor encrypted.")
+PERMISSIONS_WARNING = ("The folder's permissions are not set up for SMB users (group unos-smb, mode 2770): use Repair "
+                       "permissions")
 
 
 def digest(text: str) -> str:
@@ -119,15 +137,30 @@ def conf_sections(text: str) -> list[tuple[str, str]]:
 
 
 class Node:
-    def __init__(self, kind: str, mode: int, owner: str = "root", group: str = "root", content: str = "") -> None:
+    def __init__(self, kind: str, mode: int, owner: str = "root", group: str = "root", content: str = "",
+                 acl: list[str] | None = None) -> None:
         self.kind = kind  # dir, file, subvolume (a volume, or one made by the files check) or link
         self.mode = mode
         self.owner = owner
         self.group = group
         self.content = content
+        self.acl = acl  # the named entries of a POSIX ACL ("user:nobody:r--"), whose mask is the group bits
 
     def facts(self) -> tuple:
-        return (self.kind, self.mode, self.owner, self.group, self.content)
+        return (self.kind, self.mode, self.owner, self.group, self.content, self.acl)
+
+    def acl_lines(self) -> list[str]:
+        """What getfacl -c -E prints: the owner, the named entries, the group, the mask, other."""
+        def bits(n: int) -> str:
+            return "".join(c if n & b else "-" for c, b in (("r", 4), ("w", 2), ("x", 1)))
+        mode = self.mode
+        if not self.acl:
+            return [f"user::{bits(mode >> 6)}", f"group::{bits(mode >> 3)}", f"other::{bits(mode)}"]
+        return ([f"user::{bits(mode >> 6)}"] + self.acl + ["group::r--", f"mask::{bits(mode >> 3)}", f"other::{bits(mode)}"])
+
+
+# The accounts of the fake host: name -> uid.
+UIDS = {"root": 0, "nobody": 65534}
 
 
 class Refused(Exception):
@@ -144,18 +177,21 @@ class Interrupt(BaseException):
 class FakeSmbSession:
     """One smbclient session to a share, as REMOTE_SMB's session mode gives it to scenario.py."""
 
-    def __init__(self, nas: FakeNas, user: str, password: str, share: str) -> None:
+    def __init__(self, nas: FakeNas, user: str, password: str, share: str, guest: bool = False) -> None:
         self.nas = nas
-        self.user = user
+        self.user = user or "nobody"  # a guest works as the guest account
         self.share = share
         self.local: dict[str, str] = {"data.txt": scenario.DATA, "data2.txt": scenario.DATA2}
         self.problem = None
-        status = nas.sign_in(user, password)
-        if status is not None:
-            self.problem = f"session setup failed: {status}"
-        elif nas.level(share, user) is None:
+        if guest:  # a null session: only a guest share, read-only for guests (ADR-0096)
+            self.level = ("write" if "anonymous-writes" in nas.bugs else "read") if share in nas.guests_rendered() else None
+        else:
+            status = nas.sign_in(user, password)
+            if status is not None:
+                self.problem = f"session setup failed: {status}"
+            self.level = nas.level(share, user)  # what the tree connect was granted
+        if self.problem is None and self.level is None:
             self.problem = "tree connect failed: NT_STATUS_ACCESS_DENIED"
-        self.level = nas.level(share, user)  # what the tree connect was granted
         self.tree_closed = False
         self.killed = False
         self.ended = self.problem is not None
@@ -213,6 +249,46 @@ class FakeSmbSession:
             nas.fs[f"{folder}/{words[1]}"] = Node("dir", 0o2770, self.user, SMB_GROUP)
             return ""
         raise AssertionError(f"the fake smbclient does not know {line!r}")
+
+
+def smb_password_problem(password: str) -> str | None:
+    """smb_password_problem of src/shares/constants.py without the list of common passwords."""
+    if len(password) < 8:
+        return scenario.SMB_TOO_SHORT
+    if len(password.encode()) > 72:
+        return "SMB passwords must not be longer than 72 bytes (UTF-8)"
+    if any(ord(c) < 32 or ord(c) == 127 for c in password):
+        return scenario.SMB_CONTROL
+    return None
+
+
+class FakeUserApi:
+    """api.DeviceApi.as_user on FakeNas: a regular user's calls with its own token, which the relay
+    gets at the first call, a login with the user's password (else ApiError, as the relay's), and
+    keeps in the device's RAM under its token cache until forget_token."""
+
+    def __init__(self, nas: FakeNas, username: str, password: str, cache: str) -> None:
+        self.nas = nas
+        self.username = username
+        self.password = password
+        self.cache = cache
+        self.secrets = list(nas.secrets)
+
+    def request(self, method, path, json_body=None, params=None, auth=True, upload=None) -> Answer:
+        nas = self.nas
+        known = [u for u in nas.users.values() if u["username"] == self.username]
+        if not known or (self.cache not in nas.tokens and known[0].get("password") != self.password):
+            raise scenario.relay.ApiError(f"login as {self.username} failed: HTTP 401")
+        nas.tokens.add(self.cache)
+        nas.identity = self.username
+        try:
+            return nas.request(method, path, json_body=json_body, params=params, auth=auth, upload=upload)
+        finally:
+            nas.identity = None
+
+    def forget_token(self) -> None:
+        self.nas.tokens.discard(self.cache)
+        self.nas.forgotten.append(self.cache)
 
 
 class FakeNas:
@@ -290,6 +366,17 @@ class FakeNas:
         self.offsite_left = 0
         self.offsite_pending: tuple[str, dict] | None = None
         self.offsite_count = 0
+        # The shares check: the last Repair permissions of each share, kept in the supervisor's
+        # memory; whose token a call carries (FakeUserApi), the users' tokens that the relay keeps
+        # and those deleted; the calls answered 422 (their bodies the API's models refuse); and a
+        # device without setfacl.
+        self.repairs: dict[str, dict] = {}
+        self.identity: str | None = None
+        self.tokens: set[str] = set()
+        self.forgotten: list[str] = []
+        self.invalid: set[int] = set()
+        self.callers: list[str | None] = []  # whose token each call of calls carried; None: the administrator's
+        self.no_acl = False
 
     # --- what the tests compare
 
@@ -310,6 +397,7 @@ class FakeNas:
             "the Scheduler's tasks": copy.deepcopy(self.tasks),
             "the off-device copy": (copy.deepcopy(self.offsite), self.offsite_password,
                                     copy.deepcopy(self.offsite_status), self.offsite_running),
+            "the users' tokens in RAM": sorted(self.tokens),
         }
 
     # --- the model
@@ -349,6 +437,8 @@ class FakeNas:
             return {"state": "admin", "allowed": False}
         if user["username"] in self.passdb:
             return {"state": "active", "allowed": True, "uid": self.accounts[user["username"]]}
+        if user.get("smb_allowed"):
+            return {"state": "password_needed", "allowed": True}
         return {"state": "off", "allowed": False}
 
     def user_info(self, uid: int) -> dict:
@@ -363,28 +453,77 @@ class FakeNas:
             return f"Share path must not contain symbolic links ({path} is one)"
         return None
 
+    def unsafe_parent(self, path: str) -> tuple[str, str, str] | None:
+        """The first folder from the pool root down to PATH's parent that other accounts can change
+        (_unsafe_parent of src/shares/service.py, ADR-0153, ADR-0193): (folder, detail, commands),
+        or None. A sticky folder excuses its other writers unless PATH, in it, is another account's."""
+        parts = path[len(ROOT) + 1:].split("/")
+        chain = [ROOT] + [f"{ROOT}/{'/'.join(parts[:i])}" for i in range(1, len(parts))]
+        for folder in chain:
+            node = self.fs.get(folder)
+            if node is None:
+                return None
+            entry = self.fs.get(path) if folder == chain[-1] else None
+            foreign = entry is not None and entry.owner != "root"
+            sticky = bool(node.mode & 0o1000)
+            writable = bool(node.mode & 0o002 or (node.mode & 0o020 and node.group != "root"))
+            writable = writable and (not sticky or (foreign and "sticky-excuses-foreign" not in self.bugs))
+            owner_ok = node.owner == "root" or "foreign-parent-allowed" in self.bugs
+            if owner_ok and not writable:
+                continue
+            mode = node.mode & 0o7777
+            detail = f"mode {mode:04o}" if owner_ok else f"owner uid {UIDS[node.owner]}, mode {mode:04o}"
+            if writable and sticky:
+                detail += f", the share folder belongs to uid {UIDS[entry.owner]}"
+            chmod = f"'chmod 755 {folder}'"
+            return folder, detail, chmod if owner_ok else f"'chown root:root {folder}'" + (f" and {chmod}" if writable else "")
+        return None
+
+    def unsafe_text(self, path: str, kind: str, share: str = "") -> str | None:
+        """The refusal, warning or status problem of UnsafeFolder for a share at PATH, or None."""
+        found = self.unsafe_parent(path)
+        if found is None:
+            return None
+        folder, detail, commands = found
+        changed = f"{folder} can be changed by other accounts ({detail})"
+        if kind == "refusal":
+            return (f"Share folders must be inside folders that only root can change: {changed}. Run {commands} on "
+                    "the NAS, then try again.")
+        if kind == "warning":
+            return (f"Share folders must be inside folders that only root can change: {changed}, so they can replace "
+                    f"this share's folder. Run {commands} on the NAS.")
+        return f"Share {share}: {changed}, so they can replace the share's folder. Run {commands} on the NAS."
+
     def share_info(self, name: str) -> dict:
         info = self.shares[name]
         problem = self.path_problem(info["path"])
         access = [{**a, "smb_state": "active" if a["username"] in self.passdb else "off",
                    "effective": a["username"] in self.passdb and problem is None} for a in info["access"]]
-        return {"name": name, "path": info["path"], "comment": info["comment"], "browseable": True, "guest_ok": False,
+        guest = bool(info.get("guest_ok"))
+        return {"name": name, "path": info["path"], "comment": info["comment"], "browseable": True, "guest_ok": guest,
                 "access": access, "version": info["version"], "served": problem is None, "path_problem": problem,
-                "available": any(a["effective"] for a in access), "pool": "data", "pool_mounted": True,
-                "permissions_ok": True, "import_notes": [], "warnings": []}
+                "available": problem is None and (guest or any(a["effective"] for a in access)), "pool": "data",
+                "pool_mounted": True, "permissions_ok": True, "import_notes": [], "warnings": []}
+
+    def guests_rendered(self) -> list[str]:
+        """The served shares with guest access, which give [global] its guest lines (ADR-0098)."""
+        return sorted(name for name, info in self.shares.items()
+                      if info.get("guest_ok") and self.path_problem(info["path"]) is None)
 
     def smb_conf(self) -> str:
         """UNOS's rendering: a section per served share, each ending with UNOS's fixed lines."""
         fixed = "".join(f"   {key} = {value}\n" for key, value in scenario.UNOS_SHARE_LINES)
         sections = "".join(f"\n[{name}]\n   path = {info['path']}\n" + fixed
                            for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None)
-        return (HEADER + "\n[global]\n   server signing = mandatory\n"
-                "   map to guest = Never\n   restrict anonymous = 2\n   log file = /run/samba/log.samba\n"
-                "   max log size = 100\n" + sections)
+        # The defect guest-globals-stay keeps the guest lines once a guest share was rendered.
+        guest = bool(self.guests_rendered()) or ("guest-globals-stay" in self.bugs and getattr(self, "guest_once", False))
+        return (HEADER + "\n[global]\n" + "".join(f"   {key} = {values[guest]}\n" for key, values in scenario.GUEST_GLOBALS.items())
+                + "   log file = /run/samba/log.samba\n   max log size = 100\n" + sections)
 
     def apply(self) -> None:
         """An apply after a share change (ADR-0089): share sections that UNOS did not render go to
         smb.conf.unos-replaced first (ADR-0092); an unchanged rendering writes nothing."""
+        self.guest_once = getattr(self, "guest_once", False) or bool(self.guests_rendered())
         old, new = self.installed, self.smb_conf()
         if old == new:
             return
@@ -401,6 +540,8 @@ class FakeNas:
     def status_problems(self) -> list[str]:
         problems = [f"Share {name} is not served: {problem}" for name, info in sorted(self.shares.items())
                     if (problem := self.path_problem(info["path"]))]
+        problems += [text for name, info in sorted(self.shares.items()) if self.path_problem(info["path"]) is None
+                     and (text := self.unsafe_text(info["path"], "problem", name))]
         if self.last_apply_ok and not self.installed.startswith(HEADER) and "status-misses-replaced-file" not in self.bugs:
             problems.append(CONF_REPLACED)
         if self.replaced_problem:
@@ -454,9 +595,13 @@ class FakeNas:
     def upload(self, path: str, params: dict, filename: str, content: bytes) -> Answer:
         return self.request("POST", path, params=params, upload=(filename, content.decode()))
 
+    def as_user(self, username: str, password: str, token_cache: str) -> FakeUserApi:
+        return FakeUserApi(self, username, password, token_cache)
+
     def request(self, method, path, json_body=None, params=None, auth=True, upload=None) -> Answer:
         index = len(self.calls)
         self.calls.append((method, path, copy.deepcopy(json_body), dict(params or {})))
+        self.callers.append(self.identity)
         if index == self.interrupt_at:
             raise Interrupt()
         if index == self.fail_at:
@@ -477,6 +622,8 @@ class FakeNas:
 
     def route(self, method, path, body, params, upload):
         parts = path.strip("/").split("/")
+        if self.identity is not None and parts[0] != "auth":  # a regular user's token (ADR-0030)
+            raise Refused(403, "Admin access required")
         handler = getattr(self, "api_" + parts[0].replace("-", "_"))
         return handler(method, parts[1:], body, params, upload)
 
@@ -725,7 +872,8 @@ class FakeNas:
             self.reconcile()
         if parts == ["smb-status"]:
             return {"samba_tools_missing": [], "group_ok": True, "problems": self.status_problems(),
-                    "guest_shares": self.guest_shares,
+                    "guest_shares": sorted(set(self.guest_shares)
+                                           | {n for n, info in self.shares.items() if info.get("guest_ok")}),
                     "import_report": [],
                     "unmanaged_samba_users": [], "active_smb_users": len(self.passdb)}
         if parts == ["smb"] and method == "GET":
@@ -739,15 +887,27 @@ class FakeNas:
             for other in self.shares.values():
                 if path.startswith(other["path"] + "/") or other["path"].startswith(path + "/"):
                     raise Refused(409, "The folder overlaps another share")
+            warnings = []
             if path not in self.fs:
+                refusal = self.unsafe_text(path, "refusal")
+                if refusal:  # no folder is made below a folder that others can change (ADR-0153)
+                    raise Refused(409, refusal)
                 self.fs[path] = Node("dir", 0o750 if "share-folder-mode" in self.bugs else 0o2770, "root", SMB_GROUP)
+            else:
+                node = self.fs[path]
+                if (node.mode & 0o7777, node.group) != (0o2770, SMB_GROUP):
+                    warnings.append(PERMISSIONS_WARNING)
+                if (warning := self.unsafe_text(path, "warning")):
+                    warnings.append(warning)
             self.shares[name] = {"path": path, "comment": body.get("comment", ""), "access": body.get("access", []),
-                                 "version": 1}
+                                 "version": 1, "guest_ok": bool(body.get("guest_ok"))}
             self.apply()
-            return self.share_info(name)
+            return {**self.share_info(name), "warnings": warnings}
         name = parts[1]
         if name not in self.shares:
             raise Refused(404, f"Share {name} not found")
+        if parts[2:] == ["repair-permissions"]:
+            return self.api_repair(method, name)
         if method == "GET":
             return self.share_info(name)
         if method == "PATCH":
@@ -772,21 +932,88 @@ class FakeNas:
                     self.close_share(name)
             if "comment" in body:
                 info["comment"] = body["comment"]
+            warnings = []
+            if "guest_ok" in body:
+                if body["guest_ok"] and not info.get("guest_ok") and "no-guest-warning" not in self.bugs:
+                    warnings.append(GUEST_WARNING)
+                info["guest_ok"] = body["guest_ok"]
             info["version"] += 1
             self.apply()
-            return self.share_info(name)
+            return {**self.share_info(name), "warnings": warnings}
         del self.shares[name]
         self.close_share(name)
         self.apply()
         return {"status": "deleted", "warnings": []}
 
+    def api_repair(self, method, name):
+        """Repair permissions of a share (src/shares/repair_router.py, ADR-0155): its last result since
+        the start, or a new run, refused with 409 for a share that is not served or below a folder that
+        others can change."""
+        if method == "GET":
+            if name not in self.repairs:
+                raise Refused(404, "No repair has run for this share since UNOS started")
+            return copy.deepcopy(self.repairs[name])
+        path = self.shares[name]["path"]
+        problem = self.path_problem(path)
+        if problem and "repair-unserved" not in self.bugs:
+            raise Refused(409, f"Share {name} is not served: {problem}; change its folder first")
+        if (refusal := self.unsafe_text(path, "refusal")):
+            raise Refused(409, refusal)
+        self.repairs[name] = {"share": name, "state": "done", "started_at": "2026-11-11T10:00:00Z",
+                              "finished_at": "2026-11-11T10:00:01Z", **self.repair_walk(path),
+                              "skipped_paths": [], "errors": 0, "error_samples": [], "message": "Permissions repaired."}
+        return copy.deepcopy(self.repairs[name])
+
+    def repair_walk(self, path: str) -> dict:
+        """repair_tree (ADR-0156) on the fake: folders 2770, files 660 or 770, the group unos-smb;
+        links, private entries and other filesystems skipped, a private folder not entered; an ACL's
+        mask follows the group bits."""
+        tally = {"visited": 0, "changed": 0,
+                 "skipped": dict.fromkeys(("other_filesystem", "snapshots", "symlink", "special", "hardlink",
+                                           "private", "too_deep", "raced"), 0)}
+
+        def fix(at: str, mode: int) -> None:
+            node = self.fs[at]
+            if (node.group, node.mode) != (SMB_GROUP, mode):
+                node.group, node.mode = SMB_GROUP, mode
+                tally["changed"] += 1
+                if "repair-drops-acl" in self.bugs:
+                    node.acl = None
+
+        def visit(folder: str) -> None:
+            for at in sorted(self.children(folder)):
+                tally["visited"] += 1
+                node = self.fs[at]
+                if node.kind == "link":
+                    tally["skipped"]["symlink"] += 1
+                    if "repair-follows-links" in self.bugs:
+                        fix(os.path.normpath(os.path.join(folder, node.content)), 0o660)
+                elif node.kind == "subvolume":
+                    tally["skipped"]["other_filesystem"] += 1
+                elif node.mode & 0o077 == 0 and "repair-opens-private" not in self.bugs:
+                    tally["skipped"]["private"] += 1
+                elif node.kind == "dir":
+                    fix(at, 0o2770)
+                    visit(at)
+                else:
+                    fix(at, 0o770 if node.mode & 0o100 else 0o660)
+
+        tally["visited"] += 1
+        fix(path, 0o2770)
+        visit(path)
+        return tally
+
     def api_auth(self, method, parts, body, params, upload):
+        if self.identity is not None:
+            return self.api_own(method, "/".join(parts), body)
+        assert parts[:1] != ["me"] and parts != ["change-password"], f"/auth/{'/'.join(parts)} with the administrator's token"
         if parts == ["users"] and method == "GET":
             return [self.user_info(uid) for uid in sorted(self.users)]
         if parts == ["users"]:
             uid = self.next_user
             self.next_user += 1
-            self.users[uid] = {"username": body["username"], "is_admin": False}
+            self.users[uid] = {"username": body["username"], "is_admin": False, "password": body["password"],
+                               "smb_allowed": bool(body.get("smb_enabled"))}
             if body.get("smb_enabled"):
                 self.accounts[body["username"]] = 70000 + uid
                 self.passdb[body["username"]] = {"password": body["password"], "history": [], "bad": 0,
@@ -798,6 +1025,11 @@ class FakeNas:
         if uid not in self.users:
             raise Refused(404, "User not found")
         name = self.users[uid]["username"]
+        if parts[2:] == ["smb", "enable"]:  # an administrator allows SMB (ADR-0118)
+            if body["username"] != name:
+                raise Refused(409, f"User {uid} is now {name}")
+            self.users[uid]["smb_allowed"] = True
+            return self.user_info(uid)
         if method == "PUT":
             account = self.passdb.get(name)
             if account is not None:
@@ -814,6 +1046,62 @@ class FakeNas:
             share["access"] = [a for a in share["access"] if a["username"] != name]
         self.end_sessions(name)
         return {"status": "ok", "message": "User deleted", "warnings": []}
+
+    def api_own(self, method, what, body):
+        """A regular user's own routes (src/auth/router.py): the Account page's SMB card and the
+        password change, which keeps the token's session (ADR-0329)."""
+        uid = next(u for u, info in self.users.items() if info["username"] == self.identity)
+        user = self.users[uid]
+        name = user["username"]
+
+        def status() -> dict:
+            shares = []
+            for share, info in sorted(self.shares.items()):
+                levels = {a["level"] for a in info["access"] if a["user_id"] == uid and a["username"] == name}
+                if levels or info.get("guest_ok"):
+                    shares.append({"name": share, "comment": info["comment"], "guest_ok": bool(info.get("guest_ok")),
+                                   "level": "write" if "write" in levels else "read",
+                                   "usable": name in self.passdb or bool(info.get("guest_ok"))})
+            return {"account": self.smb_state(uid), "totp_required": False, "shares": shares}
+
+        if what == "me" and method == "GET":
+            return {"id": uid, "username": name, "is_admin": user["is_admin"], "totp_enabled": False}
+        if what == "me/smb" and method == "GET":
+            return status()
+        if method != "POST":
+            raise AssertionError(f"the fake does not know {method} /auth/{what}")
+        if what in ("change-password", "me/smb/enable") and body["current_password"] != user["password"]:
+            raise Refused(400, "Current password is incorrect")
+        if what == "change-password":
+            new = body["new_password"]
+            if len(new.encode()) > scenario.UNOS_PASSWORD_BYTES:  # NewPassword's validator: the model refuses it
+                self.invalid.add(len(self.calls) - 1)
+                raise Refused(422, [{"type": "value_error", "loc": ["body", "new_password"],
+                                     "msg": "Value error, Password must not be longer than 72 bytes (UTF-8 encoded)"}])
+            account = self.passdb.get(name)
+            if account is not None:  # an active account changes Samba's password first
+                if (problem := smb_password_problem(new)):
+                    raise Refused(400, problem)
+                account["history"] = ([account["password"]] + account["history"])[:2]
+                account["password"] = new
+                self.end_sessions(name)
+            user["password"] = new
+            return {"status": "ok", "message": "Password changed successfully", "warnings": []}
+        if what == "me/smb/enable":
+            problem = smb_password_problem(body["current_password"])
+            if problem and "smb-takes-short-password" not in self.bugs:
+                raise Refused(400, problem)
+            if not user.get("smb_allowed"):
+                raise Refused(403, "An administrator must allow SMB access for your account first")
+            self.accounts.setdefault(name, 70000 + uid)
+            self.passdb[name] = {"password": body["current_password"], "history": [], "bad": 0, "locked": False}
+            return {**status(), "warnings": []}
+        if what == "me/smb/disable":  # the allowance and the host account stay (ADR-0118)
+            if "self-off-keeps-samba" not in self.bugs:
+                self.passdb.pop(name, None)
+            self.end_sessions(name)
+            return {**status(), "warnings": []}
+        raise AssertionError(f"the fake does not know {method} /auth/{what}")
 
     def api_backup(self, method, parts, body, params, upload):
         if parts == ["list"]:
@@ -1001,7 +1289,7 @@ class FakeNas:
         digest = hashlib.sha256("\n".join(accounts).encode()).hexdigest()
         return {
             "now": 1_800_000_000,
-            "tools": ["getent", "pdbedit", "smbclient", "stdbuf", "testparm"],
+            "tools": ["getent", "pdbedit", "smbclient", "stdbuf", "testparm"] + ([] if self.no_acl else ["getfacl", "setfacl"]),
             "sha256": {"/etc/passwd": digest, "/etc/group": "g", "/etc/shadow": digest, "/etc/gshadow": "gs",
                        "/etc/samba/smb.conf": hashlib.sha256(self.installed.encode()).hexdigest()},
             "accounts": accounts,
@@ -1058,12 +1346,51 @@ class FakeNas:
         return scenario.SmbListing(0, "\n".join(disks + ["IPC|IPC$|IPC Service"]))
 
     def smb_anonymous(self):
+        """With a guest share, a null session signs in (map to guest = Bad User), but restrict
+        anonymous = 1 lets srvsvc refuse it the share list: as on the device, no share is named."""
         self.device_call("smb_anonymous")
-        return scenario.SmbListing(1, "session setup failed: NT_STATUS_ACCESS_DENIED")
+        if not self.guests_rendered():
+            return scenario.SmbListing(1, "session setup failed: NT_STATUS_ACCESS_DENIED")
+        return scenario.SmbListing(0, "")
 
     def smb_session(self, user, password, share):
         self.device_call("smb_session")
         return FakeSmbSession(self, user, password, share)
+
+    def smb_guest_session(self, share):
+        self.device_call("smb_guest_session")
+        return FakeSmbSession(self, "", "", share, guest=True)
+
+    def entries(self, action, path, acl=False):
+        """REMOTE_ENTRIES: the sticky folders, or REPAIR_ENTRIES in a share folder of the check and
+        the file outside it that link.txt points to; the other account is nobody:nogroup."""
+        self.device_call("entries")
+        if action == "sticky":
+            assert re.fullmatch(rf"{ROOT}/unoscheck[0-9a-f]{{6}}-sticky", path), path
+            if path in self.fs:
+                raise scenario.Failed(f"the device answered status 1: mkdir: {path}: File exists")
+            self.fs[path] = Node("dir", 0o1777)
+            self.fs[f"{path}/theirs"] = Node("dir", 0o1777, "nobody", "nogroup")
+        else:
+            assert action == "repair" and re.fullmatch(rf"{ROOT}/unoscheck[0-9a-f]{{6}}", path), (action, path)
+            outside = f"{path}-outside"
+            if outside in self.fs or any(f"{path}/{name}" in self.fs for name in scenario.REPAIR_ENTRIES):
+                raise scenario.Failed(f"the device answered status 1: {outside} exists")
+            self.fs[outside] = Node("dir", 0o755)
+            self.fs[f"{outside}/target.txt"] = Node("file", 0o644, content=scenario.DATA)
+            for name, (made, _) in scenario.REPAIR_ENTRIES.items():
+                mode, owner = made.format(user="nobody", group="nogroup").split()
+                user, group = owner.split(":")
+                kind = "link" if name == "link.txt" else ("file" if "." in name else "dir")
+                content = f"../{outside.rsplit('/', 1)[1]}/target.txt" if kind == "link" else (
+                    scenario.DATA if kind == "file" else "")
+                self.fs[f"{path}/{name}"] = Node(kind, int(mode, 8), user, group, content,
+                                                 ["user:nobody:r--"] if acl and name == "acl.txt" else None)
+        return {"user": "nobody", "group": "nogroup", "uid": "65534"}
+
+    def acl(self, path):
+        self.device_call("acl")
+        return self.fs[path].acl_lines()
 
     def samba_files(self):
         self.device_call("samba_files")
@@ -1294,6 +1621,122 @@ def test_after_a_lost_answer_the_smbconf_check_restarts_the_supervisor_for_the_c
     assert nas.restarts == 1 and nas.snapshot() == before, output
 
 
+# --- the shares check -------------------------------------------------------------------------
+
+
+def test_the_shares_check_covers_the_sticky_parent_repair_permissions_the_user_s_own_smb_and_a_guest_share(nas):
+    """The device checks of shares.acl-aware-parent-check (step 3), shares.repair-permissions,
+    shares.self-activation and shares.read-only-guest-share, in that order."""
+    status, output = run_check("shares", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("1777 root:root", "nobody:nogroup, uid 65534", "refused with 409",
+                  f"{ROOT}/unoscheck1a2b3c-sticky/theirs can be changed by other accounts (owner uid 65534, mode 1777)",
+                  "the share folder belongs to uid 65534", "2770 root:unos-smb", "keeps their owners", "symbolic link",
+                  "the ACL entry stays", "mask::rw-", "visited 9, changed 5, skipped symlink 1, private 2, errors 0",
+                  "Share path must not contain symbolic links", "7 characters", scenario.SMB_TOO_SHORT,
+                  scenario.SMB_CONTROL, "over 72 bytes (422)", "off, allowed False", "password_needed, allowed True",
+                  "without a two-factor code", "signed session", "turns SMB off again", "NT_STATUS_LOGON_FAILURE",
+                  "the answer warns", "anonymous (null) session", "NT_STATUS_ACCESS_DENIED",
+                  "a null session's share list (smbclient -L) ends with status 0 and names no share", "server signing is mandatory",
+                  "no password of the check", "host account"):
+        assert words in text, words
+    assert "SKIP" not in output
+    # The user's own calls carry its token, and only those; the relay kept it in RAM until the clean-up.
+    own = [(m, p) for (m, p, _, _), who in zip(nas.calls, nas.callers) if who is not None]
+    assert own and all(p.startswith(("/auth/me", "/auth/change-password")) for _, p in own), own
+    assert all(who is None for (m, p, _, _), who in zip(nas.calls, nas.callers) if not p.startswith(("/auth/me", "/auth/change-p")))
+    assert ("POST", "/auth/me/smb/enable") in own and ("POST", "/auth/me/smb/disable") in own
+    assert nas.forgotten == ["/dev/shm/unos-scenario-unoscheck1a2b3c.token"] and not nas.tokens
+    passwords = [body for (m, p, body, _), who in zip(nas.calls, nas.callers) if p == "/auth/change-password"]
+    assert [len(b["new_password"].encode()) for b in passwords][1] == 73 and "\t" in passwords[0]["new_password"]
+    guest = [body for m, p, body, _ in nas.calls if m == "PATCH" and body and "guest_ok" in body]
+    assert guest == [{"expected_version": guest[0]["expected_version"], "guest_ok": True}]
+    repairs = [p for m, p, _, _ in nas.calls if m == "POST" and p.endswith("/repair-permissions")]
+    assert repairs == ["/shares/smb/unoscheck1a2b3ct/repair-permissions", "/shares/smb/unoscheck1a2b3c/repair-permissions",
+                       "/shares/smb/unoscheck1a2b3c/repair-permissions"]
+
+
+def test_with_another_guest_share_the_shares_check_says_so_in_place_of_the_signing_step(nas):
+    """With another guest share the guest lines of [global] stay after the check's share is gone
+    (ADR-0098): the step that would show signing mandatory again says why it cannot, and the check
+    tries no sign-in with a password that Samba has no account for, which map to guest = Bad User
+    would take as a guest."""
+    nas.shares["DATA"]["guest_ok"] = True
+    nas.installed = nas.smb_conf()
+    before = nas.snapshot()
+    real = nas.smb_list
+    tried = []
+    nas.smb_list = lambda user, password: (tried.append(user), real(user, password))[1]
+    status, output = run_check("shares", nas)
+    assert status == 0, output
+    assert re.search(r"^PASS  3\. .*; its guest shares: DATA  ", output, re.M), output
+    assert re.search(r"^SKIP  \d+\. with the last guest share gone, server signing is mandatory again.*: the device "
+                     r"has other guest shares: DATA  \[SD ", output, re.M), output
+    assert "a sign-in is not tried, as the device has guest shares" in output
+    assert tried == ["unoscheck1a2b3c"]  # only the one in the signed session's step
+    assert re.search(r"^scenario shares: OK, \d+ steps passed, 1 skipped$", output, re.M)
+    assert nas.snapshot() == before
+
+
+def test_without_setfacl_the_shares_check_makes_no_acl_entry_and_says_so(nas):
+    nas.no_acl = True
+    status, output = run_check("shares", nas)
+    assert status == 0, output
+    assert "it has no setfacl or getfacl" in output
+    assert re.search(r"^SKIP  \d+\. the ACL entry stays, .*: the device has no setfacl or getfacl", output, re.M), output
+    assert f"{ROOT}/unoscheck1a2b3c/acl.txt" not in nas.fs
+
+
+def test_the_shares_check_fails_when_the_last_guest_share_leaves_the_guest_lines(nas):
+    nas.bugs.add("guest-globals-stay")
+    status, output = run_check("shares", nas)
+    assert status == 1
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 2, output
+    assert "with the last guest share gone, server signing is mandatory again" in failed[0]
+    assert "map to guest = Bad User, not Never" in failed[0]
+    assert "the device is as the check found it: smb.conf: its content changed" in failed[1]
+
+
+def test_the_shares_check_expects_unos_s_texts():
+    """The texts that the shares check compares are UNOS's own."""
+    from src.auth import schemas
+    from src.shares import constants, repair, repair_router, service, smbconf
+
+    assert service.GUEST_WARNING == GUEST_WARNING and GUEST_WARNING.startswith(scenario.GUEST_WARNS)
+    assert service.PERMISSIONS_WARNING == PERMISSIONS_WARNING
+    assert constants.smb_password_problem("a" * 7) == scenario.SMB_TOO_SHORT
+    assert constants.smb_password_problem("unos\tscenario\tcheck") == scenario.SMB_CONTROL
+    assert schemas.MAX_PASSWORD_BYTES == scenario.UNOS_PASSWORD_BYTES
+    for guest in (False, True):
+        lines = dict(smbconf.global_settings(guest))
+        assert {key: values[guest] for key, values in scenario.GUEST_GLOBALS.items()} == {
+            key: lines[key] for key in scenario.GUEST_GLOBALS}
+    unsafe = service.UnsafeFolder(path="/p/x", detail="mode 1777, the share folder belongs to uid 65534",
+                                  commands="'chmod 755 /p/x'")
+    changed = "/p/x can be changed by other accounts (mode 1777, the share folder belongs to uid 65534)"
+    assert changed in unsafe.refusal() and changed in unsafe.warning()
+    assert unsafe.problem("docs").startswith(f"Share docs: {changed}")
+    fake = FakeNas()
+    assert fake.unsafe_text(f"{ROOT}/x", "refusal") is None
+    fake.fs[f"{ROOT}/s"] = Node("dir", 0o1777)
+    fake.fs[f"{ROOT}/s/x"] = Node("dir", 0o755, "nobody", "nogroup")
+    real = service.UnsafeFolder(path=f"{ROOT}/s", detail="mode 1777, the share folder belongs to uid 65534",
+                                commands=f"'chmod 755 {ROOT}/s'")
+    assert [fake.unsafe_text(f"{ROOT}/s/x", kind, "docs") for kind in ("refusal", "warning", "problem")] == [
+        real.refusal(), real.warning(), real.problem("docs")]
+    fake.fs[f"{ROOT}/s"].owner = "nobody"
+    real = service.UnsafeFolder(path=f"{ROOT}/s", detail="owner uid 65534, mode 1777",
+                                commands=f"'chown root:root {ROOT}/s'")
+    assert fake.unsafe_text(f"{ROOT}/s/new", "refusal") == real.refusal()
+    source = (REPO_ROOT / "supervisor" / "src" / "shares" / "repair_router.py").read_text()
+    assert 'detail=f"Share {share.name} is not served: {problem}; change its folder first"' in source
+    assert repair_router.NO_RESULT == "No repair has run for this share since UNOS started"
+    assert repair.EXECUTABLE_FILE_MODE == 0o770 and constants.SHARE_DIR_MODE == 0o2770
+    assert constants.SHARE_FILE_MODE == 0o660
+
+
 # --- failures, interruptions and leftovers ---------------------------------------------------
 
 
@@ -1362,7 +1805,7 @@ def test_a_failure_at_any_call_of_a_step_still_removes_what_the_check_made(area,
         assert not nas.sessions
 
 
-@pytest.mark.parametrize("area", ["files", "smb", "volumes", "smbconf"])
+@pytest.mark.parametrize("area", ["files", "smb", "volumes", "smbconf", "shares"])
 def test_an_interruption_still_removes_what_the_check_made(area):
     steps = calls_of_the_steps(area)
     nas = FakeNas()
@@ -1654,6 +2097,17 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("offsite", "offsite-check-fails", "the copy failed at check"),
     ("offsite", "offsite-restore-differs", "the restored files hold other bytes"),
     ("offsite", "log-offsite-password", "no password of the check"),
+    ("shares", "foreign-parent-allowed", "a new share folder in theirs, a sticky folder of another account, is refused"),
+    ("shares", "sticky-excuses-foreign", "a share of theirs, a folder of another account in the sticky folder of root"),
+    ("shares", "repair-follows-links", "it leaves the private file and folder"),
+    ("shares", "repair-opens-private", "it leaves the private file and folder"),
+    ("shares", "repair-drops-acl", "the ACL entry stays"),
+    ("shares", "repair-unserved", "Repair permissions refuses it with 409"),
+    ("shares", "smb-takes-short-password", "SMB refuses the user's password of 7 characters"),
+    ("shares", "self-off-keeps-samba", "the user turns SMB off again"),
+    ("shares", "no-guest-warning", "guest access turned on for the share: the answer warns"),
+    ("shares", "anonymous-writes", "an anonymous (null) session to the share lists it"),
+    ("shares", "log-password", "no password of the check"),
 ])
 def test_the_checks_fail_on_the_defects_they_exist_for(nas, area, bug, words):
     before = nas.snapshot()
@@ -1923,20 +2377,23 @@ def test_every_call_of_the_checks_is_a_route_of_the_supervisor_with_a_body_it_ac
     """The fake answers what the real API answers only if the checks ask what the real API
     serves: every call of a passing run of each area matches a route of src.main.app with its
     method, sends only query parameters that the route reads, and a body that the route's model
-    validates."""
+    validates, but for the calls that the fake refuses with 422, whose bodies the model must
+    refuse (the shares check's password of 73 bytes)."""
     from pydantic import TypeAdapter
     from starlette.routing import compile_path
 
     from .test_authz import _http_operations
 
     operations = [(method, compile_path(path)[0], dependant) for method, path, dependant in _http_operations()]
-    calls = []
+    calls, invalid = [], set()
     for area in scenario.AREAS:
         nas = FakeNas()
         assert run_check(area, nas)[0] == 0
+        invalid |= {len(calls) + index for index in nas.invalid}
         calls += nas.calls
+    assert invalid
     problems = []
-    for method, path, body, params in calls:
+    for index, (method, path, body, params) in enumerate(calls):
         matched = [dependant for m, regex, dependant in operations if m == method and regex.match("/api/v1" + path)]
         if not matched:
             problems.append(f"{method} {path}: no route")
@@ -1958,7 +2415,11 @@ def test_every_call_of_the_checks_is_a_route_of_the_supervisor_with_a_body_it_ac
         try:
             TypeAdapter(bodies[0].field_info.annotation).validate_python(body)
         except Exception as e:  # pydantic's ValidationError
-            problems.append(f"{method} {path}: the body {body!r} is refused: {e}")
+            if index not in invalid:
+                problems.append(f"{method} {path}: the body {body!r} is refused: {e}")
+        else:
+            if index in invalid:
+                problems.append(f"{method} {path}: the fake refuses the body {body!r}, which the route accepts")
     assert problems == []
 
 
@@ -2054,7 +2515,8 @@ def test_the_scripts_for_the_device_parse(bash):
 
 def test_the_device_edits_smb_conf_without_the_read_only_namespace_and_the_rest_with_it(stub):
     """The hand edit writes /etc/samba, which the read-only root refuses (ADR-0309); the link of a
-    share folder (on the pool) and the restart (through Docker's socket) run in the namespace."""
+    share folder and the shares check's entries (on the pool), getfacl and the restart (through
+    Docker's socket) run in the namespace."""
     device = device_with_stub(stub)
     (stub.log / "reply").write_text("conf abc\ncopy missing\n")
     assert device.hand_edit("restore", "unoscheck1a2b3chand") == {"conf": "abc", "copy": "missing"}
@@ -2063,6 +2525,10 @@ def test_the_device_edits_smb_conf_without_the_read_only_namespace_and_the_rest_
     assert scenario.RO_ROOT not in (stub.log / "stdin").read_text()
     for call, reply, want in ((lambda: device.unserve("link", f"{ROOT}/unoscheck1a2b3c"), "link\n", "link"),
                               (device.restart_supervisor, "healthy 8\n", 8),
+                              (lambda: device.entries("sticky", f"{ROOT}/unoscheck1a2b3c-sticky"),
+                               "account nobody:nogroup 65534\n", {"user": "nobody", "group": "nogroup", "uid": "65534"}),
+                              (lambda: device.acl(f"{ROOT}/unoscheck1a2b3c/acl.txt"), "acl user::rw-\nacl mask::rw-\n",
+                               ["user::rw-", "mask::rw-"]),
                               (device.samba_files, "file smb.conf abc 17 644 root:root\n",
                                {"smb.conf": {"sha256": "abc", "mtime": "17", "mode": "644 root:root"}})):
         for name in ("argv", "stdin"):  # the stub appends each call's
@@ -2190,6 +2656,82 @@ def test_the_unserve_helper_touches_only_a_check_s_share_folder(tmp_path, path):
     assert sorted(p.name for p in (tmp_path / "pools" / "data").iterdir()) == ["media"]
 
 
+def run_entries(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
+    """REMOTE_ENTRIES, run here: chown and setfacl are stubs that log their arguments (the tests do
+    not run as root), and the other account is the user who runs them."""
+    stubs = tmp_path / "stubs"
+    if not stubs.exists():
+        stubs.mkdir()
+        for tool in ("chown", "setfacl"):
+            (stubs / tool).write_text(f'#!/usr/bin/env bash\necho "{tool} $*" >> "{tmp_path}/tools.log"\n')
+            (stubs / tool).chmod(0o755)
+        (stubs / "getfacl").write_text('#!/usr/bin/env bash\nprintf "user::rw-\\nuser:nobody:r--\\ngroup::r--\\n'
+                                       'mask::r--\\nother::---\\n\\n"\n')
+        (stubs / "getfacl").chmod(0o755)
+    env = {"PATH": f"{stubs}:{os.environ['PATH']}", "UNOS_DEV_POOLS": str(tmp_path / "pools"),
+           "UNOS_DEV_OTHER_ACCOUNT": "someone:somegroup"}
+    stubs_id = stubs / "id"
+    stubs_id.write_text('#!/usr/bin/env bash\n[ "$*" = "-u someone" ] && echo 4242\n')
+    stubs_id.chmod(0o755)
+    return subprocess.run(["bash", "-s", "--", *args], input=scenario.REMOTE_ENTRIES, env=env, capture_output=True,
+                          text=True)
+
+
+def test_the_entries_helper_makes_the_shares_check_s_entries_with_their_owners_and_modes(tmp_path):
+    folder = tmp_path / "pools" / "data" / "unoscheck1a2b3c"
+    folder.mkdir(parents=True)
+    result = run_entries(tmp_path, "repair", str(folder), "acl")
+    assert result.returncode == 0 and result.stdout == "account someone:somegroup 4242\n", result.stderr
+    for name, (made, _) in scenario.REPAIR_ENTRIES.items():
+        if name != "link.txt":
+            assert f"{stat.S_IMODE(os.lstat(folder / name).st_mode):o}" == made.split()[0], name
+    assert os.readlink(folder / "link.txt") == "../unoscheck1a2b3c-outside/target.txt"
+    outside = folder.parent / "unoscheck1a2b3c-outside"
+    assert (folder / "link.txt").read_text() == scenario.DATA and oct(stat.S_IMODE(outside.stat().st_mode)) == "0o755"
+    assert oct(stat.S_IMODE((outside / "target.txt").stat().st_mode)) == "0o644"
+    log = (tmp_path / "tools.log").read_text().splitlines()
+    made = {name for name in scenario.REPAIR_ENTRIES if name != "legacy.txt"}
+    assert any(line.startswith("chown -h root:root ") and set(line.split()[3:]) == made | {
+        str(outside), f"{outside}/target.txt"} for line in log), log
+    assert "chown someone:somegroup legacy.txt" in log and "setfacl -m u:someone:r acl.txt" in log
+    # Nothing is made twice.
+    again = run_entries(tmp_path, "repair", str(folder), "acl")
+    assert again.returncode == 1 and "exists" in again.stderr
+    # The ACL of an entry, as the check reads it.
+    result = run_entries(tmp_path, "acl", str(folder / "acl.txt"))
+    assert result.returncode == 0 and result.stdout == ("acl user::rw-\nacl user:nobody:r--\nacl group::r--\n"
+                                                        "acl mask::r--\nacl other::---\n"), result.stderr
+
+
+def test_the_entries_helper_makes_the_sticky_folders_without_an_acl_on_request(tmp_path):
+    sticky = tmp_path / "pools" / "data" / "unoscheck1a2b3c-sticky"
+    sticky.parent.mkdir(parents=True)
+    result = run_entries(tmp_path, "sticky", str(sticky))
+    assert result.returncode == 0 and result.stdout == "account someone:somegroup 4242\n", result.stderr
+    assert oct(stat.S_IMODE(sticky.stat().st_mode)) == oct(stat.S_IMODE((sticky / "theirs").stat().st_mode)) == "0o1777"
+    log = (tmp_path / "tools.log").read_text().splitlines()
+    assert log == [f"chown root:root {sticky}", f"chown someone:somegroup {sticky}/theirs"]
+    folder = sticky.parent / "unoscheck1a2b3c"
+    folder.mkdir()
+    assert run_entries(tmp_path, "repair", str(folder), "noacl").returncode == 0
+    assert not [line for line in (tmp_path / "tools.log").read_text().splitlines() if line.startswith("setfacl")]
+
+
+@pytest.mark.parametrize("action, path", [
+    ("repair", "{pools}/data/media"), ("repair", "{pools}/data/unoscheck1a2b3c/inner"), ("repair", "{pools}/unoscheck1a2b3c"),
+    ("repair", "/etc/unoscheck1a2b3c"), ("repair", "{pools}/data/../unoscheck1a2b3c"), ("repair", "{pools}/data/unoscheck1a2b3c-sticky"),
+    ("sticky", "{pools}/data/unoscheck1a2b3c"), ("sticky", "{pools}/data/media-sticky"),
+    ("acl", "/etc/shadow"), ("acl", "{pools}/data/unoscheck1a2b3c/../../media"), ("acl", "{pools}/data/media/a.txt"),
+    ("chmod", "{pools}/data/unoscheck1a2b3c"),
+])
+def test_the_entries_helper_touches_only_a_check_s_folders(tmp_path, action, path):
+    (tmp_path / "pools" / "data" / "media").mkdir(parents=True)
+    result = run_entries(tmp_path, action, path.format(pools=tmp_path / "pools"))
+    assert result.returncode == 2 and ("not a folder of a scenario check" in result.stderr or "not an action" in result.stderr)
+    assert sorted(p.name for p in (tmp_path / "pools" / "data").iterdir()) == ["media"]
+    assert not (tmp_path / "tools.log").exists()
+
+
 def test_the_smb_helper_makes_the_files_the_checks_compare():
     for text in (scenario.DATA, scenario.DATA2):
         assert f'printf "{text.rstrip(chr(10))}\\n"' in scenario.REMOTE_SMB
@@ -2272,6 +2814,8 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
         third = session.run("!cat data.txt")
         session.run("quit-now")
         fourth = session.run("ls")
+    with device.smb_guest_session("unoscheck1a2b3c") as session:
+        guest = session.run("ls")
     listing = device.smb_list("unoscheck1a2b3c", password)
     anonymous = device.smb_anonymous()
     assert listing.ok and listing.disks == ["unoscheck1a2b3c"]
@@ -2280,15 +2824,18 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
     assert not second.ok and second.status == "NT_STATUS_ACCESS_DENIED"
     assert third.ok and scenario.DATA.strip() in third.output
     assert not fourth.ok and fourth.ended
+    assert guest.ok and ".  D  0" in guest.output, guest.output
     log = (stub.tmp / "smb.log").read_text()
     assert f"auth 600 username = unoscheck1a2b3c|password = {password}|" in log
     assert password not in "".join(re.findall(r"^argv .*$", log, re.M))
     runs = log.split("argv ")[1:]
-    # The session and the share list sign; the null session (no user, no password) leaves
-    # signing to the server, so that only the server can refuse it.
+    # The session and the share list sign; the null session (no user, no password) and the guest
+    # session leave signing to the server, so that only the server can refuse them.
     session = [r for r in runs if "//127.0.0.1/unoscheck1a2b3c" in r]
     lists = [r for r in runs if "-g -L //127.0.0.1" in r]
-    assert len(session) == 1 and "signing required" in session[0]
+    assert len(session) == 2 and "-A " in session[0] and "\nsigning required" in session[0]
+    assert "-N -U% //127.0.0.1/unoscheck1a2b3c" in session[1] and "-A " not in session[1]
+    assert "\nsigning not required" in session[1] and "auth " not in session[1]
     assert len(lists) == 2 and "-A " in lists[0] and "\nsigning required" in lists[0] and "ipc signing required" in lists[0]
     assert "-N -U% " in lists[1] and "-A " not in lists[1]
     assert "\nsigning not required" in lists[1] and "ipc signing not required" in lists[1]

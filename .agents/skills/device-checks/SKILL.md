@@ -59,13 +59,15 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    gone: the script prints the owner action that makes it again.
 
 6. **Run a scenario check, when the owner asked for one.** `scripts/dev/scenario.sh <area>`
-   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `scrub`, `offsite`, or `all`; `--pool <name>` where
+   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub`, `offsite`, or `all`; `--pool <name>` where
    several pools are mounted), the checks of the host-level entries that the feature-pass
    skill's table names (ADR-0304). They change the device: they make a temporary user, share,
    volume, Scheduler task and folders named `unoscheck<6 hex digits>`, and two backups, through
    the API, and
    remove them again; `smbconf` also edits smb.conf by hand and restarts the supervisor once
-   (ADR-0309), `scrub` scrubs the pool, three times on a small pool, and leaves its last
+   (ADR-0309), `shares` makes entries of other owners and modes on the pool over ssh, signs in as
+   its user and turns guest access on for its share, which lowers signing for the whole server
+   while it runs (ADR-0100), `scrub` scrubs the pool, three times on a small pool, and leaves its last
    scrub result (ADR-0314), and `offsite` sets up an off-device copy to a folder of the pool and
    forgets it again (ADR-0337); it refuses to start on a device that has one set up.
    `all` takes several minutes: run it in the background as
@@ -132,6 +134,13 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   (ADR-0092).
 - The smb check needs smbclient and stdbuf on the device (its first steps say which is
   missing): installing a package is an owner action (ADR-0211).
+- A run of the shares check that lost its connection can leave, besides its share, user and
+  folders (removed as above; the folders `<pool>/unoscheck<6 hex digits>-outside` and `-sticky`
+  hold entries of `nobody`, which the files API deletes too), its share's folder as a symbolic link
+  to `-moved` (put back as for the smbconf check) and its user's token in
+  `/dev/shm/unos-scenario-unoscheck<6 hex digits>.token`, which the user's Delete makes useless:
+  `scripts/dev/ssh.sh 'rm -f /dev/shm/unos-scenario-unoscheck<6 hex digits>.token'`. Its ACL step
+  needs setfacl and getfacl (the package acl) on the device; without them it says so and skips.
 - The scenario checks write to the SD card, and each step's line says how much: the API's
   database and audit log at every change, smb.conf at every share change, `/etc/passwd` and
   `/etc/shadow` when the smb check's account is made and deleted, passdb.tdb then, at its

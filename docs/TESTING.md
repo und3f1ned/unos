@@ -390,12 +390,14 @@ secrets from the git-ignored `dev.env` (ADR-0212):
 - `scripts/dev/ipv6-filter.sh install|status|remove`: the device's inbound IPv6 filter
   (ADR-0301); `status` only reads, `install` and `remove` run on the owner's request.
 - `scripts/dev/scenario.sh [--pool NAME] AREA...`: the scenario checks (ADR-0304) of `files`,
-  `volumes`, `smart`, `backups`, `smb`, `smbconf`, `scrub` and `offsite` (`all`: every area), on the
-  owner's request. Each runs its area's user scenario through the API and on the host with a
-  temporary user, share, volume, Scheduler task and folders named `unoscheck<6 hex digits>` and two
-  backups (smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; scrub scrubs
-  the pool, ADR-0314; offsite sets up an off-device copy to a folder of the pool, with its restores,
-  and forgets it, ADR-0337), prints PASS or FAIL and the SD MiB of each step, removes what it made, also
+  `volumes`, `smart`, `backups`, `smb`, `smbconf`, `shares`, `scrub` and `offsite` (`all`: every
+  area), on the owner's request. Each runs its area's user scenario through the API and on the host
+  with a temporary user, share, volume, Scheduler task and folders named `unoscheck<6 hex digits>`
+  and two backups (smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; shares
+  makes entries of other owners and modes on the pool over ssh, signs in as its user with a token of
+  its own in the device's RAM and turns guest access on for its share; scrub scrubs the pool,
+  ADR-0314; offsite sets up an off-device copy to a folder of the pool, with its restores, and
+  forgets it, ADR-0337), prints PASS or FAIL and the SD MiB of each step, removes what it made, also
   after a FAIL or Ctrl-C, and compares the
   device with how it found it. The feature-pass skill names the check of each host-level entry;
   after a reboot (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table
