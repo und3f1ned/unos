@@ -257,7 +257,10 @@ For each pool, you can:
   disk there. Unmounting is refused while a running app or container uses the
   pool, also through a Docker volume that binds a folder in it, or while
   files on it are open, for example by a computer that has one of its SMB
-  shares open; the dialog names the containers or the reason. System services
+  shares open; the dialog names the containers or the reason. When Docker
+  does not answer, so that UNOS cannot tell which containers use the pool,
+  unmounting is refused and nothing is changed: try again when Docker is
+  running. System services
   that run in a sandbox of their own keep a copy of the pool's mount there:
   UNOS unmounts those copies too. When another process still has the pool
   mounted, for example a container that binds the whole `/mnt/pools` or `/mnt`
@@ -782,8 +785,9 @@ afterwards.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
-subvolumes or filesystems mounted in a pool cannot be deleted, renamed or
-moved here: delete volumes on the **Storage** page (see
+subvolumes or filesystems mounted in a pool, also a folder that is a bind
+mount of another folder of the pool, cannot be deleted, renamed or moved
+here: delete volumes on the **Storage** page (see
 [Pool Operations](#pool-operations)). Renaming a folder that a share, an NFS
 export or an app uses is not refused, but they keep using the old name, which
 no longer exists: rename the folder back to restore them.

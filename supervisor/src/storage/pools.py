@@ -889,20 +889,24 @@ def _path_within(path: str, base: str) -> bool:
     return path == base or path.startswith(base + "/")
 
 
-def _containers_using(name: str, target: str) -> list[str] | None:
+def _containers_using(name: str, target: str) -> list[str]:
     """Running containers that keep data on the pool, by name.
 
     A container uses the pool when one of its mounts comes from the pool's
     mountpoint (or below it), also through a Docker volume that binds a
     folder there (_mount_uses), or when the app installer labelled it with
-    the pool. Returns None when Docker cannot be asked.
+    the pool. DockerUnavailableError (HTTP 503) when Docker cannot be asked
+    about the containers or their volumes (ADR-0342).
     """
     try:
         with _docker_api() as api:
             running, bound = _running_containers(api)
     except Exception as exc:
         logger.warning("Could not list the running containers or their volumes: %s", exc)
-        return None
+        raise DockerUnavailableError(
+            f"Pool '{name}' was left mounted: Docker did not answer, so it is not known whether a "
+            f"running container keeps data on it. Try again when Docker is running ({exc})."
+        ) from exc
     users = []
     for container in running:
         labels = container.get("Labels") or {}
@@ -1213,12 +1217,15 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
     container's bind mount of a directory on the pool is a separate, private
     mount: the host's umount succeeds, the filesystem stays mounted inside
     the container and keeps being written to, and the disk must not be
-    removed. Containers that Docker reports are refused up front. After the
-    umount, the copies of the mount that services keep in mount namespaces of
-    their own, whose root is the host's, are unmounted there
-    (:func:`_namespace_copies`), unless a namespace has the filesystem mounted
-    anywhere else, or has a root of its own like a container's; any other
-    user is detected, and the pool is mounted again.
+    removed. Containers that Docker reports are refused up front; when
+    Docker cannot be asked, nothing is unmounted (DockerUnavailableError,
+    HTTP 503): the host mount of a Docker volume that binds a folder of the
+    pool would pass the check below as a deliberate mount elsewhere
+    (ADR-0342). After the umount, the copies of the mount that services keep
+    in mount namespaces of their own, whose root is the host's, are
+    unmounted there (:func:`_namespace_copies`), unless a namespace has the
+    filesystem mounted anywhere else, or has a root of its own like a
+    container's; any other user is detected, and the pool is mounted again.
     """
     here = [m for m in mounts if m.target == target]
     if not here:
@@ -1414,7 +1421,9 @@ def mount_pool(name: str) -> PoolInfo:
 def unmount_pool(name: str) -> PoolInfo:
     """Unmount a pool on the host and remove its managed fstab entry. Data is kept.
 
-    PoolBusyError (HTTP 409) while host processes or containers use the pool.
+    PoolBusyError (HTTP 409) while host processes or containers use the pool;
+    DockerUnavailableError (HTTP 503), with nothing changed, when Docker
+    cannot be asked about the containers.
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
@@ -1433,7 +1442,9 @@ def delete_pool(name: str) -> None:
 
     The disks are not touched. The filesystem keeps its label and is listed
     again as an unmounted pool that can be mounted later. PoolBusyError
-    (HTTP 409) while host processes or containers use the pool.
+    (HTTP 409) while host processes or containers use the pool, and
+    DockerUnavailableError (HTTP 503) when it is mounted and Docker cannot be
+    asked about the containers: nothing is changed then.
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
@@ -2227,9 +2238,7 @@ def _refuse_used_volume(name: str, volume_path: str) -> None:
 
     PoolConflictError (HTTP 409) that names the users. DockerUnavailableError
     (HTTP 503) when Docker cannot be asked about the containers or their
-    volumes: an unmount goes ahead without Docker because a check afterwards
-    finds remaining users and mounts the pool again (_unmount_pool_target),
-    but a deleted subvolume cannot be brought back. RuntimeError (HTTP 500)
+    volumes, as for an unmount of the pool (_containers_using). RuntimeError (HTTP 500)
     when the shares cannot be read. A copy or a restore of the off-device copy whose folders are the
     volume or lie in it is refused first, as for an unmount of its pool (ADR-0337).
     """

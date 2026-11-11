@@ -1100,6 +1100,59 @@ def test_a_folder_that_is_a_mount_point_itself_is_refused(env):
     assert _tree(env.pool) == ["bound", "bound/f.txt"]
 
 
+def _busy_rename(monkeypatch, name):
+    """rename(2) of the entry ``name`` fails with EBUSY, as the kernel answers for a mount point.
+
+    A bind mount from the pool's own filesystem has the pool's st_dev, so
+    the check of the entry itself lets it through to the rename.
+    """
+    real_rename = os.rename
+
+    def busy(old, new, *, src_dir_fd=None, dst_dir_fd=None):
+        if old == name:
+            raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
+        return real_rename(old, new, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+    monkeypatch.setattr(files_router.os, "rename", busy)
+    monkeypatch.setattr(
+        files_router, "_EXCLUSIVE_RENAME",
+        lambda src_dir_fd, old, dst_dir_fd, new: busy(old, new, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd),
+    )
+
+
+@pytest.mark.parametrize("action", ["renamed", "moved"])
+def test_a_folder_that_is_a_bind_mount_cannot_be_renamed_or_moved(env, monkeypatch, action):
+    """409 with the reason, as for a delete of it, not 500 (ADR-0073)."""
+    (env.pool / "bound").mkdir()
+    (env.pool / "bound" / "f.txt").write_text("f")
+    (env.pool / "archive").mkdir()
+    env.mounts.mount(env.pool / "bound", root="/elsewhere")
+    _busy_rename(monkeypatch, "bound")
+
+    if action == "renamed":
+        response = env.client.post(
+            "/api/v1/files/rename", json={"path": str(env.pool / "bound"), "new_name": "other"}
+        )
+    else:
+        response = _move(env.client, [env.pool / "bound"], env.pool / "archive")
+
+    assert (response.status_code, response.json()["detail"]) == (
+        409,
+        "'bound' is a separate subvolume or filesystem (such as a snapshot or a mount point) "
+        f"and cannot be {action} in the file manager.",
+    )
+    assert _tree(env.pool) == ["archive", "bound", "bound/f.txt"]
+
+
+def test_any_other_entry_that_is_busy_is_a_conflict():
+    """E.g. a file that is a bind mount, on its way into the trash."""
+    error = files_router._http_error(OSError(errno.EBUSY, os.strerror(errno.EBUSY)))
+    assert (error.status_code, error.detail) == (
+        409,
+        "In use by the system, for example as a mount point, so the file manager cannot change it",
+    )
+
+
 def test_mount_points_above_or_beside_a_folder_do_not_count(env):
     """The pool's own mount point is above every folder (see _MountTable)."""
     (env.pool / "projects" / "a").mkdir(parents=True)

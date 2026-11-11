@@ -867,6 +867,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   The pool used to be unmounted and its fstab entry removed although Docker
   kept the filesystem mounted on the host for the container, so its disks
   looked safe to remove.
+- When Docker did not answer, an unmount or removal of a pool went ahead, and
+  the host mount of a Docker volume that binds a folder of the pool passed as
+  the administrator's own mount elsewhere: the pool was reported unmounted
+  while a container could still write to it. Unmount and Remove Pool of a
+  mounted pool now answer 503 then, `Pool '<name>' was left mounted: Docker
+  did not answer, ...`, and change nothing.
+- File manager: renaming a folder that is a bind mount of another folder of
+  its pool, or moving it within the pool, answered 500 `File operation
+  failed: Device or resource busy`. It is refused with 409, as a delete of
+  it is: `'<name>' is a separate subvolume or filesystem (such as a snapshot
+  or a mount point) and cannot be renamed in the file manager` (moved for a
+  move). Any other file operation that the system refuses as busy answers
+  409 too.
 - Names that are not valid UTF-8, which apps and SMB users can give to
   folders and subvolumes in a pool, broke storage operations: a subvolume
   with such a name made listing volumes fail (HTTP 500). Such names are now

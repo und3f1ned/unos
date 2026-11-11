@@ -1126,11 +1126,15 @@
         "Renaming or moving a folder that is a bind mount answers 409, not 500",
         "A folder delete stops at a mount or subvolume that appears below the folder while it is deleted"
       ],
+      "verified_by": [
+        "supervisor/tests/test_pool_persistence.py",
+        "supervisor/tests/test_files_security.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0073"
       ],
-      "notes": "Low-severity cases deferred in slice 1; each step can be a pass of its own."
+      "notes": "Low-severity cases deferred in slice 1; each step can be a pass of its own. 2026-11-11: steps 3 and 7 fixed and tested with fakes; steps 1, 2, 4, 5, 6 and 8 are open. Step 3 (ADR-0342, which supersedes ADR-0070): when Docker cannot be asked about the running containers or their volumes, Unmount and Remove Pool of a mounted pool answer 503 \"Pool '<name>' was left mounted: Docker did not answer, ...\" before anything changes (no umount, no fstab write, no unmount in a mount namespace); a pool that is not mounted is still removed without Docker. test_pool_persistence.py: test_without_docker_the_pool_stays_mounted_and_nothing_changes (a Docker volume's host mount of the pool, for unmount and remove), test_docker_volume_that_cannot_be_inspected_leaves_the_pool_mounted, test_without_docker_a_container_that_binds_the_pools_mountpoint_is_refused and TestPoolEndpoints test_unmount_and_remove_without_docker_answer_503_and_change_nothing failed before (the pool was reported unmounted, or unmounted and mounted again); they replace the tests of ADR-0070's unmount without Docker. Step 7: a rename, or a move within the pool, that rename(2) refuses with EBUSY (a folder that is a bind mount of another folder of its pool, whose st_dev is the pool's) answers 409 with the text of a delete of it, \"'<name>' is a separate subvolume or filesystem (such as a snapshot or a mount point) and cannot be renamed (moved) in the file manager.\"; any other EBUSY of the file API answers 409 \"In use by the system, for example as a mount point, so the file manager cannot change it\" (it answered 500). test_files_security.py: test_a_folder_that_is_a_bind_mount_cannot_be_renamed_or_moved (EBUSY faked, the mount in the fake mount table) and test_any_other_entry_that_is_busy_is_a_conflict failed before (500 \"File operation failed: <the text of EBUSY>\"). Open for steps 3 and 7: the device check. A Docker that does not answer while the supervisor runs cannot be made safely on the device (a stopped Docker stops UNOS), so step 3 rests on the fakes. Step 7 on the device: on a test pool, bind-mount one folder onto another with mount --bind (on the owner's request), then Rename and Move of that folder in the File Browser answer 409 with that text and change nothing; unmount the bind mount afterwards. Report the SD MiB of each step."
     },
     {
       "id": "storage.disk-spindown",
