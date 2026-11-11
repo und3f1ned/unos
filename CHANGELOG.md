@@ -31,6 +31,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   administrator who restored) and the new **End sessions** button of the
   **Users** page all of them. Tokens from before the
   update are refused: everyone signs in once more.
+- The audit log records a user's own sign-out, password change (with an SMB
+  account entry when the SMB password changed too) and turning two-factor
+  authentication on or off (off as a warning), with the user, the address
+  and the browser; a refused attempt writes no entry. When the entry cannot
+  be written, the change still answers and the supervisor's log has it.
 - Each audit entry carries the hash of the one before it. An entry edited in
   the log file, and the entry after one that was removed, are marked **Chain
   broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest

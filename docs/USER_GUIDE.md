@@ -59,7 +59,10 @@ example by deleting old backups. The login history and the audit log then miss
 the sign-ins they cannot store: the supervisor's log
 (`docker logs unos-supervisor`) reports each record it could not write, with
 its time. On a disk that is full to the last block, Docker may not be able to
-keep those log lines either.
+keep those log lines either. Signing out, changing your own password and
+turning two-factor authentication on or off likewise answer as usual when
+their audit entry cannot be written once the change is stored, and the
+supervisor's log reports that entry.
 A recovery code does not sign you in while the disk is full, because UNOS
 cannot mark it as used; a code of your authenticator app does.
 
@@ -1281,7 +1284,10 @@ regular users have no access to it.
   **From** and **To** are the NAS's days (feature-list entry
   `architecture.times-with-time-zones`).
 - Recorded today: sign-ins and failed sign-ins (a wrong two-factor code
-  appears only in the login history), users created, changed and deleted, the
+  appears only in the login history), sign-outs, a user's own password
+  changes (with an SMB account entry when the SMB password changed too) and
+  turning two-factor authentication on or off (off as a **Warning**), each
+  by that user, users created, changed and deleted, the
   SMB access of users, shares created, changed, deleted and repaired, NFS
   exports created and deleted, shares imported from smb.conf, the corrections
   of the SMB check at startup and the SMB state after a restore (by the user
@@ -1289,11 +1295,11 @@ regular users have no access to it.
   reset of an administrator on the NAS's command line (`password_change` and
   `totp_disabled` by the user `root`, see
   [Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)),
-  and the clearing of the log. Storage, snapshots, containers, apps, backups,
-  restarts and shutdowns, scheduled tasks, the network and system settings
-  write no entries yet, and neither do a user's own password and two-factor
-  changes, although **Action** lists such actions (feature-list entry
-  `security.audit-admin-actions`).
+  and the clearing of the log. A refused attempt, such as a wrong current
+  password or code, writes no entry. Storage, snapshots, containers, apps,
+  backups, restarts and shutdowns, scheduled tasks, the network and system
+  settings write no entries yet, although **Action** lists such actions
+  (feature-list entry `security.audit-admin-actions`).
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
 (with `limit` from 1 and `offset` from 0), `GET /api/v1/audit/logs/count` and
