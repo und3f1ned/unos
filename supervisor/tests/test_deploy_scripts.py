@@ -2871,8 +2871,8 @@ def _largest_tmp_use():
     the database MAX_DB_BYTES, any other file MAX_CONFIG_BYTES, at most
     MAX_MEMBERS entries. A backup made meanwhile (Create Backup or a
     scheduled backup task) collects its files there: a copy of the database
-    and the small files (manifest, smb.conf, fstab, netplan), within the same
-    limits, or it could not be restored. deploy/update.sh copies the database
+    and the small files (the manifest, and a backup task's scheduled tasks),
+    within the same limits, or it could not be restored. deploy/update.sh copies the database
     there the same way (backup_database_online)."""
     from src.backup.router import MAX_CONFIG_BYTES, MAX_DB_BYTES, MAX_MEMBERS, MAX_TAR_BYTES
 

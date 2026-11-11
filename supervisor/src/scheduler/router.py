@@ -578,10 +578,7 @@ def _create_scheduled_backup(keep_count: int | None, key: bytes) -> tuple[bool, 
             if db_path.exists():
                 copy_database(db_path, tmpdir_path / "unos.db")
 
-            # Backup fstab
-            fstab = Path("/etc/fstab")
-            if fstab.exists():
-                shutil.copy2(fstab, tmpdir_path / "fstab")
+            # No fstab: the container's describes nothing of the host (ADR-0342).
 
             # Backup scheduled tasks
             tasks_file = Path(TASKS_FILE)

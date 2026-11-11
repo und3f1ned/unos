@@ -1612,21 +1612,22 @@ user accounts with their passwords, two-factor authentication, API tokens,
 the login history, and the SMB shares with their access lists. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
-rules and UPS settings. Each backup in the list has **Restore**, **Download**
-and **Delete** buttons.
+rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
+backup in the list has **Restore**, **Download** and **Delete** buttons.
 
 - **Create Backup** - Makes an unencrypted backup (`.tar.gz`).
 - **Upload Backup** - Adds a backup file of at most 256 MiB: `.tar.gz`, or
   `.tar.gz.enc` for an encrypted backup. It is stored under a new name,
-  `uploaded_<date>_<time>` with the same extension. An unencrypted backup
-  named `.tar.gz.enc` is refused.
+  `uploaded_<date>_<time>` with the same extension. A file named
+  `.tar.gz.enc` that is not encrypted, an unencrypted backup or any other
+  gzip file, is refused.
 - **Restore** - Type the backup's file name to confirm; an encrypted backup
   also needs its passphrase. Restoring replaces the database with the one in
   the backup: the user accounts with their passwords, two-factor
   authentication, API tokens and the login history are then those of the
   backup, so an API token revoked after the backup was made works again.
-  Other files in a backup, such as `fstab`, are not restored; the result
-  lists them.
+  Nothing else is restored: the scheduled tasks that the backups of backup
+  tasks also hold are named in the result as not restored.
 
 SMB after a restore:
 - The shares and their access lists come back with the database, and UNOS
@@ -1638,7 +1639,8 @@ SMB after a restore:
   was made. Everyone else shows **Password needed** and must turn SMB on
   again (see [SMB Access](#smb-access)), and so must a user whose SMB user id
   belongs to another account on this NAS (for example in a backup of another
-  installation).
+  installation). A backup whose database gives one SMB user id to two
+  accounts is refused, and nothing is restored.
 
 Encrypted backups (`.tar.gz.enc`) are made by backup tasks (below), or
 through the API, with `POST /api/v1/backup/create` and the body

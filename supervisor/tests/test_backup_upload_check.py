@@ -10,10 +10,11 @@ only manifest.json, in memory.
 
 Every temporary file and directory of the tempfile module raises here
 (no_temporary_files), and each upload goes through POST /api/v1/backup/upload:
-a plain backup is accepted with its manifest, a plain backup named .tar.gz.enc
-is refused, an encrypted one is accepted, and each archive of a corpus of
-hostile ones gets the status and message of before (except one that made the
-check fail with 500), stores nothing and leaves no temporary file.
+a plain backup is accepted with its manifest, a plain backup or any other gzip
+file named .tar.gz.enc is refused, an encrypted one is accepted, and each
+archive of a corpus of hostile ones gets the status and message of before
+(except one that made the check fail with 500), stores nothing and leaves no
+temporary file.
 """
 
 import gzip
@@ -106,7 +107,8 @@ def _header(name: str, size: int, kind: bytes = tarfile.REGTYPE) -> bytes:
 
 
 def _backup() -> bytes:
-    """A backup like the ones UNOS makes."""
+    """A backup like the ones UNOS makes, with the smb.conf, fstab and netplan files that older ones
+    held, which are ignored."""
     return _tar_gz([
         _file("manifest.json", MANIFEST),
         _file("unos.db", DB),
@@ -180,10 +182,10 @@ HOSTILE = [
          lambda: _gz(_members([_file("manifest.json", MANIFEST)])
                      + _header("unos.db", backup_router.MAX_DB_BYTES + 1) + END_OF_TAR),
          "unos.db in the backup archive is too large"),
-    Case("oversized-netplan-file",
-         lambda: _tar_gz([_file("manifest.json", MANIFEST), _directory("netplan"),
-                          _file("netplan/01.yaml", bytes(backup_router.MAX_CONFIG_BYTES + 1))]),
-         "netplan/01.yaml in the backup archive is too large"),
+    Case("oversized-scheduled-tasks",
+         lambda: _tar_gz([_file("manifest.json", MANIFEST),
+                          _file("scheduled_tasks.json", bytes(backup_router.MAX_CONFIG_BYTES + 1))]),
+         "scheduled_tasks.json in the backup archive is too large"),
     Case("missing-manifest", lambda: _tar_gz([_file("unos.db", DB)]), "Invalid backup: missing manifest"),
     Case("manifest-is-a-directory", lambda: _tar_gz([_directory("manifest.json"), _file("unos.db", DB)]),
          "Invalid backup: missing manifest"),
@@ -223,6 +225,13 @@ ACCEPTED = [
     Case("two-gzip-members", lambda: _gz(_tar([_file("manifest.json", MANIFEST), _file("unos.db", DB)])[:1536])
          + _gz(_tar([_file("manifest.json", MANIFEST), _file("unos.db", DB)])[1536:]), ""),
     Case("data-after-the-end-of-the-tar", lambda: _gz(gzip.decompress(_backup()) + b"not a tar header" * 100), ""),
+    # backup.edge-cases (ADR-0342): backups no longer hold the container's fstab and netplan
+    # files, and those of a backup that still holds them are ignored like any other name,
+    # whatever their size.
+    Case("fstab-and-netplan-of-an-older-backup",
+         lambda: _tar_gz([_file("manifest.json", MANIFEST), _file("unos.db", DB),
+                          _file("fstab", bytes(backup_router.MAX_CONFIG_BYTES + 1)), _directory("netplan"),
+                          _file("netplan/01.yaml", bytes(backup_router.MAX_CONFIG_BYTES + 1))]), ""),
 ]
 
 
@@ -259,6 +268,48 @@ def test_an_encrypted_backup_is_accepted_without_temporary_files(env):
     assert (response.json()["backup"]["encrypted"], response.json()["backup"]["version"]) == (True, "unknown")
     (name,) = _stored(env)
     assert name.endswith(".tar.gz.enc") and (env.backup_dir / name).read_bytes() == encrypted
+
+
+# Gzip data that is no backup UNOS restores. Stored as encrypted, each failed only at its
+# restore, with "Invalid passphrase or corrupted backup" (backup.edge-cases, ADR-0342).
+GZIP_FILES = [
+    Case("gzip-but-not-tar", lambda: _gz(bytes(range(256)) * 4), ""),
+    Case("tar-without-a-manifest", lambda: _tar_gz([_file("unos.db", DB)]), ""),
+    Case("truncated-tar", _cut_in_the_database, ""),
+    Case("zero-padding-after-the-gzip-stream", lambda: _gz(bytes(range(256))) + bytes(1000), ""),
+    Case("too-large-when-decompressed", lambda: _tar_gz([_file("manifest.json", MANIFEST), _file("padding", bytes(4 * MIB))]),
+         "", BOMB_LIMIT),
+]
+
+
+@pytest.mark.parametrize("case", GZIP_FILES, ids=[case.id for case in GZIP_FILES])
+def test_gzip_data_named_as_encrypted_is_refused_at_the_upload(env, monkeypatch, case):
+    for name, value in case.limits.items():
+        monkeypatch.setattr(backup_router, name, value)
+    content = case.build()
+    assert len(content) > backup_router.SALT_SIZE + backup_router.NONCE_SIZE + backup_router.GCM_TAG_SIZE
+
+    response = _upload(env, content, filename="unos_backup_20260101_000000.tar.gz.enc")
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "This file is not an encrypted backup: it is an unencrypted gzip file"
+    assert _stored(env) == []
+
+
+def test_an_encrypted_backup_whose_salt_starts_like_gzip_is_accepted(env):
+    """The salt is random: one encrypted backup in 65,536 starts with the two bytes of gzip's magic
+    number, and one in 16.7 million with its deflate method too. Only a file that is gzip data to its
+    end is refused."""
+    salt = b"\x1f\x8b\x08\x00" + bytes(range(backup_router.SALT_SIZE - 4))
+    backup = _backup()
+    encrypted = backup_router.encrypt_with_key(backup, salt + backup_router.derive_key(PASSPHRASE, salt))
+
+    response = _upload(env, encrypted, filename="unos_backup_20260101_000000.tar.gz.enc")
+
+    assert response.status_code == 200, response.text
+    (name,) = _stored(env)
+    assert (env.backup_dir / name).read_bytes() == encrypted
+    assert backup_router.decrypt_file(encrypted, PASSPHRASE) == backup
 
 
 @pytest.mark.parametrize("case", HOSTILE, ids=[case.id for case in HOSTILE])
