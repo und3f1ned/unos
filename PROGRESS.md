@@ -248,6 +248,46 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-11: HTTP notifications that cannot connect from the container go from the host's network
+
+- `system.telegram-from-the-device` (ADR-0336, which supersedes the proposal ADR-0046): from the
+  dev device's network Telegram answers over IPv6 only, and the containers have no IPv6, so every
+  Telegram alert of the device failed with ConnectTimeout. Now Telegram, webhook, Discord and
+  Slack send each request from the container with a connect timeout of 5 seconds and, only when
+  httpx made no connection, so that the request was not sent, once more from the host's network:
+  the host's curl through `host.run_on_host_async`, the request as curl's config on its standard
+  input and fixed options alone on its command line. An HTTP answer or a timeout after the
+  request is never followed by a second try. curl joined `HOST_TOOLS` (`deploy/install.sh`
+  installs it); e-mail is unchanged. Neither IPv6 for the compose network nor e-mail instead:
+  ADR-0336 says why.
+- Settled beyond the brief, with the reasons in ADR-0336: `data-raw` for the body, not
+  `data-binary` (curl would read a body that starts with "@" from a file of the host);
+  `--disable` (no curlrc of the host) and `--globoff` (the URL is one URL) on curl's command
+  line; the URL as httpx sends it; Telegram's `"ok": true` needed on both paths (before, HTTP 200
+  alone counted); no attempt from the host for a request with a NUL character or a header that
+  httpx would not send; curl gets what is left of the channel's time (15 seconds for Telegram, 30
+  for the others), so that a send that connects nowhere ends as soon as before; secrets shorter
+  than 8 characters are not replaced in error texts.
+- Tests first: 42 tests of `TestFromTheHostsNetwork` in `test_notifications.py` failed before the
+  change, and so did 4 older tests that the decision changes. `FakeHost` got a curl that reads its
+  config as curl does; one test sends through the workstation's real curl to a local receiver,
+  and fails without `--globoff` or with `data-binary`.
+- A review in a fresh context (ADR-0017) found, each fixed with a test that failed on the code
+  before the fix: a header name that starts with "@" made curl read headers from a file of the
+  host, and curl sent other headers that httpx refuses once connected (now such a request is not
+  sent from the host; a header without a value is written `Name;`, which curl sends as such,
+  where `Name:` dropped it); a service that names a webhook URL's path alone ("Cannot POST
+  /<path>") showed its key, and a short header value such as "1" garbled every error text (the
+  path with the query is a secret now, and values under 8 characters are left); httpcore gives
+  the connect timeout to the name lookup and TCP and again to TLS, so curl's fixed 10 seconds
+  could make a Telegram send last 25 (curl gets what is left of the channel's time now); a
+  captive portal's whole page became Telegram's failure text (now its first 200 characters).
+  Not changed, with the reason: the host's attempt runs in asyncio's default thread pool, as every
+  `run_on_host_async` does, which the brief named; a loopback URL names the host on the host's
+  network, which ADR-0336 states.
+- Open: the deploy, the device check (a test notification to the owner's Telegram channel from
+  the dev device) and the re-check after a reboot (ADR-0018).
+
 ### 2026-11-11: Every background command of an agent has a deadline
 
 - `process.background-commands-have-deadlines` (ADR-0335): on 2026-11-10 a wait loop written for

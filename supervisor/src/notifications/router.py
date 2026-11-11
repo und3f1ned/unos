@@ -5,11 +5,16 @@ import logging
 import smtplib
 import ssl
 import json
+import math
+import re
+import subprocess
 import threading
+import time
 import uuid
 import httpx
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
@@ -17,7 +22,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import TypeAdapter, ValidationError
 
-from .. import state_files
+from .. import host, state_files
 from ..auth.utils import verify_token
 from .schemas import (
     NotificationConfig, NotificationEvent, NotificationLog,
@@ -34,8 +39,43 @@ LOGS_FILE = "/data/notification_logs.json"
 HISTORY_SIZE = 100
 
 # Seconds the e-mail and Telegram senders wait for each network operation
-# (connect, read, write) before giving up.
+# (connect, read, write) before giving up; Telegram's connection from the
+# container gets CONNECT_TIMEOUT of them.
 SEND_TIMEOUT = 15
+# The same for the webhook, Discord and Slack senders.
+HOOK_TIMEOUT = 30
+
+# The HTTP channels (Telegram, webhook, Discord, Slack) send each request from
+# the container first. When no connection could be made from there, so that
+# the request was not sent, it goes once more from the host's network, with the
+# host's curl (ADR-0336): the containers have no IPv6, and a network may let a
+# service through over IPv6 alone. A request that was sent is never sent again,
+# whatever came of it (an HTTP error, no answer in time): the message could
+# arrive twice. httpx's ConnectError also stands for a failed name lookup and a
+# failed TLS handshake or certificate check.
+_NO_CONNECTION = (httpx.ConnectError, httpx.ConnectTimeout)
+# Seconds the container's attempt waits for its connection: httpcore gives them
+# to the name lookup and TCP, and again to TLS. curl's whole attempt from the
+# host gets what is left of the channel's time (SEND_TIMEOUT, HOOK_TIMEOUT):
+# a send that connects nowhere ends as soon as it did before, and both attempts
+# well within an alert's ALERT_TIMEOUT (health/router.py).
+CONNECT_TIMEOUT = 5
+# Seconds the supervisor waits for nsenter and curl beyond curl's own limit.
+HOST_WAIT_MARGIN = 5
+# What curl prints after the body (--write-out), before the HTTP status.
+_CURL_STATUS = "\nunos-http-status:"
+# In a double-quoted value of curl's config these characters are escaped; the
+# others, UTF-8 included, stand as they are.
+_CURL_CONFIG_ESCAPES = str.maketrans({"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"})
+# A header as httpx sends one (h11 refuses others, once connected): a name of
+# RFC 9110's token characters, and a value without NUL, line breaks or other
+# whitespace than spaces and tabs between its characters. curl would read the
+# headers of a name that starts with "@" from a file of the host.
+_HEADER_NAME = re.compile(r"[-!#$%&'*+.^_`|~0-9A-Za-z]+")
+_HEADER_VALUE = re.compile(r"(?:[^\x00\s]+(?:[ \t]+[^\x00\s]+)*)?")
+# Secrets shorter than this are left in error texts: no key is that short, and
+# replacing them would garble the text.
+_SHORTEST_SECRET = 8
 
 # The test notification, and the answers of the API that the web UI shows
 # (webui/tests/notifications-fakes.ts answers with the same texts).
@@ -184,16 +224,167 @@ def _error_text(error: Exception) -> str:
     return str(error) or type(error).__name__
 
 
-def _webhook_failure(response: httpx.Response) -> str | None:
-    """None for a success (2xx); otherwise the status and the start of the body.
+def _webhook_failure(status: int, text: str) -> str | None:
+    """A webhook's, Discord's or Slack's answer: None for a success (2xx);
+    otherwise the status and the start of the body.
 
     A redirect is a failure too: the senders do not follow it, so the message
     did not arrive (ADR-0326).
     """
-    if response.is_success:
+    if 200 <= status < 300:
         return None
-    text = response.text.strip()[:200]
-    return f"HTTP {response.status_code}: {text}" if text else f"HTTP {response.status_code}"
+    text = text.strip()[:200]
+    return f"HTTP {status}: {text}" if text else f"HTTP {status}"
+
+
+def _telegram_failure(status: int, text: str) -> str | None:
+    """Telegram's answer: None when it took the message (HTTP 200 and "ok":
+    true); otherwise the start of the answer, in which Telegram explains its
+    errors, or the status of one without a body, as from a proxy on the way."""
+    try:
+        answer = json.loads(text)
+    except ValueError:
+        answer = None
+    if status == 200 and isinstance(answer, dict) and answer.get("ok") is True:
+        return None
+    return text.strip()[:200] or f"HTTP {status}"
+
+
+@dataclass(frozen=True)
+class _HttpRequest:
+    """An HTTP channel's request, as both of its attempts send it (ADR-0336)."""
+
+    method: str
+    url: str
+    headers: dict[str, str]
+    body: str
+    # What no error text may show: the bot token, a webhook's URL with its path,
+    # and the values of its headers.
+    secrets: tuple[str, ...]
+
+
+def _json_request(url: str, payload: dict, secrets: tuple[str, ...]) -> _HttpRequest:
+    """A POST of ``payload`` as JSON to ``url``."""
+    return _HttpRequest("POST", url, {"Content-Type": "application/json"}, json.dumps(payload), secrets)
+
+
+def _url_secrets(url: str) -> tuple[str, ...]:
+    """A webhook's URL and its path with the query, where its key is (ADR-0326):
+    a service may name the path alone, as in "Cannot POST /<path>"."""
+    _, _, rest = url.partition("://")
+    _, slash, path = rest.partition("/")
+    return (url, slash + path) if slash else (url,)
+
+
+def _redact(text: str, secrets: Iterable[str]) -> str:
+    """``text`` with every one of ``secrets`` replaced by ***, the longest
+    first, but those shorter than _SHORTEST_SECRET."""
+    for secret in sorted(secrets, key=len, reverse=True):
+        if len(secret) >= _SHORTEST_SECRET:
+            text = text.replace(secret, "***")
+    return text
+
+
+async def _send_http(
+    request: _HttpRequest, timeout: float, failure: Callable[[int, str], str | None]
+) -> tuple[bool, str | None]:
+    """Send ``request``: (True, None), or (False, the error).
+
+    ``timeout`` is the seconds of each network operation, ``failure`` judges an
+    answer by its status and body: None for a delivery, else what to report.
+    The container's attempt waits CONNECT_TIMEOUT for its connection; when it
+    connects nowhere, the same request goes from the host's network in what is
+    left of ``timeout``, judged the same way, and an error names both attempts.
+    What the services, httpx and curl say is reported without the request's
+    secrets (ADR-0336).
+    """
+    secrets = request.secrets
+    started = time.monotonic()
+    try:
+        # As httpx sends it (spaces and braces of its path escaped): curl gets the same.
+        url = httpx.URL(request.url)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=CONNECT_TIMEOUT)) as client:
+            response = await client.request(
+                request.method, url, content=request.body, headers=request.headers
+            )
+        problem = failure(response.status_code, _redact(response.text, secrets))
+    except _NO_CONNECTION as error:
+        # Tenths of a second, at least one second.
+        left = max(math.floor((timeout - (time.monotonic() - started)) * 10) / 10, 1.0)
+        from_host = await _send_from_host(request, str(url), left, failure)
+        problem = None if from_host is None else (
+            f"no connection from the container ({_redact(_error_text(error), secrets)}); "
+            f"from the host: {from_host}"
+        )
+    except Exception as error:
+        problem = _redact(_error_text(error), secrets)
+    return (True, None) if problem is None else (False, problem)
+
+
+def _curl_config(request: _HttpRequest, url: str) -> str:
+    """``request`` to ``url`` as curl's config (``curl --config -``).
+
+    One option per line, its value in double quotes with backslashes, double
+    quotes, line breaks, carriage returns and tabs escaped, every other
+    character, UTF-8 included, as it is. A header without a value is written
+    ``Name;``, as curl takes one (``Name:`` would drop the header). The body is
+    ``data-raw``, which curl sends as it is: ``data-binary`` would read a body
+    that starts with "@" from a file of the host. ValueError for what such a
+    config cannot carry as httpx would send it: a NUL character, which cuts
+    curl's line, and a header that httpx would not send (_HEADER_NAME,
+    _HEADER_VALUE).
+    """
+    if not all(_HEADER_NAME.fullmatch(name) and _HEADER_VALUE.fullmatch(value)
+               for name, value in request.headers.items()):
+        raise ValueError("a header has a name or a value that HTTP does not allow")
+    if any("\0" in value for value in (url, request.method, request.body)):
+        raise ValueError("it holds a NUL character, which curl cannot be given")
+    headers = [f"{name}: {value}" if value else f"{name};" for name, value in request.headers.items()]
+    options = [("url", url), ("request", request.method), *(("header", header) for header in headers),
+               ("data-raw", request.body)]
+    return "".join(f'{name} = "{value.translate(_CURL_CONFIG_ESCAPES)}"\n' for name, value in options)
+
+
+async def _send_from_host(
+    request: _HttpRequest, url: str, max_time: float, failure: Callable[[int, str], str | None]
+) -> str | None:
+    """Send ``request`` to ``url`` from the host's network with the host's curl,
+    which ends after ``max_time`` seconds: None when ``failure`` judges the
+    answer a delivery, else why it was not one.
+
+    run_on_host enters the host's namespaces (ADR-0020): curl uses the host's
+    routes, name servers and CA certificates. The request is curl's config on
+    standard input, so that the bot token, a webhook's URL and its headers are
+    never on a command line, where every process of the host can read them
+    (ADR-0125). Its command line holds fixed options only: --disable, which must
+    come first, so that no curlrc of the host adds any; --globoff, so that the
+    URL is one URL, as it is; http and https only; and the status after the
+    body. It verifies HTTPS against the host's CA certificates.
+    """
+    try:
+        config = _curl_config(request, url)
+    except ValueError as error:
+        return f"not sent: {error}"
+    wait = max_time + HOST_WAIT_MARGIN
+    try:
+        result = await host.run_on_host_async(
+            ["curl", "--disable", "--silent", "--show-error", "--globoff", "--max-time", f"{max_time:.1f}",
+             "--proto", "=https,http", "--config", "-", "--write-out", _CURL_STATUS + "%{http_code}"],
+            input=config,
+            timeout=wait,
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        return f"no answer within {wait:.0f} s"
+    except Exception as error:  # nsenter, or curl where host commands run locally, did not start
+        return _redact(_error_text(error), request.secrets)
+    if result.returncode == 127:  # what nsenter answers for a program that the host lacks
+        return "the host has no curl (package curl)"
+    body, separator, status = result.stdout.rpartition(_CURL_STATUS)
+    if result.returncode == 0 and separator and status.isdigit():
+        return failure(int(status), _redact(body, request.secrets))
+    lines = result.stderr.strip().splitlines()
+    return _redact(lines[-1], request.secrets) if lines else f"curl exited with status {result.returncode}"
 
 
 # SMTPS: TLS from the first byte (RFC 8314), not STARTTLS.
@@ -279,41 +470,32 @@ UNOS NAS Notification System
 
 
 async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tuple[bool, str | None]:
-    """Send Telegram notification."""
-    try:
-        type_emoji = {
-            NotificationType.INFO: "ℹ️",
-            NotificationType.WARNING: "⚠️",
-            NotificationType.ERROR: "❌",
-            NotificationType.SUCCESS: "✅",
-        }
-        emoji = type_emoji.get(event.type, "📢")
+    """Send Telegram notification; from the host's network when the container connects nowhere."""
+    type_emoji = {
+        NotificationType.INFO: "ℹ️",
+        NotificationType.WARNING: "⚠️",
+        NotificationType.ERROR: "❌",
+        NotificationType.SUCCESS: "✅",
+    }
+    emoji = type_emoji.get(event.type, "📢")
 
-        # HTML with the texts escaped: in Telegram's Markdown a single "_" or "*",
-        # as in a pool named e2e_tank, makes it refuse the message (ADR-0326).
-        title = html.escape(event.title, quote=False)
-        text = html.escape(event.message, quote=False)
-        message = f"{emoji} <b>{title}</b>\n\n{text}\n\n<i>UNOS NAS</i>"
+    # HTML with the texts escaped: in Telegram's Markdown a single "_" or "*",
+    # as in a pool named e2e_tank, makes it refuse the message (ADR-0326).
+    title = html.escape(event.title, quote=False)
+    text = html.escape(event.message, quote=False)
+    message = f"{emoji} <b>{title}</b>\n\n{text}\n\n<i>UNOS NAS</i>"
 
-        url = f"https://api.telegram.org/bot{config.bot_token}/sendMessage"
-        async with httpx.AsyncClient(timeout=SEND_TIMEOUT) as client:
-            resp = await client.post(url, json={
-                "chat_id": config.chat_id,
-                "text": message,
-                "parse_mode": "HTML",
-            })
-
-            if resp.status_code != 200:
-                # Telegram explains its errors in the body; a proxy on the way may send none.
-                return False, resp.text or f"HTTP {resp.status_code}"
-
-        return True, None
-    except Exception as e:
-        return False, _error_text(e)
+    # The bot token is part of the URL.
+    request = _json_request(
+        f"https://api.telegram.org/bot{config.bot_token}/sendMessage",
+        {"chat_id": config.chat_id, "text": message, "parse_mode": "HTML"},
+        (config.bot_token,),
+    )
+    return await _send_http(request, SEND_TIMEOUT, _telegram_failure)
 
 
 async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple[bool, str | None]:
-    """Send generic webhook notification."""
+    """Send generic webhook notification; from the host's network when the container connects nowhere."""
     try:
         # Build the body
         if config.body_template:
@@ -332,98 +514,76 @@ async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple
                 "timestamp": event.timestamp or datetime.now().isoformat(),
                 "source": "UNOS NAS"
             })
-
-        headers = {"Content-Type": config.content_type}
-        headers.update(config.headers)
-
-        async with httpx.AsyncClient() as client:
-            if config.method.upper() == "POST":
-                resp = await client.post(config.url, content=body, headers=headers, timeout=30)
-            elif config.method.upper() == "PUT":
-                resp = await client.put(config.url, content=body, headers=headers, timeout=30)
-            else:
-                return False, f"Unsupported method: {config.method}"
-
-            failure = _webhook_failure(resp)
-            if failure:
-                return False, failure
-
-        return True, None
     except Exception as e:
         return False, _error_text(e)
+
+    method = config.method.upper()
+    if method not in ("POST", "PUT"):
+        return False, f"Unsupported method: {config.method}"
+    headers = {"Content-Type": config.content_type}
+    headers.update(config.headers)
+    # The URL carries the hook's key, and the headers may carry credentials.
+    request = _HttpRequest(method, config.url, headers, body, (*_url_secrets(config.url), *config.headers.values()))
+    return await _send_http(request, HOOK_TIMEOUT, _webhook_failure)
 
 
 async def send_discord(config: DiscordConfig, event: NotificationEvent) -> tuple[bool, str | None]:
-    """Send Discord webhook notification."""
-    try:
-        # Discord color codes
-        colors = {
-            NotificationType.INFO: 3447003,      # Blue
-            NotificationType.WARNING: 16776960,  # Yellow
-            NotificationType.ERROR: 15158332,    # Red
-            NotificationType.SUCCESS: 3066993,   # Green
-        }
+    """Send Discord webhook notification; from the host's network when the container connects nowhere."""
+    # Discord color codes
+    colors = {
+        NotificationType.INFO: 3447003,      # Blue
+        NotificationType.WARNING: 16776960,  # Yellow
+        NotificationType.ERROR: 15158332,    # Red
+        NotificationType.SUCCESS: 3066993,   # Green
+    }
 
-        payload = {
-            "username": config.username,
-            "embeds": [{
-                "title": event.title,
-                "description": event.message,
-                "color": colors.get(event.type, 3447003),
-                "footer": {"text": "UNOS NAS"},
-                "timestamp": event.timestamp or datetime.now().isoformat()
-            }]
-        }
+    payload = {
+        "username": config.username,
+        "embeds": [{
+            "title": event.title,
+            "description": event.message,
+            "color": colors.get(event.type, 3447003),
+            "footer": {"text": "UNOS NAS"},
+            "timestamp": event.timestamp or datetime.now().isoformat()
+        }]
+    }
 
-        if config.avatar_url:
-            payload["avatar_url"] = config.avatar_url
+    if config.avatar_url:
+        payload["avatar_url"] = config.avatar_url
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(config.webhook_url, json=payload, timeout=30)
-            failure = _webhook_failure(resp)
-            if failure:
-                return False, failure
-
-        return True, None
-    except Exception as e:
-        return False, _error_text(e)
+    # The webhook URL carries its key.
+    request = _json_request(config.webhook_url, payload, _url_secrets(config.webhook_url))
+    return await _send_http(request, HOOK_TIMEOUT, _webhook_failure)
 
 
 async def send_slack(config: SlackConfig, event: NotificationEvent) -> tuple[bool, str | None]:
-    """Send Slack webhook notification."""
-    try:
-        # Slack color codes
-        colors = {
-            NotificationType.INFO: "#36a64f",
-            NotificationType.WARNING: "#f2c744",
-            NotificationType.ERROR: "#d00000",
-            NotificationType.SUCCESS: "#2eb886",
-        }
+    """Send Slack webhook notification; from the host's network when the container connects nowhere."""
+    # Slack color codes
+    colors = {
+        NotificationType.INFO: "#36a64f",
+        NotificationType.WARNING: "#f2c744",
+        NotificationType.ERROR: "#d00000",
+        NotificationType.SUCCESS: "#2eb886",
+    }
 
-        payload = {
-            "username": config.username,
-            "icon_emoji": config.icon_emoji,
-            "attachments": [{
-                "color": colors.get(event.type, "#36a64f"),
-                "title": event.title,
-                "text": event.message,
-                "footer": "UNOS NAS",
-                "ts": int(datetime.now().timestamp())
-            }]
-        }
+    payload = {
+        "username": config.username,
+        "icon_emoji": config.icon_emoji,
+        "attachments": [{
+            "color": colors.get(event.type, "#36a64f"),
+            "title": event.title,
+            "text": event.message,
+            "footer": "UNOS NAS",
+            "ts": int(datetime.now().timestamp())
+        }]
+    }
 
-        if config.channel:
-            payload["channel"] = config.channel
+    if config.channel:
+        payload["channel"] = config.channel
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(config.webhook_url, json=payload, timeout=30)
-            failure = _webhook_failure(resp)
-            if failure:
-                return False, failure
-
-        return True, None
-    except Exception as e:
-        return False, _error_text(e)
+    # The webhook URL carries its key.
+    request = _json_request(config.webhook_url, payload, _url_secrets(config.webhook_url))
+    return await _send_http(request, HOOK_TIMEOUT, _webhook_failure)
 
 
 async def send_through(config: NotificationConfig, event: NotificationEvent) -> tuple[bool, str | None]:

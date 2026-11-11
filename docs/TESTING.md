@@ -201,6 +201,13 @@ def test_list_disks(fake_host):
     assert [d.name for d in disks.list_disks()] == ["sdb"]
 ```
 
+A notification that cannot connect from the container goes once more from the host's network with
+the host's curl (ADR-0336): `FakeHost`'s curl reads the request from its config on standard input
+as curl does, and answers what the test sets in `FakeHost.network` (`HttpAnswer` or
+`CurlFailure`). `tests/test_notifications.py` also sends one such request through the real `curl`
+of this machine to a local receiver (`UNOS_HOST_EXEC=local`), and skips it where curl is not
+installed.
+
 ### Linux-Only Tests
 
 `tests/test_share_repair.py` (Repair permissions) walks real temporary
