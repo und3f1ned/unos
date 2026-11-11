@@ -53,6 +53,17 @@ SD writes of each check (ADR-0214). The areas:
            end; and the task deleted, its run left in the Scheduler's history. On a pool with more
            than 32 GiB of data the scrubs are cancelled instead of waited for. The pool's last
            scrub result is the check's afterwards.
+  offsite  The off-device copy (ADR-0336), on a device where none is set up: a folder of the
+           pool with two files as the source and another as the disk target; Save and test, which
+           makes the copy repository there (700 root:root) and says that it lies on the disk it
+           copies; Run now, whose copy, check and restore test pass; the snapshots of the
+           configuration and of the folder; Restore configuration into the backup list as
+           offsite_<snapshot time>.tar.gz, deleted again; Restore files into a new folder
+           restored-<time> of the pool, compared byte for byte; no password of the check in an
+           answer or a log; and Forget this target, which removes the settings, the password and
+           the state. The clean-up waits for a copy or restore that still runs, and removes the
+           check's folders, its restored folders and its offsite_ backups: while the check's
+           target is the device's only one, no other copy or restore can make them.
 
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
 of an earlier check. It makes what it needs through the API, under names made of "unoscheck"
@@ -97,6 +108,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -107,7 +119,7 @@ import api as relay  # noqa: E402  scripts/dev/api.py
 
 SSH = HERE / "ssh.sh"
 SD = HERE / "sd.sh"
-AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "scrub")
+AREAS = ("files", "volumes", "smart", "backups", "smb", "smbconf", "scrub", "offsite")
 MARK = "unoscheck"
 LEFTOVER = re.compile(MARK + r"[0-9a-f]{6}")
 POOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -2001,6 +2013,147 @@ def scrub_check(c: Check) -> None:
         c.expect([r["id"] for r in c.get(f"/scheduler/runs/{made['id']}")] == [run["id"]], "its run is gone")
 
 
+# --- the off-device copy ------------------------------------------------------------------------
+
+# Seconds a copy or a restore of the check's small folder may take (the repository on the pool's
+# disk), and between two looks at the state.
+OFFSITE_WAIT = 1800
+OFFSITE_POLL = 2
+
+
+def offsite_idle(c: Check) -> dict:
+    """The state of the off-device copy once no copy or restore runs."""
+    deadline = time.monotonic() + OFFSITE_WAIT
+    while True:
+        status = c.get("/offsite/status")
+        if status.get("running") is None:
+            return status
+        c.expect(time.monotonic() < deadline, f"the {status['running'].get('kind')} still runs after {OFFSITE_WAIT} s")
+        time.sleep(OFFSITE_POLL)
+
+
+def utc_stamp(text: str) -> str:
+    """The UTC time of restic's ISO 8601 TEXT as backups are named, YYYYmmdd_HHMMSS. restic writes
+    nanoseconds, and Z for UTC, which datetime of Python 3.9 reads neither: the fraction is left out,
+    and Z is written as +00:00."""
+    plain = re.sub(r"Z$", "+00:00", re.sub(r"\.\d+", "", text))
+    return datetime.fromisoformat(plain).astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+def offsite_check(c: Check) -> None:
+    with c.step("a pool is mounted read-write and managed by UNOS") as s:
+        pool = c.pick_pool()
+        name, root = pool["name"], pool["mountpoint"]
+        s.text += f": {name} at {root}"
+    source = f"{root}/{c.run}"
+    target = f"{root}/{c.run}t"
+
+    def listed(path: str) -> list[str]:
+        return [i["name"] for i in c.get("/files/list", params={"path": path})["items"]]
+
+    def backups() -> list[str]:
+        return sorted(b["filename"] for b in c.get("/backup/list")["backups"])
+
+    def state() -> dict:
+        return {
+            "the off-device copy": "set up" if c.get("/offsite/settings")["configured"] else "not set up",
+            "the pool's top folder": sorted(listed(root)),
+            "the backups": backups(),
+        }
+
+    def remove_settings() -> None:
+        offsite_idle(c)
+        c.call("DELETE", "/offsite/settings")
+
+    def remove_restored() -> None:
+        offsite_idle(c)
+        for folder in listed(root):
+            if folder.startswith("restored-") and folder not in c.before["the pool's top folder"]:
+                c.delete_for_good(f"{root}/{folder}")
+
+    def remove_backups() -> None:
+        for backup in backups():
+            if backup.startswith("offsite_") and backup not in c.before["the backups"]:
+                c.call("DELETE", f"/backup/{backup}", expect=(200, 404))
+
+    with c.step("the device holds nothing of an earlier check"):
+        c.baseline(state)
+        since = c.device.now()
+
+    with c.step("no off-device copy is set up, which the check would replace"):
+        c.expect(c.before["the off-device copy"] == "not set up", "one is set up on System > Backup & Restore: forget "
+                 "it there, or run the check on a device without one")
+
+    with c.step(f"a folder {source} with two files, the folder to copy"):
+        c.on_cleanup(f"delete {source} for good", lambda: c.delete_for_good(source))
+        c.post("/files/mkdir", {"path": root, "name": c.run})
+        c.upload(source, "a.txt", DATA)
+        c.post("/files/mkdir", {"path": source, "name": "sub"})
+        c.upload(f"{source}/sub", "b.txt", DATA2)
+
+    password = c.secret()
+    with c.step(f"Save and test makes the copy repository in {target} (700 root:root), and the answer says that it "
+                "lies on the disk it copies"):
+        c.on_cleanup(f"delete {target} for good", lambda: c.delete_for_good(target))
+        c.on_cleanup("forget the target: the settings, the password and the state", remove_settings)
+        answer = c.call("PUT", "/offsite/settings", {"kind": "disk", "path": target, "password": password,
+                                                     "sources": [source]})
+        c.expect(answer.get("configured") and answer.get("has_password"), f"the answer is {answer}")
+        warnings = [w.get("kind") for w in answer.get("warnings") or []]
+        c.expect(warnings == ["same_disk"], f"its warnings are {warnings}")
+        found = listed(target)
+        c.expect("config" in found and "keys" in found, f"{target} holds {found}")
+        stat_is(c, c.device.stat([target]), target, "700 root:root")
+
+    with c.step("Run now copies the configuration and the folder, removes old snapshots, checks the repository and "
+                "tests a restore") as s:
+        c.post("/offsite/run", expect=202)
+        last = offsite_idle(c).get("last_copy") or {}
+        c.expect(last.get("success"), f"the copy failed at {last.get('step')}: {last.get('error')}")
+        c.expect((last.get("check"), last.get("restore_test")) == ("passed", "passed"),
+                 f"the check {last.get('check')}, the restore test {last.get('restore_test')}")
+        summary = last.get("summary") or {}
+        c.expect(summary.get("files_new") == 2, f"it copied {summary}")
+        s.text += f": {summary.get('files_new')} new files, {summary.get('bytes_added')} bytes added"
+
+    with c.step("the snapshots are one of the configuration and one of the folder"):
+        snapshots = c.get("/offsite/snapshots")["snapshots"]
+        kinds = {snapshot["kind"]: snapshot for snapshot in snapshots}
+        c.expect(len(snapshots) == 2 and sorted(kinds) == ["configuration", "data"],
+                 f"it lists {[(x.get('kind'), x.get('paths')) for x in snapshots]}")
+        c.expect(kinds["data"]["paths"] == [source], f"the folder's snapshot holds {kinds['data']['paths']}")
+
+    stamp = utc_stamp(kinds["configuration"]["time"])
+    with c.step(f"Restore configuration puts it into the backup list as offsite_{stamp}.tar.gz, and Delete "
+                "removes it there") as s:
+        c.on_cleanup("delete the backups of the check's restores", remove_backups)
+        backup = c.post("/offsite/restore-configuration", {"snapshot_id": kinds["configuration"]["id"]})["backup"]
+        name_of = backup["filename"]
+        c.expect(re.fullmatch(rf"offsite_{stamp}(_\d+)?\.tar\.gz", name_of) and name_of in backups(),
+                 f"{name_of} is not listed")
+        c.call("DELETE", f"/backup/{name_of}")
+        c.expect(name_of not in backups(), f"{name_of} is still listed")
+        s.text += f": {name_of}"
+
+    with c.step(f"Restore files restores the folder into a new folder restored-<time> of {name}, byte for byte") as s:
+        c.on_cleanup("delete the folders of the check's restores for good", remove_restored)
+        folder = c.post("/offsite/restore-files", {"snapshot_id": kinds["data"]["id"], "pool": name, "path": source},
+                        expect=202)["folder"]
+        c.expect(re.fullmatch(rf"{re.escape(root)}/restored-\d{{8}}-\d{{6}}", folder), f"it restores into {folder}")
+        last = offsite_idle(c).get("last_restore") or {}
+        c.expect(last.get("success") and last.get("folder") == folder, f"the restore ended {last}")
+        c.expect(c.download(f"{folder}/a.txt") == DATA and c.download(f"{folder}/sub/b.txt") == DATA2,
+                 "the restored files hold other bytes")
+        s.text += f": {folder}"
+
+    with c.step("no password of the check is in an answer, the supervisor's log, the journal or the audit log"):
+        c.scanned(since, ("the supervisor's log", "the journal", "the audit log"))
+
+    with c.step("Forget this target removes the settings, the password and the state: no copy is set up"):
+        c.call("DELETE", "/offsite/settings")
+        c.expect(not c.get("/offsite/settings")["configured"], "a copy is still set up")
+
+
 CHECKS: dict[str, Callable[[Check], None]] = {
     "files": files_check,
     "volumes": volumes_check,
@@ -2009,6 +2162,7 @@ CHECKS: dict[str, Callable[[Check], None]] = {
     "smb": smb_check,
     "smbconf": smbconf_check,
     "scrub": scrub_check,
+    "offsite": offsite_check,
 }
 
 
@@ -2042,7 +2196,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scenario.py", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("area", choices=AREAS)
-    parser.add_argument("--pool", type=pool_name, help="the pool of the files, volumes, smb, smbconf and scrub checks")
+    parser.add_argument("--pool", type=pool_name,
+                        help="the pool of the files, volumes, smb, smbconf, scrub and offsite checks")
     args = parser.parse_args(argv)
     if not lock_holder_alive(os.environ.get("UNOS_DEV_LOCK_HELD", "")):
         print("scenario.py: run it through scripts/dev/scenario.sh, which holds the device lock (ADR-0210)", file=sys.stderr)

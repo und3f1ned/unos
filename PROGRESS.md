@@ -248,6 +248,31 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-11: Off-device copies with restic
+
+- `backup.off-device-copies` is built to the design of ADR-0336, which supersedes the proposal
+  ADR-0041; `passes` stays false. restic, in a layer of its own of `supervisor/Dockerfile` after
+  pip's, copies the configuration archive of Create Backup and the chosen pool folders to one copy
+  repository: a folder on a disk mounted below /mnt that is not the system disk, or an
+  S3-compatible store. Saving the settings tests the target and makes the repository there only; a
+  task of the new type `offsite_copy` or Run now runs unlock, the two backups, forget with
+  `--prune`, check and the restore test, one copy or restore at a time; the snapshots restore the
+  configuration into the backup list (`offsite_<snapshot time>.tar.gz`) and the files into a new
+  folder `restored-<UTC time>` of a pool. The secrets live in `/data/offsite_secrets.json` (0600)
+  and reach restic only in its own environment. The web UI's section Off-device copy is on System
+  > Backup & Restore, and the Scheduler offers the task type.
+- Tests first: `test_offsite.py` (89 tests against the fake restic of
+  `supervisor/tests/fake_restic.py`, which restic's absence on the workstation calls for; the
+  stand-in runs it too), the state files, the routes' roles, the stand-in, the Dockerfile's layer,
+  and `webui/tests/offsite.spec.ts`, which failed without the section. The scenario check gets the
+  area `offsite` (`scripts/dev/scenario.py`), with its fake in `test_dev_scenarios.py`.
+- `backup.off-device-copies-over-sftp` records the SFTP and REST targets that ADR-0336 leaves out.
+- Open: the deploy, whose supervisor build runs apt-get for restic's layer (tell the owner first,
+  and measure its SD MiB), `scripts/dev/scenario.sh offsite` before and after a reboot (ADR-0018),
+  a copy to a USB disk and to an S3 store, and the review in a fresh context (ADR-0017). The ADR
+  numbered 0335 comes from another branch: until it is merged, `test_adrs.py` reports the gap
+  before 0336.
+
 ### 2026-11-10: SMB lockout, server limits and the upload speed pass on the device
 
 - `shares.smb-login-protection`, `shares.samba-runtime-writes` and `security.server-limits`

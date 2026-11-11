@@ -12,7 +12,7 @@ passwords that the history holds (ADR-0278), and the lock of an account after 5 
 refuses the right password as well and writes nothing (ADR-0334).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
-* every area (files, volumes, smart, backups, smb, smbconf, scrub) passes against the fake, prints a
+* every area (files, volumes, smart, backups, smb, smbconf, scrub, offsite) passes against the fake, prints a
   PASS line with its SD MiB for each step and a summary, and leaves the device as it found it;
 * the smbconf check (ADR-0309) shows what an smb.conf edited by hand does: the Shares page names
   the file before an apply, the apply copies it byte for byte to smb.conf.unos-replaced, a share
@@ -280,6 +280,16 @@ class FakeNas:
         self.pool_used = 1  # bytes of data in the pool data
         self.tasks: dict[str, dict] = {}
         self.runs: list[dict] = []
+        # The off-device copy (ADR-0336): its settings, password and state; the repository is a folder
+        # of fs (config, keys/key, snapshots/<id>); what a copy or restore that runs makes is shown by
+        # GET /offsite/status after offsite_left more requests.
+        self.offsite: dict | None = None
+        self.offsite_password: str | None = None
+        self.offsite_status: dict = {"last_copy": None, "last_restore": None}
+        self.offsite_running: dict | None = None
+        self.offsite_left = 0
+        self.offsite_pending: tuple[str, dict] | None = None
+        self.offsite_count = 0
 
     # --- what the tests compare
 
@@ -298,6 +308,8 @@ class FakeNas:
             "the copy's problem": self.replaced_problem,
             "a scrub runs": self.scrub["status"] == "running",
             "the Scheduler's tasks": copy.deepcopy(self.tasks),
+            "the off-device copy": (copy.deepcopy(self.offsite), self.offsite_password,
+                                    copy.deepcopy(self.offsite_status), self.offsite_running),
         }
 
     # --- the model
@@ -458,7 +470,10 @@ class FakeNas:
         if index == self.fail_after:
             self.injected = True
             return Answer(500, json.dumps({"detail": "injected failure after the change"}))
-        return Answer(200, body if isinstance(body, str) else json.dumps(body))
+        status = 200
+        if isinstance(body, tuple):  # (status, body): a route that answers 202
+            status, body = body
+        return Answer(status, body if isinstance(body, str) else json.dumps(body))
 
     def route(self, method, path, body, params, upload):
         parts = path.strip("/").split("/")
@@ -820,6 +835,140 @@ class FakeNas:
             raise Refused(404, "Backup not found")
         del self.backups[parts[0]]
         return {"status": "deleted", "filename": parts[0]}
+
+    def offsite_answer(self) -> dict:
+        settings = self.offsite
+        # The fake's one pool holds the target and the folders it copies.
+        same_disk = settings is not None and settings["path"].startswith(ROOT + "/")
+        warnings = [{"kind": "same_disk", "message": "This copy is on a disk it copies"}] if same_disk else []
+        return {"configured": settings is not None, "settings": copy.deepcopy(settings),
+                "has_password": self.offsite_password is not None, "has_s3_secret_access_key": False,
+                "pools": [{"name": "data", "path": ROOT}], "pools_base": "/mnt/pools", "warnings": warnings}
+
+    def offsite_busy(self) -> None:
+        if self.offsite_running is not None:
+            raise Refused(409, f"The {self.offsite_running['kind']} started at 2026-11-11 03:00:00 UTC is still running")
+
+    def offsite_snapshots(self) -> list[dict]:
+        folder = f"{self.offsite['path']}/snapshots"
+        found = [json.loads(self.fs[p].content) for p in self.fs if os.path.dirname(p) == folder]
+        return sorted(found, key=lambda snap: snap["time"], reverse=True)
+
+    def offsite_snapshot(self, kind: str, paths: list[str], files: dict[str, str]) -> dict:
+        self.offsite_count += 1
+        snap_id = hashlib.sha256(f"snapshot {self.offsite_count}".encode()).hexdigest()
+        snapshot = {"id": snap_id, "short_id": snap_id[:8], "time": f"2026-11-11T03:00:{self.offsite_count:02d}.123456789+00:00",
+                    "kind": kind, "tags": [f"unos-{'configuration' if kind == 'configuration' else 'data'}"],
+                    "paths": paths, "hostname": "unos", "size": sum(len(c) for c in files.values()),
+                    "files": len(files), "content": files}
+        self.fs[f"{self.offsite['path']}/snapshots/{snap_id}"] = Node("file", 0o400, content=json.dumps(snapshot))
+        return snapshot
+
+    def offsite_start(self, kind: str, result_key: str, result: dict, folder: str | None = None) -> None:
+        """A copy or restore that GET /offsite/status shows running for one request, then RESULT."""
+        self.offsite_running = {"kind": kind, "started": "2026-11-11T03:00:00+00:00", "step": None,
+                                "snapshot_id": None, "folder": folder}
+        self.offsite_left = 1
+        self.offsite_pending = (result_key, result)
+
+    def api_offsite(self, method, parts, body, params, upload):
+        what = "/".join(parts)
+        if what == "settings" and method == "GET":
+            return self.offsite_answer()
+        if what == "settings" and method == "PUT":
+            self.offsite_busy()
+            target, sources = body["path"], body["sources"]
+            if not target.startswith("/mnt/") or os.path.dirname(target) not in self.fs:
+                raise Refused(400, f"{os.path.dirname(target)} does not exist")
+            for source in sources:
+                if source not in self.fs:
+                    raise Refused(400, f"{source} does not exist")
+            password = body.get("password") or (self.offsite_password if self.offsite and self.offsite["path"] == target
+                                                 else None)
+            if not password:
+                raise Refused(400, "Enter the password of the copy repository")
+            if f"{target}/config" in self.fs:
+                if json.loads(self.fs[f"{target}/keys/key"].content)["password"] != password:
+                    raise Refused(400, "The password does not open the copy repository: Fatal: wrong password")
+            else:
+                self.fs.setdefault(target, Node("dir", 0o700))
+                for sub in ("data", "index", "keys", "locks", "snapshots"):
+                    self.fs[f"{target}/{sub}"] = Node("dir", 0o700)
+                self.fs[f"{target}/config"] = Node("file", 0o400, content="{}")
+                self.fs[f"{target}/keys/key"] = Node("file", 0o400, content=json.dumps({"password": password}))
+            if "log-offsite-password" in self.bugs:
+                self.log.append(f"restic init with RESTIC_PASSWORD={password}")
+            self.offsite = {"kind": "disk", "path": target, "sources": list(sources), "keep_daily": 7, "keep_weekly": 4,
+                            "keep_monthly": 12, "check_percent": 2}
+            self.offsite_password = password
+            return self.offsite_answer()
+        if what == "settings" and method == "DELETE":
+            self.offsite_busy()
+            self.offsite, self.offsite_password = None, None
+            self.offsite_status = {"last_copy": None, "last_restore": None}
+            return {"status": "deleted"}
+        if what == "status":
+            answer = {"running": copy.deepcopy(self.offsite_running), **copy.deepcopy(self.offsite_status)}
+            if self.offsite_running is not None:
+                self.offsite_left -= 1
+                if self.offsite_left <= 0:
+                    key, result = self.offsite_pending
+                    self.offsite_status[key] = result
+                    self.offsite_running = self.offsite_pending = None
+            return answer
+        if self.offsite is None:
+            raise Refused(409, "No off-device copy is set up: set one up on System > Backup & Restore")
+        if what == "run":
+            self.offsite_busy()
+            config = self.offsite_snapshot("configuration", ["/unos-configuration.tar.gz"], {"/unos-configuration.tar.gz": "archive"})
+            files = {p: self.fs[p].content for p in sorted(self.fs) for src in self.offsite["sources"]
+                     if p.startswith(src + "/") and self.fs[p].kind == "file"}
+            data = self.offsite_snapshot("data", list(self.offsite["sources"]), files)
+            failed = "offsite-check-fails" in self.bugs
+            self.offsite_start("copy", "last_copy", {
+                "started": "2026-11-11T03:00:00+00:00", "ended": "2026-11-11T03:00:09+00:00", "trigger": "manual",
+                "success": not failed, "step": "check" if failed else None,
+                "error": "restic check ended with exit status 1: Fatal: repository contains errors" if failed else None,
+                "summary": {"files_new": len(files), "files_changed": 0, "files_unmodified": 0, "bytes_added": 99,
+                            "configuration_snapshot": config["id"], "data_snapshot": data["id"]},
+                "check": "failed" if failed else "passed", "restore_test": None if failed else "passed"})
+            return 202, {"status": "started"}
+        if what == "snapshots":
+            return {"snapshots": [{k: v for k, v in snap.items() if k != "content"} for snap in self.offsite_snapshots()]}
+        found = [snap for snap in self.offsite_snapshots() if snap["id"].startswith(body["snapshot_id"])]
+        if not found:
+            raise Refused(404, f"The copy repository has no snapshot {body['snapshot_id']}")
+        snapshot = found[0]
+        if what == "restore-configuration":
+            self.offsite_busy()
+            stamp = re.sub(r"[-:T]", "", snapshot["time"][:19])
+            name = f"offsite_{stamp[:8]}_{stamp[8:]}.tar.gz"
+            self.backups[name] = None
+            return {"status": "success", "backup": {"filename": name, "size": 1, "created": "2026-11-11T04:00:00",
+                                                    "version": "1.0", "encrypted": False}}
+        if what == "restore-files":
+            self.offsite_busy()
+            if body["pool"] != "data":
+                raise Refused(400, f"There is no pool {body['pool']} at /mnt/pools/{body['pool']}")
+            self.offsite_count += 1
+            folder = f"{ROOT}/restored-20261111-04{self.offsite_count:04d}"
+            self.fs[folder] = Node("dir", 0o755)
+            sub = (body.get("path") or "").rstrip("/")
+            for path, content in snapshot["content"].items():
+                relative = path[len(sub) + 1:] if sub else path.lstrip("/")
+                if sub and not path.startswith(sub + "/"):
+                    continue
+                parts_of = relative.split("/")
+                for i in range(1, len(parts_of)):
+                    self.fs.setdefault(f"{folder}/{'/'.join(parts_of[:i])}", Node("dir", 0o755))
+                changed = content + "changed" if "offsite-restore-differs" in self.bugs else content
+                self.fs[f"{folder}/{relative}"] = Node("file", 0o644, content=changed)
+            self.offsite_start("restore-files", "last_restore", {
+                "snapshot_id": snapshot["id"], "path": body.get("path"), "folder": folder,
+                "started": "2026-11-11T04:00:00+00:00", "ended": "2026-11-11T04:00:02+00:00", "success": True,
+                "error": None}, folder=folder)
+            return 202, {"status": "started", "folder": folder}
+        raise AssertionError(f"the fake does not know {method} /offsite/{what}")
 
     # --- the host (scenario.Device's methods)
 
@@ -1367,7 +1516,7 @@ def test_the_subvolume_helper_touches_only_a_scenario_check_s_folder(tmp_path, a
         assert result.returncode == 2 and calls == "" and "not a subvolume of a scenario check" in result.stderr
 
 
-@pytest.mark.parametrize("area", ["files", "volumes", "smb", "smbconf"])
+@pytest.mark.parametrize("area", ["files", "volumes", "smb", "smbconf", "offsite"])
 def test_a_check_refuses_to_start_beside_leftovers_of_an_earlier_one(nas, area):
     nas.users[9] = {"username": "unoscheck0a1b2c", "is_admin": False}
     nas.fs[f"{ROOT}/unoscheck0a1b2c"] = Node("dir", 0o755)
@@ -1502,6 +1651,9 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("scrub", "scrub-errors", "it found 2 errors"),
     ("scrub", "cancel-keeps-running", "the scrub ended finished"),
     ("scrub", "runs-go-with-the-task", "its run is gone"),
+    ("offsite", "offsite-check-fails", "the copy failed at check"),
+    ("offsite", "offsite-restore-differs", "the restored files hold other bytes"),
+    ("offsite", "log-offsite-password", "no password of the check"),
 ])
 def test_the_checks_fail_on_the_defects_they_exist_for(nas, area, bug, words):
     before = nas.snapshot()
@@ -1665,6 +1817,45 @@ def test_the_smart_check_refuses_what_is_not_a_disk_and_starts_a_short_test(nas)
     assert f"/health/disk/{DISK}1" not in paths and "(no listed disk has a partition)" in output
     assert ("POST", f"/health/disk/{DISK}/test", None, {"test_type": "short"}) in nas.calls
     assert "sda: PASSED, 33 C, 2 attributes" in output
+
+
+def test_the_offsite_check_covers_the_copy_its_snapshots_and_both_restores(nas):
+    """ADR-0336: the steps of backup.off-device-copies that run on the device, on a folder of the pool
+    as the source and another as the disk target, and the device as the check found it."""
+    status, output = run_check("offsite", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("no off-device copy is set up", "700 root:root", "on the disk it copies", "Run now", "restore",
+                  "offsite_20261111_030001.tar.gz", "restored-", "byte for byte", "no password", "Forget this target"):
+        assert words in text, words
+    done = [(method, path) for method, path, _, _ in nas.calls]
+    for call in [("PUT", "/offsite/settings"), ("POST", "/offsite/run"), ("GET", "/offsite/snapshots"),
+                 ("POST", "/offsite/restore-configuration"), ("POST", "/offsite/restore-files"),
+                 ("DELETE", "/offsite/settings")]:
+        assert call in done, call
+    settings = next(body for method, path, body, _ in nas.calls if (method, path) == ("PUT", "/offsite/settings"))
+    assert settings["path"] == f"{ROOT}/unoscheck1a2b3ct" and settings["sources"] == [f"{ROOT}/unoscheck1a2b3c"]
+    assert len(settings["password"]) >= 12
+
+
+@pytest.mark.parametrize("text", ["2026-11-11T03:00:05.123456789Z", "2026-11-11T04:00:05.5+01:00",
+                                  "2026-11-11T03:00:05+00:00"])
+def test_the_offsite_check_reads_restics_times_as_python_3_9_does(text):
+    """restic writes nanoseconds and Z for UTC (Go's RFC 3339), which datetime.fromisoformat of
+    Python 3.9, a workstation's python3, reads neither: the name of a restored backup still comes out."""
+    assert scenario.utc_stamp(text) == "20261111_030005"
+
+
+def test_the_offsite_check_does_not_start_beside_a_copy_that_is_set_up(nas):
+    nas.offsite = {"kind": "disk", "path": "/mnt/usb/copy", "sources": [ROOT]}
+    nas.offsite_password = "the owner's password"
+    before = nas.snapshot()
+    status, output = run_check("offsite", nas)
+    assert status == 1
+    assert re.search(r"^FAIL  3\. no off-device copy is set up, which the check would replace: one is set up", output,
+                     re.M), output
+    assert nas.snapshot() == before
+    assert not [c for c in nas.calls if c[0] != "GET"]
 
 
 def test_the_backups_check_refuses_restores_and_never_restores(nas):

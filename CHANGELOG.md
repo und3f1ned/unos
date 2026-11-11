@@ -248,6 +248,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- Off-device copies: **System** → **Backup & Restore** copies the
+  configuration and the pools' folders with restic, encrypted with a password
+  that only the NAS keeps, to a folder on a disk mounted below `/mnt` that is
+  not the system disk, or to an S3-compatible store, with upload and download
+  limits. Saving tests the target and makes its repository; a task of the new
+  type **Off-device Copy** (daily at 03:00 with one button) or **Run now**
+  copies, removes old snapshots, checks the repository and tests a restore of
+  the configuration. Snapshots restore the configuration into the backup list
+  (`offsite_<time>.tar.gz`) and the files into a new folder of a pool. The
+  supervisor image contains restic.
 - Alerts for the problems of the NAS, and a health banner: a managed pool not
   mounted (also when none of its disks is connected), degraded (scrub errors
   included), read-only after an error or 90% full (95%: an error; it stays so

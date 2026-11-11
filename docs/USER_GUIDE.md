@@ -1478,8 +1478,8 @@ shown.
 
 **System** → **Scheduler** runs tasks on a schedule: snapshots and scrubs of a
 pool, SMART tests of a disk, system backups (see
-[Scheduled Snapshots](#scheduled-snapshots) and [System Backup](#system-backup))
-and custom commands. Only administrators see the tab, and only they can use
+[Scheduled Snapshots](#scheduled-snapshots) and [System Backup](#system-backup)),
+off-device copies (see [Off-Device Copy](#off-device-copy)) and custom commands. Only administrators see the tab, and only they can use
 its API.
 
 - **New Task** asks for the task's type, its target and when it runs: every
@@ -1675,6 +1675,80 @@ restore does not restore.
   each run with "No passphrase is set for this backup task: edit the task
   and set one", and stores nothing. Editing it asks for a passphrase, as for
   a new task.
+
+### Off-Device Copy
+
+The backups above stay on the system disk, and nothing else copies the files
+of your pools: a disk that fails takes them with it. The **Off-device copy**
+section of **System** → **Backup & Restore** copies both, with restic, to one
+place off this device, the copy repository:
+
+- **A disk**: a folder on a disk mounted below `/mnt`, such as a USB disk added
+  as a pool (`/mnt/pools/usb/unos-copy`). **Save and test** makes the folder
+  when only it is missing. A folder on the system disk is refused, and so is
+  the mount point of a disk that is not mounted: it is an empty folder there.
+  A folder that holds other files but no copy repository is refused too.
+- **An S3-compatible store**, such as Backblaze B2, Wasabi, Amazon S3,
+  Cloudflare R2 or MinIO on a second NAS: its endpoint (`https://`, or
+  `http://` in your own network, since restic encrypts everything anyway),
+  bucket, an optional prefix and region, the access key ID and the secret
+  access key. Upload and download limits in KiB/s (0: none) keep a copy from
+  filling your connection.
+
+To set it up:
+
+1. Choose where the copies go, and the folders to copy: every pool, by
+   default, and a folder below a pool through **Another folder to copy** and
+   **Add folder**. The pools' snapshots and trash are not copied, and neither
+   is the folder of the copy when it lies inside a copied folder.
+2. Enter the password of the copy repository twice, at least 12 characters.
+   **Keep it somewhere outside this device**: without it nobody, UNOS
+   included, can read the copies, and the configuration backups do not hold
+   it. The NAS keeps it, readable only by the supervisor, so that copies run
+   unattended. Editing the settings of the same target with both fields empty
+   keeps it. Another target needs a password; the password of a repository
+   cannot be changed here.
+3. **Save and test**: the NAS opens the repository with the password, or makes
+   a new one when the folder or bucket has none. A wrong password, or a store
+   that cannot be reached, is refused with restic's message.
+4. **Add a daily copy at 03:00** adds a task of the type **Off-device Copy**
+   to **System** → **Scheduler**. Until there is one, copies run only on
+   **Run now**.
+
+Each copy sends the configuration (the archive that **Create Backup** makes)
+and the changes of the folders since the last copy; removes the snapshots
+beyond the retention (7 daily, 4 weekly and 12 monthly, kept for the
+configuration and the folders each); checks the repository, reading 2% of its
+data (the share you set); and reads the configuration back and checks it as a
+restore would, the restore test, without restoring anything. The first step
+that fails ends the copy. **State** shows the last copy: whether it succeeded,
+the files new, changed and unmodified, how much it added, the check and the
+restore test, or the step that failed with restic's message; **Refresh** reads
+it again. A failed copy of a task is alerted to every notification channel. A
+copy that starts while another one or a restore runs is skipped and counts as
+a success: the first copy of a large pool to a cloud store can take days.
+
+A copy on the disk of a folder it copies, such as a folder of the same pool,
+protects against deleted and damaged files, not against the loss of that
+disk: the section says so.
+
+To restore:
+
+- **Restore configuration** on a snapshot of the configuration puts its
+  archive into the backup list above, as `offsite_<date>_<time>.tar.gz` (the
+  snapshot's time, in UTC), after the checks of an upload. Restore it there,
+  as any backup.
+- **Restore files** on a snapshot of the folders restores all of it, or one
+  folder as the snapshot holds it (`/mnt/pools/data/photos`), into a new folder
+  `restored-<date>-<time>` (UTC) at the top of the pool you choose. Nothing is
+  overwritten: take what you need from there with the **File Browser**.
+- On a new device: install UNOS, set up the same target with its password,
+  **Restore configuration**, restore that backup, then **Restore files**.
+
+**Forget this target** removes the settings and the password from the NAS; the
+copies stay where they are. A task of the type **Off-device Copy** then fails
+at each run, which is alerted, until a target is set up again: delete it on
+**System** → **Scheduler** when no copies are wanted.
 
 ---
 

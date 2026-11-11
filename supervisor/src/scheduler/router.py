@@ -1,4 +1,4 @@
-"""Scheduled tasks (snapshots, scrubs, SMART tests, backups, custom commands).
+"""Scheduled tasks (snapshots, scrubs, SMART tests, backups, off-device copies, custom commands).
 
 Trust model: tasks run as root inside the privileged supervisor container,
 which shares the host's PID namespace and has the Docker socket and /mnt. A
@@ -52,6 +52,7 @@ import psutil
 from .. import host, state_files
 from ..auth.utils import require_admin, verify_token
 from ..health import problems
+from ..offsite import service as offsite
 from ..backup.router import (
     BACKUP_KEY_SIZE,
     ENCRYPTED_EXTENSION,
@@ -707,7 +708,8 @@ def _create_snapshot(pool_name: str) -> tuple[bool, str]:
 
 
 async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
-    """Execute a snapshot, scrub, SMART test or backup task: whether it succeeded, and its output or error.
+    """Execute a snapshot, scrub, SMART test, backup or off-device copy task: whether it succeeded, and
+    its output or error.
 
     Targets are validated again here: the tasks file may contain entries
     written before validation existed or edited by hand. The commands of
@@ -782,6 +784,11 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             if key is None:
                 return False, NO_BACKUP_KEY
             return await create_scheduled_backup(task.keep_count, key)
+
+        elif task.task_type == TaskType.OFFSITE_COPY:
+            # The copy of the configuration and the pools' data to the off-device copy's repository;
+            # one that finds a copy running ends as a success that says so (ADR-0336).
+            return await offsite.run_copy("task")
 
         return False, "Unknown task type"
 

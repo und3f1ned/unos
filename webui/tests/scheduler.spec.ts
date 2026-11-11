@@ -867,6 +867,7 @@ test.describe('Scheduler: in Russian', () => {
       'Проверка целостности BTRFS (scrub)',
       'Тест SMART',
       'Резервная копия системы',
+      'Копия вне устройства',
       'Пользовательская команда',
     ]);
     await expect(field(page, 'Периодичность').locator('option')).toHaveText([

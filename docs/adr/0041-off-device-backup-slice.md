@@ -1,13 +1,16 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-05
 area: backup
 decided-by: agent
+superseded-by: ADR-0336
 ---
 
 # ADR-0041: Give off-device backup of user data its own slice
 
 ## Context
+
+Superseded by ADR-0336: the slice copies the configuration and the pools' data with restic to one repository on a disk or an S3 store, and tests a restore after each copy.
 
 Backups hold only the configuration (`unos.db`, `smb.conf` and a few files that are not restored) and are written to `/data/backups` in the `unos-data` volume, on the same system disk as everything else; the user data on the pools has no backup at all. Scheduled backups are not encrypted and contain the users' TOTP secrets, and removing the data volume (`docker compose down -v`, `deploy/uninstall.sh`) deletes the backups with it. This was too large for Phase 0 or slice 1.
 
