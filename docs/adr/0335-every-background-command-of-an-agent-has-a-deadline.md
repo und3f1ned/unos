@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-11-11
 area: process
-decided-by: owner
+decided-by: agent
 ---
 
 # ADR-0335: Every background command of an agent has a deadline
@@ -15,7 +15,7 @@ Claude Code wakes a session when a command that its Bash tool runs in the backgr
 `until [ "$(date -u +%H%M%S)" \> "222340" ]; do sleep 15; done; ...`, run in the background,
 and ended its turn. The Bash tool runs the workstation's zsh, whose `[` does not know `\>`: the
 test failed at every pass, the loop never ended, and the session stalled for nine hours. The
-owner said "this must never happen again".
+owner said "this must never happen again"; the rule below is the agent's answer to that.
 
 ## Decision
 
