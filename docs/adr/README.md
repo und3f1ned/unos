@@ -361,7 +361,7 @@ and this index, and `make check-fast` runs it.
 | [0048](0048-fixed-compose-subnet-and-trusted-proxy.md) | A fixed compose subnet lets uvicorn trust X-Forwarded-For only from the web UI | accepted | 2026-11-05 |
 | [0049](0049-update-sh-with-backup-health-check-and-rollback.md) | Updates go through update.sh, with a backup, a health check and automatic rollback | accepted | 2026-11-05 |
 | [0050](0050-releases-as-tags-and-multi-arch-images.md) | Release with git tags and multi-arch images on GHCR | proposed | 2026-11-05 |
-| [0176](0176-docker-health-checks-and-ordered-start.md) | Both containers have health checks, and the web UI waits for a healthy supervisor | accepted | 2026-11-06 |
+| [0176](0176-docker-health-checks-and-ordered-start.md) | Both containers have health checks, and the web UI waits for a healthy supervisor | superseded by [0338](0338-health-checks-ordered-start-and-an-access-log-of-refused-and-failed-requests.md) | 2026-11-06 |
 | [0177](0177-tmpfs-cap-for-small-boards.md) | Size the /tmp tmpfs for boards with 1 GB of RAM | proposed | 2026-11-06 |
 | [0178](0178-docker-log-rotation.md) | Rotate Docker's json-file logs when they grow | superseded by [0330](0330-docker-rotates-the-logs-of-every-container-unos-creates.md) | 2026-11-06 |
 | [0179](0179-uninstall-removes-smb-accounts.md) | Uninstall removes the SMB host accounts | superseded by [0180](0180-uninstall-keeps-smb-host-accounts.md) | 2026-11-06 |
@@ -372,6 +372,7 @@ and this index, and `make check-fast` runs it.
 | [0316](0316-the-install-script-recognizes-the-smb-conf-of-unos-by-its-header-alone.md) | The install script recognizes the smb.conf of UNOS by its header alone | accepted | 2026-11-10 |
 | [0322](0322-uninstall-restarts-smbd-once-and-restores-smb-conf-through-a-temporary-file.md) | Uninstall keeps the SMB host accounts, removes only their exact passdb entries, restarts smbd once and restores smb.conf through a temporary file | accepted | 2026-11-10 |
 | [0330](0330-docker-rotates-the-logs-of-every-container-unos-creates.md) | Docker rotates the logs of every container that UNOS creates at 10 MB, keeping 3 files | accepted | 2026-11-10 |
+| [0338](0338-health-checks-ordered-start-and-an-access-log-of-refused-and-failed-requests.md) | Both containers have health checks, the web UI waits for a healthy supervisor, and the access log keeps only refused and failed requests | accepted | 2026-11-11 |
 
 ## Device
 

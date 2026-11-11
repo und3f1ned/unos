@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0338
 date: 2026-11-06
 area: deploy
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0176: Both containers have health checks, and the web UI waits for a healthy supervisor
 
 ## Context
+
+Superseded by ADR-0338: it also keeps every request that answered below 400 out of the access log.
 
 The compose files had no health checks, so `docker ps` could not show whether UNOS worked, and the web UI could start before the API answered, when every request fails with 502. The files also still carried the obsolete `version` key, which Compose warns about on every command. Probes must not cost system-disk writes (ADR-0214).
 

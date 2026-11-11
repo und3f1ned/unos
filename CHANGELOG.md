@@ -448,6 +448,11 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- The supervisor's access log keeps only the requests that were refused or
+  failed (answers of 400 and above): an HTTP request that succeeds, a health
+  check included, no longer writes a line to the system disk through
+  `docker logs`. Each WebSocket connection still logs two lines when it opens,
+  and the supervisor's own log lines, warnings and errors are logged as before.
 - Docker rotates the logs of the UNOS containers, and of the apps and containers
   that UNOS creates, at 10 MB and keeps 3 files: a container that logs much no
   longer fills the system disk.
@@ -617,9 +622,6 @@ manager, encrypted backup uploads, health checks, CI checks).
   later.
 - The compose files no longer set the obsolete `version` key, which Docker
   Compose warned about on every command.
-- Successful health checks (`GET /api/v1/health` answering 200) no longer
-  appear in the supervisor's access log, which the Docker health checks would
-  fill. Failed checks and all other requests are still logged.
 - `scripts/test-cycle.sh` and the `docker compose up` commands in
   `docs/TESTING.md` start the deviceless test stack with `--wait-timeout 120`,
   as long as Docker can take to report its supervisor healthy or unhealthy

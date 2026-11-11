@@ -2725,7 +2725,8 @@
       ],
       "passes": true,
       "adr": [
-        "ADR-0176"
+        "ADR-0176",
+        "ADR-0338"
       ],
       "notes": "Over plain HTTP it is Caddy's rule: security.https-local-ca."
     },
@@ -3226,6 +3227,7 @@
       "passes": true,
       "adr": [
         "ADR-0176",
+        "ADR-0338",
         "ADR-0307"
       ],
       "notes": "Device check: 2026-11-07 (scripts/dev/deploy.sh up: both containers healthy). Re-check after the reboot of 2026-11-08 (ADR-0018, main 78769b4, the boot of 22:59:48 UTC): both containers healthy after the boot (step 1). Step 2 holds for docker compose up only: at boot dockerd's restart policy (unless-stopped) starts both containers at once, the web UI 34 ms before the supervisor, and the web UI's first health check failed (23:00:14 UTC) before it turned healthy, so after a reboot the web UI did not wait for the supervisor's health check. Since 2026-11-09 the web UI's command waits for the API before Caddy starts, whoever starts the container (ADR-0307; the owner left the choice to the agent). Device check of 2026-11-09 (01:18 UTC, scripts/dev/deploy.sh up webui): the web UI recreated with that command, healthy after 6 s, Caddy its PID 1; busybox's wget of the image takes its options. Re-check after the reboot of 2026-11-09 (ADR-0018, 78bb5b8 on the device, the boot of 07:17:13 UTC): dockerd started both containers at once again, and the web UI's command logged one wait, `waiting for the supervisor's API: wget: can't connect to remote host (172.31.254.3): Connection refused` (07:17:06, by the clock before timesyncd set it at 07:17:28); Caddy's first line came at 07:17:34.27 UTC, after the supervisor's `Application startup complete` at 07:17:32.78, so step 2 holds also at boot, as Caddy waiting for the health route that the supervisor's check requests (start period 600 s). Both containers healthy with no restart and check.sh OK (step 1); both health checks request /api/v1/health without credentials (step 3); Caddy is the web UI's PID 1."
@@ -3385,9 +3387,13 @@
       "adr": [
         "ADR-0214",
         "ADR-0178",
-        "ADR-0222"
+        "ADR-0222",
+        "ADR-0338"
       ],
-      "notes": "On 2026-11-07 one API call with a cached token wrote about 0.02 MiB, mostly access-log lines in the containers' json-file logs (ADR-0222)."
+      "notes": "Built (ADR-0338, which supersedes ADR-0176): uvicorn's access log keeps only the requests that answered 400 or above (_RefusedOrFailedRequestFilter of supervisor/src/main.py); Caddy logs no requests. Step 1: test_only_refused_and_failed_requests_reach_the_access_log of test_authz.py, a real uvicorn server with requests answering 200 to 500, which failed before (every request but a successful health check was logged); docker logs keeps the supervisor's own lines, warnings and errors. Measured before the change on 2026-11-11 (main b290ada): 60 idle seconds wrote 0.000 MiB, 100 calls of GET /api/v1/auth/me with the cached token 0.105 MiB, and the supervisor's json-file log was the only container log that grew. Open: step 2 after the deploy, and the re-check after a reboot (ADR-0018).",
+      "verified_by": [
+        "supervisor/tests/test_authz.py"
+      ]
     },
     {
       "id": "device.key-only-ssh",
