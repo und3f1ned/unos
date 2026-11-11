@@ -36,13 +36,14 @@ DEFAULT_FSTAB = (
 )
 
 # The parameters that UNOS renders, in [global] and in share sections (the testparm
-# allowlist; ADR-0281, ADR-0088, ADR-0275).
+# allowlist; ADR-0281, ADR-0088, ADR-0275, ADR-0342).
 SMB_CONF_KEYS = frozenset({
     "workgroup", "server string", "server role", "security", "passdb backend", "map to guest",
     "restrict anonymous", "guest account", "invalid users", "hosts allow", "server min protocol",
     "ntlm auth", "server signing", "server smb encrypt", "smb3 unix extensions",
     "access based share enum", "load printers", "printing", "printcap name", "disable spoolss",
     "usershare max shares", "unix password sync", "pam password change", "obey pam restrictions",
+    "check password script",
     "cache directory", "log file", "max log size", "log level", "logging", "debug timestamp", "dns proxy",
     "disable netbios", "smb ports", "multicast dns register",
     "path", "comment", "browseable", "read only", "guest ok", "valid users", "write list",

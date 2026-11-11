@@ -12,6 +12,11 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- Samba refuses every SMB password change that a computer asks for over the
+  network (Windows' **Change a password**, `smbpasswd -r`), so that SMB
+  passwords change only in UNOS, under its password rules: the line
+  `check password script = /bin/false` of the `[global]` section that UNOS
+  writes, also in the first smb.conf of `install.sh`.
 - After 5 wrong SMB passwords in a row, Samba locks the SMB account for 5
   minutes, for every computer and for the right password too; the two
   passwords before the current one do not count. The supervisor sets Samba's
