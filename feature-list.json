@@ -1659,12 +1659,16 @@
         "An archive whose smb_accounts holds two rows with one uid is refused",
         "A uid handed out before the backup is never handed out again after the restore"
       ],
+      "verified_by": [
+        "supervisor/tests/test_backup_restore.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0195",
         "ADR-0250",
         "ADR-0109"
-      ]
+      ],
+      "notes": "Step 1 built 2026-11-11: service.check_smb_tables (supervisor/src/shares/service.py), which a restore runs on the extracted database before the account snapshot and the SMB preparation, refuses an smb_accounts table that gives one non-NULL uid to two or more rows, with 400 \"unos.db in the backup gives the uid <uid> to <n> SMB accounts\", and nothing changes: no copy of the live database, no swap. UNOS's own table keeps uid UNIQUE, so only a crafted or edited backup holds such rows. test_backup_restore.py TestRestoredSchema test_two_accounts_with_one_uid_are_refused (uids 70001 and 70001: 400, the live database, smb.conf and the copies untouched, neither the snapshot nor the account rules run; 70001 and 70002, or no uids: restored) failed before: the restore answered 200. Open: step 2 (a uid of a user deleted before the backup is never handed out again; ADR-0276 names an installation id in smb_state for it), and the review in a fresh context."
     },
     {
       "id": "shares.status-names-foreign-smb-conf",
@@ -2216,10 +2220,17 @@
         "A gzip file that is not a backup, uploaded as .tar.gz.enc, is refused at the upload instead of failing at the restore",
         "A backup takes the pool entries of the host's /etc/fstab, or no fstab at all, never the container's file"
       ],
+      "verified_by": [
+        "supervisor/tests/test_backup_upload_check.py",
+        "supervisor/tests/test_backup_files.py",
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_scheduler_validation.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0167"
-      ]
+      ],
+      "notes": "Built 2026-11-11 (ADR-0345, which takes up the two backup cases of ADR-0167). Step 1: an upload named .tar.gz.enc whose bytes are gzip data to their end (header, deflate data, CRC-32 and length, zero padding allowed, or more than MAX_TAR_BYTES decompressed without an error) is refused with 400 \"This file is not an encrypted backup: it is an unencrypted gzip file\", and nothing is stored (_refuse_plain_archive and _is_gzip of supervisor/src/backup/router.py); a plain backup still gets \"This backup is not encrypted: upload it as .tar.gz\". test_backup_upload_check.py test_gzip_data_named_as_encrypted_is_refused_at_the_upload (gzip that is no tar, a tar without a manifest, a cut tar, zero padding after the stream, more than the decompression limit) failed before: each was stored and answered 200; test_an_encrypted_backup_whose_salt_starts_like_gzip_is_accepted guards the other side (an encrypted backup whose random salt starts with gzip's header is kept). Step 2, no fstab at all: no backup reads /etc (Create Backup, encrypted backups, the archive of the off-device copy, backup tasks); BackupConfig and the web UI's type lose include_pools and include_network, which only added the container's fstab and netplan files; a restore ignores the fstab and netplan members of a backup that still holds them, unextracted and without the warning \"fstab is included in the backup but is not restored automatically.\" test_backup_files.py test_a_backup_holds_neither_fstab_nor_netplan failed before (the backup by hand held fstab and netplan, read from the container's /etc), test_backup_restore.py test_restore_database_and_shares failed before (the fstab and netplan warnings), and so did the accepted case fstab-and-netplan-of-an-older-backup of test_backup_upload_check.py (400 \"fstab in the backup archive is too large\"); test_scheduler_validation.py test_a_backup_task_stores_encrypted_backups allows no fstab in a backup task's backup. Open: the review in a fresh context, and the check on the device after a deploy: scripts/dev/scenario.sh restore names the members of its backup by hand (manifest.json, unos.db) and of its scheduled one (manifest.json, scheduled_tasks.json, unos.db), neither with fstab or netplan, and its restores warn of no fstab; an upload of a gzip file that is no backup under a .tar.gz.enc name answers 400 and adds nothing to the backup list."
     },
     {
       "id": "backup.no-old-backup-import",

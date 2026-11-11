@@ -205,7 +205,10 @@ def test_restore_database_and_shares(env):
         _file("manifest.json", MANIFEST),
         _file("unos.db", _good_db(env)),
         _file("smb.conf", archived_smb.encode()),
+        # The container's fstab and netplan files, which older backups held (ADR-0345): ignored.
         _file("fstab", b"LABEL=data /mnt/pools/data btrfs defaults 0 0\n"),
+        _directory("netplan"),
+        _file("netplan/01-netcfg.yaml", b"network: {version: 2}\n"),
     ])
     reader = sqlite3.connect(env.db_path)  # an open connection, like the running app's
 
@@ -216,8 +219,8 @@ def test_restore_database_and_shares(env):
     assert body["status"] == "success"
     assert body["restored"] == ["database", "smb_config"]  # smb.conf is rendered from the restored database
     assert body["manifest"]["version"] == "1.0"
-    assert body["warnings"] == ["fstab is included in the backup but is not restored automatically."]
-    assert body["message"] == "Backup restored: database, smb_config. " + body["warnings"][0]
+    assert body["warnings"] == []
+    assert body["message"] == "Backup restored: database, smb_config."
 
     # The live database was replaced in place and open connections see it.
     assert {row[0] for row in reader.execute("SELECT username FROM users")} == {"admin2", "bob"}
@@ -287,7 +290,7 @@ def test_the_administrator_who_restores_keeps_their_session(env, tmp_path, monke
 
 
 def test_create_then_restore_roundtrip(env):
-    response = env.client.post("/api/v1/backup/create", json={"include_pools": False, "include_network": False})
+    response = env.client.post("/api/v1/backup/create", json={})
     assert response.status_code == 200, response.text
     name = response.json()["backup"]["filename"]
 
@@ -312,7 +315,7 @@ def test_a_backup_of_the_database_in_the_write_ahead_log_restores_with_its_last_
         assert pool.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
         pool.execute("INSERT INTO users (username, hashed_password, is_admin) VALUES ('recent', 'x', 0)")
         pool.commit()
-        response = env.client.post("/api/v1/backup/create", json={"include_pools": False, "include_network": False})
+        response = env.client.post("/api/v1/backup/create", json={})
         assert response.status_code == 200, response.text
         name = response.json()["backup"]["filename"]
         pool.execute("DELETE FROM users WHERE username = 'recent'")
@@ -1218,6 +1221,38 @@ class TestRestoredSchema:
         else:
             assert _usernames(env.db_path) == {"admin2"}
 
+    @pytest.mark.parametrize("uids, status", [((70001, 70001, None), 400), ((70001, 70002, None), 200),
+                                              ((None, None, None), 200)])
+    def test_two_accounts_with_one_uid_are_refused(self, env, uids, status):
+        """shares.restore-uid-guards: UNOS's smb_accounts keeps each uid unique, a backup's need not. Two
+        accounts with one uid would own each other's files on the pools (ADR-0109, ADR-0112): such a
+        database is refused before its SMB rows are prepared, and nothing changes. Any number of
+        accounts without a uid restore."""
+        path = env.tmp / "uids.db"
+        _make_db(path, users=[("admin2", 1), ("alice", 0), ("bob", 0), ("carol", 0)], smb_tables=False)
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute(
+                "CREATE TABLE smb_accounts (user_id INTEGER PRIMARY KEY, linux_name VARCHAR(32) NOT NULL UNIQUE, "
+                "uid INTEGER, enabled BOOLEAN NOT NULL DEFAULT 0, password_state VARCHAR(8) NOT NULL "
+                "DEFAULT 'needed', password_set_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "updated_at DATETIME)")
+            conn.executemany(
+                "INSERT INTO smb_accounts (user_id, linux_name, uid, enabled, password_state) VALUES (?, ?, ?, 1, 'set')",
+                [(2, "alice", uids[0]), (3, "bob", uids[1]), (4, "carol", uids[2])])
+            conn.commit()
+        _create_smb_tables(path)
+
+        response = _restore_smb(env, path.read_bytes())
+
+        assert response.status_code == status, response.text
+        if status == 400:
+            assert response.json()["detail"] == "unos.db in the backup gives the uid 70001 to 2 SMB accounts"
+            _assert_untouched(env)
+            env.snapshot.assert_not_called()
+            env.prepare_accounts.assert_not_called()
+        else:
+            assert _usernames(env.db_path) == {"admin2", "alice", "bob", "carol"}
+
 
 class TestAccountStep:
     @pytest.mark.parametrize("imported", [True, False])
@@ -1740,7 +1775,7 @@ def test_a_backup_restores_the_shares_of_its_database(smb_env):
         conn.execute("INSERT INTO smb_shares (id, name, path, comment, browseable, guest_ok, version) "
                      f"VALUES (1, 'docs', '{env.data}/docs', '', 1, 0, 1)")
         conn.commit()
-    response = env.client.post("/api/v1/backup/create", json={"include_pools": False, "include_network": False})
+    response = env.client.post("/api/v1/backup/create", json={})
     assert response.status_code == 200, response.text
     name = response.json()["backup"]["filename"]
     with closing(sqlite3.connect(env.db_path)) as conn:
@@ -1759,7 +1794,7 @@ def test_a_backup_holds_no_smb_conf(env, monkeypatch):
     """backup.no-old-backup-import (ADR-0319): the host's smb.conf, which the supervisor sees as
     /etc/samba/smb.conf, is neither read nor archived."""
     _pretend_the_hosts_smb_conf_exists(monkeypatch)
-    response = env.client.post("/api/v1/backup/create", json={"include_pools": False, "include_network": False})
+    response = env.client.post("/api/v1/backup/create", json={})
     assert response.status_code == 200, response.text
     with tarfile.open(env.backup_dir / response.json()["backup"]["filename"], "r:gz") as tar:
         assert "smb.conf" not in tar.getnames()

@@ -11,11 +11,9 @@ export interface BackupInfo {
 
 export interface BackupConfig {
   include_users: boolean;
-  include_pools: boolean;
   include_apps: boolean;
   include_scheduler: boolean;
   include_notifications: boolean;
-  include_network: boolean;
   encrypt: boolean;
   /** Required when encrypt is true. */
   passphrase: string;
@@ -34,7 +32,7 @@ export interface RestoreResult {
   };
   /** Summary for the user; it includes the warnings. */
   message: string;
-  /** What was skipped or not restored automatically (e.g. fstab, an invalid share). */
+  /** What was skipped or not restored automatically (e.g. scheduled_tasks.json, an invalid share). */
   warnings: string[];
   /** Copy of the database taken before it was replaced, if it was. */
   previous_database: string | null;
@@ -54,8 +52,9 @@ export async function downloadBackup(filename: string): Promise<void> {
 
 /**
  * Upload a backup file: .tar.gz, or .tar.gz.enc for an encrypted one (its
- * content is checked when it is restored with the passphrase). The server
- * stores it under a new name, uploaded_<date>_<time>[_<n>] with the same extension.
+ * content is checked when it is restored with the passphrase; a .tar.gz.enc
+ * that is gzip data is refused). The server stores it under a new name,
+ * uploaded_<date>_<time>[_<n>] with the same extension.
  */
 export async function uploadBackup(file: File): Promise<{ status: string; backup: BackupInfo }> {
   const formData = new FormData();

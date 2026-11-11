@@ -85,7 +85,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   links, devices, absolute paths or `..`), verifies the restored database
   before it replaces the live one through SQLite's backup API (keeping a copy),
   and regenerates `smb.conf` from validated shares instead of installing the
-  archived file.
+  archived file. A database that gives one SMB uid to two accounts, which only
+  a crafted backup can hold, is refused (400) before anything changes; it used
+  to be restored, and turning SMB on failed for the second account.
 - `smb.conf` and `/etc/exports` values are validated against directive
   injection, share and export paths must not pass through symlinks, and
   `smb.conf` is replaced atomically after `testparm` accepts it (without that
@@ -406,8 +408,10 @@ manager, encrypted backup uploads, health checks, CI checks).
 - Encrypted backups (`.tar.gz.enc`) can be uploaded, for example after a
   download, and are stored as `uploaded_<date>_<time>[_<n>].tar.gz.enc`.
   Without the passphrase their content cannot be checked (the format has no
-  header); it is checked when the backup is restored with its passphrase. An
-  unencrypted backup uploaded under a `.tar.gz.enc` name is refused (400).
+  header); it is checked when the backup is restored with its passphrase. A
+  file uploaded under a `.tar.gz.enc` name that is gzip data, an unencrypted
+  backup or any other gzip file, is refused (400) instead of failing only at
+  its restore.
 - Docker health checks for both containers: `docker ps` shows whether the
   supervisor answers `/api/v1/health`, and whether the web interface reaches
   it through Caddy. Failed checks of the supervisor count only after 10
@@ -458,6 +462,12 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- Backups, by hand, by backup tasks and for off-device copies, no longer hold
+  the supervisor container's `/etc/fstab` and `/etc/netplan` files, which
+  describe nothing of the host, and the options `include_pools` and
+  `include_network` of `POST /api/v1/backup/create`, which added them, are
+  gone. A restore ignores such files in a backup that holds them, and no
+  longer warns that `fstab` is not restored.
 - The supervisor's access log keeps only the requests that were refused or
   failed (answers of 400 and above): an HTTP request that succeeds, a health
   check included, no longer writes a line to the system disk through
@@ -925,7 +935,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   not exist, is removed. System Backup now also says that a restore brings
   back the user accounts with their passwords, two-factor authentication and
   API tokens of the backup (an API token revoked since then works again),
-  and that other files in a backup, such as `fstab`, are not restored.
+  and that other files in a backup, such as the scheduled tasks, are not
+  restored.
 - Disk Health (`GET /api/v1/health/disks`), `GET /api/v1/health/overview`
   and the hourly SMART monitor listed disks with lsblk inside the container
   and left out a fixed list of names, among them `nvme0n1`: the first NVMe

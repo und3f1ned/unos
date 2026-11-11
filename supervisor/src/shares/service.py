@@ -2996,7 +2996,10 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     without a default (every ORM insert would fail), is refused naming the
     tables and columns: the live database never receives SMB tables of an
     unknown layout. Extra columns that are nullable or have a default are
-    accepted. Raises BackupValidationError.
+    accepted. An smb_accounts table that gives one uid to two or more rows is
+    refused too (shares.restore-uid-guards): a uid owns its files on the
+    pools, and belongs to one account (ADR-0109, ADR-0112); UNOS's table keeps
+    it unique, a backup's need not. Raises BackupValidationError.
     """
     from ..backup.router import BackupValidationError  # backup.router imports this module
 
@@ -3004,6 +3007,7 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
     absent: list[str] = []
     missing: list[str] = []
     extra: list[str] = []
+    shared_uid = None
     try:
         for table in _SMB_TABLES:
             info = conn.execute(f'PRAGMA table_info("{table.name}")').fetchall()
@@ -3018,6 +3022,11 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
                 for name, row in sorted(columns.items())
                 if name not in model_columns and row[3] and row[4] is None
             )
+        if not absent and not missing:
+            shared_uid = conn.execute(
+                "SELECT uid, COUNT(*) FROM smb_accounts WHERE uid IS NOT NULL GROUP BY uid HAVING COUNT(*) > 1 "
+                "ORDER BY uid LIMIT 1"
+            ).fetchone()
     finally:
         conn.close()
     if absent:
@@ -3032,6 +3041,10 @@ def check_smb_tables(db_file: os.PathLike | str) -> None:
         raise BackupValidationError(
             f"unos.db in the backup has SMB tables of an unknown layout ({'; '.join(parts)})"
         )
+    if shared_uid is not None:
+        uid, count = shared_uid
+        shown = uid if isinstance(uid, int) else repr(uid)[:64]
+        raise BackupValidationError(f"unos.db in the backup gives the uid {shown} to {count} SMB accounts")
 
 
 _SQLITE = sqlite_dialect.dialect()

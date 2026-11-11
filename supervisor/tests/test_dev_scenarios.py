@@ -1642,7 +1642,7 @@ class FakeNas:
         if self.backups[name] is not None and passphrase != self.backups[name]:
             raise scenario.Failed("the device answered status 1: cryptography.exceptions.InvalidTag")
         scheduled = name.startswith("auto_backup_")
-        members = ["manifest.json", "fstab", "unos.db"] + (["scheduled_tasks.json"] if scheduled else [])
+        members = ["manifest.json", "unos.db"] + (["scheduled_tasks.json"] if scheduled else [])
         if ("scheduled-backup-holds-smb-conf" if scheduled else "backup-holds-smb-conf") in self.bugs:
             members.append("smb.conf")
         return members
@@ -2596,7 +2596,7 @@ def test_the_restore_check_restores_its_own_backup_twice(nas):
     status, output = run_check("restore", nas)
     assert status == 0, output
     text = "\n".join(step_lines(output))
-    for words in ("holds no smb.conf", "manifest.json, fstab, unos.db, scheduled_tasks.json", "Run now",
+    for words in ("holds no smb.conf", "manifest.json, unos.db, scheduled_tasks.json", "Run now",
                   "with nothing changed since", "byte for byte", "restored database, smb_config",
                   "a new password, which signs in", "SMB must be turned on again for unoscheck1a2b3cc",
                   "UNOS's rendering of the restored database", "which no restored row has, are removed",

@@ -111,17 +111,15 @@ NAME_ATTEMPTS = 100  # backups with the same prefix in one second
 _TEMP_NAME_PATTERN = re.compile(r"\.[a-z]+-[0-9a-f]{16}\.tmp")
 STALE_TEMP_SECONDS = 24 * 3600
 # Regular files a backup may contain, with their size limits. Other regular
-# files and directories are ignored; any other member type aborts the restore.
+# files and directories are ignored, such as the fstab and netplan files that
+# older backups held (ADR-0345); any other member type aborts the restore.
 _FILE_MEMBERS = {
     "manifest.json": MAX_CONFIG_BYTES,
     "unos.db": MAX_DB_BYTES,
-    "fstab": MAX_CONFIG_BYTES,
     "scheduled_tasks.json": MAX_CONFIG_BYTES,
 }
-_NETPLAN_MEMBER = re.compile(r"netplan/[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.yaml")
-_DIR_MEMBERS = frozenset({"netplan"})
-# Included in backups but not restored automatically.
-_NOT_RESTORED = ("fstab", "netplan", "scheduled_tasks.json")
+# Included in backups (those of backup tasks) but not restored automatically.
+_NOT_RESTORED = ("scheduled_tasks.json",)
 REQUIRED_USER_COLUMNS = frozenset({"id", "username", "hashed_password", "is_admin"})
 # What tarfile raises for a malformed header in Python 3.11 besides TarError:
 # OverflowError or ValueError for a size or offset too large to seek to or
@@ -171,11 +169,9 @@ class BackupInfo(BaseModel):
 
 class BackupConfig(BaseModel):
     include_users: bool = True
-    include_pools: bool = True
     include_apps: bool = True
     include_scheduler: bool = True
     include_notifications: bool = True
-    include_network: bool = True
     encrypt: bool = False
     passphrase: Optional[str] = None  # Required if encrypt=True
 
@@ -445,16 +441,12 @@ def _scan_members(tar: Iterable[tarfile.TarInfo]) -> dict[str, tarfile.TarInfo]:
                 raise BackupValidationError(f"Duplicate entry in backup archive: {name}")
             seen.add(name)
             if member.isdir():
-                if name in _DIR_MEMBERS:
-                    wanted[name] = member
                 continue
             if not member.isreg():
                 raise BackupValidationError(
                     f"Backup archive contains a link or special file: {name[:100]!r}"
                 )
             limit = _FILE_MEMBERS.get(name)
-            if limit is None and _NETPLAN_MEMBER.fullmatch(name):
-                limit = MAX_CONFIG_BYTES
             if limit is None:
                 continue  # not part of a UNOS backup: ignored
             if member.size > limit:
@@ -669,26 +661,51 @@ def publish_backup_file(tmp: Path, prefix: str, extension: str, when: datetime |
 
 
 def _check_encrypted_archive(path: Path) -> None:
-    """Check an encrypted backup as far as possible without its passphrase.
+    """Check the length of an encrypted backup.
 
     The file is salt, nonce and AES-GCM ciphertext with its tag (encrypt_file):
-    there is no header to recognise, so only the length is checked. Restore
-    validates the content after decrypting it.
+    there is no header to recognise. _refuse_plain_archive refuses gzip data;
+    restore validates the content after decrypting it.
     """
     if path.stat().st_size <= SALT_SIZE + NONCE_SIZE + GCM_TAG_SIZE:
         raise BackupValidationError("Invalid encrypted backup: the file is too short")
 
 
-def _refuse_plain_archive(path: Path) -> None:
-    """Refuse an unencrypted backup uploaded under an encrypted name (.tar.gz.enc).
+def _is_gzip(path: Path) -> bool:
+    """Whether the file is gzip data to its end (zero padding allowed, as gzip allows it).
 
-    Stored as encrypted it could never be restored: restore asks for a
-    passphrase and cannot decrypt it.
+    Read in one pass that writes nothing; data that decompresses to more than
+    MAX_TAR_BYTES counts as gzip without being read further.
+    """
+    total = 0
+    with open(path, "rb") as source, gzip.GzipFile(fileobj=source, mode="rb") as gz:
+        try:
+            while chunk := gz.read(_CHUNK_SIZE):
+                total += len(chunk)
+                if total > MAX_TAR_BYTES:
+                    return True
+        except (gzip.BadGzipFile, EOFError, zlib.error):
+            return False
+    return True
+
+
+def _refuse_plain_archive(path: Path) -> None:
+    """Refuse gzip data uploaded under an encrypted name (.tar.gz.enc), ADR-0345.
+
+    Stored as encrypted it could never be restored: restore decrypts the file
+    before it reads a gzip stream. What encrypt_file writes reads as gzip data
+    only by a chance too small to count: its random salt would have to start
+    with gzip's header, and the rest decode as deflate data that ends with its
+    CRC-32 and length. A plain backup is refused with the extension to use.
     """
     try:
         _inspect_archive(path)
     except BackupValidationError:
-        return  # not a plain backup: kept as encrypted, checked when it is restored
+        if _is_gzip(path):
+            raise BackupValidationError(
+                "This file is not an encrypted backup: it is an unencrypted gzip file"
+            ) from None
+        return  # kept as encrypted, its content is checked when it is restored
     raise BackupValidationError("This backup is not encrypted: upload it as .tar.gz")
 
 
@@ -1010,7 +1027,12 @@ async def list_backups(_: dict = Depends(verify_token)):
 
 
 def _collect_backup_content(config: BackupConfig, content: Path) -> None:
-    """Put the files the backup contains into the directory ``content``."""
+    """Put the files the backup contains into the directory ``content``: the manifest and the database.
+
+    Nothing of /etc: the container's fstab and netplan files describe nothing of
+    the host, whose fstab (with the pool entries) is not mounted into the
+    container (ADR-0345).
+    """
     # Create manifest (don't include passphrase)
     manifest_config = config.model_dump()
     manifest_config.pop("passphrase", None)
@@ -1030,22 +1052,6 @@ def _collect_backup_content(config: BackupConfig, content: Path) -> None:
     db_path = _live_db_path()
     if db_path is not None and db_path.exists():
         copy_database(db_path, content / "unos.db")
-
-    # The container's /etc/fstab, not the host's: the host's (with the pool
-    # entries, see src/storage/pools.py) is not mounted into the container.
-    # It is never restored (_NOT_RESTORED).
-    fstab = Path("/etc/fstab")
-    if fstab.exists() and config.include_pools:
-        shutil.copy2(fstab, content / "fstab")
-
-    # Backup network config
-    if config.include_network:
-        netplan_dir = Path("/etc/netplan")
-        if netplan_dir.exists():
-            net_backup = content / "netplan"
-            net_backup.mkdir()
-            for conf in netplan_dir.glob("*.yaml"):
-                shutil.copy2(conf, net_backup / conf.name)
 
 
 def _write_archive(content: Path, out: BinaryIO) -> None:
@@ -1177,9 +1183,9 @@ async def upload_backup(request: Request, _: dict = Depends(verify_token)):
     in the backup directory as it arrives, not through /tmp
     (request_limits.receive_upload, _BackupUpload). The check of the
     complete file (_inspect_archive: a plain backup, or a .tar.gz.enc upload,
-    which is refused if it is a plain backup) reads it once, as a stream,
-    and writes nothing: neither the decompressed archive nor its files are
-    stored anywhere.
+    which is refused if it is gzip data, _refuse_plain_archive) reads it as
+    a stream, and writes nothing: neither the decompressed archive nor its
+    files are stored anywhere.
     """
     upload = _BackupUpload()
     try:
