@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The off-device copy (ADR-0336), a section of System > Backup & Restore: the copy target with its
+  // The off-device copy (ADR-0337), a section of System > Backup & Restore: the copy target with its
   // password, the folders to copy, the state of the last copy and restore with Run now, a daily task
   // of the Scheduler, and the snapshots with their restores. The state is read when the section
   // opens and on Refresh: copies and restores run in the background, and nothing polls (ADR-0006).

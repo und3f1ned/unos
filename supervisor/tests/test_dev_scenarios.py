@@ -280,7 +280,7 @@ class FakeNas:
         self.pool_used = 1  # bytes of data in the pool data
         self.tasks: dict[str, dict] = {}
         self.runs: list[dict] = []
-        # The off-device copy (ADR-0336): its settings, password and state; the repository is a folder
+        # The off-device copy (ADR-0337): its settings, password and state; the repository is a folder
         # of fs (config, keys/key, snapshots/<id>); what a copy or restore that runs makes is shown by
         # GET /offsite/status after offsite_left more requests.
         self.offsite: dict | None = None
@@ -1820,7 +1820,7 @@ def test_the_smart_check_refuses_what_is_not_a_disk_and_starts_a_short_test(nas)
 
 
 def test_the_offsite_check_covers_the_copy_its_snapshots_and_both_restores(nas):
-    """ADR-0336: the steps of backup.off-device-copies that run on the device, on a folder of the pool
+    """ADR-0337: the steps of backup.off-device-copies that run on the device, on a folder of the pool
     as the source and another as the disk target, and the device as the check found it."""
     status, output = run_check("offsite", nas)
     assert status == 0, output

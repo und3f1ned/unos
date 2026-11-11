@@ -16,7 +16,7 @@ Everything the supervisor writes goes under the state directory (default:
     tmp/    TMPDIR of the supervisor
     bin/    first on the supervisor's PATH: restic, the fake of
             supervisor/tests/fake_restic.py, and a pass-through ionice, for the
-            off-device copy (ADR-0336); restic is not installed here
+            off-device copy (ADR-0337); restic is not installed here
     fake-restic/  the fake's calls and the stores of its s3: repositories
 
 The stand-in keeps the supervisor away from this machine's system:
@@ -132,7 +132,7 @@ def stand_in_environment(state: Path) -> dict[str, str]:
         "UNOS_DISABLE_BACKGROUND_TASKS": "1",
         "container": "docker",
         "TMPDIR": str(state / "tmp"),
-        # The fake restic of the off-device copy first (ADR-0336).
+        # The fake restic of the off-device copy first (ADR-0337).
         "PATH": f"{state / 'bin'}{os.pathsep}{os.environ.get('PATH', os.defpath)}",
     }
 
@@ -222,7 +222,7 @@ def configure(state: Path) -> Path:
         files.MOUNTINFO = str(data / "mountinfo")
         Path(files.MOUNTINFO).touch()
 
-    # The off-device copy (ADR-0336): its disk targets lie below the state directory, which stands for
+    # The off-device copy (ADR-0337): its disk targets lie below the state directory, which stands for
     # /mnt as pools/ stands for /mnt/pools. One filesystem holds all of it, so nothing here is the
     # system disk that a copy must stay off.
     offsite = importlib.import_module("src.offsite.service")

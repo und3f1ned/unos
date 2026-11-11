@@ -285,7 +285,7 @@
     {/if}
   </div>
 
-  <!-- The off-device copy (ADR-0336): a configuration it restores lands in the list above. -->
+  <!-- The off-device copy (ADR-0337): a configuration it restores lands in the list above. -->
   <OffsiteCopy on:restored={loadBackups} />
 </div>
 

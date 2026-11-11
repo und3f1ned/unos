@@ -1,4 +1,4 @@
-"""A fake restic, for the backend tests of the off-device copy and for the local stand-in (ADR-0336).
+"""A fake restic, for the backend tests of the off-device copy and for the local stand-in (ADR-0337).
 
 restic is not installed on the workstation. This script stands in for it where the tests and
 scripts/standin/run_supervisor.py put it on PATH, through a small wrapper (``install``): it keeps a

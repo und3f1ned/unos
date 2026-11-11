@@ -67,7 +67,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    remove them again; `smbconf` also edits smb.conf by hand and restarts the supervisor once
    (ADR-0309), `scrub` scrubs the pool, three times on a small pool, and leaves its last
    scrub result (ADR-0314), and `offsite` sets up an off-device copy to a folder of the pool and
-   forgets it again (ADR-0336); it refuses to start on a device that has one set up.
+   forgets it again (ADR-0337); it refuses to start on a device that has one set up.
    `all` takes several minutes: run it in the background as
    `timeout 3600 scripts/dev/scenario.sh all > <log> 2>&1` (a background command has a deadline,
    ADR-0335), or in the foreground with a tool timeout long enough, since a check that is killed

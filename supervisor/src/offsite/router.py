@@ -1,4 +1,4 @@
-"""The off-device copy's API (ADR-0336): the copy target, Run now, the state, the snapshots and the restores.
+"""The off-device copy's API (ADR-0337): the copy target, Run now, the state, the snapshots and the restores.
 
 Administrators only: main.py includes the router with the others that are (_ADMIN_ONLY), and the
 router asks for an administrator itself, since a restore writes files into the pools and the

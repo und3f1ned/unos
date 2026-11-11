@@ -245,11 +245,11 @@ Avoid: rollback (what `update.sh` and `deploy.sh` do).
 folders that restic keeps in the copy repository, encrypted with a password that only the NAS
 keeps, by a task of the Scheduler or Run now; each copy is checked and the restore of its
 configuration tested, and its snapshots restore the configuration into the backup list and the
-files into a new folder of a pool (ADR-0336). Avoid: offsite backup, sync, cloud backup.
+files into a new folder of a pool (ADR-0337). Avoid: offsite backup, sync, cloud backup.
 
 **Copy repository**: The one restic repository of an installation's off-device copies: a folder on
 a disk mounted below `/mnt` that is not the system disk, or a bucket of an S3-compatible store.
-Saving its settings opens it with its password, or makes it; a copy never makes one (ADR-0336).
+Saving its settings opens it with its password, or makes it; a copy never makes one (ADR-0337).
 Avoid: backup target, vault, bucket (unless it is one).
 
 ## Development
@@ -303,7 +303,7 @@ hold, so that one agent at a time changes or loads the device (ADR-0210). Avoid:
 `scripts/dev/scenario.sh <area>`: through the API and on the host, with a temporary user, share,
 volume, Scheduler task, folders or backups that it removes again (the smbconf check also edits smb.conf by hand
 and restarts the supervisor, ADR-0309; the scrub check scrubs the pool, ADR-0314; the offsite check
-sets up an off-device copy and forgets it, ADR-0336), PASS or FAIL
+sets up an off-device copy and forgets it, ADR-0337), PASS or FAIL
 and the SD writes of each step,
 and a comparison with how it found the device (ADR-0304). The feature-pass skill names the
 scenario check of each host-level entry. Avoid: smoke test, E2E test.

@@ -246,7 +246,7 @@ class TestRouteMatrix:
             # Importing a pool found on the disks (ADR-0283): administrator-only with the storage router.
             ("GET", f"{API}/storage/filesystems/importable"),
             ("POST", f"{API}/storage/filesystems/{{uuid}}/import"),
-            # The off-device copy (ADR-0336): administrator-only with its router.
+            # The off-device copy (ADR-0337): administrator-only with its router.
             ("GET", f"{API}/offsite/settings"),
             ("PUT", f"{API}/offsite/settings"),
             ("DELETE", f"{API}/offsite/settings"),

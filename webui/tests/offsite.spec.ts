@@ -2,7 +2,7 @@ import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
 import { targetUrl } from './target';
 
-// The off-device copy on System > Backup & Restore (backup.off-device-copies, ADR-0336): a disk
+// The off-device copy on System > Backup & Restore (backup.off-device-copies, ADR-0337): a disk
 // target saved and tested, Run now, the state with its check and restore test, the snapshots, the
 // configuration of a snapshot restored into the backup list and the files of one into a new folder,
 // a daily task at 03:00, and the form's refusals.

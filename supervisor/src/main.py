@@ -97,9 +97,10 @@ def _running_containers() -> int:
 async def check_host_tools() -> None:
     """Log one warning naming the host programs UNOS runs but the host lacks.
 
-    Pool, mount, share, network and power operations run these programs on the host
-    (not in this container), so they fail until the packages are installed
-    there. Never raises.
+    Pool, mount, share, network and power operations, and the notifications'
+    attempt from the host's network (curl), run these programs on the host (not
+    in this container), so they fail until the packages are installed there.
+    Never raises.
     """
     try:
         missing = await asyncio.to_thread(
@@ -112,7 +113,7 @@ async def check_host_tools() -> None:
         packages = sorted({host.HOST_TOOLS[name] for name in missing})
         logger.warning(
             "The host is missing programs that UNOS runs for storage pools, mounts, "
-            "shares, the network and power actions: %s. Install them on the host (apt-get install %s); "
+            "shares, the network, power actions and notifications: %s. Install them on the host (apt-get install %s); "
             "until then those operations fail.",
             ", ".join(missing),
             " ".join(packages),
@@ -173,7 +174,7 @@ async def lifespan(app: FastAPI):
             wol_reapply.cancel()
             await asyncio.gather(wol_reapply, return_exceptions=True)
         # The copies and restores of the off-device copy that Run now and Restore files started end
-        # with their restic, and are recorded as stopped (ADR-0336); the Scheduler's end with it.
+        # with their restic, and are recorded as stopped (ADR-0337); the Scheduler's end with it.
         await stop_offsite()
         # Last, when nothing uses the database any more: its last commits go from unos.db-wal
         # into unos.db (ADR-0306).

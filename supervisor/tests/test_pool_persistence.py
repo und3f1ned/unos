@@ -25,6 +25,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -87,6 +88,66 @@ def entry(name: str, uuid: str) -> str:
 
 def _forbidden_subprocess(*args, **kwargs):
     raise AssertionError(f"test tried to run a real command: {args!r}")
+
+
+@dataclass(frozen=True)
+class HttpAnswer:
+    """What a service answers the host's curl (FakeHost.network): its status and body."""
+
+    status: int
+    body: str = ""
+
+
+@dataclass(frozen=True)
+class CurlFailure:
+    """A request of the host's curl that got no answer (FakeHost.network): curl's exit status and
+    message, which it prints as ``curl: (<status>) <message>``."""
+
+    code: int
+    message: str
+
+
+# In a double-quoted value of curl's config, a backslash before t, n, r or v stands for that
+# control character, and before any other character for the character itself.
+_CURL_CONFIG_ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "v": "\v"}
+# The options of a config that curl reads as the request (notifications/router.py, ADR-0336).
+_CURL_REQUEST_OPTIONS = {"url": "url", "request": "method", "data-raw": "body"}
+
+
+def parse_curl_config(config: str) -> SimpleNamespace:
+    """The request that a config of ``curl --config -`` describes, read as curl reads it.
+
+    One option per line, ``name = "value"``, the value in double quotes with curl's escapes; a
+    header is ``Name: value``, or ``Name;`` for one without a value. The request has the url, the
+    method, the headers as (name, value) in their order, the body, and the config itself. A line
+    that is not such an option, or an option that is not part of a request, fails the test.
+    """
+    request = SimpleNamespace(url=None, method=None, headers=[], body=None, config=config)
+    for line in config.split("\n"):  # curl reads up to each line break
+        if not line:
+            continue
+        name, separator, quoted = line.partition(" = ")
+        assert separator and quoted.startswith('"'), f"not a quoted option of curl's config: {line!r}"
+        value, index = [], 1
+        while index < len(quoted) and quoted[index] != '"':
+            if quoted[index] == "\\" and index + 1 < len(quoted):
+                index += 1
+                value.append(_CURL_CONFIG_ESCAPES.get(quoted[index], quoted[index]))
+            else:
+                value.append(quoted[index])
+            index += 1
+        assert quoted[index:] == '"', f"the value does not end the line: {line!r}"
+        if name == "header":
+            header = "".join(value)
+            header_name, colon, header_value = header.partition(": ")
+            if not colon:
+                assert header.endswith(";"), f"not a header: {line!r}"
+                header_name = header[:-1]
+            request.headers.append((header_name, header_value))
+        else:
+            assert name in _CURL_REQUEST_OPTIONS, f"curl option the fake does not know: {line!r}"
+            setattr(request, _CURL_REQUEST_OPTIONS[name], "".join(value))
+    return request
 
 
 class FakeDocker:
@@ -215,6 +276,13 @@ class FakeHost:
         self.mkfs_uuid = NEW_UUID
         # Programs the host lacks (host.missing_host_binaries; timeout(1) cannot run them).
         self.missing_programs: set[str] = set()
+        # What the host's network answers its curl, which sends a notification channel's request
+        # when the container cannot connect (ADR-0336): a function of the request (as
+        # parse_curl_config reads it) that returns HttpAnswer or CurlFailure. None: the test
+        # expects no curl, and one fails it.
+        self.network = None
+        # The requests that curl was given, in order.
+        self.http_requests: list[SimpleNamespace] = []
         self.docker = FakeDocker()
         # How often the storage endpoints applied smb.conf after a pool change (install_fake_host).
         self.smb_applies = 0
@@ -490,7 +558,39 @@ class FakeHost:
         if prog in self.MUTATING:
             self.changes.append(cmd)
             return getattr(self, "_" + prog.replace(".", "_"))(cmd)
+        if prog == "curl":
+            return self._curl(cmd, input)
         raise AssertionError(f"unexpected host command: {cmd}")
+
+    # The options of curl's command line that the fake knows: those with a value, and the flags.
+    _CURL_VALUES = frozenset({"--max-time", "--proto", "--config", "--write-out"})
+    _CURL_FLAGS = frozenset({"--disable", "--silent", "--show-error", "--globoff"})
+
+    def _curl(self, cmd, config):
+        """curl as the notification senders run it (ADR-0336): the request in its config on standard
+        input, the answer from ``network``, and stdout as curl prints it with ``--write-out``: the
+        body, then the format with the status, which is 000 without an answer."""
+        if "curl" in self.missing_programs:
+            # What nsenter prints when the host has no such program.
+            return self._result(127, stderr="nsenter: failed to execute curl: No such file or directory")
+        assert self.network is not None, f"unexpected host command: {cmd}"
+        options, index = {}, 1
+        while index < len(cmd):
+            if cmd[index] in self._CURL_VALUES:
+                options[cmd[index]] = cmd[index + 1]
+                index += 2
+            else:
+                assert cmd[index] in self._CURL_FLAGS, f"curl option the fake does not know: {cmd[index]}"
+                index += 1
+        assert options.get("--config") == "-" and config is not None, f"curl without its config on stdin: {cmd}"
+        request = parse_curl_config(config)
+        self.http_requests.append(request)
+        answer = self.network(request)
+        status_format = options.get("--write-out", "")
+        if isinstance(answer, CurlFailure):
+            return self._result(answer.code, status_format.replace("%{http_code}", "000"),
+                                f"curl: ({answer.code}) {answer.message}\n")
+        return self._result(stdout=answer.body + status_format.replace("%{http_code}", f"{answer.status:03d}"))
 
     def _export_files(self, main, directory):
         """What shares/nfs.py's listing script prints: for the main export file, then the

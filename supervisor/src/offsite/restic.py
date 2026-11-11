@@ -1,4 +1,4 @@
-"""restic, as the off-device copy runs it (ADR-0336).
+"""restic, as the off-device copy runs it (ADR-0337).
 
 restic runs off the event loop as an asyncio subprocess, in a process group of its own, at a low
 priority (``nice -n 10`` and the lowest level of the best-effort I/O class, ``ionice -c 2 -n 7``:

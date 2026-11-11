@@ -347,7 +347,7 @@ const BACKUPS = {
   },
 };
 
-// The off-device copy to a cloud store (ADR-0336), as GET /offsite/settings, /status and /snapshots
+// The off-device copy to a cloud store (ADR-0337), as GET /offsite/settings, /status and /snapshots
 // answer: the S3 form, a failed copy with restic's long message, a restore into a long folder and a
 // snapshot of a folder whose path has nowhere to break.
 const OFFSITE_SNAPSHOT_ID = '4f2a9c1e7b3d5a8f0e6c2b9d1a7f3e5c8b0d4a6f2e9c1b7d3a5f8e0c6b2d9a1f';

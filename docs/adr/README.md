@@ -284,13 +284,13 @@ and this index, and `make check-fast` runs it.
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
 | [0040](0040-restore-checks-archives-and-regenerates-smb-conf.md) | Restore checks archives and regenerates smb.conf instead of installing the archived file | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-05 |
-| [0041](0041-off-device-backup-slice.md) | Give off-device backup of user data its own slice | superseded by [0336](0336-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | 2026-11-05 |
+| [0041](0041-off-device-backup-slice.md) | Give off-device backup of user data its own slice | superseded by [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | 2026-11-05 |
 | [0165](0165-backup-restore-flows-and-unique-names.md) | Backups restore from the tab, accept encrypted uploads and get unique names | accepted | 2026-11-06 |
 | [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | accepted | 2026-11-06 |
 | [0167](0167-deferred-backup-and-upload-edge-cases.md) | Fix the deferred backup and upload edge cases of slice 1 | proposed | 2026-11-06 |
 | [0240](0240-scheduled-backups-encrypted-with-a-key-derived-from-the-passphrase.md) | Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own | superseded by [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | 2026-11-07 |
 | [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | Backup tasks encrypt every backup with a key derived from their passphrase, stored in a file of its own that is set aside when damaged | accepted | 2026-11-10 |
-| [0336](0336-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested | accepted | 2026-11-11 |
+| [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested | accepted | 2026-11-11 |
 
 ## Files
 
@@ -311,7 +311,7 @@ and this index, and `make check-fast` runs it.
 | [0043](0043-background-loops-in-the-lifespan.md) | Background loops start and stop in the FastAPI lifespan | accepted | 2026-11-05 |
 | [0044](0044-custom-tasks-administrator-only.md) | Custom shell tasks stay, but are administrator-only and validated | accepted | 2026-11-05 |
 | [0045](0045-smtp-verifies-certificates.md) | E-mail notifications verify the mail server's certificate by default | accepted | 2026-11-05 |
-| [0046](0046-telegram-alerts-over-ipv6-or-e-mail.md) | Deliver Telegram alerts over Docker IPv6, or send them by e-mail | proposed | 2026-11-05 |
+| [0046](0046-telegram-alerts-over-ipv6-or-e-mail.md) | Deliver Telegram alerts over Docker IPv6, or send them by e-mail | superseded by [0336](0336-http-notifications-that-cannot-connect-from-the-container-go-once-more-from-the-hosts-network.md) | 2026-11-05 |
 | [0047](0047-event-bus-for-alerts.md) | Send alerts to every channel through an event bus, with a health banner in the UI | superseded by [0332](0332-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner.md) | 2026-11-05 |
 | [0171](0171-supervisor-volatile-files-in-ram.md) | The supervisor keeps volatile files in RAM | accepted | 2026-11-06 |
 | [0172](0172-unique-task-ids-and-bounded-smart-tests.md) | Scheduled tasks get unique ids, backups run concurrently, and SMART tests time out | accepted | 2026-11-06 |
@@ -333,6 +333,7 @@ and this index, and `make check-fast` runs it.
 | [0326](0326-notification-channels-their-history-and-damaged-files-of-them.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, the history lists every notification sent, and damaged files of them are kept | accepted | 2026-11-10 |
 | [0331](0331-the-time-zone-routes-run-timedatectl-on-the-host.md) | The time zone and hostname routes ask the host, and PUT /network/hostname alone sets the name | accepted | 2026-11-10 |
 | [0332](0332-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner.md) | The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner | accepted | 2026-11-10 |
+| [0336](0336-http-notifications-that-cannot-connect-from-the-container-go-once-more-from-the-hosts-network.md) | An HTTP notification that cannot connect from the container goes once more from the host's network, with the host's curl | accepted | 2026-11-11 |
 
 ## Web UI
 

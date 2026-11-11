@@ -787,7 +787,7 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
 
         elif task.task_type == TaskType.OFFSITE_COPY:
             # The copy of the configuration and the pools' data to the off-device copy's repository;
-            # one that finds a copy running ends as a success that says so (ADR-0336).
+            # one that finds a copy running ends as a success that says so (ADR-0337).
             return await offsite.run_copy("task")
 
         return False, "Unknown task type"

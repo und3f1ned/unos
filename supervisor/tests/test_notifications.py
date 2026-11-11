@@ -11,8 +11,10 @@ import errno
 import importlib
 import io
 import json
+import logging
 import os
 import re
+import shutil
 import ssl
 import threading
 import time
@@ -23,6 +25,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from src import host as host_module
 from src.auth.utils import verify_token
 from src.main import app
 from src.notifications.schemas import (
@@ -38,6 +41,7 @@ from src.notifications.schemas import (
 )
 
 from .notification_servers import HookServer, MailServer, certificate
+from .test_pool_persistence import CurlFailure, HttpAnswer, install_fake_host
 
 notifications = importlib.import_module("src.notifications.router")
 health_router = importlib.import_module("src.health.router")
@@ -68,6 +72,21 @@ HOOK_CONFIGS = [
     pytest.param("send_slack", lambda url: SlackConfig(webhook_url=url), id="slack"),
 ]
 
+# A bot token in Telegram's format: the bot's id, a colon and the secret. It is part of the URL.
+TOKEN = "123456789:AAH-secret_part-of-the-token-0123456"
+TELEGRAM = TelegramConfig(bot_token=TOKEN, chat_id="42")
+# What Telegram answers for a message it took.
+TELEGRAM_SENT = '{"ok":true,"result":{"message_id":7}}'
+
+# The senders of the HTTP channels, each with a configuration and what its service answers a
+# delivery.
+HTTP_SENDERS = [
+    pytest.param("send_telegram", TELEGRAM, HttpAnswer(200, TELEGRAM_SENT), id="telegram"),
+    pytest.param("send_webhook", WEBHOOK, HttpAnswer(200), id="webhook"),
+    pytest.param("send_discord", DISCORD, HttpAnswer(204), id="discord"),
+    pytest.param("send_slack", SLACK, HttpAnswer(200, "ok"), id="slack"),
+]
+
 
 @pytest.fixture
 def no_proxy(monkeypatch):
@@ -95,13 +114,40 @@ def _mail_config(server: MailServer, **changes) -> EmailConfig:
     return EMAIL.model_copy(update={"smtp_host": "127.0.0.1", "smtp_port": server.port, **changes})
 
 
+_REAL_ASYNC_CLIENT = httpx.AsyncClient
+
+
 def _route_httpx_to(monkeypatch, handler):
-    """Make the senders' httpx clients answer every request with ``handler``."""
-    real_client = httpx.AsyncClient
+    """Make the senders' httpx clients answer every request with ``handler``; a later call
+    replaces the handler of an earlier one."""
     monkeypatch.setattr(
         notifications.httpx, "AsyncClient",
-        lambda *a, **kw: real_client(*a, transport=httpx.MockTransport(handler), **kw),
+        lambda *a, **kw: _REAL_ASYNC_CLIENT(*a, transport=httpx.MockTransport(handler), **kw),
     )
+
+
+def _raises(error_type, message=""):
+    """A handler for _route_httpx_to that raises ``error_type(message)``, as httpx does: its
+    timeouts carry no message."""
+    def handler(request):
+        raise error_type(message, request=request)
+
+    return handler
+
+
+def _no_connection_from_the_container(monkeypatch, handler=None) -> list[httpx.Request]:
+    """The container's attempts connect nowhere, as on the dev device's network, which blocks
+    Telegram over IPv4 while the containers have no IPv6: httpx's ConnectTimeout, or what
+    ``handler`` raises. Returns the requests that were tried."""
+    handler = handler or _raises(httpx.ConnectTimeout)
+    tried = []
+
+    def trying(request):
+        tried.append(request)
+        return handler(request)
+
+    _route_httpx_to(monkeypatch, trying)
+    return tried
 
 
 class FakeSMTP:
@@ -359,8 +405,10 @@ class TestSendTelegram:
         [request] = seen
         assert request.url.path == "/bot123:abc/sendMessage"
         assert json.loads(request.content)["chat_id"] == "42"
+        # The connection gets 5 of the 15 seconds, so that the attempt from the host's network,
+        # which follows when there is none, has the rest (ADR-0336).
         assert request.extensions["timeout"] == {
-            "connect": 15, "read": 15, "write": 15, "pool": 15,
+            "connect": 5, "read": 15, "write": 15, "pool": 15,
         }
 
     async def test_timeout_is_named(self, monkeypatch):
@@ -389,6 +437,14 @@ class TestSendTelegram:
         config = TelegramConfig(bot_token="123:abc", chat_id="42")
 
         assert await notifications.send_telegram(config, EVENT) == (False, "HTTP 502")
+
+    async def test_an_answer_that_is_not_telegrams_is_named_by_its_start(self, monkeypatch):
+        # Only Telegram's "ok": true is a delivery (ADR-0336). A captive portal answers 200 with a
+        # page of its own, which would fill the history, the log and the test's answer.
+        page = "<html><title>Sign in to the Wi-Fi</title>" + "x" * 500 + "</html>"
+        _route_httpx_to(monkeypatch, lambda request: httpx.Response(200, text=page))
+
+        assert await notifications.send_telegram(TELEGRAM, EVENT) == (False, page[:200])
 
     async def test_any_text_arrives_as_escaped_html(self, monkeypatch):
         # With parse_mode Markdown, Telegram refused a text with one "_", such as a pool named
@@ -425,13 +481,16 @@ class TestSendToWebhooks:
 
     @pytest.mark.parametrize("sender,config", WEBHOOK_SENDERS)
     async def test_error_message_is_reported(self, monkeypatch, sender, config):
-        def handler(request):
-            raise httpx.ConnectError("[Errno 111] Connection refused", request=request)
-
-        _route_httpx_to(monkeypatch, handler)
+        # The host's network is tried as well when the container connects nowhere (ADR-0336):
+        # the error names both attempts.
+        host = install_fake_host(monkeypatch)
+        host.network = lambda request: CurlFailure(7, "Failed to connect to hooks.example port 443 after 2 ms: "
+                                                      "Couldn't connect to server")
+        _route_httpx_to(monkeypatch, _raises(httpx.ConnectError, "[Errno 111] Connection refused"))
 
         assert await getattr(notifications, sender)(config, EVENT) == (
-            False, "[Errno 111] Connection refused",
+            False, "no connection from the container ([Errno 111] Connection refused); from the host: "
+                   "curl: (7) Failed to connect to hooks.example port 443 after 2 ms: Couldn't connect to server",
         )
 
 
@@ -494,6 +553,317 @@ class TestWebhookDelivery:
         with HookServer(*answer) as hook:
             assert await getattr(notifications, sender)(config_for(hook.url), EVENT) == (False, error)
         assert len(hook.requests) == 1
+
+
+# How the container's attempt ends, and how many attempts from the host follow (ADR-0336): one
+# when no connection could be made, so that the request was not sent; none once the request was
+# sent, whatever came of it, or the message could arrive twice.
+CONTAINER_OUTCOMES = [
+    pytest.param(_raises(httpx.ConnectTimeout), 1, id="no-connection-in-time"),
+    pytest.param(_raises(httpx.ConnectError, "[Errno 101] Network is unreachable"), 1, id="no-route"),
+    pytest.param(_raises(httpx.ConnectError, "[Errno -3] Temporary failure in name resolution"), 1, id="no-name"),
+    pytest.param(_raises(httpx.ConnectError, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"), 1,
+                 id="no-tls-connection"),
+    pytest.param(lambda request: httpx.Response(500, text="busy"), 0, id="an-error-answer"),
+    pytest.param(_raises(httpx.ReadTimeout), 0, id="no-answer-in-time"),
+    pytest.param(_raises(httpx.WriteTimeout), 0, id="sent-too-slowly"),
+    pytest.param(_raises(httpx.RemoteProtocolError, "Server disconnected without sending a response."), 0,
+                 id="broken-off"),
+]
+
+# A body template with what curl's config must escape (a double quote, a backslash, a backslash
+# before n that is no line break, a line break, a tab, a carriage return) and UTF-8.
+TRICKY_TEMPLATE = 'He said "{title}" in C:\\dir\\n,\n\t{message}\r\nü ✅'
+
+
+class TestFromTheHostsNetwork:
+    """An HTTP channel's request that cannot connect from the container goes once more from the
+    host's network, with the host's curl (system.telegram-from-the-device, ADR-0336): the dev
+    device's network lets Telegram through over IPv6 only, and the containers have no IPv6.
+    Before, every Telegram alert of the device failed with ConnectTimeout, while the same alert to
+    a webhook in the LAN arrived."""
+
+    @pytest.fixture
+    def host(self, monkeypatch):
+        """The host behind src.host.run_on_host: a test sets what its network answers curl."""
+        return install_fake_host(monkeypatch)
+
+    @staticmethod
+    def _telegram_alerts(monkeypatch):
+        """The alerts go to one Telegram channel, Phone."""
+        channel = NotificationConfig(id="tg", name="Phone", channel=NotificationChannel.TELEGRAM,
+                                     telegram_config=TELEGRAM)
+        monkeypatch.setattr(health_router, "load_notification_configs", lambda: [channel])
+
+    @pytest.mark.parametrize("sender,config,delivery", HTTP_SENDERS)
+    @pytest.mark.parametrize("container,attempts", CONTAINER_OUTCOMES)
+    async def test_the_host_sends_only_a_request_that_could_not_connect(
+        self, monkeypatch, host, sender, config, delivery, container, attempts
+    ):
+        _route_httpx_to(monkeypatch, container)
+        host.network = lambda request: delivery
+
+        sent, error = await getattr(notifications, sender)(config, EVENT)
+
+        assert len(host.http_requests) == attempts
+        if attempts:
+            assert (sent, error) == (True, None)
+        else:
+            assert sent is False and "from the host" not in error
+
+    @pytest.mark.parametrize("sender,config,delivery", HTTP_SENDERS)
+    async def test_the_host_sends_the_containers_request(self, monkeypatch, host, sender, config, delivery):
+        tried = _no_connection_from_the_container(monkeypatch)
+        host.network = lambda request: delivery
+
+        assert await getattr(notifications, sender)(config, EVENT) == (True, None)
+
+        [container] = tried
+        [request] = host.http_requests
+        assert (request.method, request.url) == (container.method, str(container.url))
+        assert request.body.encode("utf-8") == container.content
+        assert request.headers == [("Content-Type", "application/json")]
+        assert container.headers["Content-Type"] == "application/json"
+
+    async def test_curls_config_escapes_what_it_must_and_keeps_utf_8(self, monkeypatch, host):
+        _no_connection_from_the_container(monkeypatch)
+        host.network = lambda request: HttpAnswer(204)
+        config = WebhookConfig(url="https://hooks.example/unos?key=k1", method="put",
+                               content_type="text/plain; charset=utf-8",
+                               headers={"X-Signature": 'a"b\\c', "X-Empty": ""}, body_template=TRICKY_TEMPLATE)
+
+        assert await notifications.send_webhook(config, EVENT) == (True, None)
+
+        [request] = host.http_requests
+        assert request.config.split("\n") == [
+            'url = "https://hooks.example/unos?key=k1"',
+            'request = "PUT"',
+            'header = "Content-Type: text/plain; charset=utf-8"',
+            r'header = "X-Signature: a\"b\\c"',
+            # curl's way of a header without a value: "X-Empty:" would drop it.
+            'header = "X-Empty;"',
+            r'data-raw = "He said \"Disk warning\" in C:\\dir\\n,\n\tsda is hot\r\nü ✅"',
+            "",
+        ]
+        # As curl reads it back: the values as they were.
+        assert request.body == TRICKY_TEMPLATE.format(title="Disk warning", message="sda is hot")
+        assert request.headers == [
+            ("Content-Type", "text/plain; charset=utf-8"), ("X-Signature", 'a"b\\c'), ("X-Empty", ""),
+        ]
+
+    @pytest.mark.skipif(shutil.which("curl") is None, reason="needs curl, which the host has (deploy/install.sh)")
+    @pytest.mark.usefixtures("no_proxy")
+    async def test_a_real_curl_sends_the_request_as_it_is(self, monkeypatch):
+        """The config, read by the curl of this machine (UNOS_HOST_EXEC=local runs it here): the
+        request reaches a local receiver byte for byte, once, at the URL that the container would
+        have used: curl's globbing would make two requests of [1-2], and a body that starts with
+        "@" would name a file for curl to send."""
+        monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+        tried = _no_connection_from_the_container(monkeypatch)
+        template = "@/etc/hosts " + TRICKY_TEMPLATE
+        with HookServer(201, b"created") as hook:
+            config = WebhookConfig(url=f"{hook.url}/unos/{{a,b}}/[1-2]?key={{k1}}", method="PUT",
+                                   content_type="text/plain; charset=utf-8",
+                                   headers={"X-Signature": 'a"b\\c', "X-Empty": ""}, body_template=template)
+            assert await notifications.send_webhook(config, EVENT) == (True, None)
+
+        [container] = tried
+        [request] = hook.requests
+        assert (request.method, request.path) == ("PUT", container.url.raw_path.decode())
+        assert request.path == "/unos/%7Ba,b%7D/[1-2]?key={k1}"
+        assert request.headers["Content-Type"] == "text/plain; charset=utf-8"
+        assert request.headers["X-Signature"] == 'a"b\\c'
+        assert request.headers["X-Empty"] == container.headers["X-Empty"] == ""
+        assert request.body == container.content
+        assert request.body == template.format(title="Disk warning", message="sda is hot").encode("utf-8")
+
+    @pytest.mark.parametrize("echo", [
+        pytest.param(lambda request: CurlFailure(6, f"Could not resolve host: api.telegram.org ({request.url})"),
+                     id="in-curls-message"),
+        pytest.param(lambda request: HttpAnswer(404, f'{{"ok":false,"description":"No {request.url}"}}'),
+                     id="in-the-answer"),
+    ])
+    async def test_the_bot_token_is_never_on_curls_command_line_in_an_error_or_in_the_log(
+        self, monkeypatch, host, caplog, echo
+    ):
+        # Command lines are visible to every process of the host, and error texts and the log
+        # travel further than the alert (ADR-0125): the token goes to curl on its standard input.
+        caplog.set_level(logging.DEBUG)
+        self._telegram_alerts(monkeypatch)
+        _no_connection_from_the_container(monkeypatch)
+        host.network = echo
+
+        await health_router.send_raid_alert("data", "degraded", 0, "1 device(s) missing.")
+
+        [request] = host.http_requests
+        assert request.url == f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        assert not [cmd for cmd in host.calls if any(TOKEN in arg for arg in cmd)]
+        [entry] = notifications.load_logs()
+        assert entry.success is False
+        assert TOKEN not in entry.error
+        assert "https://api.telegram.org/bot***/sendMessage" in entry.error
+        assert "Could not send alert" in caplog.text
+        assert TOKEN not in caplog.text
+
+    async def test_a_webhooks_url_and_headers_are_never_on_curls_command_line_or_in_an_error(
+        self, monkeypatch, host
+    ):
+        # A webhook's URL carries its key in its path, and its headers may carry credentials. A
+        # service may name the path alone ("Cannot POST /<path>"); a value too short for a key,
+        # such as a header's "1", stays, or the text would lose every "1".
+        config = WebhookConfig(url="https://hooks.example/unos/k3y-of-the-hook",
+                               headers={"Authorization": "Bearer s3cr3t-api-key", "X-Retry": "1"})
+        _no_connection_from_the_container(monkeypatch)
+
+        def answer(request):
+            path = request.url.split("hooks.example", 1)[1]
+            return HttpAnswer(401, f"{dict(request.headers)['Authorization']} is no key for {request.url}; "
+                                   f"Cannot POST {path} 1 time")
+
+        host.network = answer
+
+        sent, error = await notifications.send_webhook(config, EVENT)
+
+        assert (sent, error) == (False, "no connection from the container (ConnectTimeout); from the host: "
+                                        "HTTP 401: *** is no key for ***; Cannot POST *** 1 time")
+        [cmd] = [cmd for cmd in host.calls if cmd[0] == "curl"]
+        assert not [arg for arg in cmd if "s3cr3t" in arg or "k3y" in arg]
+        [request] = host.http_requests
+        assert request.headers == [
+            ("Content-Type", "application/json"), ("Authorization", "Bearer s3cr3t-api-key"), ("X-Retry", "1"),
+        ]
+
+    @pytest.mark.parametrize("sender,config,answer,delivered", [
+        pytest.param("send_telegram", TELEGRAM, HttpAnswer(200, TELEGRAM_SENT), True, id="telegram-sent"),
+        pytest.param("send_telegram", TELEGRAM, HttpAnswer(400, TELEGRAM_CHAT_NOT_FOUND), False, id="telegram-refused"),
+        # Telegram's own verdict is "ok"; a proxy on the way, a captive portal, may answer 200.
+        pytest.param("send_telegram", TELEGRAM, HttpAnswer(200, '{"ok":false,"description":"Bad Request"}'), False,
+                     id="telegram-not-ok"),
+        pytest.param("send_telegram", TELEGRAM, HttpAnswer(200, "<html>Sign in to the Wi-Fi</html>"), False,
+                     id="telegram-not-json"),
+        pytest.param("send_webhook", WEBHOOK, HttpAnswer(204), True, id="webhook-sent"),
+        pytest.param("send_webhook", WEBHOOK, HttpAnswer(500, "busy"), False, id="webhook-500"),
+        pytest.param("send_discord", DISCORD, HttpAnswer(301), False, id="discord-redirect"),
+        pytest.param("send_slack", SLACK, HttpAnswer(404, "no_service"), False, id="slack-404"),
+    ])
+    async def test_both_paths_judge_an_answer_alike(self, monkeypatch, host, sender, config, answer, delivered):
+        _route_httpx_to(monkeypatch, lambda request: httpx.Response(answer.status, text=answer.body))
+        from_the_container = await getattr(notifications, sender)(config, EVENT)
+        _no_connection_from_the_container(monkeypatch)
+        host.network = lambda request: answer
+        from_the_host = await getattr(notifications, sender)(config, EVENT)
+
+        assert from_the_container[0] is from_the_host[0] is delivered
+        if delivered:
+            assert from_the_container == from_the_host == (True, None)
+        else:
+            assert from_the_host[1] == (
+                f"no connection from the container (ConnectTimeout); from the host: {from_the_container[1]}"
+            )
+
+    async def test_a_host_without_curl_is_named(self, monkeypatch, host):
+        _no_connection_from_the_container(monkeypatch)
+        host.missing_programs.add("curl")
+
+        assert await notifications.send_telegram(TELEGRAM, EVENT) == (
+            False, "no connection from the container (ConnectTimeout); from the host: the host has no curl (package curl)",
+        )
+        # deploy/install.sh installs curl: the startup check names a host without it.
+        assert host_module.HOST_TOOLS["curl"] == "curl"
+
+    @pytest.mark.parametrize("change,reason", [
+        # Headers that httpx would not send either, once connected (h11 refuses them): curl would
+        # send the first as two headers, and read the headers of the second from a file of the host.
+        pytest.param({"headers": {"X-Note": "one\r\nX-Injected: two"}},
+                     "a header has a name or a value that HTTP does not allow", id="line-break"),
+        pytest.param({"headers": {"@/etc/hosts": "x"}},
+                     "a header has a name or a value that HTTP does not allow", id="name-of-a-file"),
+        pytest.param({"headers": {"X-Note": "one\x0btwo"}},
+                     "a header has a name or a value that HTTP does not allow", id="vertical-tab"),
+        pytest.param({"body_template": "{title}\0{message}"}, "it holds a NUL character, which curl cannot be given",
+                     id="nul"),
+    ])
+    async def test_a_request_that_curls_config_cannot_carry_is_not_sent_from_the_host(
+        self, monkeypatch, host, change, reason
+    ):
+        _no_connection_from_the_container(monkeypatch)
+
+        assert await notifications.send_webhook(WEBHOOK.model_copy(update=change), EVENT) == (
+            False, f"no connection from the container (ConnectTimeout); from the host: not sent: {reason}",
+        )
+        assert host.calls == []
+
+    @pytest.mark.parametrize("sender,config,delivery", HTTP_SENDERS)
+    async def test_both_attempts_end_within_the_channels_time_and_an_alerts(
+        self, monkeypatch, host, sender, config, delivery
+    ):
+        # The container gives up on a connection after 5 seconds, and curl's whole attempt, name
+        # lookup included, ends with what is left of the channel's time: a send that connects
+        # nowhere takes as long as it did before, and both attempts end well within an alert's 60
+        # seconds.
+        tried = _no_connection_from_the_container(monkeypatch)
+        host.network = lambda request: delivery
+        waits = []
+        fake_run = host_module.run_on_host
+
+        def run(cmd, **kwargs):
+            waits.append(kwargs["timeout"])
+            return fake_run(cmd, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", run)
+
+        assert await getattr(notifications, sender)(config, EVENT) == (True, None)
+
+        limit = 15 if sender == "send_telegram" else 30
+        [container] = tried
+        assert container.extensions["timeout"] == {"connect": 5, "read": limit, "write": limit, "pool": limit}
+        [curl] = [cmd for cmd in host.calls if cmd[0] == "curl"]
+        assert curl[:6] == ["curl", "--disable", "--silent", "--show-error", "--globoff", "--max-time"]
+        assert curl[7:] == ["--proto", "=https,http", "--config", "-", "--write-out", "\nunos-http-status:%{http_code}"]
+        max_time = float(curl[6])
+        assert limit - 1 <= max_time <= limit  # the container's attempt failed at once
+        [wait] = waits
+        assert wait == pytest.approx(max_time + 5)  # nsenter and curl get 5 seconds more than curl's own limit
+        assert limit + 5 < health_router.ALERT_TIMEOUT == 60
+
+    async def test_curl_gets_what_is_left_of_the_channels_time(self, monkeypatch, host):
+        # httpcore gives the connect timeout to the name lookup and TCP, and again to TLS: the
+        # container's attempt can take up to twice CONNECT_TIMEOUT, and curl gets what is left.
+        async def slow_no_connection(request):
+            await asyncio.sleep(0.5)
+            raise httpx.ConnectTimeout("", request=request)
+
+        _no_connection_from_the_container(monkeypatch, slow_no_connection)
+        monkeypatch.setattr(notifications, "SEND_TIMEOUT", 3)
+        host.network = lambda request: HttpAnswer(200, TELEGRAM_SENT)
+
+        assert await notifications.send_telegram(TELEGRAM, EVENT) == (True, None)
+
+        [curl] = [cmd for cmd in host.calls if cmd[0] == "curl"]
+        assert 2.0 <= float(curl[curl.index("--max-time") + 1]) <= 2.5
+
+    @pytest.mark.parametrize("container,host_answer,entry", [
+        pytest.param(lambda request: httpx.Response(200, text=TELEGRAM_SENT), None, (True, None), id="container"),
+        pytest.param(_raises(httpx.ConnectTimeout), HttpAnswer(200, TELEGRAM_SENT), (True, None), id="host"),
+        pytest.param(_raises(httpx.ConnectTimeout), CurlFailure(28, "Connection timed out after 10001 milliseconds"),
+                     (False, "no connection from the container (ConnectTimeout); from the host: "
+                             "curl: (28) Connection timed out after 10001 milliseconds"),
+                     id="neither"),
+    ])
+    async def test_an_alerts_history_entry_on_each_path(self, monkeypatch, host, caplog, container, host_answer, entry):
+        self._telegram_alerts(monkeypatch)
+        _route_httpx_to(monkeypatch, container)
+        if host_answer is not None:
+            host.network = lambda request: host_answer
+
+        await health_router.send_raid_alert("data", "degraded", 0, "1 device(s) missing.")
+
+        [logged] = notifications.load_logs()
+        assert (logged.event.title, logged.channel_name, logged.success, logged.error) == (
+            "RAID Pool 'data' DEGRADED", "Phone", *entry,
+        )
+        assert len([cmd for cmd in host.calls if cmd[0] == "curl"]) == (host_answer is not None)
+        assert ("Could not send alert" in caplog.text) is (not entry[0])
 
 
 class TestAlertDelivery:

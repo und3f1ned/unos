@@ -685,6 +685,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- Telegram, webhook, Discord and Slack notifications reach their service also
+  from a network that blocks it over IPv4: when the supervisor's container
+  cannot connect (the containers have no IPv6), the same message goes once
+  more from the host's network with the host's `curl`, its bot token and
+  headers on curl's standard input only. A request that reached the service is
+  never sent twice, and a failure names both attempts. A Telegram answer counts
+  as delivered only with `"ok": true`.
 - `GET` and `PUT /api/v1/system/timezone` and `GET /api/v1/system/timezones`
   read and set the host's time zone: they asked the supervisor container,
   which has no systemd, and answered "Unknown". `PUT /api/v1/system/hostname`,

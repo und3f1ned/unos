@@ -1,7 +1,7 @@
 import { api } from "./client";
 import type { BackupInfo } from "./backup";
 
-// The off-device copy (ADR-0336): one copy repository, on a disk mounted below /mnt or in an
+// The off-device copy (ADR-0337): one copy repository, on a disk mounted below /mnt or in an
 // S3-compatible store, that restic fills with the configuration and the pools' folders.
 
 export type OffsiteKind = "disk" | "s3";

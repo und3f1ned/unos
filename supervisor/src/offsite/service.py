@@ -1,6 +1,6 @@
 """The off-device copy: one copy repository per installation, the copies to it and the restores from it.
 
-ADR-0336 decides it. restic keeps the copy repository, encrypted with a password that the
+ADR-0337 decides it. restic keeps the copy repository, encrypted with a password that the
 administrator types and that only this device keeps: a folder on a disk mounted below MOUNTS_BASE
 that is not the system disk (disk), or an S3-compatible store (s3).
 

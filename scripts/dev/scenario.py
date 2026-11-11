@@ -53,7 +53,7 @@ SD writes of each check (ADR-0214). The areas:
            end; and the task deleted, its run left in the Scheduler's history. On a pool with more
            than 32 GiB of data the scrubs are cancelled instead of waited for. The pool's last
            scrub result is the check's afterwards.
-  offsite  The off-device copy (ADR-0336), on a device where none is set up: a folder of the
+  offsite  The off-device copy (ADR-0337), on a device where none is set up: a folder of the
            pool with two files as the source and another as the disk target; Save and test, which
            makes the copy repository there (700 root:root) and says that it lies on the disk it
            copies; Run now, whose copy, check and restore test pass; the snapshots of the

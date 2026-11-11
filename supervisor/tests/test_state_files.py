@@ -261,7 +261,7 @@ STATE_FILES = [
     StateFile("scheduled_backup_keys.json", scheduler, "BACKUP_KEYS_FILE",
               lambda: scheduler.save_backup_keys({"t1": b"k" * scheduler.BACKUP_KEY_SIZE}), scheduler.load_backup_keys,
               {}),
-    # The off-device copy (ADR-0336): its settings, its secrets (0600) and the result of its last copy and restore.
+    # The off-device copy (ADR-0337): its settings, its secrets (0600) and the result of its last copy and restore.
     StateFile("offsite.json", offsite, "SETTINGS_FILE",
               lambda: offsite.write_settings(offsite.OffsiteSettings(kind="disk", path="/mnt/usb/copy",
                                                                      sources=["/mnt/pools/data"])),

@@ -307,7 +307,7 @@ class TestIsolation:
         """restic is not installed here: the stand-in puts the fake of supervisor/tests/fake_restic.py
         first on PATH, with a pass-through ionice. Its pools' folder stands for /mnt/pools, so disk
         targets lie below the state directory, and one filesystem holds all of it: the stand-in has no
-        system disk that the copy must stay off (ADR-0336)."""
+        system disk that the copy must stay off (ADR-0337)."""
         state, offsite = configured["state"], configured["offsite"]
         assert Path(offsite["mounts_base"]) == state
         assert offsite["on_system_disk"] is False

@@ -2150,9 +2150,9 @@
       "passes": false,
       "adr": [
         "ADR-0041",
-        "ADR-0336"
+        "ADR-0337"
       ],
-      "notes": "Built (ADR-0336): restic in a layer of its own of the supervisor image; supervisor/src/offsite/ with the settings in /data/offsite.json, the secrets in /data/offsite_secrets.json (0600) and the last copy and restore in /data/offsite_status.json; the copy's steps unlock, the configuration from standard input, the folders, forget with --prune, check and the restore test, for the Scheduler's task type offsite_copy and Run now; the restores of the configuration into the backup list and of files into a new folder restored-<UTC time> of a pool; the section Off-device copy of System > Backup & Restore. restic is not installed on the workstation: the backend tests and the local stand-in run the fake of supervisor/tests/fake_restic.py, so restic itself runs first on the device. The test stack skips the E2E main flow: its image has no restic, and its pools share the filesystem of its data volume, which the copy refuses as the system disk. Open: the deploy, whose supervisor build runs apt-get for restic's layer (the owner is told first), the device check scripts/dev/scenario.sh offsite before and after a reboot (ADR-0018), a copy to an S3 store and to a USB disk, which the scenario check leaves out, and the review in a fresh context (ADR-0017)."
+      "notes": "Built (ADR-0337): restic in a layer of its own of the supervisor image; supervisor/src/offsite/ with the settings in /data/offsite.json, the secrets in /data/offsite_secrets.json (0600) and the last copy and restore in /data/offsite_status.json; the copy's steps unlock, the configuration from standard input, the folders, forget with --prune, check and the restore test, for the Scheduler's task type offsite_copy and Run now; the restores of the configuration into the backup list and of files into a new folder restored-<UTC time> of a pool; the section Off-device copy of System > Backup & Restore. restic is not installed on the workstation: the backend tests and the local stand-in run the fake of supervisor/tests/fake_restic.py, so restic itself runs first on the device. The test stack skips the E2E main flow: its image has no restic, and its pools share the filesystem of its data volume, which the copy refuses as the system disk. Open: the deploy, whose supervisor build runs apt-get for restic's layer (the owner is told first), the device check scripts/dev/scenario.sh offsite before and after a reboot (ADR-0018), a copy to an S3 store and to a USB disk, which the scenario check leaves out, and the review in a fresh context (ADR-0017)."
     },
     {
       "id": "backup.off-device-copies-over-sftp",
@@ -2164,9 +2164,9 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0336"
+        "ADR-0337"
       ],
-      "notes": "Left out of backup.off-device-copies by ADR-0336: SFTP needs ssh in the supervisor image, key management and the pinning of host keys."
+      "notes": "Left out of backup.off-device-copies by ADR-0337: SFTP needs ssh in the supervisor image, key management and the pinning of host keys."
     },
     {
       "id": "backup.streaming-restore",
@@ -2632,13 +2632,22 @@
       "category": "system",
       "description": "Telegram alerts reach their chat from the dev device's network",
       "steps": [
-        "The UNOS network gets IPv6, or the alerts go by e-mail instead, as the ADR decides",
-        "A test notification to a Telegram channel arrives"
+        "A Telegram, webhook, Discord or Slack request that connects nowhere from the supervisor's container goes once more, the same request, from the host's network with the host's curl, and arrives",
+        "A request that reached its service is never sent again: an HTTP answer of any status, or no answer in time after the request was sent, ends the send",
+        "The bot token, a webhook's URL and its headers reach curl only on its standard input: never on its command line, in an error text, the history or the log",
+        "An answer counts the same on both paths, and a send that fails both ways names both attempts, or a host without curl, in the test's answer and in the history",
+        "Both attempts end within the channel's time, 15 seconds for Telegram and 30 for the others, and within an alert's 60 seconds",
+        "A test notification to a Telegram channel arrives from the dev device"
       ],
       "passes": false,
       "adr": [
-        "ADR-0046"
-      ]
+        "ADR-0046",
+        "ADR-0336"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_notifications.py"
+      ],
+      "notes": "Built (ADR-0336, which supersedes the proposal ADR-0046; neither IPv6 for the compose network nor e-mail instead): the HTTP channels send each request from the container with a connect timeout of 5 seconds, and only when httpx raises ConnectError or ConnectTimeout (no TCP or TLS connection, so the request was not sent) once more from the host's network through host.run_on_host_async: curl with fixed options on its command line (--disable first, --globoff, --max-time with what is left of the channel's time, --proto =https,http, --config -, the status after the body) and the request as its config on standard input (url, request, header, data-raw, each value quoted with its escapes, UTF-8 as it is). A request with a NUL character or a header that httpx would not send is not sent from the host. The bot token, a webhook's URL with its path and its header values are replaced by *** in what httpx, curl and the services say; Telegram's answer counts as a delivery with HTTP 200 and \"ok\": true on both paths. curl joined HOST_TOOLS (deploy/install.sh installs it). E-mail is unchanged. Tests first: 42 tests of test_notifications.py's TestFromTheHostsNetwork (against FakeHost's curl of test_pool_persistence.py, which reads the config as curl does, and one through the real curl of the machine to a local receiver) failed on the code before, and so did 4 older tests that the decision changes: Telegram's connect timeout is 5 of its 15 seconds, and a webhook's refused connection is tried from the host as well. Reviewed in a fresh context (ADR-0017): the headers that curl reads differently, a webhook's key named by its path alone, short values garbling errors, curl's time after a slow TLS handshake and a captive portal's page as Telegram's error were fixed with tests that failed first; the host's attempt in asyncio's default thread pool and a loopback URL that names the host stay, with the reasons in PROGRESS.md (2026-11-11). A host-level change: it sends from the host's network. Open: the deploy, the device check (step 6: a test notification to the owner's Telegram channel from the dev device, and an alert's history entry there) and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "system.custom-command-tasks",

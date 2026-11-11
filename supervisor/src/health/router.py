@@ -111,6 +111,9 @@ _NO_SERIAL = "unknown"
 # pool with a per-operation timeout; this pool keeps the monitors isolated from
 # whatever a sender does, so a slow or unreachable mail server never freezes the
 # event loop or uses up the default executor that storage operations run in.
+# The HTTP channels' attempt from the host's network, when the container
+# connects nowhere, ends well within it too (CONNECT_TIMEOUT of
+# notifications/router.py, ADR-0336).
 ALERT_TIMEOUT = 60
 _ALERT_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="unos-alerts")
 

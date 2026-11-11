@@ -1157,6 +1157,9 @@ ALLOWED_SECRET_VALUES = {
     "eyJhbGciOiJIUzI1NiJ9." "eyJzdWIiOiJhZG1pbiJ9." "c2lnbmF0dXJlLXZhbHVl": {"supervisor/tests/test_dev_scripts.py"},
     # The E2E administrator of the compose test stack (docs/TESTING.md).
     "unos-e2e-pass": {"deploy/docker-compose.test.yml"},
+    # A webhook's credential header, which the notification senders keep off curl's command line
+    # and out of their errors (ADR-0336).
+    "s3cr3t-api-key": {"supervisor/tests/test_notifications.py"},
 }
 # The passwords that CLAUDE.md once published, the dev device's SSH password and the UNOS
 # administrator's, by their SHA-256: they stay in git history until the owner rotates them

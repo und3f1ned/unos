@@ -47,7 +47,7 @@ vendor's firmware and is never written, so every write counts (ADR-0214, ADR-022
   named `unoscheck<6 hex digits>` and two backups, remove them again and compare the device with
   how they found it; the smbconf check also edits smb.conf by hand and restarts the supervisor
   (ADR-0309), the scrub check scrubs the pool (ADR-0314), and the offsite check sets up an
-  off-device copy to a folder of the pool and forgets it (ADR-0336). They change the device for their
+  off-device copy to a folder of the pool and forgets it (ADR-0337). They change the device for their
   duration, so they run on the owner's request;
   the feature-pass skill names the check of each host-level entry, and after a reboot
   (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table lists.

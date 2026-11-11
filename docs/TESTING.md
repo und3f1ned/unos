@@ -201,6 +201,13 @@ def test_list_disks(fake_host):
     assert [d.name for d in disks.list_disks()] == ["sdb"]
 ```
 
+A notification that cannot connect from the container goes once more from the host's network with
+the host's curl (ADR-0336): `FakeHost`'s curl reads the request from its config on standard input
+as curl does, and answers what the test sets in `FakeHost.network` (`HttpAnswer` or
+`CurlFailure`). `tests/test_notifications.py` also sends one such request through the real `curl`
+of this machine to a local receiver (`UNOS_HOST_EXEC=local`), and skips it where curl is not
+installed.
+
 ### Linux-Only Tests
 
 `tests/test_share_repair.py` (Repair permissions) walks real temporary
@@ -321,7 +328,7 @@ has no Docker socket, the container and app routes answer 503 with the reason (A
 `tests/containers.spec.ts` check; the test stack skips them too.
 restic is not installed here: for the off-device copy the stand-in runs the fake restic of
 `supervisor/tests/fake_restic.py`, which the backend tests use too, keeps its copy targets below
-its state directory and counts none of it as the system disk (ADR-0336). The test stack has no
+its state directory and counts none of it as the system disk (ADR-0337). The test stack has no
 restic, and its pools share the filesystem of its data volume, which the copy refuses as the
 system disk: it skips the main flow of `tests/offsite.spec.ts`.
 
@@ -388,7 +395,7 @@ secrets from the git-ignored `dev.env` (ADR-0212):
   temporary user, share, volume, Scheduler task and folders named `unoscheck<6 hex digits>` and two
   backups (smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; scrub scrubs
   the pool, ADR-0314; offsite sets up an off-device copy to a folder of the pool, with its restores,
-  and forgets it, ADR-0336), prints PASS or FAIL and the SD MiB of each step, removes what it made, also
+  and forgets it, ADR-0337), prints PASS or FAIL and the SD MiB of each step, removes what it made, also
   after a FAIL or Ctrl-C, and compares the
   device with how it found it. The feature-pass skill names the check of each host-level entry;
   after a reboot (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table

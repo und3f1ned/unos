@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# restic for the off-device copy (ADR-0336), Debian's package, in a layer of its own after pip's:
+# restic for the off-device copy (ADR-0337), Debian's package, in a layer of its own after pip's:
 # the apt-get and pip layers above stay cached, so a device that builds this image downloads and
 # writes only restic.
 RUN apt-get update && apt-get install -y --no-install-recommends restic && rm -rf /var/lib/apt/lists/*

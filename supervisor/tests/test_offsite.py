@@ -1,4 +1,4 @@
-"""The off-device copy (backup.off-device-copies, ADR-0336), against the fake restic of fake_restic.py.
+"""The off-device copy (backup.off-device-copies, ADR-0337), against the fake restic of fake_restic.py.
 
 * The settings: a disk target below MOUNTS_BASE that is not on the system disk (the filesystem of
   MOUNTS_BASE or of the data volume), without symbolic links or .snapshots and .unos-trash in its

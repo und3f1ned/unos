@@ -1058,7 +1058,7 @@ def _write_archive(content: Path, out: BinaryIO) -> None:
 def configuration_archive() -> bytes:
     """The archive that Create Backup makes (POST /backup/create without encryption), built in memory.
 
-    The off-device copy sends it to its repository, which restic encrypts (ADR-0336). Blocking (the
+    The off-device copy sends it to its repository, which restic encrypts (ADR-0337). Blocking (the
     copy of the database, the archive): call it in a worker thread. Its files are collected in TMPDIR.
     """
     with tempfile.TemporaryDirectory() as tmpdir:

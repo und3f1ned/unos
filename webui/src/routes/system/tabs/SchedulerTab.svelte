@@ -608,7 +608,7 @@
           </div>
         {/if}
 
-        <!-- Off-device copy: its target and folders are those of System > Backup & Restore (ADR-0336) -->
+        <!-- Off-device copy: its target and folders are those of System > Backup & Restore (ADR-0337) -->
         {#if formData.task_type === "offsite_copy"}
           <p class="text-xs text-content-muted">{$t("scheduler.form.offsiteHint")}</p>
         {/if}

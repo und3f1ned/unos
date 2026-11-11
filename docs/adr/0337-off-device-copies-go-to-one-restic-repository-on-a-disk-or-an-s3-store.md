@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0041]
 ---
 
-# ADR-0336: Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested
+# ADR-0337: Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested
 
 ## Context
 
