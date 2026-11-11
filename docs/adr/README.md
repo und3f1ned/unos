@@ -250,7 +250,7 @@ and this index, and `make check-fast` runs it.
 | [0249](0249-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
 | [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | superseded by [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | 2026-11-07 |
 | [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | Windows finds the NAS through wsdd2, macOS through Samba's Bonjour announcement, and NetBIOS is off | accepted | 2026-11-08 |
-| [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | Handle the SMB follow-ups still open after network discovery | proposed | 2026-11-08 |
+| [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | Handle the SMB follow-ups still open after network discovery | superseded by [0342](0342-samba-refuses-every-password-change-over-samr-so-smb-passwords-change-only-through-unos.md) | 2026-11-08 |
 | [0277](0277-samba-logs-failed-sign-ins-to-syslog-and-keeps-its-log-file-in-ram.md) | Samba logs failed sign-ins through auth_audit to syslog and keeps its own log file in /run/samba | accepted | 2026-11-08 |
 | [0278](0278-samba-keeps-a-password-history-of-three.md) | Samba keeps a password history of 3, so that retries with an account's previous passwords write nothing to passdb | accepted | 2026-11-08 |
 | [0279](0279-smb-bound-passwords-must-not-be-common-passwords.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters, and must not be common passwords | accepted | 2026-11-08 |
@@ -265,6 +265,7 @@ and this index, and `make check-fast` runs it.
 | [0321](0321-nfs-exports-in-their-own-file-read-as-exportfs-reads-them-audited-with-actions-of-their-own.md) | UNOS keeps its NFS exports in its own export file on the host, reads every export file as exportfs reads it, applies them with the host's exportfs, and audits them with actions of their own | accepted | 2026-11-10 |
 | [0334](0334-samba-locks-an-smb-account-for-five-minutes-after-five-failed-sign-ins.md) | Samba locks an SMB account for 5 minutes after 5 failed sign-ins, and passdb.tdb stays on the system disk | accepted | 2026-11-10 |
 | [0339](0339-the-guest-globals-follow-guest-shares-and-an-anonymous-share-list-names-no-share.md) | The guest-related globals follow whether any guest share exists, and an anonymous share list names no share | accepted | 2026-11-11 |
+| [0342](0342-samba-refuses-every-password-change-over-samr-so-smb-passwords-change-only-through-unos.md) | Samba refuses every password change over SAMR with a check password script that always fails, so SMB passwords change only through UNOS | accepted | 2026-11-11 |
 
 ## Apps
 

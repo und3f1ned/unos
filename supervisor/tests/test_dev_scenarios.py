@@ -8,8 +8,9 @@ users, the SMB host accounts and Samba's passdb, the disks and the backups. Its 
 sessions as the device's does for the checks: access per share, a closed tree connect when a
 share's access shrinks (ADR-0103), the end of an account's sessions at a password change or a
 deletion (ADR-0104), a failed sign-in that Samba counts in passdb.tdb but for one of the two
-passwords that the history holds (ADR-0278), and the lock of an account after 5 of them, which
-refuses the right password as well and writes nothing (ADR-0334).
+passwords that the history holds (ADR-0278), the lock of an account after 5 of them, which
+refuses the right password as well and writes nothing (ADR-0334), and a password change over SAMR,
+which Samba refuses without a write (ADR-0342).
 
 Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 * every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite, restore) passes against
@@ -46,14 +47,16 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   share folder of another account, a Repair permissions that follows a link, opens a private
   entry, drops an ACL entry or repairs a share that is not served, SMB that takes a password of
   7 characters or keeps the account the user turned off, a guest share without the warning,
-  an anonymous write, guest lines that stay after the last guest share;
+  an anonymous write, guest lines that stay after the last guest share, a password change over
+  SAMR that Samba takes;
 * no temporary password reaches the output, a command line or the environment: scenario.Device
   sends them on standard input, and the SMB helper keeps them in a file of mode 600 in RAM that
-  it deletes;
+  it deletes, or gives them to smbpasswd -r on its standard input;
 * every call the checks make is a route of the supervisor in this tree, with a body its model
   accepts (the contract with the API);
 * the scripts that run on the device parse; the SMB helper's session and share-list protocol
-  works against a stand-in smbclient, with signing required except for the null session; the
+  works against a stand-in smbclient, with signing required except for the null session, and its
+  password change against a stand-in smbpasswd; the
   subvolume helper touches only a check's own folder;
 * scenario.sh holds the device lock and reports the SD writes of each check, also of one that a
   signal ended;
@@ -1437,7 +1440,7 @@ class FakeNas:
         digest = hashlib.sha256("\n".join(accounts).encode()).hexdigest()
         return {
             "now": 1_800_000_000,
-            "tools": ["getent", "pdbedit", "smbclient", "stdbuf", "testparm"] + ([] if self.no_acl else ["getfacl", "setfacl"]),
+            "tools": ["getent", "pdbedit", "smbclient", "smbpasswd", "stdbuf", "testparm"] + ([] if self.no_acl else ["getfacl", "setfacl"]),
             "sha256": {"/etc/passwd": digest, "/etc/group": "g", "/etc/shadow": digest, "/etc/gshadow": "gs",
                        "/etc/samba/smb.conf": hashlib.sha256(self.installed.encode()).hexdigest()},
             "accounts": accounts,
@@ -1500,6 +1503,25 @@ class FakeNas:
         if not self.guests_rendered():
             return scenario.SmbListing(1, "session setup failed: NT_STATUS_ACCESS_DENIED")
         return scenario.SmbListing(0, "")
+
+    def smb_change_password(self, user, old, new):
+        """smbpasswd -r 127.0.0.1: a session signed in with OLD, then Samba's SAMR change to NEW,
+        which its check password script /bin/false refuses before Samba stores anything (ADR-0342);
+        smbpasswd names the refusal by Samba's text for NT_STATUS_PASSWORD_RESTRICTION. The defect
+        samr-change-accepted takes the change, as Samba does without that line: the new password,
+        the old one in the history, passdb.tdb written."""
+        self.device_call("smb_change_password")
+        status = self.sign_in(user, old)
+        if status is not None:
+            return scenario.SmbPasswordChange(1, f"Could not connect to machine 127.0.0.1: {status}\n")
+        if "samr-change-accepted" in self.bugs:
+            account = self.passdb[user]
+            account["history"] = ([account["password"]] + account["history"])[:2]
+            account["password"] = new
+            self.passdb_mtime += 1
+            return scenario.SmbPasswordChange(0, f"Password changed for user {user} on 127.0.0.1.\n")
+        return scenario.SmbPasswordChange(
+            1, "machine 127.0.0.1 rejected the password change: Error was : Password restriction.\n")
 
     def smb_session(self, user, password, share):
         self.device_call("smb_session")
@@ -2266,6 +2288,7 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "lockout-ignored", "after 5 wrong passwords the right one answered status 0"),
     ("smb", "counts-twice", "wrong password 4 of 5 answered NT_STATUS_ACCOUNT_LOCKED_OUT"),
     ("smb", "locked-writes", "while the account was locked"),
+    ("smb", "samr-change-accepted", "smbpasswd -r answered status 0"),
     ("smb", "log-password", "no password of the check"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
@@ -2403,6 +2426,47 @@ def test_the_smb_check_locks_its_account_last_and_deletes_it_locked(nas):
             if "5 wrong passwords in a row lock the account" in line]
     assert lock and max(signed_in) == lock[0], output
     assert deleted == [["unoscheck1a2b3c"]]
+
+
+def test_the_smb_check_asks_for_a_samr_password_change_that_samba_refuses(nas):
+    """shares.password-changes-only-through-unos (ADR-0342): once the user's password signs in, the
+    check asks Samba to change it over SAMR with smbpasswd -r, the stand-in for Windows' Change a
+    password, signed in with that password; Samba refuses with NT_STATUS_PASSWORD_RESTRICTION, and
+    the password still signs in. The step comes before the steps with wrong passwords, so that no
+    failure is counted then and a refused change leaves passdb.tdb as it was."""
+    changes, change = [], nas.smb_change_password
+
+    def changing(user, old, new):
+        account = nas.passdb[user]
+        changes.append((user, old == account["password"], new != old, account["bad"]))
+        return change(user, old, new)
+
+    nas.smb_change_password = changing
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    assert changes == [("unoscheck1a2b3c", True, True, 0)]
+    steps = step_lines(output)
+    samr = [n for n, line in enumerate(steps) if "through SAMR" in line]
+    assert len(samr) == 1 and "NT_STATUS_PASSWORD_RESTRICTION" in steps[samr[0]], output
+    assert "the new password signs in" in steps[samr[0] - 1] and "a wrong password" in steps[samr[0] + 1], output
+
+
+@pytest.mark.parametrize("rc, output, status", [
+    (1, "machine 127.0.0.1 rejected the password change: Error was : Password restriction.\n",
+     "NT_STATUS_PASSWORD_RESTRICTION"),
+    (1, "machine 127.0.0.1 rejected the password change: Error was : Account restriction.\n",
+     "NT_STATUS_ACCOUNT_RESTRICTION"),
+    (1, "machine 127.0.0.1 rejected to change the password with error: NT_STATUS_PASSWORD_RESTRICTION",
+     "NT_STATUS_PASSWORD_RESTRICTION"),
+    (1, "Could not connect to machine 127.0.0.1: NT_STATUS_LOGON_FAILURE\n", "NT_STATUS_LOGON_FAILURE"),
+    (1, "Mismatch - password unchanged.\n", "status 1"),
+    (0, "Password changed for user unoscheck1a2b3c on 127.0.0.1.\n", "status 0"),
+])
+def test_a_samr_password_change_is_read_as_its_nt_status(rc, output, status):
+    """smbpasswd -r names a refusal of the server by Samba's text for its NT status
+    (get_friendly_nt_error_msg), and an error of its own connection by the status itself."""
+    assert scenario.SmbPasswordChange(rc, output).status == status
+    assert scenario.SmbPasswordChange(rc, output).ok is (rc == 0)
 
 
 def test_with_a_guest_share_the_smb_check_tries_no_null_session(nas, monkeypatch):
@@ -2998,6 +3062,25 @@ def test_the_device_gets_the_script_and_the_secrets_on_standard_input_only(stub)
     assert device.sectors() == 4096
 
 
+def test_a_samr_password_change_sends_both_passwords_on_standard_input_only(stub):
+    """ADR-0342: the old and the new password of smbpasswd -r reach the device after the script,
+    on standard input, in the read-only namespace."""
+    device = device_with_stub(stub)
+    (stub.log / "reply").write_text(
+        "end 1 " + scenario.b64text("machine 127.0.0.1 rejected the password change: Error was : "
+                                    "Password restriction.\n") + "\n")
+    old, new = "pw-" + os.urandom(8).hex(), "pw-" + os.urandom(8).hex()
+    change = device.smb_change_password("unoscheck1a2b3c", old, new)
+    assert change.rc == 1 and change.status == "NT_STATUS_PASSWORD_RESTRICTION"
+    argv = (stub.log / "argv").read_text()
+    env = (stub.log / "env").read_text()
+    sent = (stub.log / "stdin").read_text()
+    for password in (old, new):
+        assert password not in argv and password not in env
+    assert sent.startswith("{\n" + scenario.RO_ROOT + "\n") and sent.endswith(f"\n}}\n{old}\n{new}\n")
+    assert "unshare --mount --propagation private bash -s -- change unoscheck1a2b3c ''" in argv
+
+
 def test_the_device_reads_pdbedit_without_the_read_only_namespace(stub):
     """tdbsam opens passdb.tdb read-write, which a read-only root refuses (ADR-0304)."""
     device = device_with_stub(stub)
@@ -3382,6 +3465,59 @@ def test_the_smb_helper_runs_a_session_step_by_step_and_removes_its_files(local_
     assert "\nsigning not required" in lists[1] and "ipc signing not required" in lists[1]
     for folder in re.findall(r"^dir (\S+)$", log, re.M):
         assert folder.startswith(str(stub.tmp / "shm") + "/") and not os.path.exists(folder)
+    assert list((stub.tmp / "shm").iterdir()) == []
+
+
+# The smbpasswd of the SMB helper's change test: it checks the client configuration in RAM, logs
+# its arguments, its standard input (the old password, then the new one twice), the files of its
+# folder and whether IPC signing is required, and refuses the change as Samba refuses it when its
+# check password script fails (ADR-0342).
+STUB_SMBPASSWD = textwrap.dedent(
+    """\
+    #!@PYTHON@
+    import os, sys
+    args = sys.argv[1:]
+    conf = args[args.index("-c") + 1]
+    text = open(conf).read()
+    folder = os.path.dirname(os.path.abspath(conf))
+    assert "private dir = " + folder in text and "state directory = " + folder in text
+    lines = sys.stdin.read().split("\\n")
+    with open(os.environ["FAKE_SMB_LOG"], "a") as log:
+        log.write("argv " + " ".join(args) + "\\n")
+        log.write("stdin " + "|".join(lines) + "\\n")
+        log.write("files " + " ".join(sorted(os.listdir(folder))) + "\\n")
+        log.write("ipc signing " + ("required" if "client ipc signing = required" in text else "not required") + "\\n")
+        log.write("dir " + folder + "\\n")
+    sys.stderr.write("machine 127.0.0.1 rejected the password change: Error was : Password restriction.\\n")
+    sys.exit(1)
+    """
+)
+
+
+def test_the_smb_helper_asks_for_a_samr_password_change_with_the_passwords_on_standard_input(local_stub):
+    """REMOTE_SMB's change mode, run here (ADR-0342): smbpasswd -r 127.0.0.1 with the client
+    configuration in RAM and IPC signing required, as the user, gets the old password and the new
+    one twice on standard input, never on a command line or in a file; the answer carries its exit
+    status and output, and the folder is gone at the end."""
+    stub = local_stub
+    stub.stub("smbpasswd", STUB_SMBPASSWD)
+    extra = {"FAKE_SSH_MODE": "local", "UNOS_DEV_SHM": str(stub.tmp / "shm"), "FAKE_SMB_LOG": str(stub.tmp / "smb.log")}
+    runner = stub.bin / "ssh-here"
+    runner.write_text(f"#!/usr/bin/env bash\nexport {' '.join(f'{k}={v!r}' for k, v in stub.env(**extra).items())}\n"
+                      f'exec "{DEV}/ssh.sh" "$@"\n')
+    runner.chmod(0o755)
+    device = scenario.Device(ssh=runner, sd=runner)
+    old, new = "pw-" + os.urandom(8).hex(), "pw-" + os.urandom(8).hex()
+
+    change = device.smb_change_password("unoscheck1a2b3c", old, new)
+
+    assert not change.ok and change.rc == 1 and change.status == "NT_STATUS_PASSWORD_RESTRICTION", change.output
+    log = (stub.tmp / "smb.log").read_text()
+    folder = re.search(r"^dir (\S+)$", log, re.M).group(1)
+    assert f"argv -c {folder}/smb.conf -r 127.0.0.1 -s -U unoscheck1a2b3c\n" in log
+    assert f"stdin {old}|{new}|{new}|\n" in log
+    assert "files smb.conf\n" in log and "ipc signing required\n" in log
+    assert folder.startswith(str(stub.tmp / "shm") + "/") and not os.path.exists(folder)
     assert list((stub.tmp / "shm").iterdir()) == []
 
 

@@ -39,6 +39,7 @@ GLOBAL_WITHOUT_GUESTS = """[global]
    unix password sync = no
    pam password change = no
    obey pam restrictions = no
+   check password script = /bin/false
    cache directory = /run/samba
    log file = /run/samba/log.samba
    max log size = 100
@@ -102,6 +103,20 @@ class TestGlobal:
         assert "   invalid users = root\n" in text
         assert "   cache directory = /run/samba\n" in text
         assert "   server string = UNOS NAS\n" in text  # pinned by ADR-0281
+
+    @pytest.mark.parametrize("guest", [False, True])
+    def test_samba_refuses_every_password_change_of_its_own(self, guest):
+        """shares.password-changes-only-through-unos (ADR-0342): Samba asks its check password script
+        about the new password of every change that a client asks for over SAMR (Windows' Change a
+        password, smbpasswd -r), and /bin/false refuses each one with NT_STATUS_PASSWORD_RESTRICTION
+        before Samba stores anything. UNOS sets passwords as root with smbpasswd -s -a, which asks
+        no script, so a password changes only through UNOS and its rules (ADR-0279)."""
+        settings = dict(smbconf.global_settings(guest))
+
+        assert settings["check password script"] == "/bin/false"
+        assert "   check password script = /bin/false\n" in smbconf.render_global(guest)
+        # Nor does a change reach the host's own passwords: no passwd program, no PAM.
+        assert settings["unix password sync"] == "no" and settings["pam password change"] == "no"
 
     @pytest.mark.parametrize("guest", [False, True])
     def test_samba_writes_its_own_log_file_into_ram(self, guest):

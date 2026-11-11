@@ -1038,6 +1038,13 @@ then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 
+An SMB password changes only in UNOS: the user under **Account** →
+**Change Password**, or an administrator in the edit dialog of the **Users**
+page. Samba refuses every password change that a computer asks for over the
+network, such as **Change a password** in Windows (Ctrl+Alt+Del) aimed at the
+NAS, as a password that does not meet its rules, whatever the new password
+is; the old password keeps working.
+
 After 5 wrong SMB passwords in a row, Samba locks the user's SMB account for 5
 minutes: until they are over, every computer is refused, with the right
 password too, and then the right password signs in again. Wrong passwords

@@ -1292,6 +1292,13 @@ class TestInstallScript:
 
         assert (etc / "smb.conf").read_bytes() == smbconf.render_config([]).encode()
 
+    def test_first_install_refuses_samba_s_own_password_changes(self, tmp_path):
+        """shares.password-changes-only-through-unos (ADR-0342): from the install on, before the
+        supervisor first writes smb.conf, Samba refuses every password change over SAMR."""
+        etc = self._configure_samba(tmp_path, None)
+
+        assert "\n   check password script = /bin/false\n" in (etc / "smb.conf").read_text()
+
     def test_rerun_keeps_the_smb_conf_that_unos_generated(self, tmp_path):
         # The generated file starts with the header line that the rerun looks for.
         (tmp_path / "first").mkdir()

@@ -1635,7 +1635,14 @@
         "ADR-0195",
         "ADR-0250",
         "ADR-0164"
-      ]
+      ],
+      "verified_by": [
+        "supervisor/tests/test_smbconf.py",
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_dev_scenarios.py",
+        "supervisor/tests/test_smb_accounts.py"
+      ],
+      "notes": "Built (ADR-0342, which supersedes the proposed ADR-0276; the owner delegated the choice, ADR-0013): UNOS's [global] has check password script = /bin/false in both variants (smbconf.global_settings), and so does the smb.conf that deploy/install.sh writes before the supervisor's first start. Samba runs that script for every password change that a client asks for over SAMR (Windows' Change a password, smbpasswd -r), once the old password is checked, and refuses the change with NT_STATUS_PASSWORD_RESTRICTION before it stores anything; root's smbpasswd -s -a, with which UNOS sets every Samba password, and pdbedit run no script, so activations, UNOS's password changes, the restore steps and the compensation of ADR-0124 work as before. Step 2: the Account page's Change Password (POST /auth/change-password) and an administrator's new password on the Users page stay the ways to change an SMB password, with the rules of ADR-0279 (test_smb_accounts.py TestPasswordChange, unchanged). Tests: test_smbconf.py TestGlobal (test_samba_refuses_every_password_change_of_its_own in both variants, and the pinned [global]); test_deploy_scripts.py test_first_install_refuses_samba_s_own_password_changes and the comparison of install.sh's file with render_config([]); test_dev_scenarios.py: the smb check's new step against FakeNas, its defect samr-change-accepted, the SMB helper's change mode against a stand-in smbpasswd (the passwords on standard input only) and how smbpasswd's answer is read. Device check (ADR-0018), not run yet: the smb scenario check (scripts/dev/scenario.sh smb) before and after a reboot of the deployed tree, with the SD MiB of each step (ADR-0214): its step after the new password signs in runs smbpasswd -r 127.0.0.1 -s -U <the check's user> on the device, the stand-in for Windows' Change a password, with the old password and a new one on standard input, and expects NT_STATUS_PASSWORD_RESTRICTION (smbpasswd prints Samba's text for it, \"Password restriction\"), passdb.tdb's time unchanged and the old password still signing in; its step 3 now also needs smbpasswd on the device. Not in the check: a Windows client (testing.smb-real-world-checks). Before the merge: the real testparm with the new line (test_smbconf_testparm.py with scripts/dev/bin/testparm), and the review in a fresh context (ADR-0017)."
     },
     {
       "id": "shares.restore-uid-guards",

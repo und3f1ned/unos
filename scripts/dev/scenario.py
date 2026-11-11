@@ -28,12 +28,13 @@ SD writes of each check (ADR-0214). The areas:
            the access lowered to read and then removed during open sessions, a comment saved with
            the expected version and a stale one refused, a password change that ends the open
            session, the replaced password refused without a write to passdb.tdb, the new one
-           taken, a wrong password refused and counted in passdb.tdb, an anonymous session
-           refused, 5 wrong passwords in a row that lock the account, so that the right one is
-           refused too, without a write (ADR-0334), the [global] lines without a guest share and
-           of Samba's log in /run/samba, no password of the check in an answer or a log, the
-           share's Delete keeping its folder, and the user's Delete removing its accounts, still
-           locked.
+           taken, the user's own change of it over SAMR (smbpasswd -r, as Windows' Change a
+           password asks for one) refused without a write (ADR-0342), a wrong password refused
+           and counted in passdb.tdb, an anonymous session refused, 5 wrong passwords in a row
+           that lock the account, so that the right one is refused too, without a write
+           (ADR-0334), the [global] lines without a guest share and of Samba's log in
+           /run/samba, no password of the check in an answer or a log, the share's Delete
+           keeping its folder, and the user's Delete removing its accounts, still locked.
   smbconf  smb.conf edited by hand and what the Shares page says (ADR-0309): a share section
            added by hand (available = no) and UNOS's header removed, which the Shares page names
            before an apply; a new share whose apply copies that file byte for byte to
@@ -121,24 +122,24 @@ backup whose answer was lost is named and left, since a backup made by hand mean
 the same. Exit status: 0 when every step passed, 1 when one failed, 2 for a usage error, a run
 without the lock of scenario.sh or a dev.env that cannot be read, 130 after an interruption.
 
-The API is called through api.py's relay (ADR-0222). The commands on the device run through
-ssh.sh, in a private mount namespace with the root filesystem read-only (ADR-0221), with scratch
-files in /dev/shm: stat, the account files' digests, testparm, Samba's log sizes, smbclient with
-a client configuration of its own in RAM, the scan for passwords, the shares check's entries on
-the pool (which the namespace leaves writable) and getfacl; only pdbedit runs without that
-namespace, since tdbsam opens passdb.tdb read-write, and the smbconf check's edit of smb.conf by
-hand, which writes /etc/samba (ADR-0309), the scrub check's folder below the pools'
+The API is called through api.py's relay (ADR-0222). The commands on the device run through ssh.sh,
+in a private mount namespace with the root filesystem read-only (ADR-0221), with scratch files in
+/dev/shm: stat, the account files' digests, testparm, Samba's log sizes, smbclient and the smb
+check's smbpasswd -r with a client configuration of their own in RAM, the scan for passwords, the
+shares check's entries on the pool (which the namespace leaves writable) and getfacl; only pdbedit
+runs without that namespace, since tdbsam opens passdb.tdb read-write, and the smbconf check's edit
+of smb.conf by hand, which writes /etc/samba (ADR-0309), the scrub check's folder below the pools'
 base, on the root filesystem (ADR-0314), and the restore check's removal of the copies of the
 database that its restores keep in the supervisor's data volume (ADR-0341). The restore check lists
 a backup's members with python in the supervisor's running container (docker exec, as deploy.sh's
 checks after up do, ADR-0183), which reads the backup in memory and writes nothing. The passwords of
 the temporary users and the backups' passphrases are made here, go to the device only on standard
-input (to the relay, into an auth file of mode 600 in RAM that smbclient reads, and to that python),
-and are never printed. The shares check's user signs in through the relay with a token cache of its
-own in RAM (USER_TOKEN, mode 600 like the administrator's, ADR-0222), which its clean-up deletes.
-The checks start no container (ADR-0183); the smbconf check restarts the supervisor's (ADR-0309),
-and so does the restore check's clean-up when a restore left a host account or Samba account that
-no row has, which the startup reconcile removes (ADR-0341).
+input (to the relay, into an auth file of mode 600 in RAM that smbclient reads, to smbpasswd -r and
+to that python), and are never printed. The shares check's user signs in through the relay with a
+token cache of its own in RAM (USER_TOKEN, mode 600 like the administrator's, ADR-0222), which its
+clean-up deletes. The checks start no container (ADR-0183); the smbconf check restarts the
+supervisor's (ADR-0309), and so does the restore check's clean-up when a restore left a host account
+or Samba account that no row has, which the startup reconcile removes (ADR-0341).
 
 Settings: dev.env (env.sh); UNOS_DEV_SHM, the RAM folder of the SMB helper on the device
 (/dev/shm; the tests run it here). Standard library only; Python 3.9 or later.
@@ -222,6 +223,17 @@ GUEST_GLOBALS = {"map to guest": ("Never", "Bad User"), "restrict anonymous": ("
 SMB_TOO_SHORT = "SMB passwords must have at least 8 characters"
 SMB_CONTROL = "SMB passwords must not contain control characters such as tabs or line breaks"
 UNOS_PASSWORD_BYTES = 72
+# What smbpasswd -r prints for the NT status of a password change that the server refused: Samba's
+# text for it (get_friendly_nt_error_msg, libcli/util/nterr.c), for the statuses a refused change
+# carries. The check password script of UNOS's [global] refuses with the first (ADR-0342).
+FRIENDLY_NT_STATUS = {
+    "Password restriction": "NT_STATUS_PASSWORD_RESTRICTION",
+    "Account restriction": "NT_STATUS_ACCOUNT_RESTRICTION",
+    "Wrong Password": "NT_STATUS_WRONG_PASSWORD",
+    "Account locked out": "NT_STATUS_ACCOUNT_LOCKED_OUT",
+    "Access denied": "NT_STATUS_ACCESS_DENIED",
+    "Logon failure": "NT_STATUS_LOGON_FAILURE",
+}
 # The token cache in the device's RAM of the shares check's user (api.py's relay, ADR-0222).
 USER_TOKEN = "/dev/shm/unos-scenario-{}.token"
 # What REMOTE_ENTRIES repair makes in the shares check's share folder, and how Repair permissions
@@ -267,7 +279,7 @@ if [ -f "$1" ]; then echo "file $(base64 < "$1" | tr -d "\n")"; else echo missin
 REMOTE_FACTS = r'''
 set -uo pipefail
 echo "now $(date +%s)"
-for t in getent getfacl pdbedit setfacl smbclient stdbuf testparm; do
+for t in getent getfacl pdbedit setfacl smbclient smbpasswd stdbuf testparm; do
     if command -v "$t" > /dev/null 2>&1; then echo "tool $t"; fi
 done
 for f in /etc/passwd /etc/group /etc/shadow /etc/gshadow /etc/samba/smb.conf; do
@@ -379,6 +391,18 @@ case $mode in anonymous | guest) signing=default ;; esac
     done
     echo "   log level = 0"
 } > smb.conf
+if [ "$mode" = change ]; then
+    # A change of the user's password over SAMR, as Windows' Change a password asks for one
+    # (ADR-0342): the old password, then the new one twice, on smbpasswd's standard input, from
+    # printf, a builtin, so that no command line holds them; the exit status is smbpasswd's.
+    IFS= read -r new || new=
+    rc=0
+    out=$(set +o pipefail; printf "%s\n%s\n%s\n" "$password" "$new" "$new" |
+        smbpasswd -c "$dir/smb.conf" -r 127.0.0.1 -s -U "$user" 2>&1) || rc=$?
+    password= new=
+    echo "end $rc $(printf "%s" "$out" | base64 | tr -d "\n")"
+    exit 0
+fi
 if [ "$mode" = anonymous ] || [ "$mode" = guest ]; then
     auth=(-N -U%)
 else
@@ -765,6 +789,21 @@ class SmbListing:
         return found[-1] if found else f"status {self.rc}"
 
 
+class SmbPasswordChange(SmbListing):
+    """smbpasswd -r: its exit status and output. It names a refusal of the server by Samba's text
+    for the NT status ("Error was : Password restriction."), an error of its own by the status."""
+
+    @property
+    def status(self) -> str:
+        found = re.findall(r"NT_STATUS_[A-Z_]+", self.output)
+        if found:
+            return found[-1]
+        for text, status in FRIENDLY_NT_STATUS.items():
+            if re.search(rf"\b{re.escape(text)}\b", self.output):
+                return status
+        return f"status {self.rc}"
+
+
 # --- the device ------------------------------------------------------------------------------
 
 
@@ -882,17 +921,24 @@ class Device:
                 found[names[key]] = int(count) if count.strip().isdigit() else -1
         return found
 
-    def _listing(self, mode: str, user: str, line: str) -> SmbListing:
-        out = self.run(REMOTE_SMB, mode, user, "", data=line + "\n").strip().split(" ")
+    def _smb_helper(self, mode: str, user: str, *lines: str) -> tuple[int, str]:
+        """REMOTE_SMB's list, anonymous or change mode: its exit status and output. LINES go on
+        standard input after the script."""
+        out = self.run(REMOTE_SMB, mode, user, "", data="".join(line + "\n" for line in lines)).strip().split(" ")
         if len(out) < 2 or out[0] != "end":
             raise Failed("the SMB helper on the device gave no answer")
-        return SmbListing(int(out[1]) if out[1].isdigit() else -1, unb64(out[2] if len(out) > 2 else ""))
+        return (int(out[1]) if out[1].isdigit() else -1), unb64(out[2] if len(out) > 2 else "")
 
     def smb_list(self, user: str, password: str) -> SmbListing:
-        return self._listing("list", user, password)
+        return SmbListing(*self._smb_helper("list", user, password))
 
     def smb_anonymous(self) -> SmbListing:
-        return self._listing("anonymous", "", "")
+        return SmbListing(*self._smb_helper("anonymous", "", ""))
+
+    def smb_change_password(self, user: str, old: str, new: str) -> SmbPasswordChange:
+        """A change of USER's password from OLD to NEW over SAMR (smbpasswd -r 127.0.0.1), as
+        Windows' Change a password asks for one (ADR-0342)."""
+        return SmbPasswordChange(*self._smb_helper("change", user, old, new))
 
     def smb_session(self, user: str, password: str, share: str) -> SmbSession:
         return SmbSession(self, user, password, share)
@@ -1717,11 +1763,11 @@ def smb_check(c: Check) -> None:
 
     with c.step(f"Samba runs UNOS's smb.conf without problems with a password history of 3 and a lock of "
                 f"{LOCKOUT_MINUTES} minutes after {LOCKOUT_ATTEMPTS} failed sign-ins, and the device has smbclient, "
-                "stdbuf, testparm and pdbedit"):
+                "smbpasswd, stdbuf, testparm and pdbedit"):
         status = c.get("/shares/smb-status")
         c.expect(not status.get("problems"), "the Shares page reports: " + "; ".join(status.get("problems") or []))
         facts = c.device.facts()
-        missing = sorted({"smbclient", "stdbuf", "testparm", "pdbedit", "getent"} - set(facts["tools"]))
+        missing = sorted({"smbclient", "smbpasswd", "stdbuf", "testparm", "pdbedit", "getent"} - set(facts["tools"]))
         c.expect(not missing, f"the device lacks {', '.join(missing)} (installing one is an owner action)")
         c.expect(facts["testparm"], "testparm refuses smb.conf")
         # As UNOS's reconcile sets them (ADR-0278, ADR-0334): each failed sign-in but a retry of one of the
@@ -1857,6 +1903,20 @@ def smb_check(c: Check) -> None:
     with c.step("the new password signs in"):
         listing = c.device.smb_list(user, newer)
         c.expect(listing.ok and share in listing.disks, f"smbclient -L: {listing.status}, {listing.disks}")
+
+    # Before the steps with wrong passwords: no failure is counted, so a refused change writes nothing.
+    with c.step("the user's own change of that password through SAMR (smbpasswd -r, which stands in for Windows' "
+                "Change a password) is refused with NT_STATUS_PASSWORD_RESTRICTION, leaves passdb.tdb as it was, "
+                "and the password still signs in (ADR-0342)") as s:
+        before = passdb_time(c)
+        change = c.device.smb_change_password(user, newer, c.secret())
+        c.expect(not change.ok and change.status == "NT_STATUS_PASSWORD_RESTRICTION",
+                 f"smbpasswd -r answered {change.status}: {tail(change.output, 200)}")
+        after = passdb_time(c)
+        c.expect(after == before, f"passdb.tdb changed at {after}")
+        listing = c.device.smb_list(user, newer)
+        c.expect(listing.ok, f"the password answered {listing.status} after the refused change")
+        s.text += f": {tail(change.output, 120)}"
 
     with c.step("a wrong password is refused with NT_STATUS_LOGON_FAILURE, never as a guest, and changes passdb.tdb, "
                 "where Samba counts it (ADR-0334)") as s:
