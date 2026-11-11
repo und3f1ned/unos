@@ -26,16 +26,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import importlib
 import io
 import json
 import logging
 import os
 import re
+import socket
 import sqlite3
 import stat
 import subprocess
 import tarfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +70,7 @@ STOPPED = "The supervisor stopped during the copy"
 # The real checks, before the env fixture replaces them.
 REAL_ON_SYSTEM_DISK = offsite.on_system_disk
 REAL_ON_SYSTEM_FILESYSTEM = getattr(offsite, "on_system_filesystem", None)
+REAL_PROBE_STORE = getattr(offsite, "probe_store", None)
 
 
 # --- the environment ---------------------------------------------------------------------------
@@ -107,6 +111,8 @@ def env(tmp_path, monkeypatch):
         monkeypatch.setattr(offsite, name, str(value))
     monkeypatch.setattr(offsite, "on_system_disk", lambda fd: False)
     monkeypatch.setattr(offsite, "on_system_filesystem", lambda fd: False, raising=False)
+    # The S3 stores of the tests exist only in the fake restic: they answer.
+    monkeypatch.setattr(offsite, "probe_store", lambda endpoint: None, raising=False)
     monkeypatch.setattr(offsite, "_activity", None)
     monkeypatch.setattr(offsite, "_tasks", set())
     monkeypatch.setattr("src.security.validators.settings", SimpleNamespace(pools_base_path=str(pools)))
@@ -1343,3 +1349,120 @@ async def test_every_backup_names_the_host_unos(env):
     for argv in [c["argv"] for c in calls(env) if command_of(c["argv"]) in ("backup", "backup-stdin")]:
         assert option(argv, "--host") == ["unos"], argv
     assert {s["hostname"] for s in (await offsite.list_snapshots())["snapshots"]} == {"unos"}
+
+
+# --- the device check of 8fef386 ------------------------------------------------------------------
+#
+# Save and test with an S3 store that does not answer held the request and the lock of the module for
+# restic's 10 minutes: restic 0.18 retries a refused connection for that long. Each test failed on
+# 8fef386.
+
+
+def closed_port() -> int:
+    """A port of 127.0.0.1 where nothing listens."""
+    with socket.socket() as found:
+        found.bind(("127.0.0.1", 0))
+        return found.getsockname()[1]
+
+
+@contextlib.contextmanager
+def listener(*, answer: bool):
+    """A port of 127.0.0.1 that takes connections and closes them at once (ANSWER), as a port that
+    speaks no TLS ends a handshake, or keeps them open without a word."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    server.settimeout(0.05)
+    stop = threading.Event()
+    kept: list[socket.socket] = []
+
+    def serve() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                continue
+            if answer:
+                conn.close()
+            else:
+                kept.append(conn)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield server.getsockname()[1]
+    finally:
+        stop.set()
+        thread.join()
+        for conn in kept:
+            conn.close()
+        server.close()
+
+
+@pytest.mark.parametrize("scheme", ["https", "http"])
+async def test_saving_an_s3_store_that_refuses_connections_answers_400_at_once(env, monkeypatch, scheme):
+    monkeypatch.setattr(offsite, "probe_store", REAL_PROBE_STORE, raising=False)
+    endpoint = f"{scheme}://127.0.0.1:{closed_port()}"
+    started = time.monotonic()
+    with pytest.raises(HTTPException) as refused:
+        await save(env, **s3_settings(env, endpoint=endpoint))
+    assert time.monotonic() - started < 5
+    assert (refused.value.status_code, refused.value.detail) == (
+        400, f"The S3 store does not answer at {endpoint}: Connection refused")
+    assert calls(env) == [] and not (env.data / "offsite.json").exists()
+    assert offsite._activity is None
+
+
+async def test_an_https_store_whose_port_speaks_no_tls_answers_400(env, monkeypatch):
+    monkeypatch.setattr(offsite, "probe_store", REAL_PROBE_STORE, raising=False)
+    with listener(answer=True) as port:
+        endpoint = f"https://127.0.0.1:{port}"
+        with pytest.raises(HTTPException) as refused:
+            await save(env, **s3_settings(env, endpoint=endpoint))
+    assert refused.value.status_code == 400
+    assert refused.value.detail.startswith(f"The S3 store does not answer at {endpoint}: "), refused.value.detail
+    assert calls(env) == []
+
+
+async def test_a_store_that_takes_the_connection_and_says_nothing_answers_400_at_the_probes_end(env, monkeypatch):
+    monkeypatch.setattr(offsite, "probe_store", REAL_PROBE_STORE, raising=False)
+    monkeypatch.setattr(offsite, "PROBE_TIMEOUT", 0.5, raising=False)
+    with listener(answer=False) as port:
+        endpoint = f"https://127.0.0.1:{port}"
+        started = time.monotonic()
+        with pytest.raises(HTTPException) as refused:
+            await save(env, **s3_settings(env, endpoint=endpoint))
+        took = time.monotonic() - started
+    assert took < 5
+    assert (refused.value.status_code, refused.value.detail) == (
+        400, f"The S3 store does not answer at {endpoint}: no answer within 0.5 s")
+    assert calls(env) == []
+
+
+async def test_a_run_to_an_s3_store_that_refuses_connections_fails_before_restic(env, monkeypatch):
+    await save(env, **s3_settings(env))
+    (env.state / "calls.jsonl").unlink()
+    stored = json.loads((env.data / "offsite.json").read_text())
+    stored["endpoint"] = endpoint = f"https://127.0.0.1:{closed_port()}"
+    (env.data / "offsite.json").write_text(json.dumps(stored))
+    monkeypatch.setattr(offsite, "probe_store", REAL_PROBE_STORE, raising=False)
+
+    ok, message = await offsite.run_copy("task")
+
+    assert (ok, message) == (False, f"The S3 store does not answer at {endpoint}: Connection refused")
+    assert calls(env) == []
+    status = json.loads((env.data / "offsite_status.json").read_text())["last_copy"]
+    assert (status["step"], status["error"]) == ("settings", message)
+
+
+@pytest.mark.parametrize("command", ["cat", "init"])
+async def test_saving_waits_for_restic_120_seconds_at_most(env, monkeypatch, command):
+    """Here 1 second: the request and the lock of the module wait no longer for cat config or init."""
+    monkeypatch.setattr(offsite, "SAVE_TIMEOUT", 1, raising=False)
+    fault(env, command, sleep=10)
+    started = time.monotonic()
+    with pytest.raises(HTTPException) as refused:
+        await save(env, **s3_settings(env))
+    assert time.monotonic() - started < 8
+    assert (refused.value.status_code, refused.value.detail) == (400, "The store did not answer within 1 s")
+    assert not (env.data / "offsite.json").exists() and offsite._activity is None

@@ -39,7 +39,10 @@ import json
 import logging
 import os
 import re
+import socket
+import ssl
 import tempfile
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -112,10 +115,15 @@ WRONG_PASSWORD = 12
 PARTIAL = 3
 
 _MINUTE, _HOUR, _DAY = 60, 3600, 86400
-# Seconds each restic command may take; then it is killed with its process group (restic.py).
+# Seconds that Save and a run wait for an S3 store to take a connection, with the TLS handshake for
+# https, before restic runs (probe_store): restic retries a store that does not answer for minutes.
+PROBE_TIMEOUT = 10
+# Seconds that the restic commands of Save (cat config, init) may take: its request waits for them,
+# holding the lock of the module.
+SAVE_TIMEOUT = 120
+# Seconds each restic command of a run or a restore may take; then it is killed with its process
+# group (restic.py).
 TIMEOUTS = {
-    "init": 10 * _MINUTE,
-    "cat": 10 * _MINUTE,
     "unlock": 10 * _MINUTE,
     "snapshots": 10 * _MINUTE,
     "dump": _HOUR,
@@ -580,6 +588,42 @@ def system_disks() -> set[str]:
     return found
 
 
+def probe_store(endpoint: str) -> Optional[str]:
+    """Why the S3 store at ENDPOINT cannot be reached, or None: a TCP connection to its host and port
+    and, for https, a TLS handshake that verifies its certificate with the system's roots, as restic
+    does, within PROBE_TIMEOUT. Nothing is sent but the handshake: no request, no key. Blocking."""
+    parts = urlsplit(endpoint)
+    host = parts.hostname or ""
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    deadline = time.monotonic() + PROBE_TIMEOUT
+    try:
+        with socket.create_connection((host, port), timeout=PROBE_TIMEOUT) as connection:
+            if parts.scheme == "https":
+                connection.settimeout(max(deadline - time.monotonic(), 0.01))
+                with ssl.create_default_context().wrap_socket(connection, server_hostname=host):
+                    pass
+    except ssl.SSLCertVerificationError as e:
+        return f"The S3 store at {endpoint} has a certificate that restic refuses: {e.verify_message or e}"
+    except TimeoutError:
+        return f"The S3 store does not answer at {endpoint}: no answer within {PROBE_TIMEOUT:g} s"
+    except ssl.SSLError as e:
+        return f"The S3 store does not answer at {endpoint}: its TLS handshake failed: {e.reason or e}"
+    except OSError as e:
+        return f"The S3 store does not answer at {endpoint}: {e.strerror or e}"
+    return None
+
+
+async def _unreachable(settings: OffsiteSettings) -> Optional[str]:
+    """For an S3 store, why it cannot be reached (probe_store); None when it answers, and for a disk."""
+    if settings.kind != Kind.S3:
+        return None
+    try:
+        # The name's lookup is not bounded by the socket's timeout.
+        return await asyncio.wait_for(asyncio.to_thread(probe_store, settings.endpoint or ""), PROBE_TIMEOUT + 5)
+    except asyncio.TimeoutError:
+        return f"The S3 store does not answer at {settings.endpoint}: no answer within {PROBE_TIMEOUT:g} s"
+
+
 def _close(fds: list[int]) -> None:
     """Close FDS, the folders held open while restic ran."""
     while fds:
@@ -932,12 +976,15 @@ async def settings_answer() -> dict:
 
 
 async def _open_or_create(repo: _Repository, created: Optional[str]) -> None:
-    """Open the repository with its password, or make it when none is there; 400 with restic's message."""
+    """Open the repository with its password, or make it when none is there; 400 with restic's message,
+    or when restic does not end within SAVE_TIMEOUT."""
     try:
-        await _restic(repo, ["cat", "config"], step="settings")
+        await _restic(repo, ["cat", "config"], step="settings", timeout=SAVE_TIMEOUT)
         return
     except _Failed as e:
         failure = e
+    if failure.timed_out:
+        raise _bad(f"The store did not answer within {SAVE_TIMEOUT:g} s")
     where = location(repo.settings)
     if failure.code == WRONG_PASSWORD:
         raise _bad(f"The password does not open the copy repository at {where}: {failure.message}")
@@ -947,8 +994,10 @@ async def _open_or_create(repo: _Repository, created: Optional[str]) -> None:
         raise _bad(f"{repo.settings.path} holds files but no copy repository: choose an empty folder, or the folder "
                    "of an existing copy")
     try:
-        await _restic(repo, ["init"], step="settings")
+        await _restic(repo, ["init"], step="settings", timeout=SAVE_TIMEOUT)
     except _Failed as e:
+        if e.timed_out:
+            raise _bad(f"The store did not answer within {SAVE_TIMEOUT:g} s") from None
         raise _bad(f"The copy repository could not be made at {where}: {e.message}") from None
 
 
@@ -965,6 +1014,9 @@ async def save_settings(request: SettingsRequest) -> dict:
         stored, kept = _stored()
         settings = _normalized(request)
         secrets = _secrets_for(request, settings, stored, kept)
+        problem = await _unreachable(settings)
+        if problem:
+            raise _bad(problem)
         activity.pools = _pools_used(settings, sources=False)
         created, held = await asyncio.to_thread(_prepare_folders, settings)
         repo = _Repository(settings, secrets.password, secrets.s3_secret_access_key)
@@ -1010,12 +1062,14 @@ class _Failed(Exception):
     """A step failed: STEP, what went wrong, and restic's exit status when it ran. PREFIX replaces the
     step's text of STEP_TEXTS in the message of the run."""
 
-    def __init__(self, step: str, message: str, code: Optional[int] = None, *, prefix: Optional[str] = None) -> None:
+    def __init__(self, step: str, message: str, code: Optional[int] = None, *, prefix: Optional[str] = None,
+                 timed_out: bool = False) -> None:
         super().__init__(message)
         self.step = step
         self.message = message
         self.code = code
         self.prefix = prefix
+        self.timed_out = timed_out  # restic did not end within its timeout and was killed
 
 
 @dataclass
@@ -1077,18 +1131,20 @@ def _message(text: str) -> str:
 
 async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: Optional[bytes] = None,
                   stdout_path: Optional[Path] = None, partial: bool = False,
-                  on_error_line: Optional[Callable[[bytes], None]] = None) -> restic.Result:
-    """Run the restic command ARGS on REPO; _Failed(STEP) when it cannot run, times out or fails. With
-    PARTIAL, exit status 3 (a backup that saved its snapshot without some files) is no failure: the
-    caller judges it by the errors that ON_ERROR_LINE gets."""
+                  on_error_line: Optional[Callable[[bytes], None]] = None,
+                  timeout: Optional[float] = None) -> restic.Result:
+    """Run the restic command ARGS on REPO within TIMEOUT, by default its TIMEOUTS; _Failed(STEP) when
+    it cannot run, times out or fails. With PARTIAL, exit status 3 (a backup that saved its snapshot
+    without some files) is no failure: the caller judges it by the errors that ON_ERROR_LINE gets."""
     name = args[0]
-    timeout = TIMEOUTS[name]
+    timeout = timeout or TIMEOUTS[name]
     waits = ["--retry-lock", RETRY_LOCK] if name in WAIT_FOR_LOCKS else []
     try:
         result = await restic.run([*repo.options(), *waits, *args], repo.env(), timeout=timeout, stdin=stdin,
                                   stdout_path=stdout_path, on_error_line=on_error_line)
     except restic.Timeout:
-        raise _Failed(step, f"restic {name} did not end within {_duration(timeout)}: it was stopped") from None
+        raise _Failed(step, f"restic {name} did not end within {_duration(timeout)}: it was stopped",
+                      timed_out=True) from None
     except (OSError, ValueError) as e:  # ValueError: a NUL in its environment, from a file edited by hand
         raise _Failed(step, f"restic could not run: {repo.redact(str(e))}") from None
     if result.code != 0 and not (partial and result.code == PARTIAL):
@@ -1276,6 +1332,9 @@ async def _copy(activity: Activity, result: CopyResult, unread: _Unread) -> str:
     activity.step = "folders"
     repo, held = await asyncio.to_thread(_ready, stored, secrets, sources=True)
     try:
+        problem = await _unreachable(repo.settings)
+        if problem:
+            raise _Failed("settings", problem)
         return await _steps(activity, result, repo, unread)
     finally:
         _close(held)

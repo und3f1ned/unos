@@ -229,6 +229,8 @@ def configure(state: Path) -> Path:
     offsite.MOUNTS_BASE = str(state)
     offsite.on_system_disk = lambda fd: False
     offsite.on_system_filesystem = lambda fd: False
+    # Its fake restic keeps an S3 store in its state directory: no store to connect to first.
+    offsite.probe_store = lambda endpoint: None
 
     # 5 attempts per minute and client: the specs sign in through the form once per test.
     importlib.import_module("src.auth.router").limiter.enabled = False

@@ -1711,7 +1711,9 @@ To set it up:
    cannot be changed here.
 3. **Save and test**: the NAS opens the repository with the password, or makes
    a new one when the folder or bucket has none. A wrong password, or a store
-   that cannot be reached, is refused with restic's message.
+   that cannot be reached, is refused with restic's message. The NAS first
+   connects to an S3 store: one that does not answer within 10 seconds is
+   refused at once, and restic gets 2 minutes at most.
 4. **Add a daily copy at 03:00** adds a task of the type **Off-device Copy**
    to **System** → **Scheduler**. Until there is one, copies run only on
    **Run now**.

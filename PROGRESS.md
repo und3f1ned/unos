@@ -306,8 +306,16 @@ Open owner actions:
   Two tests changed their setup with the code, not their assertions: the refusal of a target on
   the root filesystem sets both real checks, and the refusal of a source that is not mounted
   replaces `on_system_filesystem`, which judges the sources now.
-- Open: the deploy of the review's fixes, `scripts/dev/scenario.sh offsite` again before and after
-  a reboot (ADR-0018), a copy to a USB disk and to an S3 store, and `passes`.
+- The device check of 8fef386 (deployed; `scenario.sh offsite` passes; Save refuses a folder on
+  the system disk and a wrong password): Save and test with an S3 store out of reach
+  (`https://127.0.0.1:9`) held the request and the lock of the module for restic's whole 10
+  minutes, from 11:23:28 to 11:33:33 UTC, while the HTTP client gave up after 150 s and every other
+  action of the copy answered 409: restic 0.18 retries a refused connection for that long. Save and
+  a run now connect to an S3 store first (TCP and the TLS handshake, 10 s, nothing sent) and refuse
+  one that does not answer at once, and Save's `cat config` and `init` end after 120 s with 400
+  "The store did not answer within 120 s"; tests first (7, each failed on 8fef386).
+- Open: the deploy of that fix, `scripts/dev/scenario.sh offsite` again before and after a reboot
+  (ADR-0018), a copy to a USB disk and to an S3 store, and `passes`.
 
 ### 2026-11-11: HTTP notifications that cannot connect from the container go from the host's network
 
