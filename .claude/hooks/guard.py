@@ -4,11 +4,12 @@
 .claude/settings.json runs this script before every command of the Bash tool and of the desktop
 app's terminal tool (mcp__terminal__run_in_terminal, whose command runs in the owner's login
 shell) and passes the hook input as JSON on standard input (tool_name, tool_input.command, cwd;
-the terminal tool's tool_input.cwd too). The script splits the command into simple commands (at
-; && || | & newlines, subshells and command substitutions, with heredoc bodies kept apart),
-parses each with shlex, follows wrappers (sudo, env, timeout, xargs, bash -c, eval, ...) and
-treats the remote command of ssh, scripts/dev/ssh.sh and dev.sh as commands on the dev device.
-It blocks, with exit code 2 and one line on stderr that names the rule and what to do instead:
+the terminal tool's tool_input.cwd and the Bash tool's tool_input.run_in_background too). The
+script splits the command into simple commands (at ; && || | & newlines, subshells and command
+substitutions, with heredoc bodies kept apart), parses each with shlex, follows wrappers (sudo,
+env, timeout, xargs, bash -c, eval, ...) and treats the remote command of ssh,
+scripts/dev/ssh.sh and dev.sh as commands on the dev device. It blocks, with exit code 2 and one
+line on stderr that names the rule and what to do instead:
 
   push-main        git push to main or master (also --all, and a push without a refspec that git's
                    configuration sends there: @{push}, the upstream, push.default matching),
@@ -34,6 +35,13 @@ It blocks, with exit code 2 and one line on stderr that names the rule and what 
                    device backups of tmp/dev/backup; recursive searches, copies and tar or zip
                    archives of a tree that holds either, also of a linked worktree's main
                    checkout, whose dev.env and backups the worktree's scripts use
+  background-deadline  a command that the Bash tool runs in the background (run_in_background)
+                   and that is not one call of timeout with a deadline of at most 7200 s, -k
+                   included: [cd DIR &&]... [NAME=VALUE ...] timeout [-k DUR] [-s TERM, INT,
+                   HUP, QUIT or KILL] [-p] [-v] DURATION COMMAND [ARGS] [REDIRECTIONS], with no
+                   ; && || | & or newline after it and no $(...), backticks or <(...) outside
+                   single quotes; loops and pipelines go inside timeout <seconds> bash -c '...'.
+                   Claude Code wakes the session only when a background command ends
 
 Everything else is allowed (exit 0). An internal error never blocks: the script prints a
 warning and exits 1, which Claude Code reports without stopping the command. Every denial adds
@@ -55,6 +63,10 @@ Known limits: the guard reads the command line, not what it runs at run time.
   command's git -c push settings; settings in the environment (GIT_CONFIG_*) are not followed.
   A path to a secret is recognized by its name (dev.env, tmp/dev/backup); a copy elsewhere, or
   a path built in a program's code, is not.
+- timeout ends a background command at its deadline with SIGTERM, or the signal of -s: a
+  command that catches or ignores it runs on unless -k also sends SIGKILL, and a process that
+  leaves timeout's process group (setsid, a daemon) outlives it. The outer shell opens the
+  redirections before timeout starts: one of a FIFO waits for its other end without a deadline.
 """
 
 from __future__ import annotations
@@ -104,18 +116,23 @@ def _operator_at(s: str, i: int) -> str:
     return s[i]
 
 
-def _skip_arithmetic(s: str, i: int) -> int:
-    """The index after the '))' that closes $(( or (( whose content starts at i."""
-    depth = 0
+def _skip_arithmetic(s: str, i: int, nested: list) -> int:
+    """The index after the '))' that closes $(( or (( whose content starts at i. The command
+    substitutions in it run (echo $(( $(cmd) + 1 ))): they are appended to `nested`."""
+    start, depth = i, 0
     while i < len(s):
         if s[i] == "(":
             depth += 1
         elif s[i] == ")":
             if depth == 0:
-                return i + 2 if s.startswith("))", i) else i + 1
+                end = i + 2 if s.startswith("))", i) else i + 1
+                break
             depth -= 1
         i += 1
-    return len(s)
+    else:
+        end = len(s)
+    _substitutions(s[start:i], nested)
+    return end
 
 
 def _extract(s: str, start: int, stop: str) -> tuple:
@@ -135,7 +152,7 @@ def _double_quoted(s: str, i: int, nested: list) -> tuple:
             part.append(s[i:i + 2])
             i += 2
         elif s.startswith("$((", i):
-            i = _skip_arithmetic(s, i + 3)
+            i = _skip_arithmetic(s, i + 3, nested)
             part.append("0")
         elif s.startswith("$(", i):
             inner, i = _extract(s, i + 2, ")")
@@ -169,7 +186,9 @@ def _heredoc_word(s: str, j: int) -> tuple:
     """The delimiter of a heredoc at j: (word without quotes, quoted, end)."""
     word, quoted = [], False
     while j < len(s) and s[j] not in " \t\n;&|()<>":
-        if s[j] in "'\"":
+        if s.startswith(("$'", '$"'), j):  # <<$'EOF' is quoted as <<'EOF' is
+            j += 1
+        elif s[j] in "'\"":
             end = s.find(s[j], j + 1)
             end = len(s) if end < 0 else end
             word.append(s[j + 1:end])
@@ -203,7 +222,7 @@ def _substitutions(text: str, nested: list) -> None:
         if text[i] == "\\":
             i += 2
         elif text.startswith("$((", i):
-            i = _skip_arithmetic(text, i + 3)
+            i = _skip_arithmetic(text, i + 3, nested)
         elif text.startswith("$(", i):
             inner, i = _extract(text, i + 2, ")")
             nested.append(inner)
@@ -259,7 +278,7 @@ def _lex(s: str, i: int, stop, nested: list) -> tuple:
             text, i = _double_quoted(s, i + 1, nested)
             word.append(text)
         elif s.startswith("$((", i):
-            i = _skip_arithmetic(s, i + 3)
+            i = _skip_arithmetic(s, i + 3, nested)
             word.append("0")
         elif s.startswith("$(", i):
             inner, i = _extract(s, i + 2, ")")
@@ -273,7 +292,7 @@ def _lex(s: str, i: int, stop, nested: list) -> tuple:
             inner, i = _extract(s, i + 2, ")")
             nested.append(inner)
             word.append("/dev/fd/63")
-        elif c in " \t\r":
+        elif c in " \t":  # a carriage return is part of a word to bash and zsh
             flush()
             i += 1
         elif c == "\n":
@@ -290,7 +309,7 @@ def _lex(s: str, i: int, stop, nested: list) -> tuple:
             end = s.find("\n", i)
             i = n if end < 0 else end
         elif s.startswith("((", i) and not word and (not tokens or tokens[-1][0] == "op"):
-            i = _skip_arithmetic(s, i + 2)
+            i = _skip_arithmetic(s, i + 2, nested)
             tokens.append(("op", ";"))
         elif c in ";&|()<>":
             if c in "<>" and word and "".join(word).isdigit():
@@ -2039,6 +2058,121 @@ class Guard:
         return held
 
 
+# --- background commands (rule background-deadline, ADR-0335) -------------------------------
+
+MAX_DEADLINE = 2 * 3600  # seconds
+_TIMEOUTS = {"timeout", "gtimeout", "/opt/homebrew/bin/timeout", "/opt/homebrew/bin/gtimeout"}
+# The signals that end a process unless it catches them; others (CHLD, CONT, STOP, 0, ...) leave
+# the command running past its deadline.
+_ENDING_SIGNALS = {"HUP", "INT", "QUIT", "KILL", "TERM", "1", "2", "3", "9", "15"}
+_DURATION = re.compile(r"(\d+(?:\.\d*)?|\.\d+)([smhd]?)", re.ASCII)
+_DURATION_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _seconds(duration: str):
+    """The seconds of a duration of GNU timeout (a number with an optional unit), or None."""
+    match = _DURATION.fullmatch(duration)
+    return float(match.group(1)) * _DURATION_SECONDS[match.group(2)] if match else None
+
+
+def _shown(word: str, otherwise: str) -> str:
+    """`word` as a message shows it when it is a plain name or number, else `otherwise`: a word
+    of the command may hold a secret or a line break."""
+    return f"`{word}`" if re.fullmatch(r"[A-Za-z0-9_./+,=%-]{1,40}", word) else otherwise
+
+
+def check_background(command: str) -> None:
+    """Rule background-deadline: a command that the Bash tool runs in the background is one call
+    of timeout that ends it within MAX_DEADLINE seconds (ADR-0335).
+
+        [cd DIR &&]... [NAME=VALUE ...] timeout [OPTIONS] DURATION COMMAND [ARGS] [REDIRECTIONS]
+
+    Claude Code wakes the session when such a command ends, so one that never ends stalls the
+    session unseen. Nothing else stands at the top level: no ; && || | & ( ) or newline but the
+    && after a cd DIR, and no $(...), backticks or <(...) outside single quotes, which the outer
+    shell runs before timeout starts. A heredoc's body is the command's input; a ; or newlines at
+    the end, and blank lines or comments at the start, are no commands. DURATION is more than 0,
+    and with the -k of SIGKILL at most MAX_DEADLINE; -s names a signal that ends a process, and
+    --foreground, which would leave the command's children running, is refused."""
+
+    def block(problem: str) -> None:
+        raise Blocked("background-deadline", f"{problem}: a background command that never ends never wakes "
+                      "the session (ADR-0335). Write it as `timeout <seconds> bash -c '<command>'`, with a "
+                      f"deadline of at most {MAX_DEADLINE} s, and put loops, pipelines, ; && || and $(...) "
+                      "inside the single quotes, where bash runs them")
+
+    nested: list = []
+    tokens, bodies, _, _ = _lex(command, 0, None, nested)
+    while tokens and tokens[-1] in (("op", "\n"), ("op", ";")):
+        tokens.pop()
+    while True:
+        while tokens and tokens[0] == ("op", "\n"):  # blank lines, comments, a line after &&
+            tokens.pop(0)
+        if not (len(tokens) > 3 and tokens[0][0] == tokens[1][0] == "word" and tokens[2] == ("op", "&&")
+                and _unquote(tokens[0][1]) == "cd"):
+            break
+        tokens = tokens[3:]
+    end = next((i for i, (kind, _) in enumerate(tokens) if kind == "op"), len(tokens))
+    words = [word for simple in _simple_commands(tokens[:end], bodies) for word in simple.words]
+    while words and _ASSIGNMENT.match(words[0]):
+        words.pop(0)
+    if not words:
+        block("the command does not start with timeout")
+    if words[0] == "cd":
+        block("a cd before timeout must be `cd DIR &&`")
+    if words[0] not in _TIMEOUTS:
+        block(f"{_shown(words[0], 'its first word')} is not timeout")
+    if end < len(tokens):
+        operator = tokens[end][1]
+        name = "a newline" if operator == "\n" else f"`{operator}`"
+        block(f"{name} after the call of timeout makes the call only part of the command")
+    if nested:
+        block("`$(...)`, backticks and `<(...)` outside single quotes run in the outer shell, before timeout "
+              "starts")
+    kill_after, i = 0.0, 1
+    while i < len(words) and words[i].startswith("-") and words[i] != "-":
+        option, value = words[i], None
+        if option == "--":
+            i += 1
+            break
+        if option.startswith(("--kill-after=", "--signal=")):
+            option, value = option.split("=", 1)
+        elif option[:2] in ("-k", "-s") and len(option) > 2:
+            option, value = option[:2], option[2:]
+        if option in ("-k", "--kill-after", "-s", "--signal") and value is None:
+            i += 1
+            value = words[i] if i < len(words) else ""
+        if option in ("-k", "--kill-after"):
+            kill_after = _seconds(value)
+            if kill_after is None:
+                block(f"the {option} of timeout takes a duration (seconds, or a number with s, m, h or d)")
+        elif option in ("-s", "--signal"):
+            if (value[3:] if value.upper().startswith("SIG") else value).upper() not in _ENDING_SIGNALS:
+                block(f"the signal {_shown(value, 'of ' + option)} may not end the command; give TERM, INT, HUP, "
+                      "QUIT or KILL")
+        elif option in ("-f", "--foreground"):
+            block(f"`{option}` leaves the children of the command running after the deadline")
+        elif option not in ("-p", "--preserve-status", "-v", "--verbose"):
+            block(f"{_shown(option, 'an option')} is not an option of timeout that this rule knows")
+        i += 1
+    if i >= len(words):
+        block("timeout has no duration")
+    seconds = _seconds(words[i])
+    if seconds is None:
+        shown = _shown(words[i], "")
+        block(f"timeout's duration {shown + ' ' if shown else ''}is not a number with an optional unit s, m, h "
+              "or d")
+    if seconds <= 0:
+        block("a deadline of 0 turns timeout off")
+    total = seconds + kill_after
+    if total > MAX_DEADLINE:
+        number = int(total) if total.is_integer() else total
+        block(f"a deadline of {number} s{', with the SIGKILL of -k,' if kill_after else ''} is longer than "
+              f"{MAX_DEADLINE} s")
+    if i + 1 >= len(words):
+        block("timeout has no command to run")
+
+
 def log_denial(rule: str, tool: str) -> None:
     """Add a line to tmp/guard/denials.log of the project: the UTC time, the rule and the tool.
     Never the command: for secret-argv it holds the secret. Best effort: nothing here blocks."""
@@ -2076,6 +2210,8 @@ def main() -> int:
             cwd = os.path.normpath(os.path.join(cwd, os.path.expanduser(tool_input["cwd"])))
         project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or cwd
         Guard(cwd, project_dir).check(command)
+        if tool == "Bash" and tool_input.get("run_in_background"):
+            check_background(command)
     except Blocked as blocked:
         print(f"Blocked by .claude/hooks/guard.py ({blocked.rule}): {blocked.message}.", file=sys.stderr)
         log_denial(blocked.rule, str(tool))

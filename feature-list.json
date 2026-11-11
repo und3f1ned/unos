@@ -32,6 +32,26 @@
       "notes": "Owner action on GitHub: 20 merged remote branches remain (19 claude/* and phase0-hardening). On 2026-11-07 the 21 branches merged into main were deleted on GitHub by hand; nothing deletes them automatically yet."
     },
     {
+      "id": "process.background-commands-have-deadlines",
+      "category": "process",
+      "description": "Every command that an agent's Bash tool runs in the background is one call of timeout with a deadline of at most 2 hours",
+      "steps": [
+        "A background command that is not one call of timeout, such as a wait loop, sleep 600 or make check > log 2>&1, is refused by the guard's rule background-deadline with one line that says what to write instead",
+        "One call of timeout with a deadline of more than 0 and at most 7200 s runs in the background: timeout 600 make check > log 2>&1, after cd DIR &&, with assignments and redirections, with the options -k and --kill-after, and timeout 900 bash -c with a loop inside the single quotes",
+        "A background call of timeout followed by ; && || | & or a newline, or with $(...), backticks or <(...) outside single quotes, is refused",
+        "A background deadline of 0, of more than 7200 s with the SIGKILL of -k, or that is not a literal duration is refused, and so are a signal of -s that may not end the command and --foreground",
+        "Commands in the foreground and the commands of the desktop app's terminal tool are not checked by the rule, and each of its denials adds a line to tmp/guard/denials.log"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_agent_guard.py"
+      ],
+      "passes": true,
+      "adr": [
+        "ADR-0335"
+      ],
+      "notes": "Built 2026-11-11 (ADR-0335): the rule background-deadline of .claude/hooks/guard.py (check_background), which reads the line with the guard's own lexer. Tests first: on the guard of main 75 tests of supervisor/tests/test_agent_guard.py failed, the 53 refused cases of BACKGROUND_CASES, 17 checks of the messages, the 3 lexer cases of CASES, the docstring check and the denials log check. Step 1: the refused cases of BACKGROUND_CASES, the loop of 2026-11-10 among them, and test_a_background_denial_says_what_is_wrong; step 2: its allowed cases; step 3: its cases of operators and substitutions, also inside $((...)) and in unquoted heredocs; step 4: its cases of durations, -k, -s and --foreground; step 5: its foreground cases, test_the_terminal_tool_has_no_background_commands and test_a_background_denial_is_logged_like_the_others. The review in a fresh context (ADR-0017) found commands of the outer shell that the guard's lexer missed (substitutions inside $((...)), a heredoc delimiter <<$'EOF', a carriage return before #), signals of -s that do not end a command, --foreground, an unbounded -k, words of the command echoed in messages, a trailing ; refused, and gaps in the docs: all fixed, the lexer for every rule of the guard (four new cases in CASES). Kept as they are: a command that ignores SIGTERM runs on without -k (ADR-0335, Considered options), a redirection of a FIFO waits without a deadline, and the rule refuses the rare timeout forms 1e3, +60, --kill=10 and -vk 10, which GNU timeout takes. Not a host-level change: no device check."
+    },
+    {
       "id": "architecture.host-command-layer",
       "category": "architecture",
       "description": "The network, power, time zone, hostname, firewall, log, NFS and SMART actions read and change the host through src/host.py",
