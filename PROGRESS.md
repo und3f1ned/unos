@@ -26,7 +26,12 @@ significant step. Features and their state live in `feature-list.json`, decision
   re-check that runs to its end (ADR-0312), the scrub's status from its start (ADR-0313), the
   scenario check `scrub` (ADR-0314), passwords checked as given (ADR-0315) and three cleanups of
   legacy code, and `storage.scrub` passing again on the scenario check scrub before and after a
-  reboot. The dev device runs main eceead5, deployed on 2026-11-09 at 21:07 UTC.
+  reboot.
+- On 2026-11-11 (Log): Telegram alerts through the host's network (ADR-0336), off-device copies
+  with restic (ADR-0337), the access log of refused and failed requests only (ADR-0338), and the
+  scenario checks `shares` (ADR-0340; ADR-0339 supersedes ADR-0098) and `restore` (ADR-0341), so
+  that `scenario.sh all` runs 10 areas, 147 steps. `main` is d6e98c0; the dev device runs 96db310,
+  whose runtime differs from it only in a docstring (Dev device).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -57,13 +62,19 @@ significant step. Features and their state live in `feature-list.json`, decision
      12:22 UTC that day (Log), and `files.group-writable-entries-in-shares` on the scenario
      checks around that reboot (Log), and `shares.samba-runtime-writes` and
      `storage.scrub-needs-mounted-pool` on the checks around the reboot of 18:41 UTC, and
-     `storage.scrub` again on the scenario check scrub around the reboot of 21:12 UTC (Log); the
-     others need a device check first or, as `storage.pool-health`, a step the re-check could
-     not show.
+     `storage.scrub` again on the scenario check scrub around the reboot of 21:12 UTC (Log), and
+     on 2026-11-11 `system.telegram-from-the-device`, `backup.restore` and
+     `backup.off-device-copies`, and that evening `deploy.container-logs-off-the-system-disk`,
+     `shares.read-only-guest-share`, `shares.self-activation`,
+     `shares.restore-keeps-smb-with-proof` and `backup.no-old-backup-import` on the checks around
+     the reboot of 19:26 UTC (Log); `shares.repair-permissions` waits for setfacl on the device
+     (the package acl, an owner action) and `shares.acl-aware-parent-check` for the owner's word
+     on ADR-0193; the others need a device check first or, as `storage.pool-health`, a step the
+     re-check could not show.
 
 ## Dev device
 
-State on 2026-11-11, 13:10 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-11, 19:36 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -71,7 +82,13 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 27b840b (its tree is the branch backup.off-device-copies at c926016, deployed at
+- Runs main 96db310 (ADR-0338: the access log keeps refused and failed requests only), its
+  supervisor deployed at 15:16 UTC (SD MiB sync 1.129, build-supervisor 12.336, up 3.250, check.sh
+  0.016); `main` d6e98c0 differs from it at runtime only in a docstring of
+  `supervisor/src/shares/smbconf.py`, so it was not deployed again. Rebooted from the API at
+  19:25:58 UTC (the boot of 19:26:54; both containers healthy by 19:28:12): `scenario.sh all`
+  from d6e98c0 (146 steps passed, 1 skipped) OK before and after, and `check.sh` OK after.
+  Before it, main 27b840b (its tree is the branch backup.off-device-copies at c926016, deployed at
   13:08 UTC: SD MiB sync 1.012, build-supervisor 12.898, build-webui 18.852, up 5.742, check.sh
   0.016), with restic 0.18.0 of Debian 13 in an image layer of its own since 09:34 UTC (81.227
   MiB on the SD card that once). Rebooted from the API at 10:18:07 and at 12:51:45 UTC (the boots
@@ -136,8 +153,9 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   07:17 UTC deleted the 11 dangling images (the old builds' layers) and reclaimed only 134.9 kB,
   where this file had said about 351 MB.
 - Containers: unos-supervisor, unos-webui, transmission (web login, data on the pool `data`).
-  Images: deploy-supervisor:latest (`11729d7d...` of 2026-11-10, 17:55 UTC, `ba92f8e6...` as
-  `:rollback`), deploy-webui:latest (`232cf5db...` of 17:55 UTC, `44bd3f12...` as `:rollback`),
+  Images: deploy-supervisor:latest (`460919ca...` of 2026-11-11, 15:16 UTC, `c4b0e9d2...` of
+  13:08 UTC as `:rollback`), deploy-webui:latest (`fbd48f90...` of 13:08 UTC, `ee17d90f...` of
+  12:30 UTC as `:rollback`),
   lscr.io/linuxserver/transmission, alpine (the
   final backup of `deploy/uninstall.sh`) and caddy:2-alpine (the web UI's base: Caddy 2.10.2 of
   January 2026, `sha256:f2b257f2...`). The slice-2 rollback images and files were deleted on
@@ -254,6 +272,47 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-11: The access log keeps refusals and failures, and the shares and restore checks pass across a reboot
+
+- `deploy.container-logs-off-the-system-disk` (ADR-0338, superseding ADR-0176): uvicorn's access log
+  keeps only requests answered 400 or above (test_authz.py's real server, which failed before).
+  Before it (main b290ada, 14:42 UTC): 60 idle seconds 0.000 MiB, 100 calls of GET /auth/me with
+  the cached token 0.105 MiB, one access line per call in the supervisor's json-file log. Deployed
+  as main 96db310 at 15:16 UTC (SD MiB sync 1.129, build-supervisor 12.336, up 3.250, check.sh
+  0.016): idle 0.016 MiB a minute, the 100 calls 0.016 MiB, docker logs with the start lines and
+  no access line. After the reboot below: idle 0.016, the 100 calls 0.000 MiB; docker logs of
+  unos-supervisor and unos-webui (Caddy's TLS lines) both showed their recent lines.
+- The scenario check `shares` (ADR-0340) checks a sticky folder of another account (step 3 of
+  `shares.acl-aware-parent-check`), Repair permissions, a user's own SMB activation with a token of
+  its own, and a guest share. Its first device run (15:24 UTC, 2.859 MiB) failed at the anonymous
+  share list, which names no share under restrict anonymous = 1: ADR-0339 supersedes ADR-0098 and
+  says so; the check now reports that list and asserts the session to the share by its name. Then
+  OK at 15:27 UTC, 25 steps and the ACL step skipped (no setfacl on the device), 2.941 MiB.
+- The scenario check `restore` (ADR-0341) restores a backup it made moments before, twice, with two
+  SMB users and a share: first run at 15:13 UTC (19 steps, 7.504 MiB; its two copies of the
+  database removed by hand afterwards, 0.070 MiB), then OK at 15:38 UTC, 20 steps, 7.207 MiB.
+- Fresh-context reviews, three lenses and two refuters per finding: `shares` 14 findings, 13 of
+  them fixed in 702ef6f (among them the sticky helper's chmod order, which could have followed a
+  symbolic link swapped in by the other account, and a tabbed password printed after tail()) and
+  the missing Log entry by this one; `restore` 6, then 8 more on the fixes and the merge, all fixed in fc06047 (the clean-up waits
+  for a restore whose answer was lost and keeps the copies of the database when what is not the
+  check's changed; the API tokens compared are the relay administrator's, the only ones its API
+  lists; with a guest share the refused sign-ins are left out, ADR-0339). Merged as main 1555716
+  and d6e98c0 after `make check`; the E2E specs shares.spec.ts and account-smb.spec.ts passed on
+  the stand-in (53).
+- The reboot from the API at 19:25:58 UTC (the boot of 19:26:54, check.sh OK at 19:28): before it
+  `scenario.sh all` OK, 146 steps passed and 1 skipped (SD MiB files 0.145, volumes 0.727,
+  smart 0.035, backups 0.379, smb 3.250, smbconf 2.586, shares 3.078, scrub 0.410, offsite 0.520, restore
+  7.215); after it the same (0.199, 0.426, 0.062, 0.395, 2.930, 2.145, 3.020, 0.406, 0.469,
+  7.117). 10.5 MiB written to the SD card from the boot to check.sh.
+- Passing now: `deploy.container-logs-off-the-system-disk`, `shares.read-only-guest-share`,
+  `shares.self-activation`, `shares.restore-keeps-smb-with-proof`, `backup.no-old-backup-import`.
+  Open: `shares.repair-permissions` (its ACL step needs setfacl, the package acl, on the device:
+  an owner action), `shares.acl-aware-parent-check` (ADR-0193 waits for the owner), and copies to
+  an S3 store or a second disk, which the owner left for later.
+- An intermediate amend of the restore branch ran with the git hooks off by mistake; that commit
+  was replaced, and the commits merged ran the hooks.
 
 ### 2026-11-11: Telegram alerts, restores and off-device copies on the device
 
