@@ -6,6 +6,7 @@ import importlib
 import io
 import os
 import re
+import shutil
 import sqlite3
 import tarfile
 import threading
@@ -32,8 +33,6 @@ from .test_backup_restore import (
 
 backup_router = importlib.import_module("src.backup.router")
 
-# Without fstab and netplan (the container's): the database is enough here.
-CREATE = {"include_pools": False, "include_network": False}
 PASSPHRASE = "correct horse battery"
 FROZEN = datetime(2026, 1, 2, 3, 4, 5)
 SECOND = "20260102_030405"
@@ -58,7 +57,7 @@ def same_second(monkeypatch):
 
 
 def _create(env, **config) -> dict:
-    response = env.client.post("/api/v1/backup/create", json={**CREATE, **config})
+    response = env.client.post("/api/v1/backup/create", json=config)
     assert response.status_code == 200, response.text
     return response.json()["backup"]
 
@@ -109,7 +108,7 @@ def test_backups_created_in_the_same_second_get_different_names(env, same_second
 
 
 def test_parallel_creates_never_overwrite_each_other(env, same_second):
-    config = backup_router.BackupConfig(**CREATE)
+    config = backup_router.BackupConfig()
     with ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(lambda _: backup_router._create_backup(config), range(3)))
 
@@ -177,7 +176,7 @@ def test_a_failed_create_leaves_no_file(env, monkeypatch):
         raise OSError(28, "No space left on device")
 
     monkeypatch.setattr(backup_router, "_write_archive", fail_midway)
-    response = env.client.post("/api/v1/backup/create", json=CREATE)
+    response = env.client.post("/api/v1/backup/create", json={})
 
     assert response.status_code == 500
     assert "No space left on device" in response.json()["detail"]
@@ -210,7 +209,7 @@ def test_the_name_is_chosen_from_a_limited_number_of_attempts(env, same_second, 
     for name in (f"unos_backup_{SECOND}.tar.gz", f"unos_backup_{SECOND}_1.tar.gz"):
         (env.backup_dir / name).write_bytes(b"taken")
 
-    response = env.client.post("/api/v1/backup/create", json=CREATE)
+    response = env.client.post("/api/v1/backup/create", json={})
 
     assert response.status_code == 500
     assert "Could not choose a file name" in response.json()["detail"]
@@ -493,6 +492,70 @@ def test_plain_upload_is_still_inspected(env):
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid backup: corrupt archive"
     assert os.listdir(env.backup_dir) == []
+
+
+# --- what a backup holds ----------------------------------------------------------------
+
+
+def _pretend_the_containers_fstab_and_netplan_exist(monkeypatch) -> list[str]:
+    """/etc/fstab and /etc/netplan/01-netcfg.yaml exist, as the supervisor's container may have them.
+
+    They describe the container, nothing of the host: the host's fstab, with the entries of the
+    pools, is not mounted into it. A copy of either is recorded in the list returned, and writes a
+    line of its own.
+    """
+    container_files = {"/etc/fstab", "/etc/netplan/01-netcfg.yaml"}
+    copied: list[str] = []
+    exists, glob, copy2 = Path.exists, Path.glob, shutil.copy2
+
+    def pretended_exists(path, *args, **kwargs):
+        return str(path) in container_files | {"/etc/netplan"} or exists(path, *args, **kwargs)
+
+    def pretended_glob(path, pattern, *args, **kwargs):
+        if str(path) == "/etc/netplan":
+            return iter([Path("/etc/netplan/01-netcfg.yaml")])
+        return glob(path, pattern, *args, **kwargs)
+
+    def recorded_copy(source, destination, *args, **kwargs):
+        if str(source) in container_files:
+            copied.append(str(source))
+            Path(destination).write_text("# the container's\n")
+            return destination
+        return copy2(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", pretended_exists)
+    monkeypatch.setattr(Path, "glob", pretended_glob)
+    monkeypatch.setattr(shutil, "copy2", recorded_copy)
+    return copied
+
+
+def test_a_backup_holds_neither_fstab_nor_netplan(env, monkeypatch):
+    """backup.edge-cases (ADR-0345): no backup reads the container's fstab or netplan files, made by
+    hand, encrypted, as the archive of the off-device copy or by a backup task; BackupConfig has no
+    options for them."""
+    copied = _pretend_the_containers_fstab_and_netplan_exist(monkeypatch)
+    _scheduler(env, monkeypatch)
+    task = env.client.post("/api/v1/scheduler/tasks", json={
+        "name": "Nightly backup", "task_type": "backup", "enabled": False, "frequency": "daily",
+        "hour": 2, "minute": 0, "passphrase": PASSPHRASE,
+    })
+    assert task.status_code == 200, task.text
+
+    plain = env.backup_dir / _create(env)["filename"]
+    encrypted = env.backup_dir / _create(env, encrypt=True, passphrase=PASSPHRASE)["filename"]
+    assert env.client.post(f"/api/v1/scheduler/tasks/{task.json()['id']}/run").status_code == 200
+    (scheduled,) = env.backup_dir.glob("auto_backup_*.tar.gz.enc")
+
+    with tarfile.open(plain, "r:gz") as tar:
+        assert tar.getnames() == ["manifest.json", "unos.db"]
+    with _decrypted_tar(encrypted) as tar:
+        assert tar.getnames() == ["manifest.json", "unos.db"]
+    with tarfile.open(fileobj=io.BytesIO(backup_router.configuration_archive()), mode="r:gz") as tar:
+        assert tar.getnames() == ["manifest.json", "unos.db"]
+    with _decrypted_tar(scheduled) as tar:
+        assert tar.getnames() == ["manifest.json", "scheduled_tasks.json", "unos.db"]
+    assert copied == []
+    assert not {"include_pools", "include_network"} & set(backup_router.BackupConfig.model_fields)
 
 
 # --- scheduled backups and retention ----------------------------------------------------

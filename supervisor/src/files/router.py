@@ -242,9 +242,11 @@ def _refuse_separate_filesystem(dir_fd: int, st: os.stat_result, parts: list[str
     checks of the Storage page; moving or renaming it breaks those users.
     This checks the entry itself; _refuse_nested_filesystems checks the tree
     below a directory before it is deleted or moved to another filesystem.
-    A bind mount from the same filesystem has the same st_dev:
-    _refuse_nested_filesystems finds it in the mount table before a delete or
-    a move to another filesystem; renaming it fails with EBUSY.
+    A bind mount from the same filesystem has the same st_dev: the mount
+    table shows it, to _refuse_nested_filesystems before a delete or a move
+    to another filesystem, and to _refuse_separate_filesystems before any
+    move; renaming it fails with EBUSY, which _rename answers with this
+    refusal (_refuse_busy, ADR-0348).
     """
     if not stat.S_ISDIR(st.st_mode) or st.st_dev == os.fstat(dir_fd).st_dev:
         return
@@ -255,6 +257,18 @@ def _refuse_separate_filesystem(dir_fd: int, st: os.stat_result, parts: list[str
             "Volumes are deleted on the Storage page (Volumes).",
         )
     raise HTTPException(409, _separate_detail(parts[-1], action))
+
+
+def _refuse_busy(exc: OSError, name: str, action: str) -> None:
+    """Refuse (409) the rename of ``name`` that failed with ``exc``, when it is EBUSY: a mount point.
+
+    With the text of a delete of it (ADR-0348). This answers a rename, and a
+    move of a mount point that appeared after the check of every item
+    (_refuse_separate_filesystems), or that the mount table could not show.
+    Any other error is left to the caller.
+    """
+    if exc.errno == errno.EBUSY:
+        raise HTTPException(409, _separate_detail(name, action)) from None
 
 
 def _read_mount_points() -> list[bytes]:
@@ -378,9 +392,15 @@ def _refuse_separate_filesystems(plan: list[list[str]], action: str, *, moving_t
     Directories are also checked for subvolumes and mount points below them:
     all of them before a delete; before a move (``moving_to`` is the st_dev
     of the destination), those on another filesystem, which are copied and
-    then deleted.
+    then deleted. Before a move, every entry, a file too, is refused when it
+    is a mount point itself, such as a bind mount, whatever its st_dev
+    (ADR-0348): rename(2) would refuse it with EBUSY, or a move to another
+    filesystem would copy it and then fail to delete it (EBUSY), only after
+    the entries before it had moved. Without the mount table, that is left
+    to rename(2) and the delete (_readable_mount_points, _refuse_busy).
     """
     mount_points = None
+    within = _readable_mount_points() if moving_to is not None else None
     for parts in plan:
         dir_fd = _open_parent_or_none(parts)
         if dir_fd is None:
@@ -390,7 +410,11 @@ def _refuse_separate_filesystems(plan: list[list[str]], action: str, *, moving_t
             if st is None:
                 continue
             _refuse_separate_filesystem(dir_fd, st, parts, action)
-            if not stat.S_ISDIR(st.st_mode) or (moving_to is not None and st.st_dev == moving_to):
+            if within is not None and os.fsencode(_display_path(parts)) in within:
+                raise HTTPException(409, _separate_detail(parts[-1], action))
+            if moving_to is not None and st.st_dev == moving_to:
+                continue
+            if not stat.S_ISDIR(st.st_mode):
                 continue
             nested_action = action if moving_to is None else _MOVED_ELSEWHERE
             if mount_points is None:
@@ -404,7 +428,11 @@ def _refuse_separate_filesystems(plan: list[list[str]], action: str, *, moving_t
 
 
 def _http_error(exc: OSError) -> HTTPException:
-    """Map an OSError to an HTTP error without leaking host paths."""
+    """Map an OSError to an HTTP error without leaking host paths.
+
+    EBUSY is a conflict (409), not a failure: the kernel refuses to change an
+    entry that is in use by the system, such as a mount point (ADR-0348).
+    """
     code = exc.errno
     if code == errno.ENOENT:
         return HTTPException(404, "Not found")
@@ -422,6 +450,8 @@ def _http_error(exc: OSError) -> HTTPException:
         return HTTPException(400, "Name too long")
     if code in (errno.ENOSPC, errno.EDQUOT):
         return HTTPException(507, "No space left on device")
+    if code == errno.EBUSY:
+        return HTTPException(409, "In use by the system, for example as a mount point, so the file manager cannot change it")
     reason = os.strerror(code) if code else "unknown error"
     return HTTPException(500, f"File operation failed: {reason}")
 
@@ -908,6 +938,9 @@ def _rename(path: str, new_name: str) -> FileInfo:
                 _rename_exclusive(dir_fd, parts[-1], dir_fd, new_name)
             except FileExistsError:
                 raise HTTPException(400, f"Already exists: {new_name}") from None
+            except OSError as exc:
+                _refuse_busy(exc, parts[-1], "renamed")
+                raise
         st = os.stat(new_name, dir_fd=dir_fd, follow_symlinks=False)
     finally:
         os.close(dir_fd)
@@ -1032,6 +1065,12 @@ def _plan_transfer(sources: list[str], destination: str, *, moving: bool) -> tup
 
 
 def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str]:
+    """Copy or move the items ``sources`` into the folder ``destination``.
+
+    Every item is checked before any is changed. A move that fails at an
+    item after others moved is refused with how many moved before it
+    (_done_before).
+    """
     dest_parts, plan = _plan_transfer(sources, destination, moving=moving)
     dest_fd = _open_dir(dest_parts)
     try:
@@ -1043,34 +1082,47 @@ def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str
 
         done = []
         for parts in plan:
-            src_dir_fd = _open_parent_or_none(parts)
-            if src_dir_fd is None:
-                continue  # missing sources are skipped, as before
             try:
-                name = parts[-1]
-                st = _lstat_at(src_dir_fd, name)
-                if st is None:
-                    continue
-                if moving:
-                    _refuse_separate_filesystem(src_dir_fd, st, parts, "moved")
-                    try:
-                        os.rename(name, name, src_dir_fd=src_dir_fd, dst_dir_fd=dest_fd)
-                    except OSError as exc:
-                        if exc.errno != errno.EXDEV:
-                            raise
-                        # Different filesystem (e.g. another pool): copy, then delete.
-                        if stat.S_ISDIR(st.st_mode):
-                            _refuse_nested_filesystems(src_dir_fd, parts, _MOVED_ELSEWHERE)
-                        _copy_entry(src_dir_fd, name, dest_fd)
-                        _remove_entry(src_dir_fd, parts, _MOVED_ELSEWHERE, expected=st)
-                else:
-                    _copy_entry(src_dir_fd, name, dest_fd, True)
-            finally:
-                os.close(src_dir_fd)
-            done.append(_display_path([*dest_parts, name]))
+                went = _transfer_one(parts, dest_fd, moving)
+            except (HTTPException, OSError) as exc:
+                if not moving or not done:
+                    raise
+                raise _done_before(exc, len(done), len(plan), "moved") from exc
+            if went:
+                done.append(_display_path([*dest_parts, parts[-1]]))
         return done
     finally:
         os.close(dest_fd)
+
+
+def _transfer_one(parts: list[str], dest_fd: int, moving: bool) -> bool:
+    """Copy or move the item ``parts`` into the folder ``dest_fd``; False when it is not there (any more)."""
+    src_dir_fd = _open_parent_or_none(parts)
+    if src_dir_fd is None:
+        return False  # missing sources are skipped, as before
+    try:
+        name = parts[-1]
+        st = _lstat_at(src_dir_fd, name)
+        if st is None:
+            return False
+        if moving:
+            _refuse_separate_filesystem(src_dir_fd, st, parts, "moved")
+            try:
+                os.rename(name, name, src_dir_fd=src_dir_fd, dst_dir_fd=dest_fd)
+            except OSError as exc:
+                _refuse_busy(exc, name, "moved")
+                if exc.errno != errno.EXDEV:
+                    raise
+                # Different filesystem (e.g. another pool): copy, then delete.
+                if stat.S_ISDIR(st.st_mode):
+                    _refuse_nested_filesystems(src_dir_fd, parts, _MOVED_ELSEWHERE)
+                _copy_entry(src_dir_fd, name, dest_fd)
+                _remove_entry(src_dir_fd, parts, _MOVED_ELSEWHERE, expected=st)
+        else:
+            _copy_entry(src_dir_fd, name, dest_fd, True)
+        return True
+    finally:
+        os.close(src_dir_fd)
 
 
 def _delete(paths: list[str], permanent: bool = False) -> list[str]:
@@ -1151,7 +1203,7 @@ def _done_before(exc: HTTPException | OSError, done: int, total: int, how: str) 
 # as root can change it. So origin is checked before a restore and leads
 # only below the trash's own pool or volume, the item is renamed back
 # without replacing anything, and an entry is deleted for good only after
-# the checks of ADR-0170.
+# the checks of ADR-0348.
 
 
 def _now() -> datetime:
@@ -1754,7 +1806,7 @@ def _restore_one(path: str, scope: list[str], entry: str) -> str:
 
 
 def _delete_trash_entry(scope: list[str], trash_fd: int, entry: str) -> bool:
-    """Delete the trash entry ``entry`` for good, after the checks of ADR-0170.
+    """Delete the trash entry ``entry`` for good, after the checks of ADR-0348.
 
     False when it is gone already, or is not one of UNOS's (_unos_entry), which stays.
     """

@@ -542,7 +542,7 @@ def test_neither_file_of_the_copy_is_in_a_configuration_backup(env):
         names = tar.getnames()
     assert "manifest.json" in names and "unos.db" in names
     assert not [n for n in names if "offsite" in n]
-    assert set(names) <= set(backup_router._FILE_MEMBERS) | {"netplan"} | {n for n in names if n.startswith("netplan/")}
+    assert set(names) <= set(backup_router._FILE_MEMBERS)  # no fstab or netplan either (ADR-0345)
 
 
 # --- a copy -------------------------------------------------------------------------------------

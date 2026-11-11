@@ -12,6 +12,11 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- Samba refuses every SMB password change that a computer asks for over the
+  network (Windows' **Change a password**, `smbpasswd -r`), so that SMB
+  passwords change only in UNOS, under its password rules: the line
+  `check password script = /bin/false` of the `[global]` section that UNOS
+  writes, also in the first smb.conf of `install.sh`.
 - After 5 wrong SMB passwords in a row, Samba locks the SMB account for 5
   minutes, for every computer and for the right password too; the two
   passwords before the current one do not count. The supervisor sets Samba's
@@ -26,6 +31,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   administrator who restored) and the new **End sessions** button of the
   **Users** page all of them. Tokens from before the
   update are refused: everyone signs in once more.
+- The audit log records a user's own sign-out, password change (with an SMB
+  account entry when the SMB password changed too) and turning two-factor
+  authentication on or off (off as a warning), with the user, the address
+  and the browser; a refused attempt writes no entry. When the entry cannot
+  be written, the change still answers and the supervisor's log has it.
 - Each audit entry carries the hash of the one before it. An entry edited in
   the log file, and the entry after one that was removed, are marked **Chain
   broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest
@@ -75,7 +85,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   links, devices, absolute paths or `..`), verifies the restored database
   before it replaces the live one through SQLite's backup API (keeping a copy),
   and regenerates `smb.conf` from validated shares instead of installing the
-  archived file.
+  archived file. A database that gives one SMB uid to two accounts, which only
+  a crafted backup can hold, is refused (400) before anything changes; it used
+  to be restored, and turning SMB on failed for the second account.
 - `smb.conf` and `/etc/exports` values are validated against directive
   injection, share and export paths must not pass through symlinks, and
   `smb.conf` is replaced atomically after `testparm` accepts it (without that
@@ -396,8 +408,10 @@ manager, encrypted backup uploads, health checks, CI checks).
 - Encrypted backups (`.tar.gz.enc`) can be uploaded, for example after a
   download, and are stored as `uploaded_<date>_<time>[_<n>].tar.gz.enc`.
   Without the passphrase their content cannot be checked (the format has no
-  header); it is checked when the backup is restored with its passphrase. An
-  unencrypted backup uploaded under a `.tar.gz.enc` name is refused (400).
+  header); it is checked when the backup is restored with its passphrase. A
+  file uploaded under a `.tar.gz.enc` name that is gzip data to its end, such
+  as an unencrypted backup, is refused (400) instead of failing only at its
+  restore.
 - Docker health checks for both containers: `docker ps` shows whether the
   supervisor answers `/api/v1/health`, and whether the web interface reaches
   it through Caddy. Failed checks of the supervisor count only after 10
@@ -448,6 +462,12 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- Backups, by hand, by backup tasks and for off-device copies, no longer hold
+  the supervisor container's `/etc/fstab` and `/etc/netplan` files, which
+  describe nothing of the host, and the options `include_pools` and
+  `include_network` of `POST /api/v1/backup/create`, which added them, are
+  gone. A restore ignores such files in a backup that holds them, and no
+  longer warns that `fstab` is not restored.
 - The supervisor's access log keeps only the requests that were refused or
   failed (answers of 400 and above): an HTTP request that succeeds, a health
   check included, no longer writes a line to the system disk through
@@ -460,6 +480,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   (`cpu`, `memory`, `network`, `disk_io`): the flat `cpu_*`, `memory_*` and
   `network_*` fields are gone, and so are the `disk_*` fields of the container's
   root and the `history` of the last two minutes, which no page read.
+- The stats message of `/ws/v1/events` sends the CPU's temperature as
+  `cpu.temperature`, and `GET /api/v1/system/stats` as `cpu_temperature`
+  (degrees Celsius, or null without sensors); their `temperatures` objects,
+  which held the first reading of every sensor group, are gone.
+  `GET /api/v1/system/temperatures` lists every sensor.
 - The logs API reads every source through `GET /api/v1/logs/entries?source=...`:
   the old `GET /api/v1/logs/dmesg` and `/logs/journal` are gone (404).
 - On a narrow screen the System tabs are listed above the open tab, the file
@@ -692,6 +717,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- Two-factor authentication set up in two tabs at once could be turned on
+  with a secret that the user had not scanned, and so lock them out: a setup
+  that stored its new secret while the other tab's code was being accepted,
+  or just after that code turned 2FA on. Turning 2FA on now needs the secret
+  its code was checked against to be still the stored one (otherwise 400
+  "Run /totp/setup first"), and a setup never replaces the secret of 2FA that
+  is on (400 "2FA is already enabled").
+- The dashboard's Temperature card shows the CPU's temperature (Intel's
+  package; AMD's Tdie, or Tctl where the CPU has no Tdie) or the SoC's
+  (`cpu_thermal`, and the RK3588's `soc_thermal` or `package_thermal`): it
+  showed the first sensor that the host listed, on many hosts an ACPI zone or a
+  disk. A host whose CPU sensor UNOS
+  does not recognize still shows that first sensor.
 - **Run now** of a scheduled task no longer holds a stop of the supervisor
   until the run ends: the stop ends the run and records it as stopped, as it
   does for the runs that the schedule starts.
@@ -867,6 +905,22 @@ manager, encrypted backup uploads, health checks, CI checks).
   The pool used to be unmounted and its fstab entry removed although Docker
   kept the filesystem mounted on the host for the container, so its disks
   looked safe to remove.
+- When Docker did not answer, an unmount or removal of a pool went ahead, and
+  the host mount of a Docker volume that binds a folder of the pool passed as
+  the administrator's own mount elsewhere: the pool was reported unmounted
+  while a container could still write to it. Unmount and Remove Pool of a
+  mounted pool now answer 503 then, `Pool '<name>' was left mounted: Docker
+  did not answer, ...`, and change nothing.
+- File manager: renaming a folder that is a bind mount of another folder of
+  its pool, or moving it within the pool, answered 500 `File operation
+  failed: Device or resource busy`. It is refused with 409, as a delete of
+  it is: `'<name>' is a separate subvolume or filesystem (such as a snapshot
+  or a mount point) and cannot be renamed in the file manager` (moved for a
+  move). A move checks every item first, a file that is a bind mount too,
+  also one moved to another pool or volume (it was copied there before the
+  move failed), so such an item among several items moves none of them, and
+  a move that stops part way says how many items moved before it. Any other
+  file operation that the system refuses as busy answers 409 too.
 - Names that are not valid UTF-8, which apps and SMB users can give to
   folders and subvolumes in a pool, broke storage operations: a subvolume
   with such a name made listing volumes fail (HTTP 500). Such names are now
@@ -902,7 +956,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   not exist, is removed. System Backup now also says that a restore brings
   back the user accounts with their passwords, two-factor authentication and
   API tokens of the backup (an API token revoked since then works again),
-  and that other files in a backup, such as `fstab`, are not restored.
+  and that other files in a backup, such as the scheduled tasks, are not
+  restored.
 - Disk Health (`GET /api/v1/health/disks`), `GET /api/v1/health/overview`
   and the hourly SMART monitor listed disks with lsblk inside the container
   and left out a fixed list of names, among them `nvme0n1`: the first NVMe
@@ -957,6 +1012,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   into its folder (a backup into the backup folder) as it arrives: nothing
   is copied once its last byte has arrived, and a backup is then checked in
   one pass that writes nothing.
+- A file manager or backup upload whose client stopped sending in the
+  middle, with its connection still open, kept what had arrived, and its
+  space, for as long as that connection stayed open. An upload that gets no
+  data for 2 minutes now fails with HTTP 408 ("The upload timed out: the
+  client sent nothing for 120 seconds"), and nothing of it is kept; one
+  that keeps sending, however slowly, goes on.
 - Backup upload and restore answered HTTP 500 for some malformed archives (a
   member size of 2^63 bytes or more, broken GNU sparse data, a long chain of
   extended headers), such as "cannot fit 'int' into an offset-sized

@@ -89,6 +89,7 @@ and this index, and `make check-fast` runs it.
 | [0315](0315-pyjwt-and-bcrypt-check-passwords-as-given-and-dependencies-are-pinned.md) | PyJWT and bcrypt check passwords as given, and dependencies are pinned | accepted | 2026-11-09 |
 | [0328](0328-each-audit-entry-carries-the-hash-of-the-one-before-and-the-listing-says-where-the-chain-breaks.md) | Each audit entry carries the hash of the one before, and the listing says where the chain breaks | accepted | 2026-11-10 |
 | [0333](0333-the-supervisor-serves-128-open-connections-and-caddy-16-kb-of-headers.md) | The supervisor serves at most 128 open connections and 64 sockets, and Caddy refuses header blocks over 16 KB | accepted | 2026-11-10 |
+| [0343](0343-a-users-own-sign-out-password-and-two-factor-changes-are-audited-about-the-user.md) | A user's own sign-out, password change and two-factor changes are audited about the user, and answer when their entry cannot be written | accepted | 2026-11-11 |
 
 ## Auth
 
@@ -125,7 +126,7 @@ and this index, and `make check-fast` runs it.
 | [0035](0035-irreversible-storage-operations-need-confirmation.md) | Irreversible storage operations need a typed confirmation and device identity checks | accepted | 2026-11-05 |
 | [0036](0036-pool-health-from-the-host.md) | Pool health is computed from the host and never assumed | accepted | 2026-11-05 |
 | [0069](0069-volumes-are-top-level-subvolumes.md) | Volumes are top-level subvolumes, addressed by subvolume id | accepted | 2026-11-06 |
-| [0070](0070-pools-respect-docker-volumes-and-odd-names.md) | Pool unmount and delete respect Docker volumes, and odd names do not break storage | accepted | 2026-11-06 |
+| [0070](0070-pools-respect-docker-volumes-and-odd-names.md) | Pool unmount and delete respect Docker volumes, and odd names do not break storage | superseded by [0344](0344-pool-unmount-and-delete-are-refused-when-docker-cannot-be-asked.md) | 2026-11-06 |
 | [0071](0071-scrubs-return-once-started.md) | Scrubs return once started, and scheduled scrubs need a mounted pool | superseded by [0311](0311-a-scrub-starts-only-on-a-mounted-pool-through-one-helper.md) | 2026-11-06 |
 | [0072](0072-smart-only-on-whole-host-disks.md) | SMART runs only on whole host disks, the set the Storage page lists | accepted | 2026-11-06 |
 | [0073](0073-deferred-storage-edge-cases.md) | Fix the deferred storage and snapshot edge cases of slice 1 | proposed | 2026-11-06 |
@@ -144,6 +145,7 @@ and this index, and `make check-fast` runs it.
 | [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, a command still stuck is not started again, and a snapshot cleanup without an answer fails its run | accepted | 2026-11-08 |
 | [0311](0311-a-scrub-starts-only-on-a-mounted-pool-through-one-helper.md) | A scrub starts only on a pool whose btrfs filesystem is mounted, through one helper | accepted | 2026-11-09 |
 | [0313](0313-a-scrub-runs-from-its-start-and-its-result-names-how-it-ended.md) | A scrub runs from its start, before btrfs records it, and its result names how it ended | accepted | 2026-11-09 |
+| [0344](0344-pool-unmount-and-delete-are-refused-when-docker-cannot-be-asked.md) | Pool unmount and delete are refused when Docker cannot be asked, respect Docker volumes, and odd names do not break storage | accepted | 2026-11-11 |
 
 ## Shares
 
@@ -250,7 +252,7 @@ and this index, and `make check-fast` runs it.
 | [0249](0249-smb-status-names-an-smb-conf-replaced-after-unos-wrote-it.md) | SMB cannot be turned on while Samba serves an smb.conf that UNOS did not write, and the status names one replaced after UNOS wrote it | accepted | 2026-11-07 |
 | [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | Handle the SMB follow-ups still open after slice 2 | superseded by [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | 2026-11-07 |
 | [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | Windows finds the NAS through wsdd2, macOS through Samba's Bonjour announcement, and NetBIOS is off | accepted | 2026-11-08 |
-| [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | Handle the SMB follow-ups still open after network discovery | proposed | 2026-11-08 |
+| [0276](0276-smb-follow-ups-still-open-after-network-discovery.md) | Handle the SMB follow-ups still open after network discovery | superseded by [0342](0342-samba-refuses-every-password-change-over-samr-so-smb-passwords-change-only-through-unos.md) | 2026-11-08 |
 | [0277](0277-samba-logs-failed-sign-ins-to-syslog-and-keeps-its-log-file-in-ram.md) | Samba logs failed sign-ins through auth_audit to syslog and keeps its own log file in /run/samba | accepted | 2026-11-08 |
 | [0278](0278-samba-keeps-a-password-history-of-three.md) | Samba keeps a password history of 3, so that retries with an account's previous passwords write nothing to passdb | accepted | 2026-11-08 |
 | [0279](0279-smb-bound-passwords-must-not-be-common-passwords.md) | SMB-bound passwords need at least 8 characters, at most 72 bytes, no control characters, and must not be common passwords | accepted | 2026-11-08 |
@@ -265,6 +267,8 @@ and this index, and `make check-fast` runs it.
 | [0321](0321-nfs-exports-in-their-own-file-read-as-exportfs-reads-them-audited-with-actions-of-their-own.md) | UNOS keeps its NFS exports in its own export file on the host, reads every export file as exportfs reads it, applies them with the host's exportfs, and audits them with actions of their own | accepted | 2026-11-10 |
 | [0334](0334-samba-locks-an-smb-account-for-five-minutes-after-five-failed-sign-ins.md) | Samba locks an SMB account for 5 minutes after 5 failed sign-ins, and passdb.tdb stays on the system disk | accepted | 2026-11-10 |
 | [0339](0339-the-guest-globals-follow-guest-shares-and-an-anonymous-share-list-names-no-share.md) | The guest-related globals follow whether any guest share exists, and an anonymous share list names no share | accepted | 2026-11-11 |
+| [0342](0342-samba-refuses-every-password-change-over-samr-so-smb-passwords-change-only-through-unos.md) | Samba refuses every password change over SAMR with a check password script that always fails, so SMB passwords change only through UNOS | accepted | 2026-11-11 |
+| [0349](0349-a-restore-refuses-a-backup-whose-database-gives-one-smb-uid-to-two-accounts.md) | A restore refuses a backup whose database gives one SMB uid to two accounts | accepted | 2026-11-11 |
 
 ## Apps
 
@@ -287,11 +291,12 @@ and this index, and `make check-fast` runs it.
 | [0040](0040-restore-checks-archives-and-regenerates-smb-conf.md) | Restore checks archives and regenerates smb.conf instead of installing the archived file | superseded by [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | 2026-11-05 |
 | [0041](0041-off-device-backup-slice.md) | Give off-device backup of user data its own slice | superseded by [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | 2026-11-05 |
 | [0165](0165-backup-restore-flows-and-unique-names.md) | Backups restore from the tab, accept encrypted uploads and get unique names | accepted | 2026-11-06 |
-| [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | accepted | 2026-11-06 |
+| [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | superseded by [0345](0345-backups-hold-neither-fstab-nor-netplan-and-an-encrypted-upload-that-is-gzip-data-is-refused.md) | 2026-11-06 |
 | [0167](0167-deferred-backup-and-upload-edge-cases.md) | Fix the deferred backup and upload edge cases of slice 1 | proposed | 2026-11-06 |
 | [0240](0240-scheduled-backups-encrypted-with-a-key-derived-from-the-passphrase.md) | Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own | superseded by [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | 2026-11-07 |
 | [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | Backup tasks encrypt every backup with a key derived from their passphrase, stored in a file of its own that is set aside when damaged | accepted | 2026-11-10 |
 | [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested | accepted | 2026-11-11 |
+| [0345](0345-backups-hold-neither-fstab-nor-netplan-and-an-encrypted-upload-that-is-gzip-data-is-refused.md) | Backups hold neither fstab nor netplan, and an encrypted upload that is gzip data is refused | accepted | 2026-11-11 |
 
 ## Files
 
@@ -300,10 +305,12 @@ and this index, and `make check-fast` runs it.
 | [0042](0042-file-paths-stay-inside-the-pools.md) | File paths stay inside the pools and never follow symlinks | accepted | 2026-11-05 |
 | [0168](0168-file-manager-download-delete-copy-move.md) | The file manager downloads with the session and never overwrites on copy or move | accepted | 2026-11-06 |
 | [0169](0169-uploads-stream-into-their-folder.md) | Uploads stream into their folder and stay unnamed until complete | accepted | 2026-11-06 |
-| [0170](0170-file-manager-protects-volumes-and-mounts.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts | accepted | 2026-11-06 |
+| [0170](0170-file-manager-protects-volumes-and-mounts.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts | superseded by [0348](0348-the-file-manager-refuses-bind-mounts-before-a-move-and-busy-entries-with-409.md) | 2026-11-06 |
 | [0232](0232-file-manager-renames-in-the-row-and-never-replaces.md) | The file manager renames one selected item in its row and never replaces an entry | accepted | 2026-11-07 |
 | [0259](0259-deleted-items-go-to-the-trash-of-their-pool-or-volume-for-30-days.md) | Deleted items go to the trash of their pool or volume for 30 days, unless they are restored or deleted for good | accepted | 2026-11-07 |
 | [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | New folders and uploads of the file manager in a share folder get 2770 and 0660 | superseded by [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | 2026-11-08 |
+| [0347](0347-an-upload-that-gets-no-data-for-120-seconds-is-cut-off-with-408.md) | An upload that gets no data for 120 seconds is cut off with 408 | accepted | 2026-11-11 |
+| [0348](0348-the-file-manager-refuses-bind-mounts-before-a-move-and-busy-entries-with-409.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts, bind mounts included, and a busy entry is a conflict | accepted | 2026-11-11 |
 
 ## System
 
@@ -335,6 +342,7 @@ and this index, and `make check-fast` runs it.
 | [0331](0331-the-time-zone-routes-run-timedatectl-on-the-host.md) | The time zone and hostname routes ask the host, and PUT /network/hostname alone sets the name | accepted | 2026-11-10 |
 | [0332](0332-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner.md) | The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner | accepted | 2026-11-10 |
 | [0336](0336-http-notifications-that-cannot-connect-from-the-container-go-once-more-from-the-hosts-network.md) | An HTTP notification that cannot connect from the container goes once more from the host's network, with the host's curl | accepted | 2026-11-11 |
+| [0346](0346-the-dashboard-shows-the-cpu-or-soc-temperature-chosen-by-sensor-name-in-one-place.md) | The dashboard shows the CPU's or SoC's temperature, chosen by the sensor's name in one place on the server | accepted | 2026-11-11 |
 
 ## Web UI
 

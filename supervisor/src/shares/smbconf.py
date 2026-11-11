@@ -139,6 +139,11 @@ def global_settings(guest_enabled: bool) -> list[tuple[str, str]]:
         ("unix password sync", "no"),
         ("pam password change", "no"),
         ("obey pam restrictions", "no"),
+        # Samba asks this script about every password change that a client asks for over SAMR
+        # (Windows' Change a password, smbpasswd -r) and refuses the change when it fails, with
+        # NT_STATUS_PASSWORD_RESTRICTION. UNOS sets passwords as root with smbpasswd -s -a, which
+        # asks no script, so an SMB password changes only through UNOS (ADR-0342).
+        ("check password script", "/bin/false"),
         # Samba's cache and its own log file in RAM (a tmpfs), the log file one for every
         # process, so that clients cannot add files of their own; its messages go to syslog,
         # with a failed sign-in at level 2 of the class auth_audit and no header line

@@ -59,7 +59,10 @@ example by deleting old backups. The login history and the audit log then miss
 the sign-ins they cannot store: the supervisor's log
 (`docker logs unos-supervisor`) reports each record it could not write, with
 its time. On a disk that is full to the last block, Docker may not be able to
-keep those log lines either.
+keep those log lines either. Signing out, changing your own password and
+turning two-factor authentication on or off likewise answer as usual when
+their audit entry cannot be written once the change is stored, and the
+supervisor's log reports that entry.
 A recovery code does not sign you in while the disk is full, because UNOS
 cannot mark it as used; a code of your authenticator app does.
 
@@ -115,7 +118,10 @@ that failed or missed its run (see [Alerts](#alerts)).
 - **CPU** - Current processor usage
 - **Memory** - RAM usage and total
 - **Network** - Current upload/download speeds
-- **Temperature** - System temperature (if sensors available)
+- **Temperature** - The temperature of the CPU (Intel, AMD) or of the SoC of
+  an ARM board, such as a Raspberry Pi or an RK3588. On a host where UNOS does
+  not recognize the CPU's sensor, the first sensor the host lists, which may be
+  a disk's; **N/A** on a host without sensors.
 
 ### Storage Overview
 Shows all your storage pools with:
@@ -257,7 +263,10 @@ For each pool, you can:
   disk there. Unmounting is refused while a running app or container uses the
   pool, also through a Docker volume that binds a folder in it, or while
   files on it are open, for example by a computer that has one of its SMB
-  shares open; the dialog names the containers or the reason. System services
+  shares open; the dialog names the containers or the reason. When Docker
+  does not answer, so that UNOS cannot tell which containers use the pool,
+  unmounting is refused and nothing is changed: try again when Docker is
+  running. System services
   that run in a sandbox of their own keep a copy of the pool's mount there:
   UNOS unmounts those copies too. When another process still has the pool
   mounted, for example a container that binds the whole `/mnt/pools` or `/mnt`
@@ -732,7 +741,10 @@ in your storage pools from the web interface. It starts in the pools directory
   very large file needs that much free memory on your computer.
 - **Copy and Move** - Select the items and click **Copy** or **Move**, open
   the destination folder, then click **Copy here** or **Move here**. If an
-  item with the same name is already there, nothing is copied or moved.
+  item with the same name is already there, nothing is copied or moved, and a
+  move that one of the items cannot make (such as a folder that is a mount
+  point) moves none of them. When a move stops at an item after others moved,
+  the message says how many moved before it.
 - **Rename** - Select one item and click **Rename**: its name becomes a field
   with the name selected. Type the new name, then press Enter or click
   elsewhere; Escape keeps the old name. Switching to another window or tab
@@ -757,7 +769,9 @@ in your storage pools from the web interface. It starts in the pools directory
 - **Upload** - Click the upload arrow at the top right and choose one or more
   files. They go to the folder that was open when you chose them, also if you
   open another folder while they upload. A file with the same name is
-  replaced.
+  replaced. An upload that gets no data for 2 minutes (the network dropped,
+  or the computer went to sleep) fails, and nothing of it is kept: upload
+  the file again.
 - **New Folder** - Click **+** at the top right, type the name, then press
   Enter or click **Create**.
 - **Keyboard and screen readers** - The name of each folder and file is a
@@ -782,8 +796,9 @@ afterwards.
 
 Uploads, new folders, copies and moves go into the folders of a pool, not
 into the pools directory itself. The folder of a pool, its volumes, and other
-subvolumes or filesystems mounted in a pool cannot be deleted, renamed or
-moved here: delete volumes on the **Storage** page (see
+subvolumes or filesystems mounted in a pool, also a folder that is a bind
+mount of another folder of the pool, cannot be deleted, renamed or moved
+here: delete volumes on the **Storage** page (see
 [Pool Operations](#pool-operations)). Renaming a folder that a share, an NFS
 export or an app uses is not refused, but they keep using the old name, which
 no longer exists: rename the folder back to restore them.
@@ -1038,6 +1053,15 @@ then turns SMB on. A two-factor code works only once:
 the code the user signed in with cannot turn SMB on as well, so wait until
 the authenticator app shows the next one.
 
+An SMB password changes only in UNOS: the user under **Account** →
+**Change Password**, or an administrator in the edit dialog of the **Users**
+page. Samba refuses every password change that a computer asks for over the
+network, such as **Change a password** in Windows (Ctrl+Alt+Del) aimed at the
+NAS, whatever the new password is, and the old password keeps working. Samba
+answers that the new password breaks a password rule, so Windows is expected
+to say that the new password does not meet the length, complexity or history
+requirements; this has not been tried with a Windows computer yet.
+
 After 5 wrong SMB passwords in a row, Samba locks the user's SMB account for 5
 minutes: until they are over, every computer is refused, with the right
 password too, and then the right password signs in again. Wrong passwords
@@ -1274,7 +1298,10 @@ regular users have no access to it.
   **From** and **To** are the NAS's days (feature-list entry
   `architecture.times-with-time-zones`).
 - Recorded today: sign-ins and failed sign-ins (a wrong two-factor code
-  appears only in the login history), users created, changed and deleted, the
+  appears only in the login history), sign-outs, a user's own password
+  changes (with an SMB account entry when the SMB password changed too) and
+  turning two-factor authentication on or off (off as a **Warning**), each
+  by that user, users created, changed and deleted, the
   SMB access of users, shares created, changed, deleted and repaired, NFS
   exports created and deleted, shares imported from smb.conf, the corrections
   of the SMB check at startup and the SMB state after a restore (by the user
@@ -1282,10 +1309,11 @@ regular users have no access to it.
   reset of an administrator on the NAS's command line (`password_change` and
   `totp_disabled` by the user `root`, see
   [Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)),
-  and the clearing of the log. Storage, snapshots, containers, apps, backups,
-  restarts and shutdowns, scheduled tasks, the network and system settings
-  write no entries yet, and neither do a user's own password and two-factor
-  changes, although **Action** lists such actions (feature-list entry
+  and the clearing of the log. A refused change of your own account, such as
+  a wrong current password or two-factor code, writes no entry. Storage,
+  snapshots, containers, apps, backups, restarts and shutdowns, scheduled
+  tasks, the network and system settings write no entries yet, although
+  **Action** lists such actions (feature-list entry
   `security.audit-admin-actions`).
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
@@ -1612,21 +1640,24 @@ user accounts with their passwords, two-factor authentication, API tokens,
 the login history, and the SMB shares with their access lists. It does not
 hold the files in your pools, Samba's own password database, nor settings
 kept elsewhere, such as notification channels, scheduled tasks, firewall
-rules and UPS settings. Each backup in the list has **Restore**, **Download**
-and **Delete** buttons.
+rules, UPS settings, the network settings and the host's `/etc/fstab`. Each
+backup in the list has **Restore**, **Download** and **Delete** buttons.
 
 - **Create Backup** - Makes an unencrypted backup (`.tar.gz`).
 - **Upload Backup** - Adds a backup file of at most 256 MiB: `.tar.gz`, or
   `.tar.gz.enc` for an encrypted backup. It is stored under a new name,
-  `uploaded_<date>_<time>` with the same extension. An unencrypted backup
-  named `.tar.gz.enc` is refused.
+  `uploaded_<date>_<time>` with the same extension. A `.tar.gz.enc` file
+  that is gzip data to its end, such as an unencrypted backup, is refused.
+  Any other `.tar.gz.enc` file is stored, and its content is checked only
+  when it is restored with the passphrase. An upload that gets no data for
+  2 minutes fails, and nothing of it is kept.
 - **Restore** - Type the backup's file name to confirm; an encrypted backup
   also needs its passphrase. Restoring replaces the database with the one in
   the backup: the user accounts with their passwords, two-factor
   authentication, API tokens and the login history are then those of the
   backup, so an API token revoked after the backup was made works again.
-  Other files in a backup, such as `fstab`, are not restored; the result
-  lists them.
+  Nothing else is restored: the scheduled tasks that the backups of backup
+  tasks also hold are named in the result as not restored.
 
 SMB after a restore:
 - The shares and their access lists come back with the database, and UNOS
@@ -1638,7 +1669,8 @@ SMB after a restore:
   was made. Everyone else shows **Password needed** and must turn SMB on
   again (see [SMB Access](#smb-access)), and so must a user whose SMB user id
   belongs to another account on this NAS (for example in a backup of another
-  installation).
+  installation). A backup whose database gives one SMB user id to two
+  accounts is refused, and nothing is restored.
 
 Encrypted backups (`.tar.gz.enc`) are made by backup tasks (below), or
 through the API, with `POST /api/v1/backup/create` and the body

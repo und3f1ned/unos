@@ -17,7 +17,10 @@ directory of the tempfile module refused (no_temporary_files), and check that:
   before;
 * every other refusal and error answers as before and leaves no temporary
   file and nothing under a final name: also a client that goes away, a full
-  disk, a cancelled request and a failed check.
+  disk, a cancelled request and a failed check;
+* a client that stops sending, its connection still open, is cut off after
+  UPLOAD_IDLE_TIMEOUT seconds without data (408) and leaves nothing, and one
+  that keeps sending, however slowly, is not (ADR-0347).
 
 On Linux the file of a file upload is unnamed in its folder until it is
 complete (O_TMPFILE, src/files/router.py): nothing of it is in the folder,
@@ -274,15 +277,17 @@ class _Sender:
     """An ASGI client: sends the body in the given chunks, records what the application read and answered.
 
     ``on_read(n)`` runs when the application asks for the chunk ``n`` (from
-    0), before it gets it. After the chunks, ``then`` is "end" (the last
-    chunk ends the body), "disconnect" (the client goes away instead) or
-    "block" (the client sends nothing more).
+    0), before it gets it. The client waits ``pause`` seconds before it
+    sends each chunk. After the chunks, ``then`` is "end" (the last chunk
+    ends the body), "disconnect" (the client goes away instead) or "block"
+    (the client sends nothing more).
     """
 
-    def __init__(self, chunks: list[bytes], *, on_read=None, then: str = "end"):
+    def __init__(self, chunks: list[bytes], *, on_read=None, then: str = "end", pause: float = 0):
         self.chunks = chunks
         self.on_read = on_read
         self.then = then
+        self.pause = pause
         self.reads = 0
         self.messages: list[dict] = []
 
@@ -292,6 +297,8 @@ class _Sender:
         if self.on_read is not None:
             self.on_read(n)
         if n < len(self.chunks):
+            if self.pause:
+                await asyncio.sleep(self.pause)
             more = n + 1 < len(self.chunks) or self.then != "end"
             return {"type": "http.request", "body": self.chunks[n], "more_body": more}
         if self.then == "block":
@@ -304,6 +311,10 @@ class _Sender:
     @property
     def status(self) -> int:
         return next(m["status"] for m in self.messages if m["type"] == "http.response.start")
+
+    @property
+    def headers(self) -> dict[bytes, bytes]:
+        return dict(next(m["headers"] for m in self.messages if m["type"] == "http.response.start"))
 
     @property
     def json(self):
@@ -911,6 +922,103 @@ async def test_a_folder_that_appears_at_the_target_name_is_not_replaced(env):
     assert sender.json == {"detail": "Is a directory"}  # rename() onto a folder: EISDIR
     assert target.stored() == ["big.bin"]
     assert (env.pool / "big.bin" / "inside").read_bytes() == b"kept"
+
+
+# --- a client that stops sending: cut off after UPLOAD_IDLE_TIMEOUT (ADR-0347) -------------
+
+# The seconds without data after which the uploads of these tests are cut off (120 in use).
+IDLE = 0.2
+
+
+def _idle_detail(seconds: float) -> str:
+    return f"The upload timed out: the client sent nothing for {seconds:g} seconds"
+
+
+@pytest.mark.parametrize("stops", ["before-the-body", "in-the-file"])
+async def test_a_client_that_stops_sending_is_cut_off_and_leaves_nothing(env, target, monkeypatch, stops):
+    """Nothing arrives for UPLOAD_IDLE_TIMEOUT, the connection still open: 408, and the upload is discarded.
+
+    The client stops before any of the body, or after 2 MiB of the file, when
+    the destination file holds data. Without the timeout the request, and
+    that file with its space, were held for as long as the connection stayed
+    open; the test gives up after 5 s.
+    """
+    monkeypatch.setattr(request_limits, "UPLOAD_IDLE_TIMEOUT", IDLE)
+    chunks = [] if stops == "before-the-body" else [_part_head(b"file", target.filename), *_pieces(os.urandom(2 * MIB))]
+    seen = []
+
+    def on_read(n):
+        if n == len(chunks):  # the client sends nothing more
+            seen.append(_temporary_bytes(env))
+
+    sender = _Sender(chunks, then="block", on_read=on_read)
+
+    await asyncio.wait_for(app(target.scope(), sender.receive, sender.send), 5)
+
+    assert (sender.status, sender.json) == (408, {"detail": _idle_detail(IDLE)})
+    assert sender.headers.get(b"connection") == b"close"  # the rest of the body is not read
+    if stops == "in-the-file":
+        assert seen[0] >= MIB  # the destination file held data when the client stopped
+    assert target.stored() == []
+    assert _temporary_files(env) == []
+
+
+async def test_a_client_that_keeps_sending_slowly_is_not_cut_off(env, target, monkeypatch):
+    """The timeout is for each wait for the client, not for the whole body.
+
+    The client waits a quarter of the timeout before each of its 10 chunks:
+    the body takes more than twice the timeout, and the upload is stored.
+    """
+    monkeypatch.setattr(request_limits, "UPLOAD_IDLE_TIMEOUT", IDLE)
+    data = os.urandom(MIB)
+    sender = _Sender([_part_head(b"file", target.filename), *_pieces(data, 128 * 1024), b"\r\n" + END], pause=IDLE / 4)
+    started = time.monotonic()
+
+    await app(target.scope(), sender.receive, sender.send)
+
+    assert sender.status == 200, sender.json
+    assert time.monotonic() - started > 2 * IDLE
+    assert target.stored_content() == data
+
+
+def test_a_client_that_stops_sending_to_a_real_server_is_cut_off(env, target, monkeypatch):
+    """Through uvicorn (httptools, as in the image): 408, the connection closed, and nothing is left."""
+    idle = 0.5
+    monkeypatch.setattr(request_limits, "UPLOAD_IDLE_TIMEOUT", idle)
+    head = _part_head(b"file", target.filename)
+    with _uvicorn(app, http="httptools") as port:
+        conn = _connect(port, target.url, len(head) + 8 * MIB)
+        # getresponse() takes the socket from conn; a duplicate is left to see the server's end.
+        sock = socket.socket(fileno=os.dup(conn.sock.fileno()))
+        try:
+            conn.send(head + os.urandom(3 * MIB))
+            _wait_for(lambda: _temporary_bytes(env) >= 2 * MIB, "the destination file holds data")
+            conn.sock.settimeout(10)  # without the timeout no answer comes
+            response = conn.getresponse()
+            body = response.read()
+            closed = _closed_by_server(sock)
+        finally:
+            sock.close()
+            conn.close()
+        _wait_for(lambda: _temporary_files(env) == [], "the temporary file is removed (an unnamed one closed)")
+
+    assert (response.status, json.loads(body)) == (408, {"detail": _idle_detail(idle)})
+    assert closed, "the server kept the connection open after the 408"
+    assert response.getheader("Connection") == "close"
+    assert target.stored() == []
+
+
+def _closed_by_server(sock: socket.socket, within: float = 3.0) -> bool:
+    """Whether a read of ``sock``, after the answer, gets the end of the connection within ``within`` seconds.
+
+    3 seconds is less than uvicorn's keep-alive timeout of 5 seconds, after
+    which it would close a connection that it kept open.
+    """
+    sock.settimeout(within)
+    try:
+        return sock.recv(1) == b""
+    except TimeoutError:
+        return False
 
 
 # --- the file of a file upload: unnamed, or a hidden temporary file ---------------------------

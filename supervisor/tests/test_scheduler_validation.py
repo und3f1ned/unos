@@ -613,7 +613,7 @@ def test_a_backup_task_stores_encrypted_backups(backup_env, monkeypatch):
         names = tar.getnames()
         archived_tasks = json.load(tar.extractfile("scheduled_tasks.json"))
     assert names[0] == "manifest.json" and "unos.db" in names
-    assert set(names) <= {"manifest.json", "unos.db", "fstab", "scheduled_tasks.json"}
+    assert set(names) <= {"manifest.json", "unos.db", "scheduled_tasks.json"}  # no fstab (ADR-0345)
     assert [t["id"] for t in archived_tasks] == [task["id"]]
     assert "passphrase" not in archived_tasks[0]
     (stored,) = env.client.get("/api/v1/scheduler/tasks").json()

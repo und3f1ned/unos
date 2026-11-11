@@ -7,7 +7,9 @@ const LOCALE_KEY = 'unos-locale';
 // One message of the stats stream, as /ws/v1/events sends it (supervisor/src/websocket/events.py):
 // the parts the tab shows, with sizes and rates in each power of 1024 and with decimals.
 const STATS = {
-  cpu: { percent: 12.5, per_core: [10, 15], load_1: 0.5, load_5: 0.4, load_15: 0.3, cores: 2, threads: 2 },
+  cpu: {
+    percent: 12.5, per_core: [10, 15], load_1: 0.5, load_5: 0.4, load_15: 0.3, cores: 2, threads: 2, temperature: 45.8,
+  },
   memory: {
     total: 8 * 1024 ** 3, used: 2.5 * 1024 ** 3, free: 5.5 * 1024 ** 3, available: 5.5 * 1024 ** 3, percent: 31.25,
     swap_total: 0, swap_used: 0, swap_percent: 0,
@@ -22,7 +24,6 @@ const STATS = {
   processes: [
     { pid: 812, name: 'smbd', cpu_percent: 3.5, memory_percent: 0.5, memory_mb: 42, status: 'sleeping', username: 'root' },
   ],
-  temperatures: {},
   timestamp: '2026-11-08T10:00:00',
 };
 

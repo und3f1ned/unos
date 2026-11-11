@@ -139,7 +139,7 @@ async def delete_pool_endpoint(request: Request, name: str, _=Depends(verify_tok
     """Forget a pool: unmount it on the host and drop its fstab entry and empty mountpoint.
 
     The disks are not wiped; the filesystem is listed again as an unmounted
-    pool and can be mounted later. Refused with 409 as an unmount is. As
+    pool and can be mounted later. Refused with 409 or 503 as an unmount is. As
     after an unmount, its SMB shares stop being served (ADR-0248).
     """
     # Validate pool name
@@ -219,9 +219,10 @@ async def unmount_pool_endpoint(request: Request, name: str, _=Depends(verify_to
     for an SMB client that has one of its shares open, and when the mount
     namespace of another process still has it mounted after the host's
     umount: elsewhere, or in a namespace with a root of its own, such as a
-    container that binds /mnt/pools; the pool is then mounted again. Before
-    it answers, smb.conf no longer serves the pool's shares, and their open
-    connections are closed (ADR-0248).
+    container that binds /mnt/pools; the pool is then mounted again. 503,
+    with nothing changed, when Docker cannot be asked which containers use
+    the pool (ADR-0344). Before it answers, smb.conf no longer serves the
+    pool's shares, and their open connections are closed (ADR-0248).
     """
     validated_name = validate_pool_name(name)
 

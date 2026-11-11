@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0345
 date: 2026-11-06
 area: backup
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0166: Uploaded backups are checked in one streaming pass that writes nothing
 
 ## Context
+
+Superseded by ADR-0345: an encrypted upload that is gzip data is refused too, and the rules of the upload check are restated there.
 
 An uploaded backup is untrusted input that must be checked before it is listed. Python's tarfile reads some headers in full before anything can be checked: a 200 KiB upload could make the supervisor hold 740 MiB of memory or work for minutes, some malformed archives produced HTTP 500, and there was no size limit. The check must not leave temporary copies on the system disk (ADR-0214).
 

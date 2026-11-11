@@ -1,14 +1,17 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-08
 area: shares
 decided-by: agent
 supersedes: [ADR-0250]
+superseded-by: ADR-0342
 ---
 
 # ADR-0276: Handle the SMB follow-ups still open after network discovery
 
 ## Context
+
+Superseded by ADR-0342: Samba refuses every password change over SAMR, and the follow-ups still open.
 
 ADR-0250 restated the known gaps, smaller design items and unchecked points that phase 1 slice 2
 (ADR-0059) left open, so that later slices pick them up instead of finding them again. One of its

@@ -51,6 +51,7 @@ from ..auth.utils import authenticate_token
 from ..config import get_settings
 from ..database import async_session
 from ..health import problems
+from ..system.sensors import cpu_temperature
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -194,16 +195,6 @@ def get_system_stats() -> dict:
     processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
     top_processes = processes[:10]
 
-    # Temperature sensors
-    temps = {}
-    try:
-        sensors = psutil.sensors_temperatures()
-        for name, entries in sensors.items():
-            if entries:
-                temps[name] = entries[0].current
-    except Exception:
-        pass
-
     timestamp = datetime.now().isoformat()
 
     # Store previous values for next calculation
@@ -214,8 +205,6 @@ def get_system_stats() -> dict:
     return {
         "type": "stats",
         "data": {
-            "temperatures": temps,
-
             # CPU stats
             "cpu": {
                 "percent": cpu_percent,
@@ -225,6 +214,8 @@ def get_system_stats() -> dict:
                 "load_15": load[2],
                 "cores": cpu_count,
                 "threads": cpu_threads,
+                # The CPU's or SoC's, None without sensors (ADR-0346).
+                "temperature": cpu_temperature(),
             },
 
             # Memory stats

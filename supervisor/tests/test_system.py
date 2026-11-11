@@ -1,3 +1,6 @@
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -60,7 +63,8 @@ class TestSystemStats:
         assert hasattr(result, "disk_percent")
         assert hasattr(result, "network_sent")
         assert hasattr(result, "network_recv")
-        assert hasattr(result, "temperatures")
+        assert hasattr(result, "cpu_temperature")
+        assert not hasattr(result, "temperatures")
 
     def test_cpu_percent_in_valid_range(self):
         """Test that CPU percent is between 0 and 100."""
@@ -232,6 +236,114 @@ class TestTemperatures:
                 result = asyncio.run(get_temperatures())
         
         assert result == []
+
+
+def _reading(label: str, current: float) -> SimpleNamespace:
+    """A reading as psutil.sensors_temperatures lists it."""
+    return SimpleNamespace(label=label, current=current, high=None, critical=None)
+
+
+# The NVMe disk that many hosts have, and that psutil may list before the CPU.
+_NVME = [_reading("Composite", 41.9), _reading("Sensor 1", 41.9), _reading("Sensor 2", 44.9)]
+
+
+class TestDashboardTemperature:
+    """system.temperatures (ADR-0346): the dashboard's Temperature card shows the temperature that
+    /system/stats and the stats message of /ws/v1/events give, chosen in one place: the CPU's or
+    SoC's sensor by the name of its group, and on a host without one the first reading of the
+    first group that psutil lists. Before, the web UI showed the first group, which on many hosts
+    is an ACPI zone or a disk."""
+
+    @staticmethod
+    def chosen(groups):
+        """The temperature that /system/stats and the stats message give for these sensor groups,
+        which must be the same."""
+        from src.system.router import get_system_stats
+        from src.websocket import events
+
+        with patch("psutil.sensors_temperatures", create=True, return_value=groups):
+            message = events.get_system_stats()
+            stats = asyncio.run(get_system_stats())
+        assert message["data"]["cpu"]["temperature"] == stats.cpu_temperature
+        return stats.cpu_temperature
+
+    @pytest.mark.parametrize(
+        ("groups", "expected"),
+        [
+            pytest.param(
+                {"acpitz": [_reading("", 27.8), _reading("", 29.8)], "nvme": _NVME,
+                 "coretemp": [_reading("Core 0", 50.0), _reading("Package id 0", 53.0), _reading("Core 1", 49.0)]},
+                53.0, id="intel-package",
+            ),
+            pytest.param(
+                {"nvme": _NVME, "k10temp": [_reading("Tccd1", 61.5), _reading("Tctl", 57.4)]},
+                57.4, id="amd-tctl",
+            ),
+            # On the Ryzen X CPUs of the first two generations and the Threadripper 1000 and 2000,
+            # Tctl is the die's temperature plus an offset, and k10temp lists Tdie, the die's own,
+            # after it.
+            pytest.param(
+                {"k10temp": [_reading("Tctl", 65.0), _reading("Tdie", 45.0)]},
+                45.0, id="amd-tdie-before-tctl",
+            ),
+            pytest.param(
+                {"drivetemp": [_reading("", 33.0)], "cpu_thermal": [_reading("", 48.3)]},
+                48.3, id="raspberry-pi",
+            ),
+            # The RK3588 under Rockchip's kernel: the kernel names the hwmon device of each thermal
+            # zone after it, with "_" for "-" (soc-thermal is soc_thermal), and soc-thermal is the
+            # sensor of the whole chip, beside those of the core clusters, the GPU and the NPU.
+            pytest.param(
+                {"nvme": _NVME, "bigcore0_thermal": [_reading("", 46.2)], "bigcore1_thermal": [_reading("", 46.2)],
+                 "littlecore_thermal": [_reading("", 45.3)], "center_thermal": [_reading("", 44.4)],
+                 "gpu_thermal": [_reading("", 43.5)], "npu_thermal": [_reading("", 44.4)],
+                 "soc_thermal": [_reading("", 45.8)]},
+                45.8, id="rk3588-soc-thermal",
+            ),
+            # Without hwmon, psutil names the groups after the thermal zones' types themselves.
+            pytest.param(
+                {"bigcore0-thermal": [_reading("", 46.2)], "soc-thermal": [_reading("", 45.8)]},
+                45.8, id="rk3588-thermal-zones",
+            ),
+            # The mainline kernel's name for the same sensor of the RK3588.
+            pytest.param(
+                {"nvme": _NVME, "bigcore0_thermal": [_reading("", 46.2)], "package_thermal": [_reading("", 44.4)]},
+                44.4, id="rk3588-package-thermal",
+            ),
+            pytest.param(
+                {"cpu-thermal": [_reading("", 51.1)], "gpu-thermal": [_reading("", 49.0)]},
+                51.1, id="cpu-thermal-zone",
+            ),
+            # No sensor known as the CPU's: the first reading of the first group, as before.
+            pytest.param(
+                {"acpitz": [_reading("", 27.8), _reading("", 29.8)], "nvme": _NVME},
+                27.8, id="unknown-first-group",
+            ),
+            # A known group without its chip-wide label (k10temp of a CPU older than Zen): its
+            # first reading.
+            pytest.param(
+                {"nvme": _NVME, "k10temp": [_reading("", 52.0)]},
+                52.0, id="known-group-without-label",
+            ),
+        ],
+    )
+    def test_the_cpu_or_soc_sensor_is_chosen(self, groups, expected):
+        assert self.chosen(groups) == expected
+
+    def test_a_host_without_sensors_gives_none(self):
+        assert self.chosen({}) is None
+        assert self.chosen({"acpitz": []}) is None
+
+    def test_a_failing_sensor_read_gives_none(self):
+        """macOS has no psutil.sensors_temperatures, and hwmon can fail on Linux."""
+        from src.system.router import get_system_stats
+        from src.websocket import events
+
+        with patch("psutil.sensors_temperatures", create=True, side_effect=OSError("No sensors")):
+            message = events.get_system_stats()
+            stats = asyncio.run(get_system_stats())
+        assert message["data"]["cpu"]["temperature"] is None
+        assert stats.cpu_temperature is None
 
 
 class TestNetworkInterfaces:
