@@ -22,7 +22,12 @@ comes back from ``dump``, ``restore`` and ``snapshots``:
   with exit code 11, or after the time of --retry-lock; --no-lock takes none; unlock removes the
   locks of processes that are gone;
 * backup of folders exits with 3 when files could not be read: it saves the snapshot without them
-  and prints an error for each, a JSON line with message_type "error" on standard error.
+  and prints an error for each, a JSON line with message_type "error" on standard error. A file that
+  vanished before restic opened it is left out without a word, as restic 0.18 does (filterNotExist);
+  only one that vanished between its first open and the next is reported;
+* each call records the host name that its wrapper wrote into ``<state>/hostname`` (on the device
+  /proc/sys/kernel/hostname of the UTS namespace that ``unshare --uts`` made for that restic), and
+  ``install`` puts a pass-through ``unshare`` next to the pass-through ``ionice``.
 
 ``<state>`` is FAKE_RESTIC_STATE, which the wrapper sets. Each call appends a line to
 ``<state>/calls.jsonl``: its arguments, its environment and its process id. ``<state>/faults.json``
@@ -30,8 +35,9 @@ changes what a command does, by the command's name (``backup-stdin`` for the con
 backup): ``{"code": N, "stderr": "..."}`` fails it, ``{"sleep": S}`` waits S seconds first,
 ``{"block": true}`` writes ``<state>/blocked-<name>`` and waits for ``<state>/release-<name>``,
 ``{"garble": true}`` makes dump change a byte of what it writes, and backup of folders takes
-``{"vanished": [paths]}`` (files gone while it ran: "no such file or directory") and
-``{"unreadable": {path: reason}}`` (such as "permission denied").
+``{"vanished": [paths]}`` (files gone while it ran, left out without a word; with ``"reported":
+true``, reported as "no such file or directory") and ``{"unreadable": {path: reason}}`` (such as
+"permission denied").
 
 Standard library only: it runs with the stand-in's Python and the tests' alike.
 """
@@ -92,7 +98,15 @@ def install(folder: Path, state: Path, python: str = sys.executable) -> Path:
         "shift 4\n"
         'exec "$@"\n'
     )
-    for path in (restic, ionice):
+    unshare = folder / "unshare"
+    unshare.write_text(
+        "#!/bin/sh\n"
+        "# unshare as the off-device copy calls it, without a namespace: the options, then the command.\n"
+        '[ "$1" = --uts ] && [ "$2" = -- ] || { echo "fake unshare: unexpected options: $*" >&2; exit 99; }\n'
+        "shift 2\n"
+        'exec "$@"\n'
+    )
+    for path in (restic, ionice, unshare):
         path.chmod(0o755)
     return folder
 
@@ -334,9 +348,11 @@ def cmd_backup(args, values, flags) -> int:
     else:
         if not args:
             raise Fatal("Fatal: nothing to backup, please specify source files/dirs")
-        errors = {path: "no such file or directory" for path in fault().get("vanished", [])}
+        vanished = set(fault().get("vanished", []))
+        errors = {path: "no such file or directory" for path in vanished} if fault().get("reported") else {}
         errors.update(fault().get("unreadable", {}))
-        files = _collect(args, values.get("--exclude", []), errors)
+        files = {path: content for path, content in _collect(args, values.get("--exclude", []), errors).items()
+                 if path not in vanished}
         paths = sorted(args)
     hostname = values.get("--host", [os.uname().nodename])[0]
     parents = [s for s in snapshots(repo) if s["paths"] == paths and s["hostname"] == hostname]
@@ -373,8 +389,7 @@ def cmd_backup(args, values, flags) -> int:
     else:
         print(f"snapshot {snapshot_id[:8]} saved")
     # restic's exit code 3: the snapshot is saved, but some files could not be read.
-    unread = set(fault().get("vanished", [])) | set(fault().get("unreadable", {}))
-    return 3 if "--stdin" not in flags and unread else 0
+    return 3 if "--stdin" not in flags and errors else 0
 
 
 def _keep(group: list[dict], days: int, weeks: int, months: int) -> set[str]:
@@ -490,8 +505,9 @@ def fault() -> dict:
 def main(argv: list[str]) -> int:
     global _fault
     state = state_dir()
+    hostname = (state / "hostname").read_text() if (state / "hostname").exists() else None
     with open(state / "calls.jsonl", "a") as log:
-        log.write(json.dumps({"argv": argv, "env": dict(os.environ), "pid": os.getpid()}) + "\n")
+        log.write(json.dumps({"argv": argv, "env": dict(os.environ), "pid": os.getpid(), "hostname": hostname}) + "\n")
     try:
         command, args, values, flags = parse(argv)
         name = "backup-stdin" if command == "backup" and "--stdin" in flags else command

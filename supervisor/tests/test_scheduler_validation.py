@@ -44,20 +44,53 @@ def env(tmp_path, monkeypatch):
     yield from make_env(tmp_path, monkeypatch)
 
 
+class RecordedRuns(set):
+    """scheduler._runs, which also keeps every run added to it until waiting_for_runs takes it: a run
+    that ended at once has left the set by then."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.added: list[asyncio.Task] = []
+
+    def add(self, run: asyncio.Task) -> None:
+        self.added.append(run)
+        super().add(run)
+
+
 def waiting_for_runs(asgi_app):
-    """ASGI_APP, whose requests return once the runs of tasks that they started have ended, as the
-    tests read them. Run now answers at once and its run goes on beside the request, on the event
-    loop of the TestClient (scheduler.run_task_now), which a TestClient outside a with block ends with
-    each request."""
+    """ASGI_APP, whose requests return once the runs of tasks that they started have ended, and raise
+    what a run raised, as the tests read them. Run now answers at once and its run goes on beside the
+    request, on the event loop of the TestClient (scheduler.run_task_now), which a TestClient outside a
+    with block ends with each request. The env puts RecordedRuns into scheduler._runs."""
 
     async def app_waiting_for_runs(scope, receive, send):
         await asgi_app(scope, receive, send)
-        if scope["type"] == "http":
-            loop = asyncio.get_running_loop()
-            await asyncio.gather(*[run for run in list(scheduler._runs) if run.get_loop() is loop],
-                                 return_exceptions=True)
+        if scope["type"] != "http":
+            return
+        runs = scheduler._runs
+        if isinstance(runs, RecordedRuns):
+            added, runs.added = runs.added, []
+        else:
+            added = list(runs)
+        loop = asyncio.get_running_loop()
+        ended = await asyncio.gather(*[run for run in added if run.get_loop() is loop], return_exceptions=True)
+        for result in ended:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                raise result
 
     return app_waiting_for_runs
+
+
+def test_a_run_of_run_now_that_raises_fails_the_request_of_these_tests(env, monkeypatch):
+    """waiting_for_runs keeps what a run raised: a test that reads the run would not see it."""
+    async def broken(task):
+        raise RuntimeError("the run broke")
+
+    task = env.client.post("/api/v1/scheduler/tasks", json=_task(task_type="custom", target_pool=None,
+                                                                 keep_count=None, command="true")).json()
+    monkeypatch.setattr(scheduler, "run_task", broken)
+    with pytest.raises(RuntimeError, match="the run broke"):
+        env.client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
 
 
 def make_env(tmp_path, monkeypatch):
@@ -68,6 +101,7 @@ def make_env(tmp_path, monkeypatch):
     monkeypatch.setattr(scheduler, "TASKS_FILE", str(tmp_path / "tasks.json"))
     monkeypatch.setattr(scheduler, "RUNS_FILE", str(tmp_path / "runs.json"))
     monkeypatch.setattr(scheduler, "BACKUP_KEYS_FILE", str(tmp_path / "backup_keys.json"))
+    monkeypatch.setattr(scheduler, "_runs", RecordedRuns())
     # schedule_zone starts afresh: no zone read from the host yet, no problem with it logged.
     monkeypatch.setattr(scheduler, "_last_zone", None)
     monkeypatch.setattr(scheduler, "_zone_problem", None)

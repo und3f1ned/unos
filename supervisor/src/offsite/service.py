@@ -277,6 +277,9 @@ class Activity:
     folder: Optional[str] = None
     # The pools whose folders it reads or writes: the Storage page neither unmounts nor forgets them.
     pools: set[str] = field(default_factory=set)
+    # The folders it reads or writes (the target, the folders it copies, a restore's folder): the
+    # Storage page deletes no volume that is one of them or holds one.
+    paths: set[str] = field(default_factory=set)
 
     def answer(self) -> dict:
         return {"kind": self.kind, "started": self.started.isoformat(), "step": self.step,
@@ -328,6 +331,16 @@ def pools_in_use() -> set[str]:
     """The pools that the copy or restore that runs reads or writes."""
     activity = _activity
     return set(activity.pools) if activity is not None else set()
+
+
+def volume_user(volume_path: str) -> Optional[str]:
+    """What of the off-device copy uses the volume at VOLUME_PATH, as pool_user says it: a target, a
+    folder that it copies or a restore's folder that is the volume or lies in it. A folder above it,
+    such as the whole pool, does not count, as for the volume's other users (storage/pools.py)."""
+    activity = _activity
+    if activity is None or not any(_inside(path, volume_path) for path in activity.paths):
+        return None
+    return _running(activity)
 
 
 def pool_user(pool: str) -> Optional[str]:
@@ -451,10 +464,24 @@ def on_system_filesystem(fd: int) -> bool:
     return os.fstat(fd).st_dev in system_devices()
 
 
+class UnknownDisk(Exception):
+    """The whole disks under a folder, or under the system's filesystems, cannot be found."""
+
+
 def on_system_disk(fd: int) -> bool:
     """Whether the folder open at FD is on the system disk: on the filesystem of MOUNTS_BASE or
-    DATA_DIR, or on one of the whole disks that hold them, as another partition of the system disk is."""
-    return on_system_filesystem(fd) or bool(disks_of(fd) & system_disks())
+    DATA_DIR, or on one of the whole disks that hold them, as another partition of the system disk is.
+    UnknownDisk when the disks under the folder or under the system's filesystems cannot be found
+    (sysfs that cannot be read, a network filesystem, ZFS, an overlay root): the rule cannot be kept."""
+    if on_system_filesystem(fd):
+        return True
+    system = system_disks()
+    if not system:
+        raise UnknownDisk("the disks of the system's filesystems are not known")
+    disks = disks_of(fd)
+    if not disks:
+        raise UnknownDisk("its filesystem shows no disk")
+    return bool(disks & system)
 
 
 def _read_dev(path: str) -> Optional[int]:
@@ -479,21 +506,25 @@ def _whole_disks(device: int, depth: int) -> set[str]:
     path = os.path.realpath(os.path.join(SYS_DEV_BLOCK, _major_minor(device)))
     if not os.path.isdir(path):
         return set()
-    slaves = os.path.join(path, "slaves")
-    try:
-        below = sorted(os.listdir(slaves))
-    except OSError:
-        below = []
-    if below and depth < 8:  # device mapper (LVM, LUKS) and md: the devices below them
-        found: set[str] = set()
-        for name in below:
-            number = _read_dev(os.path.join(slaves, name, "dev"))
-            if number is not None:
-                found |= _whole_disks(number, depth + 1)
-        return found
-    if os.path.exists(os.path.join(path, "partition")):
-        return {os.path.basename(os.path.dirname(path))}
-    return {os.path.basename(path)}
+    if depth < 8:
+        if os.path.exists(os.path.join(path, "partition")):  # sda1, nvme0n1p2, md0p1: its device's disks
+            parent = _read_dev(os.path.join(os.path.dirname(path), "dev"))
+            if parent is None:
+                return {os.path.basename(os.path.dirname(path))}
+            return _whole_disks(parent, depth + 1)
+        slaves = os.path.join(path, "slaves")
+        try:
+            below = sorted(os.listdir(slaves))
+        except OSError:
+            below = []
+        if below:  # device mapper (LVM, LUKS) and md: the devices below them
+            found: set[str] = set()
+            for name in below:
+                number = _read_dev(os.path.join(slaves, name, "dev"))
+                if number is not None:
+                    found |= _whole_disks(number, depth + 1)
+            return found
+    return {os.path.basename(path)}  # a disk; a loop device counts as one of its own
 
 
 def whole_disks(devices: set[int]) -> set[str]:
@@ -633,6 +664,18 @@ def _close(fds: list[int]) -> None:
             pass
 
 
+def _system_disk_problem(fd: int, path: str) -> Optional[str]:
+    """Why PATH, open at FD, cannot hold the copy as a folder on the system disk (on_system_disk), or
+    None. When the disks cannot be found it cannot either, and the reason is logged too."""
+    try:
+        return _on_system_disk_problem(path) if on_system_disk(fd) else None
+    except UnknownDisk as e:
+        problem = (f"UNOS cannot tell which disk holds {path} ({e}), so it cannot make sure that the copy "
+                   f"leaves the system disk: choose a folder on a disk mounted below {MOUNTS_BASE}")
+        logger.warning("%s", problem)
+        return problem
+
+
 def _pool_of(path: Optional[str]) -> Optional[str]:
     """The pool that PATH lies in, or None for a path outside the pools' base."""
     base = str(pools_base())
@@ -641,12 +684,19 @@ def _pool_of(path: Optional[str]) -> Optional[str]:
     return path[len(base) + 1:].split("/")[0] or None
 
 
-def _pools_used(settings: OffsiteSettings, *, sources: bool) -> set[str]:
-    """The pools of a disk target and, with SOURCES, of the folders it copies."""
-    found = {_pool_of(settings.path)} if settings.kind == Kind.DISK else set()
-    if sources:
-        found |= {_pool_of(source) for source in settings.sources}
-    return {pool for pool in found if pool}
+def _paths_used(settings: OffsiteSettings, *, sources: bool) -> list[str]:
+    """The folder of a disk target and, with SOURCES, the folders it copies."""
+    found = [settings.path] if settings.kind == Kind.DISK and settings.path else []
+    return found + (list(settings.sources) if sources else [])
+
+
+def _use(activity: Activity, paths: list[str]) -> None:
+    """Name PATHS and their pools as what ACTIVITY reads or writes (pool_user, volume_user)."""
+    for path in paths:
+        activity.paths.add(path)
+        pool = _pool_of(path)
+        if pool:
+            activity.pools.add(pool)
 
 
 def _bad(detail: str) -> HTTPException:
@@ -717,8 +767,9 @@ def _open_target(path: str, *, create: bool) -> tuple[int, Optional[str]]:
         except FileNotFoundError:
             if not create:
                 raise _bad(f"{path} does not exist: is its disk mounted?") from None
-            if on_system_disk(parent):
-                raise _bad(_on_system_disk_problem(path)) from None
+            problem = _system_disk_problem(parent, path)
+            if problem:
+                raise _bad(problem) from None
             try:
                 fd = open_subdirs_nofollow(parent, relative[-1:], create=True, mode=0o700)
             except OSError as e:
@@ -727,8 +778,9 @@ def _open_target(path: str, *, create: bool) -> tuple[int, Optional[str]]:
         except OSError as e:
             raise _bad(_open_problem(e, path, what)) from None
         try:
-            if on_system_disk(fd):
-                raise _bad(_on_system_disk_problem(path))
+            problem = _system_disk_problem(fd, path)
+            if problem:
+                raise _bad(problem)
         except BaseException:
             os.close(fd)
             if created is not None:
@@ -1017,7 +1069,7 @@ async def save_settings(request: SettingsRequest) -> dict:
         problem = await _unreachable(settings)
         if problem:
             raise _bad(problem)
-        activity.pools = _pools_used(settings, sources=False)
+        _use(activity, _paths_used(settings, sources=False))
         created, held = await asyncio.to_thread(_prepare_folders, settings)
         repo = _Repository(settings, secrets.password, secrets.s3_secret_access_key)
         try:
@@ -1039,8 +1091,11 @@ def _remove_files() -> None:
     """The settings, the secrets and the state, and the copies of them kept as .bad (ADR-0324): a
     damaged secrets file holds the password too."""
     for name in (SETTINGS_FILE, SECRETS_FILE, STATUS_FILE):
-        Path(name).unlink(missing_ok=True)
-        state_files.bad_path(Path(name)).unlink(missing_ok=True)
+        path = Path(name)
+        path.unlink(missing_ok=True)
+        state_files.bad_path(path).unlink(missing_ok=True)
+        for staged in path.parent.glob(f".{path.name}.*.tmp"):  # of a write that a stop interrupted
+            staged.unlink(missing_ok=True)
     _sync_folder(Path(SECRETS_FILE).parent)
 
 
@@ -1097,12 +1152,13 @@ class _Repository:
                 env["AWS_DEFAULT_REGION"] = self.settings.region
         return env
 
-    def options(self) -> list[str]:
-        """restic's global options: a cache in TMPDIR (the tmpfs, rebuilt after a restart) and the limits
-        for s3; no cache for a disk, which is read as fast as a cache."""
+    def options(self, *, cache: bool = True) -> list[str]:
+        """restic's global options: for s3 a cache in TMPDIR (the tmpfs, rebuilt after a restart) and the
+        limits; no cache for a disk, which is read as fast as a cache, nor without CACHE (the check,
+        which reads every file from the store)."""
         if self.settings.kind == Kind.DISK:
             return ["--no-cache"]
-        options = ["--cache-dir", os.path.join(tempfile.gettempdir(), "restic-cache")]
+        options = ["--cache-dir", os.path.join(tempfile.gettempdir(), "restic-cache")] if cache else ["--no-cache"]
         if self.settings.limit_upload_kib:
             options += ["--limit-upload", str(self.settings.limit_upload_kib)]
         if self.settings.limit_download_kib:
@@ -1132,7 +1188,7 @@ def _message(text: str) -> str:
 async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: Optional[bytes] = None,
                   stdout_path: Optional[Path] = None, partial: bool = False,
                   on_error_line: Optional[Callable[[bytes], None]] = None,
-                  timeout: Optional[float] = None) -> restic.Result:
+                  timeout: Optional[float] = None, cache: bool = True) -> restic.Result:
     """Run the restic command ARGS on REPO within TIMEOUT, by default its TIMEOUTS; _Failed(STEP) when
     it cannot run, times out or fails. With PARTIAL, exit status 3 (a backup that saved its snapshot
     without some files) is no failure: the caller judges it by the errors that ON_ERROR_LINE gets."""
@@ -1140,7 +1196,7 @@ async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: Optio
     timeout = timeout or TIMEOUTS[name]
     waits = ["--retry-lock", RETRY_LOCK] if name in WAIT_FOR_LOCKS else []
     try:
-        result = await restic.run([*repo.options(), *waits, *args], repo.env(), timeout=timeout, stdin=stdin,
+        result = await restic.run([*repo.options(cache=cache), *waits, *args], repo.env(), timeout=timeout, stdin=stdin,
                                   stdout_path=stdout_path, on_error_line=on_error_line)
     except restic.Timeout:
         raise _Failed(step, f"restic {name} did not end within {_duration(timeout)}: it was stopped",
@@ -1188,7 +1244,7 @@ async def _repository(activity: Optional[Activity] = None) -> tuple[_Repository,
     restore, names the target's pool."""
     stored, secrets = _stored()
     if activity is not None and stored is not None:
-        activity.pools |= _pools_used(stored, sources=False)
+        _use(activity, _paths_used(stored, sources=False))
     try:
         return await asyncio.to_thread(_ready, stored, secrets, sources=False)
     except _Failed as e:
@@ -1328,7 +1384,7 @@ async def _copy(activity: Activity, result: CopyResult, unread: _Unread) -> str:
     except OSError as e:
         raise _Failed("settings", f"The settings of the off-device copy cannot be read: {e}") from None
     if stored is not None:
-        activity.pools = _pools_used(stored, sources=True)
+        _use(activity, _paths_used(stored, sources=True))
     activity.step = "folders"
     repo, held = await asyncio.to_thread(_ready, stored, secrets, sources=True)
     try:
@@ -1384,9 +1440,9 @@ async def _steps(activity: Activity, result: CopyResult, repo: _Repository, unre
     activity.step = "check"
     result.check = "failed"
     subset = [f"--read-data-subset={settings.check_percent}%"] if settings.check_percent else []
-    # An S3 store's check reads the cache of the copy (TMPDIR) instead of a new one of its own.
-    cache = ["--with-cache"] if settings.kind == Kind.S3 else []
-    await _restic(repo, ["check", *cache, *subset], step="check")
+    # Without a cache: every file it checks comes from the store, none from a warm cache, which would
+    # let a damaged copy pass; nothing goes into TMPDIR.
+    await _restic(repo, ["check", *subset], step="check", cache=False)
     result.check = "passed"
 
     activity.step = "restore_test"
@@ -1699,7 +1755,7 @@ async def restore_files(request: RestoreFilesRequest) -> dict:
     pool = validate_pool_name(request.pool)
     path = _snapshot_path(request.path)
     activity = _begin_or_409("restore-files")
-    activity.pools = {pool}
+    activity.pools.add(pool)
     held: list[int] = []
     try:
         repo, held = await _repository(activity)
@@ -1707,6 +1763,7 @@ async def restore_files(request: RestoreFilesRequest) -> dict:
         snapshot = await _find_snapshot(repo, snapshot_id)
         folder, fd = await asyncio.to_thread(_make_folder, pool, f"restored-{_utc_now():%Y%m%d-%H%M%S}")
         held.append(fd)
+        _use(activity, [folder])
     except BaseException:
         _close(held)
         _end(activity)

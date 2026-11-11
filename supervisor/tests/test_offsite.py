@@ -37,6 +37,7 @@ import socket
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 import threading
 import time
@@ -105,6 +106,9 @@ def env(tmp_path, monkeypatch):
 
     state = tmp_path / "fake-restic"
     folder = fake_restic.install(tmp_path / "bin", state)
+    # Each restic writes its host name there (on the device: /proc/sys/kernel/hostname of its own
+    # UTS namespace), and the fake restic records it.
+    monkeypatch.setattr(runner, "HOSTNAME_FILE", str(state / "hostname"), raising=False)
     monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ.get('PATH', os.defpath)}")
     for name, value in (("SETTINGS_FILE", data / "offsite.json"), ("SECRETS_FILE", data / "offsite_secrets.json"),
                         ("STATUS_FILE", data / "offsite_status.json"), ("DATA_DIR", data), ("MOUNTS_BASE", mnt)):
@@ -705,8 +709,10 @@ def test_a_stop_of_the_supervisor_ends_the_copy_and_records_it(env, monkeypatch)
     assert gone(pid)
 
 
-def test_restic_runs_at_a_low_priority_in_a_group_of_its_own():
-    assert runner.command(["unlock"]) == ["nice", "-n", "10", "ionice", "-c", "2", "-n", "7", "restic", "unlock"]
+def test_restic_runs_at_a_low_priority_in_a_uts_namespace_of_its_own():
+    assert runner.command(["unlock"], "unos-0123456789ab") == [
+        "unshare", "--uts", "--", sys.executable, "-c", runner.SET_HOSTNAME, runner.HOSTNAME_FILE,
+        "unos-0123456789ab", "nice", "-n", "10", "ionice", "-c", "2", "-n", "7", "restic", "unlock"]
 
 
 # --- Run now and the status ----------------------------------------------------------------------
@@ -1031,7 +1037,8 @@ async def test_files_that_vanished_during_the_copy_are_a_note_and_no_failure(env
     await save(env)
     (env.state / "calls.jsonl").unlink()
     gone = str(env.pool / "docs" / "letter.txt")
-    fault(env, "backup", vanished=[gone])
+    # Gone after restic opened it once, before it read it: reported. One gone before is not.
+    fault(env, "backup", vanished=[gone], reported=True)
 
     ok, message = await offsite.run_copy("task")
 
@@ -1099,8 +1106,10 @@ def test_run_now_of_a_task_does_not_hold_the_request_and_ends_with_the_superviso
 # 5. check with the cache of an S3 store.
 
 
-async def test_only_the_check_of_an_s3_store_uses_its_cache(env):
-    """Without --with-cache, check builds a second cache of its own in TMPDIR, the 2 GiB tmpfs."""
+async def test_the_check_reads_everything_from_the_store(env):
+    """With a cache (--with-cache), check reads the index, snapshot and tree files of a warm cache, and
+    a damaged copy in the store passes. Without one it reads them all from the store, and writes
+    nothing into TMPDIR, the 2 GiB tmpfs; the other steps of an S3 store keep its cache."""
     await save(env)
     assert (await offsite.run_copy("task"))[0]
     check = [c["argv"] for c in calls(env) if command_of(c["argv"]) == "check"][-1]
@@ -1109,7 +1118,10 @@ async def test_only_the_check_of_an_s3_store_uses_its_cache(env):
     await save(env, **s3_settings(env))
     assert (await offsite.run_copy("task"))[0]
     check = [c["argv"] for c in calls(env) if command_of(c["argv"]) == "check"][-1]
-    assert "--with-cache" in check and option(check, "--cache-dir")
+    assert "--with-cache" not in check and "--no-cache" in check and not option(check, "--cache-dir")
+    assert option(check, "--limit-download") == ["5000"]
+    backup = [c["argv"] for c in calls(env) if command_of(c["argv"]) == "backup"][-1]
+    assert option(backup, "--cache-dir") and "--no-cache" not in backup
 
 
 # 6. A folder that cannot be made is a 400 with the reason.
@@ -1162,7 +1174,7 @@ def fake_sysfs(root: Path) -> None:
     partition), sdb with one partition behind dm-0 (LVM or LUKS), and sdc and sdd in one btrfs."""
     devices = root / "devices" / "pci0000:00" / "block"
     layout = {"sda": "8:0", "sda/sda1": "8:1", "sda/sda2": "8:2", "sdb": "8:16", "sdb/sdb1": "8:17",
-              "sdc": "8:32", "sdd": "8:48"}
+              "sdc": "8:32", "sdd": "8:48", "sde": "8:64", "sdf": "8:80"}
     for name, number in layout.items():
         (devices / name).mkdir(parents=True)
         (devices / name / "dev").write_text(number + "\n")
@@ -1172,11 +1184,22 @@ def fake_sysfs(root: Path) -> None:
     (dm / "slaves").mkdir(parents=True)
     (dm / "dev").write_text("253:0\n")
     (dm / "slaves" / "sdb1").symlink_to(devices / "sdb" / "sdb1")
+    # md0 of sde and sdf, partitioned: md0p1.
+    md = root / "devices" / "virtual" / "block" / "md0"
+    (md / "slaves").mkdir(parents=True)
+    (md / "dev").write_text("9:0\n")
+    for name in ("sde", "sdf"):
+        (md / "slaves" / name).symlink_to(devices / name)
+    (md / "md0p1").mkdir()
+    (md / "md0p1" / "dev").write_text("9:1\n")
+    (md / "md0p1" / "partition").write_text("1\n")
     block = root / "dev" / "block"
     block.mkdir(parents=True)
     for name, number in layout.items():
         (block / number).symlink_to(devices / name)
     (block / "253:0").symlink_to(dm)
+    (block / "9:0").symlink_to(md)
+    (block / "9:1").symlink_to(md / "md0p1")
     btrfs = root / "fs" / "btrfs" / "2b0d5f4e-6c1a-4b8e-9d3f-7a1c2e3b4d5f" / "devices"
     btrfs.mkdir(parents=True)
     for name in ("sdc", "sdd"):
@@ -1194,7 +1217,7 @@ def sysfs(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("numbers, disks", [
     ([(8, 1)], {"sda"}), ([(8, 0)], {"sda"}), ([(8, 2), (8, 17)], {"sda", "sdb"}), ([(253, 0)], {"sdb"}),
-    ([(8, 32), (8, 48)], {"sdc", "sdd"}), ([(9, 9)], set()),
+    ([(8, 32), (8, 48)], {"sdc", "sdd"}), ([(9, 9)], set()), ([(9, 1)], {"sde", "sdf"}),
 ])
 def test_block_devices_map_to_their_whole_disks(sysfs, numbers, disks):
     assert offsite.whole_disks({os.makedev(*n) for n in numbers}) == disks
@@ -1293,6 +1316,19 @@ async def test_a_target_in_a_volume_of_a_copied_pool_is_on_the_disk_it_copies(en
 
 
 # 9. Forget removes what the damaged files hold; a damaged file is logged without its values.
+
+
+async def test_forget_removes_a_staged_secrets_file_too(env):
+    """A write that a stop interrupted leaves its staged file (state_files.replace_file): it may hold
+    the password."""
+    await save(env)
+    for name in (".offsite_secrets.json.0123456789abcdef.tmp", ".offsite.json.fedcba9876543210.tmp",
+                 ".offsite_status.json.00112233445566ff.tmp"):
+        (env.data / name).write_text('{"password": "an old password of the copies"}')
+
+    await offsite.remove_settings()
+
+    assert sorted(p.name for p in env.data.iterdir() if "offsite" in p.name) == []
 
 
 async def test_forget_removes_the_damaged_secrets_file_too(env):
@@ -1466,3 +1502,41 @@ async def test_saving_waits_for_restic_120_seconds_at_most(env, monkeypatch, com
     assert time.monotonic() - started < 8
     assert (refused.value.status_code, refused.value.detail) == (400, "The store did not answer within 1 s")
     assert not (env.data / "offsite.json").exists() and offsite._activity is None
+
+
+# --- the second review of 8fef386 -----------------------------------------------------------------
+
+
+async def test_each_restic_runs_with_a_host_name_of_its_own(env):
+    """restic tests a lock of its own host name by sending SIGHUP to the lock's process ID, which with
+    pid: host can be any process of the host after a crash, and every installation is "unos": each
+    restic runs in a UTS namespace of its own with a name of its own, so a lock is stale only by
+    its age. The snapshots still name the host unos."""
+    await save(env)
+    assert (await offsite.run_copy("task"))[0]
+    names = [call["hostname"] for call in calls(env)]
+    assert all(isinstance(name, str) and re.fullmatch(r"unos-[0-9a-f]{12}", name) for name in names), names
+    assert len(set(names)) == len(names)
+    assert {s["hostname"] for s in (await offsite.list_snapshots())["snapshots"]} == {"unos"}
+
+
+def by_number(mapping: dict[Path, tuple[int, int]]):
+    return by_folder({path: {number} for path, number in mapping.items()})
+
+
+@pytest.mark.parametrize("unknown", ["the target", "the system"])
+async def test_a_target_whose_disks_cannot_be_found_is_refused(env, sysfs, monkeypatch, caplog, unknown):
+    """(9, 9) is no device of sysfs: a network filesystem, ZFS or an overlay root, or sysfs that
+    cannot be read. The rule that the copy leaves the system disk cannot be kept then."""
+    monkeypatch.setattr(offsite, "on_system_disk", REAL_ON_SYSTEM_DISK)
+    system, target = ((8, 1), (9, 9)) if unknown == "the target" else ((9, 9), (8, 16))
+    monkeypatch.setattr(offsite, "_filesystem_devices", by_number(
+        {env.mnt: system, env.data: system, env.usb: target}), raising=False)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(HTTPException) as refused:
+        await save(env)
+
+    assert refused.value.status_code == 400
+    assert refused.value.detail.startswith(f"UNOS cannot tell which disk holds {env.target}"), refused.value.detail
+    assert "UNOS cannot tell which disk holds" in caplog.text
+    assert calls(env) == [] and not env.target.exists()

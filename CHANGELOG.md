@@ -255,9 +255,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   limits. Saving tests the target and makes its repository; a task of the new
   type **Off-device Copy** (daily at 03:00 with one button) or **Run now**
   copies, removes old snapshots, checks the repository and tests a restore of
-  the configuration. Files that vanish while a copy reads them are a note;
-  files that cannot be read fail the copy once its other steps have run. While
-  a copy or a restore runs, its pools cannot be unmounted or removed.
+  the configuration. restic leaves out a file deleted before it opened it; one
+  that vanishes after it opened it is a note; files that cannot be read fail
+  the copy once its other steps have run. While a copy or a restore runs, its
+  pools cannot be unmounted or removed, nor its volumes deleted. One copy
+  repository serves one installation.
   Snapshots restore the configuration into the backup list
   (`offsite_<time>.tar.gz`) and the files into a new folder of a pool. The
   supervisor image contains restic.

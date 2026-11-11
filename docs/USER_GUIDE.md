@@ -1681,14 +1681,17 @@ restore does not restore.
 The backups above stay on the system disk, and nothing else copies the files
 of your pools: a disk that fails takes them with it. The **Off-device copy**
 section of **System** → **Backup & Restore** copies both, with restic, to one
-place off this device, the copy repository:
+place off this device, the copy repository. A copy repository serves one
+installation: give each NAS a folder or a bucket prefix of its own.
 
 - **A disk**: a folder on a disk mounted below `/mnt`, such as a USB disk added
   as a pool (`/mnt/pools/usb/unos-copy`). **Save and test** makes the folder
   when only it is missing. A folder on the system disk, or on another
   partition of it, is refused, and so is the mount point of a disk that is not
-  mounted: it is an empty folder there. A folder that holds other files but no
-  copy repository is refused too.
+  mounted: it is an empty folder there. A folder on a filesystem whose disk
+  UNOS cannot find, such as a network filesystem or ZFS, is refused too, since
+  UNOS cannot tell whether the copy leaves the system disk; so is a folder that
+  holds other files but no copy repository.
 - **An S3-compatible store**, such as Backblaze B2, Wasabi, Amazon S3,
   Cloudflare R2 or MinIO on a second NAS: its endpoint (`https://`, or
   `http://` in your own network, since restic encrypts everything anyway),
@@ -1728,9 +1731,11 @@ its share anew at each copy: on a store that bills downloads, such as Amazon
 S3, 2% checked daily downloads about 60% of the repository a month. Set a
 smaller share there, or 0, with which the check reads none of the data and
 covers only the repository's structure. The first step that fails ends the
-copy, with one exception: files that cannot be read. Files that vanish while
-the copy reads them, deleted or moved meanwhile, are named in a note, and the
-copy succeeds. Files that cannot be read for another reason, such as a missing
+copy, with one exception: files that cannot be read. A file deleted or moved
+after restic listed its folder and before it opened it is left out without a
+word, as if it had not been there; one that vanishes after restic opened it
+and before it read it is named in a note, and the copy succeeds. Files that
+cannot be read for another reason, such as a missing
 permission or a read error of the disk, are left out of the snapshot, the
 other steps still run, and then the copy fails, naming up to 5 of them.
 **State** shows the last copy: whether it succeeded, the files new, changed and
@@ -1739,12 +1744,12 @@ step that failed with restic's message; **Refresh** reads it again. A failed
 copy of a task is alerted to every notification channel. A copy that starts
 while another one or a restore runs is skipped and counts as a success: the
 first copy of a large pool to a cloud store can take days. A step that finds
-the repository locked by another program, such as a copy of another device,
-waits up to 10 minutes for it.
+the repository locked by another program waits up to 10 minutes for it.
 
 While a copy or a restore runs, the disks it uses stay mounted: **Unmount** and
 **Remove Pool** on **Storage** refuse for its pools, and so does a plain
-`umount` on the host, until it ends.
+`umount` on the host, until it ends. **Delete Volume** refuses for a volume
+that holds its target, a folder it copies or the folder a restore writes.
 
 A copy on the disk of a folder it copies, such as a folder of the same pool,
 protects against deleted and damaged files, not against the loss of that

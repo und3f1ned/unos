@@ -314,8 +314,22 @@ Open owner actions:
   a run now connect to an S3 store first (TCP and the TLS handshake, 10 s, nothing sent) and refuse
   one that does not answer at once, and Save's `cat config` and `init` end after 120 s with 400
   "The store did not answer within 120 s"; tests first (7, each failed on 8fef386).
-- Open: the deploy of that fix, `scripts/dev/scenario.sh offsite` again before and after a reboot
-  (ADR-0018), a copy to a USB disk and to an S3 store, and `passes`.
+- A second review of 8fef386 (the coordinator's decisions, the reviewer's reading of restic
+  0.18.0) found, each with a test that failed first: (1, 2) restic tests a lock of its own host
+  name by sending SIGHUP to the lock's PID, any host process with `pid: host` after a crash, and
+  every installation is "unos": each restic now runs in a UTS namespace of its own with the host
+  name `unos-<12 hex>` (`unshare --uts` and a Python step that writes it, restic's arguments and
+  environment unchanged), and one copy repository serves one installation; (3) `check
+  --with-cache` read a warm cache, so a damaged store passed: `check --no-cache` for both kinds;
+  (4) a disk target whose disks cannot be found was taken by the filesystem rule: 400 "UNOS
+  cannot tell which disk holds ...", logged, and a partition of an md or device-mapper device
+  follows to its members (loop devices stay as they are); (5) restic leaves out a file that
+  vanished before its first open without a word: the docs say so, and the fake restic does too
+  unless a test asks for the reported case; (6) the scheduler tests' clients raise what a run
+  raised, Forget removes a staged `.offsite_secrets.json.<hex>.tmp`, and Delete Volume answers
+  409 naming the copy while it uses the volume.
+- Open: the deploy of these fixes, `scripts/dev/scenario.sh offsite` again before and after a
+  reboot (ADR-0018), a copy to a USB disk and to an S3 store, and `passes`.
 
 ### 2026-11-11: HTTP notifications that cannot connect from the container go from the host's network
 

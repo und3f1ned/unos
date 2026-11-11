@@ -9,9 +9,11 @@ where the pool's mount was checked.
 
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 import docker
 import pytest
@@ -1237,6 +1239,34 @@ class TestVolumeInUse:
             f"(docs, scans) and NFS exports ({DOCUMENTS}). Stop or remove them and try again."
         )
         self.assert_kept(documents)
+
+    @pytest.mark.parametrize("path", [DOCUMENTS, f"{DOCUMENTS}/copies", f"{DOCUMENTS}/restored-20261111-030000"])
+    def test_the_off_device_copy_that_uses_the_volume(self, api, documents, monkeypatch, path):
+        """A copy or a restore whose target, folder to copy or restore folder is the volume or lies in
+        it (ADR-0337): restic would go on in a deleted directory."""
+        offsite = importlib.import_module("src.offsite.service")
+        started = datetime(2026, 11, 11, 3, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr(offsite, "_activity", offsite.Activity("copy", started, paths={path}))
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == (
+            "Volume 'documents' is used by the off-device copy: the copy started at 2026-11-11 03:00:00 UTC "
+            "is still running. Wait for it to end and try again."
+        )
+        self.assert_kept(documents)
+
+    def test_the_off_device_copy_of_the_whole_pool_does_not_count(self, api, documents, monkeypatch):
+        # As a share of the pool: it keeps working without the volume.
+        offsite = importlib.import_module("src.offsite.service")
+        started = datetime(2026, 11, 11, 3, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr(offsite, "_activity", offsite.Activity("copy", started, paths={"/mnt/pools/data"}))
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 200, response.text
+        assert documents.subvols.paths(DATA_UUID) == []
 
     def test_users_of_a_parent_folder_or_of_other_volumes_do_not_count(self, api, documents):
         # They keep working without the volume.

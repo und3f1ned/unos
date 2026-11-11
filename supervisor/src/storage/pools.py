@@ -2230,8 +2230,16 @@ def _refuse_used_volume(name: str, volume_path: str) -> None:
     volumes: an unmount goes ahead without Docker because a check afterwards
     finds remaining users and mounts the pool again (_unmount_pool_target),
     but a deleted subvolume cannot be brought back. RuntimeError (HTTP 500)
-    when the shares cannot be read.
+    when the shares cannot be read. A copy or a restore of the off-device copy whose folders are the
+    volume or lie in it is refused first, as for an unmount of its pool (ADR-0337).
     """
+    from ..offsite import service as offsite  # it imports this module
+
+    copying = offsite.volume_user(volume_path)
+    if copying:
+        raise PoolConflictError(
+            f"Volume '{name}' is used by the off-device copy: {copying}. Wait for it to end and try again."
+        )
     try:
         with _docker_api() as api:
             running, bound = _running_containers(api)

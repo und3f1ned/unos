@@ -231,6 +231,8 @@ def configure(state: Path) -> Path:
     offsite.on_system_filesystem = lambda fd: False
     # Its fake restic keeps an S3 store in its state directory: no store to connect to first.
     offsite.probe_store = lambda endpoint: None
+    # restic's own host name goes into a file of the fake's state, not into /proc of this machine.
+    importlib.import_module("src.offsite.restic").HOSTNAME_FILE = str(state / "fake-restic" / "hostname")
 
     # 5 attempts per minute and client: the specs sign in through the form once per test.
     importlib.import_module("src.auth.router").limiter.enabled = False

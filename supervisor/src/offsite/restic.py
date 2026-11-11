@@ -2,8 +2,9 @@
 
 restic runs off the event loop as an asyncio subprocess, in a process group of its own, at a low
 priority (``nice -n 10`` and the lowest level of the best-effort I/O class, ``ionice -c 2 -n 7``:
-nice and ionice exec it, so the group holds restic alone), with the environment that the caller
-builds for it, never the supervisor's. At its timeout, and when the task that waits for it is
+nice and ionice exec it, so the group holds restic alone), in a UTS namespace of its own with a host
+name of its own (``command``), with the environment that the caller builds for it, never the
+supervisor's. At its timeout, and when the task that waits for it is
 cancelled (a stop of the supervisor), the whole group is killed. Its secrets come only in that
 environment, never in its arguments (ADR-0125).
 """
@@ -13,13 +14,29 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import secrets
 import signal
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 RESTIC = "restic"
 PRIORITY = ("nice", "-n", "10", "ionice", "-c", "2", "-n", "7")
+# Each restic runs in a UTS namespace of its own (unshare --uts: the container is privileged), whose
+# host name SET_HOSTNAME writes into HOSTNAME_FILE before it executes nice, ionice and restic:
+# "unos-" and 12 random hexadecimal digits. restic tests a lock of its own host name by sending SIGHUP
+# to the lock's process ID, which with pid: host can be any process of the host after a crash, and
+# the host name of every installation is unos; with a name that no other restic has, a lock is stale
+# only by its age (30 minutes). The snapshots name the host unos all the same (--host).
+HOSTNAME_FILE = "/proc/sys/kernel/hostname"
+SET_HOSTNAME = (
+    "import os, sys\n"
+    "with open(sys.argv[1], 'w') as f:\n"
+    "    f.write(sys.argv[2])\n"
+    "os.environ.pop('LC_CTYPE', None)  # Python's coercion of the C locale (PEP 538), not restic's\n"
+    "os.execvp(sys.argv[3], sys.argv[3:])\n"
+)
 # What is kept of restic's standard error (its last part), and read of its standard output at most:
 # the JSON of `snapshots` and the summary of `backup`; `dump` writes into a file instead.
 STDERR_KEPT = 64 * 1024
@@ -42,9 +59,10 @@ class Result:
     stderr: str
 
 
-def command(args: list[str]) -> list[str]:
-    """The argv that runs restic with ARGS at a low priority."""
-    return [*PRIORITY, RESTIC, *args]
+def command(args: list[str], hostname: str) -> list[str]:
+    """The argv that runs restic with ARGS at a low priority, in a UTS namespace named HOSTNAME."""
+    return ["unshare", "--uts", "--", sys.executable, "-c", SET_HOSTNAME, HOSTNAME_FILE, hostname,
+            *PRIORITY, RESTIC, *args]
 
 
 async def _read(stream: asyncio.StreamReader, limit: int, keep_end: bool) -> tuple[bytes, bool]:
@@ -131,7 +149,7 @@ async def run(args: list[str], env: dict[str, str], *, timeout: float, stdin: by
     out = open(stdout_path, "xb") if stdout_path is not None else None
     try:
         process = await asyncio.create_subprocess_exec(
-            *command(args),
+            *command(args, f"unos-{secrets.token_hex(6)}"),
             env=env,
             stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
             stdout=out if out is not None else asyncio.subprocess.PIPE,

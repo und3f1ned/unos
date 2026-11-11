@@ -179,9 +179,9 @@ test.describe('Off-device copy', () => {
     });
     expect(upload.ok(), await upload.text()).toBeTruthy();
     // The stand-in's fake restic reports the letter as gone while it reads the folder, as restic does
-    // for a file deleted meanwhile (the faults of supervisor/tests/fake_restic.py).
+    // for a file deleted between its two opens of it (the faults of supervisor/tests/fake_restic.py).
     const faults = join(process.env.E2E_STANDIN_STATE as string, 'fake-restic', 'faults.json');
-    writeFileSync(faults, JSON.stringify({ backup: { vanished: [letter] } }));
+    writeFileSync(faults, JSON.stringify({ backup: { vanished: [letter], reported: true } }));
 
     try {
       const saved = await request.put(`${BASE_URL}/api/v1/offsite/settings`, {
