@@ -642,20 +642,21 @@ def remove_stale_temp_files(directory: Path) -> None:
             continue  # gone meanwhile, or not removable: never fail the backup for it
 
 
-def publish_backup_file(tmp: Path, prefix: str, extension: str) -> str:
+def publish_backup_file(tmp: Path, prefix: str, extension: str, when: datetime | None = None) -> str:
     """Give the finished file ``tmp`` its backup name in the same directory; return the name.
 
-    The name is ``<prefix>_<YYYYmmdd_HHMMSS><extension>``, with ``_1``, ``_2``,
-    ... before the extension when it is taken. os.link never replaces an
-    existing file, and the file appears complete under the new name (also
-    after a power loss: it is written to disk first). The caller removes ``tmp``.
+    The name is ``<prefix>_<YYYYmmdd_HHMMSS><extension>``, of ``when`` (default:
+    now), with ``_1``, ``_2``, ... before the extension when it is taken. os.link
+    never replaces an existing file, and the file appears complete under the new
+    name (also after a power loss: it is written to disk first). The caller
+    removes ``tmp``.
     """
     fd = os.open(tmp, os.O_RDONLY)
     try:
         os.fsync(fd)
     finally:
         os.close(fd)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = (when or datetime.now()).strftime("%Y%m%d_%H%M%S")
     for attempt in range(NAME_ATTEMPTS):
         number = f"_{attempt}" if attempt else ""
         name = f"{prefix}_{timestamp}{number}{extension}"
@@ -1052,6 +1053,52 @@ def _write_archive(content: Path, out: BinaryIO) -> None:
     with tarfile.open(fileobj=out, mode="w:gz") as tar:
         for item in sorted(content.iterdir()):
             tar.add(item, arcname=item.name)
+
+
+def configuration_archive() -> bytes:
+    """The archive that Create Backup makes (POST /backup/create without encryption), built in memory.
+
+    The off-device copy sends it to its repository, which restic encrypts (ADR-0337). Blocking (the
+    copy of the database, the archive): call it in a worker thread. Its files are collected in TMPDIR.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        content = Path(tmpdir) / "content"
+        content.mkdir()
+        _collect_backup_content(BackupConfig(), content)
+        out = io.BytesIO()
+        _write_archive(content, out)
+    return out.getvalue()
+
+
+def check_archive(path: Path) -> dict:
+    """Check the unencrypted backup at ``path`` as an upload is checked (_inspect_archive), writing
+    nothing; return its manifest. BackupValidationError for an archive that a restore would refuse."""
+    return _inspect_archive(path)
+
+
+def store_backup(source: Path, prefix: str, when: datetime) -> BackupInfo:
+    """Copy the checked unencrypted backup ``source`` into BACKUP_DIR as ``<prefix>_<when>.tar.gz``.
+
+    Written under a temporary name and published complete (publish_backup_file), as an upload is.
+    Blocking: call it in a worker thread.
+    """
+    ensure_backup_dir()
+    remove_stale_temp_files(BACKUP_DIR)
+    tmp = backup_temp_file(BACKUP_DIR, prefix)
+    try:
+        with open(source, "rb") as src, open(tmp, "xb") as out:
+            shutil.copyfileobj(src, out, _CHUNK_SIZE)
+        name = publish_backup_file(tmp, prefix, PLAIN_EXTENSION, when)
+    finally:
+        tmp.unlink(missing_ok=True)
+    st = os.stat(BACKUP_DIR / name)
+    return BackupInfo(
+        filename=name,
+        size=st.st_size,
+        created=datetime.fromtimestamp(st.st_mtime).isoformat(),
+        version=_manifest_version(BACKUP_DIR / name),
+        encrypted=False,
+    )
 
 
 def _create_backup(config: BackupConfig) -> dict:

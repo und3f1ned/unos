@@ -36,6 +36,7 @@ from src.updates.schemas import UpdateConfig
 # The packages export their APIRouter as `router`, which hides the module of that name.
 health = importlib.import_module("src.health.router")
 notifications = importlib.import_module("src.notifications.router")
+offsite = importlib.import_module("src.offsite.service")
 power = importlib.import_module("src.power.router")
 scheduler = importlib.import_module("src.scheduler.router")
 security = importlib.import_module("src.security.router")
@@ -260,6 +261,18 @@ STATE_FILES = [
     StateFile("scheduled_backup_keys.json", scheduler, "BACKUP_KEYS_FILE",
               lambda: scheduler.save_backup_keys({"t1": b"k" * scheduler.BACKUP_KEY_SIZE}), scheduler.load_backup_keys,
               {}),
+    # The off-device copy (ADR-0337): its settings, its secrets (0600) and the result of its last copy and restore.
+    StateFile("offsite.json", offsite, "SETTINGS_FILE",
+              lambda: offsite.write_settings(offsite.OffsiteSettings(kind="disk", path="/mnt/usb/copy",
+                                                                     sources=["/mnt/pools/data"])),
+              offsite.load_settings, None),
+    StateFile("offsite_secrets.json", offsite, "SECRETS_FILE",
+              lambda: offsite.write_secrets(offsite.Secrets(password="a password of the copies")),
+              offsite.load_secrets, offsite.Secrets()),
+    StateFile("offsite_status.json", offsite, "STATUS_FILE",
+              lambda: offsite.write_status(offsite.Status(last_copy=offsite.CopyResult(
+                  started=_NOW.isoformat(), trigger="task"))),
+              offsite.load_status, offsite.Status()),
 ]
 _IDS = [f.name for f in STATE_FILES]
 

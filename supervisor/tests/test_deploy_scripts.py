@@ -2487,6 +2487,25 @@ class TestBuildContexts:
         build = _compose_file("docker-compose.yml")["services"]["supervisor"]["build"]
         assert build == {"context": "../supervisor", "args": {"UNOS_VERSION": "${UNOS_VERSION:-unknown}"}}
 
+    def test_restic_comes_in_a_layer_of_its_own_after_the_pip_layer(self):
+        """The off-device copy runs restic in the supervisor's container (ADR-0337). Its own RUN after
+        pip's keeps the apt-get and pip layers above it cached: a device that builds the image downloads
+        only restic, and the comment above the layer says so."""
+        text = (REPO_ROOT / "supervisor" / "Dockerfile").read_text()
+        lines = [line.strip() for line in text.splitlines()]
+        restic = ("RUN apt-get update && apt-get install -y --no-install-recommends restic "
+                  "&& rm -rf /var/lib/apt/lists/*")
+        assert lines.count(restic) == 1
+        at = lines.index(restic)
+        assert lines.index("RUN pip install --no-cache-dir -r requirements.txt") < at < lines.index("COPY src/ ./src/")
+        comment = []
+        for line in reversed(lines[:at]):
+            if not line.startswith("#"):
+                break
+            comment.insert(0, line)
+        assert "ADR-0337" in " ".join(comment) and "cached" in " ".join(comment), comment
+        assert "restic" not in text.split("COPY requirements.txt")[0]
+
 
 # A FROM line that names its image by tag and digest, `name:tag@sha256:<64 hex>`, with an
 # optional --platform and stage name (ADR-0305). The digest decides what a build starts from. The

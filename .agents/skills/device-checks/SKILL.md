@@ -59,14 +59,15 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    gone: the script prints the owner action that makes it again.
 
 6. **Run a scenario check, when the owner asked for one.** `scripts/dev/scenario.sh <area>`
-   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `scrub`, or `all`; `--pool <name>` where
+   (`files`, `volumes`, `smart`, `backups`, `smb`, `smbconf`, `scrub`, `offsite`, or `all`; `--pool <name>` where
    several pools are mounted), the checks of the host-level entries that the feature-pass
    skill's table names (ADR-0304). They change the device: they make a temporary user, share,
    volume, Scheduler task and folders named `unoscheck<6 hex digits>`, and two backups, through
    the API, and
    remove them again; `smbconf` also edits smb.conf by hand and restarts the supervisor once
-   (ADR-0309), and `scrub` scrubs the pool, three times on a small pool, and leaves its last
-   scrub result (ADR-0314).
+   (ADR-0309), `scrub` scrubs the pool, three times on a small pool, and leaves its last
+   scrub result (ADR-0314), and `offsite` sets up an off-device copy to a folder of the pool and
+   forgets it again (ADR-0337); it refuses to start on a device that has one set up.
    `all` takes several minutes: run it in the background as
    `timeout 3600 scripts/dev/scenario.sh all > <log> 2>&1` (a background command has a deadline,
    ADR-0335), or in the foreground with a tool timeout long enough, since a check that is killed

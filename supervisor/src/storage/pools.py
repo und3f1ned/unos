@@ -56,7 +56,7 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1223,6 +1223,15 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
     here = [m for m in mounts if m.target == target]
     if not here:
         return
+    # A copy or a restore of the off-device copy holds the pool's folders open while restic runs, so
+    # the umount would fail as busy: it is named instead (ADR-0337). That module imports this one.
+    from ..offsite import service as offsite
+
+    copying = offsite.pool_user(name)
+    if copying:
+        raise PoolBusyError(
+            f"Pool '{name}' is used by the off-device copy: {copying}. Wait for it to end and try again."
+        )
     users = _containers_using(name, target)
     if users:
         raise PoolBusyError(
@@ -2221,8 +2230,16 @@ def _refuse_used_volume(name: str, volume_path: str) -> None:
     volumes: an unmount goes ahead without Docker because a check afterwards
     finds remaining users and mounts the pool again (_unmount_pool_target),
     but a deleted subvolume cannot be brought back. RuntimeError (HTTP 500)
-    when the shares cannot be read.
+    when the shares cannot be read. A copy or a restore of the off-device copy whose folders are the
+    volume or lie in it is refused first, as for an unmount of its pool (ADR-0337).
     """
+    from ..offsite import service as offsite  # it imports this module
+
+    copying = offsite.volume_user(volume_path)
+    if copying:
+        raise PoolConflictError(
+            f"Volume '{name}' is used by the off-device copy: {copying}. Wait for it to end and try again."
+        )
     try:
         with _docker_api() as api:
             running, bound = _running_containers(api)
@@ -2295,13 +2312,18 @@ def _delete_volume(
             f"{subvol_id}) existed before it was created."
         )
     _check_volume_id(pool, target, name, subvol_id)
-    if refuse_if_used:
-        _refuse_used_volume(name, os.path.join(target, name))
-    result = host.run_on_host(
-        ["btrfs", "subvolume", "delete", "--subvolid", str(subvol_id), target],
-        timeout=VOLUME_TIMEOUT,
-        errors="replace",  # it prints the subvolume's path, which may have changed by then
-    )
+    from ..offsite import service as offsite  # it imports this module
+
+    # Under the lock with which a copy of the off-device copy names and opens its folders: either the
+    # check sees the copy, or the copy finds the volume gone (ADR-0337).
+    with offsite.FOLDERS_LOCK if refuse_if_used else nullcontext():
+        if refuse_if_used:
+            _refuse_used_volume(name, os.path.join(target, name))
+        result = host.run_on_host(
+            ["btrfs", "subvolume", "delete", "--subvolid", str(subvol_id), target],
+            timeout=VOLUME_TIMEOUT,
+            errors="replace",  # it prints the subvolume's path, which may have changed by then
+        )
     if not result.ok:
         message = result.stderr.strip() or f"exit status {result.returncode}"
         if "not empty" in message.lower():

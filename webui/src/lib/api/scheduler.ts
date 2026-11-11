@@ -1,6 +1,6 @@
 import { api } from "./client";
 
-export type TaskType = "snapshot" | "scrub" | "smart_test" | "backup" | "custom";
+export type TaskType = "snapshot" | "scrub" | "smart_test" | "backup" | "offsite_copy" | "custom";
 export type ScheduleFrequency = "hourly" | "daily" | "weekly" | "monthly" | "custom";
 
 export interface ScheduledTask {

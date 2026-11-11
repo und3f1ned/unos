@@ -2481,6 +2481,28 @@ class TestPoolEndpoints:
         ("method", "url"),
         [("post", "/api/v1/storage/pools/data/unmount"), ("delete", "/api/v1/storage/pools/data")],
     )
+    def test_a_pool_that_the_off_device_copy_uses_answers_409(self, api, data_pool, monkeypatch, method, url):
+        """While a copy or a restore of the off-device copy reads or writes a pool, UNOS neither
+        unmounts nor forgets it (ADR-0337): restic would go on writing onto the mount point."""
+        from datetime import datetime, timezone
+
+        offsite = importlib.import_module("src.offsite.service")
+        pools.mount_pool("data")
+        started = datetime(2026, 11, 11, 3, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr(offsite, "_activity", offsite.Activity("copy", started, pools={"data"}))
+
+        response = getattr(api, method)(url)
+
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "Pool 'data' is used by the off-device copy: the copy started at 2026-11-11 03:00:00 UTC "
+                      "is still running. Wait for it to end and try again."})
+        assert data_pool.mounted("/mnt/pools/data")
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+
+    @pytest.mark.parametrize(
+        ("method", "url"),
+        [("post", "/api/v1/storage/pools/data/unmount"), ("delete", "/api/v1/storage/pools/data")],
+    )
     def test_pool_used_by_a_container_is_409(self, api, data_pool, method, url):
         pools.mount_pool("data")
         data_pool.docker.add("transmission", sources=["/mnt/pools/data/apps/transmission"])

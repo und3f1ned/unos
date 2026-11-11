@@ -5,6 +5,7 @@
   import { intlLocale, t } from "$lib/i18n";
   import { listBackups, createBackup, deleteBackup, downloadBackup, uploadBackup, restoreBackup, formatBytes, type BackupInfo } from "$lib/api/backup";
   import { Archive, Plus, Trash2, RefreshCw, Clock, Download, Upload, RotateCcw, AlertTriangle, CheckCircle, Lock } from "lucide-svelte";
+  import OffsiteCopy from "./OffsiteCopy.svelte";
 
   let backups: BackupInfo[] = [];
   let loading = true;
@@ -283,6 +284,9 @@
       </div>
     {/if}
   </div>
+
+  <!-- The off-device copy (ADR-0337): a configuration it restores lands in the list above. -->
+  <OffsiteCopy on:restored={loadBackups} />
 </div>
 
 <!-- Restore Confirmation Modal. Modal's overlay (ADR-0302): taller than the window, the dialog

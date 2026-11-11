@@ -2131,15 +2131,43 @@
       "category": "backup",
       "description": "Backups of the configuration and of the pools' data are copied off the device and restored from there",
       "steps": [
-        "Configure a target: a USB disk or a second NAS (btrfs send/receive or rsync), or a cloud store (restic or rclone)",
-        "A scheduled job copies the pools' data and the configuration backups there, with a bandwidth limit and encryption",
-        "Each copy is verified, and a restore from it is tested",
-        "Configuration backups no longer stay only on the system disk"
+        "On System > Backup & Restore, Save and test of a copy target, a folder on a disk mounted below /mnt or an S3-compatible store with its keys, with the password typed twice (at least 12 characters), opens the copy repository with restic or makes it when none is there; a folder on the system disk, a wrong password and a store out of reach are refused with the reason, and nothing is saved",
+        "The repository password and the S3 secret key are kept only in /data/offsite_secrets.json, mode 0600: in no answer of the API, settings or status file, log line, configuration backup or argument of restic",
+        "A task of the type offsite_copy, or Run now, copies the configuration archive and the chosen pool folders without their snapshots and trash, removes the snapshots beyond the retention, checks the repository with a share of its data and tests the restore of the configuration; a step that fails fails the run with restic's message and is alerted as a task problem, files that vanished while restic read them are a note, files that cannot be read fail the run once every step ran, and a run while another copy runs is skipped as a success",
+        "The page shows the last copy with its files, check and restore test, and the snapshots; Restore configuration puts a snapshot's configuration into the backup list, and Restore files restores a snapshot or one of its folders into a new folder of a pool without overwriting anything"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_offsite.py",
+        "supervisor/tests/test_state_files.py",
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_standin.py",
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_dev_scenarios.py",
+        "supervisor/tests/test_pool_persistence.py",
+        "webui/tests/offsite.spec.ts",
+        "webui/tests/scheduler.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
       ],
       "passes": false,
       "adr": [
-        "ADR-0041"
-      ]
+        "ADR-0041",
+        "ADR-0337"
+      ],
+      "notes": "Built (ADR-0337): restic in a layer of its own of the supervisor image; supervisor/src/offsite/ with the settings in /data/offsite.json, the secrets in /data/offsite_secrets.json (0600) and the last copy and restore in /data/offsite_status.json; the copy's steps unlock, the configuration from standard input, the folders, forget with --prune, check and the restore test, for the Scheduler's task type offsite_copy and Run now; the restores of the configuration into the backup list and of files into a new folder restored-<UTC time> of a pool; the section Off-device copy of System > Backup & Restore. restic is not installed on the workstation: the backend tests and the local stand-in run the fake of supervisor/tests/fake_restic.py, so restic itself runs first on the device. The test stack skips the E2E main flow: its image has no restic, and its pools share the filesystem of its data volume, which the copy refuses as the system disk. The dev device ran e663f14 with the real restic 0.18: scenario.sh offsite OK (12 steps), and a copy, Restore configuration and the regular restore of that backup left the users, shares, tokens, smb.conf and passdb the same. The review in a fresh context (ADR-0017) of e663f14 found 13 points, each fixed with a test that failed on e663f14 (PROGRESS.md, 2026-11-11): the folders held open while restic runs and the Storage page's refusal to unmount or remove a pool in use, --retry-lock 10m and snapshots --no-lock, the rule for exit status 3, Run now of a task as a task of the scheduler, check --with-cache for s3, the whole disks instead of filesystems, --host unos, and smaller ones. On 8fef386 the device check found that Save with an S3 store out of reach held its request and the lock of the module for restic's 10 minutes: Save and a run now connect to an S3 store first (10 s) and refuse one that does not answer, and Save's restic commands end after 120 s. A second review of 8fef386 led to a UTS namespace and host name of its own for each restic (restic tests a lock of its own host name with SIGHUP to its PID), one copy repository per installation, check --no-cache, the refusal of a disk target whose disks cannot be found, md and device-mapper partitions followed to their members, the refusal of Delete Volume while a copy uses it, and Forget removing staged secrets files. Open: the deploy of these fixes, scripts/dev/scenario.sh offsite again before and after a reboot (ADR-0018), and a copy to an S3 store and to a USB disk, which the scenario check leaves out."
+    },
+    {
+      "id": "backup.off-device-copies-over-sftp",
+      "category": "backup",
+      "description": "Off-device copies also go to a second NAS over SFTP or to a restic REST server",
+      "steps": [
+        "On System > Backup & Restore, an SFTP target (host, user, folder, with its host key pinned) or a REST server with its credentials can be saved and tested as the copy target",
+        "Copies, their check and restore test, and the restores run to it as to a disk or an S3 store"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0337"
+      ],
+      "notes": "Left out of backup.off-device-copies by ADR-0337: SFTP needs ssh in the supervisor image, key management and the pinning of host keys."
     },
     {
       "id": "backup.streaming-restore",

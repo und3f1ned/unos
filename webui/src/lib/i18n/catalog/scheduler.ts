@@ -30,6 +30,7 @@ export const en = {
 	'scheduler.type.scrub': 'BTRFS Scrub',
 	'scheduler.type.smartTest': 'SMART Test',
 	'scheduler.type.backup': 'System Backup',
+	'scheduler.type.offsiteCopy': 'Off-device Copy',
 	'scheduler.type.custom': 'Custom Command',
 
 	// How often a task runs.
@@ -74,6 +75,8 @@ export const en = {
 	'scheduler.form.command': 'Command',
 	'scheduler.form.commandHint':
 		"Runs with /bin/sh as root in the supervisor's container. Each run records its output (the last 16 KiB) and its exit status. A command still running after 24 hours is stopped, and the processes it leaves running end with it.",
+	'scheduler.form.offsiteHint':
+		'Copies the configuration and the folders to the target set up on System > Backup & Restore, Off-device copy. A run while a copy still runs is skipped.',
 	'scheduler.form.keepCount': 'Keep Count',
 	'scheduler.form.keepSnapshots': 'Number of snapshots to retain',
 	'scheduler.form.keepBackups': 'Number of backups to retain',
@@ -146,6 +149,7 @@ export const ru: Translation<typeof en> = {
 	'scheduler.type.scrub': 'Проверка целостности BTRFS (scrub)',
 	'scheduler.type.smartTest': 'Тест SMART',
 	'scheduler.type.backup': 'Резервная копия системы',
+	'scheduler.type.offsiteCopy': 'Копия вне устройства',
 	'scheduler.type.custom': 'Пользовательская команда',
 
 	'scheduler.frequency.hourly': 'Ежечасно',
@@ -187,6 +191,8 @@ export const ru: Translation<typeof en> = {
 	'scheduler.form.command': 'Команда',
 	'scheduler.form.commandHint':
 		'Выполняется через /bin/sh от имени root в контейнере супервизора. Каждый запуск сохраняет вывод команды (последние 16 КиБ) и её код завершения. Команда, которая выполняется дольше 24 часов, останавливается, и вместе с ней завершаются оставленные ею процессы.',
+	'scheduler.form.offsiteHint':
+		'Копирует конфигурацию и папки в хранилище, настроенное в разделе «Система» → «Резервное копирование и восстановление», «Копия вне устройства». Запуск, пока идёт прежнее копирование, пропускается.',
 	'scheduler.form.keepCount': 'Сколько хранить',
 	'scheduler.form.keepSnapshots': 'Число хранимых снимков',
 	'scheduler.form.keepBackups': 'Число хранимых резервных копий',

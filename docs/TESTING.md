@@ -326,6 +326,11 @@ specs that need Docker, although that stack has the host's Docker socket. On the
 has no Docker socket, the container and app routes answer 503 with the reason (ADR-0323), which
 `tests/api.spec.ts` and the "Containers without Docker (stand-in)" specs of
 `tests/containers.spec.ts` check; the test stack skips them too.
+restic is not installed here: for the off-device copy the stand-in runs the fake restic of
+`supervisor/tests/fake_restic.py`, which the backend tests use too, keeps its copy targets below
+its state directory and counts none of it as the system disk (ADR-0337). The test stack has no
+restic, and its pools share the filesystem of its data volume, which the copy refuses as the
+system disk: it skips the main flow of `tests/offsite.spec.ts`.
 
 The tests that restore a backup ("Restoring backups" in `tests/backup-restore.spec.ts`) replace
 the database and `smb.conf` of the target. They run only when the target is on this machine
@@ -385,11 +390,12 @@ secrets from the git-ignored `dev.env` (ADR-0212):
 - `scripts/dev/ipv6-filter.sh install|status|remove`: the device's inbound IPv6 filter
   (ADR-0301); `status` only reads, `install` and `remove` run on the owner's request.
 - `scripts/dev/scenario.sh [--pool NAME] AREA...`: the scenario checks (ADR-0304) of `files`,
-  `volumes`, `smart`, `backups`, `smb`, `smbconf` and `scrub` (`all`: every area), on the owner's
-  request. Each runs its area's user scenario through the API and on the host with a temporary
-  user, share, volume, Scheduler task and folders named `unoscheck<6 hex digits>` and two backups
-  (smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; scrub scrubs the
-  pool, ADR-0314), prints PASS or FAIL and the SD MiB of each step, removes what it made, also
+  `volumes`, `smart`, `backups`, `smb`, `smbconf`, `scrub` and `offsite` (`all`: every area), on the
+  owner's request. Each runs its area's user scenario through the API and on the host with a
+  temporary user, share, volume, Scheduler task and folders named `unoscheck<6 hex digits>` and two
+  backups (smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; scrub scrubs
+  the pool, ADR-0314; offsite sets up an off-device copy to a folder of the pool, with its restores,
+  and forgets it, ADR-0337), prints PASS or FAIL and the SD MiB of each step, removes what it made, also
   after a FAIL or Ctrl-C, and compares the
   device with how it found it. The feature-pass skill names the check of each host-level entry;
   after a reboot (ADR-0018) `scenario.sh all` runs again, with the checks by hand that its table

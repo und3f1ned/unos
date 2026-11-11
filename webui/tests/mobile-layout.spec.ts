@@ -347,6 +347,70 @@ const BACKUPS = {
   },
 };
 
+// The off-device copy to a cloud store (ADR-0337), as GET /offsite/settings, /status and /snapshots
+// answer: the S3 form, a failed copy with restic's long message, a restore into a long folder and a
+// snapshot of a folder whose path has nowhere to break.
+const OFFSITE_SNAPSHOT_ID = '4f2a9c1e7b3d5a8f0e6c2b9d1a7f3e5c8b0d4a6f2e9c1b7d3a5f8e0c6b2d9a1f';
+const OFFSITE = {
+  '/api/v1/offsite/settings': {
+    configured: true,
+    settings: {
+      kind: 's3',
+      path: null,
+      endpoint: 'https://s3.eu-central-003.backblazeb2.com',
+      bucket: 'family-nas-in-the-living-room-copies',
+      prefix: 'unos/nasinthelivingroomoftheoldhouse',
+      region: 'eu-central-003',
+      access_key_id: '003a1b2c3d4e5f6000000000001',
+      sources: ['/mnt/pools/data', '/mnt/pools/media/FamilyPhotosAndVideosOfTheWholeFamily2026'],
+      limit_upload_kib: 2000,
+      limit_download_kib: 0,
+      keep_daily: 7,
+      keep_weekly: 4,
+      keep_monthly: 12,
+      check_percent: 2,
+    },
+    has_password: true,
+    has_s3_secret_access_key: true,
+    pools: [
+      { name: 'data', path: '/mnt/pools/data' },
+      { name: 'media', path: '/mnt/pools/media' },
+    ],
+    pools_base: '/mnt/pools',
+    warnings: [],
+  },
+  '/api/v1/offsite/status': {
+    running: null,
+    last_copy: {
+      started: '2026-11-11T02:00:00+00:00', ended: '2026-11-11T02:41:07+00:00', trigger: 'task', success: false,
+      step: 'data',
+      error: 'restic backup ended with exit status 1: Fatal: unable to save snapshot: Put "https://s3.eu-central-003.' +
+        'backblazeb2.com/family-nas-in-the-living-room-copies/unos/data/4f/4f2a9c1e7b3d5a8f0e6c2b9d1a7f3e5c8b0d4a6f": ' +
+        'dial tcp: lookup s3.eu-central-003.backblazeb2.com: no such host',
+      summary: { files_new: 1204, files_changed: 37, files_unmodified: 1_048_576, bytes_added: 734_003_200,
+        configuration_snapshot: '9d1a7f3e5c8b0d4a6f2e9c1b7d3a5f8e0c6b2d9a1f4f2a9c1e7b3d5a8f0e6c2b', data_snapshot: null },
+      check: null,
+      restore_test: null,
+      note: null,
+    },
+    last_restore: {
+      snapshot_id: OFFSITE_SNAPSHOT_ID, path: '/mnt/pools/media/FamilyPhotosAndVideosOfTheWholeFamily2026',
+      folder: '/mnt/pools/media/restored-20261110-210512', started: '2026-11-10T21:05:12+00:00',
+      ended: '2026-11-10T21:30:44+00:00', success: true, error: null,
+    },
+  },
+  '/api/v1/offsite/snapshots': {
+    snapshots: [
+      { id: OFFSITE_SNAPSHOT_ID, short_id: '4f2a9c1e', time: '2026-11-10T02:01:12.123456789+00:00', kind: 'data',
+        tags: ['unos-data'], paths: ['/mnt/pools/data', '/mnt/pools/media/FamilyPhotosAndVideosOfTheWholeFamily2026'],
+        hostname: 'nas-living-room', size: 1_099_511_627_776, files: 1_048_613 },
+      { id: '9d1a7f3e5c8b0d4a6f2e9c1b7d3a5f8e0c6b2d9a1f4f2a9c1e7b3d5a8f0e6c2b', short_id: '9d1a7f3e',
+        time: '2026-11-10T02:00:03.5+00:00', kind: 'configuration', tags: ['unos-configuration'],
+        paths: ['/unos-configuration.tar.gz'], hostname: 'nas-living-room', size: 1_048_576, files: 1 },
+    ],
+  },
+};
+
 const BACKUP_TASK = {
   id: 'task_e2e_backup',
   name: 'Nightly encrypted backup of the configuration',
@@ -751,6 +815,15 @@ const VIEWS: View[] = [
     path: '/system#backup',
     fake: (page) => serve(page, BACKUPS),
     shows: (page) => page.getByText('unos_backup_20261107_020000.tar.gz.enc'),
+  },
+  {
+    name: 'System: Backup, an off-device copy to a cloud store',
+    path: '/system#backup',
+    fake: (page) => serve(page, { ...BACKUPS, ...OFFSITE, ...SCHEDULER }),
+    // A snapshot's Restore files opens its form, with the pool and the folder.
+    open: (page) => page.getByRole('button', { name: /^(Restore files|Восстановить файлы)$/ }).click(),
+    shows: (page) => page.getByText('/mnt/pools/media/restored-20261110-210512'),
+    end: (page) => page.getByRole('button', { name: /^(Forget this target|Забыть это хранилище)$/ }),
   },
   {
     name: 'System: Backup, a download that failed',

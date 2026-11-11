@@ -248,6 +248,99 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-11: Off-device copies with restic
+
+- `backup.off-device-copies` is built to the design of ADR-0337, which supersedes the proposal
+  ADR-0041; `passes` stays false. restic, in a layer of its own of `supervisor/Dockerfile` after
+  pip's, copies the configuration archive of Create Backup and the chosen pool folders to one copy
+  repository: a folder on a disk mounted below /mnt that is not the system disk, or an
+  S3-compatible store. Saving the settings tests the target and makes the repository there only; a
+  task of the new type `offsite_copy` or Run now runs unlock, the two backups, forget with
+  `--prune`, check and the restore test, one copy or restore at a time; the snapshots restore the
+  configuration into the backup list (`offsite_<snapshot time>.tar.gz`) and the files into a new
+  folder `restored-<UTC time>` of a pool. The secrets live in `/data/offsite_secrets.json` (0600)
+  and reach restic only in its own environment. The web UI's section Off-device copy is on System
+  > Backup & Restore, and the Scheduler offers the task type.
+- Tests first: `test_offsite.py` (89 tests against the fake restic of
+  `supervisor/tests/fake_restic.py`, which restic's absence on the workstation calls for; the
+  stand-in runs it too), the state files, the routes' roles, the stand-in, the Dockerfile's layer,
+  and `webui/tests/offsite.spec.ts`, which failed without the section. The scenario check gets the
+  area `offsite` (`scripts/dev/scenario.py`), with its fake in `test_dev_scenarios.py`.
+- `backup.off-device-copies-over-sftp` records the SFTP and REST targets that ADR-0337 leaves out.
+- On the dev device, e663f14 of the branch with the real restic 0.18: `scenario.sh offsite` OK,
+  12 steps, and a copy, Restore configuration and the regular restore of that backup left the
+  users, shares, tokens, smb.conf and passdb the same. Its copies name the container's hostname,
+  so `forget` keeps them as a group of their own beside those of `--host unos` (below).
+- The review in a fresh context (ADR-0017) of e663f14 found 13 points. Each got a test that failed
+  on e663f14 first (30 more in `test_offsite.py`, 2 in `test_pool_persistence.py`, 1 in
+  `test_dev_scenarios.py`; the fake restic now takes locks and exits with 3), and each was fixed:
+  1. An unmount of the target's disk during a run let restic's local back end make the missing
+     folders on the empty mount point, on the system disk. The target, the sources and a
+     restore's new folder are now held open while restic runs (Save's init too), so a plain
+     umount fails as busy; Unmount and Remove Pool answer 409 naming the copy while a copy or a
+     restore uses the pool. No code of UNOS unmounts lazily.
+  2. `forget` and `check` failed at once beside any other lock: every step of a copy and of the
+     restores waits up to 10 minutes (`--retry-lock 10m`), and the listing takes no lock.
+  3. Exit status 3 of the data's backup failed the run although the snapshot was saved: now the
+     other steps run, vanished files are a note, and other unreadable files fail the run at its
+     end, the first 5 named with the count. The status and the Scheduler's record say which, and
+     the page shows the note.
+  4. Run now of a task ran as a background task of Starlette, for which uvicorn waits at its stop
+     without a limit: it is a task of the scheduler now, which the stop ends and records. The
+     scheduler and backup tests' clients wait for those runs (`waiting_for_runs`).
+  5. `check` of an s3 store made a second cache: `--with-cache`; ADR-0337 says the cache in /tmp
+     counts against the 2 GiB of the tmpfs.
+  6. A target folder that could not be made answered 500: 400 with the reason, as a restore's.
+  7. A failed restore of files left its empty folder: it is removed.
+  8. The system disk was compared by filesystem: whole disks now (another partition of the system
+     disk, btrfs with all its devices, device mapper and md), for the target and the same-disk
+     warning; the sources and a restore's pool keep the filesystem rule (a pool not mounted).
+  9. Forget this target left `offsite_secrets.json.bad`: it removes the `.bad` copies, and a file
+     that fails validation is logged without its values.
+  10. The configuration archive stayed in RAM for the whole copy: it is let go after its step.
+  11. `docs/INSTALL.md` did not say that update.sh's copy of the data volume holds
+      `offsite_secrets.json`: it does.
+  12. The device check could start beside a task that copies: it refuses to; that no route cancels
+      a copy, so one that outlives the waits fails the clean-up, is in its docstring.
+  13. The snapshots named the container's hostname: every backup names `--host unos`.
+  Two tests changed their setup with the code, not their assertions: the refusal of a target on
+  the root filesystem sets both real checks, and the refusal of a source that is not mounted
+  replaces `on_system_filesystem`, which judges the sources now.
+- The device check of 8fef386 (deployed; `scenario.sh offsite` passes; Save refuses a folder on
+  the system disk and a wrong password): Save and test with an S3 store out of reach
+  (`https://127.0.0.1:9`) held the request and the lock of the module for restic's whole 10
+  minutes, from 11:23:28 to 11:33:33 UTC, while the HTTP client gave up after 150 s and every other
+  action of the copy answered 409: restic 0.18 retries a refused connection for that long. Save and
+  a run now connect to an S3 store first (TCP and the TLS handshake, 10 s, nothing sent) and refuse
+  one that does not answer at once, and Save's `cat config` and `init` end after 120 s with 400
+  "The store did not answer within 120 s"; tests first (7, each failed on 8fef386).
+- A second review of 8fef386 (the coordinator's decisions, the reviewer's reading of restic
+  0.18.0) found, each with a test that failed first: (1, 2) restic tests a lock of its own host
+  name by sending SIGHUP to the lock's PID, any host process with `pid: host` after a crash, and
+  every installation is "unos": each restic now runs in a UTS namespace of its own with the host
+  name `unos-<12 hex>` (`unshare --uts` and a Python step that writes it, restic's arguments and
+  environment unchanged), and one copy repository serves one installation; (3) `check
+  --with-cache` read a warm cache, so a damaged store passed: `check --no-cache` for both kinds;
+  (4) a disk target whose disks cannot be found was taken by the filesystem rule: 400 "UNOS
+  cannot tell which disk holds ...", logged, and a partition of an md or device-mapper device
+  follows to its members (loop devices stay as they are); (5) restic leaves out a file that
+  vanished before its first open without a word: the docs say so, and the fake restic does too
+  unless a test asks for the reported case; (6) the scheduler tests' clients raise what a run
+  raised, Forget removes a staged `.offsite_secrets.json.<hex>.tmp`, and Delete Volume answers
+  409 naming the copy while it uses the volume.
+- f4ecd22 on the device: `scenario.sh offsite` OK, the S3 refusal answers at once; make check
+  6676 passed, the E2E specs 181. A three-lens review of 8fef386..f4ecd22 then found, each with a
+  test that failed first where one could: a stop or a timeout killed restic with SIGKILL, so its
+  lock, of its own host name now, stayed for 30 minutes and failed the next copy at forget: restic
+  gets SIGTERM first and SIGKILL 5 s later (the fake removes its lock on SIGTERM, and its unlock
+  follows restic's rule); the host-name step runs with `-B`; the system-disk rule refuses when
+  the disks of only one of /mnt and /data are known; Delete Volume checks and deletes under the
+  lock with which a copy names and opens its folders; tests of the fake's vanished files and of
+  the stand-in's overrides. The guide says that a copy ended hard leaves the repository locked
+  for up to 30 minutes.
+- Open: the deploy of these fixes, `scripts/dev/scenario.sh offsite` again before and after a
+  reboot (ADR-0018), a copy to a USB disk and to an S3 store, and `passes`.
+
 ### 2026-11-11: HTTP notifications that cannot connect from the container go from the host's network
 
 - `system.telegram-from-the-device` (ADR-0336, which supersedes the proposal ADR-0046): from the

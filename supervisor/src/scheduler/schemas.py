@@ -9,6 +9,8 @@ class TaskType(str, Enum):
     SMART_TEST = "smart_test"
     BACKUP = "backup"
     CUSTOM = "custom"
+    # A copy to the off-device copy's repository (ADR-0337): no fields of its own.
+    OFFSITE_COPY = "offsite_copy"
 
 
 class ScheduleFrequency(str, Enum):

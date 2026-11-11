@@ -61,6 +61,8 @@ from .security.router import router as security_router
 from .monitor.router import router as monitor_router
 from .backup.router import router as backup_router
 from .backup.router import MAX_ARCHIVE_BYTES as MAX_BACKUP_ARCHIVE_BYTES
+from .offsite.router import router as offsite_router
+from .offsite.service import stop as stop_offsite
 from .audit.router import router as audit_router
 from .updates.router import router as updates_router
 from .websocket.events import router as ws_router
@@ -161,7 +163,9 @@ async def lifespan(app: FastAPI):
             await stop_trash_expiry()
             await stop_ups_monitor()
             await stop_health_monitors()
-            await stop_scheduler()
+        # Always: the runs that Run now of a task started end with it and are recorded, also when the
+        # background tasks are off (UNOS_DISABLE_BACKGROUND_TASKS=1), where the scheduler never started.
+        await stop_scheduler()
         if host_tool_check is not None:
             host_tool_check.cancel()
             await asyncio.gather(host_tool_check, return_exceptions=True)
@@ -171,6 +175,9 @@ async def lifespan(app: FastAPI):
         if wol_reapply is not None:
             wol_reapply.cancel()
             await asyncio.gather(wol_reapply, return_exceptions=True)
+        # The copies and restores of the off-device copy that Run now and Restore files started end
+        # with their restic, and are recorded as stopped (ADR-0337); the Scheduler's end with it.
+        await stop_offsite()
         # Last, when nothing uses the database any more: its last commits go from unos.db-wal
         # into unos.db (ADR-0306).
         await checkpoint_db()
@@ -262,6 +269,7 @@ for _router in (
     health_router,
     monitor_router,
     backup_router,
+    offsite_router,
     updates_router,
 ):
     app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY)

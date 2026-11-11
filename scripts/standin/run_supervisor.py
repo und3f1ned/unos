@@ -14,6 +14,13 @@ Everything the supervisor writes goes under the state directory (default:
     pools/  UNOS_POOLS_BASE_PATH; testpool/ is the folder of a pool that UNOS
             does not manage, as on the Docker test stack
     tmp/    TMPDIR of the supervisor
+    bin/    first on the supervisor's PATH: restic, the fake of
+            supervisor/tests/fake_restic.py, and a pass-through ionice and
+            unshare, for the off-device copy (ADR-0337); restic is not
+            installed here
+    fake-restic/  the fake's calls, the stores of its s3: repositories, and
+            hostname, where each restic writes its host name instead of
+            /proc/sys/kernel/hostname of a UTS namespace of its own
 
 The stand-in keeps the supervisor away from this machine's system:
 
@@ -23,6 +30,12 @@ The stand-in keeps the supervisor away from this machine's system:
   are off (UNOS_DISABLE_BACKGROUND_TASKS=1).
 * Docker is out of reach: UNOS_DOCKER_SOCKET and DOCKER_HOST name a socket that
   does not exist, so no container or image of this machine is touched.
+* The off-device copy runs the fake restic (bin/). The state directory stands
+  for /mnt, where its disk targets lie, as pools/ stands for /mnt/pools, and
+  one filesystem holds all of it: the copy's check of the system disk is off
+  (there is none to protect here), so that the specs can copy to a folder of
+  testpool. No S3 store is connected to before restic runs: the fake keeps
+  its s3: repositories in fake-restic/.
 * Power actions are off: with host commands on this machine
   (UNOS_HOST_EXEC=local) the power API refuses to reboot, shut down or
   suspend it, to cancel its shutdowns and to change Wake-on-LAN (ADR-0233),
@@ -44,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.util
 import os
 import shutil
 import sys
@@ -57,7 +71,10 @@ DEFAULT_PORT = 46180
 # taken for one only when it holds nothing but the stand-in's own entries
 # (e2e.sh makes logs/ and tls/ before the supervisor starts).
 MARKER = ".unos-standin"
-STATE_ENTRIES = frozenset({MARKER, ".gitignore", "data", "pools", "tmp", "logs", "tls", "e2e.lock"})
+STATE_ENTRIES = frozenset({MARKER, ".gitignore", "data", "pools", "tmp", "bin", "fake-restic", "logs", "tls",
+                           "e2e.lock"})
+# The fake restic that the off-device copy runs here (bin/restic).
+FAKE_RESTIC = SUPERVISOR / "tests" / "fake_restic.py"
 
 # Module globals of supervisor/src that hold a path under /data. Each one is
 # replaced by the same path under the stand-in's data directory
@@ -69,6 +86,7 @@ DATA_GLOBALS: dict[str, tuple[str, ...]] = {
     "src.backup.router": ("BACKUP_DIR",),
     "src.health.router": ("RAID_STATUS_FILE", "SMART_HISTORY_FILE"),
     "src.notifications.router": ("CONFIG_FILE", "LOGS_FILE"),
+    "src.offsite.service": ("SETTINGS_FILE", "SECRETS_FILE", "STATUS_FILE", "DATA_DIR"),
     "src.power.router": ("CONFIG_FILE", "UPS_CONFIG_FILE", "WOL_FILE"),
     "src.scheduler.router": ("TASKS_FILE", "RUNS_FILE", "SCHEDULED_BACKUP_DIR", "DB_FILE", "BACKUP_KEYS_FILE"),
     "src.security.router": ("FIREWALL_RULES_FILE", "CERTS_DIR", "CADDY_CERTS_DIR"),
@@ -118,6 +136,8 @@ def stand_in_environment(state: Path) -> dict[str, str]:
         "UNOS_DISABLE_BACKGROUND_TASKS": "1",
         "container": "docker",
         "TMPDIR": str(state / "tmp"),
+        # The fake restic of the off-device copy first (ADR-0337).
+        "PATH": f"{state / 'bin'}{os.pathsep}{os.environ.get('PATH', os.defpath)}",
     }
 
 
@@ -134,7 +154,7 @@ def prepare(state: Path, *, fresh: bool) -> None:
                 f"run_supervisor.py: {state} holds {', '.join(foreign)} and no {MARKER} file: "
                 "not a stand-in state directory, nothing deleted"
             )
-        for name in ("data", "pools", "tmp"):
+        for name in ("data", "pools", "tmp", "fake-restic"):
             shutil.rmtree(state / name, ignore_errors=True)
     marker.write_text("State of the local E2E stand-in (scripts/standin/run_supervisor.py).\n")
     # Ignored by git wherever the directory is, whatever the repository's .gitignore says.
@@ -147,6 +167,16 @@ def prepare(state: Path, *, fresh: bool) -> None:
         smb_conf.write_text(SEED_SMB_CONF.format(pools=pools))
     for name in ("exports", "fstab"):
         (data / name).touch()
+    _install_fake_restic(state)
+
+
+def _install_fake_restic(state: Path) -> None:
+    """bin/restic and bin/ionice, the fake of supervisor/tests/fake_restic.py with its state in
+    fake-restic/, run by this Python."""
+    spec = importlib.util.spec_from_file_location("standin_fake_restic", FAKE_RESTIC)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.install(state / "bin", state / "fake-restic", python=sys.executable)
 
 
 def _replacement(original: object, new: Path) -> object:
@@ -195,6 +225,18 @@ def configure(state: Path) -> Path:
     if not os.path.exists(files.MOUNTINFO):
         files.MOUNTINFO = str(data / "mountinfo")
         Path(files.MOUNTINFO).touch()
+
+    # The off-device copy (ADR-0337): its disk targets lie below the state directory, which stands for
+    # /mnt as pools/ stands for /mnt/pools. One filesystem holds all of it, so nothing here is the
+    # system disk that a copy must stay off, nor the root filesystem where an unmounted pool would be.
+    offsite = importlib.import_module("src.offsite.service")
+    offsite.MOUNTS_BASE = str(state)
+    offsite.on_system_disk = lambda fd: False
+    offsite.on_system_filesystem = lambda fd: False
+    # Its fake restic keeps an S3 store in its state directory: no store to connect to first.
+    offsite.probe_store = lambda endpoint: None
+    # restic's own host name goes into a file of the fake's state, not into /proc of this machine.
+    importlib.import_module("src.offsite.restic").HOSTNAME_FILE = str(state / "fake-restic" / "hostname")
 
     # 5 attempts per minute and client: the specs sign in through the form once per test.
     importlib.import_module("src.auth.router").limiter.enabled = False

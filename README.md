@@ -93,6 +93,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Configuration Backup** - Back up the UNOS database (accounts, 2FA, API tokens, SMB shares and their access)
 - **Encrypted Backups** - Optional AES-256 encryption with passphrase
 - **Restore** - Import backups to restore configuration
+- **Off-Device Copies** - The configuration and the pools' folders copied with restic, encrypted, to a disk of their own or an S3-compatible store, on a schedule; each copy is checked and its restore tested, and its snapshots restore the configuration and the files
 
 ### Power Management
 - **Reboot, shutdown and suspend** - From System > Power after a confirmation; reboot and shutdown act on the host one minute later and can be cancelled until then

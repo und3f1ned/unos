@@ -38,6 +38,7 @@
     Terminal,
     Archive,
     Search,
+    UploadCloud,
   } from "lucide-svelte";
 
   // State
@@ -90,6 +91,7 @@
     { value: "scrub", key: "scheduler.type.scrub", icon: Search },
     { value: "smart_test", key: "scheduler.type.smartTest", icon: HardDrive },
     { value: "backup", key: "scheduler.type.backup", icon: Archive },
+    { value: "offsite_copy", key: "scheduler.type.offsiteCopy", icon: UploadCloud },
     { value: "custom", key: "scheduler.type.custom", icon: Terminal },
   ];
 
@@ -604,6 +606,11 @@
               {/key}
             {/if}
           </div>
+        {/if}
+
+        <!-- Off-device copy: its target and folders are those of System > Backup & Restore (ADR-0337) -->
+        {#if formData.task_type === "offsite_copy"}
+          <p class="text-xs text-content-muted">{$t("scheduler.form.offsiteHint")}</p>
         {/if}
 
         <!-- Custom Command -->

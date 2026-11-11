@@ -98,7 +98,7 @@ READ_ONLY_PROBES = {
 # Runs in a child process, so that the redirected globals and the cached
 # settings never reach the other tests. argv: the state directory.
 CHILD = r"""
-import importlib, json, os, pkgutil, sys
+import importlib, json, os, pkgutil, shutil, sys
 from pathlib import Path, PurePath
 
 sys.path.insert(0, os.environ["STANDIN_DIR"])
@@ -142,6 +142,13 @@ for module_name, files in standin.HOST_FILE_GLOBALS.items():
 
 from src.config import get_settings
 settings = get_settings()
+offsite = importlib.import_module("src.offsite.service")
+data_fd = os.open(str(data), os.O_RDONLY)
+try:
+    data_on_system_disk = offsite.on_system_disk(data_fd)
+    data_on_system_filesystem = getattr(offsite, "on_system_filesystem", lambda fd: True)(data_fd)
+finally:
+    os.close(data_fd)
 print(json.dumps({
     "data": str(data),
     "left": left,
@@ -159,6 +166,16 @@ print(json.dumps({
     "power_off": importlib.import_module("src.host").runs_locally(),
     "gitignore": (state / ".gitignore").read_text(),
     "seeded": (data / "smb.conf").read_text(),
+    "offsite": {
+        "mounts_base": str(offsite.MOUNTS_BASE),
+        "on_system_disk": data_on_system_disk,
+        "on_system_filesystem": data_on_system_filesystem,
+        "restic": shutil.which("restic"),
+        "ionice": shutil.which("ionice"),
+        "unshare": shutil.which("unshare"),
+        "hostname_file": importlib.import_module("src.offsite.restic").HOSTNAME_FILE,
+        "probe": offsite.probe_store("https://127.0.0.1:9"),
+    },
 }))
 """
 
@@ -290,6 +307,22 @@ class TestIsolation:
 
     def test_login_rate_limit_is_off(self, configured):
         assert configured["login_limit"] is False
+
+    def test_the_off_device_copy_runs_the_fake_restic_on_the_state_directory(self, configured):
+        """restic is not installed here: the stand-in puts the fake of supervisor/tests/fake_restic.py
+        first on PATH, with a pass-through ionice and unshare. Each restic writes its host name into
+        a file of the fake's state, not into /proc. Its pools' folder stands for /mnt/pools, so disk
+        targets lie below the state directory, and one filesystem holds all of it: the stand-in has no
+        system disk that the copy must stay off, and no S3 store to connect to first (ADR-0337)."""
+        state, offsite = configured["state"], configured["offsite"]
+        assert Path(offsite["mounts_base"]) == state
+        assert offsite["on_system_disk"] is False and offsite["on_system_filesystem"] is False
+        for tool in ("restic", "ionice", "unshare"):
+            assert offsite[tool] and _inside(offsite[tool], state), (tool, offsite[tool])
+        assert "fake_restic.py" in Path(offsite["restic"]).read_text()
+        assert "fake unshare" in Path(offsite["unshare"]).read_text()
+        assert Path(offsite["hostname_file"]) == state / "fake-restic" / "hostname"
+        assert offsite["probe"] is None
 
     def test_state_directory_ignores_itself_and_seeds_the_e2e_share(self, configured):
         assert configured["gitignore"] == "*\n"
