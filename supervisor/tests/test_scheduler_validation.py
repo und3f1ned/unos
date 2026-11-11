@@ -1,5 +1,6 @@
 """Scheduler tasks: admin-only, validated targets at creation and at run time."""
 
+import asyncio
 import contextlib
 import importlib
 import io
@@ -43,6 +44,22 @@ def env(tmp_path, monkeypatch):
     yield from make_env(tmp_path, monkeypatch)
 
 
+def waiting_for_runs(asgi_app):
+    """ASGI_APP, whose requests return once the runs of tasks that they started have ended, as the
+    tests read them. Run now answers at once and its run goes on beside the request, on the event
+    loop of the TestClient (scheduler.run_task_now), which a TestClient outside a with block ends with
+    each request."""
+
+    async def app_waiting_for_runs(scope, receive, send):
+        await asgi_app(scope, receive, send)
+        if scope["type"] == "http":
+            loop = asyncio.get_running_loop()
+            await asyncio.gather(*[run for run in list(scheduler._runs) if run.get_loop() is loop],
+                                 return_exceptions=True)
+
+    return app_waiting_for_runs
+
+
 def make_env(tmp_path, monkeypatch):
     """The env fixture, also of test_custom_tasks.py and test_scheduler_time_zone.py."""
     base = tmp_path.resolve() / "pools"
@@ -74,7 +91,7 @@ def make_env(tmp_path, monkeypatch):
         # (run_command).
         with patch("src.scheduler.router.subprocess.run") as run, patch("src.host.run_in_container", run):
             run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-            yield SimpleNamespace(client=TestClient(app), base=base, pool=base / "data",
+            yield SimpleNamespace(client=TestClient(waiting_for_runs(app)), base=base, pool=base / "data",
                                   outside=tmp_path / "outside", run=run, tmp=tmp_path, host=host)
     app.dependency_overrides.pop(verify_token, None)
 

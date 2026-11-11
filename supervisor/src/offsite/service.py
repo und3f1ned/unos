@@ -12,12 +12,18 @@ that is not the system disk (disk), or an S3-compatible store (s3).
 * Saving the settings tests the target: ``restic cat config`` with the password opens an existing
   repository, and ``restic init`` makes one only when none is there. A copy never makes one, so that
   a disk that is not mounted never gets a repository on its empty mount point.
+* A disk target is off the system disk: not on the filesystem of MOUNTS_BASE or DATA_DIR, nor on the
+  whole disks under them (on_system_disk). While restic runs, the target, the folders it copies and
+  the folder a restore writes are held open, so that a plain unmount of their disks fails as busy,
+  and the Storage page refuses to unmount or forget a pool that a copy or a restore uses (pool_user).
 * A copy (run_copy, for the Scheduler's task type offsite_copy and for Run now): unlock, the
   configuration archive of Create Backup from standard input, the pools' folders, forget with the
   retention and --prune, check with a share of the data, and the restore test, which reads the
-  configuration archive back and checks it as a restore would. One copy or restore runs at a time; a
-  copy that finds one running ends at once as a success that says so. Its result is the one write of
-  STATUS_FILE per run, besides the Scheduler's record.
+  configuration archive back and checks it as a restore would. Every step waits up to RETRY_LOCK for
+  the lock of another restic, and every snapshot names the host HOST. Files that vanished while
+  restic read them are a note; files that could not be read fail the copy once every step ran. One
+  copy or restore runs at a time; a copy that finds one running ends at once as a success that says
+  so. Its result is the one write of STATUS_FILE per run, besides the Scheduler's record.
 * The restores: the configuration of a snapshot into the backup list (restore_configuration), the
   files of a snapshot into a new folder of a pool (restore_files, in the background).
 """
@@ -26,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import fcntl
 import hashlib
 import ipaddress
 import json
@@ -33,6 +40,8 @@ import logging
 import os
 import re
 import tempfile
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -41,7 +50,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .. import state_files
 from ..backup.router import (
@@ -71,6 +80,19 @@ STATUS_FILE = "/data/offsite_status.json"
 # system disk's, where a disk target is refused (on_system_disk).
 DATA_DIR = "/data"
 MOUNTS_BASE = "/mnt"
+# Where the disks under a filesystem are found: the block devices by number, the devices of each btrfs
+# filesystem, and the mounts of this process (a filesystem without a device number of its own, FUSE).
+SYS_DEV_BLOCK = "/sys/dev/block"
+SYS_FS_BTRFS = "/sys/fs/btrfs"
+PROC_SELF = "/proc/self"
+# _IOR(0x94, 31, struct btrfs_ioctl_fs_info_args): the btrfs filesystem's info, its fsid at bytes 16 to 32.
+BTRFS_IOC_FS_INFO = 0x8400941F
+# How long a step of a copy or a restore waits for the lock of another restic (restic 0.16 and later).
+RETRY_LOCK = "10m"
+# The host every snapshot names, whatever the container's hostname is: forget groups by it.
+HOST = "unos"
+# The files that cannot be read that a result names, and that a note of vanished files names.
+NAMED_FILES = 5
 
 MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_LENGTH = 1024
@@ -83,9 +105,11 @@ DATA_TAG = "unos-data"
 CONFIGURATION_NAME = "unos-configuration.tar.gz"
 SNAPSHOTS = ".snapshots"
 TRASH = ".unos-trash"
-# restic's exit codes (0.17 and later) for a repository that does not exist and for a wrong password.
+# restic's exit codes (0.17 and later) for a repository that does not exist and for a wrong password,
+# and of a backup that saved its snapshot without the files that it could not read.
 REPOSITORY_MISSING = 10
 WRONG_PASSWORD = 12
+PARTIAL = 3
 
 _MINUTE, _HOUR, _DAY = 60, 3600, 86400
 # Seconds each restic command may take; then it is killed with its process group (restic.py).
@@ -110,6 +134,11 @@ STOPPED_DURING_COPY = "The supervisor stopped during the copy"
 STOPPED_DURING_RESTORE = "The supervisor stopped during the restore"
 SAME_DISK = ("This copy is on a disk it copies: it protects against deleted and damaged files, not against the loss "
              "of that disk")
+# The commands that wait up to RETRY_LOCK for the lock of another restic (a listing, a copy of another
+# device or another program) instead of failing at once: every step of a copy and of the restores.
+# Saving the settings does not wait (cat, init), and the listing of the snapshots takes no lock.
+WAIT_FOR_LOCKS = {"unlock", "backup", "forget", "check", "dump", "restore"}
+INCOMPLETE = "The copy of the data is incomplete"
 # What failed, before the error of a step that runs restic, in the result of a copy.
 STEP_TEXTS = {
     "unlock": "Removing stale locks of the copy repository failed",
@@ -192,6 +221,9 @@ class CopyResult(BaseModel):
     summary: Optional[CopySummary] = None
     check: Optional[str] = None  # passed or failed; None when the run did not get there
     restore_test: Optional[str] = None
+    # What the copy of the data could not read that is not the error: the files that vanished while
+    # restic read the folders (no failure), and those that could not be read when a later step failed.
+    note: Optional[str] = None
 
 
 class RestoreResult(BaseModel):
@@ -235,6 +267,8 @@ class Activity:
     step: Optional[str] = None
     snapshot_id: Optional[str] = None
     folder: Optional[str] = None
+    # The pools whose folders it reads or writes: the Storage page neither unmounts nor forgets them.
+    pools: set[str] = field(default_factory=set)
 
     def answer(self) -> dict:
         return {"kind": self.kind, "started": self.started.isoformat(), "step": self.step,
@@ -251,8 +285,12 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _running(activity: Activity) -> str:
+    return f"the {_WHAT[activity.kind]} started at {activity.started:%Y-%m-%d %H:%M:%S} UTC is still running"
+
+
 def _busy() -> str:
-    return f"the {_WHAT[_activity.kind]} started at {_activity.started:%Y-%m-%d %H:%M:%S} UTC is still running"
+    return _running(_activity)
 
 
 def _begin(kind: str) -> Optional[Activity]:
@@ -276,6 +314,21 @@ def _end(activity: Activity) -> None:
     global _activity
     if _activity is activity:
         _activity = None
+
+
+def pools_in_use() -> set[str]:
+    """The pools that the copy or restore that runs reads or writes."""
+    activity = _activity
+    return set(activity.pools) if activity is not None else set()
+
+
+def pool_user(pool: str) -> Optional[str]:
+    """What of the off-device copy uses POOL, as "the copy started at ... is still running", or None.
+    The Storage page refuses to unmount or forget the pool meanwhile (storage/pools.py)."""
+    activity = _activity
+    if activity is None or pool not in activity.pools:
+        return None
+    return _running(activity)
 
 
 def _keep(task: asyncio.Task) -> None:
@@ -303,10 +356,25 @@ def _sync_folder(folder: Path) -> None:
         os.close(fd)
 
 
+def _reader(model: type[BaseModel]):
+    """MODEL's validation of a state file, whose refusal names the fields and why, never their values:
+    load_json logs it, and pydantic's own message repeats the values, a password among them."""
+
+    def read(data: object) -> BaseModel:
+        try:
+            return model.model_validate(data)
+        except ValidationError as e:
+            fields = "; ".join(f"{'.'.join(str(part) for part in error['loc']) or 'the file'}: {error['type']}"
+                               for error in e.errors())
+            raise ValueError(f"it holds no valid {model.__name__} ({fields})") from None
+
+    return read
+
+
 def load_settings() -> Optional[OffsiteSettings]:
     """The settings; None without a file, or for one kept as .bad. Raises OSError for one that cannot
     be opened (ADR-0324: settings are never replaced unread)."""
-    return state_files.load_json(Path(SETTINGS_FILE), OffsiteSettings.model_validate, lambda: None,
+    return state_files.load_json(Path(SETTINGS_FILE), _reader(OffsiteSettings), lambda: None,
                                  what="the settings of the off-device copy")
 
 
@@ -320,7 +388,7 @@ def write_settings(settings: OffsiteSettings) -> None:
 def load_secrets() -> Secrets:
     """The secrets; none without a file, or for one kept as .bad (with its mode 0600). Raises OSError
     for one that cannot be opened."""
-    return state_files.load_json(Path(SECRETS_FILE), Secrets.model_validate, Secrets,
+    return state_files.load_json(Path(SECRETS_FILE), _reader(Secrets), Secrets,
                                  what="the secrets of the off-device copy")
 
 
@@ -334,7 +402,7 @@ def write_secrets(secrets: Secrets) -> None:
 def load_status() -> Status:
     """The last copy and restore; none for a file that cannot be read, with a warning: a history."""
     try:
-        return state_files.load_json(Path(STATUS_FILE), Status.model_validate, Status,
+        return state_files.load_json(Path(STATUS_FILE), _reader(Status), Status,
                                      what="the state of the off-device copy")
     except OSError as e:
         logger.warning("Could not read the state of the off-device copy %s: %s", STATUS_FILE, e)
@@ -369,9 +437,172 @@ def system_devices() -> set[int]:
     return found
 
 
-def on_system_disk(fd: int) -> bool:
-    """Whether the folder open at FD is on the system disk (system_devices)."""
+def on_system_filesystem(fd: int) -> bool:
+    """Whether the folder open at FD is on the filesystem of MOUNTS_BASE or DATA_DIR (system_devices):
+    below /mnt, a folder of a disk that is not mounted, such as a pool's empty mount point."""
     return os.fstat(fd).st_dev in system_devices()
+
+
+def on_system_disk(fd: int) -> bool:
+    """Whether the folder open at FD is on the system disk: on the filesystem of MOUNTS_BASE or
+    DATA_DIR, or on one of the whole disks that hold them, as another partition of the system disk is."""
+    return on_system_filesystem(fd) or bool(disks_of(fd) & system_disks())
+
+
+def _read_dev(path: str) -> Optional[int]:
+    """The device number in a "major:minor" file of sysfs, or None."""
+    try:
+        with open(path) as f:
+            major, minor = f.read().strip().split(":")
+        return os.makedev(int(major), int(minor))
+    except (OSError, ValueError):
+        return None
+
+
+def _major_minor(device: int) -> str:
+    """DEVICE as sysfs names it, major:minor. (On macOS, where the tests run too, os.makedev gives a
+    large major a negative dev_t, which os.major refuses.)"""
+    if device < 0:
+        device &= 0xFFFFFFFF
+    return f"{os.major(device)}:{os.minor(device)}"
+
+
+def _whole_disks(device: int, depth: int) -> set[str]:
+    path = os.path.realpath(os.path.join(SYS_DEV_BLOCK, _major_minor(device)))
+    if not os.path.isdir(path):
+        return set()
+    slaves = os.path.join(path, "slaves")
+    try:
+        below = sorted(os.listdir(slaves))
+    except OSError:
+        below = []
+    if below and depth < 8:  # device mapper (LVM, LUKS) and md: the devices below them
+        found: set[str] = set()
+        for name in below:
+            number = _read_dev(os.path.join(slaves, name, "dev"))
+            if number is not None:
+                found |= _whole_disks(number, depth + 1)
+        return found
+    if os.path.exists(os.path.join(path, "partition")):
+        return {os.path.basename(os.path.dirname(path))}
+    return {os.path.basename(path)}
+
+
+def whole_disks(devices: set[int]) -> set[str]:
+    """The whole disks (sda, nvme0n1, mmcblk1) under the block DEVICES: a partition's disk, and the
+    disks below a device mapper or md device. None for a device that sysfs does not know."""
+    found: set[str] = set()
+    for device in devices:
+        found |= _whole_disks(device, 0)
+    return found
+
+
+def _btrfs_fsid(fd: int) -> Optional[str]:
+    """The UUID of the btrfs filesystem of FD, or None for another filesystem."""
+    info = bytearray(1024)
+    try:
+        fcntl.ioctl(fd, BTRFS_IOC_FS_INFO, info)
+    except OSError:
+        return None
+    return str(uuid.UUID(bytes=bytes(info[16:32])))
+
+
+def btrfs_devices(fsid: str) -> set[int]:
+    """The device numbers of the btrfs filesystem FSID, all of them."""
+    folder = os.path.join(SYS_FS_BTRFS, fsid, "devices")
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return set()
+    found = set()
+    for name in names:
+        number = _read_dev(os.path.join(folder, name, "dev"))
+        if number is not None:
+            found.add(number)
+    return found
+
+
+def mount_source(fd: int) -> Optional[str]:
+    """The source of the mount that holds FD, as /proc/self/mountinfo names it, or None."""
+    try:
+        with open(f"{PROC_SELF}/fdinfo/{fd}") as f:
+            mount_id = next((line.split(":", 1)[1].strip() for line in f if line.startswith("mnt_id:")), None)
+        if mount_id is None:
+            return None
+        with open(f"{PROC_SELF}/mountinfo") as f:
+            for line in f:
+                fields = line.split()
+                if fields and fields[0] == mount_id and "-" in fields:
+                    after = fields[fields.index("-") + 1:]
+                    return after[1] if len(after) >= 2 else None
+    except OSError:
+        return None
+    return None
+
+
+def _filesystem_devices(fd: int) -> set[int]:
+    """The block devices under the filesystem of FD: its device number; for btrfs, whose every
+    subvolume has a number of its own, all of the filesystem's devices; else, as for FUSE, the source
+    of its mount. None for a filesystem on no block device (NFS, CIFS)."""
+    device = os.fstat(fd).st_dev
+    if not _major_minor(device).startswith("0:"):
+        return {device}
+    fsid = _btrfs_fsid(fd)
+    if fsid is not None:
+        return btrfs_devices(fsid)
+    source = mount_source(fd)
+    if source and source.startswith("/dev/"):
+        try:
+            return {os.stat(source).st_rdev}
+        except OSError:
+            return set()
+    return set()
+
+
+def disks_of(fd: int) -> set[str]:
+    """The whole disks under the filesystem of FD."""
+    return whole_disks(_filesystem_devices(fd))
+
+
+def system_disks() -> set[str]:
+    """The whole disks of the root filesystem (the filesystem of MOUNTS_BASE, a bind of the host's
+    /mnt) and of the data volume DATA_DIR."""
+    found: set[str] = set()
+    for path in (MOUNTS_BASE, DATA_DIR):
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        except OSError:
+            continue
+        try:
+            found |= disks_of(fd)
+        finally:
+            os.close(fd)
+    return found
+
+
+def _close(fds: list[int]) -> None:
+    """Close FDS, the folders held open while restic ran."""
+    while fds:
+        try:
+            os.close(fds.pop())
+        except OSError:
+            pass
+
+
+def _pool_of(path: Optional[str]) -> Optional[str]:
+    """The pool that PATH lies in, or None for a path outside the pools' base."""
+    base = str(pools_base())
+    if not path or not _inside(path, base) or path == base:
+        return None
+    return path[len(base) + 1:].split("/")[0] or None
+
+
+def _pools_used(settings: OffsiteSettings, *, sources: bool) -> set[str]:
+    """The pools of a disk target and, with SOURCES, of the folders it copies."""
+    found = {_pool_of(settings.path)} if settings.kind == Kind.DISK else set()
+    if sources:
+        found |= {_pool_of(source) for source in settings.sources}
+    return {pool for pool in found if pool}
 
 
 def _bad(detail: str) -> HTTPException:
@@ -424,16 +655,17 @@ def _on_system_disk_problem(path: str) -> str:
             f"the disk below {MOUNTS_BASE} and choose a folder on it")
 
 
-def _check_target(path: str, *, create: bool) -> tuple[int, Optional[str]]:
+def _open_target(path: str, *, create: bool) -> tuple[int, Optional[str]]:
     """Open the folder of a disk target without following symbolic links, making it (mode 0700) when
-    CREATE and its parent is not on the system disk. Its device and, when it was made here, its path;
-    400 for a folder that cannot hold the copy (a run maps it to a failed step)."""
+    CREATE and its parent is not on the system disk: the open folder, which the caller closes, and its
+    path when it was made here. 400 for a folder that cannot hold the copy or cannot be made (a run
+    maps it to a failed step)."""
+    what = "The folder of the copy"
     relative = path.split("/")[len(_base_parts()) + 1:]
-    parent_path = os.path.dirname(path)
     try:
         parent = open_dir_nofollow(MOUNTS_BASE, relative[:-1])
     except OSError as e:
-        raise _bad(_open_problem(e, parent_path, "The folder of the copy")) from None
+        raise _bad(_open_problem(e, os.path.dirname(path), what)) from None
     created = None
     try:
         try:
@@ -443,23 +675,30 @@ def _check_target(path: str, *, create: bool) -> tuple[int, Optional[str]]:
                 raise _bad(f"{path} does not exist: is its disk mounted?") from None
             if on_system_disk(parent):
                 raise _bad(_on_system_disk_problem(path)) from None
-            fd = open_subdirs_nofollow(parent, relative[-1:], create=True, mode=0o700)
+            try:
+                fd = open_subdirs_nofollow(parent, relative[-1:], create=True, mode=0o700)
+            except OSError as e:
+                raise _bad(f"{path} could not be made: {e.strerror or e}") from None
             created = path
         except OSError as e:
-            raise _bad(_open_problem(e, path, "The folder of the copy")) from None
+            raise _bad(_open_problem(e, path, what)) from None
         try:
             if on_system_disk(fd):
                 raise _bad(_on_system_disk_problem(path))
-            return os.fstat(fd).st_dev, created
-        finally:
+        except BaseException:
             os.close(fd)
+            if created is not None:
+                _remove_empty(parent, relative[-1])
+            raise
+        return fd, created
     finally:
         os.close(parent)
 
 
-def _check_source(path: str) -> tuple[str, int]:
+def _open_source(path: str) -> tuple[str, int]:
     """A folder to copy: inside the pools' base, opened without following symbolic links, on a mounted
-    pool. Its normalized path and its device; 400 otherwise."""
+    pool (not on the filesystem of MOUNTS_BASE, where a pool that is not mounted leaves its empty mount
+    point). Its normalized path and the open folder, which the caller closes; 400 otherwise."""
     what = "A folder to copy"
     normalized = validate_pools_path(path, what)
     _parts(normalized, what)
@@ -469,11 +708,21 @@ def _check_source(path: str) -> tuple[str, int]:
     except OSError as e:
         raise _bad(_open_problem(e, normalized, what)) from None
     try:
-        if on_system_disk(fd):
+        if on_system_filesystem(fd):
             raise _bad(f"{normalized} is not on a mounted pool: it is on the system disk")
-        return normalized, os.fstat(fd).st_dev
-    finally:
+    except BaseException:
         os.close(fd)
+        raise
+    return normalized, fd
+
+
+def _same_disk(a: int, b: int) -> bool:
+    """Whether the folders open at A and B are on one disk: their whole disks meet, or, when the disks
+    of one are not known (a network filesystem), they are on one filesystem."""
+    disks_a, disks_b = disks_of(a), disks_of(b)
+    if disks_a and disks_b:
+        return bool(disks_a & disks_b)
+    return os.fstat(a).st_dev == os.fstat(b).st_dev
 
 
 def _inside(path: str, folder: str) -> bool:
@@ -483,6 +732,14 @@ def _inside(path: str, folder: str) -> bool:
 def _remove_if_empty(path: str) -> None:
     try:
         os.rmdir(path)
+    except OSError:
+        pass
+
+
+def _remove_empty(parent: int, name: str) -> None:
+    """Remove the folder NAME of the folder open at PARENT when it is empty."""
+    try:
+        os.rmdir(name, dir_fd=parent)
     except OSError:
         pass
 
@@ -608,34 +865,42 @@ def _secrets_for(request: SettingsRequest, settings: OffsiteSettings, stored: Op
     return Secrets(password=password, s3_secret_access_key=secret)
 
 
-def _prepare_folders(settings: OffsiteSettings) -> Optional[str]:
+def _prepare_folders(settings: OffsiteSettings) -> tuple[Optional[str], list[int]]:
     """Check the sources and a disk target on the filesystem, normalize the sources, and make the
-    target's folder when it is missing: its path then. 400 for what cannot be copied or hold the copy."""
+    target's folder when it is missing: its path then, and the target held open for restic (_ready),
+    which the caller closes. 400 for what cannot be copied or hold the copy."""
     sources = []
     for path in settings.sources:
-        normalized, _ = _check_source(path)
+        normalized, fd = _open_source(path)
+        os.close(fd)
         if normalized not in sources:
             sources.append(normalized)
     settings.sources = sources
     if settings.kind != Kind.DISK:
-        return None
+        return None, []
     if any(_inside(source, settings.path) for source in sources):
         raise _bad(f"{settings.path} holds a folder that it copies: choose a folder outside them, or one inside "
                    "a folder that it copies")
-    _, created = _check_target(settings.path, create=True)
-    return created
+    fd, created = _open_target(settings.path, create=True)
+    return created, [fd]
 
 
 def _warnings(settings: OffsiteSettings) -> list[dict]:
-    """same_disk: a disk target on the filesystem of a folder that it copies."""
+    """same_disk: a disk target on a disk of a folder that it copies."""
     if settings.kind != Kind.DISK:
         return []
+    target: Optional[int] = None
+    sources: list[int] = []
     try:
-        target, _ = _check_target(settings.path, create=False)
-        devices = {_check_source(source)[1] for source in settings.sources}
+        target = _open_target(settings.path, create=False)[0]
+        for source in settings.sources:
+            sources.append(_open_source(source)[1])
+        same = any(_same_disk(target, source) for source in sources)
     except HTTPException:
         return []
-    return [{"kind": "same_disk", "message": SAME_DISK}] if target in devices else []
+    finally:
+        _close(sources + ([target] if target is not None else []))
+    return [{"kind": "same_disk", "message": SAME_DISK}] if same else []
 
 
 def _managed_pools() -> list[dict]:
@@ -700,7 +965,8 @@ async def save_settings(request: SettingsRequest) -> dict:
         stored, kept = _stored()
         settings = _normalized(request)
         secrets = _secrets_for(request, settings, stored, kept)
-        created = await asyncio.to_thread(_prepare_folders, settings)
+        activity.pools = _pools_used(settings, sources=False)
+        created, held = await asyncio.to_thread(_prepare_folders, settings)
         repo = _Repository(settings, secrets.password, secrets.s3_secret_access_key)
         try:
             await _open_or_create(repo, created)
@@ -708,6 +974,8 @@ async def save_settings(request: SettingsRequest) -> dict:
             if created is not None:
                 await asyncio.to_thread(_remove_if_empty, created)
             raise
+        finally:
+            _close(held)
         await asyncio.to_thread(_store, settings, secrets)
         logger.info("The off-device copy goes to %s", location(settings))
     finally:
@@ -716,8 +984,11 @@ async def save_settings(request: SettingsRequest) -> dict:
 
 
 def _remove_files() -> None:
+    """The settings, the secrets and the state, and the copies of them kept as .bad (ADR-0324): a
+    damaged secrets file holds the password too."""
     for name in (SETTINGS_FILE, SECRETS_FILE, STATUS_FILE):
         Path(name).unlink(missing_ok=True)
+        state_files.bad_path(Path(name)).unlink(missing_ok=True)
     _sync_folder(Path(SECRETS_FILE).parent)
 
 
@@ -736,13 +1007,15 @@ async def remove_settings() -> dict:
 
 
 class _Failed(Exception):
-    """A step failed: STEP, what went wrong, and restic's exit status when it ran."""
+    """A step failed: STEP, what went wrong, and restic's exit status when it ran. PREFIX replaces the
+    step's text of STEP_TEXTS in the message of the run."""
 
-    def __init__(self, step: str, message: str, code: Optional[int] = None) -> None:
+    def __init__(self, step: str, message: str, code: Optional[int] = None, *, prefix: Optional[str] = None) -> None:
         super().__init__(message)
         self.step = step
         self.message = message
         self.code = code
+        self.prefix = prefix
 
 
 @dataclass
@@ -803,47 +1076,63 @@ def _message(text: str) -> str:
 
 
 async def _restic(repo: _Repository, args: list[str], *, step: str, stdin: Optional[bytes] = None,
-                  stdout_path: Optional[Path] = None) -> restic.Result:
-    """Run the restic command ARGS on REPO; _Failed(STEP) when it cannot run, times out or fails."""
+                  stdout_path: Optional[Path] = None, partial: bool = False,
+                  on_error_line: Optional[Callable[[bytes], None]] = None) -> restic.Result:
+    """Run the restic command ARGS on REPO; _Failed(STEP) when it cannot run, times out or fails. With
+    PARTIAL, exit status 3 (a backup that saved its snapshot without some files) is no failure: the
+    caller judges it by the errors that ON_ERROR_LINE gets."""
     name = args[0]
     timeout = TIMEOUTS[name]
+    waits = ["--retry-lock", RETRY_LOCK] if name in WAIT_FOR_LOCKS else []
     try:
-        result = await restic.run([*repo.options(), *args], repo.env(), timeout=timeout, stdin=stdin,
-                                  stdout_path=stdout_path)
+        result = await restic.run([*repo.options(), *waits, *args], repo.env(), timeout=timeout, stdin=stdin,
+                                  stdout_path=stdout_path, on_error_line=on_error_line)
     except restic.Timeout:
         raise _Failed(step, f"restic {name} did not end within {_duration(timeout)}: it was stopped") from None
     except (OSError, ValueError) as e:  # ValueError: a NUL in its environment, from a file edited by hand
         raise _Failed(step, f"restic could not run: {repo.redact(str(e))}") from None
-    if result.code != 0:
+    if result.code != 0 and not (partial and result.code == PARTIAL):
         raise _Failed(step, f"restic {name} ended with exit status {result.code}: "
                             f"{_message(repo.redact(result.stderr))}", result.code)
     return result
 
 
-def _ready(stored: Optional[OffsiteSettings], secrets: Secrets, *, sources: bool) -> _Repository:
-    """The repository of the stored settings, with its target checked (and the sources): _Failed with
-    step settings when something is not stored, folders when a folder cannot be used. Blocking."""
+def _ready(stored: Optional[OffsiteSettings], secrets: Secrets, *,
+           sources: bool) -> tuple[_Repository, list[int]]:
+    """The repository of the stored settings, with its target checked (and the sources) and held open
+    while restic runs, which the caller closes (_close): a folder held open keeps its filesystem busy,
+    so that a plain unmount of its disk fails, and restic's local back end, which makes the folders
+    that it misses, never writes onto the empty mount point, on the system disk. _Failed with step
+    settings when something is not stored, folders when a folder cannot be used. Blocking."""
     if stored is None:
         raise _Failed("settings", NOT_SET_UP)
     if not secrets.password:
         raise _Failed("settings", NO_PASSWORD)
     if stored.kind == Kind.S3 and not secrets.s3_secret_access_key:
         raise _Failed("settings", NO_SECRET_KEY)
+    held: list[int] = []
     try:
         if stored.kind == Kind.DISK:
-            _check_target(_target_path(stored.path), create=False)
+            held.append(_open_target(_target_path(stored.path), create=False)[0])
         if sources:
             for path in stored.sources:
-                _check_source(path)
+                held.append(_open_source(path)[1])
     except HTTPException as e:
+        _close(held)
         raise _Failed("folders", e.detail) from None
-    return _Repository(stored, secrets.password, secrets.s3_secret_access_key)
+    except BaseException:
+        _close(held)
+        raise
+    return _Repository(stored, secrets.password, secrets.s3_secret_access_key), held
 
 
-async def _repository() -> _Repository:
-    """The repository for the snapshots and the restores: 409 when nothing is set up, 503 when the
-    target cannot be used."""
+async def _repository(activity: Optional[Activity] = None) -> tuple[_Repository, list[int]]:
+    """The repository for the snapshots and the restores, with the target held open (_ready), which
+    the caller closes: 409 when nothing is set up, 503 when the target cannot be used. ACTIVITY, the
+    restore, names the target's pool."""
     stored, secrets = _stored()
+    if activity is not None and stored is not None:
+        activity.pools |= _pools_used(stored, sources=False)
     try:
         return await asyncio.to_thread(_ready, stored, secrets, sources=False)
     except _Failed as e:
@@ -907,14 +1196,95 @@ async def _restore_test(repo: _Repository, snapshot_id: str, digest: str) -> Non
                                           f"takes: {e}") from None
 
 
-async def _copy(activity: Activity, result: CopyResult) -> str:
+def _files(count: int) -> str:
+    return f"{count} file{'' if count == 1 else 's'}"
+
+
+def _listed(items: list[str], count: int) -> str:
+    """ITEMS, the first of COUNT, and how many more there are."""
+    more = count - len(items)
+    return ", ".join(items) + (f", and {more} more" if more > 0 else "")
+
+
+class _Unread:
+    """The files that the copy of the data could not read, from the errors that ``restic backup
+    --json`` prints on its standard error (message_type error, with the file as item and why): those
+    that vanished while it ran (no such file or directory: deleted or moved meanwhile), which are no
+    failure, and the others (permission denied, an I/O error), which fail the copy once every step
+    ran. restic exits with status 3 for both and saves the snapshot without them. Counted, with the
+    first NAMED_FILES of each named."""
+
+    def __init__(self) -> None:
+        self.vanished: list[str] = []
+        self.vanished_count = 0
+        self.unreadable: list[str] = []
+        self.unreadable_count = 0
+        # Exit status 3 without an error that names a file: why, from the end of standard error.
+        self.unnamed: Optional[str] = None
+        self.redact: Callable[[str], str] = lambda text: text
+
+    def add(self, line: bytes) -> None:
+        """One line of restic's standard error."""
+        try:
+            message = json.loads(line)
+        except ValueError:
+            return
+        if not isinstance(message, dict) or message.get("message_type") != "error":
+            return
+        if message.get("during") == "scan":  # the scanner only counts: the archiver reports the file again
+            return
+        error = message.get("error")
+        text = error.get("message") if isinstance(error, dict) else error
+        text = self.redact(text) if isinstance(text, str) and text else "no reason given"
+        item = self.redact(message["item"]) if isinstance(message.get("item"), str) else ""
+        reason = text.split(f"{item}: ", 1)[1] if item and f"{item}: " in text else text
+        if reason.lower().endswith("no such file or directory"):
+            self.vanished_count += 1
+            if len(self.vanished) < NAMED_FILES:
+                self.vanished.append(item or text)
+        else:
+            self.unreadable_count += 1
+            if len(self.unreadable) < NAMED_FILES:
+                self.unreadable.append(f"{item} ({reason})" if item else reason)
+
+    def problem(self) -> Optional[str]:
+        """Why the copy fails: the files that could not be read; None when every file was read or vanished."""
+        if self.unreadable_count:
+            return (f"{_files(self.unreadable_count)} could not be read: "
+                    f"{_listed(self.unreadable, self.unreadable_count)}")
+        return self.unnamed
+
+    def note(self, error: Optional[str]) -> Optional[str]:
+        """The files that vanished, and the problem unless it is ERROR, the error of the copy."""
+        parts = []
+        if self.vanished_count:
+            parts.append(f"{_files(self.vanished_count)} vanished during the copy: "
+                         f"{_listed(self.vanished, self.vanished_count)}")
+        problem = self.problem()
+        if problem and problem != error:
+            parts.append(problem)
+        return "; ".join(parts) or None
+
+
+async def _copy(activity: Activity, result: CopyResult, unread: _Unread) -> str:
     try:
         stored, secrets = load_settings(), load_secrets()
     except OSError as e:
         raise _Failed("settings", f"The settings of the off-device copy cannot be read: {e}") from None
+    if stored is not None:
+        activity.pools = _pools_used(stored, sources=True)
     activity.step = "folders"
-    repo = await asyncio.to_thread(_ready, stored, secrets, sources=True)
+    repo, held = await asyncio.to_thread(_ready, stored, secrets, sources=True)
+    try:
+        return await _steps(activity, result, repo, unread)
+    finally:
+        _close(held)
+
+
+async def _steps(activity: Activity, result: CopyResult, repo: _Repository, unread: _Unread) -> str:
+    """The steps of a copy, while its folders are held open."""
     settings = repo.settings
+    unread.redact = repo.redact
 
     activity.step = "unlock"
     await _restic(repo, ["unlock"], step="unlock")
@@ -926,13 +1296,18 @@ async def _copy(activity: Activity, result: CopyResult) -> str:
         raise _Failed("configuration", f"The configuration could not be collected: {e}") from None
     digest = hashlib.sha256(archive).hexdigest()
     configuration = _summary(await _restic(
-        repo, ["backup", "--json", "--quiet", "--stdin", "--stdin-filename", CONFIGURATION_NAME,
+        repo, ["backup", "--json", "--quiet", "--host", HOST, "--stdin", "--stdin-filename", CONFIGURATION_NAME,
                "--tag", CONFIGURATION_TAG], step="configuration", stdin=archive), "configuration")
+    del archive  # up to MAX_ARCHIVE_BYTES of RAM, not for the days that the copy of the data can take
 
     activity.step = "data"
-    data = _summary(await _restic(
-        repo, ["backup", "--json", "--quiet", "--tag", DATA_TAG, *_excludes(settings), "--", *settings.sources],
-        step="data"), "data")
+    backup = await _restic(
+        repo, ["backup", "--json", "--quiet", "--host", HOST, "--tag", DATA_TAG, *_excludes(settings), "--",
+               *settings.sources], step="data", partial=True, on_error_line=unread.add)
+    data = _summary(backup, "data")
+    if backup.code == PARTIAL and not (unread.vanished_count or unread.unreadable_count):
+        unread.unnamed = ("restic could not read some files and named none of them: "
+                          f"{_message(repo.redact(backup.stderr))}")
     result.summary = CopySummary(
         files_new=int(data.get("files_new") or 0),
         files_changed=int(data.get("files_changed") or 0),
@@ -950,7 +1325,9 @@ async def _copy(activity: Activity, result: CopyResult) -> str:
     activity.step = "check"
     result.check = "failed"
     subset = [f"--read-data-subset={settings.check_percent}%"] if settings.check_percent else []
-    await _restic(repo, ["check", *subset], step="check")
+    # An S3 store's check reads the cache of the copy (TMPDIR) instead of a new one of its own.
+    cache = ["--with-cache"] if settings.kind == Kind.S3 else []
+    await _restic(repo, ["check", *cache, *subset], step="check")
     result.check = "passed"
 
     activity.step = "restore_test"
@@ -958,6 +1335,9 @@ async def _copy(activity: Activity, result: CopyResult) -> str:
     await _restore_test(repo, configuration["snapshot_id"], digest)
     result.restore_test = "passed"
 
+    problem = unread.problem()
+    if problem:  # the snapshot is saved, without these files
+        raise _Failed("data", problem, PARTIAL, prefix=INCOMPLETE)
     summary = result.summary
     checked = f"the check of {settings.check_percent}% of the data" if settings.check_percent else "the check"
     return (f"Copied {summary.files_new} new, {summary.files_changed} changed and {summary.files_unmodified} "
@@ -966,8 +1346,9 @@ async def _copy(activity: Activity, result: CopyResult) -> str:
             "restore test passed")
 
 
-def _finish_copy(result: CopyResult) -> None:
+def _finish_copy(result: CopyResult, unread: _Unread) -> None:
     result.ended = _utc_now().isoformat()
+    result.note = unread.note(result.error)
     status = load_status()
     status.last_copy = result
     try:
@@ -988,17 +1369,19 @@ async def run_copy(trigger: str, activity: Optional[Activity] = None) -> tuple[b
         if activity is None:
             return True, f"Skipped: {_busy()}"
     result = CopyResult(started=activity.started.isoformat(), trigger=trigger)
+    unread = _Unread()
     try:
-        message = await _copy(activity, result)
+        message = await _copy(activity, result, unread)
         result.success = True
-        logger.info("Off-device copy: %s", message)
     except _Failed as e:
         result.step, result.error = e.step, e.message
-        message = e.message if e.step in ("settings", "folders") else f"{STEP_TEXTS[e.step]}: {e.message}"
-        logger.warning("Off-device copy: %s", message)
+        if e.step in ("settings", "folders"):
+            message = e.message
+        else:
+            message = f"{e.prefix or STEP_TEXTS[e.step]}: {e.message}"
     except asyncio.CancelledError:
         result.step, result.error = activity.step, STOPPED_DURING_COPY
-        _finish_copy(result)
+        _finish_copy(result, unread)
         raise
     except Exception as e:  # recorded as failed, never left running
         logger.exception("The off-device copy failed")
@@ -1006,7 +1389,13 @@ async def run_copy(trigger: str, activity: Optional[Activity] = None) -> tuple[b
         message = result.error
     finally:
         _end(activity)
-    _finish_copy(result)
+    _finish_copy(result, unread)
+    if result.note:
+        message = f"{message}. {result.note}"
+    if result.success:
+        logger.info("Off-device copy: %s", message)
+    else:
+        logger.warning("Off-device copy: %s", message)
     return result.success, message
 
 
@@ -1048,7 +1437,8 @@ def _when(snapshot: dict) -> datetime:
 async def _snapshots(repo: _Repository) -> list[dict]:
     """The snapshots of the repository, newest first, as the API answers them."""
     try:
-        result = await _restic(repo, ["snapshots", "--json"], step="snapshots")
+        # No lock: a listing beside a copy, or beside the lock of another device, neither waits nor fails.
+        result = await _restic(repo, ["snapshots", "--json", "--no-lock"], step="snapshots")
     except _Failed as e:
         raise HTTPException(503, f"The copy repository cannot be read: {e.message}") from None
     if result.stdout_cut:
@@ -1079,7 +1469,11 @@ async def _snapshots(repo: _Repository) -> list[dict]:
 
 async def list_snapshots() -> dict:
     """GET /offsite/snapshots."""
-    return {"snapshots": await _snapshots(await _repository())}
+    repo, held = await _repository()
+    try:
+        return {"snapshots": await _snapshots(repo)}
+    finally:
+        _close(held)
 
 
 def _snapshot_id(value: str) -> str:
@@ -1104,8 +1498,9 @@ async def restore_configuration(snapshot_id: str) -> dict:
     snapshot_id = _snapshot_id(snapshot_id)
     activity = _begin_or_409("restore-configuration")
     activity.snapshot_id = snapshot_id
+    held: list[int] = []
     try:
-        repo = await _repository()
+        repo, held = await _repository(activity)
         snapshot = await _find_snapshot(repo, snapshot_id)
         if snapshot["kind"] != "configuration":
             raise _bad(f"Snapshot {snapshot['short_id']} is not a configuration snapshot")
@@ -1126,6 +1521,7 @@ async def restore_configuration(snapshot_id: str) -> dict:
             when = _when(snapshot).replace(tzinfo=None)
             backup: BackupInfo = await asyncio.to_thread(store_backup, archive, "offsite", when)
     finally:
+        _close(held)
         _end(activity)
     return {"status": "success", "backup": backup.model_dump()}
 
@@ -1149,25 +1545,50 @@ def _pool_root(pool: str) -> str:
     except OSError:
         raise _bad(f"There is no pool {pool} at {base / pool}") from None
     try:
-        if on_system_disk(fd):
+        if on_system_filesystem(fd):
             raise _bad(f"Pool {pool} is not mounted at {base / pool}")
     finally:
         os.close(fd)
     return str(base / pool)
 
 
-def _make_folder(pool: str, name: str) -> str:
-    """Make the new folder NAME at the top of POOL (755); 409 when it exists. Blocking."""
+def _make_folder(pool: str, name: str) -> tuple[str, int]:
+    """Make the new folder NAME at the top of POOL (755) and open it: its path and the open folder,
+    which the caller closes. 409 when it exists, 400 when it cannot be made. Blocking."""
     base = pools_base()
-    fd = open_dir_nofollow(base, [pool])
+    path = base / pool / name
     try:
-        os.mkdir(name, 0o755, dir_fd=fd)
-    except FileExistsError:
-        raise HTTPException(409, f"{base / pool / name} exists: a restore never writes into a folder that "
-                                 "exists. Try again in a second") from None
+        parent = open_dir_nofollow(base, [pool])
+    except OSError as e:
+        raise _bad(_open_problem(e, str(base / pool), "The pool")) from None
+    try:
+        try:
+            os.mkdir(name, 0o755, dir_fd=parent)
+        except FileExistsError:
+            raise HTTPException(409, f"{path} exists: a restore never writes into a folder that exists. Try "
+                                     "again in a second") from None
+        except OSError as e:
+            raise _bad(f"{path} could not be made: {e.strerror or e}") from None
+        try:
+            return str(path), open_subdirs_nofollow(parent, [name])
+        except OSError as e:
+            _remove_empty(parent, name)
+            raise _bad(f"{path} could not be opened: {e.strerror or e}") from None
     finally:
-        os.close(fd)
-    return str(base / pool / name)
+        os.close(parent)
+
+
+def _remove_restore_folder(folder: str) -> None:
+    """Remove the folder of a restore that failed when nothing came into it. Blocking."""
+    path = Path(folder)
+    try:
+        parent = open_dir_nofollow(pools_base(), [path.parent.name])
+    except OSError:
+        return
+    try:
+        _remove_empty(parent, path.name)
+    finally:
+        os.close(parent)
 
 
 def _finish_restore(result: RestoreResult) -> None:
@@ -1181,24 +1602,32 @@ def _finish_restore(result: RestoreResult) -> None:
 
 
 async def _restore_files(activity: Activity, repo: _Repository, snapshot_id: str, path: Optional[str],
-                         folder: str) -> None:
+                         folder: str, held: list[int]) -> None:
+    """The restore into FOLDER, with FOLDER and the target held open (HELD) while restic writes. A
+    failed restore removes FOLDER when nothing came into it; one that a stop of the supervisor ends
+    keeps it, as its record says."""
     result = RestoreResult(snapshot_id=snapshot_id, path=path, folder=folder, started=activity.started.isoformat())
     activity.step = "restore"
     try:
-        target = f"{snapshot_id}:{path}" if path else snapshot_id
-        await _restic(repo, ["restore", target, "--target", folder, "--json", "--quiet"], step="restore")
-        result.success = True
-        logger.info("Restored snapshot %s of the off-device copy into %s", snapshot_id[:8], folder)
-    except _Failed as e:
-        result.error = e.message
-        logger.warning("The restore of snapshot %s into %s failed: %s", snapshot_id[:8], folder, e.message)
+        try:
+            target = f"{snapshot_id}:{path}" if path else snapshot_id
+            await _restic(repo, ["restore", target, "--target", folder, "--json", "--quiet"], step="restore")
+            result.success = True
+            logger.info("Restored snapshot %s of the off-device copy into %s", snapshot_id[:8], folder)
+        except _Failed as e:
+            result.error = e.message
+            logger.warning("The restore of snapshot %s into %s failed: %s", snapshot_id[:8], folder, e.message)
+        except Exception as e:  # recorded as failed, never left running
+            logger.exception("The restore from the off-device copy failed")
+            result.error = f"The restore failed: {e}"
+        finally:
+            _close(held)
+        if not result.success:
+            await asyncio.to_thread(_remove_restore_folder, folder)
     except asyncio.CancelledError:
-        result.error = STOPPED_DURING_RESTORE
+        result.error = result.error or STOPPED_DURING_RESTORE
         _finish_restore(result)
         raise
-    except Exception as e:  # recorded as failed, never left running
-        logger.exception("The restore from the off-device copy failed")
-        result.error = f"The restore failed: {e}"
     finally:
         _end(activity)
     _finish_restore(result)
@@ -1211,14 +1640,18 @@ async def restore_files(request: RestoreFilesRequest) -> dict:
     pool = validate_pool_name(request.pool)
     path = _snapshot_path(request.path)
     activity = _begin_or_409("restore-files")
+    activity.pools = {pool}
+    held: list[int] = []
     try:
-        repo = await _repository()
+        repo, held = await _repository(activity)
         await asyncio.to_thread(_pool_root, pool)
         snapshot = await _find_snapshot(repo, snapshot_id)
-        folder = await asyncio.to_thread(_make_folder, pool, f"restored-{_utc_now():%Y%m%d-%H%M%S}")
+        folder, fd = await asyncio.to_thread(_make_folder, pool, f"restored-{_utc_now():%Y%m%d-%H%M%S}")
+        held.append(fd)
     except BaseException:
+        _close(held)
         _end(activity)
         raise
     activity.snapshot_id, activity.folder = snapshot["id"], folder
-    _keep(asyncio.create_task(_restore_files(activity, repo, snapshot["id"], path, folder)))
+    _keep(asyncio.create_task(_restore_files(activity, repo, snapshot["id"], path, folder, held)))
     return {"status": "started", "folder": folder}

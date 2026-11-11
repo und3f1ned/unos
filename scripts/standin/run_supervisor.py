@@ -224,10 +224,11 @@ def configure(state: Path) -> Path:
 
     # The off-device copy (ADR-0337): its disk targets lie below the state directory, which stands for
     # /mnt as pools/ stands for /mnt/pools. One filesystem holds all of it, so nothing here is the
-    # system disk that a copy must stay off.
+    # system disk that a copy must stay off, nor the root filesystem where an unmounted pool would be.
     offsite = importlib.import_module("src.offsite.service")
     offsite.MOUNTS_BASE = str(state)
     offsite.on_system_disk = lambda fd: False
+    offsite.on_system_filesystem = lambda fd: False
 
     # 5 attempts per minute and client: the specs sign in through the form once per test.
     importlib.import_module("src.auth.router").limiter.enabled = False

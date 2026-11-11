@@ -1223,6 +1223,15 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
     here = [m for m in mounts if m.target == target]
     if not here:
         return
+    # A copy or a restore of the off-device copy holds the pool's folders open while restic runs, so
+    # the umount would fail as busy: it is named instead (ADR-0337). That module imports this one.
+    from ..offsite import service as offsite
+
+    copying = offsite.pool_user(name)
+    if copying:
+        raise PoolBusyError(
+            f"Pool '{name}' is used by the off-device copy: {copying}. Wait for it to end and try again."
+        )
     users = _containers_using(name, target)
     if users:
         raise PoolBusyError(

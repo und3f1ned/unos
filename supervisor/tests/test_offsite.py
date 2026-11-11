@@ -64,8 +64,9 @@ ACCESS_KEY = "AKIATESTACCESSKEY01"
 ADMIN = SimpleNamespace(id=1, username="admin", is_admin=True)
 API = "/api/v1/offsite"
 STOPPED = "The supervisor stopped during the copy"
-# The real check, before the env fixture replaces it.
+# The real checks, before the env fixture replaces them.
 REAL_ON_SYSTEM_DISK = offsite.on_system_disk
+REAL_ON_SYSTEM_FILESYSTEM = getattr(offsite, "on_system_filesystem", None)
 
 
 # --- the environment ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ def env(tmp_path, monkeypatch):
                         ("STATUS_FILE", data / "offsite_status.json"), ("DATA_DIR", data), ("MOUNTS_BASE", mnt)):
         monkeypatch.setattr(offsite, name, str(value))
     monkeypatch.setattr(offsite, "on_system_disk", lambda fd: False)
+    monkeypatch.setattr(offsite, "on_system_filesystem", lambda fd: False, raising=False)
     monkeypatch.setattr(offsite, "_activity", None)
     monkeypatch.setattr(offsite, "_tasks", set())
     monkeypatch.setattr("src.security.validators.settings", SimpleNamespace(pools_base_path=str(pools)))
@@ -294,6 +296,7 @@ async def test_a_disk_target_on_the_root_filesystem_or_the_data_volume_is_refuse
     """The folder of an unmounted disk's mount point is on the filesystem of MOUNTS_BASE: refused,
     before restic runs and without a folder made there."""
     monkeypatch.setattr(offsite, "on_system_disk", REAL_ON_SYSTEM_DISK)
+    monkeypatch.setattr(offsite, "on_system_filesystem", REAL_ON_SYSTEM_FILESYSTEM)
     with pytest.raises(HTTPException) as refused:
         await save(env)
     assert refused.value.status_code == 400 and "system disk" in refused.value.detail
@@ -426,7 +429,7 @@ async def test_sources_that_are_no_folders_of_a_pool_are_refused(env, sources, w
 async def test_a_source_on_the_system_disk_is_refused(env, monkeypatch):
     """A pool that is not mounted leaves its empty mount point on the root filesystem."""
     pool = os.stat(env.pool)
-    monkeypatch.setattr(offsite, "on_system_disk", lambda fd: os.path.samestat(os.fstat(fd), pool))
+    monkeypatch.setattr(offsite, "on_system_filesystem", lambda fd: os.path.samestat(os.fstat(fd), pool))
     with pytest.raises(HTTPException) as refused:
         await save(env)
     assert refused.value.status_code == 400 and "not on a mounted pool" in refused.value.detail
@@ -873,3 +876,470 @@ def test_the_routes_need_settings(env, client):
                                ("POST", "/restore-files", {"snapshot_id": "0123abcd", "pool": "data"})):
         answer = client.request(method, f"{API}{path}", json=body)
         assert answer.status_code == 409, (path, answer.text)
+
+
+# --- the review of e663f14 -----------------------------------------------------------------------
+#
+# A review in a fresh context of the first version (ADR-0017) found what follows; each test failed on
+# that version.
+
+
+def open_dirs() -> set[tuple[int, int]]:
+    """(device, inode) of the folders that this process holds open."""
+    found = set()
+    for fd in range(3, 2048):
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            found.add((st.st_dev, st.st_ino))
+    return found
+
+
+def ident(path: Path) -> tuple[int, int]:
+    st = os.stat(path)
+    return st.st_dev, st.st_ino
+
+
+def release(env, name: str) -> None:
+    (env.state / f"release-{name}").write_text("")
+
+
+# 1. A plain unmount of a folder that restic uses fails as busy: the folders are held open.
+
+
+async def test_the_target_and_every_source_are_held_open_while_restic_runs(env):
+    """restic's local back end makes the folders it misses: after an unmount of the target's disk
+    during a copy it would write the rest onto the mount point, on the system disk. Folders held open
+    keep their filesystem busy, so a plain umount fails."""
+    second = env.pools / "media"
+    second.mkdir()
+    (second / "film.txt").write_text("film")
+    await save(env, **disk_settings(env, sources=[str(env.pool), str(second)]))
+    fault(env, "backup", block=True)
+    copy = asyncio.create_task(offsite.run_copy("task"))
+    await wait_for(env.state / "blocked-backup")
+    held = open_dirs()
+    release(env, "backup")
+    ok, message = await copy
+
+    assert {ident(env.target), ident(env.pool), ident(second)} <= held
+    assert ok, message
+    assert not {ident(env.target), ident(env.pool), ident(second)} & open_dirs()
+
+
+async def test_save_holds_the_target_open_while_restic_makes_its_repository(env):
+    fault(env, "init", block=True)
+    saving = asyncio.create_task(save(env))
+    await wait_for(env.state / "blocked-init")
+    held = open_dirs()
+    release(env, "init")
+    await saving
+
+    assert ident(env.target) in held
+    assert ident(env.target) not in open_dirs()
+
+
+async def test_a_restore_of_files_holds_its_new_folder_and_the_target_open(env):
+    await save(env)
+    assert (await offsite.run_copy("task"))[0]
+    data = next(s for s in (await offsite.list_snapshots())["snapshots"] if s["kind"] == "data")
+    fault(env, "restore", block=True)
+    answer = await offsite.restore_files(offsite.RestoreFilesRequest(snapshot_id=data["id"], pool="data"))
+    await wait_for(env.state / "blocked-restore")
+    held = open_dirs()
+    release(env, "restore")
+    await asyncio.gather(*list(offsite._tasks))
+
+    assert {ident(Path(answer["folder"])), ident(env.target)} <= held
+    assert ident(env.target) not in open_dirs()
+
+
+async def test_the_pools_that_a_copy_or_a_restore_uses_are_named(env):
+    """The Storage page refuses to unmount or forget them meanwhile (test_pool_persistence.py)."""
+    second = env.pools / "media"
+    second.mkdir()
+    await save(env, **disk_settings(env, path=str(env.pool / "copies"), sources=[str(env.pool / "docs"), str(second)]))
+    fault(env, "backup", block=True)
+    copy = asyncio.create_task(offsite.run_copy("task"))
+    await wait_for(env.state / "blocked-backup")
+    during = offsite.pools_in_use()
+    release(env, "backup")
+    assert (await copy)[0]
+
+    assert during == {"data", "media"}
+    assert offsite.pools_in_use() == set()
+
+
+# 2. Locks: a listing takes none, and the steps wait for another one.
+
+
+def lock(path: Path, *, exclusive: bool, pid: int | None = None) -> Path:
+    """A lock of another restic in the repository at PATH."""
+    found = path / "locks" / f"other-{exclusive}"
+    found.write_text(json.dumps({"exclusive": exclusive, "pid": pid or os.getpid(), "time": "2026-11-11T03:00:00Z"}))
+    return found
+
+
+def test_the_snapshots_are_listed_beside_another_restic_that_holds_a_lock(env, client):
+    _copied(env, client)
+    lock(env.target, exclusive=True)
+
+    answer = client.get(f"{API}/snapshots")
+
+    assert answer.status_code == 200, answer.text
+    snapshots_call = [c["argv"] for c in calls(env) if command_of(c["argv"]) == "snapshots"][-1]
+    assert "--no-lock" in snapshots_call
+
+
+async def test_a_copy_waits_for_the_lock_of_another_restic(env):
+    """forget and check lock the repository exclusively and failed at once (exit 11) beside the lock
+    of a listing or of another device; they wait for it now (--retry-lock 10m)."""
+    await save(env)
+    other = lock(env.target, exclusive=False)
+    asyncio.get_running_loop().call_later(1.0, other.unlink)
+
+    ok, message = await offsite.run_copy("task")
+
+    assert ok, message
+    for call in calls(env):
+        if command_of(call["argv"]) in ("unlock", "backup-stdin", "backup", "forget", "check", "dump"):
+            assert option(call["argv"], "--retry-lock") == ["10m"], call["argv"]
+
+
+def test_the_restores_wait_for_a_lock_too(env, client):
+    found = _copied(env, client)
+    client.post(f"{API}/restore-configuration", json={"snapshot_id": found["configuration"]["id"]})
+    client.post(f"{API}/restore-files", json={"snapshot_id": found["data"]["id"], "pool": "data"})
+    wait_until_idle(client)
+    for name in ("dump", "restore"):
+        argv = [c["argv"] for c in calls(env) if command_of(c["argv"]) == name][-1]
+        assert option(argv, "--retry-lock") == ["10m"], argv
+
+
+# 3. Files that cannot be read: the snapshot stays, the other steps run, the end judges.
+
+
+async def test_files_that_vanished_during_the_copy_are_a_note_and_no_failure(env):
+    await save(env)
+    (env.state / "calls.jsonl").unlink()
+    gone = str(env.pool / "docs" / "letter.txt")
+    fault(env, "backup", vanished=[gone])
+
+    ok, message = await offsite.run_copy("task")
+
+    assert ok, message
+    assert commands(env) == ["unlock", "backup-stdin", "backup", "forget", "check", "dump"]
+    status = json.loads((env.data / "offsite_status.json").read_text())["last_copy"]
+    assert status["success"] and status["error"] is None
+    assert status["note"] == f"1 file vanished during the copy: {gone}"
+    assert status["note"] in message
+    assert status["summary"]["data_snapshot"]
+
+
+async def test_files_that_cannot_be_read_fail_the_copy_after_every_step(env):
+    await save(env)
+    (env.state / "calls.jsonl").unlink()
+    unreadable = {str(env.pool / "docs" / "letter.txt"): "permission denied",
+                  str(env.pool / "photos" / "2026" / "beach.jpg"): "input/output error"}
+    for n in range(5):
+        path = env.pool / "docs" / f"more{n}.txt"
+        path.write_text("x")
+        unreadable[str(path)] = "permission denied"
+    fault(env, "backup", unreadable=unreadable)
+    scheduler.save_tasks([_task()])
+
+    await scheduler.run_task(_task())
+
+    assert commands(env) == ["unlock", "backup-stdin", "backup", "forget", "check", "dump"]
+    status = json.loads((env.data / "offsite_status.json").read_text())["last_copy"]
+    assert (status["success"], status["step"], status["check"], status["restore_test"]) == (False, "data", "passed", "passed")
+    assert status["error"].startswith("7 files could not be read: ")
+    assert status["error"].count("permission denied") + status["error"].count("input/output error") == 5
+    assert status["error"].endswith(", and 2 more")
+    assert status["summary"]["data_snapshot"]
+    run = scheduler.load_runs()[-1]
+    assert run.status == "failed" and "7 files could not be read" in run.error
+
+
+# 4. Run now of a task runs beside the request, and a stop of the supervisor ends it.
+
+
+def test_run_now_of_a_task_does_not_hold_the_request_and_ends_with_the_supervisor(env, monkeypatch):
+    """Starlette's background tasks run after the answer, and uvicorn waits for them at its stop
+    without a limit: a copy of days would hold the stop. A task's Run now runs as the scheduler's
+    runs do, which its stop ends and records."""
+    monkeypatch.setenv("UNOS_DISABLE_BACKGROUND_TASKS", "1")
+    monkeypatch.setattr(scheduler, "_runs", set())
+    app.dependency_overrides[verify_token] = lambda: ADMIN
+    try:
+        with TestClient(app) as client:
+            task = client.post("/api/v1/scheduler/tasks", json={
+                "name": "Long", "task_type": "custom", "frequency": "daily", "hour": 3, "command": "sleep 8"}).json()
+            started = time.monotonic()
+            answer = client.post(f"/api/v1/scheduler/tasks/{task['id']}/run")
+            answered = time.monotonic() - started
+            running = [run for run in scheduler._runs if not run.done()]
+    finally:
+        app.dependency_overrides.pop(verify_token, None)
+
+    assert answer.status_code == 200 and answered < 5
+    assert len(running) == 1
+    run = scheduler.load_runs()[-1]
+    assert (run.status, run.error) == ("failed", scheduler.STOPPED_DURING_RUN)
+
+
+# 5. check with the cache of an S3 store.
+
+
+async def test_only_the_check_of_an_s3_store_uses_its_cache(env):
+    """Without --with-cache, check builds a second cache of its own in TMPDIR, the 2 GiB tmpfs."""
+    await save(env)
+    assert (await offsite.run_copy("task"))[0]
+    check = [c["argv"] for c in calls(env) if command_of(c["argv"]) == "check"][-1]
+    assert "--with-cache" not in check and "--no-cache" in check
+
+    await save(env, **s3_settings(env))
+    assert (await offsite.run_copy("task"))[0]
+    check = [c["argv"] for c in calls(env) if command_of(c["argv"]) == "check"][-1]
+    assert "--with-cache" in check and option(check, "--cache-dir")
+
+
+# 6. A folder that cannot be made is a 400 with the reason.
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root makes folders in any folder")
+async def test_a_target_folder_that_cannot_be_made_answers_400(env):
+    env.usb.chmod(0o555)
+    try:
+        with pytest.raises(HTTPException) as refused:
+            await save(env)
+    finally:
+        env.usb.chmod(0o755)
+    assert refused.value.status_code == 400 and "could not be made" in refused.value.detail
+    assert calls(env) == []
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root makes folders in any folder")
+def test_a_restore_folder_that_cannot_be_made_answers_400(env, client):
+    data = _copied(env, client)["data"]
+    env.pool.chmod(0o555)
+    try:
+        answer = client.post(f"{API}/restore-files", json={"snapshot_id": data["id"], "pool": "data"})
+    finally:
+        env.pool.chmod(0o755)
+    assert answer.status_code == 400 and "could not be made" in answer.json()["detail"]
+    assert client.get(f"{API}/status").json()["running"] is None
+
+
+# 7. A failed restore of files leaves no empty folder.
+
+
+def test_a_failed_restore_of_files_removes_its_empty_folder(env, client):
+    data = _copied(env, client)["data"]
+    fault(env, "restore", code=1, stderr="Fatal: the restore broke")
+
+    folder = Path(client.post(f"{API}/restore-files", json={"snapshot_id": data["id"], "pool": "data"}).json()["folder"])
+    status = wait_until_idle(client)
+
+    assert not status["last_restore"]["success"] and "the restore broke" in status["last_restore"]["error"]
+    assert status["last_restore"]["folder"] == str(folder)
+    assert not folder.exists()
+
+
+# 8. Disks, not filesystems: partitions of the system disk, and the volumes of a pool.
+
+
+def fake_sysfs(root: Path) -> None:
+    """/sys/dev/block and /sys/fs/btrfs of a host with sda (system: sda1 the root, sda2 another
+    partition), sdb with one partition behind dm-0 (LVM or LUKS), and sdc and sdd in one btrfs."""
+    devices = root / "devices" / "pci0000:00" / "block"
+    layout = {"sda": "8:0", "sda/sda1": "8:1", "sda/sda2": "8:2", "sdb": "8:16", "sdb/sdb1": "8:17",
+              "sdc": "8:32", "sdd": "8:48"}
+    for name, number in layout.items():
+        (devices / name).mkdir(parents=True)
+        (devices / name / "dev").write_text(number + "\n")
+        if "/" in name:
+            (devices / name / "partition").write_text(name[-1] + "\n")
+    dm = root / "devices" / "virtual" / "block" / "dm-0"
+    (dm / "slaves").mkdir(parents=True)
+    (dm / "dev").write_text("253:0\n")
+    (dm / "slaves" / "sdb1").symlink_to(devices / "sdb" / "sdb1")
+    block = root / "dev" / "block"
+    block.mkdir(parents=True)
+    for name, number in layout.items():
+        (block / number).symlink_to(devices / name)
+    (block / "253:0").symlink_to(dm)
+    btrfs = root / "fs" / "btrfs" / "2b0d5f4e-6c1a-4b8e-9d3f-7a1c2e3b4d5f" / "devices"
+    btrfs.mkdir(parents=True)
+    for name in ("sdc", "sdd"):
+        (btrfs / name).symlink_to(devices / name)
+
+
+@pytest.fixture
+def sysfs(tmp_path, monkeypatch):
+    root = tmp_path / "sys"
+    fake_sysfs(root)
+    monkeypatch.setattr(offsite, "SYS_DEV_BLOCK", str(root / "dev" / "block"), raising=False)
+    monkeypatch.setattr(offsite, "SYS_FS_BTRFS", str(root / "fs" / "btrfs"), raising=False)
+    return root
+
+
+@pytest.mark.parametrize("numbers, disks", [
+    ([(8, 1)], {"sda"}), ([(8, 0)], {"sda"}), ([(8, 2), (8, 17)], {"sda", "sdb"}), ([(253, 0)], {"sdb"}),
+    ([(8, 32), (8, 48)], {"sdc", "sdd"}), ([(9, 9)], set()),
+])
+def test_block_devices_map_to_their_whole_disks(sysfs, numbers, disks):
+    assert offsite.whole_disks({os.makedev(*n) for n in numbers}) == disks
+
+
+def test_a_btrfs_filesystem_is_all_its_devices(sysfs):
+    assert offsite.btrfs_devices("2b0d5f4e-6c1a-4b8e-9d3f-7a1c2e3b4d5f") == {os.makedev(8, 32), os.makedev(8, 48)}
+    assert offsite.btrfs_devices("00000000-0000-0000-0000-000000000000") == set()
+
+
+def test_a_filesystem_without_its_own_device_number_is_found_by_its_mount(tmp_path, monkeypatch):
+    """FUSE (ntfs-3g, exFAT) has no block device in st_dev: /proc/self/mountinfo names it."""
+    proc = tmp_path / "proc"
+    (proc / "fdinfo").mkdir(parents=True)
+    (proc / "fdinfo" / "7").write_text("pos:\t0\nflags:\t02000000\nmnt_id:\t42\nino:\t12\n")
+    (proc / "mountinfo").write_text(
+        "29 1 179:2 / / rw,relatime shared:1 - ext4 /dev/mmcblk1p2 rw\n"
+        "42 29 0:51 / /mnt/usb rw,nosuid shared:30 - fuseblk /dev/sdx1 rw,user_id=0,group_id=0\n")
+    monkeypatch.setattr(offsite, "PROC_SELF", str(proc), raising=False)
+    assert offsite.mount_source(7) == "/dev/sdx1"
+
+
+def by_folder(mapping: dict[Path, set[tuple[int, int]]]):
+    """_filesystem_devices for fds of the folders of MAPPING or below them (of the deepest folder of
+    MAPPING that holds them), as a filesystem mounted there has; the rest have none."""
+
+    def holds(path: Path, st: os.stat_result) -> bool:
+        below = [path, *(Path(folder) / name for folder, dirs, _ in os.walk(path) for name in dirs)]
+        return any(os.path.samestat(st, os.stat(folder)) for folder in below)
+
+    def devices(fd: int) -> set[int]:
+        st = os.fstat(fd)
+        holders = [path for path in mapping if holds(path, st)]
+        if not holders:
+            return set()
+        return {os.makedev(*n) for n in mapping[max(holders, key=lambda path: len(path.parts))]}
+
+    return devices
+
+
+async def test_a_target_on_another_partition_of_the_system_disk_is_refused(env, sysfs, monkeypatch):
+    """The root filesystem is on sda1; a filesystem of sda2 mounted below /mnt is on the system disk
+    too, which a comparison of filesystems let pass."""
+    monkeypatch.setattr(offsite, "on_system_disk", REAL_ON_SYSTEM_DISK)
+    monkeypatch.setattr(offsite, "_filesystem_devices", by_folder({
+        env.mnt: {(8, 1)}, env.data: {(8, 1)}, env.usb: {(8, 2)}, env.pool: {(8, 32), (8, 48)}}), raising=False)
+    # Another filesystem than the root's, as a partition mounted below /mnt is.
+    monkeypatch.setattr(offsite, "os", _OtherDevice(env.usb))
+
+    with pytest.raises(HTTPException) as refused:
+        await save(env)
+
+    assert refused.value.status_code == 400
+    assert refused.value.detail.startswith(f"{env.target} is on the system disk"), refused.value.detail
+    assert not env.target.exists()
+
+
+async def test_a_target_on_a_disk_of_its_own_is_taken(env, sysfs, monkeypatch):
+    monkeypatch.setattr(offsite, "on_system_disk", REAL_ON_SYSTEM_DISK)
+    monkeypatch.setattr(offsite, "_filesystem_devices", by_folder({
+        env.mnt: {(8, 1)}, env.data: {(8, 1)}, env.usb: {(253, 0)}, env.pool: {(8, 32), (8, 48)}}), raising=False)
+    answer = await save(env)
+    assert answer["configured"] and answer["warnings"] == []
+
+
+class _OtherDevice:
+    """The os module, but for whose fstat ROOT and everything below it have a device number of their
+    own, as a filesystem mounted there has, and btrfs gives every subvolume."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+
+    def fstat(self, fd: int) -> os.stat_result:
+        st = os.fstat(fd)
+        below = [self._root, *(Path(folder) / name for folder, dirs, _ in os.walk(self._root) for name in dirs)]
+        if any(os.path.samestat(st, os.stat(path)) for path in below):
+            values = list(st)
+            values[stat.ST_DEV] = st.st_dev + 1
+            return os.stat_result(values)
+        return st
+
+    def __getattr__(self, name: str):
+        return getattr(os, name)
+
+
+async def test_a_target_in_a_volume_of_a_copied_pool_is_on_the_disk_it_copies(env, sysfs, monkeypatch):
+    volume = env.pool / "media"
+    (volume / "copies").mkdir()
+    monkeypatch.setattr(offsite, "_filesystem_devices", by_folder({
+        env.pool: {(8, 32), (8, 48)}, volume / "copies": {(8, 32), (8, 48)}}), raising=False)
+    monkeypatch.setattr(offsite, "os", _OtherDevice(volume / "copies"))
+
+    answer = await save(env, **disk_settings(env, path=str(volume / "copies")))
+
+    assert [w["kind"] for w in answer["warnings"]] == ["same_disk"]
+
+
+# 9. Forget removes what the damaged files hold; a damaged file is logged without its values.
+
+
+async def test_forget_removes_the_damaged_secrets_file_too(env):
+    await save(env)
+    for name in ("offsite_secrets.json.bad", "offsite.json.bad", "offsite_status.json.bad"):
+        (env.data / name).write_text('{"password": "an old password of the copies"}')
+
+    await offsite.remove_settings()
+
+    assert sorted(p.name for p in env.data.iterdir() if p.name.startswith("offsite")) == []
+
+
+@pytest.mark.parametrize("name, content", [
+    ("offsite_secrets.json", {"password": ["leaked-secret-value-1234"]}),
+    ("offsite.json", {"kind": "disk", "path": ["leaked-secret-value-1234"], "sources": []}),
+])
+def test_a_file_that_fails_validation_is_logged_without_its_values(env, caplog, name, content):
+    (env.data / name).write_text(json.dumps(content))
+    with caplog.at_level(logging.WARNING):
+        loaded = offsite.load_secrets() if name == "offsite_secrets.json" else offsite.load_settings()
+    assert loaded in (None, offsite.Secrets())
+    assert (env.data / f"{name}.bad").exists()
+    assert "leaked-secret-value-1234" not in caplog.text and f"{name}.bad" in caplog.text
+
+
+# 10. The configuration archive is let go once it is copied.
+
+
+async def test_the_configuration_archive_is_let_go_once_it_is_copied(env, monkeypatch):
+    import tracemalloc
+
+    await save(env)
+    size = 24 * 1024 * 1024
+    monkeypatch.setattr(offsite, "configuration_archive", lambda: b"\0" * size)
+    fault(env, "backup", block=True)
+    tracemalloc.start()
+    try:
+        copy = asyncio.create_task(offsite.run_copy("task"))
+        await wait_for(env.state / "blocked-backup", timeout=60)
+        held, _ = tracemalloc.get_traced_memory()
+        release(env, "backup")
+        await copy
+    finally:
+        tracemalloc.stop()
+    assert held < size // 2, held
+
+
+# 13. Every backup names the same host.
+
+
+async def test_every_backup_names_the_host_unos(env):
+    await save(env)
+    assert (await offsite.run_copy("task"))[0]
+    for argv in [c["argv"] for c in calls(env) if command_of(c["argv"]) in ("backup", "backup-stdin")]:
+        assert option(argv, "--host") == ["unos"], argv
+    assert {s["hostname"] for s in (await offsite.list_snapshots())["snapshots"]} == {"unos"}

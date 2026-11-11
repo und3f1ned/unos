@@ -255,7 +255,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   limits. Saving tests the target and makes its repository; a task of the new
   type **Off-device Copy** (daily at 03:00 with one button) or **Run now**
   copies, removes old snapshots, checks the repository and tests a restore of
-  the configuration. Snapshots restore the configuration into the backup list
+  the configuration. Files that vanish while a copy reads them are a note;
+  files that cannot be read fail the copy once its other steps have run. While
+  a copy or a restore runs, its pools cannot be unmounted or removed.
+  Snapshots restore the configuration into the backup list
   (`offsite_<time>.tar.gz`) and the files into a new folder of a pool. The
   supervisor image contains restic.
 - Alerts for the problems of the NAS, and a health banner: a managed pool not
@@ -685,6 +688,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- **Run now** of a scheduled task no longer holds a stop of the supervisor
+  until the run ends: the stop ends the run and records it as stopped, as it
+  does for the runs that the schedule starts.
 - Telegram, webhook, Discord and Slack notifications reach their service also
   from a network that blocks it over IPv4: when the supervisor's container
   cannot connect (the containers have no IPv6), the same message goes once

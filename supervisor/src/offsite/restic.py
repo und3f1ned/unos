@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import os
 import signal
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,8 @@ STDERR_KEPT = 64 * 1024
 STDOUT_LIMIT = 32 * 1024 * 1024
 # Seconds to wait for a killed restic to end.
 KILL_WAIT = 10
+# The longest line of standard error that a caller's on_error_line gets; a longer one is dropped.
+LINE_LIMIT = 1024 * 1024
 
 
 class Timeout(Exception):
@@ -59,11 +62,39 @@ async def _read(stream: asyncio.StreamReader, limit: int, keep_end: bool) -> tup
     return bytes(data), cut
 
 
-async def _communicate(process: asyncio.subprocess.Process, stdin: bytes | None) -> Result:
+async def _read_errors(stream: asyncio.StreamReader, on_line: Callable[[bytes], None]) -> tuple[bytes, bool]:
+    """Read standard error to its end: its last STDERR_KEPT bytes, and each line for ON_LINE, as it comes
+    (restic's JSON messages of the files it cannot read can be more than any limit)."""
+    tail = bytearray()
+    pending = bytearray()
+    skipping = False  # in a line longer than LINE_LIMIT, dropped up to its end
+    while chunk := await stream.read(65536):
+        tail += chunk
+        if len(tail) > STDERR_KEPT:
+            del tail[: len(tail) - STDERR_KEPT]
+        pending += chunk
+        *lines, rest = pending.split(b"\n")
+        for line in lines:
+            if not skipping:
+                on_line(bytes(line))
+            skipping = False
+        if len(rest) > LINE_LIMIT:
+            rest, skipping = b"", True
+        pending = bytearray(rest)
+    if pending and not skipping:
+        on_line(bytes(pending))
+    return bytes(tail), False
+
+
+async def _communicate(process: asyncio.subprocess.Process, stdin: bytes | None,
+                       on_error_line: Callable[[bytes], None] | None) -> Result:
     reads = []
     if process.stdout is not None:
         reads.append(asyncio.create_task(_read(process.stdout, STDOUT_LIMIT, keep_end=False)))
-    errors = asyncio.create_task(_read(process.stderr, STDERR_KEPT, keep_end=True))
+    if on_error_line is None:
+        errors = asyncio.create_task(_read(process.stderr, STDERR_KEPT, keep_end=True))
+    else:
+        errors = asyncio.create_task(_read_errors(process.stderr, on_error_line))
     try:
         if stdin is not None:
             # restic that ends early (a wrong password) closes the pipe: its exit status says why.
@@ -89,12 +120,13 @@ async def _kill(process: asyncio.subprocess.Process) -> None:
 
 
 async def run(args: list[str], env: dict[str, str], *, timeout: float, stdin: bytes | None = None,
-              stdout_path: Path | None = None) -> Result:
+              stdout_path: Path | None = None, on_error_line: Callable[[bytes], None] | None = None) -> Result:
     """Run restic with ARGS and ENV, and wait for it at most TIMEOUT seconds.
 
     STDIN is written to its standard input; with STDOUT_PATH its standard output goes into that new
-    file (dump), and Result.stdout is empty. Raises Timeout after killing its process group at the
-    timeout, OSError when it cannot start; a cancellation kills the group too and goes on.
+    file (dump), and Result.stdout is empty. ON_ERROR_LINE gets each line of its standard error. Raises
+    Timeout after killing its process group at the timeout, OSError when it cannot start; a
+    cancellation kills the group too and goes on.
     """
     out = open(stdout_path, "xb") if stdout_path is not None else None
     try:
@@ -110,7 +142,7 @@ async def run(args: list[str], env: dict[str, str], *, timeout: float, stdin: by
         if out is not None:
             out.close()  # restic has its own descriptor of the file
     try:
-        return await asyncio.wait_for(_communicate(process, stdin), timeout)
+        return await asyncio.wait_for(_communicate(process, stdin, on_error_line), timeout)
     except asyncio.TimeoutError:
         await _kill(process)
         raise Timeout(timeout) from None

@@ -13,16 +13,25 @@ comes back from ``dump``, ``restore`` and ``snapshots``:
   with --stdin and --stdin-filename), forget with --tag, --keep-daily, --keep-weekly and
   --keep-monthly, check, dump, snapshots and restore, with restic's exit codes: 10 for a
   repository that does not exist, 12 for a wrong password, 1 for other failures;
-* global options anywhere: --no-cache, --cache-dir, --limit-upload, --limit-download, --json and
-  --quiet; backup prints its summary as restic does with --json --quiet.
+* global options anywhere: --no-cache, --cache-dir, --limit-upload, --limit-download, --json,
+  --quiet, --no-lock and --retry-lock; backup prints its summary as restic does with --json
+  --quiet, and keeps the host that --host names;
+* locks as restic takes them, files in ``locks/`` with their process id: cat, backup, dump,
+  restore and snapshots a shared one, forget and check an exclusive one, which conflicts with any
+  other lock, as a shared one does with an exclusive one. A conflict fails the command at once
+  with exit code 11, or after the time of --retry-lock; --no-lock takes none; unlock removes the
+  locks of processes that are gone;
+* backup of folders exits with 3 when files could not be read: it saves the snapshot without them
+  and prints an error for each, a JSON line with message_type "error" on standard error.
 
 ``<state>`` is FAKE_RESTIC_STATE, which the wrapper sets. Each call appends a line to
 ``<state>/calls.jsonl``: its arguments, its environment and its process id. ``<state>/faults.json``
 changes what a command does, by the command's name (``backup-stdin`` for the configuration's
 backup): ``{"code": N, "stderr": "..."}`` fails it, ``{"sleep": S}`` waits S seconds first,
 ``{"block": true}`` writes ``<state>/blocked-<name>`` and waits for ``<state>/release-<name>``,
-``{"garble": true}`` makes dump change a byte of what it writes, and ``{"skip": [paths]}`` makes
-backup leave those files out.
+``{"garble": true}`` makes dump change a byte of what it writes, and backup of folders takes
+``{"vanished": [paths]}`` (files gone while it ran: "no such file or directory") and
+``{"unreadable": {path: reason}}`` (such as "permission denied").
 
 Standard library only: it runs with the stand-in's Python and the tests' alike.
 """
@@ -30,6 +39,7 @@ Standard library only: it runs with the stand-in's Python and the tests' alike.
 from __future__ import annotations
 
 import base64
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -42,12 +52,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-GLOBAL_FLAGS = {"--no-cache", "--json", "--quiet", "-q"}
-GLOBAL_VALUES = {"--cache-dir", "--limit-upload", "--limit-download"}
+GLOBAL_FLAGS = {"--no-cache", "--json", "--quiet", "-q", "--no-lock"}
+GLOBAL_VALUES = {"--cache-dir", "--limit-upload", "--limit-download", "--retry-lock"}
 COMMAND_VALUES = {
     "--stdin-filename", "--tag", "--exclude", "--keep-daily", "--keep-weekly", "--keep-monthly", "--target",
     "--host", "--group-by",
 }
+# The lock that each command takes, as restic's do.
+SHARED, EXCLUSIVE = "shared", "exclusive"
+LOCKS = {"cat": SHARED, "backup": SHARED, "dump": SHARED, "restore": SHARED, "snapshots": SHARED,
+         "forget": EXCLUSIVE, "check": EXCLUSIVE}
 
 
 class Fatal(Exception):
@@ -99,7 +113,7 @@ def parse(argv: list[str]) -> tuple[str, list[str], dict[str, list[str]], set[st
         if arg == "--":  # the end of the options: the rest are arguments
             positional += argv[i + 1:]
             break
-        if arg in GLOBAL_FLAGS or arg in ("--stdin", "--prune", "--read-data"):
+        if arg in GLOBAL_FLAGS or arg in ("--stdin", "--prune", "--read-data", "--with-cache"):
             flags.add(arg)
         elif name in GLOBAL_VALUES or name in COMMAND_VALUES or name == "--read-data-subset":
             if eq:
@@ -170,6 +184,54 @@ def open_repository() -> Path:
     return repo
 
 
+def _seconds(text: str) -> float:
+    """A duration as restic writes them: 10m, 30s, 1h."""
+    units = {"s": 1, "m": 60, "h": 3600}
+    return float(text[:-1]) * units[text[-1]] if text and text[-1] in units else float(text)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _locks(repo: Path) -> list[dict]:
+    found = []
+    for path in (repo / "locks").iterdir():
+        with contextlib.suppress(FileNotFoundError, ValueError):
+            found.append(json.loads(path.read_text()))
+    return found
+
+
+@contextlib.contextmanager
+def locked(repo: Path, kind: str | None, values: dict, flags: set):
+    """Hold a lock of KIND on REPO while the command runs, as restic does."""
+    if kind is None or "--no-lock" in flags:
+        yield
+        return
+    deadline = time.monotonic() + _seconds(values.get("--retry-lock", ["0s"])[0])
+    while True:
+        conflict = next((o for o in _locks(repo) if kind == EXCLUSIVE or o["exclusive"]), None)
+        if conflict is None:
+            break
+        if time.monotonic() >= deadline:
+            how = "exclusively " if conflict["exclusive"] else ""
+            raise Fatal(f"Fatal: unable to create lock in backend: repository is already locked {how}by PID "
+                        f"{conflict['pid']} on host unos by root (UID 0, GID 0)", 11)
+        time.sleep(0.02)
+    path = repo / "locks" / secrets.token_hex(32)
+    path.write_text(json.dumps({"exclusive": kind == EXCLUSIVE, "pid": os.getpid(), "time": now()}))
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
+
+
 def snapshots(repo: Path) -> list[dict]:
     """The snapshots, oldest first."""
     found = [json.loads(path.read_text()) for path in (repo / "snapshots").iterdir()]
@@ -211,8 +273,14 @@ def cmd_cat(args, values, flags) -> None:
 
 
 def cmd_unlock(args, values, flags) -> None:
-    open_repository()
-    print("successfully removed 0 locks")
+    repo = open_repository()
+    removed = 0
+    for path in (repo / "locks").iterdir():
+        with contextlib.suppress(FileNotFoundError, ValueError):
+            if not _alive(json.loads(path.read_text())["pid"]):
+                path.unlink()
+                removed += 1
+    print(f"successfully removed {removed} locks")
 
 
 def _pattern_matches(pattern: str, path: str) -> bool:
@@ -225,8 +293,9 @@ def _pattern_matches(pattern: str, path: str) -> bool:
     return len(parts) >= len(wanted) and all(fnmatch.fnmatchcase(a, b) for a, b in zip(parts, wanted))
 
 
-def _collect(sources: list[str], excludes: list[str], skip: list[str]) -> dict[str, str]:
-    """The regular files below SOURCES, not excluded: absolute path -> content in base64."""
+def _collect(sources: list[str], excludes: list[str], errors: dict[str, str]) -> dict[str, str]:
+    """The regular files below SOURCES, not excluded: absolute path -> content in base64. ERRORS:
+    the files that cannot be read, by path, with why."""
     files: dict[str, str] = {}
     existing = 0
     for source in sources:
@@ -238,7 +307,12 @@ def _collect(sources: list[str], excludes: list[str], skip: list[str]) -> dict[s
             dirs[:] = sorted(d for d in dirs if not any(_pattern_matches(p, os.path.join(folder, d)) for p in excludes))
             for name in sorted(names):
                 path = os.path.join(folder, name)
-                if any(_pattern_matches(p, path) for p in excludes) or path in skip:
+                if any(_pattern_matches(p, path) for p in excludes):
+                    continue
+                if path in errors:
+                    message = f"open {path}: {errors[path]}"
+                    sys.stderr.write(json.dumps({"message_type": "error", "error": {"message": message},
+                                                 "during": "archival", "item": path}) + "\n")
                     continue
                 if stat.S_ISREG(os.lstat(path).st_mode):
                     with open(path, "rb") as f:
@@ -248,7 +322,7 @@ def _collect(sources: list[str], excludes: list[str], skip: list[str]) -> dict[s
     return files
 
 
-def cmd_backup(args, values, flags) -> None:
+def cmd_backup(args, values, flags) -> int:
     repo = open_repository()
     tags = values.get("--tag", [])
     started = now()
@@ -260,9 +334,11 @@ def cmd_backup(args, values, flags) -> None:
     else:
         if not args:
             raise Fatal("Fatal: nothing to backup, please specify source files/dirs")
-        files = _collect(args, values.get("--exclude", []), fault().get("skip", []))
+        errors = {path: "no such file or directory" for path in fault().get("vanished", [])}
+        errors.update(fault().get("unreadable", {}))
+        files = _collect(args, values.get("--exclude", []), errors)
         paths = sorted(args)
-    hostname = os.uname().nodename
+    hostname = values.get("--host", [os.uname().nodename])[0]
     parents = [s for s in snapshots(repo) if s["paths"] == paths and s["hostname"] == hostname]
     parent = parents[-1]["files"] if parents else {}
     new = [p for p in files if p not in parent]
@@ -296,6 +372,9 @@ def cmd_backup(args, values, flags) -> None:
         }))
     else:
         print(f"snapshot {snapshot_id[:8]} saved")
+    # restic's exit code 3: the snapshot is saved, but some files could not be read.
+    unread = set(fault().get("vanished", [])) | set(fault().get("unreadable", {}))
+    return 3 if "--stdin" not in flags and unread else 0
 
 
 def _keep(group: list[dict], days: int, weeks: int, months: int) -> set[str]:
@@ -431,11 +510,13 @@ def main(argv: list[str]) -> int:
         handler = COMMANDS.get(command)
         if handler is None:
             raise Fatal(f"Fatal: unknown command \"{command}\" for \"restic\"")
-        handler(args, values, flags)
+        if command in LOCKS:
+            with locked(open_repository(), LOCKS[command], values, flags):
+                return handler(args, values, flags) or 0
+        return handler(args, values, flags) or 0
     except Fatal as e:
         sys.stderr.write(f"{e}\n")
         return e.code
-    return 0
 
 
 if __name__ == "__main__":

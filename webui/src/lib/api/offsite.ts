@@ -80,6 +80,9 @@ export interface CopyResult {
   /** passed or failed; null when the copy did not get there. */
   check: string | null;
   restore_test: string | null;
+  /** What the copy of the data could not read that is not the error, in the server's words: files that
+   * vanished while it ran (no failure), and files that could not be read when a later step failed. */
+  note: string | null;
 }
 
 export interface RestoreResult {

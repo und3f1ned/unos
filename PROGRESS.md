@@ -267,9 +267,47 @@ Open owner actions:
   and `webui/tests/offsite.spec.ts`, which failed without the section. The scenario check gets the
   area `offsite` (`scripts/dev/scenario.py`), with its fake in `test_dev_scenarios.py`.
 - `backup.off-device-copies-over-sftp` records the SFTP and REST targets that ADR-0337 leaves out.
-- Open: the deploy, whose supervisor build runs apt-get for restic's layer (tell the owner first,
-  and measure its SD MiB), `scripts/dev/scenario.sh offsite` before and after a reboot (ADR-0018),
-  a copy to a USB disk and to an S3 store, and the review in a fresh context (ADR-0017).
+- On the dev device, e663f14 of the branch with the real restic 0.18: `scenario.sh offsite` OK,
+  12 steps, and a copy, Restore configuration and the regular restore of that backup left the
+  users, shares, tokens, smb.conf and passdb the same. Its copies name the container's hostname,
+  so `forget` keeps them as a group of their own beside those of `--host unos` (below).
+- The review in a fresh context (ADR-0017) of e663f14 found 13 points. Each got a test that failed
+  on e663f14 first (30 more in `test_offsite.py`, 2 in `test_pool_persistence.py`, 1 in
+  `test_dev_scenarios.py`; the fake restic now takes locks and exits with 3), and each was fixed:
+  1. An unmount of the target's disk during a run let restic's local back end make the missing
+     folders on the empty mount point, on the system disk. The target, the sources and a
+     restore's new folder are now held open while restic runs (Save's init too), so a plain
+     umount fails as busy; Unmount and Remove Pool answer 409 naming the copy while a copy or a
+     restore uses the pool. No code of UNOS unmounts lazily.
+  2. `forget` and `check` failed at once beside any other lock: every step of a copy and of the
+     restores waits up to 10 minutes (`--retry-lock 10m`), and the listing takes no lock.
+  3. Exit status 3 of the data's backup failed the run although the snapshot was saved: now the
+     other steps run, vanished files are a note, and other unreadable files fail the run at its
+     end, the first 5 named with the count. The status and the Scheduler's record say which, and
+     the page shows the note.
+  4. Run now of a task ran as a background task of Starlette, for which uvicorn waits at its stop
+     without a limit: it is a task of the scheduler now, which the stop ends and records. The
+     scheduler and backup tests' clients wait for those runs (`waiting_for_runs`).
+  5. `check` of an s3 store made a second cache: `--with-cache`; ADR-0337 says the cache in /tmp
+     counts against the 2 GiB of the tmpfs.
+  6. A target folder that could not be made answered 500: 400 with the reason, as a restore's.
+  7. A failed restore of files left its empty folder: it is removed.
+  8. The system disk was compared by filesystem: whole disks now (another partition of the system
+     disk, btrfs with all its devices, device mapper and md), for the target and the same-disk
+     warning; the sources and a restore's pool keep the filesystem rule (a pool not mounted).
+  9. Forget this target left `offsite_secrets.json.bad`: it removes the `.bad` copies, and a file
+     that fails validation is logged without its values.
+  10. The configuration archive stayed in RAM for the whole copy: it is let go after its step.
+  11. `docs/INSTALL.md` did not say that update.sh's copy of the data volume holds
+      `offsite_secrets.json`: it does.
+  12. The device check could start beside a task that copies: it refuses to; that no route cancels
+      a copy, so one that outlives the waits fails the clean-up, is in its docstring.
+  13. The snapshots named the container's hostname: every backup names `--host unos`.
+  Two tests changed their setup with the code, not their assertions: the refusal of a target on
+  the root filesystem sets both real checks, and the refusal of a source that is not mounted
+  replaces `on_system_filesystem`, which judges the sources now.
+- Open: the deploy of the review's fixes, `scripts/dev/scenario.sh offsite` again before and after
+  a reboot (ADR-0018), a copy to a USB disk and to an S3 store, and `passes`.
 
 ### 2026-11-11: HTTP notifications that cannot connect from the container go from the host's network
 

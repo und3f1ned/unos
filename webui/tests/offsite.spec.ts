@@ -1,3 +1,5 @@
+import { rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
 import { targetUrl } from './target';
@@ -5,7 +7,7 @@ import { targetUrl } from './target';
 // The off-device copy on System > Backup & Restore (backup.off-device-copies, ADR-0337): a disk
 // target saved and tested, Run now, the state with its check and restore test, the snapshots, the
 // configuration of a snapshot restored into the backup list and the files of one into a new folder,
-// a daily task at 03:00, and the form's refusals.
+// a daily task at 03:00, a file that vanishes during a copy, and the form's refusals.
 //
 // The main flow runs on the stand-in only, which runs the fake restic of
 // supervisor/tests/fake_restic.py and counts no folder as the system disk
@@ -152,6 +154,47 @@ test.describe('Off-device copy', () => {
       await section.getByRole('button', { name: 'Forget this target' }).click();
       await expect(section.getByText('No off-device copy is set up')).toBeVisible();
     } finally {
+      await cleanUp(request, token, [source, target]);
+    }
+  });
+
+  test('a file that vanishes while a copy reads it is a note of the state, and the copy succeeds', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN);
+    const token = await loginToken(request);
+    const headers = { Authorization: `Bearer ${token}` };
+    const run = Date.now().toString(36);
+    const source = `${POOLS}/testpool/e2e-offsite-${run}`;
+    const target = `${POOLS}/testpool/e2e-offsite-${run}-copy`;
+    const letter = `${source}/letter.txt`;
+    expect(
+      (await request.post(`${BASE_URL}/api/v1/files/mkdir`, { headers, data: { path: `${POOLS}/testpool`, name: `e2e-offsite-${run}` } })).ok(),
+    ).toBeTruthy();
+    const upload = await request.post(`${BASE_URL}/api/v1/files/upload`, {
+      headers,
+      params: { path: source },
+      multipart: { file: { name: 'letter.txt', mimeType: 'text/plain', buffer: Buffer.from('Dear family,\n') } },
+    });
+    expect(upload.ok(), await upload.text()).toBeTruthy();
+    // The stand-in's fake restic reports the letter as gone while it reads the folder, as restic does
+    // for a file deleted meanwhile (the faults of supervisor/tests/fake_restic.py).
+    const faults = join(process.env.E2E_STANDIN_STATE as string, 'fake-restic', 'faults.json');
+    writeFileSync(faults, JSON.stringify({ backup: { vanished: [letter] } }));
+
+    try {
+      const saved = await request.put(`${BASE_URL}/api/v1/offsite/settings`, {
+        headers,
+        data: { kind: 'disk', path: target, password: PASSWORD, sources: [source] },
+      });
+      expect(saved.ok(), await saved.text()).toBeTruthy();
+      const section = await openSection(page);
+      await section.getByRole('button', { name: 'Run now' }).click();
+      await refreshUntil(section, 'Last copy: succeeded');
+      await expect(section.getByTestId('copy-note')).toHaveText(`1 file vanished during the copy: ${letter}`);
+    } finally {
+      rmSync(faults, { force: true });
       await cleanUp(request, token, [source, target]);
     }
   });

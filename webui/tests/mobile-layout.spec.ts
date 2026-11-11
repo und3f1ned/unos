@@ -391,6 +391,7 @@ const OFFSITE = {
         configuration_snapshot: '9d1a7f3e5c8b0d4a6f2e9c1b7d3a5f8e0c6b2d9a1f4f2a9c1e7b3d5a8f0e6c2b', data_snapshot: null },
       check: null,
       restore_test: null,
+      note: null,
     },
     last_restore: {
       snapshot_id: OFFSITE_SNAPSHOT_ID, path: '/mnt/pools/media/FamilyPhotosAndVideosOfTheWholeFamily2026',

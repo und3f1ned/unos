@@ -146,6 +146,7 @@ offsite = importlib.import_module("src.offsite.service")
 data_fd = os.open(str(data), os.O_RDONLY)
 try:
     data_on_system_disk = offsite.on_system_disk(data_fd)
+    data_on_system_filesystem = getattr(offsite, "on_system_filesystem", lambda fd: True)(data_fd)
 finally:
     os.close(data_fd)
 print(json.dumps({
@@ -168,6 +169,7 @@ print(json.dumps({
     "offsite": {
         "mounts_base": str(offsite.MOUNTS_BASE),
         "on_system_disk": data_on_system_disk,
+        "on_system_filesystem": data_on_system_filesystem,
         "restic": shutil.which("restic"),
         "ionice": shutil.which("ionice"),
     },
@@ -310,7 +312,7 @@ class TestIsolation:
         system disk that the copy must stay off (ADR-0337)."""
         state, offsite = configured["state"], configured["offsite"]
         assert Path(offsite["mounts_base"]) == state
-        assert offsite["on_system_disk"] is False
+        assert offsite["on_system_disk"] is False and offsite["on_system_filesystem"] is False
         for tool in ("restic", "ionice"):
             assert offsite[tool] and _inside(offsite[tool], state), (tool, offsite[tool])
         assert "fake_restic.py" in Path(offsite["restic"]).read_text()

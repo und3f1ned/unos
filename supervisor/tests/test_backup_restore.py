@@ -26,6 +26,7 @@ from src.host import HostResult
 from src.main import app
 from src.shares import accounts, interfaces, service
 from .audit_helpers import audit_entries
+from .test_scheduler_validation import waiting_for_runs
 
 backup_router = importlib.import_module("src.backup.router")
 
@@ -149,7 +150,7 @@ def make_env(tmp_path, monkeypatch, *, smb_applied: bool = False):
         with host as run_on_host:
             app.dependency_overrides[verify_token] = lambda: ADMIN
             yield SimpleNamespace(
-                client=TestClient(app),
+                client=TestClient(waiting_for_runs(app)),
                 tmp=tmp_path,
                 backup_dir=backup_dir,
                 db_path=db_path,

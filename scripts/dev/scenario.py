@@ -2041,6 +2041,15 @@ def utc_stamp(text: str) -> str:
 
 
 def offsite_check(c: Check) -> None:
+    """The off-device copy to a folder of a pool (ADR-0337): set up, Run now, the snapshots, both
+    restores and Forget this target. It starts only on a device where no copy is set up and no task of
+    the Scheduler copies: the check sets one up and forgets it again, and such a task would copy to its
+    target meanwhile and fail every run after it.
+
+    The API has no route that cancels a copy or a restore: one that outlives the waits (OFFSITE_WAIT)
+    still runs at the clean-up, whose steps then fail, and the final comparison reports what is left
+    on the device.
+    """
     with c.step("a pool is mounted read-write and managed by UNOS") as s:
         pool = c.pick_pool()
         name, root = pool["name"], pool["mountpoint"]
@@ -2083,6 +2092,10 @@ def offsite_check(c: Check) -> None:
     with c.step("no off-device copy is set up, which the check would replace"):
         c.expect(c.before["the off-device copy"] == "not set up", "one is set up on System > Backup & Restore: forget "
                  "it there, or run the check on a device without one")
+        copying = [task.get("name") for task in c.get("/scheduler/tasks") if task.get("task_type") == "offsite_copy"]
+        c.expect(not copying, f"the Scheduler has a task that copies: {', '.join(copying)}. It would copy to the "
+                 "check's target meanwhile and fail every run after the check: delete it, or run the check on a "
+                 "device without one")
 
     with c.step(f"a folder {source} with two files, the folder to copy"):
         c.on_cleanup(f"delete {source} for good", lambda: c.delete_for_good(source))

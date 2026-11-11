@@ -1685,9 +1685,10 @@ place off this device, the copy repository:
 
 - **A disk**: a folder on a disk mounted below `/mnt`, such as a USB disk added
   as a pool (`/mnt/pools/usb/unos-copy`). **Save and test** makes the folder
-  when only it is missing. A folder on the system disk is refused, and so is
-  the mount point of a disk that is not mounted: it is an empty folder there.
-  A folder that holds other files but no copy repository is refused too.
+  when only it is missing. A folder on the system disk, or on another
+  partition of it, is refused, and so is the mount point of a disk that is not
+  mounted: it is an empty folder there. A folder that holds other files but no
+  copy repository is refused too.
 - **An S3-compatible store**, such as Backblaze B2, Wasabi, Amazon S3,
   Cloudflare R2 or MinIO on a second NAS: its endpoint (`https://`, or
   `http://` in your own network, since restic encrypts everything anyway),
@@ -1720,13 +1721,28 @@ and the changes of the folders since the last copy; removes the snapshots
 beyond the retention (7 daily, 4 weekly and 12 monthly, kept for the
 configuration and the folders each); checks the repository, reading 2% of its
 data (the share you set); and reads the configuration back and checks it as a
-restore would, the restore test, without restoring anything. The first step
-that fails ends the copy. **State** shows the last copy: whether it succeeded,
-the files new, changed and unmodified, how much it added, the check and the
-restore test, or the step that failed with restic's message; **Refresh** reads
-it again. A failed copy of a task is alerted to every notification channel. A
-copy that starts while another one or a restore runs is skipped and counts as
-a success: the first copy of a large pool to a cloud store can take days.
+restore would, the restore test, without restoring anything. The check reads
+its share anew at each copy: on a store that bills downloads, such as Amazon
+S3, 2% checked daily downloads about 60% of the repository a month. Set a
+smaller share there, or 0, with which the check reads none of the data and
+covers only the repository's structure. The first step that fails ends the
+copy, with one exception: files that cannot be read. Files that vanish while
+the copy reads them, deleted or moved meanwhile, are named in a note, and the
+copy succeeds. Files that cannot be read for another reason, such as a missing
+permission or a read error of the disk, are left out of the snapshot, the
+other steps still run, and then the copy fails, naming up to 5 of them.
+**State** shows the last copy: whether it succeeded, the files new, changed and
+unmodified, how much it added, the check and the restore test, the note, or the
+step that failed with restic's message; **Refresh** reads it again. A failed
+copy of a task is alerted to every notification channel. A copy that starts
+while another one or a restore runs is skipped and counts as a success: the
+first copy of a large pool to a cloud store can take days. A step that finds
+the repository locked by another program, such as a copy of another device,
+waits up to 10 minutes for it.
+
+While a copy or a restore runs, the disks it uses stay mounted: **Unmount** and
+**Remove Pool** on **Storage** refuse for its pools, and so does a plain
+`umount` on the host, until it ends.
 
 A copy on the disk of a folder it copies, such as a folder of the same pool,
 protects against deleted and damaged files, not against the loss of that
@@ -1741,12 +1757,13 @@ To restore:
 - **Restore files** on a snapshot of the folders restores all of it, or one
   folder as the snapshot holds it (`/mnt/pools/data/photos`), into a new folder
   `restored-<date>-<time>` (UTC) at the top of the pool you choose. Nothing is
-  overwritten: take what you need from there with the **File Browser**.
+  overwritten: take what you need from there with the **File Browser**. A
+  restore that fails removes its folder when nothing came into it.
 - On a new device: install UNOS, set up the same target with its password,
   **Restore configuration**, restore that backup, then **Restore files**.
 
-**Forget this target** removes the settings and the password from the NAS; the
-copies stay where they are. A task of the type **Off-device Copy** then fails
+**Forget this target** removes the settings and the password from the NAS,
+damaged copies of their files included; the copies stay where they are. A task of the type **Off-device Copy** then fails
 at each run, which is alerted, until a target is set up again: delete it on
 **System** → **Scheduler** when no copies are wanted.
 

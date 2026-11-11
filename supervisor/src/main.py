@@ -163,7 +163,9 @@ async def lifespan(app: FastAPI):
             await stop_trash_expiry()
             await stop_ups_monitor()
             await stop_health_monitors()
-            await stop_scheduler()
+        # Always: the runs that Run now of a task started end with it and are recorded, also when the
+        # background tasks are off (UNOS_DISABLE_BACKGROUND_TASKS=1), where the scheduler never started.
+        await stop_scheduler()
         if host_tool_check is not None:
             host_tool_check.cancel()
             await asyncio.gather(host_tool_check, return_exceptions=True)

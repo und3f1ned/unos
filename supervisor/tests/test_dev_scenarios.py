@@ -1846,6 +1846,20 @@ def test_the_offsite_check_reads_restics_times_as_python_3_9_does(text):
     assert scenario.utc_stamp(text) == "20261111_030005"
 
 
+def test_the_offsite_check_does_not_start_beside_a_task_that_copies(nas):
+    """A task of the Scheduler would copy to the check's target while it runs, and fail every run
+    once the check forgot it again."""
+    nas.tasks["task_9"] = {"id": "task_9", "name": "Nightly off-device copy", "task_type": "offsite_copy",
+                           "enabled": True, "frequency": "daily", "hour": 3, "minute": 0}
+    before = nas.snapshot()
+    status, output = run_check("offsite", nas)
+    assert status == 1
+    assert re.search(r"^FAIL  3\. no off-device copy is set up.*: the Scheduler has a task that copies: "
+                     r"Nightly off-device copy", output, re.M), output
+    assert nas.snapshot() == before
+    assert not [c for c in nas.calls if c[0] != "GET"]
+
+
 def test_the_offsite_check_does_not_start_beside_a_copy_that_is_set_up(nas):
     nas.offsite = {"kind": "disk", "path": "/mnt/usb/copy", "sources": [ROOT]}
     nas.offsite_password = "the owner's password"

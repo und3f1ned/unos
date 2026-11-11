@@ -449,6 +449,9 @@
                 {lastCopy.error}
               </p>
             {/if}
+            {#if lastCopy.note}
+              <p class="text-status-warning break-words" data-testid="copy-note">{lastCopy.note}</p>
+            {/if}
           {:else}
             <p>{$t("offsite.state.never")}</p>
           {/if}

@@ -44,7 +44,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import NamedTuple, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends
 from croniter import croniter
 from pydantic import TypeAdapter
 import psutil
@@ -1185,8 +1185,8 @@ async def start_scheduler():
 
 
 async def stop_scheduler():
-    """Stop the scheduler and its checks on app shutdown, and end the runs that it started: each
-    is recorded as failed, with the processes of a command killed (run_task, ADR-0268)."""
+    """Stop the scheduler and its checks on app shutdown, and end the runs that it and Run now
+    started: each is recorded as failed, with the processes of a command killed (run_task, ADR-0268)."""
     global _scheduler_running, _scheduler_task, _task_check_task
     _scheduler_running = False
     stopping = [t for t in (_scheduler_task, _task_check_task, *_runs) if t is not None]
@@ -1291,15 +1291,19 @@ async def delete_task(task_id: str, _: dict = Depends(verify_token)):
 
 
 @router.post("/tasks/{task_id}/run")
-async def run_task_now(task_id: str, background_tasks: BackgroundTasks, _: dict = Depends(verify_token)):
-    """Run a task immediately."""
+async def run_task_now(task_id: str, _: dict = Depends(verify_token)):
+    """Run a task immediately, beside the request, as the scheduler runs its tasks: stop_scheduler
+    ends the run and records it. (A background task of Starlette runs after the answer, and uvicorn
+    waits for it at its stop without a limit: an off-device copy can take days.)"""
     tasks = load_tasks()
 
     task = next((t for t in tasks if t.id == task_id), None)
     if not task:
         raise HTTPException(404, f"Task not found: {task_id}")
 
-    background_tasks.add_task(run_task, task)
+    run = asyncio.create_task(run_task(task))
+    _runs.add(run)
+    run.add_done_callback(_runs.discard)
     return {"status": "started", "task_id": task_id}
 
 
