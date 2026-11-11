@@ -272,18 +272,49 @@ async def login(
     return Token(access_token=access_token, requires_totp=False)
 
 
+async def _own_account_audit(
+    request: Request,
+    action: AuditAction,
+    username: str,
+    details: str | None = None,
+    severity: AuditSeverity = AuditSeverity.INFO,
+    resource_type: str = "user",
+) -> None:
+    """The audit entry of a change that a user made to their own account, after it was stored:
+    by them, from their address, about them (ADR-0342). One that cannot be written, such as on a
+    full /data, is in the supervisor's log (log_action), and the request still answers what it
+    did, as a sign-in does (ADR-0251)."""
+    try:
+        await log_action(
+            action=action,
+            request=request,
+            username=username,
+            resource_type=resource_type,
+            resource_id=username,
+            details=details,
+            severity=severity,
+        )
+    except OSError:
+        pass  # log_action reported the entry
+
+
 @router.post("/logout")
 async def logout(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db),
 ):
-    """End the session of this token on the server (ADR-0329); an API token is not a session."""
+    """End the session of this token on the server (ADR-0329); an API token is not a session.
+    Only the sign-out that ended the session writes the audit entry (ADR-0342)."""
     session_id = session_id_of(credentials.credentials)
     if session_id is None:
         raise HTTPException(status_code=400, detail="An API token is no session: delete it to end it")
-    await end_session(db, session_id)
+    username = current_user.username
+    ended = await end_session(db, session_id)
     await db.commit()
+    if ended:
+        await _own_account_audit(request, AuditAction.LOGOUT, username)
     return {"status": "ok"}
 
 
@@ -302,6 +333,7 @@ async def get_auth_status(db: AsyncSession = Depends(get_db)):
 
 @router.post("/change-password")
 async def change_password(
+    request: Request,
     data: PasswordChange,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     current_user: User = Depends(verify_token),
@@ -311,7 +343,9 @@ async def change_password(
 
     For an active SMB account, Samba's copy is changed first and the
     account's open SMB sessions end after the commit (ADR-0121, ADR-0123). A self flow:
-    its warnings are fixed texts (the details are logged).
+    its warnings are fixed texts (the details are logged). A stored change writes a
+    password_change entry, and a change of Samba's copy also an smb_account_updated one
+    (ADR-0342, ADR-0320).
     """
     keep = session_id_of(credentials.credentials)  # read before anything changes
     verified_hash = current_user.hashed_password
@@ -333,6 +367,16 @@ async def change_password(
         # The user's other sessions end with the old password (ADR-0329), in the same commit.
         await end_sessions(db, user.id, keep=keep)
         warnings = await accounts.store_password(db, smb_update)
+    details = "Password changed by the user"
+    await _own_account_audit(
+        request, AuditAction.PASSWORD_CHANGE, token_username,
+        details if smb_update is None else f"{details}, also for SMB",
+    )
+    if smb_update is not None:
+        await _own_account_audit(
+            request, AuditAction.SMB_ACCOUNT_UPDATED, token_username, "SMB password changed by the user",
+            resource_type="smb_account",
+        )
     # store_password() only ends the account's sessions.
     fixed = [accounts.SELF_SESSIONS_WARNING] if warnings else []
     return {
@@ -365,47 +409,54 @@ async def setup_totp(
 
 @router.post("/totp/enable")
 async def enable_totp(
-    request: TOTPEnableRequest,
+    request: Request,
+    data: TOTPEnableRequest,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Enable 2FA after verifying TOTP code."""
+    """Enable 2FA after verifying TOTP code; a totp_enabled entry records it (ADR-0342)."""
     if not current_user.totp_secret:
         raise HTTPException(status_code=400, detail="Run /totp/setup first")
 
     if current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="2FA is already enabled")
 
-    check = check_totp_code(current_user.id, current_user.totp_secret, request.code)
+    check = check_totp_code(current_user.id, current_user.totp_secret, data.code)
     if check is not TotpCheck.OK:
         raise HTTPException(
             status_code=400, detail=TOTP_CODE_REUSED if check is TotpCheck.REUSED else "Invalid TOTP code"
         )
 
+    username = current_user.username
     current_user.totp_enabled = True
     # A new setup starts without recovery codes: none of an earlier one comes back (ADR-0238).
     current_user.recovery_codes = None
     await db.commit()
+    await _own_account_audit(
+        request, AuditAction.TOTP_ENABLED, username, "Two-factor authentication turned on by the user"
+    )
 
     return {"status": "ok", "message": "2FA enabled successfully"}
 
 
 @router.post("/totp/disable")
 async def disable_totp(
-    request: TOTPVerifyRequest,
+    request: Request,
+    data: TOTPVerifyRequest,
     current_user: User = Depends(verify_token),
     db: AsyncSession = Depends(get_db)
 ):
-    """Disable 2FA."""
+    """Disable 2FA; a totp_disabled entry of severity warning records it (ADR-0342)."""
     if not current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="2FA is not enabled")
 
-    check = check_totp_code(current_user.id, current_user.totp_secret, request.code)
+    check = check_totp_code(current_user.id, current_user.totp_secret, data.code)
     if check is not TotpCheck.OK:
         raise HTTPException(
             status_code=400, detail=TOTP_CODE_REUSED if check is TotpCheck.REUSED else "Invalid TOTP code"
         )
 
+    username = current_user.username
     # One statement writes all three columns. Assigning None to the loaded user would leave
     # recovery_codes out of the UPDATE when it was loaded as None, and then codes that a
     # generation stored after that load would outlive 2FA: they belong to this setup (ADR-0238).
@@ -415,6 +466,11 @@ async def disable_totp(
         .values(totp_enabled=False, totp_secret=None, recovery_codes=None)
     )
     await db.commit()
+    await _own_account_audit(
+        request, AuditAction.TOTP_DISABLED, username,
+        "Two-factor authentication turned off by the user, with its recovery codes",
+        AuditSeverity.WARNING,
+    )
 
     return {"status": "ok", "message": "2FA disabled successfully"}
 

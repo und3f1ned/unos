@@ -263,13 +263,16 @@
         "A user's own password change and turning two-factor authentication on or off write audit entries",
         "Every AuditAction value that the Action filter of the Audit Log page offers is written by the action it names, or is removed"
       ],
+      "verified_by": [
+        "supervisor/tests/test_audit_own_account.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0157",
+        "ADR-0320",
         "ADR-0203",
         "ADR-0224"
       ],
-      "notes": "A side finding of security.audit-log (ADR-0203): only the auth, shares and audit code call log_action (supervisor/src/audit/router.py), so POOL_*, VOLUME_*, SNAPSHOT_*, CONTAINER_*, APP_*, BACKUP_*, SYSTEM_*, SETTINGS_CHANGED, TASK_*, FIREWALL_*, SSL_CERT_UPLOADED, NETWORK_CONFIG_CHANGED, PASSWORD_CHANGE, TOTP_* and LOGOUT are never written. Entries record real changes only (ADR-0157)."
+      "notes": "A side finding of security.audit-log (ADR-0203): only the auth, shares and audit code call log_action (supervisor/src/audit/router.py), so POOL_*, VOLUME_*, SNAPSHOT_*, CONTAINER_*, APP_*, BACKUP_*, SYSTEM_*, SETTINGS_CHANGED, TASK_*, FIREWALL_*, SSL_CERT_UPLOADED and NETWORK_CONFIG_CHANGED are never written. Entries record real changes only (ADR-0320, which superseded ADR-0157; the adr list names ADR-0320 in its place). Step 4 is done (ADR-0342, not in the adr list yet): POST /auth/logout, /auth/change-password, /auth/totp/enable and /auth/totp/disable write LOGOUT, PASSWORD_CHANGE, TOTP_ENABLED and TOTP_DISABLED (warning) after the change is committed, by the user, with the client address and browser and resource type user with the user name; a password change that also set Samba's password writes SMB_ACCOUNT_UPDATED too (ADR-0320). A refused attempt writes nothing, a sign-out only when it ended the session (end_session says whether), and an entry that cannot be written goes to the supervisor's log while the change still answers, as a sign-in (ADR-0251). Tested in tests/test_audit_own_account.py, which failed before the change. Not host-level (GLOSSARY.md): no device check needed for step 4. Steps 1-3 and 5 remain."
     },
     {
       "id": "security.append-only-audit-log",

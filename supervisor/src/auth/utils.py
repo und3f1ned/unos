@@ -120,10 +120,12 @@ def forget_unstored_sessions() -> None:
     _unstored_sessions.clear()
 
 
-async def end_session(db: AsyncSession, session_id: str) -> None:
-    """Delete one session, stored or kept in memory; the caller commits."""
-    await db.execute(delete(UserSession).where(UserSession.id == session_id))
-    _unstored_sessions.pop(session_id, None)
+async def end_session(db: AsyncSession, session_id: str) -> bool:
+    """Delete one session, stored or kept in memory; the caller commits. Whether there was one
+    to end: a sign-out of the same session that came first leaves none (ADR-0342)."""
+    result = await db.execute(delete(UserSession).where(UserSession.id == session_id))
+    kept = _unstored_sessions.pop(session_id, None) is not None
+    return bool(result.rowcount) or kept
 
 
 def decode_access_token(token: str) -> tuple[str, str]:
