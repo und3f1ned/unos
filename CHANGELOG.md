@@ -957,6 +957,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   into its folder (a backup into the backup folder) as it arrives: nothing
   is copied once its last byte has arrived, and a backup is then checked in
   one pass that writes nothing.
+- A file manager or backup upload whose client stopped sending in the
+  middle, with its connection still open, kept what had arrived, and its
+  space, for as long as that connection stayed open. An upload that gets no
+  data for 2 minutes now fails with HTTP 408 ("The upload timed out: the
+  client sent nothing for 120 seconds"), and nothing of it is kept; one
+  that keeps sending, however slowly, goes on.
 - Backup upload and restore answered HTTP 500 for some malformed archives (a
   member size of 2^63 bytes or more, broken GNU sparse data, a long chain of
   extended headers), such as "cannot fit 'int' into an offset-sized

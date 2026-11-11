@@ -19,6 +19,11 @@ before it is turned away with 401.
   /tmp first (the system disk of the container, the SD card of a small
   board, or RAM on a tmpfs), so every upload was written twice, and one
   larger than the space in /tmp failed after filling it.
+* receive_upload() waits at most UPLOAD_IDLE_TIMEOUT seconds for each chunk
+  of an upload's body, then answers 408 and discards the upload: neither
+  uvicorn nor Caddy limits the time a request body takes, so a client that
+  stopped sending held the request and the upload's destination file, with
+  the space of what had arrived, for as long as its connection stayed open.
 """
 
 import asyncio
@@ -26,7 +31,7 @@ import codecs
 import logging
 import os
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import aclosing
 from typing import Any
 
@@ -70,8 +75,19 @@ _PARSE_BYTES = 256 * 1024
 _HELD_BACK = len(b"\r\n--") + MAX_BOUNDARY_LENGTH + 1
 _WRITE_AT = UPLOAD_BUFFER_BYTES - _PARSE_BYTES - _HELD_BACK
 
+# The seconds receive_upload waits for each chunk of an upload's body, from
+# the client (through Caddy, which streams it); the disk writes between two
+# chunks do not count. A client that keeps sending, however slowly, is not
+# cut off (ADR-0342).
+UPLOAD_IDLE_TIMEOUT = 120
+
 NO_FILE_DETAIL = f"No file was sent: send it as multipart/form-data in the field '{UPLOAD_FIELD}'"
 INTERRUPTED_DETAIL = "The upload was interrupted: the client closed the connection"
+
+
+def idle_detail(seconds: float) -> str:
+    return f"The upload timed out: the client sent nothing for {seconds:g} seconds"
+
 
 # For the API documentation: the endpoints read the form themselves.
 UPLOAD_OPENAPI = {
@@ -455,6 +471,21 @@ class _UploadForm:
             raise HTTPException(422, NO_FILE_DETAIL)
 
 
+async def _next_chunk(stream: AsyncIterator[bytes]) -> bytes | None:
+    """The next chunk of the body, or None after its end; 408 when none arrives within UPLOAD_IDLE_TIMEOUT.
+
+    The answer closes the connection (RFC 9110, 408): the rest of the body is
+    never read.
+    """
+    try:
+        async with asyncio.timeout(UPLOAD_IDLE_TIMEOUT):
+            return await anext(stream)
+    except StopAsyncIteration:
+        return None
+    except TimeoutError:
+        raise HTTPException(408, idle_detail(UPLOAD_IDLE_TIMEOUT), headers={"Connection": "close"}) from None
+
+
 async def receive_upload(request: Request, sink: UploadSink) -> Any:
     """Stream the file of a multipart upload (form field UPLOAD_FIELD) into ``sink``.
 
@@ -473,10 +504,11 @@ async def receive_upload(request: Request, sink: UploadSink) -> Any:
     or one that ends before the closing boundary of the file part); 400 for
     a malformed form, a second file, too many or too large other fields, or
     part headers over UPLOAD_MAX_HEADER_BYTES; 400 when the client goes away
-    (not a server error); sink.too_large() as soon as the file grows over
-    sink.max_bytes. The 413 of RequestBodyLimitMiddleware and the exceptions
-    of the sink pass through. Whatever happens, sink.discard() runs at the
-    end.
+    (not a server error); 408, closing the connection, when the client sends
+    nothing for UPLOAD_IDLE_TIMEOUT seconds before the body has ended;
+    sink.too_large() as soon as the file grows over sink.max_bytes. The 413
+    of RequestBodyLimitMiddleware and the exceptions of the sink pass
+    through. Whatever happens, sink.discard() runs at the end.
     """
     destination = _Destination(sink)
     try:
@@ -484,7 +516,7 @@ async def receive_upload(request: Request, sink: UploadSink) -> Any:
         form = _UploadForm(request.headers, sink)
         try:
             async with aclosing(request.stream()) as stream:
-                async for chunk in stream:
+                while (chunk := await _next_chunk(stream)) is not None:
                     for start in range(0, len(chunk), _PARSE_BYTES):
                         form.write(chunk[start : start + _PARSE_BYTES])
                         if form.filename is not None:
