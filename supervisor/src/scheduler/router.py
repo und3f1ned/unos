@@ -44,12 +44,14 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import NamedTuple, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from croniter import croniter
 from pydantic import TypeAdapter
 import psutil
 
 from .. import host, state_files
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction
 from ..auth.utils import require_admin, verify_token
 from ..health import problems
 from ..offsite import service as offsite
@@ -1223,8 +1225,35 @@ async def list_tasks(_: dict = Depends(verify_token)):
     return [_task_info(task, None if keys is None else task.id in keys, zone, now) for task in tasks]
 
 
+# The fields of a task that an edit changes; the others are the server's (ADR-0175, ADR-0332), and
+# the passphrase is never stored (ADR-0325).
+_EDITED_FIELDS = tuple(
+    name for name in ScheduledTask.model_fields
+    if name not in ("id", "last_run", "last_status", "schedule_since", "passphrase")
+)
+
+
+def _changed_fields(before: ScheduledTask, after: ScheduledTask) -> list[str]:
+    """What an edit changed, as the audit entry names it (ADR-0350): the fields, the old name with a new one."""
+    changed = []
+    for name in _EDITED_FIELDS:
+        if getattr(before, name) != getattr(after, name):
+            changed.append(f"name (was {before.name})" if name == "name" else name)
+    return changed
+
+
+def _named(task: ScheduledTask) -> str:
+    return f"the {task.task_type.value} task {task.name}"
+
+
+async def _audit_task(request: Request, user, action: AuditAction, task: ScheduledTask, details: str) -> None:
+    """The audit entry of a change of ``task`` or of a run started by hand (ADR-0350)."""
+    await audit_change(action, request, user.username, resource_type="task", resource_id=task.name,
+                       details=details)
+
+
 @router.post("/tasks", response_model=ScheduledTaskInfo)
-async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
+async def create_task(request: Request, task: ScheduledTask, user=Depends(verify_token)):
     """Create a new scheduled task; a backup task needs a passphrase."""
     # In a worker thread: the disk of a SMART task is looked up on the host,
     # and the key of a backup task is derived from its passphrase.
@@ -1241,14 +1270,16 @@ async def create_task(task: ScheduledTask, _: dict = Depends(verify_token)):
     tasks = load_tasks()
     tasks.append(task)
     save_tasks(tasks)
+    await _audit_task(request, user, AuditAction.TASK_CREATED, task, f"Created {_named(task)}")
 
     return _task_info(task, key is not None, await asyncio.to_thread(schedule_zone), _utc_now())
 
 
 @router.put("/tasks/{task_id}", response_model=ScheduledTaskInfo)
-async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verify_token)):
+async def update_task(request: Request, task_id: str, task: ScheduledTask, user=Depends(verify_token)):
     """Update a scheduled task. Its last run and last status stay; a backup task
-    without a passphrase keeps the one it has."""
+    without a passphrase keeps the one it has. An edit that changes nothing is
+    neither stored nor audited (ADR-0214, ADR-0350)."""
     stored = next((t for t in load_tasks() if t.id == task_id), None)
     kept_disk = stored.target_disk if stored and stored.task_type == TaskType.SMART_TEST else None
     await asyncio.to_thread(validate_task, task, kept_disk=kept_disk)
@@ -1269,8 +1300,12 @@ async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verif
             # With a new schedule, or enabled again, it misses runs from now on only (ADR-0332).
             kept = (get_cron_expression(task), task.enabled) == (get_cron_expression(t), t.enabled)
             task.schedule_since = t.schedule_since if kept else _utc_now().isoformat()
-            tasks[i] = task
-            save_tasks(tasks)
+            changed = _changed_fields(t, task) + (["passphrase"] if key is not None else [])
+            if changed:
+                tasks[i] = task
+                save_tasks(tasks)
+                await _audit_task(request, user, AuditAction.TASK_UPDATED, task,
+                                  f"Changed {_named(task)}: {', '.join(changed)}")
             # A backup task has the new key now, or kept the one it had.
             return _task_info(task, key is not None or has_key, await asyncio.to_thread(schedule_zone), _utc_now())
 
@@ -1278,17 +1313,20 @@ async def update_task(task_id: str, task: ScheduledTask, _: dict = Depends(verif
 
 
 @router.delete("/tasks/{task_id}")
-async def delete_task(task_id: str, _: dict = Depends(verify_token)):
-    """Delete a scheduled task, and first the key of a backup task."""
+async def delete_task(request: Request, task_id: str, user=Depends(verify_token)):
+    """Delete a scheduled task, and first the key of a backup task. The tasks file is
+    written, and the deletion audited, only when the task was there (ADR-0350)."""
     await asyncio.to_thread(set_backup_key, task_id, None)
     tasks = load_tasks()
-    tasks = [t for t in tasks if t.id != task_id]
-    save_tasks(tasks)
+    deleted = next((t for t in tasks if t.id == task_id), None)
+    if deleted is not None:
+        save_tasks([t for t in tasks if t.id != task_id])
+        await _audit_task(request, user, AuditAction.TASK_DELETED, deleted, f"Deleted {_named(deleted)}")
     return {"status": "deleted", "id": task_id}
 
 
 @router.post("/tasks/{task_id}/run")
-async def run_task_now(task_id: str, _: dict = Depends(verify_token)):
+async def run_task_now(request: Request, task_id: str, user=Depends(verify_token)):
     """Run a task immediately, beside the request, as the scheduler runs its tasks: stop_scheduler
     ends the run and records it. (A background task of Starlette runs after the answer, and uvicorn
     waits for it at its stop without a limit: an off-device copy can take days.)"""
@@ -1301,11 +1339,12 @@ async def run_task_now(task_id: str, _: dict = Depends(verify_token)):
     run = asyncio.create_task(run_task(task))
     _runs.add(run)
     run.add_done_callback(_runs.discard)
+    await _audit_task(request, user, AuditAction.TASK_RUN, task, f"Started a run of {_named(task)}")
     return {"status": "started", "task_id": task_id}
 
 
 @router.post("/tasks/{task_id}/toggle")
-async def toggle_task(task_id: str, _: dict = Depends(verify_token)):
+async def toggle_task(request: Request, task_id: str, user=Depends(verify_token)):
     """Enable/disable a task."""
     tasks = load_tasks()
 
@@ -1315,6 +1354,8 @@ async def toggle_task(task_id: str, _: dict = Depends(verify_token)):
             if task.enabled:  # the runs of the time it was disabled are none it missed (ADR-0332)
                 task.schedule_since = _utc_now().isoformat()
             save_tasks(tasks)
+            await _audit_task(request, user, AuditAction.TASK_UPDATED, task,
+                              f"{'Enabled' if task.enabled else 'Disabled'} {_named(task)}")
             return {"status": "toggled", "enabled": task.enabled}
 
     raise HTTPException(404, f"Task not found: {task_id}")

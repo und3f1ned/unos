@@ -1296,9 +1296,12 @@ class TestAuthoritative:
         assert _db_rows(env, "SELECT name FROM smb_shares") == [("docs",)]
         assert _db_rows(env, "SELECT pending_import_source FROM smb_state") == [(None,)]
         env.reconcile.assert_awaited_once()
-        (entry,) = audit_entries(env.audit)
+        # The SMB state's entry, then the restore's own (ADR-0350).
+        entry, restored = audit_entries(env.audit)
         assert (entry["action"], entry["username"], entry["resource_type"], entry["severity"]) == (
             "smb_restored", "system", "smb", "info")
+        assert (restored["action"], restored["username"], restored["resource_type"]) == (
+            "backup_restored", "admin", "backup")
         assert entry["details"].startswith("SMB state after restore: the shares of the restored database were kept")
 
     def test_an_smb_conf_that_cannot_be_installed_is_not_reported_as_restored(self, smb_env, monkeypatch):
@@ -1333,7 +1336,8 @@ class TestAuthoritative:
                "without a password." in response.json()["warnings"]
         assert _db_rows(env, "SELECT guest_ok FROM smb_shares") == [(1,)]
         assert "   map to guest = Bad User\n" in env.smb_conf.read_text()
-        (entry,) = audit_entries(env.audit)
+        entry, restored = audit_entries(env.audit)
+        assert restored["action"] == "backup_restored"
         assert entry["severity"] == "warning"
         assert "shares served with guest access: public" in entry["details"]
 

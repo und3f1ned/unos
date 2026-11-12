@@ -60,6 +60,7 @@ class AuditAction(str, Enum):
     TASK_CREATED = "task_created"
     TASK_UPDATED = "task_updated"
     TASK_DELETED = "task_deleted"
+    TASK_RUN = "task_run"  # a run started by hand (ADR-0350)
 
     # Security
     FIREWALL_RULE_ADDED = "firewall_rule_added"

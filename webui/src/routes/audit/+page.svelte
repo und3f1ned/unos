@@ -106,6 +106,7 @@
 		task_created: 'audit.action.taskCreated',
 		task_updated: 'audit.action.taskUpdated',
 		task_deleted: 'audit.action.taskDeleted',
+		task_run: 'audit.action.taskRun',
 		firewall_rule_added: 'audit.action.firewallRuleAdded',
 		firewall_rule_deleted: 'audit.action.firewallRuleDeleted',
 		ssl_cert_uploaded: 'audit.action.sslCertUploaded',
@@ -125,7 +126,11 @@
 		nfs_export: 'audit.resource.nfsExport',
 		api_token: 'audit.resource.apiToken',
 		recovery_codes: 'audit.resource.recoveryCodes',
-		audit_log: 'audit.resource.auditLog'
+		audit_log: 'audit.resource.auditLog',
+		backup: 'audit.resource.backup',
+		host: 'audit.resource.host',
+		network_interface: 'audit.resource.networkInterface',
+		task: 'audit.resource.task'
 	};
 
 	/** The text of `value` by its key in `keys`, in the language of the page; else `value`. */

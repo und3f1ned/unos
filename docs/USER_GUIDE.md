@@ -62,7 +62,10 @@ its time. On a disk that is full to the last block, Docker may not be able to
 keep those log lines either. Signing out, changing your own password and
 turning two-factor authentication on or off likewise answer as usual when
 their audit entry cannot be written once the change is stored, and the
-supervisor's log reports that entry.
+supervisor's log reports that entry. So do backups created, uploaded,
+restored and deleted, reboots and shutdowns scheduled or cancelled, changes
+of scheduled tasks and runs started by hand, and changes of network
+interfaces, Wake-on-LAN, the host name and the time zone.
 A recovery code does not sign you in while the disk is full, because UNOS
 cannot mark it as used; a code of your authenticator app does.
 
@@ -1309,11 +1312,21 @@ regular users have no access to it.
   reset of an administrator on the NAS's command line (`password_change` and
   `totp_disabled` by the user `root`, see
   [Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)),
-  and the clearing of the log. A refused change of your own account, such as
-  a wrong current password or two-factor code, writes no entry. Storage,
-  snapshots, containers, apps, backups, restarts and shutdowns, scheduled
-  tasks, the network and system settings write no entries yet, although
-  **Action** lists such actions (feature-list entry
+  and the clearing of the log. Backups created, uploaded, restored (a
+  **Warning**, with what it restored) and deleted; a reboot or shutdown
+  (a **Warning**, recorded as soon as it is scheduled, a minute before the
+  host goes down) and its cancel; scheduled tasks created, changed (with the
+  fields that changed, never their values), enabled, disabled, deleted and
+  run with **Run now** (**Task run**); a network interface disabled, its
+  disable kept, and enabled; Wake-on-LAN turned on or off; and a new host
+  name or time zone (**Settings changed**, from the old value to the new).
+  Only a change that was made writes an entry: a refused or failed one, or
+  one that changes nothing (the same host name, a task saved unchanged),
+  writes none. A refused change of your own account, such as a wrong current
+  password or two-factor code, writes no entry either. Storage, snapshots,
+  containers, apps, suspend, the off-device copy, notifications, the
+  firewall and the TLS certificate write no entries yet, although **Action**
+  lists some such actions (feature-list entry
   `security.audit-admin-actions`).
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`

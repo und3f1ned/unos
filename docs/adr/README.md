@@ -90,6 +90,7 @@ and this index, and `make check-fast` runs it.
 | [0328](0328-each-audit-entry-carries-the-hash-of-the-one-before-and-the-listing-says-where-the-chain-breaks.md) | Each audit entry carries the hash of the one before, and the listing says where the chain breaks | accepted | 2026-11-10 |
 | [0333](0333-the-supervisor-serves-128-open-connections-and-caddy-16-kb-of-headers.md) | The supervisor serves at most 128 open connections and 64 sockets, and Caddy refuses header blocks over 16 KB | accepted | 2026-11-10 |
 | [0343](0343-a-users-own-sign-out-password-and-two-factor-changes-are-audited-about-the-user.md) | A user's own sign-out, password change and two-factor changes are audited about the user, and answer when their entry cannot be written | accepted | 2026-11-11 |
+| [0350](0350-backups-power-scheduled-tasks-and-the-hosts-settings-are-audited-after-they-succeed.md) | Backups, power, scheduled tasks and the host's network and system settings are audited after they succeed, and answer when their entry cannot be written | accepted | 2026-11-12 |
 
 ## Auth
 
