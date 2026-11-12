@@ -84,6 +84,8 @@
   // Certificate state
   let certStatus: CertificateStatus | null = null;
   let certificates: Certificate[] = [];
+  // Until the stored certificates have loaded, the card does not say that there are none.
+  let certificatesLoaded = false;
   let certLoading = false;
   let certError = "";
   let certSuccess = "";
@@ -120,8 +122,11 @@
   };
   const CERTIFICATE_TYPES: Record<string, string> = {
     self_signed: "account.certs.selfSigned",
-    lets_encrypt: "account.certs.letsEncrypt",
     custom: "account.certs.custom"
+  };
+  // What browsers get (served_by of CertificateStatus): stored certificates are not served (ADR-0357).
+  const SERVED_BY: Record<string, string> = {
+    caddy_local_ca: "account.certs.caddyLocalCa"
   };
 
   /** The label of `value` in the language of the page; a value without one as it comes. */
@@ -438,8 +443,10 @@
       certStatus = await getCertificateStatus();
       const resp = await getCertificates();
       certificates = resp.certificates;
+      certificatesLoaded = true;
     } catch (e) {
-      console.error("Failed to load certificate status:", e);
+      certificatesLoaded = false;
+      certError = $t("account.certs.loadFailed", { error: messageOf(e) });
     } finally {
       certLoading = false;
     }
@@ -829,21 +836,7 @@
       </h3>
       <div class="flex flex-wrap items-center gap-2">
         {#if certStatus}
-          {#if certStatus.has_certificate && certStatus.is_valid}
-            <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-lg text-sm flex items-center gap-1">
-              <CheckCircle class="w-4 h-4" />
-              {$t("account.certs.valid")}
-            </span>
-          {:else if certStatus.has_certificate}
-            <span class="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-lg text-sm flex items-center gap-1">
-              <AlertCircle class="w-4 h-4" />
-              {$t("account.certs.expired")}
-            </span>
-          {:else}
-            <span class="px-3 py-1 bg-slate-700 text-slate-400 rounded-lg text-sm">
-              {$t("account.certs.none")}
-            </span>
-          {/if}
+          <Badge variant="info">{labelOf(SERVED_BY, certStatus.served_by)}</Badge>
         {/if}
         <button
           on:click={() => showCertModal = !showCertModal}
@@ -874,29 +867,17 @@
 
     {#if showCertModal}
       <div class="mt-4 space-y-4">
-        {#if certStatus?.has_certificate}
-          <div class="p-3 bg-slate-700 rounded-lg">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="min-w-0 break-words">
-                <p class="font-medium">{certStatus.domain || $t("account.certs.certificate")}</p>
-                <p class="text-sm text-slate-400">
-                  {$t("account.certs.type", {
-                    type: certStatus.type ? labelOf(CERTIFICATE_TYPES, certStatus.type) : $t("common.unknown")
-                  })}
-                  {#if certStatus.valid_until}
-                    | {$t("account.certs.expires", { date: formatCertificateDate(certStatus.valid_until) })}
-                  {/if}
-                </p>
-              </div>
-              {#if certStatus.auto_renew}
-                <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">{$t("account.certs.autoRenew")}</span>
-              {/if}
-            </div>
+        {#if certStatus}
+          <div class="p-3 bg-surface-muted rounded-lg min-w-0 break-words">
+            <p class="font-medium">
+              {$t("account.certs.servedBy", { source: labelOf(SERVED_BY, certStatus.served_by) })}
+            </p>
+            <p class="text-sm text-content-secondary">{$t("account.certs.servedHint")}</p>
           </div>
         {/if}
 
         <div class="flex flex-wrap justify-between items-center gap-2">
-          <h4 class="font-medium">{$t("account.certs.all")}</h4>
+          <h4 class="font-medium">{$t("account.certs.stored")}</h4>
           <button
             on:click={() => showGenCertModal = true}
             class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm flex items-center gap-1"
@@ -907,7 +888,9 @@
         </div>
 
         {#if certificates.length === 0}
-          <p class="text-sm text-slate-400 text-center py-4">{$t("account.certs.noneFound")}</p>
+          {#if certificatesLoaded}
+            <p class="text-sm text-slate-400 text-center py-4">{$t("account.certs.noneFound")}</p>
+          {/if}
         {:else}
           <div class="space-y-2">
             {#each certificates as cert}
@@ -916,6 +899,9 @@
                   <span class="px-2 py-1 rounded text-xs font-medium {cert.is_valid ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">
                     {cert.is_valid ? $t("account.certs.validBadge") : $t("account.certs.expiredBadge")}
                   </span>
+                  {#if !cert.served}
+                    <Badge variant="neutral">{$t("account.certs.notServedBadge")}</Badge>
+                  {/if}
                   <div class="min-w-0 break-words">
                     <p class="font-medium">{cert.domain}</p>
                     <p class="text-sm text-slate-400">
@@ -929,6 +915,7 @@
                   <button
                     on:click={() => handleDeleteCert(cert.id)}
                     class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+                    aria-label={$t("account.certs.delete", { domain: cert.domain })}
                   >
                     <Trash2 class="w-4 h-4" />
                   </button>
@@ -1338,6 +1325,7 @@
           <input
             type="text"
             bind:value={newCert.organization}
+            maxlength="64"
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             placeholder={$t("account.certs.organizationPlaceholder")}
           />

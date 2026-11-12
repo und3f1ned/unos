@@ -12,6 +12,20 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- **System** → **Security** no longer names a stored certificate as the one
+  in use: its **SSL/TLS Certificates** card and
+  `GET /api/v1/security/certificates/status` (now
+  `{"served_by": "caddy_local_ca"}`) name Caddy's local CA, which is what
+  browsers get, and list uploaded and self-signed certificates as stored,
+  **NOT SERVED** (`served: false`), since nothing hands them to the web
+  server yet. The listing no longer reads Caddy's certificates, which the
+  supervisor cannot see, and has no `active_certificate` or `auto_renew`.
+  openssl runs off the event loop with a timeout (10 s to read a certificate,
+  60 s to make one; a timeout answers 500, an upload no longer "Invalid
+  certificate format"), certificate and key files are written without
+  following a symbolic link at their path (keys 0600), and a self-signed
+  certificate's organization is refused over 64 characters and its country
+  unless it is two letters (422).
 - Samba refuses every SMB password change that a computer asks for over the
   network (Windows' **Change a password**, `smbpasswd -r`), so that SMB
   passwords change only in UNOS, under its password rules: the line

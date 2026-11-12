@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from datetime import datetime
@@ -123,19 +124,13 @@ class TestSecuritySchemas:
         assert cert.type == CertificateType.SELF_SIGNED
 
     def test_certificate_status_schema(self):
-        """Test CertificateStatus schema."""
-        from src.security.schemas import CertificateStatus, CertificateType
+        """The status names what browsers get: Caddy's local CA, whatever is stored (ADR-0357)."""
+        from src.security.schemas import Certificate, CertificateStatus, CertificateType
 
-        status = CertificateStatus(
-            has_certificate=True,
-            type=CertificateType.LETS_ENCRYPT,
-            domain="example.com",
-            is_valid=True,
-            auto_renew=True
-        )
-
-        assert status.has_certificate is True
-        assert status.auto_renew is True
+        assert CertificateStatus().model_dump(mode="json") == {"served_by": "caddy_local_ca"}
+        stored = Certificate(id="custom_nas.local", type=CertificateType.CUSTOM, domain="nas.local")
+        assert stored.served is False
+        assert "auto_renew" not in stored.model_dump()
 
     def test_self_signed_cert_request_schema(self):
         """Test SelfSignedCertRequest schema."""
@@ -299,13 +294,13 @@ SHA256 Fingerprint=AA:BB:CC:DD:EE:FF"""
             certs = get_custom_certificates()
             assert certs == []
 
-    def test_get_caddy_certificates_missing_dir(self, tmp_path):
-        """Test getting Caddy certificates when directory doesn't exist."""
-        from src.security.router import get_caddy_certificates
+    def test_nothing_reads_caddys_certificates(self):
+        """caddy-data is mounted only into unos-webui (deploy/docker-compose.yml): the supervisor
+        has no directory of Caddy's certificates to read, and lists none (ADR-0357)."""
+        from src.security import router
 
-        with patch("src.security.router.CADDY_CERTS_DIR", str(tmp_path / "nonexistent")):
-            certs = get_caddy_certificates()
-            assert certs == []
+        assert not hasattr(router, "CADDY_CERTS_DIR")
+        assert not hasattr(router, "get_caddy_certificates")
 
 
 class TestRecordLoginAttempt:
@@ -465,9 +460,7 @@ class TestEnums:
         """Test CertificateType enum values."""
         from src.security.schemas import CertificateType
 
-        assert CertificateType.SELF_SIGNED.value == "self_signed"
-        assert CertificateType.LETS_ENCRYPT.value == "lets_encrypt"
-        assert CertificateType.CUSTOM.value == "custom"
+        assert [t.value for t in CertificateType] == ["self_signed", "custom"]
 
 
 # ==================== Certificate names (INJ-7) ====================
@@ -507,20 +500,29 @@ INVALID_DOMAINS = [
 ]
 
 
+# What the fake openssl of ``certs`` prints: a new key, then its certificate. The key's first line
+# is split: the secret scan of test_repo_tooling.py takes it for a real one.
+GENERATED_KEY = "-----BEGIN PRIV" + "ATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n"
+GENERATED_CERTIFICATE = "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n"
+
+
 @pytest.fixture
 def certs(tmp_path, monkeypatch):
-    """CERTS_DIR in a scratch tree; openssl replaced by a fake that writes the files."""
+    """CERTS_DIR in a scratch tree; openssl replaced by a fake that prints a key and a certificate."""
     certs_dir = tmp_path / "data" / "certs"
     monkeypatch.setattr("src.security.router.CERTS_DIR", str(certs_dir))
     calls = []
 
     def fake_openssl(cmd, **kwargs):
-        # Like the real one with -keyout -: the key on standard output, the certificate in -out.
+        # Like the real one with -keyout -: the key on its standard output, then the certificate,
+        # there too, or in the file that -out names, through a symbolic link at its path.
         assert cmd[:2] == ["openssl", "req"], cmd
         calls.append(cmd)
         assert cmd[cmd.index("-keyout") + 1] == "-", cmd
-        Path(cmd[cmd.index("-out") + 1]).write_text("CERT")
-        return subprocess.CompletedProcess(cmd, 0, "KEY", "")
+        if "-out" in cmd:
+            Path(cmd[cmd.index("-out") + 1]).write_text(GENERATED_CERTIFICATE)
+            return subprocess.CompletedProcess(cmd, 0, GENERATED_KEY, "")
+        return subprocess.CompletedProcess(cmd, 0, GENERATED_KEY + GENERATED_CERTIFICATE, "")
 
     monkeypatch.setattr(subprocess, "run", fake_openssl)
     return SimpleNamespace(root=tmp_path, dir=certs_dir, calls=calls)
@@ -577,10 +579,13 @@ class TestCertificateDomainValidation:
         assert response.json()["certificate_id"] == "custom_nas.local"
         [cmd] = certs.calls
         assert cmd[cmd.index("-keyout") + 1] == "-"
-        assert cmd[cmd.index("-out") + 1] == str(certs.dir / "nas.local.crt")
+        # openssl prints the certificate too: the supervisor writes both files (ADR-0042).
+        assert "-out" not in cmd
         assert cmd[cmd.index("-subj") + 1] == "/CN=nas.local"
         assert cmd[cmd.index("-addext") + 1] == "subjectAltName=DNS:nas.local"
         assert _files_under(certs.root) == ["data/certs/nas.local.crt", "data/certs/nas.local.key"]
+        assert (certs.dir / "nas.local.crt").read_text() == GENERATED_CERTIFICATE
+        assert (certs.dir / "nas.local.key").read_text() == GENERATED_KEY
 
     @pytest.mark.parametrize("domain,name", [("192.168.1.10", "192.168.1.10"), ("FD00::1", "fd00::1")])
     def test_ip_address_gets_an_ip_san(self, certs, admin_api, domain, name):
@@ -866,7 +871,6 @@ def upload_env(tmp_path, monkeypatch):
     for the tempfile module. openssl is the real one."""
     certs_dir = tmp_path / "data" / "certs"
     monkeypatch.setattr("src.security.router.CERTS_DIR", str(certs_dir))
-    monkeypatch.setattr("src.security.router.CADDY_CERTS_DIR", str(tmp_path / "caddy"))
     temp_dir = tmp_path / "tmp"
     temp_dir.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(temp_dir))
@@ -921,7 +925,8 @@ class TestCertificateUploadLeavesNoTemporaryFile:
         response = _upload(admin_api, NOT_A_CERTIFICATE)
 
         assert (response.status_code, response.json()) == (400, {"detail": "Invalid certificate format"})
-        assert list(upload_env.certs.iterdir()) == []
+        # A refused upload makes nothing, not even the directory of the certificates (ADR-0214).
+        assert not upload_env.certs.exists()
         assert list(upload_env.temp.iterdir()) == []
 
     def test_full_temporary_directory(self, upload_env, admin_api, monkeypatch):
@@ -948,7 +953,8 @@ class TestCertificateUploadLeavesNoTemporaryFile:
         response = _upload(admin_api, TEST_CERTIFICATE + "\ud800")
 
         assert (response.status_code, response.json()) == (400, {"detail": "Invalid certificate format"})
-        assert list(upload_env.certs.iterdir()) == []
+        # A refused upload makes nothing, not even the directory of the certificates (ADR-0214).
+        assert not upload_env.certs.exists()
         assert list(upload_env.temp.iterdir()) == []
 
     @pytest.mark.parametrize("field,message", [
@@ -989,11 +995,14 @@ class TestStoredCertificates:
     real openssl."""
 
     def test_a_failed_self_signed_certificate_leaves_the_stored_key(self, upload_env, admin_api):
-        # openssl refuses a country of three letters only after it has made the new key, which it
-        # wrote over the stored key when it wrote the key file itself.
+        # openssl refuses a validity whose end it cannot write (after the year 9999) only after it
+        # has made the new key, which it wrote over the stored key when it wrote the key file
+        # itself. (A country of three letters, which it refuses the same way, is refused before
+        # openssl runs: TestSelfSignedSubjectValidation.)
         assert _upload(admin_api, TEST_CERTIFICATE).status_code == 200
 
-        response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local", "country": "DEU"})
+        response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local",
+                                                              "validity_days": 99999999})
 
         assert response.status_code == 500, response.text
         assert (upload_env.certs / "nas.local.key").read_text() == "KEY"
@@ -1015,3 +1024,237 @@ class TestStoredCertificates:
         for cert_id in listed:
             assert admin_api.delete(f"{API}/{cert_id}").status_code == 200, cert_id
         assert sorted(path.name for path in upload_env.certs.iterdir()) == ["My NAS.crt"]
+
+
+# ==================== What browsers get (security.custom-certificates, ADR-0357) ====================
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+class TestCertificateStatusNamesWhatIsServed:
+    """Caddy serves only its local CA: nothing hands stored certificates to the web UI's
+    container (deploy/docker-compose.yml mounts caddy-data only there). The status says so, and a
+    stored certificate is listed as stored, not served (ADR-0357)."""
+
+    def test_without_a_stored_certificate(self, upload_env, admin_api):
+        assert admin_api.get(f"{API}/status").json() == {"served_by": "caddy_local_ca"}
+        assert admin_api.get(API).json() == {"certificates": [], "served_by": "caddy_local_ca"}
+
+    def test_a_stored_certificate_is_not_named_as_served(self, upload_env, admin_api):
+        # A valid certificate, which the status used to name as the active one.
+        assert _upload(admin_api, TEST_CERTIFICATE).status_code == 200
+
+        assert admin_api.get(f"{API}/status").json() == {"served_by": "caddy_local_ca"}
+        listing = admin_api.get(API).json()
+        assert listing["served_by"] == "caddy_local_ca"
+        [cert] = listing["certificates"]
+        assert (cert["id"], cert["is_valid"], cert["served"]) == ("custom_nas.local", True, False)
+        assert set(cert) == {"id", "type", "domain", "issuer", "valid_from", "valid_until",
+                             "is_valid", "served", "fingerprint"}
+
+
+def _on_event_loop() -> bool:
+    """Whether the caller runs on an event loop (a worker thread of asyncio.to_thread has none)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+class TestOpensslRunsOffTheEventLoop:
+    """openssl runs in a worker thread, with a timeout (ADR-0021)."""
+
+    @pytest.fixture
+    def openssl(self, certs, monkeypatch):
+        """A fake openssl that records where it ran and with which timeout."""
+        runs = []
+
+        def fake(cmd, **kwargs):
+            runs.append((cmd[1], _on_event_loop(), kwargs.get("timeout")))
+            if cmd[1] == "req":
+                return subprocess.CompletedProcess(cmd, 0, GENERATED_KEY + GENERATED_CERTIFICATE, "")
+            return subprocess.CompletedProcess(cmd, 0, "subject=CN = nas.local\nissuer=CN = nas.local\n", "")
+
+        monkeypatch.setattr(subprocess, "run", fake)
+        return runs
+
+    def test_generation_upload_and_listing(self, certs, openssl, admin_api):
+        assert admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"}).status_code == 200
+        assert admin_api.post(f"{API}/upload", json={"certificate": "PEM", "private_key": "KEY"}).status_code == 200
+        assert [c["id"] for c in admin_api.get(API).json()["certificates"]] == ["custom_nas.local"]
+
+        assert {command for command, _, _ in openssl} == {"req", "x509"}
+        assert [(command, on_loop) for command, on_loop, _ in openssl if on_loop] == []
+        assert {(command, timeout) for command, _, timeout in openssl} == {("req", 60), ("x509", 10)}
+
+    @pytest.mark.parametrize("error,message", [
+        (subprocess.TimeoutExpired(["openssl"], 60), "openssl did not finish within 60 seconds"),
+        (FileNotFoundError(errno.ENOENT, "No such file or directory", "openssl"),
+         "[Errno 2] No such file or directory: 'openssl'"),
+    ], ids=["timeout", "raises"])
+    def test_a_generation_whose_openssl_fails_changes_nothing(self, certs, admin_api, monkeypatch,
+                                                              error, message):
+        certs.dir.mkdir(parents=True)
+        old = {"nas.local.crt": "old certificate", "nas.local.key": "old key"}
+        for name, text in old.items():
+            (certs.dir / name).write_text(text)
+
+        def fail(cmd, **kwargs):
+            raise error
+
+        monkeypatch.setattr(subprocess, "run", fail)
+        response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
+
+        assert (response.status_code, response.json()) == (
+            500, {"detail": f"Failed to generate certificate: {message}"})
+        assert {path.name: path.read_text() for path in certs.dir.iterdir()} == old
+
+    def test_an_upload_whose_openssl_times_out_is_no_invalid_certificate(self, certs, admin_api,
+                                                                         monkeypatch):
+        def slow(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        monkeypatch.setattr(subprocess, "run", slow)
+        response = admin_api.post(f"{API}/upload", json={"certificate": "PEM", "private_key": "KEY"})
+
+        assert (response.status_code, response.json()) == (
+            500, {"detail": "Failed to upload certificate: openssl did not finish within 10 seconds"})
+        assert _files_under(certs.root) == []
+
+    def test_a_listing_whose_openssl_times_out_says_so(self, certs, admin_api, monkeypatch):
+        # Not an empty list: the stored certificate is there, its details are not known.
+        certs.dir.mkdir(parents=True)
+        (certs.dir / "nas.local.crt").write_text("CERT")
+
+        def slow(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        monkeypatch.setattr(subprocess, "run", slow)
+        response = admin_api.get(API)
+
+        assert (response.status_code, response.json()) == (
+            500, {"detail": "Failed to read the stored certificates: openssl did not finish within 10 seconds"})
+
+
+class TestCertificateFilesFollowNoLink:
+    """A symbolic link at a certificate's file path is not followed: the write fails and the
+    link's target stays as it was (ADR-0042)."""
+
+    @pytest.fixture
+    def victim(self, certs):
+        victim = certs.root / "victim"
+        victim.write_text("keep me")
+        certs.dir.mkdir(parents=True)
+        return victim
+
+    @pytest.mark.parametrize("suffix", [".crt", ".key", ".chain.pem"])
+    def test_upload(self, certs, admin_api, monkeypatch, victim, suffix):
+        (certs.dir / f"nas.local{suffix}").symlink_to(victim)
+
+        response = _upload_as(monkeypatch, admin_api, "nas.local")
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"].startswith("Failed to upload certificate: ")
+        assert victim.read_text() == "keep me"
+        assert (certs.dir / f"nas.local{suffix}").is_symlink()
+
+    @pytest.mark.parametrize("suffix", [".crt", ".key"])
+    def test_self_signed(self, certs, admin_api, victim, suffix):
+        (certs.dir / f"nas.local{suffix}").symlink_to(victim)
+
+        response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"].startswith("Failed to generate certificate: ")
+        assert victim.read_text() == "keep me"
+        assert (certs.dir / f"nas.local{suffix}").is_symlink()
+
+
+class TestSelfSignedSubjectValidation:
+    """Organization and country of a self-signed certificate are checked before openssl runs,
+    which refuses a longer organization or another country only after it has made the key."""
+
+    @pytest.mark.parametrize("field,value", [
+        ("organization", "x" * 65),
+        ("organization", "ä" * 65),
+        ("country", "DEU"),
+        ("country", "D"),
+        ("country", "12"),
+        ("country", "D1"),
+        ("country", ""),
+        ("country", "DE\n"),
+        ("country", "ÄÖ"),
+    ])
+    def test_refused_with_422_before_openssl(self, certs, admin_api, field, value):
+        response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local", field: value})
+
+        assert response.status_code == 422, response.text
+        assert certs.calls == []
+        assert _files_under(certs.root) == []
+
+    @pytest.mark.parametrize("organization,country", [
+        ("x" * 64, "DE"), ("Home/Lab", "de"), (None, None), ("", None),
+    ])
+    def test_accepted(self, certs, admin_api, organization, country):
+        response = admin_api.post(f"{API}/self-signed", json={
+            "domain": "nas.local", "organization": organization, "country": country,
+        })
+
+        assert response.status_code == 200, response.text
+        [cmd] = certs.calls
+        subject = "/CN=nas.local"
+        if organization:
+            subject += "/O=" + organization.replace("/", "\\/")
+        if country:
+            subject += f"/C={country}"
+        assert cmd[cmd.index("-subj") + 1] == subject
+
+    @pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+    def test_an_organization_of_64_letters_beyond_ascii(self, upload_env, admin_api):
+        """openssl counts characters as the check does only with -utf8: without it, every byte
+        of UTF-8 counted, and 64 such letters failed after the key was made."""
+        organization = "ä" * 64
+        response = admin_api.post(f"{API}/self-signed", json={
+            "domain": "nas.local", "organization": organization, "country": "DE",
+        })
+
+        assert response.status_code == 200, response.text
+        subject = subprocess.run(
+            ["openssl", "x509", "-in", str(upload_env.certs / "nas.local.crt"), "-noout",
+             "-subject", "-nameopt", "RFC2253,-esc_msb"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout
+        assert f"O={organization}" in subject
+
+
+class TestCertificateErrorAnswers:
+    """The answers of the certificate API's error paths."""
+
+    def test_a_delete_of_a_certificate_that_is_not_stored_here(self, certs, admin_api):
+        response = admin_api.delete(f"{API}/caddy_unos")
+
+        assert (response.status_code, response.json()) == (
+            400, {"detail": "Can only delete custom certificates"})
+
+    def test_an_upload_that_cannot_be_written(self, certs, admin_api, monkeypatch):
+        def full(path, key):
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+        monkeypatch.setattr("src.security.router._write_private_key", full)
+        response = _upload_as(monkeypatch, admin_api, "nas.local")
+
+        assert (response.status_code, response.json()) == (
+            500, {"detail": f"Failed to upload certificate: [Errno {errno.ENOSPC}] {os.strerror(errno.ENOSPC)}"})
+
+    def test_a_delete_that_cannot_remove_the_files(self, certs, admin_api, monkeypatch):
+        certs.dir.mkdir(parents=True)
+        (certs.dir / "nas.local.crt").write_text("CERT")
+
+        def refused(self, missing_ok=False):
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES))
+
+        monkeypatch.setattr(Path, "unlink", refused)
+        response = admin_api.delete(f"{API}/custom_nas.local")
+
+        assert (response.status_code, response.json()) == (
+            500, {"detail": f"Failed to delete certificate: [Errno {errno.EACCES}] {os.strerror(errno.EACCES)}"})
+        assert (certs.dir / "nas.local.crt").read_text() == "CERT"
