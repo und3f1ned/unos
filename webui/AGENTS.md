@@ -35,10 +35,11 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 ## Data
 
 - Live data comes from the store `stats` of `$lib/stores/stats`, with `wsConnected` and
-  `wsForbidden`, which `/ws/v1/events` feeds every 2 seconds (ADR-0006); a page reads the objects
-  of the message it needs (`$stats.cpu`, `$stats.network.interfaces`). Rates come from the
-  server; a page writes sizes and rates with the units of its catalog, as `NetworkTab.svelte` and
-  `MonitorTab.svelte` do (ADR-0287).
+  `wsForbidden`, which `/ws/v1/events` feeds every 2 seconds (ADR-0363); a page reads the objects
+  of the message it needs (`$stats.cpu`, `$stats.network.interfaces`). The same socket fills the
+  stores `problems` and `repairJob` (the running or last repair of a share's permissions) for
+  administrators. Rates come from the server; a page writes sizes and rates with the units of its
+  catalog, as `NetworkTab.svelte` and `MonitorTab.svelte` do (ADR-0287).
 - The `setInterval` polling in `LogsTab.svelte` and the storage page predates that rule: new live
   data comes over the WebSocket, as a container's log does (`streamContainerLogs` of
   `$lib/api/containers.ts`, ADR-0255).

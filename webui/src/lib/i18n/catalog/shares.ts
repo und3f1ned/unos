@@ -179,6 +179,7 @@ export const en = {
 	'shares.card.noAccess': 'No access',
 	'shares.card.poolNotMounted': 'Pool not mounted',
 	'shares.card.permissions': 'Permissions need repair',
+	'shares.card.repairing': 'Repairing permissions',
 	// The buttons, and what screen readers hear after their words: "Edit share docs".
 	'shares.card.edit': 'Edit',
 	'shares.card.editOf': 'share {name}',
@@ -207,11 +208,16 @@ export const en = {
 	'shares.card.reason.unavailable': '{username} cannot use SMB',
 	'shares.card.reason.other': '{username} cannot connect yet',
 
-	// Repair permissions: src/lib/components/shares/RepairPermissionsModal.svelte (ADR-0155).
+	// Repair permissions: src/lib/components/shares/RepairPermissionsModal.svelte (ADR-0363).
 	'shares.repair.title': 'Repair permissions of {name}',
 	'shares.repair.lastError': 'The last result could not be read',
 	'shares.repair.failed': 'Permissions were not repaired',
-	'shares.repair.running': 'Repairing... This can take a few minutes.',
+	'shares.repair.notStopped': 'The repair was not stopped',
+	// A repair that runs in the background, and when it started.
+	'shares.repair.progress': 'Repair in progress',
+	'shares.repair.since': 'started {time}',
+	'shares.repair.running':
+		'It runs in the background: you can close this dialog, and the Shares page shows when it ends.',
 	'shares.repair.result': 'Repair result',
 	'shares.repair.lastRun': 'Last run',
 	// The states of a run (RepairResult of supervisor/src/shares/repair.py).
@@ -245,10 +251,11 @@ export const en = {
 	'shares.repair.private': 'Private files and folders (only their owner can use them) are left alone.',
 	'shares.repair.skips': 'Snapshots, other volumes, mount points and links are skipped.',
 	'shares.repair.duration':
-		'It can take minutes on a large share, and stops after 4 minutes: run it again to continue.',
+		'It runs in the background until the whole share is done, which can take hours on a large share. Stop repair ends it early; a new run continues quickly.',
 	'shares.repair.warning': 'This changes the permissions of existing files. It cannot be undone automatically.',
 	'shares.repair.close': 'Close',
-	'shares.repair.run': 'Repair permissions'
+	'shares.repair.run': 'Repair permissions',
+	'shares.repair.stop': 'Stop repair'
 };
 
 export const ru: Translation<typeof en> = {
@@ -402,6 +409,7 @@ export const ru: Translation<typeof en> = {
 	'shares.card.noAccess': 'Нет доступа',
 	'shares.card.poolNotMounted': 'Пул не смонтирован',
 	'shares.card.permissions': 'Нужно исправить права',
+	'shares.card.repairing': 'Исправление прав',
 	'shares.card.edit': 'Изменить',
 	'shares.card.editOf': 'общую папку {name}',
 	'shares.card.repair': 'Исправить права',
@@ -428,7 +436,11 @@ export const ru: Translation<typeof en> = {
 	'shares.repair.title': 'Исправление прав общей папки {name}',
 	'shares.repair.lastError': 'Не удалось прочитать последний результат',
 	'shares.repair.failed': 'Права не исправлены',
-	'shares.repair.running': 'Исправление... Это может занять несколько минут.',
+	'shares.repair.notStopped': 'Исправление не остановлено',
+	'shares.repair.progress': 'Исправление идёт',
+	'shares.repair.since': 'начато {time}',
+	'shares.repair.running':
+		'Оно идёт в фоне: этот диалог можно закрыть, а страница общих папок покажет, когда оно закончится.',
 	'shares.repair.result': 'Результат исправления',
 	'shares.repair.lastRun': 'Последний запуск',
 	'shares.repair.state.done': 'Готово',
@@ -461,8 +473,9 @@ export const ru: Translation<typeof en> = {
 	'shares.repair.private': 'Личные файлы и папки (доступные только владельцу) не затрагиваются.',
 	'shares.repair.skips': 'Снимки, другие тома, точки монтирования и ссылки пропускаются.',
 	'shares.repair.duration':
-		'На большой общей папке это может занять несколько минут, а через 4 минуты исправление останавливается: запустите его снова, чтобы продолжить.',
+		'Исправление идёт в фоне, пока не будет обработана вся общая папка; на большой папке это может занять часы. «Остановить исправление» прерывает его, а новый запуск быстро продолжит работу.',
 	'shares.repair.warning': 'Это меняет права существующих файлов. Автоматически отменить это нельзя.',
 	'shares.repair.close': 'Закрыть',
-	'shares.repair.run': 'Исправить права'
+	'shares.repair.run': 'Исправить права',
+	'shares.repair.stop': 'Остановить исправление'
 };

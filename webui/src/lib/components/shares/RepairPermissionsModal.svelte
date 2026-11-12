@@ -1,25 +1,40 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
-	import { Wrench } from 'lucide-svelte';
+	import { StopCircle, Wrench } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
-	import { getRepairResult, repairSharePermissions, type RepairResult } from '$lib/api/shares';
+	import { getRepairResult, repairSharePermissions, stopRepair, type RepairResult } from '$lib/api/shares';
 	import { Alert, Badge, Button, Modal } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import { isRepairOf, repairJob } from '$lib/stores/repair';
 
-	/** The share whose folder is repaired. The dialog is open while mounted. */
+	/**
+	 * The share whose folder is repaired. The dialog is open while mounted. A repair runs in the
+	 * background (ADR-0363): the dialog follows it through the store repairJob, which the start's
+	 * answer and then the events socket fill, and can be closed while it runs.
+	 */
 	export let name: string;
 
-	const dispatch = createEventDispatcher<{ close: void; repaired: RepairResult }>();
+	const dispatch = createEventDispatcher<{ close: void }>();
 
-	let result: RepairResult | null = null;
-	let running = false;
+	// The share's last finished run as the dialog read it when it opened.
+	let fetched: RepairResult | null = null;
+	let starting = false;
+	let stopping = false;
 	let error = '';
+	let stopError = '';
 	let lastError = '';
+
+	// This share's repair as the store has it: the running one, or the last one that ended since
+	// the page loaded, which is newer than the one read when the dialog opened.
+	$: job = isRepairOf($repairJob, name) ? $repairJob : null;
+	$: running = job?.state === 'running';
+	$: result = running ? null : (job ?? fetched);
 
 	type BadgeVariant = 'success' | 'warning' | 'error';
 
-	// The states of a run, each with the key of its label; a state without one is shown as it comes.
-	const stateBadges: Record<RepairResult['state'], { variant: BadgeVariant; key: string }> = {
+	// The states of a run that ended, each with the key of its label; a state without one is shown
+	// as it comes.
+	const stateBadges: Partial<Record<RepairResult['state'], { variant: BadgeVariant; key: string }>> = {
 		done: { variant: 'success', key: 'shares.repair.state.done' },
 		incomplete: { variant: 'warning', key: 'shares.repair.state.incomplete' },
 		failed: { variant: 'error', key: 'shares.repair.state.failed' }
@@ -38,9 +53,9 @@
 	};
 
 	onMount(async () => {
-		// The last run since UNOS started, if any (404: none).
+		// The last finished run since UNOS started, if any (404: none).
 		try {
-			result = await getRepairResult(name);
+			fetched = await getRepairResult(name);
 		} catch (e) {
 			if (!(e instanceof ApiError && e.status === 404)) lastError = messageOf(e);
 		}
@@ -51,22 +66,42 @@
 	}
 
 	async function repair() {
-		if (running) return;
-		running = true;
+		if (starting || running) return;
+		starting = true;
 		error = '';
+		stopError = '';
 		try {
-			result = await repairSharePermissions(name);
-			dispatch('repaired', result);
+			// Answered at once with the repair running; the events socket sends what follows, and
+			// what it has sent of this run already (a short one may have ended) stays.
+			const started = await repairSharePermissions(name);
+			repairJob.update((job) =>
+				isRepairOf(job, started.share) && job.started_at === started.started_at ? job : started
+			);
 		} catch (e) {
 			// 409: not served, pool not mounted or read-only, group problem, already running.
 			error = messageOf(e);
 		} finally {
-			running = false;
+			starting = false;
+		}
+	}
+
+	async function stop() {
+		if (stopping) return;
+		stopping = true;
+		stopError = '';
+		try {
+			// The walk stops before its next entry; its end comes over the events socket.
+			await stopRepair(name);
+		} catch (e) {
+			// 409: it ended meanwhile.
+			stopError = messageOf(e);
+		} finally {
+			stopping = false;
 		}
 	}
 
 	function close() {
-		if (!running) dispatch('close');
+		if (!starting) dispatch('close');
 	}
 
 	function formatTime(value: string, locale: string): string {
@@ -81,13 +116,7 @@
 		: [];
 </script>
 
-<Modal
-	open
-	title={$t('shares.repair.title', { name })}
-	size="lg"
-	closable={!running}
-	on:close={close}
->
+<Modal open title={$t('shares.repair.title', { name })} size="lg" closable={!starting} on:close={close}>
 	<div class="space-y-3 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1">
 		<!-- The outcome first: after a run it is what the user is waiting for. -->
 		{#if lastError}
@@ -98,8 +127,21 @@
 			<Alert variant="error" title={$t('shares.repair.failed')}>{error}</Alert>
 		{/if}
 
-		{#if running}
-			<p class="text-sm text-secondary">{$t('shares.repair.running')}</p>
+		{#if stopError}
+			<Alert variant="error" title={$t('shares.repair.notStopped')}>{stopError}</Alert>
+		{/if}
+
+		{#if job && running}
+			<section class="card-nested space-y-2 text-sm" aria-label={$t('shares.repair.progress')}>
+				<div class="flex flex-wrap items-center gap-2">
+					<span class="font-medium">{$t('shares.repair.progress')}</span>
+					<span class="text-xs text-muted"
+						>{$t('shares.repair.since', { time: formatTime(job.started_at, $intlLocale) })}</span
+					>
+				</div>
+				<p>{$t('shares.repair.counts', { visited: job.visited, changed: job.changed, n: job.errors })}</p>
+				<p class="text-secondary">{$t('shares.repair.running')}</p>
+			</section>
 		{/if}
 
 		{#if result}
@@ -108,7 +150,9 @@
 				<div class="flex flex-wrap items-center gap-2">
 					<span class="font-medium">{$t('shares.repair.lastRun')}</span>
 					<Badge variant={badge?.variant ?? 'warning'}>{badge ? $t(badge.key) : result.state}</Badge>
-					<span class="text-xs text-muted">{formatTime(result.finished_at, $intlLocale)}</span>
+					<span class="text-xs text-muted"
+						>{formatTime(result.finished_at ?? result.started_at, $intlLocale)}</span
+					>
 				</div>
 				<p>
 					{$t('shares.repair.counts', {
@@ -163,11 +207,17 @@
 	</div>
 
 	<svelte:fragment slot="footer">
-		<Button variant="secondary" class="flex-1" disabled={running} on:click={close}>
+		<Button variant="secondary" class="flex-1" disabled={starting} on:click={close}>
 			{$t('shares.repair.close')}
 		</Button>
-		<Button variant="warning" class="flex-1" icon={Wrench} loading={running} on:click={repair}>
-			{$t('shares.repair.run')}
-		</Button>
+		{#if running}
+			<Button variant="danger" class="flex-1" icon={StopCircle} loading={stopping} on:click={stop}>
+				{$t('shares.repair.stop')}
+			</Button>
+		{:else}
+			<Button variant="warning" class="flex-1" icon={Wrench} loading={starting} on:click={repair}>
+				{$t('shares.repair.run')}
+			</Button>
+		{/if}
 	</svelte:fragment>
 </Modal>

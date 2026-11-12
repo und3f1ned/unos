@@ -57,7 +57,7 @@ and this index, and `make check-fast` runs it.
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
 | [0002](0002-two-containers-on-an-existing-linux-host.md) | UNOS runs on an existing Linux host as a web UI and a privileged supervisor container | accepted | 2026-01-23 |
-| [0006](0006-real-time-data-over-websocket.md) | Real-time data goes over WebSocket, never HTTP polling | accepted | 2026-01-25 |
+| [0006](0006-real-time-data-over-websocket.md) | Real-time data goes over WebSocket, never HTTP polling | superseded by [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | 2026-01-25 |
 | [0020](0020-host-changes-through-host-py.md) | Host changes go through src/host.py, which runs argv lists in the host's namespaces | accepted | 2026-11-05 |
 | [0021](0021-blocking-work-off-the-event-loop.md) | Blocking work runs off the event loop, with timeouts | accepted | 2026-11-05 |
 | [0022](0022-database-migrations-with-alembic.md) | Adopt Alembic for database migrations | proposed | 2026-11-05 |
@@ -65,6 +65,7 @@ and this index, and `make check-fast` runs it.
 | [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits | accepted | 2026-11-08 |
 | [0308](0308-a-sign-in-writes-at-most-0-1-mib-to-the-sd-card.md) | A sign-in in the middle of the write-ahead log writes at most 0.1 MiB to the SD card | accepted | 2026-11-09 |
 | [0324](0324-json-state-files-are-replaced-through-a-rename-and-one-that-cannot-be-read-is-kept-as-bad.md) | JSON state files are replaced through a rename, and one that cannot be read is kept as .bad | accepted | 2026-11-10 |
+| [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | Repair permissions runs as a background job that reports over the events socket, where live data goes | accepted | 2026-11-12 |
 
 ## Security
 
@@ -241,7 +242,7 @@ and this index, and `make check-fast` runs it.
 | [0152](0152-share-folders-created-through-the-pool-mount.md) | Share folders are created only through the pool's mount, checked on descriptors | accepted | 2026-11-06 |
 | [0153](0153-share-folders-only-below-root-only-folders.md) | Share folders are created only below folders that only root can change | accepted | 2026-11-06 |
 | [0154](0154-unos-never-changes-existing-folder-modes.md) | UNOS never changes the mode of an existing folder, and the owner runs the chmod | accepted | 2026-11-06 |
-| [0155](0155-repair-permissions-only-on-request.md) | Guest-era permissions are fixed only by an explicit per-share Repair | accepted | 2026-11-06 |
+| [0155](0155-repair-permissions-only-on-request.md) | Guest-era permissions are fixed only by an explicit per-share Repair | superseded by [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | 2026-11-06 |
 | [0156](0156-repair-walks-with-descriptors.md) | Repair walks the folder tree with descriptors and opens nothing it must not | accepted | 2026-11-06 |
 | [0157](0157-smb-audits-only-real-changes.md) | The SMB code audits only real changes, and problems go to the status | superseded by [0320](0320-smb-changes-are-audited-with-actions-of-their-own-and-the-rollback-era-safeguards-stay-for-restores-and-hand-edits.md) | 2026-11-06 |
 | [0158](0158-netbios-stays-until-discovery.md) | NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour | superseded by [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | 2026-11-06 |

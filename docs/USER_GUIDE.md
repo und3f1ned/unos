@@ -602,9 +602,17 @@ until you press **Repair permissions** on the share. A share marked
   such as 0600 keys or a 0700 folder;
 - changes no owner and no file content;
 - skips snapshots, volumes and other mounts inside the share, symbolic
-  links, and files with more than one hard link;
-- can take minutes, and stops after 4 minutes: run it again to continue
-  (entries that are already right are skipped quickly).
+  links, and files with more than one hard link.
+
+It runs in the background until the whole share is done, which can take
+hours on a large share: the dialog shows how many entries it has checked and
+changed so far, and can be closed meanwhile; the share's card then says
+**Repairing permissions**, and the page updates the share when the repair
+ends. Open the dialog again to see the result as **Last run**. One repair
+runs at a time: another one is refused until it ends. **Stop repair** ends it
+early, and so does a restart of UNOS, or 24 hours of running; what it changed
+stays changed, and a new run continues quickly (entries that are already
+right are skipped quickly).
 
 It changes the permissions of existing files and cannot be undone
 automatically. It is refused while a folder above the share's folder can be

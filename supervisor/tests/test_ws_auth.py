@@ -1,5 +1,6 @@
 """WebSocket authentication handshake (first-message auth, 4401/4403 close codes), and the problems
-that the events socket sends administrators only (ADR-0332)."""
+(ADR-0332) and the repair of a share's permissions (ADR-0363) that the events socket sends
+administrators only."""
 import asyncio
 import gc
 import importlib
@@ -32,6 +33,7 @@ from src.config import get_settings
 from src.database import Base
 from src.health import problems
 from src.main import app
+from src.shares import repair, repair_router
 from src.websocket import events
 
 from .test_alert_events import _found, _problem
@@ -853,6 +855,81 @@ class TestTheProblemsOnTheEventsSocket:
             while len(fast_recheck) < checked + 2:
                 assert ws.receive_json()["type"] == "stats"
                 assert time.monotonic() < deadline, "credentials were not re-checked"
+
+
+# ---------------------------------------------------------------------------
+# The repair of a share's permissions on the events socket (shares.repair-in-background, ADR-0363)
+# ---------------------------------------------------------------------------
+
+
+def _repair_job(state: str = "running", visited: int = 0) -> repair.RepairResult:
+    """The job as repair_router publishes it: the running repair, then its end."""
+    return repair.RepairResult(
+        share="Media", state=state, started_at=datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc),
+        finished_at=None if state == "running" else datetime(2026, 11, 12, 11, 0, tzinfo=timezone.utc),
+        visited=visited, changed=visited // 2, skipped=dict.fromkeys(repair.SKIP_REASONS, 0), skipped_paths=[],
+        errors=0, error_samples=[], message="" if state == "running" else "Permissions repaired.",
+    )
+
+
+@pytest.fixture
+def no_repair():
+    """No repair has run since the start, and none is left behind."""
+    repair_router._job = None
+    yield
+    repair_router._job = None
+
+
+def _next_repair(ws, until=lambda data: True, timeout: float = 5.0) -> dict:
+    """The next repair message on ``ws`` whose job ``until`` accepts, skipping the others."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        message = ws.receive_json()
+        if message["type"] == "repair" and until(message["data"]):
+            return message
+    pytest.fail("no such repair message")
+
+
+class TestTheRepairOnTheEventsSocket:
+    def test_an_administrator_gets_the_job_after_auth_ok_and_whenever_it_changes(
+            self, client, admin_token, fast_recheck, alerts, no_repair):
+        repair_router._publish(_repair_job())
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json() == {"type": "problems", "data": []}
+            assert ws.receive_json() == {"type": "repair", "data": {
+                "share": "Media", "state": "running", "started_at": "2026-11-12T10:00:00Z", "finished_at": None,
+                "visited": 0, "changed": 0, "skipped": dict.fromkeys(repair.SKIP_REASONS, 0), "skipped_paths": [],
+                "errors": 0, "error_samples": [], "message": "",
+            }}
+
+            repair_router._publish(_repair_job(visited=5000))
+            assert _next_repair(ws)["data"]["visited"] == 5000
+
+            repair_router._publish(_repair_job("done", visited=9000))
+            end = _next_repair(ws)["data"]
+            assert (end["state"], end["visited"], end["finished_at"]) == ("done", 9000, "2026-11-12T11:00:00Z")
+
+    def test_an_unchanged_job_is_not_sent_again(self, client, admin_token, fast_recheck, alerts, no_repair):
+        repair_router._publish(_repair_job("done", visited=9))
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "problems"
+            assert ws.receive_json()["type"] == "repair"
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+
+    def test_a_regular_user_never_gets_it(self, client, user_token, fast_recheck, alerts, no_repair):
+        repair_router._publish(_repair_job())
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            repair_router._publish(_repair_job(visited=5000))
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
 
 
 class TestSocketCaps:

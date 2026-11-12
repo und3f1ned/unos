@@ -87,13 +87,15 @@ export interface SmbShareDeleted {
   warnings: string[];
 }
 
-export type RepairState = "done" | "incomplete" | "failed";
+export type RepairState = "running" | "done" | "incomplete" | "failed";
 
+/** A repair of a share's permissions: while it runs (the counts so far), then its result. */
 export interface RepairResult {
   share: string;
   state: RepairState;
   started_at: string;
-  finished_at: string;
+  /** null while it runs. */
+  finished_at: string | null;
   visited: number;
   changed: number;
   /** Keys: other_filesystem, snapshots, symlink, special, hardlink, private, too_deep, raced. */
@@ -205,12 +207,20 @@ export async function deleteSmbShare(name: string): Promise<SmbShareDeleted> {
   return api.delete<SmbShareDeleted>(smbSharePath(name));
 }
 
-/** Runs while the request waits: up to about 4 minutes on a large share. */
+/**
+ * Start a repair in the background; answers it running (ADR-0363). Its progress and its end come
+ * over /ws/v1/events (the store repairJob of $lib/stores/repair).
+ */
 export async function repairSharePermissions(name: string): Promise<RepairResult> {
   return api.post<RepairResult>(`${smbSharePath(name)}/repair-permissions`);
 }
 
-/** The last repair of the share since UNOS started; 404 when none has run. */
+/** Ask the running repair of the share to stop; its end comes over /ws/v1/events. */
+export async function stopRepair(name: string): Promise<RepairResult> {
+  return api.delete<RepairResult>(`${smbSharePath(name)}/repair-permissions`);
+}
+
+/** The last finished repair of the share since UNOS started; 404 when none has run. */
 export async function getRepairResult(name: string): Promise<RepairResult> {
   return api.get<RepairResult>(`${smbSharePath(name)}/repair-permissions`);
 }

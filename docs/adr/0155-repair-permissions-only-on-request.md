@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0363
 ---
 
 # ADR-0155: Guest-era permissions are fixed only by an explicit per-share Repair
 
 ## Context
+
+Superseded by ADR-0363: Repair permissions runs as a background job, one at a time, until the share is done, stopped or 24 hours have passed.
 
 Guest shares left folders with mode 0777 and files `nobody:nogroup` 0666. Giving them the
 group model changes the owner's data and takes away the access that every other account had,

@@ -55,11 +55,12 @@ SD writes of each check (ADR-0214). The areas:
            folder in "theirs" is refused with 409 and the reason, and a share of "theirs" itself
            is accepted with the warning that names its owner, reported on the Shares page and
            refused by Repair permissions (ADR-0193); a share on a new folder with entries of
-           other groups and modes made over ssh, which Repair permissions gives the group
-           unos-smb, group read and write and setgid on folders, keeping their owners, while a
+           other groups and modes made over ssh, which Repair permissions, answered at once
+           (202) running and waited for until the Shares API names its end (ADR-0363), gives the
+           group unos-smb, group read and write and setgid on folders, keeping their owners, while a
            private file and folder, a symbolic link and the file outside the share that it
            points to stay as they were, and an ACL entry (where the device has setfacl) stays
-           with the group bits as its mask (ADR-0155); the last run with its counts on the Shares
+           with the group bits as its mask (ADR-0363); the last run with its counts on the Shares
            API, and Repair refused while the share's folder is a symbolic link; a regular user
            without SMB, signed in with its own token, whose password of 7 characters (which
            UNOS's own rules allow) and one with a tab SMB refuses with the reason, while UNOS
@@ -2340,6 +2341,25 @@ def smbconf_check(c: Check) -> None:
 
 # --- shares: the sticky parent, Repair permissions, the user's own SMB, a guest share ---------
 
+# How long the shares check waits for the end of its repair, which runs in the background
+# (ADR-0363), and how often it asks: its share holds a few entries (the tests make both short).
+REPAIR_WAIT = 300
+REPAIR_POLL = 1
+
+
+def repair_until_it_ends(c: Check, share: str, started: Any) -> tuple[dict, int]:
+    """The run of Repair permissions of SHARE that started at STARTED once GET .../repair-permissions,
+    the share's last finished run, answers it, and how many answers named the run before it (or none)."""
+    deadline = time.monotonic() + REPAIR_WAIT
+    before = 0
+    while True:
+        last = c.get(f"/shares/smb/{share}/repair-permissions", expect=(200, 404))
+        if isinstance(last, dict) and last.get("started_at") == started:
+            return last, before
+        before += 1
+        c.expect(time.monotonic() < deadline, f"the repair of {share} did not end within {REPAIR_WAIT} s")
+        time.sleep(REPAIR_POLL)
+
 
 def smb_state(answer: dict) -> str:
     """The state of GET /auth/me/smb's answer, with whether SMB is allowed and the code is asked."""
@@ -2441,7 +2461,7 @@ def shares_check(c: Check) -> None:
         c.expect(problems == [], f"the Shares page reports {problems}")
         s.text += f": {detail}"
 
-    # shares.repair-permissions (ADR-0155, ADR-0156).
+    # shares.repair-permissions and shares.repair-in-background (ADR-0363, ADR-0156).
     with c.step(f"the share {share} on a new folder makes the folder 2770 root:unos-smb, and smb.conf gets its "
                 "section, closed (available = no) while nobody has access"):
         c.on_cleanup(f"delete {folder} for good", lambda: c.delete_for_good(folder))
@@ -2469,9 +2489,13 @@ def shares_check(c: Check) -> None:
             found = c.device.acl(f"{folder}/acl.txt")
             c.expect(f"user:{other['user']}:r--" in found and "mask::r--" in found, f"its ACL is {found}")
 
-    with c.step("Repair permissions gives them the group unos-smb, group read and write, and setgid on the folder, "
-                "and keeps their owners") as s:
-        result = c.post(f"/shares/smb/{share}/repair-permissions")
+    with c.step("Repair permissions answers at once (202) that it runs, in the background (ADR-0363), and by its "
+                "end, which the Shares API then answers as the last run, it gives them the group unos-smb, group "
+                "read and write, and setgid on the folder, and keeps their owners") as s:
+        started = c.post(f"/shares/smb/{share}/repair-permissions", expect=202)
+        c.expect(isinstance(started, dict) and started.get("share") == share and started.get("state") == "running"
+                 and started.get("finished_at") is None and started.get("started_at"), f"it answered {started}")
+        result, before = repair_until_it_ends(c, share, started["started_at"])
         c.expect(result.get("state") == "done" and not result.get("errors"),
                  f"it ended {result.get('state')}: {result.get('message')} {result.get('error_samples')}")
         facts = c.device.stat(sorted(entries) + [folder])
@@ -2479,7 +2503,7 @@ def shares_check(c: Check) -> None:
         for path, (want, after) in entries.items():
             if want != after:
                 stat_is(c, facts, path, after)
-        s.text += f": {result.get('message')}"
+        s.text += f": {result.get('message')} (GET named it after {before} earlier answer(s))"
 
     with c.step("it leaves the private file and folder, what the folder holds, the symbolic link and the file outside "
                 "the share that the link points to as they were"):

@@ -180,8 +180,8 @@ narrows access (ADR-0084, ADR-0086). Avoid: migration.
 passwords and smb.conf in line with the database (ADR-0138). Avoid: sync, repair.
 
 **Repair permissions**: An administrator's action on one share that gives the files already in it
-the group unos-smb and removes other accounts' access (ADR-0155). Avoid: fix permissions, chmod,
-reconcile.
+the group unos-smb and removes other accounts' access; it runs in the background (ADR-0363). Avoid:
+fix permissions, chmod, reconcile.
 
 **Network discovery**: How computers on the LAN find the NAS without its address: Windows through
 WS-Discovery (wsdd2), macOS through Bonjour (the `_smb._tcp` service that smbd registers with

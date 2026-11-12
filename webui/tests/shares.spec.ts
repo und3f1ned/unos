@@ -4,13 +4,17 @@ import {
   FAKE_PATHS,
   GUEST_WARNING,
   POOLS,
+  REPAIR_NOT_RUNNING,
+  REPAIR_STOPPED,
   SMB_CONF_REPLACED,
   VERSION_CONFLICT,
   accessOf,
+  fakeRepairEvents,
   fakeShare,
   fakeSmbApi,
   fakeUser,
   repairResult,
+  repairStarted,
   smbStatus,
   type FakeUser,
 } from './shares-fakes';
@@ -694,11 +698,19 @@ test.describe('SMB shares page (fake data)', () => {
     ]);
   });
 
-  test('repair permissions shows the last run, a new run and its errors', async ({ authenticatedPage: page }) => {
-    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: [fakeShare('docs', { available: true })] });
+  test('repair permissions runs in the background, follows it over the socket and keeps the last run', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, {
+      users: fakeUsers(),
+      shares: [fakeShare('docs', { available: true, permissions_ok: false })],
+    });
+    const events = await fakeRepairEvents(page, fake);
     await page.goto('/shares');
+    const card = shareCard(page, 'docs');
+    await expect(card.locator('.badge', { hasText: /^Permissions need repair$/ })).toBeVisible();
 
-    await shareCard(page, 'docs').getByRole('button', { name: 'Repair permissions' }).click();
+    await card.getByRole('button', { name: 'Repair permissions' }).click();
     const dialog = page.getByRole('dialog', { name: 'Repair permissions of docs' });
     await expect(dialog.getByText('This changes the permissions of existing files. It cannot be undone automatically.')).toBeVisible();
     // On entries with ACLs, chmod sets the ACL mask (acl(5)): named entries can get more.
@@ -709,56 +721,149 @@ test.describe('SMB shares page (fake data)', () => {
     ).toBeVisible();
     await expect(dialog.getByText(/Everyone else loses access/)).toHaveCount(0);
     await expect(dialog.getByText('Private files and folders (only their owner can use them) are left alone.')).toBeVisible();
-    await expect(dialog.getByText(/stops after 4 minutes: run it again to continue/)).toBeVisible();
+    await expect(
+      dialog.getByText(
+        'It runs in the background until the whole share is done, which can take hours on a large share. Stop repair ends it early; a new run continues quickly.',
+      ),
+    ).toBeVisible();
     // No run since UNOS started (404): no result.
     await expect.poll(() => fake.reads).toContain('/shares/smb/docs/repair-permissions');
     await expect(dialog.getByText('Last run')).toHaveCount(0);
     expect(fake.writes).toEqual([]);
 
-    const repair = dialog.getByRole('button', { name: 'Repair permissions' });
-    fake.repairAnswer = {
-      status: 200,
-      json: repairResult('docs', {
+    // The start answers at once: the dialog shows the repair running, which can be left open or closed.
+    await dialog.getByRole('button', { name: 'Repair permissions' }).click();
+    const running = dialog.getByRole('region', { name: 'Repair in progress' });
+    await expect(running).toContainText('0 checked, 0 changed, 0 errors');
+    await expect(running).toContainText('It runs in the background: you can close this dialog');
+    await expect(dialog.getByRole('button', { name: 'Repair permissions' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeEnabled();
+    expect(fake.writes).toEqual([{ method: 'POST', path: '/shares/smb/docs/repair-permissions', body: null }]);
+
+    // Its progress comes over the socket.
+    await events.progress(repairStarted('docs', { visited: 5000, changed: 1200, errors: 1 }));
+    await expect(running).toContainText('5000 checked, 1200 changed, 1 error');
+
+    // Closed while it runs, the share's card says that it runs.
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(card.locator('.badge', { hasText: /^Repairing permissions$/ })).toBeVisible();
+
+    // Its end comes over the socket too, and the page reads the shares again: their permissions are right now.
+    fake.shares[0].permissions_ok = true;
+    await events.end(
+      repairResult('docs', {
         skipped: { other_filesystem: 2, snapshots: 0, symlink: 1, special: 0, hardlink: 0, private: 3, too_deep: 0, raced: 0 },
         skipped_paths: ['media', 'backup/usb'],
       }),
-    };
-    await repair.click();
+    );
+    await expect(card.locator('.badge', { hasText: /^Repairing permissions$/ })).toHaveCount(0);
+    await expect(card.locator('.badge', { hasText: /^Permissions need repair$/ })).toHaveCount(0);
+
+    // Opened again, the dialog shows the run as the last one.
+    await card.getByRole('button', { name: 'Repair permissions' }).click();
     const result = dialog.getByRole('region', { name: 'Repair result' });
     await expect(result.locator('.badge')).toHaveText('Done');
     await expect(result).toContainText('120 checked, 37 changed, 0 errors');
     await expect(result).toContainText('Skipped: other volumes and mounts: 2, links: 1, private files and folders: 3');
     await expect(result.getByRole('listitem')).toHaveText(['media', 'backup/usb']);
-    expect(fake.writes).toEqual([{ method: 'POST', path: '/shares/smb/docs/repair-permissions', body: null }]);
+    await expect(running).toHaveCount(0);
+    // Nothing polled the repair: it was read only when the dialog opened.
+    expect(fake.reads.filter((path) => path === '/shares/smb/docs/repair-permissions')).toHaveLength(2);
 
-    const stopped = 'Stopped after 4 minutes; run it again to continue (already repaired entries are skipped quickly)';
-    fake.repairAnswer = {
-      status: 200,
-      json: repairResult('docs', {
+    // A run that ends incomplete, with an error.
+    const stopped = 'Stopped after 24 hours; run it again to continue (already repaired entries are skipped quickly)';
+    await dialog.getByRole('button', { name: 'Repair permissions' }).click();
+    await expect(running).toBeVisible();
+    await events.end(
+      repairResult('docs', {
         state: 'incomplete',
         errors: 1,
         error_samples: ['photos/locked.jpg: Permission denied'],
         message: stopped,
       }),
-    };
-    await repair.click();
+    );
     await expect(result.locator('.badge')).toHaveText('Incomplete');
     // One error: the singular.
     await expect(result.getByText(/^120 checked, 37 changed, 1 error$/)).toBeVisible();
     await expect(result.getByText(stopped)).toBeVisible();
     await expect(result).toContainText('photos/locked.jpg: Permission denied');
+    await expect(running).toHaveCount(0);
 
+    // One repair at a time: another start while one runs is refused.
     fake.repairAnswer = { status: 409, json: { detail: 'A permissions repair is already running' } };
-    await repair.click();
+    await dialog.getByRole('button', { name: 'Repair permissions' }).click();
     await expect(dialog.getByText('Permissions were not repaired')).toBeVisible();
     await expect(dialog.getByText('A permissions repair is already running')).toBeVisible();
 
     // Opened again, it shows the last run.
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(dialog).toBeHidden();
-    await shareCard(page, 'docs').getByRole('button', { name: 'Repair permissions' }).click();
+    await card.getByRole('button', { name: 'Repair permissions' }).click();
     await expect(result.locator('.badge')).toHaveText('Incomplete');
     await expect(dialog.getByText('A permissions repair is already running')).toHaveCount(0);
+  });
+
+  test('a repair whose end comes before the answer to its start shows its end', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: [fakeShare('docs', { available: true })] });
+    const events = await fakeRepairEvents(page, fake);
+    // A small share is repaired in moments: the socket can send the end before the start's answer arrives.
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    await page.route('**/api/v1/shares/smb/docs/repair-permissions', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      await answered;
+      await route.fulfill({ status: 202, json: repairStarted('docs') });
+    });
+    await page.goto('/shares');
+    await shareCard(page, 'docs').getByRole('button', { name: 'Repair permissions' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Repair permissions of docs' });
+    await expect(dialog.getByRole('button', { name: 'Repair permissions' })).toBeEnabled();
+    await dialog.getByRole('button', { name: 'Repair permissions' }).click();
+
+    await events.end(repairResult('docs'));
+    const result = dialog.getByRole('region', { name: 'Repair result' });
+    await expect(result.locator('.badge')).toHaveText('Done');
+    answer();
+
+    await expect(dialog.getByRole('button', { name: 'Repair permissions' })).toBeEnabled();
+    await expect(result.locator('.badge')).toHaveText('Done');
+    await expect(dialog.getByRole('region', { name: 'Repair in progress' })).toHaveCount(0);
+    await expect(shareCard(page, 'docs').locator('.badge', { hasText: /^Repairing permissions$/ })).toHaveCount(0);
+  });
+
+  test('a running repair can be stopped', async ({ authenticatedPage: page }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: [fakeShare('docs', { available: true })] });
+    const events = await fakeRepairEvents(page, fake);
+    await page.goto('/shares');
+    await shareCard(page, 'docs').getByRole('button', { name: 'Repair permissions' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Repair permissions of docs' });
+    await dialog.getByRole('button', { name: 'Repair permissions' }).click();
+    const stop = dialog.getByRole('button', { name: 'Stop repair' });
+    await expect(stop).toBeVisible();
+
+    // A stop that the server refuses, for a repair that has ended meanwhile, says why.
+    fake.repairStopAnswer = { status: 409, json: { detail: REPAIR_NOT_RUNNING } };
+    await stop.click();
+    await expect(dialog.locator('.alert', { hasText: 'The repair was not stopped' })).toContainText(REPAIR_NOT_RUNNING);
+
+    fake.repairStopAnswer = null;
+    await stop.click();
+    await expect(dialog.getByText('The repair was not stopped')).toHaveCount(0);
+    expect(fake.writes.filter((write) => write.method === 'DELETE')).toEqual([
+      { method: 'DELETE', path: '/shares/smb/docs/repair-permissions', body: null },
+      { method: 'DELETE', path: '/shares/smb/docs/repair-permissions', body: null },
+    ]);
+    // The walk stops before its next entry, and its end comes over the socket.
+    await events.end(repairResult('docs', { state: 'incomplete', visited: 40, changed: 12, message: REPAIR_STOPPED }));
+    const result = dialog.getByRole('region', { name: 'Repair result' });
+    await expect(result.locator('.badge')).toHaveText('Incomplete');
+    await expect(result).toContainText('40 checked, 12 changed, 0 errors');
+    await expect(result.getByText(REPAIR_STOPPED)).toBeVisible();
+    await expect(stop).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Repair permissions' })).toBeVisible();
   });
 
   test('the SMB status is shown as alerts', async ({ authenticatedPage: page }) => {
@@ -1304,6 +1409,7 @@ test.describe('In Russian', () => {
       users: fakeUsers(),
       shares: [fakeShare('docs', { available: true }), fakeShare('photos', { available: true })],
     });
+    const events = await fakeRepairEvents(page, fake);
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
     await page.goto('/shares');
 
@@ -1314,18 +1420,25 @@ test.describe('In Russian', () => {
       dialog.getByText('Это меняет права существующих файлов. Автоматически отменить это нельзя.'),
     ).toBeVisible();
 
+    await dialog.getByRole('button', { name: 'Исправить права', exact: true }).click();
+    const running = dialog.getByRole('region', { name: 'Исправление идёт' });
+    await expect(running).toContainText('Проверено: 0, изменено: 0, ошибок: 0');
+    await expect(running).toContainText('Оно идёт в фоне: этот диалог можно закрыть');
+    await expect(dialog.getByRole('button', { name: 'Остановить исправление', exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
+    await expect(shareCard(page, 'docs').locator('.badge', { hasText: /^Исправление прав$/ })).toBeVisible();
+    await shareCard(page, 'docs').getByRole('button', { name: 'Исправить права общей папки docs' }).click();
+
     // The server's message, as repair.py words it.
     const repaired = 'Permissions repaired, except for 1 entry that could not be changed.';
-    fake.repairAnswer = {
-      status: 200,
-      json: repairResult('docs', {
+    await events.end(
+      repairResult('docs', {
         errors: 1,
         error_samples: ['photos/locked.jpg: Permission denied'],
         skipped: { other_filesystem: 2, snapshots: 0, symlink: 1, special: 0, hardlink: 0, private: 3, too_deep: 0, raced: 0 },
         message: repaired,
       }),
-    };
-    await dialog.getByRole('button', { name: 'Исправить права', exact: true }).click();
+    );
     const result = dialog.getByRole('region', { name: 'Результат исправления' });
     await expect(result.locator('.badge')).toHaveText('Готово');
     await expect(result).toContainText('Последний запуск');
