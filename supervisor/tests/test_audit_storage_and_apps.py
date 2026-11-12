@@ -1,0 +1,507 @@
+"""Changes of pools, volumes, snapshots, containers and apps are in the audit log
+(security.audit-admin-actions, steps 1 and 2; ADR-0350).
+
+Creating and deleting pools and volumes, creating, deleting and restoring snapshots, starting,
+stopping, restarting and removing containers (on the Containers page and on the Apps page), and
+installing and uninstalling apps each write one entry of their action, with the administrator,
+the client address and browser of the request and the resource, after the change was made. A
+refused or failed request, and one that changed nothing (a pool that was not there to remove, a
+start of a running container, a stop of a stopped one), write none (ADR-0320: entries record
+real changes). An entry that cannot be written, as on a full /data, is in the supervisor's log,
+and the change, already made, answers as it does otherwise (ADR-0251, ADR-0343).
+"""
+from __future__ import annotations
+
+import importlib
+import json
+import logging
+from collections.abc import Iterator
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+from docker.errors import APIError, NotFound
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from src.audit import router as audit_router
+from src.auth.utils import verify_token
+from src.containers import docker as docker_module
+from src.database import Base, get_db
+from src.main import app
+from src.storage import router as storage_router
+
+from .audit_helpers import audit_entries
+from .test_containers import _container
+from .test_pool_persistence import DATA_UUID
+from .test_sign_in_full_disk import ENTRY_LOST, the_audit_log_is_full
+from . import test_volumes
+from .test_snapshots import FakeBtrfs
+
+# The package re-exports its APIRouter as ``router``; import the modules.
+apps_router = importlib.import_module("src.apps.router")
+snapshots_router = importlib.import_module("src.snapshots.router")
+
+# The fixture of test_volumes: the FakeHost with pool "data" mounted and its subvolumes, and pool
+# "media" not mounted.
+host = test_volumes.host
+
+CLIENT = "192.0.2.30"  # the address the test client connects from
+BROWSER = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+ADMIN = "carol"
+FIELDS = ("action", "username", "ip_address", "user_agent", "resource_type", "resource_id", "details",
+          "severity", "success")
+POOLS = "/api/v1/storage/pools"
+SNAPSHOTS = "/api/v1/snapshots"
+CONTAINERS = "/api/v1/containers"
+APPS = "/api/v1/apps"
+
+
+def entry(action: str, resource_type: str, resource_id: str, details: str, severity: str = "info") -> dict:
+    """An entry of the administrator ADMIN, from CLIENT with BROWSER, as the audit log keeps it."""
+    return {"action": action, "username": ADMIN, "ip_address": CLIENT, "user_agent": BROWSER,
+            "resource_type": resource_type, "resource_id": resource_id, "details": details,
+            "severity": severity, "success": True}
+
+
+def picked(record: dict) -> dict:
+    return {field: record.get(field) for field in FIELDS}
+
+
+@pytest.fixture
+def audit_file(tmp_path_factory, monkeypatch) -> Path:
+    """The audit log of the test, outside tmp_path, whose tree some fixtures compare."""
+    path = tmp_path_factory.mktemp("audit") / "audit.jsonl"
+    monkeypatch.setattr(audit_router, "AUDIT_FILE", str(path))
+    return path
+
+
+@pytest.fixture
+def admin(audit_file) -> Iterator[TestClient]:
+    """The API as the administrator ADMIN, from the address CLIENT and the browser BROWSER."""
+    previous = app.dependency_overrides.get(verify_token)
+    app.dependency_overrides[verify_token] = lambda: SimpleNamespace(
+        id=1, username=ADMIN, is_admin=True, is_active=True
+    )
+    storage_router.limiter.reset()
+    try:
+        yield TestClient(app, client=(CLIENT, 50000), headers={"User-Agent": BROWSER})
+    finally:
+        storage_router.limiter.reset()
+        if previous is None:
+            app.dependency_overrides.pop(verify_token, None)
+        else:
+            app.dependency_overrides[verify_token] = previous
+
+
+def entries(audit_file: Path) -> list[dict]:
+    return [picked(record) for record in audit_entries(audit_file)]
+
+
+def lost(caplog) -> list[dict]:
+    """The entries that the supervisor's log reports in place of the audit log (ADR-0251)."""
+    found = []
+    for record in caplog.records:
+        message = record.getMessage()
+        if record.levelno >= logging.ERROR and message.startswith(ENTRY_LOST):
+            found.append(picked(json.JSONDecoder().raw_decode(message, len(ENTRY_LOST))[0]))
+    return found
+
+
+# ---------------------------------------------------------------------------
+# Pools and volumes (step 1)
+# ---------------------------------------------------------------------------
+
+
+class TestPools:
+    def test_creating_a_pool_writes_pool_created(self, admin, audit_file, host):
+        host.add_disk("sdc", serial="WD-3")
+
+        response = admin.post(POOLS, json={"name": "tank", "devices": ["/dev/sdc"], "raid_level": "single",
+                                           "confirm_name": "tank"})
+
+        assert response.status_code == 200, response.text
+        assert entries(audit_file) == [entry("pool_created", "pool", "tank", "Created the pool tank (single) on /dev/sdc")]
+
+    def test_a_refused_pool_writes_nothing(self, admin, audit_file, host):
+        # /dev/sda holds the mounted pool "data".
+        response = admin.post(POOLS, json={"name": "tank", "devices": ["/dev/sda"], "raid_level": "single",
+                                           "confirm_name": "tank"})
+
+        assert response.status_code == 409, response.text
+        assert entries(audit_file) == []
+
+    def test_removing_a_pool_writes_pool_deleted(self, admin, audit_file, host):
+        response = admin.delete(f"{POOLS}/data")
+
+        assert response.status_code == 200, response.text
+        assert not host.mounted("/mnt/pools/data")
+        assert entries(audit_file) == [
+            entry("pool_deleted", "pool", "data", "Removed the pool data; its disks and their data were kept", "warning")
+        ]
+
+    def test_removing_a_pool_that_is_not_there_writes_nothing(self, admin, audit_file, host):
+        response = admin.delete(f"{POOLS}/nothing")
+
+        assert (response.status_code, response.json()) == (200, {"status": "deleted"})
+        assert host.changes == []
+        assert entries(audit_file) == []
+
+    def test_a_pool_in_use_is_not_removed_and_writes_nothing(self, admin, audit_file, host):
+        host.busy.add("/mnt/pools/data")
+
+        response = admin.delete(f"{POOLS}/data")
+
+        assert response.status_code == 409, response.text
+        assert entries(audit_file) == []
+
+    def test_creating_and_deleting_a_volume_write_their_entries(self, admin, audit_file, host):
+        created = admin.post(f"{POOLS}/data/volumes", json={"name": "documents"})
+        assert created.status_code == 200, created.text
+        host.dirs.add("/mnt/pools/data/documents")
+        deleted = admin.delete(f"{POOLS}/data/volumes/documents")
+
+        assert deleted.status_code == 200, deleted.text
+        assert host.subvols.paths(DATA_UUID) == []
+        assert entries(audit_file) == [
+            entry("volume_created", "volume", "data/documents", "Created the volume documents in the pool data"),
+            entry("volume_deleted", "volume", "data/documents",
+                  "Deleted the volume documents of the pool data with everything in it", "warning"),
+        ]
+
+    def test_a_volume_with_a_quota_says_so(self, admin, audit_file, host):
+        host.subvols.quotas.add(DATA_UUID)
+
+        response = admin.post(f"{POOLS}/data/volumes", json={"name": "photos", "quota": 1 << 30})
+
+        assert response.status_code == 200, response.text
+        assert entries(audit_file) == [
+            entry("volume_created", "volume", "data/photos",
+                  "Created the volume photos in the pool data, with a quota of 1073741824 bytes")
+        ]
+
+    @pytest.mark.parametrize(("method", "url", "status"), [
+        ("post", f"{POOLS}/media/volumes", 409),  # the pool is not mounted
+        ("delete", f"{POOLS}/data/volumes/nope", 404),
+    ])
+    def test_a_refused_volume_change_writes_nothing(self, admin, audit_file, host, method, url, status):
+        kwargs = {"json": {"name": "documents"}} if method == "post" else {}
+
+        response = getattr(admin, method)(url, **kwargs)
+
+        assert response.status_code == status, response.text
+        assert entries(audit_file) == []
+
+    def test_a_volume_whose_entry_cannot_be_written_is_created_and_answers(
+        self, admin, audit_file, host, monkeypatch, caplog
+    ):
+        the_audit_log_is_full(monkeypatch)
+
+        response = admin.post(f"{POOLS}/data/volumes", json={"name": "documents"})
+
+        assert response.status_code == 200, response.text
+        assert host.changes == [["btrfs", "subvolume", "create", "/mnt/pools/data/documents"]]
+        assert lost(caplog) == [
+            entry("volume_created", "volume", "data/documents", "Created the volume documents in the pool data")
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Snapshots (step 1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def btrfs(tmp_path, monkeypatch) -> Iterator[FakeBtrfs]:
+    """btrfs-progs faked (FakeBtrfs of test_snapshots) on the pool ``btrfs.pool`` of a pools base."""
+    base = tmp_path.resolve() / "pools"
+    pool = base / "datapool"
+    pool.mkdir(parents=True)
+    fake = FakeBtrfs(pool)
+    fake.pool = pool
+    # The time that the name of a restored copy gets.
+    monkeypatch.setattr(snapshots_router, "utc_stamp", lambda: "20261112_093000")
+    with patch("src.security.validators.settings", SimpleNamespace(pools_base_path=str(base))), \
+            patch("src.snapshots.router.subprocess.run", side_effect=fake.run):
+        yield fake
+
+
+class TestSnapshots:
+    def test_creating_a_snapshot_writes_snapshot_created(self, admin, audit_file, btrfs):
+        response = admin.post(f"{SNAPSHOTS}/", json={"subvolume": str(btrfs.pool), "name": "before"})
+
+        assert response.status_code == 200, response.text
+        assert (btrfs.pool / ".snapshots" / "before").is_dir()
+        assert entries(audit_file) == [
+            entry("snapshot_created", "snapshot", f"{btrfs.pool}/.snapshots/before",
+                  f"Created the read-only snapshot before of {btrfs.pool}")
+        ]
+
+    def test_deleting_a_snapshot_writes_snapshot_deleted(self, admin, audit_file, btrfs):
+        snap = btrfs.snapshot(btrfs.pool, "before")
+
+        response = admin.delete(f"{SNAPSHOTS}/before", params={"subvolume": str(btrfs.pool)})
+
+        assert response.status_code == 200, response.text
+        assert btrfs.deleted == [snap]
+        assert entries(audit_file) == [
+            entry("snapshot_deleted", "snapshot", str(snap), f"Deleted the snapshot before of {btrfs.pool}", "warning")
+        ]
+
+    def test_restoring_a_snapshot_writes_snapshot_restored(self, admin, audit_file, btrfs):
+        snap = btrfs.snapshot(btrfs.pool, "before")
+
+        response = admin.post(f"{SNAPSHOTS}/restore", json={"snapshot_path": str(snap)})
+
+        assert response.status_code == 200, response.text
+        copy = btrfs.pool / "restore_20261112_093000"
+        assert response.json()["target"] == str(copy)
+        assert entries(audit_file) == [
+            entry("snapshot_restored", "snapshot", str(snap), f"Restored the snapshot as the writable copy {copy}")
+        ]
+
+    def test_refused_and_failed_snapshot_changes_write_nothing(self, admin, audit_file, btrfs):
+        btrfs.snapshot(btrfs.pool, "before")
+
+        taken = admin.post(f"{SNAPSHOTS}/", json={"subvolume": str(btrfs.pool), "name": "before"})
+        missing = admin.delete(f"{SNAPSHOTS}/nope", params={"subvolume": str(btrfs.pool)})
+        no_copy = admin.post(f"{SNAPSHOTS}/restore", json={"snapshot_path": f"{btrfs.pool}/.snapshots/nope"})
+        btrfs.state["fail"] = True
+        failed = admin.post(f"{SNAPSHOTS}/", json={"subvolume": str(btrfs.pool), "name": "after"})
+
+        assert [r.status_code for r in (taken, missing, no_copy, failed)] == [400, 404, 404, 500]
+        assert entries(audit_file) == []
+
+    def test_a_snapshot_whose_entry_cannot_be_written_is_made_and_answers(
+        self, admin, audit_file, btrfs, monkeypatch, caplog
+    ):
+        the_audit_log_is_full(monkeypatch)
+
+        response = admin.post(f"{SNAPSHOTS}/", json={"subvolume": str(btrfs.pool), "name": "before"})
+
+        assert response.status_code == 200, response.text
+        assert (btrfs.pool / ".snapshots" / "before").is_dir()
+        assert lost(caplog) == [
+            entry("snapshot_created", "snapshot", f"{btrfs.pool}/.snapshots/before",
+                  f"Created the read-only snapshot before of {btrfs.pool}")
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Containers and apps (step 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def docker(monkeypatch):
+    """A mocked Docker client of the Containers and the Apps pages that knows the containers passed
+    to ``add``, by name; a container that ``containers.create`` makes is added too."""
+    by_name: dict[str, MagicMock] = {}
+    client = MagicMock(name="docker")
+
+    def get(name):
+        try:
+            return by_name[name]
+        except KeyError:
+            raise NotFound(f"No such container: {name}") from None
+
+    def create(image, *, name, labels, **kwargs):
+        container = _container(name, labels, [])
+        container.short_id = "c0ffee"
+        container.status = "running"
+        return by_name.setdefault(name, container)
+
+    client.containers.get.side_effect = get
+    client.containers.list.side_effect = lambda all=False, **kwargs: [
+        c for c in by_name.values() if all or c.status == "running"
+    ]
+    client.containers.create.side_effect = create
+    client.add = lambda container: by_name.setdefault(container.name, container)
+    monkeypatch.setattr(docker_module, "get_client", lambda: client)
+    monkeypatch.setattr(apps_router, "get_client", lambda: client)
+    # No pool is mounted: the apps of these tests keep no data on one.
+    monkeypatch.setattr(apps_router, "list_mounted_pools", lambda: [])
+    return client
+
+
+def running(container: MagicMock) -> MagicMock:
+    container.status = "running"
+    return container
+
+
+def app_container(name: str = "dozzle") -> MagicMock:
+    """An installed app of the catalog without data on a pool, stopped."""
+    return _container(name, {"unos.app": "dozzle"}, [])
+
+
+class TestContainers:
+    @pytest.mark.parametrize(("status", "action", "verb", "written"), [
+        ("exited", "start", "Started", "container_started"),
+        ("running", "stop", "Stopped", "container_stopped"),
+        ("running", "restart", "Restarted", "container_started"),
+        ("exited", "restart", "Restarted", "container_started"),
+    ])
+    def test_a_container_that_changes_writes_its_entry(self, admin, audit_file, docker, status, action, verb, written):
+        web = docker.add(_container("web", {}, []))
+        web.status = status
+
+        response = admin.post(f"{CONTAINERS}/web/{action}")
+
+        assert response.status_code == 200, response.text
+        getattr(web, action).assert_called_once()
+        assert entries(audit_file) == [entry(written, "container", "web", f"{verb} the container web")]
+
+    @pytest.mark.parametrize(("status", "action"), [("running", "start"), ("exited", "stop"), ("created", "stop")])
+    def test_a_start_or_stop_that_changes_nothing_writes_nothing(self, admin, audit_file, docker, status, action):
+        # Docker answers a start of a running container and a stop of one that does not run
+        # without an error, and changes nothing.
+        web = docker.add(_container("web", {}, []))
+        web.status = status
+
+        response = admin.post(f"{CONTAINERS}/web/{action}")
+
+        assert response.status_code == 200, response.text
+        assert entries(audit_file) == []
+
+    @pytest.mark.parametrize(("force", "details"), [
+        (False, "Removed the container web"),
+        (True, "Removed the container web (forced)"),
+    ])
+    def test_removing_a_container_writes_container_removed(self, admin, audit_file, docker, force, details):
+        web = docker.add(_container("web", {}, []))
+
+        response = admin.delete(f"{CONTAINERS}/web", params={"force": force})
+
+        assert response.status_code == 200, response.text
+        web.remove.assert_called_once_with(force=force)
+        assert entries(audit_file) == [entry("container_removed", "container", "web", details, "warning")]
+
+    def test_refused_and_failed_container_changes_write_nothing(self, admin, audit_file, docker):
+        web = docker.add(_container("web", {}, []))
+        web.start.side_effect = APIError("port is already allocated")
+        running(docker.add(_container("unos-webui", {}, [])))
+
+        failed = admin.post(f"{CONTAINERS}/web/start")
+        missing = admin.delete(f"{CONTAINERS}/nope")
+        system = admin.post(f"{CONTAINERS}/unos-webui/stop")
+
+        assert [r.status_code for r in (failed, missing, system)] == [500, 404, 404]
+        assert entries(audit_file) == []
+
+    def test_a_stop_whose_entry_cannot_be_written_stops_and_answers(
+        self, admin, audit_file, docker, monkeypatch, caplog
+    ):
+        web = running(docker.add(_container("web", {}, [])))
+        the_audit_log_is_full(monkeypatch)
+
+        response = admin.post(f"{CONTAINERS}/web/stop")
+
+        assert response.status_code == 200, response.text
+        web.stop.assert_called_once()
+        assert lost(caplog) == [entry("container_stopped", "container", "web", "Stopped the container web")]
+
+
+@pytest.fixture
+def database(tmp_path_factory) -> Iterator[None]:
+    """The database that an install reads the shares from (ADR-0274): without shares."""
+    path = tmp_path_factory.mktemp("apps-db") / "apps.db"
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    maker = async_sessionmaker(
+        create_async_engine(f"sqlite+aiosqlite:///{path}", poolclass=NullPool), expire_on_commit=False
+    )
+
+    async def override_get_db():
+        async with maker() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        engine.dispose()
+
+
+class TestApps:
+    def test_installing_an_app_writes_app_installed(self, admin, audit_file, docker, database):
+        response = admin.post(f"{APPS}/install", json={"template_id": "dozzle"})
+
+        assert response.status_code == 200, response.text
+        assert entries(audit_file) == [entry("app_installed", "app", "dozzle", "Installed Dozzle from the catalog as dozzle")]
+
+    def test_a_refused_or_failed_install_writes_nothing(self, admin, audit_file, docker, database):
+        docker.add(_container("dozzle", {}, []))
+        taken = admin.post(f"{APPS}/install", json={"template_id": "dozzle"})
+        docker.images.pull.side_effect = APIError("pull access denied")
+        failed = admin.post(f"{APPS}/install", json={"template_id": "dozzle", "name": "logs"})
+
+        assert [r.status_code for r in (taken, failed)] == [409, 500]
+        assert entries(audit_file) == []
+
+    def test_uninstalling_an_app_writes_app_uninstalled(self, admin, audit_file, docker):
+        logs = running(docker.add(app_container("logs")))
+
+        response = admin.delete(f"{APPS}/installed/logs")
+
+        assert response.status_code == 200, response.text
+        logs.remove.assert_called_once_with()
+        assert entries(audit_file) == [
+            entry("app_uninstalled", "app", "logs", "Uninstalled the app logs; its data folders were kept", "warning")
+        ]
+
+    @pytest.mark.parametrize(("status", "action", "verb", "written"), [
+        ("exited", "start", "Started", "container_started"),
+        ("running", "stop", "Stopped", "container_stopped"),
+        ("running", "restart", "Restarted", "container_started"),
+    ])
+    def test_starting_and_stopping_an_app_write_their_entries(
+        self, admin, audit_file, docker, status, action, verb, written
+    ):
+        logs = docker.add(app_container("logs"))
+        logs.status = status
+
+        response = admin.post(f"{APPS}/installed/logs/{action}")
+
+        assert response.status_code == 200, response.text
+        getattr(logs, action).assert_called_once()
+        assert entries(audit_file) == [entry(written, "container", "logs", f"{verb} the app logs")]
+
+    @pytest.mark.parametrize(("status", "action"), [("running", "start"), ("exited", "stop")])
+    def test_an_app_start_or_stop_that_changes_nothing_writes_nothing(self, admin, audit_file, docker, status, action):
+        logs = docker.add(app_container("logs"))
+        logs.status = status
+
+        response = admin.post(f"{APPS}/installed/logs/{action}")
+
+        assert response.status_code == 200, response.text
+        assert entries(audit_file) == []
+
+    def test_refused_and_failed_app_changes_write_nothing(self, admin, audit_file, docker):
+        docker.add(_container("web", {}, []))  # no app of the catalog
+        logs = running(docker.add(app_container("logs")))
+        logs.remove.side_effect = APIError("removal of container logs is already in progress")
+
+        not_an_app = admin.delete(f"{APPS}/installed/web")
+        missing = admin.post(f"{APPS}/installed/nope/stop")
+        failed = admin.delete(f"{APPS}/installed/logs")
+
+        assert [r.status_code for r in (not_an_app, missing, failed)] == [400, 404, 500]
+        assert entries(audit_file) == []
+
+    def test_an_uninstall_whose_entry_cannot_be_written_removes_the_app_and_answers(
+        self, admin, audit_file, docker, monkeypatch, caplog
+    ):
+        logs = running(docker.add(app_container("logs")))
+        the_audit_log_is_full(monkeypatch)
+
+        response = admin.delete(f"{APPS}/installed/logs")
+
+        assert response.status_code == 200, response.text
+        logs.remove.assert_called_once_with()
+        assert lost(caplog) == [
+            entry("app_uninstalled", "app", "logs", "Uninstalled the app logs; its data folders were kept", "warning")
+        ]

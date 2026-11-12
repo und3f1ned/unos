@@ -29,6 +29,12 @@ SYSTEM_IMAGES = [
 # Label of containers installed from the app catalog (see apps.router).
 UNOS_APP_LABEL = "unos.app"
 
+# The states of a container that Docker counts as running (State.Running): it answers a start of
+# such a container, and a stop of any other, without an error and without changing anything (HTTP
+# 304, which docker-py does not pass on). The audit log records only starts and stops that changed
+# the container (ADR-0320, ADR-0350); a paused container is not started, and is stopped.
+RUNNING_STATES = ("running", "restarting", "paused")
+
 # Seconds each request to the Docker API may take before docker-py gives up; a
 # stop also waits for the container's stop timeout. Pulls are sent without a
 # timeout by docker-py: their length depends on the image (ADR-0254).
@@ -230,21 +236,25 @@ def _check_app_start(container: Container) -> None:
         prepare_app_start(container)
 
 
-def start_container(container_id: str) -> ContainerInfo:
-    """Start a stopped container; a UNOS app only if its data folders are usable."""
+def start_container(container_id: str) -> tuple[ContainerInfo, bool]:
+    """Start a stopped container; a UNOS app only if its data folders are usable.
+
+    With whether it started it: not when it ran already (RUNNING_STATES).
+    """
     client = get_client()
     try:
         container = client.containers.get(container_id)
         _check_app_start(container)
+        started = container.status not in RUNNING_STATES
         container.start()
         container.reload()
-        return get_container(container_id)
+        return get_container(container_id), started
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
 
 
-def stop_container(container_id: str) -> ContainerInfo:
-    """Stop a running container."""
+def stop_container(container_id: str) -> tuple[ContainerInfo, bool]:
+    """Stop a running container; with whether it stopped it: not when it did not run (RUNNING_STATES)."""
     client = get_client()
     try:
         container = client.containers.get(container_id)
@@ -253,9 +263,10 @@ def stop_container(container_id: str) -> ContainerInfo:
         if is_system_container(container.name):
             raise ValueError("Cannot stop system container")
         
+        stopped = container.status in RUNNING_STATES
         container.stop()
         container.reload()
-        return get_container(container_id)
+        return get_container(container_id), stopped
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
 
@@ -273,8 +284,8 @@ def restart_container(container_id: str) -> ContainerInfo:
         raise ValueError(f"Container {container_id} not found")
 
 
-def remove_container(container_id: str, force: bool = False) -> None:
-    """Remove a container."""
+def remove_container(container_id: str, force: bool = False) -> str:
+    """Remove a container; returns its name."""
     client = get_client()
     try:
         container = client.containers.get(container_id)
@@ -284,6 +295,7 @@ def remove_container(container_id: str, force: bool = False) -> None:
             raise ValueError("Cannot remove system container")
         
         container.remove(force=force)
+        return container.name
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
 

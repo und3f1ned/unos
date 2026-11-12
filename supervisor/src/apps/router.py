@@ -11,22 +11,24 @@ from typing import Any
 
 from docker.errors import DockerException, NotFound
 from docker.types import Mount
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from requests.exceptions import RequestException
 from urllib3.exceptions import HTTPError as Urllib3Error
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import require_admin, verify_token
 from ..config import get_settings
-from ..containers.docker import CAPPED_LOG, NO_ANSWER, get_client, no_answer_detail
+from ..containers.docker import CAPPED_LOG, NO_ANSWER, RUNNING_STATES, get_client, no_answer_detail
 from ..database import get_db
 from ..files.router import TRASH
 from ..security.validators import open_dir_nofollow, pools_base, validate_pools_path
 from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
+from ..storage.router import audit_change
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
 from .schemas import (
     POOL_PLACEHOLDER,
@@ -936,17 +938,28 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
 @router.post("/install", response_model=AppInstallResponse)
 async def install_app(
     req: AppInstallRequest,
-    _: User = Depends(require_admin),
+    request: Request,
+    user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> AppInstallResponse:
-    """Install an app from the catalog with its data on a mounted pool."""
+    """Install an app from the catalog with its data on a mounted pool.
+
+    The audit log gets app_installed (ADR-0350).
+    """
     shares = await _share_folders(db)
     # Pulling an image can take minutes; keep the event loop responsive.
-    return await asyncio.to_thread(_install_app, req, shares)
+    installed = await asyncio.to_thread(_install_app, req, shares)
+    template = get_app_by_id(req.template_id)
+    pool = "" if installed.pool is None else f", with its data on the pool {installed.pool}"
+    await audit_change(
+        request, user, AuditAction.APP_INSTALLED, resource_type="app", resource_id=installed.name,
+        details=f"Installed {template.name} from the catalog as {installed.name}{pool}",
+    )
+    return installed
 
 
-def _uninstall_app(container_id: str) -> dict[str, str]:
-    """Stop and remove the app's container; its data folders stay where they are."""
+def _uninstall_app(container_id: str) -> str:
+    """Stop and remove the app's container; its data folders stay where they are. Returns its name."""
     container = _get_app(container_id)
     try:
         container.stop()
@@ -955,14 +968,20 @@ def _uninstall_app(container_id: str) -> dict[str, str]:
         container.remove()
     except _DOCKER_ERRORS as e:
         raise HTTPException(500, f"Failed to remove: {e}")
-    return {"status": "removed", "id": container_id}
+    return container.name
 
 
 @router.delete("/installed/{container_id}")
-async def uninstall_app(container_id: str, _: dict = Depends(verify_token)):
-    """Uninstall an app: remove its container and keep its data."""
+async def uninstall_app(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Uninstall an app: remove its container and keep its data; the audit log gets app_uninstalled
+    (ADR-0350)."""
     # A stop waits up to 10 s for the app to exit: keep it off the event loop.
-    return await asyncio.to_thread(_uninstall_app, container_id)
+    name = await asyncio.to_thread(_uninstall_app, container_id)
+    await audit_change(
+        request, user, AuditAction.APP_UNINSTALLED, resource_type="app", resource_id=name,
+        details=f"Uninstalled the app {name}; its data folders were kept", severity=AuditSeverity.WARNING,
+    )
+    return {"status": "removed", "id": container_id}
 
 
 # ---------------------------------------------------------------------------
@@ -1056,10 +1075,13 @@ def _get_app(container_id: str) -> Any:
     return container
 
 
-def _start_installed_app(container_id: str, *, restart: bool) -> dict[str, str]:
+def _start_installed_app(container_id: str, *, restart: bool) -> tuple[Any, bool]:
+    """Start or restart an app's container: the container, and whether this started it (a restart
+    always does; a start not when it ran already, RUNNING_STATES)."""
     action = "restart" if restart else "start"
     container = _get_app(container_id)
     prepare_app_start(container)
+    started = restart or container.status not in RUNNING_STATES
     try:
         if restart:
             container.restart()
@@ -1068,33 +1090,58 @@ def _start_installed_app(container_id: str, *, restart: bool) -> dict[str, str]:
         container.reload()
     except _DOCKER_ERRORS as e:
         raise HTTPException(500, f"Failed to {action}: {e}")
+    return container, started
+
+
+async def _start_app(container_id: str, request: Request, user: User, *, restart: bool) -> dict[str, str]:
+    container, started = await asyncio.to_thread(_start_installed_app, container_id, restart=restart)
+    if started:
+        await audit_change(
+            request, user, AuditAction.CONTAINER_STARTED, resource_type="container", resource_id=container.name,
+            details=f"{'Restarted' if restart else 'Started'} the app {container.name}",
+        )
     return {"status": container.status, "id": container_id}
 
 
 @router.post("/installed/{container_id}/start")
-async def start_app(container_id: str, _: dict = Depends(verify_token)):
-    """Start an installed app (409 if its data folders are not usable)."""
-    return await asyncio.to_thread(_start_installed_app, container_id, restart=False)
+async def start_app(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Start an installed app (409 if its data folders are not usable).
+
+    The audit log gets container_started when it did not run (ADR-0350).
+    """
+    return await _start_app(container_id, request, user, restart=False)
 
 
-def _stop_installed_app(container_id: str) -> dict[str, str]:
+def _stop_installed_app(container_id: str) -> tuple[Any, bool]:
+    """Stop an app's container: the container, and whether this stopped it (not when it did not
+    run, RUNNING_STATES)."""
     container = _get_app(container_id)
+    stopped = container.status in RUNNING_STATES
     try:
         container.stop()
         container.reload()
     except _DOCKER_ERRORS as e:
         raise HTTPException(500, f"Failed to stop: {e}")
-    return {"status": container.status, "id": container_id}
+    return container, stopped
 
 
 @router.post("/installed/{container_id}/stop")
-async def stop_app(container_id: str, _: dict = Depends(verify_token)):
-    """Stop an installed app."""
+async def stop_app(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Stop an installed app; the audit log gets container_stopped when it ran (ADR-0350)."""
     # A stop waits up to 10 s for the app to exit: keep it off the event loop.
-    return await asyncio.to_thread(_stop_installed_app, container_id)
+    container, stopped = await asyncio.to_thread(_stop_installed_app, container_id)
+    if stopped:
+        await audit_change(
+            request, user, AuditAction.CONTAINER_STOPPED, resource_type="container", resource_id=container.name,
+            details=f"Stopped the app {container.name}",
+        )
+    return {"status": container.status, "id": container_id}
 
 
 @router.post("/installed/{container_id}/restart")
-async def restart_app(container_id: str, _: dict = Depends(verify_token)):
-    """Restart an installed app (409 if its data folders are not usable)."""
-    return await asyncio.to_thread(_start_installed_app, container_id, restart=True)
+async def restart_app(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Restart an installed app (409 if its data folders are not usable).
+
+    It starts the app again: the audit log gets container_started (ADR-0350).
+    """
+    return await _start_app(container_id, request, user, restart=True)

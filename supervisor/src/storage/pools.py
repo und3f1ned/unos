@@ -323,10 +323,11 @@ def _write_fstab(new_text: str, old_text: str) -> bool:
     return True
 
 
-def _forget_fstab_entry(name: str) -> None:
+def _forget_fstab_entry(name: str) -> bool:
+    """Drop the pool's managed fstab entry; returns whether there was one to drop."""
     text = _read_fstab()
     new_text = remove_managed_fstab_entry(text, name)
-    _write_fstab(new_text, text)
+    changed = _write_fstab(new_text, text)
     leftovers = unmanaged_fstab_entries(new_text, pool_mountpoint(name))
     if leftovers:
         logger.warning(
@@ -334,6 +335,7 @@ def _forget_fstab_entry(name: str) -> None:
             pool_mountpoint(name),
             leftovers[0],
         )
+    return changed
 
 
 def _managed_entries_or_none() -> dict[str, ManagedFstabEntry] | None:
@@ -747,19 +749,21 @@ def _ensure_mountpoint_dir(target: str) -> None:
     guard_mountpoint(target)
 
 
-def _remove_mountpoint_dir(target: str) -> None:
-    """Remove the guard and the empty mountpoint directory of a deleted pool."""
+def _remove_mountpoint_dir(target: str) -> bool:
+    """Remove the guard and the empty mountpoint directory of a deleted pool; returns whether it
+    was removed."""
     if not host.run_on_host(["test", "-d", target], timeout=15).ok:
-        return
+        return False
     if _target_mounted(target):
-        return
+        return False
     host.run_on_host(["chattr", "-i", target], timeout=15)  # fails harmlessly if unset
     result = host.run_on_host(["rmdir", target], timeout=15)
     if not result.ok:
         logger.warning("Kept %s: %s", target, result.stderr.strip())
         guard_mountpoint(target)
-        return
+        return False
     host.sync_host_path(os.path.dirname(target))
+    return True
 
 
 def _mountpoint_entries(target: str) -> list[str]:
@@ -1437,21 +1441,27 @@ def unmount_pool(name: str) -> PoolInfo:
         return get_pool(name)
 
 
-def delete_pool(name: str) -> None:
+def delete_pool(name: str) -> bool:
     """Forget a pool: unmount it, drop its fstab entry and its empty mountpoint.
 
     The disks are not touched. The filesystem keeps its label and is listed
     again as an unmounted pool that can be mounted later. PoolBusyError
     (HTTP 409) while host processes or containers use the pool, and
     DockerUnavailableError (HTTP 503) when it is mounted and Docker cannot be
-    asked about the containers: nothing is changed then.
+    asked about the containers: nothing is changed then. Returns whether it
+    changed anything: False when the pool was neither mounted nor in the
+    fstab and had no mountpoint left, the case of a name that is no pool
+    (its audit entry is written for a real change only, ADR-0320).
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
     with _lock:
-        _unmount_pool_target(name, target, disks.host_mounts())
-        _forget_fstab_entry(name)
-        _remove_mountpoint_dir(target)
+        mounts = disks.host_mounts()
+        mounted = any(m.target == target for m in mounts)
+        _unmount_pool_target(name, target, mounts)
+        forgotten = _forget_fstab_entry(name)
+        removed = _remove_mountpoint_dir(target)
+        return mounted or forgotten or removed
 
 
 # --------------------------------------------------------------------------
