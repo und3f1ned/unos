@@ -4,6 +4,7 @@ import asyncio
 import gzip
 import importlib
 import io
+import json
 import os
 import re
 import shutil
@@ -556,6 +557,68 @@ def test_a_backup_holds_neither_fstab_nor_netplan(env, monkeypatch):
         assert tar.getnames() == ["manifest.json", "scheduled_tasks.json", "unos.db"]
     assert copied == []
     assert not {"include_pools", "include_network"} & set(backup_router.BackupConfig.model_fields)
+
+
+# The include_ options that BackupConfig had, which selected nothing (ADR-0355).
+OLD_OPTIONS = {"include_users": False, "include_apps": True, "include_scheduler": False, "include_notifications": True}
+
+
+def _manifest(tar: tarfile.TarFile) -> dict:
+    """manifest.json of ``tar``, checked to name none of OLD_OPTIONS."""
+    text = tar.extractfile("manifest.json").read().decode()
+    assert not [option for option in OLD_OPTIONS if option in text], text
+    return json.loads(text)
+
+
+def test_backups_have_no_include_options(env, monkeypatch):
+    """backup.drop-unused-include-options (ADR-0355): BackupConfig has only encrypt and the
+    passphrase, and no manifest names an include_ option. A request that still sends them makes the
+    same backup, a backup task stored with them runs, and an older backup whose manifest names them
+    uploads and restores."""
+    assert set(backup_router.BackupConfig.model_fields) == {"encrypt", "passphrase"}
+    scheduler = _scheduler(env, monkeypatch)
+    task = env.client.post("/api/v1/scheduler/tasks", json={
+        "name": "Nightly backup", "task_type": "backup", "enabled": False, "frequency": "daily",
+        "hour": 2, "minute": 0, "passphrase": PASSPHRASE,
+    })
+    assert task.status_code == 200, task.text
+    tasks_file = Path(scheduler.TASKS_FILE)
+    (stored,) = json.loads(tasks_file.read_text())
+    tasks_file.write_text(json.dumps([{**stored, **OLD_OPTIONS, "config": OLD_OPTIONS}]))
+
+    assert env.client.post(f"/api/v1/scheduler/tasks/{task.json()['id']}/run").status_code == 200
+    (task_after_run,) = json.loads(tasks_file.read_text())
+    assert task_after_run["last_status"] == "success"
+    assert not {"config", *OLD_OPTIONS} & set(task_after_run)  # dropped when the run was recorded
+    plain = env.backup_dir / _create(env, **OLD_OPTIONS)["filename"]
+    encrypted = env.backup_dir / _create(env, encrypt=True, passphrase=PASSPHRASE, **OLD_OPTIONS)["filename"]
+    (scheduled,) = env.backup_dir.glob("auto_backup_*.tar.gz.enc")
+
+    made_by_hand = {"version", "created", "hostname", "encrypted"}
+    with tarfile.open(plain, "r:gz") as tar:
+        assert tar.getnames() == ["manifest.json", "unos.db"]
+        manifest = _manifest(tar)
+        assert (set(manifest), manifest["encrypted"]) == (made_by_hand, False)
+    with _decrypted_tar(encrypted) as tar:
+        assert tar.getnames() == ["manifest.json", "unos.db"]
+        manifest = _manifest(tar)
+        assert (set(manifest), manifest["encrypted"]) == (made_by_hand, True)
+    with tarfile.open(fileobj=io.BytesIO(backup_router.configuration_archive()), mode="r:gz") as tar:
+        assert tar.getnames() == ["manifest.json", "unos.db"]
+        manifest = _manifest(tar)
+        assert (set(manifest), manifest["encrypted"]) == (made_by_hand, False)
+    with _decrypted_tar(scheduled) as tar:
+        assert tar.getnames() == ["manifest.json", "scheduled_tasks.json", "unos.db"]
+        assert set(_manifest(tar)) == {"version", "created", "hostname", "type"}
+
+    older = {"version": "1.0", "created": "2026-11-01T02:00:00", "hostname": "nas", "encrypted": False,
+             "config": {**OLD_OPTIONS, "include_pools": True, "include_network": True, "encrypt": False}}
+    uploaded = _upload(env, _tar_gz([_file("manifest.json", json.dumps(older).encode()), _file("unos.db", _good_db(env))]))
+    assert uploaded.status_code == 200, uploaded.text
+    restored = _restore(env, uploaded.json()["backup"]["filename"])
+    assert restored.status_code == 200, restored.text
+    assert (restored.json()["restored"], restored.json()["manifest"]) == (["database"], older)
+    assert _usernames(env.db_path) == {"admin2", "bob"}
 
 
 # --- scheduled backups and retention ----------------------------------------------------

@@ -2258,12 +2258,15 @@
         "BackupConfig of POST /api/v1/backup/create and the web UI's type have no include_users, include_apps, include_scheduler or include_notifications, and the manifest of a new backup names none of them",
         "Create Backup, encrypted backups through the API, the off-device copy and backup tasks make the same backups as before: the manifest and the database, and for a task also the scheduled tasks"
       ],
+      "verified_by": [
+        "supervisor/tests/test_backup_files.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0345",
         "ADR-0207"
       ],
-      "notes": "Left open by ADR-0345, which dropped include_pools and include_network: BackupConfig in supervisor/src/backup/router.py keeps include_users, include_apps, include_scheduler and include_notifications, all true by default, and the BackupConfig type of webui/src/lib/api/backup.ts lists them too. None of them selects anything: every backup holds the manifest and the database whatever they say, and they only end up in the config of the manifest. The Backup tab sends an empty body. No backward compatibility (ADR-0207): the fields go, a request that still sends them is answered as before (pydantic ignores unknown fields), and the manifests of older backups that name them still restore."
+      "notes": "Built 2026-11-12 (ADR-0355). Step 1: BackupConfig of supervisor/src/backup/router.py has only encrypt and passphrase, and the BackupConfig type of webui/src/lib/api/backup.ts only encrypt and passphrase (the Backup tab sends an empty body, as before). _collect_backup_content takes encrypted instead of the config: the manifest of Create Backup, of encrypted backups through the API and of the off-device copy's archive is version, created, hostname and encrypted, without the config that named the options and would now only repeat encrypt. A request that still sends an include_ option is answered as before (pydantic ignores unknown fields; ADR-0207, no compatibility for API clients). Step 2: the members are unchanged (manifest.json and unos.db; for a backup task also scheduled_tasks.json, whose manifest never named the options). Backup tasks never carried the options: ScheduledTask ignores unknown keys (pydantic's default), so a task stored with them, also in a config object, loads and runs, and the next write of the tasks file (the record of its run) leaves them out; no migration. An older backup whose manifest config names the options (also include_pools and include_network) uploads and restores: only a JSON object is required of manifest.json. test_backup_files.py test_backups_have_no_include_options (a request with the four options, an encrypted backup, the off-device archive, a backup task stored with the options and run, an older backup uploaded and restored) failed before with: AssertionError: assert {'encrypt', '... 'passphrase'} == {'encrypt', 'passphrase'}, Extra items in the left set: 'include_notifications', 'include_scheduler', 'include_users', 'include_apps'. No E2E spec: the web UI's change is a type that no code sends."
     },
     {
       "id": "backup.no-old-backup-import",

@@ -492,6 +492,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   `include_network` of `POST /api/v1/backup/create`, which added them, are
   gone. A restore ignores such files in a backup that holds them, and no
   longer warns that `fstab` is not restored.
+- `POST /api/v1/backup/create` takes only `encrypt` and `passphrase`: the
+  options `include_users`, `include_apps`, `include_scheduler` and
+  `include_notifications`, which selected nothing, are gone, and a request
+  that still sends them makes the same backup. The manifest of a backup made
+  by hand, through the API or for an off-device copy no longer has a `config`
+  with them, only its version, date, hostname and whether it is encrypted.
+  Older backups whose manifest names them still restore.
 - The supervisor's access log keeps only the requests that were refused or
   failed (answers of 400 and above): an HTTP request that succeeds, a health
   check included, no longer writes a line to the system disk through

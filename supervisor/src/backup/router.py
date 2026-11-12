@@ -170,10 +170,9 @@ class BackupInfo(BaseModel):
 
 
 class BackupConfig(BaseModel):
-    include_users: bool = True
-    include_apps: bool = True
-    include_scheduler: bool = True
-    include_notifications: bool = True
+    """The body of POST /backup/create. Every backup holds the same files (_collect_backup_content):
+    there are no options of what it holds (ADR-0345, ADR-0355)."""
+
     encrypt: bool = False
     passphrase: Optional[str] = None  # Required if encrypt=True
 
@@ -1037,22 +1036,19 @@ async def list_backups(_: dict = Depends(verify_token)):
     return {"backups": await asyncio.to_thread(_list_backups)}
 
 
-def _collect_backup_content(config: BackupConfig, content: Path) -> None:
+def _collect_backup_content(content: Path, *, encrypted: bool) -> None:
     """Put the files the backup contains into the directory ``content``: the manifest and the database.
 
     Nothing of /etc: the container's fstab and netplan files describe nothing of
     the host, whose fstab (with the pool entries) is not mounted into the
-    container (ADR-0345).
+    container (ADR-0345). The manifest says whether the backup is ``encrypted``,
+    and names no options (ADR-0355).
     """
-    # Create manifest (don't include passphrase)
-    manifest_config = config.model_dump()
-    manifest_config.pop("passphrase", None)
     manifest = {
         "version": BACKUP_VERSION,
         "created": datetime.now().isoformat(),
         "hostname": os.uname().nodename,
-        "encrypted": config.encrypt,
-        "config": manifest_config
+        "encrypted": encrypted,
     }
 
     with open(content / "manifest.json", "w") as f:
@@ -1081,7 +1077,7 @@ def configuration_archive() -> bytes:
     with tempfile.TemporaryDirectory() as tmpdir:
         content = Path(tmpdir) / "content"
         content.mkdir()
-        _collect_backup_content(BackupConfig(), content)
+        _collect_backup_content(content, encrypted=False)
         out = io.BytesIO()
         _write_archive(content, out)
     return out.getvalue()
@@ -1127,7 +1123,7 @@ def _create_backup(config: BackupConfig) -> dict:
         with tempfile.TemporaryDirectory() as tmpdir:
             content = Path(tmpdir) / "content"
             content.mkdir()
-            _collect_backup_content(config, content)
+            _collect_backup_content(content, encrypted=config.encrypt)
             with open(tmp, "xb") as out:
                 if config.encrypt:
                     plain = io.BytesIO()
