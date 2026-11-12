@@ -52,6 +52,7 @@ import asyncio
 import logging
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import threading
@@ -2086,6 +2087,13 @@ class VolumeNotFoundError(PoolNotFoundError):
     """The pool has no volume with this name (HTTP 404)."""
 
 
+class VolumeKeptWithoutQuotaError(RuntimeError):
+    """A create made the volume and keeps it, but without (or perhaps without) its quota (HTTP 500).
+
+    The endpoint writes volume_created as failed (ADR-0350).
+    """
+
+
 class DockerUnavailableError(RuntimeError):
     """Docker could not be asked which containers are running (HTTP 503)."""
 
@@ -2373,7 +2381,9 @@ def _host_paths(paths: set[str]) -> dict[str, str]:
         )
     except subprocess.TimeoutExpired as exc:
         raise hung from exc
-    if result.returncode in (124, 137):  # ended by timeout(1); with SIGKILL, timeout ends itself too
+    # Ended by timeout(1). Its SIGKILL goes to its whole process group, itself included: nsenter
+    # ends by the signal of its child, and so the supervisor sees -9 (137 through a shell).
+    if result.returncode in (124, 137, -signal.SIGKILL):
         raise hung
     resolved = result.stdout.split("\0")
     if not result.ok or len(resolved) != len(given) + 1 or resolved[-1]:
@@ -2641,9 +2651,11 @@ def _limit_new_volume(pool: str, target: str, name: str, quota: int, newest: int
     Returns None when the quota is set, otherwise why not (the caller then
     removes the new volume again). PoolConflictError (HTTP 409) when the
     subvolume list gives the name only ids of other subvolumes, and
-    RuntimeError (HTTP 500) when it cannot be read or checked, or btrfs does
-    not answer within VOLUME_TIMEOUT: either says that the volume was
-    created without its quota (storage.edge-cases, step 6).
+    VolumeKeptWithoutQuotaError (HTTP 500) when it cannot be read or
+    checked, or btrfs does not answer within VOLUME_TIMEOUT: either says
+    that the volume was created without its quota (storage.edge-cases,
+    step 6). VolumeKeptWithoutQuotaError as well when the limit does not
+    answer within VOLUME_TIMEOUT: the volume may have no quota.
     """
     outcome = "was created without its quota"
     try:
@@ -2651,17 +2663,25 @@ def _limit_new_volume(pool: str, target: str, name: str, quota: int, newest: int
     except PoolConflictError:
         raise
     except RuntimeError as exc:
-        raise RuntimeError(f"Volume '{name}' {outcome}: {exc}. Delete it and create it again.") from exc
+        raise VolumeKeptWithoutQuotaError(
+            f"Volume '{name}' {outcome}: {exc}. Delete it and create it again."
+        ) from exc
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
+        raise VolumeKeptWithoutQuotaError(
             f"Volume '{name}' {outcome}: btrfs did not answer within {VOLUME_TIMEOUT} seconds. "
             "Delete it and create it again."
         ) from exc
     if new_id is None or new_id <= newest:
         return "it was renamed or replaced right after it was created"
-    result = host.run_on_host(
-        ["btrfs", "qgroup", "limit", str(quota), f"0/{new_id}", target], timeout=VOLUME_TIMEOUT
-    )
+    try:
+        result = host.run_on_host(
+            ["btrfs", "qgroup", "limit", str(quota), f"0/{new_id}", target], timeout=VOLUME_TIMEOUT
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VolumeKeptWithoutQuotaError(
+            f"Volume '{name}' was created, but btrfs did not answer within {VOLUME_TIMEOUT} seconds "
+            "while its quota was set: it may have no quota. Delete it and create it again."
+        ) from exc
     if result.ok:
         return None
     return result.stderr.strip() or f"exit status {result.returncode}"
@@ -2699,7 +2719,8 @@ def create_volume(pool_name: str, volume: VolumeCreate) -> VolumeInfo:
     existed before (whatever can rename entries in the pool's top directory
     could have given it that name). The new volume stays without its quota
     when the subvolume list gives its name only ids of other subvolumes
-    (409), or cannot be read or checked in time (500). When something took
+    (409), or cannot be read or checked in time, and perhaps without it
+    when the limit does not answer in time (500, VolumeKeptWithoutQuotaError). When something took
     the name between the check and the create, btrfs refuses the create: PoolConflictError
     (HTTP 409) that says what is there (_entry_at).
     """

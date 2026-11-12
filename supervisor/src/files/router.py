@@ -2284,8 +2284,9 @@ def _remove_upload_leftovers(paths: list[str]) -> list[str]:
     (_not_a_leftover), or nothing any more. Each file is looked at again
     right before its unlink, through the descriptor of the folder that was
     checked: one replaced or written since is left alone. A file that is
-    gone or is not a leftover any more leaves the list of the last check,
-    also when the request is refused for it.
+    gone (also when a folder on its path was replaced by a file or a
+    symbolic link) or is not a leftover any more leaves the list of the
+    last check, also when the request is refused for it.
     """
     now = _now()
     folders: dict[tuple[str, ...], int] = {}  # the descriptors of the folders checked
@@ -2298,8 +2299,14 @@ def _remove_upload_leftovers(paths: list[str]) -> list[str]:
                 raise HTTPException(400, f"Not the hidden file of an upload: {_shown(path)}")
             dir_fd = folders.get(tuple(parts[:-1]))
             if dir_fd is None:
-                dir_fd = _open_parent_or_none(parts)
-                if dir_fd is None:
+                try:
+                    dir_fd = _open_dir(parts[:-1])
+                except OSError as exc:
+                    # Gone, or replaced by a file or a symbolic link since the check: it holds
+                    # no leftover now. Refusing would block every removal, since the page sends
+                    # every listed path.
+                    if exc.errno not in _GONE:
+                        raise
                     dropped.append(parts)
                     continue
                 folders[tuple(parts[:-1])] = dir_fd

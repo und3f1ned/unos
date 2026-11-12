@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -242,6 +243,29 @@ class TestPools:
         assert entries(audit_file) == [
             entry("volume_created", "volume", "data/photos",
                   "Created the volume photos in the pool data, with a quota of 1073741824 bytes")
+        ]
+
+    def test_a_volume_kept_without_its_quota_writes_a_failed_entry(self, admin, audit_file, host):
+        # The volume was created, then the list after the create did not answer: it wrote no entry.
+        host.subvols.quotas.add(DATA_UUID)
+
+        def hangs(cmd):
+            if cmd[1:3] == ["subvolume", "list"]:
+                raise subprocess.TimeoutExpired(cmd, pools.VOLUME_TIMEOUT)
+
+        test_volumes.TestCreateRaces.after_the_create(host, hangs)
+
+        response = admin.post(f"{POOLS}/data/volumes", json={"name": "documents", "quota": 1 << 30})
+
+        error = (
+            f"Volume 'documents' was created without its quota: btrfs did not answer within "
+            f"{pools.VOLUME_TIMEOUT} seconds. Delete it and create it again."
+        )
+        assert (response.status_code, response.json()["detail"]) == (500, error)
+        assert host.subvols.paths(DATA_UUID) == ["documents"]
+        assert entries(audit_file) == [
+            entry("volume_created", "volume", "data/documents",
+                  f"Created the volume documents in the pool data; then: {error}", success=False)
         ]
 
     @pytest.mark.parametrize(("method", "url", "status"), [

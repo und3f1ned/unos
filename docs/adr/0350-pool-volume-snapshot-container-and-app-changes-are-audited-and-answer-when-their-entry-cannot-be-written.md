@@ -62,12 +62,15 @@ translation), as for ADR-0340.
   | --- | --- | --- |
   | Create Pool, when a step after `mkfs.btrfs` fails (`PoolFormattedError`) | `pool_created` | "Formatted /dev/sdb for the pool tank (single); then: Mounting /mnt/pools/tank failed: ..." |
   | Remove Pool, when a step fails after the pool was unmounted or its fstab entry dropped (`PoolPartlyRemovedError`) | `pool_deleted` | "Unmounted the pool tank; then: ...", "Unmounted the pool tank and dropped its fstab entry; then: ...", "Dropped the fstab entry of the pool tank; then: ..." |
+  | Create Volume with a quota, when the volume is kept without (or perhaps without) its quota (`VolumeKeptWithoutQuotaError`, ADR-0352) | `volume_created` | "Created the volume documents in the pool data; then: Volume 'documents' was created without its quota: btrfs did not answer within 120 seconds. Delete it and create it again." |
   | Uninstall, when it stopped the running app and could not remove it | `container_stopped` | "Stopped the app jellyfin; then: Failed to remove: ..." |
 
   A Create Pool that fails after `mkfs.btrfs` answers 500 with the error of the step that
   failed, also where that step alone would answer 409: the disks are formatted. A Remove Pool
   answers as its failed step does: 409 when the pool, unmounted, is still in use elsewhere and
-  mounting it again failed, 500 otherwise.
+  mounting it again failed, 500 otherwise. A Create Volume that keeps the volume without its
+  quota answers 500: the subvolume list or its check after the create failed or did not answer,
+  or `btrfs qgroup limit` did not answer.
 - An entry that cannot be written, such as on a full `/data`, is in the supervisor's log
   (`log_action`, ADR-0251) and the request answers what it did: the change is made, and a 500
   would tell the administrator it was not. This extends ADR-0343's rule to these requests;
@@ -82,7 +85,10 @@ translation), as for ADR-0340.
   from where, and the **Action** filter of the Audit Log page finds these entries.
 - Each such change appends a line of a few hundred bytes to the audit log on the system disk
   (ADR-0214, ADR-0224); a start or stop that changed nothing appends none. A change that failed
-  part way is in the log as failed, so that formatted disks or an unmounted pool have an entry.
+  part way is in the log as failed, so that formatted disks, an unmounted pool or a volume
+  without its quota have an entry. A Create Volume whose new volume stays in another way writes
+  none yet: when the subvolume list gives its name only ids of other subvolumes (409), when it
+  was renamed away before its removal (409), and when removing it again failed (500).
 - Two starts (or stops) of one container at the same moment can both find it stopped (or
   running) and both write an entry, though Docker made only one change. Mounting, unmounting
   and importing a pool, creating a container on the Containers page and pulling or removing an

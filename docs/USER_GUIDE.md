@@ -308,7 +308,8 @@ For each pool, you can:
   is not created, the dialog says so, and you can create it without a quota.
   When the quota cannot be set, the new volume is removed again. When UNOS
   cannot tell which subvolume is the new one, or btrfs does not answer, it
-  keeps it and the message says that it was created without its quota:
+  keeps it and the message says that it was created without its quota, or
+  that it may have none when btrfs does not answer while the quota is set:
   delete it and create it again. When an app or a user renames or replaces
   the new volume right after it is created, UNOS sets no quota and removes
   nothing: the message says that the new volume was not removed, and it

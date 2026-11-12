@@ -295,12 +295,24 @@ async def create_volume_endpoint(
     is taken, or a quota is asked for and quotas are not enabled on the
     pool. 409 as well when the quota cannot be set: the new volume is
     removed again, unless the subvolume with its name by then existed
-    before it. The audit log gets volume_created (ADR-0350).
+    before it. The audit log gets volume_created (ADR-0350); as failed when
+    the volume is kept without (or perhaps without) its quota, which
+    answers 500.
     """
     validated_pool = validate_pool_name(pool_name)
-    validate_volume_name(volume.name)
+    validated_name = validate_volume_name(volume.name)
 
-    info = await _call(pools.create_volume, validated_pool, volume)
+    try:
+        info = await _call(pools.create_volume, validated_pool, volume)
+    except HTTPException as exc:
+        if isinstance(exc.__cause__, pools.VolumeKeptWithoutQuotaError):
+            await audit_change(
+                AuditAction.VOLUME_CREATED, request, user.username, resource_type="volume",
+                resource_id=f"{validated_pool}/{validated_name}",
+                details=f"Created the volume {validated_name} in the pool {validated_pool}; then: {exc.detail}",
+                success=False,
+            )
+        raise
     quota = "" if info.quota is None else f", with a quota of {info.quota} bytes"
     await audit_change(
         AuditAction.VOLUME_CREATED, request, user.username, resource_type="volume",

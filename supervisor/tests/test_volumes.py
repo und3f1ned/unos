@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -991,6 +992,27 @@ class TestCreateRaces:
         assert host.subvols.limits == {}
         assert _btrfs_calls(host, "subvolume", "delete") == []
 
+    def test_a_quota_limit_that_does_not_answer_says_that_the_volume_may_have_no_quota(self, api, host):
+        # It answered 500 with the text of subprocess.TimeoutExpired, and the volume stayed
+        # without a word about it.
+        host.subvols.quotas.add(DATA_UUID)
+
+        def hangs(cmd):
+            if cmd[1:3] == ["qgroup", "limit"]:
+                raise subprocess.TimeoutExpired(cmd, pools.VOLUME_TIMEOUT)
+
+        self.after_the_create(host, hangs)
+
+        response = api.post(f"{API}/data/volumes", json={"name": "documents", "quota": GIB})
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == (
+            f"Volume 'documents' was created, but btrfs did not answer within {pools.VOLUME_TIMEOUT} "
+            "seconds while its quota was set: it may have no quota. Delete it and create it again."
+        )
+        assert host.subvols.paths(DATA_UUID) == ["documents"]
+        assert _btrfs_calls(host, "subvolume", "delete") == []
+
     @pytest.mark.parametrize(
         "made,named",
         [("folder", "a folder"), ("file", "a file"), ("link", "a symbolic link"), ("subvolume", "a subvolume")],
@@ -1777,12 +1799,15 @@ class TestVolumeInUse:
     # storage.edge-cases, step 4: realpath runs on the host over every folder that a container
     # mounts. On a network or FUSE mount that hangs it did not return: subprocess.TimeoutExpired
     # answered 500 with its own text, and a realpath stuck on the host was left behind.
-    @pytest.mark.parametrize("hang", ["killed by timeout", "no answer"])
+    # timeout(1) kills itself with its SIGKILL, so nsenter and then the supervisor end by it: -9
+    # (only 124 and 137 were taken for a hang). 124 is timeout's own status for other signals.
+    @pytest.mark.parametrize("hang", ["killed by timeout", "timeout's status 124", "no answer"])
     def test_a_realpath_that_does_not_answer_keeps_the_volume(self, api, documents, monkeypatch, hang):
         host = documents
         host.docker.add("paperless", sources=["/srv/nfs/paperless"])
-        if hang == "killed by timeout":
-            host.fail[("timeout", "--signal=KILL", "10", "realpath")] = (137, "")
+        if hang in ("killed by timeout", "timeout's status 124"):
+            code = -signal.SIGKILL if hang == "killed by timeout" else 124
+            host.fail[("timeout", "--signal=KILL", "10", "realpath")] = (code, "")
         else:
             real = host_module.run_on_host
 

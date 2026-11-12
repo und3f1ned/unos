@@ -44,8 +44,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   (a pool that was not there, a start of a running container, a stop of a
   stopped one), writes no entry. A change that failed part way writes its
   entry as failed, with what was done: a pool create that formatted the
-  disks, a removal that unmounted the pool or dropped its fstab entry, an
-  uninstall that stopped the app. When the entry cannot be written, the
+  disks, a removal that unmounted the pool or dropped its fstab entry, a
+  volume create that kept the volume without its quota, an uninstall that
+  stopped the app. When the entry cannot be written, the
   change still answers and the supervisor's log has it.
 - The audit log records backups created, uploaded, restored and deleted,
   reboots and shutdowns scheduled (as a warning, before the host goes down)
@@ -981,7 +982,8 @@ manager, encrypted backup uploads, health checks, CI checks).
 - Volumes: when the subvolume list failed right after a create with a quota,
   the request answered 500 without saying that the volume existed; it now
   says `Volume '<name>' was created without its quota: ...`, also when btrfs
-  does not answer within 120 seconds. When something
+  does not answer within 120 seconds; when setting the quota does not
+  answer, it says that the volume was created but may have no quota. When something
   took the name between the check and the create, the request answered 500
   `Creating volume ... failed`; it now answers 409 and names what is there (a
   folder, a file, a symbolic link or a subvolume).

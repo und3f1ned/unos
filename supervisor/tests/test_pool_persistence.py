@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import signal
 import stat
 import subprocess
 import threading
@@ -1375,12 +1376,14 @@ class TestUnmountAndDelete:
     # storage.edge-cases, step 4: realpath runs on the host over every folder that a running
     # container mounts. On a network or FUSE mount that hangs it did not return: the pools' lock
     # stayed held until subprocess.TimeoutExpired, which answered with its own text.
+    # With --signal=KILL, timeout(1) kills its whole process group, itself too: nsenter passes the
+    # signal on, and the supervisor sees the return code -9 (it took only 124 and 137 for a hang).
     @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
     @pytest.mark.parametrize("hang", ["killed by timeout", "no answer"])
     def test_a_realpath_that_does_not_answer_leaves_the_pool_mounted(self, mounted, monkeypatch, operation, hang):
         mounted.docker.add("syncthing", sources=["/srv/nfs/sync"])
         if hang == "killed by timeout":
-            mounted.fail[("timeout", "--signal=KILL", "10", "realpath")] = (137, "")
+            mounted.fail[("timeout", "--signal=KILL", "10", "realpath")] = (-signal.SIGKILL, "")
         else:
             real = host_module.run_on_host
 

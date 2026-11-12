@@ -318,6 +318,33 @@ def test_a_removal_drops_from_the_list_what_is_gone_or_changed_since_the_check(e
     assert env.client.get(API).json()["files"] == []
 
 
+@pytest.mark.parametrize("replaced_by", ["a symbolic link", "a file"])
+def test_a_leftover_whose_folder_was_replaced_since_the_check_leaves_the_list(env, replaced_by):
+    """A folder replaced by a symbolic link or a file since the check holds no leftover any more.
+
+    The removal drops it from the list and removes the others: the page sends every listed path,
+    so an entry that could never be removed would block all of them.
+    """
+    folder = env.pool / "docs"
+    folder.mkdir()
+    stale = _hidden(folder, "0123456789abcdef")
+    other = _hidden(env.pool, "fedcba9876543210")
+    assert _paths(_check(env)) == [str(other), str(stale)]  # sorted by path: "data/.unos-..." first
+
+    stale.unlink()
+    folder.rmdir()
+    if replaced_by == "a symbolic link":
+        (env.pool / "elsewhere").mkdir()
+        folder.symlink_to(env.pool / "elsewhere")
+    else:
+        folder.write_text("a file now")
+
+    response = _remove(env, [stale, other])
+
+    assert (response.status_code, response.json()) == (200, {"removed": [str(other)]})
+    assert env.client.get(API).json()["files"] == []
+
+
 def test_the_first_check_runs_upload_leftover_age_after_the_start_and_logs_what_it_found(env, monkeypatch, caplog):
     found = _hidden(env.pool)
     monkeypatch.setattr(files_router, "UPLOAD_LEFTOVER_AGE", 0.3)
