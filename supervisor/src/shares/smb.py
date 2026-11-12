@@ -38,6 +38,7 @@ import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -55,10 +56,14 @@ COMMENT_MAX_LENGTH = 256
 # testparm exits 1 when the cache directory ("cache directory" in [global],
 # Debian's lock directory, a tmpfs) is missing, e.g. after a boot before smbd ran.
 CACHE_DIRECTORY = "/run/samba"
-# Copies kept next to smb.conf: the file found by the one-time import, and a
-# file whose share sections UNOS did not render (ADR-0085, ADR-0092).
-IMPORT_BACKUP_SUFFIX = ".unos-import-backup"
-REPLACED_SUFFIX = ".unos-replaced"
+# Copies kept next to smb.conf, each named <smb.conf>.<kind>-<UTC time of the copy>: a file
+# that an import found and UNOS did not write, and a file with share sections that UNOS did not
+# render. The newest COPIES_KEPT of each kind are kept (ADR-0360).
+IMPORT_BACKUP = "unos-import-backup"
+REPLACED = "unos-replaced"
+COPIES_KEPT = 10
+_COPY_TIME = "%Y%m%d_%H%M%S_%f"
+_COPY_TIME_PATTERN = r"\d{8}_\d{6}_\d{6}"
 # Temporary files next to smb.conf: ".smb.conf.<random>.unos-tmp".
 _TEMP_PREFIX = ".smb.conf."
 _TEMP_SUFFIX = ".unos-tmp"
@@ -138,12 +143,20 @@ def read_conf_bytes() -> bytes | None:
         return None
 
 
-def import_backup_path() -> str:
-    return settings.smb_conf_path + IMPORT_BACKUP_SUFFIX
+def copy_path_label(kind: str) -> str:
+    """How a message names a new copy of ``kind``: <smb.conf>.<kind>-<UTC time>."""
+    return f"{settings.smb_conf_path}.{kind}-<UTC time>"
 
 
-def replaced_path() -> str:
-    return settings.smb_conf_path + REPLACED_SUFFIX
+def kept_copies(kind: str) -> list[str]:
+    """The paths of the copies of ``kind`` next to smb.conf, oldest first by the time in their name."""
+    directory = _conf_directory()
+    pattern = re.compile(re.escape(f"{os.path.basename(settings.smb_conf_path)}.{kind}-") + _COPY_TIME_PATTERN)
+    try:
+        names = os.listdir(directory)
+    except FileNotFoundError:
+        return []
+    return [os.path.join(directory, name) for name in sorted(names) if pattern.fullmatch(name)]
 
 
 def _stage(content: str) -> str:
@@ -248,8 +261,10 @@ def _install(tmp: str) -> None:
         _fsync_dir(os.path.dirname(os.path.abspath(target)))
 
 
-def _write_file_durably(path: str, data: bytes) -> None:
-    """Replace ``path`` with ``data``: temporary file, fsync, rename, fsync of the directory."""
+def _write_new_file_durably(path: str, data: bytes) -> None:
+    """Create ``path`` with ``data``: temporary file (mode 600), fsync, then a hard link to
+    ``path``, which fails with FileExistsError instead of replacing a file. The caller fsyncs
+    the directory."""
     directory = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(prefix=_TEMP_PREFIX, suffix=_TEMP_SUFFIX, dir=directory)
     try:
@@ -257,36 +272,51 @@ def _write_file_durably(path: str, data: bytes) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
+        os.link(tmp, path)
+    finally:
         _discard(tmp)
-        raise
-    _fsync_dir(directory)
 
 
-def keep_import_backup(data: bytes) -> bool:
-    """Copy the original smb.conf to ``<smb.conf>.unos-import-backup`` (ADR-0085).
+@dataclass(frozen=True)
+class KeptCopy:
+    """The copy of smb.conf that holds the bytes given to keep_copy, and the other copies of its kind."""
 
-    An existing copy is never overwritten. Returns True when this call wrote it.
+    path: str
+    earlier: tuple[str, ...]  # newest first
+
+
+def keep_copy(kind: str, data: bytes) -> KeptCopy:
+    """Copy smb.conf's bytes to a new <smb.conf>.<kind>-<UTC time>, unless the newest copy of
+    ``kind`` has exactly these bytes, and then delete the oldest copies of ``kind`` beyond
+    COPIES_KEPT, never the new one (ADR-0360).
+
+    No copy is ever replaced, and none is refused for the number of copies. A copy that cannot
+    be written raises; an old one that cannot be deleted is logged and stays.
     """
-    path = import_backup_path()
-    if os.path.lexists(path):
-        return False
-    _write_file_durably(path, data)
-    return True
-
-
-def keep_replaced(data: bytes) -> bool:
-    """Copy smb.conf to ``<smb.conf>.unos-replaced`` unless that file has exactly these bytes."""
-    path = replaced_path()
-    try:
-        with open(path, "rb") as f:
+    copies = kept_copies(kind)
+    if copies:
+        with open(copies[-1], "rb") as f:
             if f.read() == data:
-                return False
-    except FileNotFoundError:
-        pass
-    _write_file_durably(path, data)
-    return True
+                return KeptCopy(copies[-1], tuple(reversed(copies[:-1])))
+    directory = _conf_directory()
+    name = f"{os.path.basename(settings.smb_conf_path)}.{kind}-{datetime.now(timezone.utc).strftime(_COPY_TIME)}"
+    path = os.path.join(directory, name)
+    _write_new_file_durably(path, data)
+    # A clock set back can name the new copy before the others: it is kept all the same.
+    others = [copy for copy in kept_copies(kind) if copy != path]
+    kept = others[max(len(others) - (COPIES_KEPT - 1), 0):]
+    for old in others[:len(others) - len(kept)]:
+        try:
+            os.unlink(old)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            logger.warning("Could not delete the old copy %s: %s", os.path.basename(old), exc)
+            kept.insert(0, old)
+            continue
+        logger.info("Deleted the old copy %s: UNOS keeps the newest %d", os.path.basename(old), COPIES_KEPT)
+    _fsync_dir(directory)
+    return KeptCopy(path, tuple(sorted(kept, reverse=True)))
 
 
 def remove_stale_temp_files() -> list[str]:

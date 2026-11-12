@@ -7,8 +7,10 @@ commands go to a fake behind ``src.host.run_on_host`` and the pool list is
 
 import json
 import os
+import re
 import sqlite3
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -118,7 +120,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(service, "_last_apply", service.LastApply())
     monkeypatch.setattr(service, "_last_import_problem", None)
     yield SimpleNamespace(base=base, pool=base / "data", conf=conf, samba=samba, db_path=db_path, host=host,
-                          audit=audit, backup=Path(str(conf) + ".unos-import-backup"))
+                          audit=audit)
 
 
 async def run_import(env) -> bool:
@@ -128,6 +130,19 @@ async def run_import(env) -> bool:
             return await service._import_if_needed_locked(db)
     finally:
         await engine.dispose()
+
+
+def backups(env) -> list[Path]:
+    """The import backups <smb.conf>.unos-import-backup-<UTC time>, oldest first (ADR-0360)."""
+    pattern = re.compile(r"smb\.conf\.unos-import-backup-\d{8}_\d{6}_\d{6}")
+    return sorted(env.samba / name for name in os.listdir(env.samba) if pattern.fullmatch(name))
+
+
+def backup(env) -> Path | None:
+    """The one import backup, or None."""
+    found = backups(env)
+    assert len(found) <= 1, found
+    return found[0] if found else None
 
 
 def write_conf(env, text: str) -> None:
@@ -599,11 +614,11 @@ class TestDeviceFiles:
             notes=[NOT_EVERYONE, f"Not served: {service.POOL_ROOT_PROBLEM}"],
         )}
         assert state(env).report == [
-            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {env.conf}.unos-import-backup",
+            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {backup(env)}",
             "These settings of the old [global] were replaced: map to guest = Bad Password, "
             "log file = /var/log/samba/log.%m, max log size = 50",
         ]
-        assert env.backup.read_bytes() == original
+        assert backup(env).read_bytes() == original
         assert env.conf.read_bytes() == original  # the import itself does not write smb.conf
 
     async def test_pre_phase0_guest_copy(self, env):
@@ -628,10 +643,10 @@ class TestDeviceFiles:
         assert (share.guest_ok, share.access) == (False, {})
         assert share.notes[0] == "Guest access was not restored"
         assert share.notes[1].startswith("Ownership settings (force user = nobody")
-        # The live file, which UNOS did not write, is kept before the import (ADR-0085).
+        # The live file, which UNOS did not write, is kept before the import (ADR-0360).
         assert state(env).report[0] == (
-            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {env.conf}.unos-import-backup")
-        assert env.backup.exists()
+            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {backup(env)}")
+        assert backup(env) is not None
 
 
 # --- path rules (ADR-0145) -----------------------------------------------------------------
@@ -735,7 +750,7 @@ class TestUnosRenderedSource:
         }
         assert (found["team"].comment, found["team"].browseable) == ("Team", False)
         assert state(env).report == [f"Imported 3 share(s) from {env.conf}"]
-        assert not env.backup.exists()
+        assert backup(env) is None
 
     async def test_unos_file_without_shares_gives_no_report(self, env):
         env.conf.write_text(smbconf.render_config([]))
@@ -743,7 +758,7 @@ class TestUnosRenderedSource:
         assert shares(env) == {}
         assert state(env).report is None
         assert state(env).imported_at is not None
-        assert not env.backup.exists()
+        assert backup(env) is None
 
     async def test_a_hand_edit_of_a_unos_file_still_counts(self, env):
         text = rendered(env, service.ShareRender("team", f"{env.pool}/team", "", True, False, ("bob",), ()))
@@ -778,7 +793,7 @@ class TestNotUtf8:
             for (raw,) in conn.execute("SELECT import_notes FROM smb_shares UNION ALL "
                                        "SELECT import_report FROM smb_state"):
                 raw.decode("utf-8")  # strict
-        assert env.backup.read_bytes() == env.conf.read_bytes()
+        assert backup(env).read_bytes() == env.conf.read_bytes()
 
 
 # --- the marker, failures and the copy --------------------------------------------------------------
@@ -805,7 +820,7 @@ class TestMarker:
         assert await run_import(env) is True
         assert shares(env) == {}
         assert state(env).report == [f"Imported 0 share(s) from {env.conf}"]
-        assert not env.backup.exists()
+        assert backup(env) is None
 
     async def test_a_failure_halfway_commits_nothing(self, env, monkeypatch):
         write_conf(env, "[x]\n path = {pool}/x\n valid users = alice\n[y]\n path = {pool}/y\n")
@@ -824,14 +839,15 @@ class TestMarker:
         assert state(env) is None
         assert service.last_import_problem() == "Shares were not imported from smb.conf: disk I/O error"
         # The copy was written before the import transaction and stays.
-        assert env.backup.read_bytes() == env.conf.read_bytes()
+        assert backup(env).read_bytes() == env.conf.read_bytes()
         assert not env.audit.exists()
 
         monkeypatch.setattr(AsyncSession, "commit", real_commit)
         assert await run_import(env) is True
         assert sorted(shares(env)) == ["x", "y"]
-        # The copy existed already: this import did not write it.
-        assert state(env).report[0] == f"Imported 2 share(s) from {env.conf}"
+        # The newest import backup has these bytes already: this import names it and writes none.
+        assert len(backups(env)) == 1
+        assert state(env).report[0] == f"Imported 2 share(s) from {env.conf}; the previous file is kept as {backup(env)}"
         assert service.last_import_problem() is None
 
     async def test_pool_list_unavailable_imports_nothing(self, env, monkeypatch):
@@ -845,7 +861,7 @@ class TestMarker:
                 "cat: /etc/fstab: Permission denied$")):
             await run_import(env)
         assert state(env) is None and shares(env) == {}
-        assert not env.backup.exists()
+        assert backup(env) is None
 
     async def test_an_unreadable_smb_conf_keeps_its_reason(self, env, monkeypatch):
         def unreadable():
@@ -925,7 +941,7 @@ class TestCopy:
                 await service.ensure_imported(db)
         finally:
             await engine.dispose()
-        assert env.backup.read_bytes() == env.conf.read_bytes()
+        assert backup(env).read_bytes() == env.conf.read_bytes()
         assert "the previous file is kept as" in state(env).report[0]
 
     async def test_apply_trigger_writes_the_copy_before_installing(self, env):
@@ -937,22 +953,44 @@ class TestCopy:
                 result = await service.apply_smb_config(db)
         finally:
             await engine.dispose()
-        assert env.backup.read_bytes() == original
+        assert backup(env).read_bytes() == original
         assert result.changed is True
         assert env.conf.read_text() == smbconf.render_config([])  # DATA is a pool root: not served
         assert result.closed_shares == ["DATA"]
 
-    async def test_an_existing_copy_is_never_overwritten(self, env):
+    async def test_every_import_backup_is_kept_with_its_date(self, env):
+        """ADR-0360: an import of another file that UNOS did not write keeps it in a backup of its
+        own, named with the UTC time of the copy; the earlier backup keeps its bytes."""
         write_conf(env, DEVICE_CONF)
-        Path(env.backup).write_bytes(b"older copy")
+        earlier = env.samba / "smb.conf.unos-import-backup-20261101_120000_000000"
+        earlier.write_bytes(b"older copy")
+        before = datetime.now(timezone.utc).replace(tzinfo=None)
         await run_import(env)
-        assert env.backup.read_bytes() == b"older copy"
-        assert state(env).report[0] == f"Imported 1 share(s) from {env.conf}"
+        after = datetime.now(timezone.utc).replace(tzinfo=None)
+        first, new = backups(env)
+        assert first == earlier and earlier.read_bytes() == b"older copy"
+        assert new.read_bytes() == env.conf.read_bytes()
+        assert before <= datetime.strptime(new.name.rsplit("-", 1)[1], "%Y%m%d_%H%M%S_%f") <= after
+        assert state(env).report[0] == (
+            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {new}; earlier import backups "
+            f"(UNOS keeps the newest 10): {earlier}")
+
+    async def test_the_newest_ten_import_backups_are_kept(self, env):
+        write_conf(env, DEVICE_CONF)
+        earlier = [env.samba / f"smb.conf.unos-import-backup-202610{day:02d}_120000_000000" for day in range(1, 11)]
+        for path in earlier:
+            path.write_bytes(path.name.encode())
+        (env.samba / "smb.conf.unos-replaced-20261001_120000_000000").write_bytes(b"replaced")
+        await run_import(env)
+        kept = backups(env)
+        assert kept[:9] == earlier[1:] and len(kept) == 10 and kept[9].read_bytes() == env.conf.read_bytes()
+        assert not earlier[0].exists()
+        assert (env.samba / "smb.conf.unos-replaced-20261001_120000_000000").read_bytes() == b"replaced"
 
     async def test_no_copy_of_a_unos_file(self, env):
         env.conf.write_text(rendered(env, service.ShareRender("a", f"{env.pool}/a", "", True, False, (), ())))
         await run_import(env)
-        assert not env.backup.exists()
+        assert backup(env) is None
         assert sorted(os.listdir(env.samba)) == ["smb.conf"]
 
 
@@ -1050,10 +1088,10 @@ class TestStartupTrigger:
 
         await service.reconcile_smb_on_startup()
 
-        assert env.backup.read_bytes() == original
+        assert backup(env).read_bytes() == original
         assert list(shares(env)) == ["DATA"]
         assert state(env).report[0] == (
-            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {env.backup}")
+            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {backup(env)}")
         assert env.conf.read_text() == smbconf.render_config([])  # DATA is a pool root: not served
         details = [entry["details"] for entry in audit_entries(env.audit)]
         assert details[0] == "Imported 1 shares from smb.conf"
@@ -1089,7 +1127,7 @@ class TestLazyTrigger:
         assert (share["name"], share["served"], share["access"]) == ("DATA", False, [])
         assert share["import_notes"] == [NOT_EVERYONE, f"Not served: {service.POOL_ROOT_PROBLEM}"]
         assert state(env).imported_at is not None
-        assert env.backup.read_bytes() == original
+        assert backup(env).read_bytes() == original
         assert env.conf.read_bytes() == original  # a read imports, it does not apply
         assert env.host.calls == []
 

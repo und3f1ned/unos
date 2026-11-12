@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
+superseded-by: ADR-0360
 ---
 
 # ADR-0085: The original smb.conf is kept once as smb.conf.unos-import-backup
 
 ## Context
+
+Superseded by ADR-0360: every import backup is kept, named with its UTC time, the newest 10 of them.
 
 The one-time import (ADR-0084) turns a file that UNOS did not write into rows, and the next apply replaces that file with UNOS's rendering. The import only narrows access and drops options UNOS does not support (ADR-0086), so the original file is the only complete record of what the host served before, and the uninstall text points to it.
 
