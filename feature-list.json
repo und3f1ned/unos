@@ -1074,11 +1074,16 @@
         "Delete it there after the check that nothing uses it: the subvolume is removed by its subvolume id",
         "The volume that held it can be deleted afterwards"
       ],
+      "verified_by": [
+        "supervisor/tests/test_restore_copies.py",
+        "webui/tests/snapshots.spec.ts",
+        "supervisor/tests/test_dev_scenarios.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0073"
       ],
-      "notes": "Today a restored copy inside a volume can be deleted nowhere in the web UI."
+      "notes": "Until 2026-11-12 a restored copy inside a volume could be deleted nowhere in the web UI. Built 2026-11-12 (ADR-0356): GET /snapshots/copies?subvolume=<pool or volume> lists the copies that restores made right in a pool or a volume (a writable snapshot restore_<date>_<time>, its path checked byte for byte, Parent UUID set and not read-only), newest first with the time of the name, and DELETE /snapshots/copies/{name}?subvolume=... deletes one by btrfs subvolume delete --subvolid after the checks of a volume's Delete (running containers, SMB shares, NFS exports, the off-device copy; one function for both now, pools._refuse_used_subvolume), refusing anything else (400, 404, 409); the audit log gets snapshot_deleted. The Snapshots page lists the copies of the pool or volume chosen apart from its snapshots (name, path, time) and deletes them after a confirmation. The volume that held a copy can be deleted afterwards. Tests that failed before: supervisor/tests/test_restore_copies.py (no route: 405 for the list, 404 for the delete, and the volume's Delete stayed 409 with the copy inside), webui/tests/snapshots.spec.ts (7 tests: no Restored copies card, the Restore dialog's old texts), the volumes tests of supervisor/tests/test_dev_scenarios.py (the check made no snapshot or copy). The volumes scenario check (scripts/dev/scenario.sh volumes) has the steps: a snapshot of its volume, its restore, the copy listed and a subvolume on the host, its Delete refused while a share uses it, then done, and the snapshot and the volume deleted. Open: that device check and the re-check after a reboot (ADR-0018)."
     },
     {
       "id": "storage.scrub-needs-mounted-pool",

@@ -204,6 +204,21 @@ const SNAPSHOTS = ['nightly_20261107_020000', 'before-upgrade_20261106_181500'].
   path: `${DATA}/.snapshots/${name}`,
   created: `2026-11-0${7 - i}T02:00:00+00:00`,
 }));
+// The copies that restores made right in the pool (GET /snapshots/copies, ADR-0356).
+const COPIES = ['restore_20261107_103000', 'restore_20261106_090000'].map((name, i) => ({
+  name,
+  pool: 'e2e_data',
+  volume: null,
+  subvolume: DATA,
+  path: `${DATA}/${name}`,
+  created: `2026-11-0${7 - i}T10:30:00+00:00`,
+}));
+const SNAPSHOTS_API = {
+  '/api/v1/snapshots/subvolumes': SUBVOLUMES,
+  '/api/v1/snapshots/': SNAPSHOTS,
+  '/api/v1/snapshots': SNAPSHOTS,
+  '/api/v1/snapshots/copies': COPIES,
+};
 
 const INSTALLED_APPS = [
   {
@@ -691,13 +706,8 @@ const VIEWS: View[] = [
   {
     name: 'Snapshots',
     path: '/snapshots',
-    fake: (page) =>
-      serve(page, {
-        '/api/v1/snapshots/subvolumes': SUBVOLUMES,
-        '/api/v1/snapshots/': SNAPSHOTS,
-        '/api/v1/snapshots': SNAPSHOTS,
-      }),
-    shows: (page) => page.getByText('before-upgrade_20261106_181500').first(),
+    fake: (page) => serve(page, SNAPSHOTS_API),
+    shows: (page) => page.getByText(`${DATA}/restore_20261106_090000`).first(),
   },
   {
     name: 'Shares (SMB)',
@@ -934,14 +944,23 @@ const VIEWS: View[] = [
   {
     name: 'Dialog: create a snapshot',
     path: '/snapshots',
-    fake: (page) =>
-      serve(page, {
-        '/api/v1/snapshots/subvolumes': SUBVOLUMES,
-        '/api/v1/snapshots/': SNAPSHOTS,
-        '/api/v1/snapshots': SNAPSHOTS,
-      }),
+    fake: (page) => serve(page, SNAPSHOTS_API),
     open: (page) => page.getByRole('button', { name: /^(Create Snapshot|Создать снимок)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: delete a restored copy',
+    path: '/snapshots',
+    fake: (page) => serve(page, SNAPSHOTS_API),
+    open: (page) =>
+      page
+        .getByRole('button', {
+          name: /^(Delete restored copy|Удалить восстановленную копию) restore_20261107_103000$/,
+        })
+        .click(),
+    shows: (page) => page.getByRole('dialog').getByText(`${DATA}/restore_20261107_103000`),
     start: dialogTitle,
     end: dialogEnd,
   },

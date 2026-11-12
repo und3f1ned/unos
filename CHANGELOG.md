@@ -291,6 +291,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   on this server must turn SMB on again, and gets a new user id.
 
 ### Added
+- The Snapshots page lists the copies that **Restore** made right in the pool
+  or volume chosen, `restore_<date>_<time>`, apart from the snapshots, with
+  their folder and time, and deletes them by their subvolume id after the
+  checks of a volume's Delete (running containers, SMB shares, NFS exports,
+  the off-device copy). A volume that held a copy can then be deleted; before,
+  no page could delete the copy, and the volume's Delete answered 409.
 - Off-device copies: **System** → **Backup & Restore** copies the
   configuration and the pools' folders with restic, encrypted with a password
   that only the NAS keeps, to a folder on a disk mounted below `/mnt` that is

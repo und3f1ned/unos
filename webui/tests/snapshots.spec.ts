@@ -66,6 +66,16 @@ interface FakeSnapshot {
   created: string;
 }
 
+/** A copy that a restore made right in a pool or a volume (GET /snapshots/copies, ADR-0356). */
+interface FakeCopy {
+  name: string;
+  pool: string;
+  volume: string | null;
+  subvolume: string;
+  path: string;
+  created: string;
+}
+
 interface FakeResponse {
   status: number;
   json: unknown;
@@ -95,15 +105,34 @@ function snapshot(subvolume: string, name: string, created: string): FakeSnapsho
   return { id: name, name, subvolume, path: `${subvolume}/.snapshots/${name}`, created };
 }
 
+/** A pool or volume as GET /snapshots/subvolumes gives it. */
+interface FakeSubvolume {
+  path: string;
+  pool: string;
+  volume: string | null;
+}
+
+/** The copy `name` (restore_<date>_<time>, in UTC) right in the pool or volume `where`; its time is its name's. */
+function restoredCopy(where: FakeSubvolume, name: string): FakeCopy {
+  const time = /^restore_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(name);
+  if (!time) throw new Error(`not the name of a restored copy: ${name}`);
+  const [, year, month, day, hour, minute, second] = time;
+  const created = `${year}-${month}-${day}T${hour}:${minute}:${second}+00:00`;
+  return { name, pool: where.pool, volume: where.volume, subvolume: where.path, path: `${where.path}/${name}`, created };
+}
+
 interface FakeSnapshotsOptions {
   subvolumes?: unknown[];
   snapshots?: FakeSnapshot[];
+  copies?: FakeCopy[];
   /** Answers instead of the fake's own, while set. */
   responses?: {
     subvolumes?: FakeResponse;
     create?: FakeResponse;
     restore?: FakeResponse;
     delete?: FakeResponse;
+    copies?: FakeResponse;
+    deleteCopy?: FakeResponse;
   };
 }
 
@@ -111,6 +140,7 @@ interface FakeSnapshotsOptions {
 async function fakeSnapshotsApi(page: Page, options: FakeSnapshotsOptions = {}): Promise<SnapshotRequest[]> {
   const subvolumes = options.subvolumes ?? SUBVOLUMES;
   const snapshots = [...(options.snapshots ?? [])];
+  const copies = [...(options.copies ?? [])];
   const responses = options.responses ?? {};
   const requests: SnapshotRequest[] = [];
   await page.route(
@@ -143,8 +173,28 @@ async function fakeSnapshotsApi(page: Page, options: FakeSnapshotsOptions = {}):
       if (method === 'POST' && path === '/restore') {
         if (responses.restore) return route.fulfill(responses.restore);
         const source: string = body.snapshot_path;
-        const target = `${source.slice(0, source.lastIndexOf('/.snapshots/'))}/${RESTORE_NAME}`;
-        return route.fulfill({ json: { status: 'restored', source, target } });
+        const folder = source.slice(0, source.lastIndexOf('/.snapshots/'));
+        const where = (subvolumes as FakeSubvolume[]).find((sv) => sv.path === folder);
+        if (where) copies.push(restoredCopy(where, RESTORE_NAME));
+        return route.fulfill({ json: { status: 'restored', source, target: `${folder}/${RESTORE_NAME}` } });
+      }
+      if (method === 'GET' && path === '/copies') {
+        if (responses.copies) return route.fulfill(responses.copies);
+        const listed = copies
+          .filter((c) => c.subvolume === subvolume)
+          .sort((a, b) => b.created.localeCompare(a.created));
+        return route.fulfill({ json: listed });
+      }
+      const copyDeleted = path.match(/^\/copies\/([^/]+)$/);
+      if (method === 'DELETE' && copyDeleted) {
+        if (responses.deleteCopy) return route.fulfill(responses.deleteCopy);
+        const name = decodeURIComponent(copyDeleted[1]);
+        const index = copies.findIndex((c) => c.name === name && c.subvolume === subvolume);
+        if (index === -1) {
+          return route.fulfill({ status: 404, json: { detail: `Restored copy '${name}' not found in pool 'e2e_data'` } });
+        }
+        copies.splice(index, 1);
+        return route.fulfill({ json: { status: 'deleted', name } });
       }
       const deleted = path.match(/^\/([^/]+)$/);
       if (method === 'DELETE' && deleted) {
@@ -339,8 +389,14 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(dialog).toContainText('restore_<date>_<time> with the date and time in UTC');
     await expect(dialog).toContainText('/mnt/pools/e2e_data/documents');
     await expect(dialog).toContainText('Nothing is overwritten.');
-    // The copy of a volume's snapshot is a subvolume in the volume (storage.restore-copies-deletable).
-    await expect(dialog.getByText(/cannot be deleted in the web interface yet/)).toBeVisible();
+    // The copy of a volume's snapshot is a subvolume in the volume, deleted under Restored copies
+    // (storage.restore-copies-deletable).
+    await expect(
+      dialog.getByText(
+        'The copy is a subvolume inside the volume, listed under Restored copies below. The volume cannot be ' +
+          'deleted while it holds the copy: delete the copy there first.',
+      ),
+    ).toBeVisible();
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
     expect(writes(requests)).toEqual([]);
@@ -365,8 +421,12 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await page.getByRole('button', { name: 'Restore snapshot nightly' }).click();
     const dialog = page.getByRole('dialog', { name: 'Restore Snapshot' });
-    await expect(dialog.getByText(/The copy is a volume of the pool/)).toBeVisible();
-    await expect(dialog.getByText(/cannot be deleted in the web interface yet/)).toHaveCount(0);
+    await expect(
+      dialog.getByText(
+        'The copy is a volume of the pool too. When it is no longer needed, delete it under Restored copies below.',
+      ),
+    ).toBeVisible();
+    await expect(dialog.getByText(/subvolume inside the volume/)).toHaveCount(0);
     await dialog.getByRole('button', { name: 'Restore', exact: true }).click();
     await expect(page.locator('.alert').filter({ hasText: 'Snapshot restored' })).toContainText(
       `${DATA.path}/${RESTORE_NAME}`,
@@ -404,6 +464,139 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await choose(page, 'e2e_data (Pool)');
     await expect(row(page, 'before-edit')).toBeVisible();
     expect(dialogs).toEqual([]);
+  });
+
+  // The copies that restores made (storage.restore-copies-deletable, ADR-0356): listed apart from the
+  // snapshots, under the pool or volume they are right in, with the time in their names.
+  const copyRows = (page: Page) => page.getByRole('table', { name: 'Restored copies' }).getByRole('row');
+
+  test('the restored copies of the pool or volume chosen are listed apart from its snapshots', async ({
+    authenticatedPage: page,
+  }) => {
+    const dialogs = refuseBrowserDialogs(page);
+    const requests = await fakeSnapshotsApi(page, {
+      snapshots: [snapshot(DOCUMENTS.path, 'before-edit', '2026-11-07T08:15:00+00:00')],
+      copies: [
+        restoredCopy(DOCUMENTS, 'restore_20261106_090000'),
+        restoredCopy(DOCUMENTS, 'restore_20261107_103000'),
+        restoredCopy(DATA, 'restore_20261105_080000'),
+      ],
+    });
+    await page.goto('/snapshots');
+
+    await expect(page.getByRole('heading', { name: 'Restored copies in e2e_data (Pool)' })).toBeVisible();
+    await expect(copyRows(page)).toHaveCount(2); // the header and the pool's copy
+    await expect(copyRows(page).nth(1)).toContainText('restore_20261105_080000');
+    await expect(copyRows(page).nth(1)).toContainText(`${DATA.path}/restore_20261105_080000`);
+    await expect(copyRows(page).nth(1)).toContainText('11/5/2026, 11:00:00 AM');
+    await expect(page.getByText('No snapshots yet')).toBeVisible();
+
+    await choose(page, 'e2e_data/documents (Volume)');
+    await expect(page.getByRole('heading', { name: 'Restored copies in e2e_data/documents (Volume)' })).toBeVisible();
+    await expect(
+      page.getByText(
+        'Writable copies that Restore made here. Copy what you need from one, then delete it: a volume cannot be ' +
+          'deleted while it holds one.',
+      ),
+    ).toBeVisible();
+    const table = page.getByRole('table', { name: 'Restored copies' });
+    await expect(table.getByRole('columnheader')).toHaveText(['Name', 'Restored', 'Actions']);
+    // Newest first, at the browser's time; the copies are no snapshots.
+    await expect(copyRows(page)).toHaveCount(3);
+    await expect(copyRows(page).nth(1)).toContainText('restore_20261107_103000');
+    await expect(copyRows(page).nth(1)).toContainText(`${DOCUMENTS.path}/restore_20261107_103000`);
+    await expect(copyRows(page).nth(1)).toContainText('11/7/2026, 1:30:00 PM');
+    await expect(copyRows(page).nth(2)).toContainText('restore_20261106_090000');
+    await expect(rows(page)).toHaveCount(2);
+    await expect(row(page, 'before-edit')).toBeVisible();
+    await expect(rows(page).filter({ hasText: 'restore_' })).toHaveCount(0);
+
+    await choose(page, 'e2e_data/photos (Volume)');
+    await expect(page.getByText('No restored copies here.')).toBeVisible();
+    expect(requests.filter((r) => r.method === 'GET' && r.path === '/copies').map((r) => r.subvolume)).toEqual([
+      DATA.path,
+      DOCUMENTS.path,
+      PHOTOS.path,
+    ]);
+    expect(writes(requests)).toEqual([]);
+    expect(dialogs).toEqual([]);
+  });
+
+  test('a restored copy is listed, and Delete asks first and removes it', async ({ authenticatedPage: page }) => {
+    const dialogs = refuseBrowserDialogs(page);
+    const before = snapshot(DOCUMENTS.path, 'before-edit', '2026-11-07T08:15:00+00:00');
+    const requests = await fakeSnapshotsApi(page, { snapshots: [before] });
+    await page.goto('/snapshots');
+    await choose(page, 'e2e_data/documents (Volume)');
+    await expect(page.getByText('No restored copies here.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Restore snapshot before-edit' }).click();
+    await page.getByRole('dialog', { name: 'Restore Snapshot' }).getByRole('button', { name: 'Restore', exact: true }).click();
+    await expect(copyRows(page).filter({ hasText: RESTORE_NAME })).toContainText('11/7/2026, 1:30:00 PM');
+
+    await page.getByRole('button', { name: `Delete restored copy ${RESTORE_NAME}` }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete Restored Copy' });
+    await expect(dialog).toContainText(
+      `Delete the restored copy ${RESTORE_NAME} (${DOCUMENTS.path}/${RESTORE_NAME})? Its files are deleted with ` +
+        'it, and this cannot be undone.',
+    );
+    await expect(
+      dialog.getByText('It is not deleted while a running container, an SMB share or an NFS export uses it.'),
+    ).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    expect(writes(requests).map((r) => `${r.method} ${r.path}`)).toEqual(['POST /restore']);
+
+    await page.getByRole('button', { name: `Delete restored copy ${RESTORE_NAME}` }).click();
+    await dialog.getByRole('button', { name: 'Delete Copy' }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText('No restored copies here.')).toBeVisible();
+    // Named by the volume it is in; the snapshot stays.
+    expect(writes(requests)[1]).toEqual({
+      method: 'DELETE',
+      path: `/copies/${RESTORE_NAME}`,
+      subvolume: DOCUMENTS.path,
+      body: null,
+    });
+    await expect(row(page, 'before-edit')).toBeVisible();
+    expect(dialogs).toEqual([]);
+  });
+
+  test('a copy in use is kept, and the dialog says why', async ({ authenticatedPage: page }) => {
+    const detail = `Restored copy 'documents/${RESTORE_NAME}' is used by SMB shares (docs). Stop or remove them and try again.`;
+    const requests = await fakeSnapshotsApi(page, {
+      copies: [restoredCopy(DOCUMENTS, RESTORE_NAME)],
+      responses: { deleteCopy: { status: 409, json: { detail } } },
+    });
+    await page.goto('/snapshots');
+    await choose(page, 'e2e_data/documents (Volume)');
+
+    await page.getByRole('button', { name: `Delete restored copy ${RESTORE_NAME}` }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete Restored Copy' });
+    await dialog.getByRole('button', { name: 'Delete Copy' }).click();
+
+    await expect(dialog.getByText('Restored copy was not deleted')).toBeVisible();
+    await expect(dialog.getByText(detail)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(copyRows(page).filter({ hasText: RESTORE_NAME })).toBeVisible();
+    expect(writes(requests).map((r) => `${r.method} ${r.path}`)).toEqual([`DELETE /copies/${RESTORE_NAME}`]);
+  });
+
+  test('when the copies cannot be read, the page says why and still lists the snapshots', async ({
+    authenticatedPage: page,
+  }) => {
+    const detail = 'Reading subvolume 260 of /mnt/pools/e2e_data failed: ERROR: Failed to get subvol info: Input/output error';
+    await fakeSnapshotsApi(page, {
+      snapshots: [snapshot(DATA.path, 'nightly', '2026-11-07T02:00:00+00:00')],
+      responses: { copies: { status: 500, json: { detail } } },
+    });
+    await page.goto('/snapshots');
+
+    const alert = page.locator('.alert').filter({ hasText: 'Could not load the restored copies' });
+    await expect(alert).toContainText(detail);
+    await expect(row(page, 'nightly')).toBeVisible();
   });
 
   test('errors of the API are shown where they happened', async ({ authenticatedPage: page }) => {
@@ -534,6 +727,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     const requests = await fakeSnapshotsApi(page, {
       subvolumes: [DATA, DOCUMENTS, PHOTOS, { ...MEDIA, volumes_error: detail }],
       snapshots: [snapshot(DATA.path, 'nightly', '2026-11-07T02:00:00+00:00')],
+      copies: [restoredCopy(DATA, 'restore_20261106_090000')],
     });
     await chooseRussian(page);
     await page.goto('/snapshots');
@@ -545,6 +739,25 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(page.getByRole('heading', { name: 'Снимки e2e_data (пул)' })).toBeVisible();
     const table = page.getByRole('table', { name: 'Снимки' });
     await expect(table.getByRole('columnheader')).toHaveText(['Имя', 'Создан', 'Действия']);
+    // The restored copies, apart from the snapshots.
+    await expect(page.getByRole('heading', { name: 'Восстановленные копии в e2e_data (пул)' })).toBeVisible();
+    const copiesTable = page.getByRole('table', { name: 'Восстановленные копии' });
+    await expect(copiesTable.getByRole('columnheader')).toHaveText(['Имя', 'Восстановлена', 'Действия']);
+    await expect(copiesTable.getByRole('row').filter({ hasText: 'restore_20261106_090000' })).toContainText(
+      '06.11.2026, 12:00:00',
+    );
+    await page.getByRole('button', { name: 'Удалить восстановленную копию restore_20261106_090000' }).click();
+    const removeCopy = page.getByRole('dialog', { name: 'Удаление восстановленной копии' });
+    await expect(removeCopy).toContainText(
+      `Удалить восстановленную копию restore_20261106_090000 (${DATA.path}/restore_20261106_090000)? Её файлы ` +
+        'будут удалены вместе с ней, это действие нельзя отменить.',
+    );
+    await expect(
+      removeCopy.getByText('Копия не удаляется, пока её использует работающий контейнер, общая папка SMB или экспорт NFS.'),
+    ).toBeVisible();
+    await expect(removeCopy.getByRole('button', { name: 'Удалить копию' })).toBeVisible();
+    await removeCopy.getByRole('button', { name: 'Отмена' }).click();
+    await expect(removeCopy).toBeHidden();
     // The time in the language of the page, in Moscow: the day first, on a 24-hour clock.
     await expect(table.getByRole('row').filter({ hasText: 'nightly' })).toContainText('07.11.2026, 05:00:00');
     // The title in Russian, the server's reason as it comes.
@@ -594,7 +807,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     );
     await expect(
       restore.getByText(
-        'Копия станет томом пула: когда она больше не нужна, удалите её в списке томов пула на странице «Хранилище».',
+        'Копия станет и томом пула. Когда она больше не нужна, удалите её в разделе «Восстановленные копии» ниже.',
       ),
     ).toBeVisible();
     await restore.getByRole('button', { name: 'Восстановить', exact: true }).click();

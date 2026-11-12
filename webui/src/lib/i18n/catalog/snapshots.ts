@@ -69,9 +69,9 @@ export const en = {
 	'snapshots.restore.madeIn': 'with the date and time in UTC, is made in',
 	'snapshots.restore.after': '. Nothing is overwritten.',
 	'snapshots.restore.poolCopy':
-		"The copy is a volume of the pool: delete it with the pool's Volumes on the Storage page when it is no longer needed.",
+		'The copy is a volume of the pool too. When it is no longer needed, delete it under Restored copies below.',
 	'snapshots.restore.volumeCopy':
-		'The copy is a subvolume inside the volume: it cannot be deleted in the web interface yet, and the volume cannot be deleted while it holds the copy.',
+		'The copy is a subvolume inside the volume, listed under Restored copies below. The volume cannot be deleted while it holds the copy: delete the copy there first.',
 	'snapshots.restore.failed': 'Snapshot was not restored',
 	'snapshots.restore.submit': 'Restore',
 
@@ -80,7 +80,27 @@ export const en = {
 	'snapshots.delete.before': 'Delete snapshot',
 	'snapshots.delete.after': '? This cannot be undone.',
 	'snapshots.delete.failed': 'Snapshot was not deleted',
-	'snapshots.delete.submit': 'Delete Snapshot'
+	'snapshots.delete.submit': 'Delete Snapshot',
+
+	// The copies that restores made right in the pool or volume chosen (ADR-0356).
+	'snapshots.copies.of': 'Restored copies in {name}',
+	'snapshots.copies.hint':
+		'Writable copies that Restore made here. Copy what you need from one, then delete it: a volume cannot be deleted while it holds one.',
+	'snapshots.copies.loading': 'Loading restored copies...',
+	'snapshots.copies.loadError': 'Could not load the restored copies',
+	'snapshots.copies.empty': 'No restored copies here.',
+	'snapshots.copies.list': 'Restored copies',
+	'snapshots.copies.made': 'Restored',
+	'snapshots.copies.deleteOne': 'Delete restored copy {name}',
+
+	// Delete Restored Copy: before the copy's name, and after its path in parentheses.
+	'snapshots.copies.delete.title': 'Delete Restored Copy',
+	'snapshots.copies.delete.before': 'Delete the restored copy',
+	'snapshots.copies.delete.after': '? Its files are deleted with it, and this cannot be undone.',
+	'snapshots.copies.delete.inUse':
+		'It is not deleted while a running container, an SMB share or an NFS export uses it.',
+	'snapshots.copies.delete.failed': 'Restored copy was not deleted',
+	'snapshots.copies.delete.submit': 'Delete Copy'
 };
 
 export const ru: Translation<typeof en> = {
@@ -140,9 +160,9 @@ export const ru: Translation<typeof en> = {
 	'snapshots.restore.madeIn': '(дата и время в UTC) в папке',
 	'snapshots.restore.after': '. Ничего не перезаписывается.',
 	'snapshots.restore.poolCopy':
-		'Копия станет томом пула: когда она больше не нужна, удалите её в списке томов пула на странице «Хранилище».',
+		'Копия станет и томом пула. Когда она больше не нужна, удалите её в разделе «Восстановленные копии» ниже.',
 	'snapshots.restore.volumeCopy':
-		'Копия станет подтомом внутри тома: удалить её в веб-интерфейсе пока нельзя, а сам том нельзя удалить, пока в нём есть копия.',
+		'Копия станет подтомом внутри тома и появится в разделе «Восстановленные копии» ниже. Том нельзя удалить, пока в нём есть копия: сначала удалите её там.',
 	'snapshots.restore.failed': 'Снимок не восстановлен',
 	'snapshots.restore.submit': 'Восстановить',
 
@@ -150,5 +170,23 @@ export const ru: Translation<typeof en> = {
 	'snapshots.delete.before': 'Удалить снимок',
 	'snapshots.delete.after': '? Это действие нельзя отменить.',
 	'snapshots.delete.failed': 'Снимок не удалён',
-	'snapshots.delete.submit': 'Удалить снимок'
+	'snapshots.delete.submit': 'Удалить снимок',
+
+	'snapshots.copies.of': 'Восстановленные копии в {name}',
+	'snapshots.copies.hint':
+		'Копии, доступные для записи, которые создало восстановление снимка. Скопируйте из копии нужное, затем удалите её: том нельзя удалить, пока в нём есть копия.',
+	'snapshots.copies.loading': 'Загрузка восстановленных копий...',
+	'snapshots.copies.loadError': 'Не удалось загрузить восстановленные копии',
+	'snapshots.copies.empty': 'Восстановленных копий здесь нет.',
+	'snapshots.copies.list': 'Восстановленные копии',
+	'snapshots.copies.made': 'Восстановлена',
+	'snapshots.copies.deleteOne': 'Удалить восстановленную копию {name}',
+
+	'snapshots.copies.delete.title': 'Удаление восстановленной копии',
+	'snapshots.copies.delete.before': 'Удалить восстановленную копию',
+	'snapshots.copies.delete.after': '? Её файлы будут удалены вместе с ней, это действие нельзя отменить.',
+	'snapshots.copies.delete.inUse':
+		'Копия не удаляется, пока её использует работающий контейнер, общая папка SMB или экспорт NFS.',
+	'snapshots.copies.delete.failed': 'Восстановленная копия не удалена',
+	'snapshots.copies.delete.submit': 'Удалить копию'
 };

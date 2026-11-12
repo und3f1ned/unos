@@ -1674,11 +1674,26 @@ taken of (for a snapshot of a pool, `/mnt/pools/<pool>/restore_<date>_<time>`).
 3. Click its **Restore** button and confirm. A message shows where the copy is.
 
 Copy what you need from it, for example in the **File Browser**. The copy of
-a pool snapshot is a volume of the pool: when you no longer need it, delete
-it with the pool's **Volumes** on the **Storage** page (see
-[Pool Operations](#pool-operations)). The copy of a volume's snapshot is a
-subvolume inside the volume: the web interface cannot delete it yet, and the
-volume cannot be deleted while it holds the copy.
+a pool snapshot is also a volume of the pool. The copy of a volume's snapshot
+is a subvolume inside the volume, and the volume cannot be deleted while it
+holds the copy.
+
+#### Restored Copies
+
+Below the snapshots, **Restored copies in** the pool or volume you chose lists
+the copies that Restore made right in it, newest first, with their folder and
+the time of the restore (from the name, shown in your browser's time zone).
+Only such copies are listed: a writable snapshot named
+`restore_<date>_<time>` right in the pool or the volume.
+
+To delete one, click its **Delete** button and confirm; its files are deleted
+with it, and this cannot be undone. As for a volume, the copy is not deleted
+while a running container, an SMB share or an NFS export uses it or a folder
+in it, or while an off-device copy or restore reads or writes there: the
+dialog names them. Stop or remove them and try again. When Docker does not
+answer, nothing is deleted either. A share or export of the volume around the
+copy does not count. Once its copies and snapshots are deleted, the volume
+can be deleted on the **Storage** page.
 
 #### Deleting a Snapshot
 
