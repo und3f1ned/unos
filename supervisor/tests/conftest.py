@@ -69,6 +69,16 @@ def _notification_files_in_tmp_path(monkeypatch, tmp_path):
     monkeypatch.setattr(notifications, "LOGS_FILE", str(tmp_path / "notification_logs.json"))
 
 
+@pytest.fixture(autouse=True)
+def _audit_log_in_tmp_path(monkeypatch, tmp_path):
+    """Changes of backups, power, tasks and the host's settings write audit entries (ADR-0351),
+    as sign-ins and shares do: in the tests the audit log is in the test's tmp_path, never in
+    /data of this machine. A test that reads it sets AUDIT_FILE itself."""
+    from src.audit import router as audit_router
+
+    monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit.jsonl"))
+
+
 @pytest.fixture
 def temp_smb_conf():
     """Create temporary smb.conf for testing."""

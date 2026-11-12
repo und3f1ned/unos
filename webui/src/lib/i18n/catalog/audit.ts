@@ -91,6 +91,7 @@ export const en = {
 	'audit.action.taskCreated': 'Task created',
 	'audit.action.taskUpdated': 'Task updated',
 	'audit.action.taskDeleted': 'Task deleted',
+	'audit.action.taskRun': 'Task run',
 	'audit.action.firewallRuleAdded': 'Firewall rule added',
 	'audit.action.firewallRuleDeleted': 'Firewall rule deleted',
 	'audit.action.sslCertUploaded': 'Ssl cert uploaded',
@@ -110,7 +111,11 @@ export const en = {
 	'audit.resource.recoveryCodes': 'recovery_codes',
 	'audit.resource.container': 'container',
 	'audit.resource.app': 'app',
-	'audit.resource.auditLog': 'audit_log'
+	'audit.resource.auditLog': 'audit_log',
+	'audit.resource.backup': 'backup',
+	'audit.resource.host': 'host',
+	'audit.resource.networkInterface': 'network_interface',
+	'audit.resource.task': 'task'
 };
 
 export const ru: Translation<typeof en> = {
@@ -196,6 +201,7 @@ export const ru: Translation<typeof en> = {
 	'audit.action.taskCreated': 'Задача создана',
 	'audit.action.taskUpdated': 'Задача изменена',
 	'audit.action.taskDeleted': 'Задача удалена',
+	'audit.action.taskRun': 'Задача запущена вручную',
 	'audit.action.firewallRuleAdded': 'Правило брандмауэра добавлено',
 	'audit.action.firewallRuleDeleted': 'Правило брандмауэра удалено',
 	'audit.action.sslCertUploaded': 'SSL-сертификат загружен',
@@ -214,5 +220,9 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.recoveryCodes': 'коды восстановления',
 	'audit.resource.container': 'контейнер',
 	'audit.resource.app': 'приложение',
-	'audit.resource.auditLog': 'журнал аудита'
+	'audit.resource.auditLog': 'журнал аудита',
+	'audit.resource.backup': 'резервная копия',
+	'audit.resource.host': 'хост',
+	'audit.resource.networkInterface': 'сетевой интерфейс',
+	'audit.resource.task': 'задача'
 };

@@ -13,6 +13,8 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from .. import host, state_files
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import verify_token
 from ..security.validators import INTERFACE_NAME_PATTERN, validate_interface_name
 
@@ -391,18 +393,20 @@ def _schedule(action: str) -> PowerAnswer:
     return PowerAnswer(status="scheduled", message=message, pending=pending)
 
 
-def _cancel() -> PowerAnswer:
-    """Cancel the pending reboot or shutdown, if there is one."""
+def _cancel() -> tuple[PowerAnswer, Optional[str]]:
+    """Cancel the pending reboot or shutdown, if there is one; the answer, and the action that was
+    cancelled (None when none was pending)."""
     pending = _read_pending()
     if pending.action is None:
-        return PowerAnswer(status="none", message=NOTHING_PENDING, pending=pending)
+        return PowerAnswer(status="none", message=NOTHING_PENDING, pending=pending), None
     result = _run(["shutdown", "-c"])
     if not result.ok:
         raise HTTPException(500, f"Could not cancel the pending {pending.action}: {_why(result)}")
     after = _read_pending()
     if after.action is not None:
         raise HTTPException(500, f"The pending {after.action} is still scheduled")
-    return PowerAnswer(status="cancelled", message=f"The pending {pending.action} was cancelled", pending=after)
+    answer = PowerAnswer(status="cancelled", message=f"The pending {pending.action} was cancelled", pending=after)
+    return answer, pending.action
 
 
 def _suspend() -> PowerAnswer:
@@ -426,27 +430,47 @@ async def get_pending_action(_: dict = Depends(verify_token)):
     return await asyncio.to_thread(_read_pending)
 
 
+# The audit action of a reboot or shutdown, scheduled or cancelled (ADR-0351).
+_AUDIT_ACTIONS = {"reboot": AuditAction.SYSTEM_REBOOT, "shutdown": AuditAction.SYSTEM_SHUTDOWN}
+
+
+async def _schedule_and_audit(request: Request, user, action: str) -> PowerAnswer:
+    """Schedule ``action`` and write its audit entry (ADR-0351). The entry is appended as soon as
+    the host accepted the command, a minute before logind acts; the clean reboot or shutdown that
+    follows writes the page cache out with the file systems, so the entry is on the disk when the
+    host goes down."""
+    answer = await asyncio.to_thread(_schedule, action)
+    await audit_change(_AUDIT_ACTIONS[action], request, user.username, resource_type="host",
+                       details=answer.message, severity=AuditSeverity.WARNING)
+    return answer
+
+
 @router.post("/reboot", response_model=PowerAnswer)
 @limiter.limit("2/minute")  # Rate limit reboot requests
-async def reboot_system(request: Request, _: dict = Depends(verify_token)):
+async def reboot_system(request: Request, user=Depends(verify_token)):
     """Reboot the host one minute from now."""
     _refuse_local()
-    return await asyncio.to_thread(_schedule, "reboot")
+    return await _schedule_and_audit(request, user, "reboot")
 
 
 @router.post("/shutdown", response_model=PowerAnswer)
 @limiter.limit("2/minute")  # Rate limit shutdown requests
-async def shutdown_system(request: Request, _: dict = Depends(verify_token)):
+async def shutdown_system(request: Request, user=Depends(verify_token)):
     """Shut the host down one minute from now."""
     _refuse_local()
-    return await asyncio.to_thread(_schedule, "shutdown")
+    return await _schedule_and_audit(request, user, "shutdown")
 
 
 @router.post("/cancel", response_model=PowerAnswer)
-async def cancel_shutdown(_: dict = Depends(verify_token)):
-    """Cancel the pending reboot or shutdown of the host."""
+async def cancel_shutdown(request: Request, user=Depends(verify_token)):
+    """Cancel the pending reboot or shutdown of the host; a cancel is audited with the action it
+    cancelled (ADR-0351)."""
     _refuse_local()
-    return await asyncio.to_thread(_cancel)
+    answer, cancelled = await asyncio.to_thread(_cancel)
+    if cancelled is not None:
+        await audit_change(_AUDIT_ACTIONS[cancelled], request, user.username, resource_type="host",
+                           details=answer.message)
+    return answer
 
 
 @router.post("/suspend", response_model=PowerAnswer)
@@ -529,28 +553,32 @@ def _wol_choices(data: object) -> dict[str, bool]:
     }
 
 
-def _remember_wol(name: str, on: bool) -> None:
-    """Keep the choice for the next start; the file is written only when it changes (ADR-0214)."""
+def _remember_wol(name: str, on: bool) -> bool:
+    """Keep the choice for the next start; the file is written only when it changes (ADR-0214).
+    Whether it changed."""
     choices = _load_wol_choices()
     if choices.get(name) is on:
-        return
+        return False
     choices[name] = on
     state_files.replace_file(Path(WOL_FILE), (json.dumps(choices, indent=2, sort_keys=True) + "\n").encode(), sync=False)
+    return True
 
 
-def _set_wol(name: str, on: bool) -> WolInterface:
-    """Turn magic-packet wake on (``wol g``) or every wake event off (``wol d``) for one interface."""
+def _set_wol(name: str, on: bool) -> tuple[WolInterface, bool]:
+    """Turn magic-packet wake on (``wol g``) or every wake event off (``wol d``) for one interface;
+    the interface, and whether its state or the choice kept for the next start changed."""
     with _wol_lock:
         return _set_wol_locked(name, on)
 
 
-def _set_wol_locked(name: str, on: bool) -> WolInterface:
+def _set_wol_locked(name: str, on: bool) -> tuple[WolInterface, bool]:
     current = next((iface for iface in _list_wol() if iface.name == name), None)
     if current is None:
         raise HTTPException(404, f"No network interface named {name}")
     if not current.supported:
         raise HTTPException(409, f"{name} does not support Wake-on-LAN by magic packet")
-    if current.enabled != on:
+    changed = current.enabled != on
+    if changed:
         state = "on" if on else "off"
         result = _run(["ethtool", "-s", name, "wol", "g" if on else "d"])
         if not result.ok:
@@ -558,8 +586,8 @@ def _set_wol_locked(name: str, on: bool) -> WolInterface:
         current = _read_wol(name, current.mac_address)
         if current.enabled != on:
             raise HTTPException(500, f"Wake-on-LAN is still {'off' if on else 'on'} on {name}")
-    _remember_wol(name, on)
-    return current
+    remembered = _remember_wol(name, on)
+    return current, changed or remembered
 
 
 def _reapply_wol(choices: dict[str, bool]) -> None:
@@ -608,18 +636,29 @@ async def get_wol_status(_: dict = Depends(verify_token)):
     return WolStatus(interfaces=await asyncio.to_thread(_list_wol))
 
 
+async def _set_wol_and_audit(request: Request, user, interface: str, on: bool) -> WolInterface:
+    """Turn Wake-on-LAN on or off; a change is audited (ADR-0351)."""
+    name = validate_interface_name(interface)
+    current, changed = await asyncio.to_thread(_set_wol, name, on)
+    if changed:
+        await audit_change(AuditAction.NETWORK_CONFIG_CHANGED, request, user.username,
+                           resource_type="network_interface", resource_id=name,
+                           details=f"Wake-on-LAN turned {'on' if on else 'off'}")
+    return current
+
+
 @router.post("/wol/{interface}/enable", response_model=WolInterface)
-async def enable_wol(interface: str, _: dict = Depends(verify_token)):
+async def enable_wol(request: Request, interface: str, user=Depends(verify_token)):
     """Let a magic packet to this interface wake the host."""
     _refuse_local()
-    return await asyncio.to_thread(_set_wol, validate_interface_name(interface), True)
+    return await _set_wol_and_audit(request, user, interface, True)
 
 
 @router.post("/wol/{interface}/disable", response_model=WolInterface)
-async def disable_wol(interface: str, _: dict = Depends(verify_token)):
+async def disable_wol(request: Request, interface: str, user=Depends(verify_token)):
     """Let nothing that reaches this interface wake the host."""
     _refuse_local()
-    return await asyncio.to_thread(_set_wol, validate_interface_name(interface), False)
+    return await _set_wol_and_audit(request, user, interface, False)
 
 
 # ==================== UPS Monitoring ====================

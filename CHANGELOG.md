@@ -44,6 +44,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   (a pool that was not there, a start of a running container, a stop of a
   stopped one), writes no entry. When the entry cannot be written, the change
   still answers and the supervisor's log has it.
+- The audit log records backups created, uploaded, restored and deleted,
+  reboots and shutdowns scheduled (as a warning, before the host goes down)
+  and cancelled, scheduled tasks created, changed (naming the changed
+  fields), enabled, disabled, deleted and run by hand (the new action
+  **Task run**), network interfaces disabled, kept disabled and enabled,
+  Wake-on-LAN turned on or off, and a new host name or time zone, with the
+  administrator, the address and the browser. A change that changes nothing
+  writes no entry, and saving a scheduled task unchanged or deleting one that
+  is not there no longer rewrites the tasks file. When the entry cannot be
+  written, the change still answers and the supervisor's log has it.
 - Each audit entry carries the hash of the one before it. An entry edited in
   the log file, and the entry after one that was removed, are marked **Chain
   broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest

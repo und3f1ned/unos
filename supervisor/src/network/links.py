@@ -350,8 +350,9 @@ async def _answer_a_failed_keep(name: str, failed: host.HostResult) -> None:
     # Kept: its timer, should it still be armed, finds no disable to undo.
 
 
-async def enable(name: str) -> None:
-    """Enable ``name`` and bring back the addresses and routes its disable saved.
+async def enable(name: str) -> bool:
+    """Enable ``name`` and bring back the addresses and routes its disable saved; whether it
+    turned the link on (False for an interface that was enabled already).
 
     A disable that waits to be kept is called off once the link is on. Until
     then its timer stays armed: when the restore cannot turn the link on, or
@@ -364,7 +365,7 @@ async def enable(name: str) -> None:
         if is_enabled(link):
             # Turned on outside UNOS: a disable of it has nothing left to undo.
             await run(_script("unos-network-forget", name))
-            return
+            return False
         result = await run(_script("unos-network-restore", name), timeout=RESTORE_TIMEOUT)
         if result.ok or result.returncode == 2:
             # The link is on: the disable is undone now, not by its timer.
@@ -377,6 +378,7 @@ async def enable(name: str) -> None:
             )
         if not result.ok:
             raise HTTPException(500, NOT_ENABLED.format(name=name, reason=reason(result)))
+        return True
 
 
 async def revert_in(name: str) -> int | None:
