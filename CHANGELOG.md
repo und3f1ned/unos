@@ -536,8 +536,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   `/etc/samba/smb.conf.unos-replaced-<UTC time>` before an apply, and a file
   whose shares UNOS imports to a new
   `/etc/samba/smb.conf.unos-import-backup-<UTC time>` (for example
-  `smb.conf.unos-replaced-20261112_101530_123456`), unless the newest copy of
-  its kind holds exactly the same bytes. A copy never replaces another; UNOS
+  `smb.conf.unos-replaced-20261112_101530_123456`), unless one of the newest 10
+  copies of its kind holds exactly the same bytes. A copy never replaces another; UNOS
   keeps the newest 10 of each kind and deletes the older ones, never the new
   one, and refuses nothing for their number. The Shares page's problem and the
   import report name the new copy and the earlier ones, newest first, and the
@@ -811,8 +811,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   dialog, which stays open, and Escape closes the question first, then the
   edit dialog. Which dialog Escape closed depended on the order of the dialogs
   in the page. A dialog that opens takes the keyboard focus, so a key no
-  longer acts on the page or dialog under it, and when it closes the focus
-  goes back to the button or checkbox that opened it.
+  longer acts on the element that opened it, and the dialog under it takes
+  neither the focus nor clicks until the question closes. When a dialog
+  closes, the focus goes back to the element that had the focus when it
+  opened.
 - The UPS state was never read: `upsc` ran in the supervisor's container,
   which has no NUT client. It now runs on the host, under a time limit and
   off the event loop. While the host has no `upsc`, the UPS status, Test
@@ -1238,6 +1240,9 @@ manager, encrypted backup uploads, health checks, CI checks).
     channel have no effect (`system.alert-events`).
   - The host name and the time zone cannot be set from the web interface
     (`system.hostname-and-time-zone`).
+  - The SMART data of a disk attached after the supervisor started, such as a
+    USB disk, cannot be read, nor its self-tests run, until the supervisor
+    restarts (`storage.hot-plugged-disks-smart`).
 
 ## [1.0.0] - 2026-02-05
 

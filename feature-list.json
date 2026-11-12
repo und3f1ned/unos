@@ -1219,9 +1219,24 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0023"
+        "ADR-0023",
+        "ADR-0360"
       ],
-      "notes": "Built 2026-11-12 (ADR-0360). Cause: GET /api/v1/storage/disks already ran lsblk at every request in the host's namespaces, which see the host's /dev, /sys and udev database (test_disk_safety.py TestDisksEndpoint test_a_disk_attached_or_removed_after_a_request_is_in_the_next_answer passed on the code before the change); the Storage page asked for its lists only when it opened and when Create Pool opened. The page now loads its lists again when the block devices that the stats stream /ws/v1/events names (disk_io.disks, from /proc/diskstats) changed and stayed the same for one message, not while a dialog is open but once it closes. Tests first: the two specs of storage.spec.ts Physical disks (a disk attached while the page is open is listed without a reload and a removed one goes; while a dialog is open the lists stay, and are loaded once it closes) failed on the page before the change, the attached disk never listed. Left: the device check, attaching a spare USB disk with the Storage page open, needs a spare disk (an owner action). SMART of a disk attached after the supervisor started still fails, since smartctl runs in the container whose /dev lacks the new node (ADR-0360 Consequences): no entry yet."
+      "notes": "Built 2026-11-12 (ADR-0360). Cause: GET /api/v1/storage/disks already ran lsblk at every request in the host's namespaces, which see the host's /dev, /sys and udev database (test_disk_safety.py TestDisksEndpoint test_a_disk_attached_or_removed_after_a_request_is_in_the_next_answer passed on the code before the change); the Storage page asked for its lists only when it opened and when Create Pool opened. The page now loads its lists again when the block devices that the stats stream /ws/v1/events names (disk_io.disks, from /proc/diskstats) changed and stayed the same for one message, not while a dialog is open but once it closes. Tests first: the two specs of storage.spec.ts Physical disks (a disk attached while the page is open is listed without a reload and a removed one goes; while a dialog is open the lists stay, and are loaded once it closes) failed on the page before the change, the attached disk never listed. Left: the device check, attaching a spare USB disk with the Storage page open, needs a spare disk (an owner action). SMART of a disk attached after the supervisor started still fails, since smartctl runs in the container whose /dev lacks the new node (ADR-0360 Consequences): storage.hot-plugged-disks-smart."
+    },
+    {
+      "id": "storage.hot-plugged-disks-smart",
+      "category": "storage",
+      "description": "The SMART data of a disk attached after the supervisor started can be read without a restart",
+      "steps": [
+        "Attach a USB disk while UNOS runs: System > Disk Health shows its SMART data, runs its self-tests and the SMART monitor records it, without a restart of the supervisor"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0023",
+        "ADR-0360"
+      ],
+      "notes": "Cause (ADR-0360 Consequences): smartctl runs in the supervisor's container, whose /dev is filled once, when the container starts, so the node of a disk attached later is missing there: its SMART data, its self-tests and its snapshots of the SMART monitor fail until the supervisor restarts, while lsblk, which runs in the host's namespaces, lists the disk (storage.hot-plugged-disks). Options, a decision for an ADR of its own: the host's /dev in the container, a bind mount /dev:/dev in deploy/docker-compose.yml (a host-level change: the device check and the reboot check of ADR-0018); another host-level change that adds the new nodes to the container's /dev; or smartctl run on the host through supervisor/src/host.py (ADR-0020). Open: the decision, a test first, and the device check with a spare USB disk (an owner action)."
     },
     {
       "id": "shares.smb-share",
@@ -1762,9 +1777,10 @@
       "adr": [
         "ADR-0195",
         "ADR-0250",
-        "ADR-0164"
+        "ADR-0164",
+        "ADR-0362"
       ],
-      "notes": "Built 2026-11-12 (ADR-0362, which supersedes ADR-0085 and ADR-0092). Each smb.conf with share sections that UNOS did not render gets a copy of its own before an apply, /etc/samba/smb.conf.unos-replaced-<UTC time YYYYMMDD_HHMMSS_ffffff>, and each live smb.conf that the import finds without UNOS's header an import backup /etc/samba/smb.conf.unos-import-backup-<UTC time>, unless the newest copy of its kind has exactly these bytes; a copy is hard-linked to its name and never replaces a file, and after it the copies of its kind beyond the newest 10 are deleted, never the new one (smb.keep_copy, smb.COPIES_KEPT). The status problem names the new copy and the earlier ones, newest first, until the supervisor restarts; the import report names the import backup and the earlier ones; deploy/uninstall.sh lists the import backups oldest first. Asserted on fakes: step 1 by test_share_apply.py (TestReplaced: a second event keeps the first copy, the newest 10, a clock set back, a failed copy; TestSmbHelpers) and test_share_api.py (TestStatus); step 2 by test_share_import.py (TestCopy: an earlier import backup stays beside the new one, each with its time, the newest 10) and test_deploy_scripts.py (the uninstall's list). The smbconf scenario check (scripts/dev/scenario.py) refuses to start beside 10 replaced copies, takes the one new name as its copy, expects the earlier copies to stay and to be named on the Shares page, and deletes only its own copy (test_dev_scenarios.py). Open: the device check, scripts/dev/scenario.sh smbconf after a deploy of these runtime files, on the owner's request (ADR-0304), and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214). The device's undated /etc/samba/smb.conf.unos-import-backup of the earlier single copy is neither listed nor deleted (ADR-0207): renaming it to the dated form, or deleting it, is the owner's call."
+      "notes": "Built 2026-11-12 (ADR-0362, which supersedes ADR-0085, ADR-0092 and ADR-0309). Each smb.conf with share sections that UNOS did not render gets a copy of its own before an apply, /etc/samba/smb.conf.unos-replaced-<UTC time YYYYMMDD_HHMMSS_ffffff>, and each live smb.conf that the import finds without UNOS's header an import backup /etc/samba/smb.conf.unos-import-backup-<UTC time>, unless one of the newest 10 copies of its kind has exactly these bytes (only regular files count); a copy is hard-linked to its name and never replaces a file, and after it the copies of its kind beyond the newest 10 are deleted, never the new one (smb.keep_copy, smb.COPIES_KEPT). The status problem names the new copy and the earlier ones, newest first, until the supervisor restarts; the import report names the import backup and the earlier ones; deploy/uninstall.sh lists the import backups oldest first. Asserted on fakes: step 1 by test_share_apply.py (TestReplaced: a second event keeps the first copy, the newest 10, a clock set back, a failed copy; TestSmbHelpers) and test_share_api.py (TestStatus); step 2 by test_share_import.py (TestCopy: an earlier import backup stays beside the new one, each with its time, the newest 10) and test_deploy_scripts.py (the uninstall's list). The smbconf scenario check (scripts/dev/scenario.py) refuses to start beside 9 replaced copies, edits smb.conf by hand twice, takes the one new name after each apply as its copy, expects the first copy to keep its bytes and to be named on the Shares page as an earlier copy and the earlier copies to stay, and deletes only its two copies (test_dev_scenarios.py). Open: the device check, scripts/dev/scenario.sh smbconf after a deploy of these runtime files, on the owner's request (ADR-0304), and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214). The device's undated /etc/samba/smb.conf.unos-import-backup of the earlier single copy is neither listed nor deleted (ADR-0207): renaming it to the dated form, or deleting it, is the owner's call."
     },
     {
       "id": "shares.samba-runtime-writes",
@@ -3269,13 +3285,14 @@
       "passes": false,
       "adr": [
         "ADR-0175",
-        "ADR-0197"
+        "ADR-0197",
+        "ADR-0361"
       ],
       "verified_by": [
         "webui/tests/users.spec.ts",
         "webui/tests/shares.spec.ts"
       ],
-      "notes": "ADR-0361: Modal keeps a stack of open dialogs and only the top one answers Escape, whatever the markup order; a dialog takes the focus when it opens and gives it back to its opener when it closes. The Users page shows the Turn off SMB confirmation over the edit dialog (users.spec 'Escape closes only the Turn off SMB confirmation over the edit dialog, then the edit dialog'); 'every dialog is named by its own title, with a title id of its own' reads the confirmation's title id while the edit dialog is open under it and fails when the dialogs share one. Left for the feature pass: the Users page in a browser on the dev device after a deploy of the web UI."
+      "notes": "ADR-0361: Modal keeps a stack of open dialogs (a store, each with its depth) and only the top one answers Escape, whatever the markup order; a new dialog is drawn one over the highest open one, and every open dialog under the top one is inert; a dialog takes the focus when it opens and gives it back, when it closes, to the element that had the focus when it opened. The Users page shows the Turn off SMB confirmation over the edit dialog (users.spec 'Escape closes only the Turn off SMB confirmation over the edit dialog, then the edit dialog'; 'Tab never reaches the edit dialog under the Turn off SMB confirmation, which is usable again after it'); 'every dialog is named by its own title, with a title id of its own' reads the confirmation's title id while the edit dialog is open under it and fails when the dialogs share one. Left for the feature pass: the Users page in a browser on the dev device after a deploy of the web UI."
     },
     {
       "id": "deploy.install-script",

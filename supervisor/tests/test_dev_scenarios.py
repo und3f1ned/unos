@@ -24,9 +24,10 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   restored SMB account only with the live password and uid (ADR-0141), keeps the live next uid
   (ADR-0109), removes stale host accounts and renders smb.conf; its helper on the device lists
   the members of a plain and of an encrypted backup as src/backup/router.py writes them;
-* the smbconf check (ADR-0309) shows what an smb.conf edited by hand does: the Shares page names
+* the smbconf check (ADR-0362) shows what an smb.conf edited by hand does: the Shares page names
   the file before an apply, the apply copies it byte for byte to a new
-  smb.conf.unos-replaced-<time> and keeps the earlier copies (ADR-0362), a share
+  smb.conf.unos-replaced-<time> and keeps the earlier copies, a second hand edit goes to a second
+  copy, and the first keeps its bytes and is named as an earlier copy, a share
   that is not served gets access only with a new folder, and a restart of the supervisor writes
   no file in /etc/samba; its hand edit runs without the read-only namespace, and its helpers on
   the device touch only a check's own section and share folder;
@@ -46,7 +47,8 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 * the defects the checks exist for fail them: a share access that shrinks without closing the
   open tree connects, a password change that leaves the sessions open, a share folder or an
   upload with the wrong mode, a volume that the File Manager deletes, a password in a log, an
-  apply that drops a section added by hand without a copy, access granted to a share that is
+  apply that drops a section added by hand without a copy or overwrites the first copy, access
+  granted to a share that is
   not served, a status that misses an smb.conf that is not UNOS's, a restart that writes
   smb.conf; a new share folder below a folder of another account, a sticky folder that excuses a
   share folder of another account, a Repair permissions that follows a link, opens a private
@@ -583,9 +585,10 @@ class FakeNas:
 
     def apply(self) -> None:
         """An apply after a share change (ADR-0089): share sections that UNOS did not render go to
-        a new smb.conf.unos-replaced-<time> first, unless the newest copy holds these bytes, and the
-        oldest copies beyond the newest 10 are deleted (ADR-0362); an unchanged rendering writes
-        nothing. The defect deletes-earlier-copies keeps only the new copy."""
+        a new smb.conf.unos-replaced-<time> first, unless a copy holds these bytes, and the oldest
+        copies beyond the newest 10 are deleted (ADR-0362); an unchanged rendering writes nothing.
+        The defect deletes-earlier-copies keeps only the new copy, and overwrites-the-first-copy
+        writes the file over the newest copy."""
         self.guest_once = getattr(self, "guest_once", False) or bool(self.guests_rendered())
         old, new = self.installed, self.smb_conf()
         if old == new:
@@ -595,8 +598,12 @@ class FakeNas:
                    if name.lower() != "global" and not all(line in body.splitlines() for line in fixed)]
         if foreign and "no-replaced-copy" not in self.bugs:
             copies = self.replaced_copies()
-            if copies and self.samba[copies[-1]] == old:
+            same = [name for name in copies if self.samba[name] == old]
+            if same:
+                name, others = same[-1], [copy for copy in copies if copy != same[-1]]
+            elif copies and "overwrites-the-first-copy" in self.bugs:
                 name, others = copies[-1], copies[:-1]
+                self.samba[name] = old
             else:
                 self.copy_count = getattr(self, "copy_count", 0) + 1
                 name = f"smb.conf.unos-replaced-20261112_1200{self.copy_count:02d}_000000"
@@ -1665,17 +1672,21 @@ class FakeNas:
                        "mode": "644 root:root" if name == "smb.conf" else "600 root:root"}
                 for name, text in sorted(files.items())}
 
-    def hand_edit(self, action, section, expect=""):
-        """REMOTE_HAND_EDIT: edit smb.conf as by hand, keeping the original in RAM, or put it back
-        when it is not UNOS's and delete the copies that hold the check's edited file."""
+    def hand_edit(self, action, section, *digests):
+        """REMOTE_HAND_EDIT: edit smb.conf as by hand, keeping the original in RAM (edit), or again
+        with that original kept (again), or put it back when it is not UNOS's and delete the copies
+        that hold one of the check's edited files (restore)."""
         self.device_call("hand_edit")
         assert re.fullmatch(r"unoscheck[0-9a-f]{6}hand", section), section
-        if action == "edit":
-            if digest(self.installed) != expect:
+        if action in ("edit", "again"):
+            assert len(digests) == 1, digests
+            if digest(self.installed) != digests[0]:
                 raise scenario.Failed("the device answered status 1: smb.conf changed since the check read it")
-            if len(self.replaced_copies()) >= scenario.REPLACED_COPIES_KEPT or section in self.saved:
+            limit = scenario.REPLACED_COPIES_KEPT - (1 if action == "edit" else 0)
+            if len(self.replaced_copies()) >= limit or (section in self.saved) != (action == "again"):
                 raise scenario.Failed("the device answered status 1: an apply would delete the oldest copy")
-            self.saved[section] = self.installed
+            if action == "edit":
+                self.saved[section] = self.installed
             body = self.installed.split("\n")
             while body and body[0].startswith("#"):
                 body.pop(0)
@@ -1688,7 +1699,7 @@ class FakeNas:
                 self.installed = saved
                 self.mtimes["smb.conf"] += 1
             for name in self.replaced_copies():
-                if expect and digest(self.samba[name]) == expect:
+                if digest(self.samba[name]) in digests:
                     del self.samba[name]
                     self.mtimes.pop(name, None)
         return digest(self.installed), {name: digest(self.samba[name]) for name in self.replaced_copies()}
@@ -1836,23 +1847,29 @@ def test_the_smbconf_check_covers_the_steps_that_were_checked_by_hand(nas):
     """ADR-0309: the steps of shares.smb-conf-and-status (4, 5 and the restart of 3) and of
     shares.edit-and-delete that the smb check leaves out, in the order they were checked by hand
     on 2026-11-09."""
+    before = nas.snapshot()
     status, output = run_check("smbconf", nas)
     assert status == 0, output
     text = "\n".join(step_lines(output))
     for words in ("edited by hand", "before an apply", "byte for byte", "smb.conf.unos-replaced", "409",
+                  "edited by hand again", "the check's first copy keeps its bytes",
+                  "names the check's first copy as an earlier copy",
                   "symbolic link", "not served", "Share path must not contain symbolic links", "refused with 400",
                   "new folder", "2770 root:unos-smb", "keeps the folder", "restart of the supervisor",
                   "healthy after about 8 s"):
         assert words in text, words
-    assert nas.restarts == 1
+    first, second = "smb.conf.unos-replaced-20261112_120001_000000", "smb.conf.unos-replaced-20261112_120002_000000"
+    assert re.search(rf"^PASS  7\. .*: {first}  ", output, re.M) and re.search(rf"^PASS  10\. .*: {second}  ", output, re.M)
+    assert nas.restarts == 1 and nas.snapshot() == before
     patches = [(path, body) for method, path, body, _ in nas.calls if method == "PATCH"]
     share = "/shares/smb/unoscheck1a2b3c"
     new_folder = f"{ROOT}/unoscheck1a2b3c-new"
     access = [{"user_id": 2, "username": "test", "level": "read"}]  # the device's regular user
     assert patches == [(share, {"expected_version": 1, "comment": "unos scenario check"}),
                        (share, {"expected_version": 1, "comment": "stale"}),
-                       (share, {"expected_version": 2, "access": access}),
-                       (share, {"expected_version": 2, "path": new_folder, "access": access}),
+                       (share, {"expected_version": 2, "comment": "unos scenario check, edited again"}),
+                       (share, {"expected_version": 3, "access": access}),
+                       (share, {"expected_version": 3, "path": new_folder, "access": access}),
                        # after the restart: waits for the startup reconcile, 404, no write
                        ("/shares/smb/unoscheck1a2b3cnone", {})]
     assert ("POST", "/auth/users") not in [(m, p) for m, p, _, _ in nas.calls]
@@ -2393,6 +2410,7 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("volumes", "copy-delete-ignores-shares", "the copy's Delete is refused while the share"),
     ("smbconf", "status-misses-replaced-file", "names smb.conf as not UNOS's"),
     ("smbconf", "no-replaced-copy", "byte for byte"),
+    ("smbconf", "overwrites-the-first-copy", "the apply replaced the check's first copy"),
     ("smbconf", "access-without-folder", "access without a new folder is refused"),
     ("smbconf", "restart-writes", "a restart of the supervisor writes no file"),
     ("scrub", "no-mount-check", "is refused with 409"),
@@ -2439,17 +2457,17 @@ def test_the_checks_fail_on_the_defects_they_exist_for(nas, area, bug, words):
         assert nas.snapshot() == before, output
 
 
-@pytest.mark.parametrize("found", ["ten copies", "an smb.conf that is not UNOS's", "the same, before any apply",
+@pytest.mark.parametrize("found", ["nine copies", "an smb.conf that is not UNOS's", "the same, before any apply",
                                    "a section that UNOS did not write", "a problem"])
-def test_the_smbconf_check_does_not_start_beside_ten_copies_a_foreign_smb_conf_or_a_problem(nas, found):
-    """With 10 copies smb.conf.unos-replaced-<time>, the check's copy would make UNOS delete the
-    oldest, which the check did not make (ADR-0362); an apply would also copy a section that UNOS
+def test_the_smbconf_check_does_not_start_beside_nine_copies_a_foreign_smb_conf_or_a_problem(nas, found):
+    """With 9 copies smb.conf.unos-replaced-<time>, the check's two copies would make UNOS delete
+    the oldest, which the check did not make (ADR-0362); an apply would also copy a section that UNOS
     did not write, which the check's clean-up deletes with the copy (it keeps a header of UNOS's,
     so the status does not name it, ADR-0249); an smb.conf that is not UNOS's, which the status
     names only once an apply has run since the start, or a problem on the Shares page would make
     the check's findings ambiguous. The check changes nothing then."""
-    if found == "ten copies":
-        for day in range(1, 11):
+    if found == "nine copies":
+        for day in range(1, 10):
             nas.samba[f"smb.conf.unos-replaced-202611{day:02d}_120000_000000"] = "[global]\n\n[old]\n   path = /srv/old\n"
     elif found == "a problem":
         nas.replaced_problem = COPIED.format("old", "smb.conf.unos-replaced-20261101_120000_000000")
@@ -2466,16 +2484,18 @@ def test_the_smbconf_check_does_not_start_beside_ten_copies_a_foreign_smb_conf_o
 
 
 def test_the_smbconf_check_keeps_the_earlier_copies(nas):
-    """Earlier copies smb.conf.unos-replaced-<time> stay through the check's apply and clean-up,
-    and the Shares page names them beside the check's copy (ADR-0362)."""
-    earlier = [f"smb.conf.unos-replaced-202611{day:02d}_120000_000000" for day in range(1, 10)]
+    """Earlier copies smb.conf.unos-replaced-<time> stay through the check's two applies and its
+    clean-up, and the Shares page names them beside the check's copies (ADR-0362): 8 of them and
+    the check's 2 are the newest 10."""
+    earlier = [f"smb.conf.unos-replaced-202611{day:02d}_120000_000000" for day in range(1, 9)]
     for name in earlier:
         nas.samba[name] = f"[global]\n\n[{name[-6:]}]\n   path = /srv/old\n"
     before = nas.snapshot()
     status, output = run_check("smbconf", nas)
     assert status == 0, output
-    assert "PASS  3. smb.conf is UNOS's" in output and ": 9 earlier copies" in output
+    assert "PASS  3. smb.conf is UNOS's" in output and ": 8 earlier copies" in output
     assert "smb.conf.unos-replaced-20261112_120001_000000" in output
+    assert "smb.conf.unos-replaced-20261112_120002_000000" in output
     assert nas.snapshot() == before
 
 
@@ -2505,6 +2525,7 @@ def test_the_smbconf_check_expects_unos_s_texts():
     apply_tests = (REPO_ROOT / "supervisor" / "tests" / "test_share_apply.py").read_text()
     assert ('f"on the Shares page' + EARLIER_COPIES.format("{") in apply_tests
             and EARLIER_COPIES.format("").endswith("(UNOS keeps the newest 10): "))
+    assert EARLIER_COPIES.startswith(scenario.REPLACED_EARLIER)
     from src.shares import smb, smbconf
 
     assert scenario.REPLACED_COPIES_KEPT == smb.COPIES_KEPT == 10
@@ -3362,10 +3383,10 @@ def test_the_device_edits_smb_conf_without_the_read_only_namespace_and_the_rest_
     Docker's socket) run in the namespace."""
     device = device_with_stub(stub)
     (stub.log / "reply").write_text("conf abc\ncopy smb.conf.unos-replaced-20261101_120000_000000 def\n")
-    assert device.hand_edit("restore", "unoscheck1a2b3chand") == (
+    assert device.hand_edit("restore", "unoscheck1a2b3chand", "d1", "d2") == (
         "abc", {"smb.conf.unos-replaced-20261101_120000_000000": "def"})
     argv = (stub.log / "argv").read_text()
-    assert "unshare" not in argv and "restore unoscheck1a2b3chand ''" in argv
+    assert "unshare" not in argv and "restore unoscheck1a2b3chand d1 d2" in argv
     assert scenario.RO_ROOT not in (stub.log / "stdin").read_text()
     for call, reply, want in ((lambda: device.unserve("link", f"{ROOT}/unoscheck1a2b3c"), "link\n", "link"),
                               (device.restart_supervisor, "healthy 8\n", 8),
@@ -3472,24 +3493,67 @@ def test_the_hand_edit_helper_refuses_what_is_not_its_own(tmp_path, args, why):
     assert conf.read_text() == HEADER + "\n[global]\n" and list((tmp_path / "shm").iterdir()) == []
 
 
-def test_the_hand_edit_helper_refuses_beside_ten_copies(tmp_path):
-    """With 10 copies, the check's apply would make UNOS delete the oldest (ADR-0362); nine are fine."""
+def test_the_hand_edit_helper_refuses_beside_nine_copies(tmp_path):
+    """With 9 copies, the check's two applies would make UNOS delete the oldest (ADR-0362); 8 are
+    fine. A directory or a link with the name of a copy is no copy."""
     (tmp_path / "samba").mkdir()
     (tmp_path / "shm").mkdir()
     conf = tmp_path / "samba" / "smb.conf"
     conf.write_text(HEADER + "\n[global]\n")
-    for day in range(1, 10):
+    for day in range(1, 9):
         (tmp_path / "samba" / f"smb.conf.unos-replaced-202611{day:02d}_120000_000000").write_text("[old]\n")
     (tmp_path / "samba" / "smb.conf.unos-replaced").write_text("[old]\n")  # not a copy of UNOS's
+    (tmp_path / "samba" / "smb.conf.unos-replaced-20261120_120000_000000").mkdir()
+    (tmp_path / "samba" / "smb.conf.unos-replaced-20261121_120000_000000").symlink_to("smb.conf")
     section = "unoscheck1a2b3chand"
     result = run_helper(scenario.REMOTE_HAND_EDIT, tmp_path, "edit", section, digest(conf.read_text()))
     assert result.returncode == 0, result.stderr
     assert run_helper(scenario.REMOTE_HAND_EDIT, tmp_path, "restore", section).returncode == 0
     assert conf.read_text() == HEADER + "\n[global]\n"
-    (tmp_path / "samba" / "smb.conf.unos-replaced-20261110_120000_000000").write_text("[old]\n")
+    (tmp_path / "samba" / "smb.conf.unos-replaced-20261109_120000_000000").write_text("[old]\n")
     result = run_helper(scenario.REMOTE_HAND_EDIT, tmp_path, "edit", section, digest(conf.read_text()))
-    assert result.returncode == 1 and "keeps 10 copies smb.conf.unos-replaced-<time>: an apply would delete the oldest" in result.stderr
+    assert result.returncode == 1 and ("keeps 9 copies smb.conf.unos-replaced-<time>: the check's copies would make "
+                                       "UNOS delete the oldest") in result.stderr
     assert conf.read_text() == HEADER + "\n[global]\n" and list((tmp_path / "shm").iterdir()) == []
+
+
+def test_the_hand_edit_helper_edits_again_and_deletes_both_copies(tmp_path):
+    """The second edit (again) edits smb.conf as UNOS's apply left it and keeps the first edit's
+    original in RAM; it refuses without that original and beside 10 copies, the check's first
+    among them. The restore deletes the copies that hold either edited file (ADR-0362)."""
+    samba, shm = tmp_path / "samba", tmp_path / "shm"
+    samba.mkdir()
+    shm.mkdir()
+    conf = samba / "smb.conf"
+    original = HEADER + "\n[global]\n"
+    conf.write_text(original)
+    section = "unoscheck1a2b3chand"
+    refused = run_helper(scenario.REMOTE_HAND_EDIT, tmp_path, "again", section, digest(original))
+    assert refused.returncode == 1 and "the first edit's original" in refused.stderr and conf.read_text() == original
+    assert run_helper(scenario.REMOTE_HAND_EDIT, tmp_path, "edit", section, digest(original)).returncode == 0
+    first = samba / "smb.conf.unos-replaced-20261112_120001_000000"
+    first.write_text(conf.read_text())  # the first apply's copy
+    applied = HEADER + "\n[global]\n\n[unoscheck1a2b3c]\n   path = /x\n"
+    conf.write_text(applied)
+    for day in range(1, 10):
+        (samba / f"smb.conf.unos-replaced-202611{day:02d}_120000_000000").write_text("[old]\n")
+    result = run_helper(scenario.REMOTE_HAND_EDIT, tmp_path, "again", section, digest(applied))
+    assert result.returncode == 1 and "keeps 10 copies" in result.stderr and conf.read_text() == applied
+    (samba / "smb.conf.unos-replaced-20261101_120000_000000").unlink()
+    result = run_helper(scenario.REMOTE_HAND_EDIT, tmp_path, "again", section, digest(applied))
+    assert result.returncode == 0, result.stderr
+    again = conf.read_text()
+    assert again == ("# Edited by hand for a scenario check of UNOS\n\n[global]\n\n[unoscheck1a2b3c]\n   path = /x\n"
+                     f"\n[{section}]\n   path = /srv/{section}\n   available = no\n")
+    assert (shm / f"unos-scenario-{section}.conf").read_text() == original
+    second = samba / "smb.conf.unos-replaced-20261112_120002_000000"
+    second.write_text(again)
+    kept = samba / "smb.conf.unos-replaced-20261102_120000_000000"
+    result = run_helper(scenario.REMOTE_HAND_EDIT, tmp_path, "restore", section, digest(first.read_text()), digest(again))
+    assert result.returncode == 0, result.stderr
+    assert not first.exists() and not second.exists() and kept.read_text() == "[old]\n"
+    assert len([p for p in samba.iterdir() if p.name.startswith("smb.conf.unos-replaced-")]) == 8
+    assert conf.read_text() == original and list(shm.iterdir()) == []
 
 
 def test_the_unserve_helper_links_a_check_s_share_folder_and_puts_it_back(tmp_path):

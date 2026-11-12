@@ -701,8 +701,8 @@
 		</svelte:fragment>
 	</Modal>
 
-	<!-- Turn off SMB, asked from the edit dialog, which stays open under it: Escape closes only
-	     the top dialog (Modal, ADR-0361). -->
+	<!-- Turn off SMB, asked from the edit dialog, which stays open and inert under it: Escape
+	     closes only the top dialog (Modal, ADR-0361). -->
 	<Modal
 		open={confirmSmbOff}
 		title={$t('users.smbOff.title')}

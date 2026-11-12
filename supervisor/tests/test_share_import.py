@@ -987,6 +987,20 @@ class TestCopy:
         assert not earlier[0].exists()
         assert (env.samba / "smb.conf.unos-replaced-20261001_120000_000000").read_bytes() == b"replaced"
 
+    async def test_an_import_backup_written_while_the_clock_was_set_back_is_not_written_again(self, env):
+        """The backup that holds the file is named before a newer backup of another file, as after
+        a clock set back: the import writes none and names that one (ADR-0362)."""
+        write_conf(env, DEVICE_CONF)
+        set_back = env.samba / "smb.conf.unos-import-backup-20261001_120000_000000"
+        set_back.write_bytes(env.conf.read_bytes())
+        newer = env.samba / "smb.conf.unos-import-backup-20261101_120000_000000"
+        newer.write_bytes(b"another file")
+        await run_import(env)
+        assert backups(env) == [set_back, newer]
+        assert state(env).report[0] == (
+            f"Imported 1 share(s) from {env.conf}; the previous file is kept as {set_back}; earlier import backups "
+            f"(UNOS keeps the newest 10): {newer}")
+
     async def test_no_copy_of_a_unos_file(self, env):
         env.conf.write_text(rendered(env, service.ShareRender("a", f"{env.pool}/a", "", True, False, (), ())))
         await run_import(env)

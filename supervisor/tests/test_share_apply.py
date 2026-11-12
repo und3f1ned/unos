@@ -798,6 +798,27 @@ class TestReplaced:
         assert (env.samba / new).read_text() == old
         assert rest == future[1:]
 
+    async def test_a_file_copied_while_the_clock_was_set_back_is_not_copied_again(self, env):
+        """The copy that holds the file is named before a newer copy of another file, as after a
+        clock set back: the apply writes no copy and names that one (ADR-0362)."""
+        add_share(env, "docs", "docs", access={ALICE: "read"})
+        await apply(env)
+        rendered = env.conf.read_text()
+        old = rendered + self.OLD_RELEASE.format(pool=env.pool)
+        set_back = "smb.conf.unos-replaced-20261101_120000_000000"
+        newer = "smb.conf.unos-replaced-20261110_120000_000000"
+        (env.samba / set_back).write_text(old)
+        (env.samba / newer).write_text(rendered + "\n[later]\n   path = /srv/later\n")
+        env.conf.write_text(old)
+
+        result = await apply(env)
+
+        assert result.changed is True and "[legacy]" not in env.conf.read_text()
+        assert copies(env) == [set_back, newer]
+        assert service.last_apply().replaced_problem == (
+            f"smb.conf had shares that UNOS did not create (legacy); they are kept in {set_back}: create them again "
+            f"on the Shares page; earlier copies (UNOS keeps the newest 10): {newer}")
+
     async def test_a_failed_copy_keeps_smb_conf(self, env, monkeypatch):
         """ADR-0362: sections that UNOS did not render are copied before they are
         overwritten; without the copy, smb.conf is not replaced."""
@@ -1327,6 +1348,101 @@ class TestSmbHelpers:
         assert Path(kept.path).read_bytes() == b"new"
         assert len(copies(env)) == 11
         assert "Could not delete the old copy smb.conf.unos-replaced-20261101_120000_000000" in caplog.text
+
+    def test_only_regular_files_are_copies(self, env):
+        """A directory, a symbolic link or a FIFO with the name of a copy is neither listed, read
+        nor deleted (ADR-0362)."""
+        (env.samba / "notes").write_bytes(b"same")
+        directory = env.samba / "smb.conf.unos-replaced-20261101_120000_000000"
+        directory.mkdir()
+        link = env.samba / "smb.conf.unos-replaced-20261102_120000_000000"
+        link.symlink_to("notes")
+        fifo = env.samba / "smb.conf.unos-replaced-20261103_120000_000000"
+        os.mkfifo(fifo)
+        regular = env.samba / "smb.conf.unos-replaced-20261104_120000_000000"
+        regular.write_bytes(b"other")
+
+        assert smb.kept_copies(smb.REPLACED) == [str(regular)]
+        kept = smb.keep_copy(smb.REPLACED, b"same")  # the link's target holds these bytes: no copy
+        assert kept.path not in (str(link), str(regular)) and Path(kept.path).read_bytes() == b"same"
+        assert kept.earlier == (str(regular),)
+        assert directory.is_dir() and link.is_symlink() and stat.S_ISFIFO(os.lstat(fifo).st_mode)
+        assert smb.kept_copies(smb.REPLACED) == [str(regular), kept.path]
+
+    @staticmethod
+    def listed_once(monkeypatch, raced: Path) -> None:
+        """kept_copies lists RACED first once, as if a copy had been replaced after the listing."""
+        real = smb.kept_copies
+        calls: list[str] = []
+
+        def listing(kind: str) -> list[str]:
+            calls.append(kind)
+            return [str(raced), *real(kind)] if len(calls) == 1 else real(kind)
+
+        monkeypatch.setattr(smb, "kept_copies", listing)
+
+    @pytest.mark.parametrize("entry", ["link", "directory"])
+    def test_an_entry_that_replaced_a_copy_after_the_listing_is_not_read(self, env, monkeypatch, entry):
+        """The read opens a copy without following a symbolic link and checks with fstat that it
+        is a regular file: a link to a file with these bytes, or a directory, is no copy, and a new
+        copy is written (ADR-0362)."""
+        raced = env.samba / "smb.conf.unos-replaced-20261101_120000_000000"
+        if entry == "link":
+            (env.samba / "notes").write_bytes(b"same")
+            raced.symlink_to("notes")
+        else:
+            raced.mkdir()
+        self.listed_once(monkeypatch, raced)
+        kept = smb.keep_copy(smb.REPLACED, b"same")
+        assert kept.path != str(raced) and Path(kept.path).read_bytes() == b"same"
+        assert os.path.lexists(raced) and temp_files(env) == []
+
+    def test_a_fifo_that_replaced_a_copy_is_not_waited_on(self, env, monkeypatch):
+        """A FIFO opened for a blocking read would hold the apply until something writes to it;
+        here a writer puts these bytes into it once a reader waits (ADR-0362)."""
+        fifo = env.samba / "smb.conf.unos-replaced-20261101_120000_000000"
+        os.mkfifo(fifo)
+        done = threading.Event()
+
+        def writer() -> None:
+            while not done.wait(0.01):
+                try:
+                    fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                except OSError:  # nobody reads yet
+                    continue
+                try:
+                    os.write(fd, b"same")
+                except OSError:
+                    pass
+                finally:
+                    os.close(fd)
+                return
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        self.listed_once(monkeypatch, fifo)
+        try:
+            kept = smb.keep_copy(smb.REPLACED, b"same")
+        finally:
+            done.set()
+            thread.join(5)
+        assert kept.path != str(fifo) and Path(kept.path).read_bytes() == b"same"
+
+    def test_no_copy_when_any_copy_holds_these_bytes(self, env):
+        """A copy written while the clock was set back is named before a newer one: it still holds
+        these bytes, so nothing is written (ADR-0362)."""
+        newer = env.samba / "smb.conf.unos-replaced-20261110_120000_000000"
+        newer.write_bytes(b"newer")
+        set_back = env.samba / "smb.conf.unos-replaced-20261101_120000_000000"
+        set_back.write_bytes(b"same")
+        (env.samba / "smb.conf.unos-replaced-20261105_120000_000000").write_bytes(b"sam")  # shorter: not read
+
+        kept = smb.keep_copy(smb.REPLACED, b"same")
+
+        assert kept == smb.KeptCopy(path=str(set_back), earlier=(
+            str(newer), str(env.samba / "smb.conf.unos-replaced-20261105_120000_000000")))
+        assert copies(env) == [set_back.name, "smb.conf.unos-replaced-20261105_120000_000000", newer.name]
+        assert temp_files(env) == []
 
 
 # --- share mutations and the startup -----------------

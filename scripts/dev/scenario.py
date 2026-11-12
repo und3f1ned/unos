@@ -38,16 +38,18 @@ SD writes of each check (ADR-0214). The areas:
            (ADR-0334), the [global] lines without a guest share and of Samba's log in
            /run/samba, no password of the check in an answer or a log, the share's Delete
            keeping its folder, and the user's Delete removing its accounts, still locked.
-  smbconf  smb.conf edited by hand and what the Shares page says (ADR-0309): a share section
+  smbconf  smb.conf edited by hand and what the Shares page says (ADR-0362): a share section
            added by hand (available = no) and UNOS's header removed, which the Shares page names
            before an apply; a new share whose apply copies that file byte for byte to a new
-           smb.conf.unos-replaced-<time>, keeping the earlier copies (ADR-0362), and makes
-           smb.conf UNOS's again, and the copy and the earlier ones named on the Shares page; a
-           comment saved with the expected version and a stale one refused;
+           smb.conf.unos-replaced-<time>, keeping the earlier copies, and makes smb.conf UNOS's
+           again, and the copy and the earlier ones named on the Shares page; a comment saved with
+           the expected version and a stale one refused; smb.conf edited by hand again, which the
+           next comment's apply copies to a second copy, while the first keeps its bytes and is
+           named on the Shares page as an earlier copy;
            the share's folder replaced by a symbolic link, so that the share is not served, with
            access refused without a new folder and saved with one; Delete keeping the folder with
-           its files and smb.conf byte for byte as found; then, with the copy deleted, a restart
-           of the supervisor that writes no file in /etc/samba and leaves no problem.
+           its files and smb.conf byte for byte as found; then, with the two copies deleted, a
+           restart of the supervisor that writes no file in /etc/samba and leaves no problem.
   shares   The Shares and Account pages beyond slice 2 (ADR-0340): a sticky folder of root with a
            sticky folder "theirs" of another account in it, made over ssh on the pool, where a new share
            folder in "theirs" is refused with 409 and the reason, and a share of "theirs" itself
@@ -210,6 +212,8 @@ SAMBA_RUN_LOG = "/run/samba/log.samba"
 REPLACED_COPY = "smb.conf.unos-replaced-<time>"
 REPLACED_COPY_NAME = re.compile(r"smb\.conf\.unos-replaced-\d{8}_\d{6}_\d{6}")
 REPLACED_COPIES_KEPT = 10
+# What the Shares page's problem of a copy puts before the other copies (src/shares/service.py).
+REPLACED_EARLIER = "; earlier copies (UNOS keeps the newest"
 # What GET /shares/smb-status says of an smb.conf that is not UNOS's (ADR-0249), as
 # src/shares/service.py words it (test_dev_scenarios.py compares).
 CONF_NOT_UNOS = "smb.conf was replaced or removed after UNOS wrote it"
@@ -483,20 +487,24 @@ for f in *; do
     printf "file %s %s %s %s\n" "$f" "$(sha256sum < "$f" | cut -d " " -f 1)" "$(stat -c %Y -- "$f")" "$(stat -c "%a %U:%G" -- "$f")"
 done'''
 
-# The smbconf check's edit of smb.conf by hand (ADR-0309), without the read-only namespace: it
-# writes /etc/samba. $1: edit or restore; $2: the check's section, unoscheck<6 hex digits>hand;
-# $3 (edit): smb.conf's digest as the check read it. edit keeps smb.conf in RAM and rewrites it in
-# place, as an editor that keeps the file's inode, owner and mode: UNOS's header replaced by a
-# comment and the section appended, which Samba does not serve (available = no). It refuses when
-# smb.conf changed since the check read it or when /etc/samba keeps REPLACED_COPIES_KEPT copies
-# smb.conf.unos-replaced-<time>, of which an apply would delete the oldest. restore ($3: the
-# digest of the check's edited smb.conf, or nothing) puts the kept smb.conf back when smb.conf
-# does not start with UNOS's header (after an apply it holds UNOS's newer rendering, which
-# stays), deletes the copy in RAM, and deletes the copies that hold exactly the check's edited
-# file. Prints "conf <digest>" and "copy <name> <digest>" for each copy.
+# The smbconf check's edit of smb.conf by hand (ADR-0362), without the read-only namespace: it
+# writes /etc/samba. $1: edit, again or restore; $2: the check's section, unoscheck<6 hex
+# digits>hand; $3 (edit, again): smb.conf's digest as the check read it. edit keeps smb.conf in
+# RAM and rewrites it in place, as an editor that keeps the file's inode, owner and mode: UNOS's
+# header replaced by a comment and the section appended, which Samba does not serve (available =
+# no); again does the same to smb.conf as UNOS's apply left it, and keeps the first edit's
+# original in RAM. Each refuses when smb.conf changed since the check read it or when /etc/samba
+# keeps so many copies smb.conf.unos-replaced-<time> that the check's copies would make UNOS
+# delete the oldest: 1 less than REPLACED_COPIES_KEPT for edit, whose two applies each make one,
+# and REPLACED_COPIES_KEPT for again, with the first among them. restore ($3...: the digests of
+# the check's edited files, or none) puts the kept smb.conf back when smb.conf does not start
+# with UNOS's header (after an apply it holds UNOS's newer rendering, which stays), deletes the
+# copy in RAM, and deletes the copies that hold exactly one of the check's edited files. Prints
+# "conf <digest>" and "copy <name> <digest>" for each copy.
 REMOTE_HAND_EDIT = r'''
 set -uo pipefail
-action=$1 section=$2 expect=${3:-}
+action=$1 section=$2
+shift 2
 if ! [[ $section =~ ^unoscheck[0-9a-f]{6}hand$ ]]; then
     echo "not a section of a scenario check: $section" >&2
     exit 2
@@ -516,18 +524,24 @@ copies() {
     done
 }
 case $action in
-    edit)
-        [ "$(digest "$conf")" = "$expect" ] || { echo "smb.conf changed since the check read it" >&2; exit 1; }
+    edit|again)
+        [ "$(digest "$conf")" = "${1:-}" ] || { echo "smb.conf changed since the check read it" >&2; exit 1; }
+        if [ "$action" = edit ]; then
+            [ ! -e "$saved" ] || { echo "$saved exists" >&2; exit 1; }
+            limit=$((kept - 1))
+        else
+            [ -f "$saved" ] || { echo "the first edit's original $saved is missing" >&2; exit 1; }
+            limit=$kept
+        fi
         count=0
         while IFS= read -r f; do count=$((count + 1)); done < <(copies)
-        [ "$count" -lt "$kept" ] || { echo "$dir keeps $count copies smb.conf.unos-replaced-<time>: an apply would delete the oldest" >&2; exit 1; }
-        [ ! -e "$saved" ] || { echo "$saved exists" >&2; exit 1; }
-        cp -p "$conf" "$saved" || exit 1
+        [ "$count" -lt "$limit" ] || { echo "$dir keeps $count copies smb.conf.unos-replaced-<time>: the check's copies would make UNOS delete the oldest" >&2; exit 1; }
+        if [ "$action" = edit ]; then cp -p "$conf" "$saved" || exit 1; fi
         {
             echo "# Edited by hand for a scenario check of UNOS" &&
-            awk 'body || !/^#/ { body = 1; print }' "$saved" &&
+            awk 'body || !/^#/ { body = 1; print }' "$conf" &&
             printf "\n[%s]\n   path = /srv/%s\n   available = no\n" "$section" "$section"
-        } > "$saved.new" || { rm -f "$saved" "$saved.new"; exit 1; }
+        } > "$saved.new" || { [ "$action" = again ] || rm -f "$saved"; rm -f "$saved.new"; exit 1; }
         # A write that fails half-way leaves smb.conf without UNOS's header: restore puts it back.
         cat "$saved.new" > "$conf" || { rm -f "$saved.new"; exit 1; }
         rm -f "$saved.new"
@@ -537,9 +551,12 @@ case $action in
             cat "$saved" > "$conf" || exit 1
         fi
         rm -f "$saved"
-        if [ -n "$expect" ]; then
+        if [ "$#" -gt 0 ]; then
             while IFS= read -r f; do
-                if [ "$(digest "$f")" = "$expect" ]; then rm -f -- "$f" || exit 1; fi
+                d=$(digest "$f")
+                for e in "$@"; do
+                    if [ "$d" = "$e" ]; then rm -f -- "$f" || exit 1; break; fi
+                done
             done < <(copies)
         fi
         ;;
@@ -991,10 +1008,12 @@ class Device:
                 found[parts[1]] = {"sha256": parts[2], "mtime": parts[3], "mode": f"{parts[4]} {parts[5]}"}
         return found
 
-    def hand_edit(self, action: str, section: str, expect: str = "") -> tuple[str, dict[str, str]]:
-        """REMOTE_HAND_EDIT, without the read-only namespace: it writes /etc/samba (ADR-0309).
-        smb.conf's digest, and the copies smb.conf.unos-replaced-<time>: name -> digest."""
-        out = self.run(REMOTE_HAND_EDIT, action, section, expect, read_only=False)
+    def hand_edit(self, action: str, section: str, *digests: str) -> tuple[str, dict[str, str]]:
+        """REMOTE_HAND_EDIT, without the read-only namespace: it writes /etc/samba (ADR-0362).
+        DIGESTS: smb.conf's as the check read it (edit, again), or those of the check's edited
+        files (restore). smb.conf's digest, and the copies smb.conf.unos-replaced-<time>: name ->
+        digest."""
+        out = self.run(REMOTE_HAND_EDIT, action, section, *digests, read_only=False)
         conf = [line[len("conf "):] for line in out.splitlines() if line.startswith("conf ")]
         copies = dict(line[len("copy "):].split(" ", 1) for line in out.splitlines()
                       if line.startswith("copy ") and line.count(" ") == 2)
@@ -2135,7 +2154,7 @@ def smbconf_check(c: Check) -> None:
     hand = c.run + "hand"
     folder = f"{root}/{c.run}"
     new_folder = f"{folder}-new"
-    edited: dict[str, str] = {}  # the digest of the hand-edited smb.conf, once it is known
+    edited: list[str] = []  # the digests of the hand-edited files, once they are known
 
     def state() -> dict:
         files = c.device.samba_files()
@@ -2162,7 +2181,8 @@ def smbconf_check(c: Check) -> None:
 
     earlier = sorted(name for name in c.before["the files of /etc/samba"] if REPLACED_COPY_NAME.fullmatch(name))
     with c.step(f"smb.conf is UNOS's, the Shares page reports no problem, and /etc/samba keeps fewer than "
-                f"{REPLACED_COPIES_KEPT} copies {REPLACED_COPY}, so that the check's copy makes UNOS delete none") as s:
+                f"{REPLACED_COPIES_KEPT - 1} copies {REPLACED_COPY}, so that the check's two copies make UNOS delete "
+                "none") as s:
         reported = c.before["the problems on the Shares page"]
         c.expect(not reported, "the Shares page reports: " + "; ".join(reported))
         conf = c.device.read(SMB_CONF) or ""
@@ -2170,9 +2190,9 @@ def smbconf_check(c: Check) -> None:
         others = foreign_sections(conf)
         c.expect(not others, f"smb.conf holds sections that UNOS did not write ({', '.join(others)}): an apply would "
                              f"copy them into the check's {REPLACED_COPY}, which its clean-up deletes")
-        c.expect(len(earlier) < REPLACED_COPIES_KEPT,
-                 f"/etc/samba keeps {len(earlier)} copies {REPLACED_COPY}: the check's copy would make UNOS delete the "
-                 f"oldest, {earlier[0] if earlier else ''}")
+        c.expect(len(earlier) < REPLACED_COPIES_KEPT - 1,
+                 f"/etc/samba keeps {len(earlier)} copies {REPLACED_COPY}: the check's two copies would make UNOS "
+                 f"delete the oldest, {earlier[0] if earlier else ''}")
         s.text += f": {len(earlier)} earlier copies"
 
     with c.step("a regular user for an access entry") as s:
@@ -2192,9 +2212,9 @@ def smbconf_check(c: Check) -> None:
                 "does not serve (available = no)"):
         c.on_cleanup("restart the supervisor if the Shares page still names the check's section",
                      lambda: restart_if_named(c, hand))
-        c.on_cleanup(f"put smb.conf back if it is not UNOS's, and delete the check's {REPLACED_COPY}",
-                     lambda: c.device.hand_edit("restore", hand, edited.get("conf", "")))
-        edited["conf"] = c.device.hand_edit("edit", hand, found or "")[0]
+        c.on_cleanup(f"put smb.conf back if it is not UNOS's, and delete the check's copies {REPLACED_COPY}",
+                     lambda: c.device.hand_edit("restore", hand, *edited))
+        edited.append(c.device.hand_edit("edit", hand, found or "")[0])
         text = c.device.read(SMB_CONF) or ""
         c.expect(not text.startswith(SMB_HEADER) and f"\n[{hand}]\n" in text, "smb.conf is not as edited")
 
@@ -2211,7 +2231,7 @@ def smbconf_check(c: Check) -> None:
                  f"it is served {made.get('served')}, version {made.get('version')}: {made.get('path_problem')}")
         files = c.device.samba_files()
         new = sorted(name for name in files if REPLACED_COPY_NAME.fullmatch(name) and name not in earlier)
-        c.expect(len(new) == 1 and files[new[0]]["sha256"] == edited["conf"],
+        c.expect(len(new) == 1 and files[new[0]]["sha256"] == edited[0],
                  f"the new copies are {', '.join(new) or 'none'}, not one with the edited file")
         copy = new[0]
         gone = [name for name in earlier if name not in files]
@@ -2236,6 +2256,33 @@ def smbconf_check(c: Check) -> None:
         c.expect(changed.get("comment") == "unos scenario check" and changed.get("version") != 1, f"the share is {changed}")
         c.call("PATCH", f"/shares/smb/{share}", {"expected_version": 1, "comment": "stale"}, expect=409)
         applied = c.device.samba_files()["smb.conf"]["sha256"]
+
+    with c.step(f"smb.conf edited by hand again, and a new comment applies it: the file goes byte for byte into a "
+                f"second {REPLACED_COPY}, the check's first copy keeps its bytes, and the earlier copies stay") as s:
+        edited.append(c.device.hand_edit("again", hand, applied)[0])
+        changed = c.call("PATCH", f"/shares/smb/{share}",
+                         {"expected_version": changed["version"], "comment": "unos scenario check, edited again"})
+        files = c.device.samba_files()
+        c.expect((files.get(copy) or {}).get("sha256") == edited[0], f"the apply replaced the check's first copy {copy}")
+        new = sorted(name for name in files if REPLACED_COPY_NAME.fullmatch(name) and name not in earlier + [copy])
+        c.expect(len(new) == 1 and files[new[0]]["sha256"] == edited[1],
+                 f"the new copies are {', '.join(new) or 'none'}, not one with the file edited again")
+        second = new[0]
+        gone = [name for name in earlier if name not in files]
+        c.expect(not gone, f"the apply deleted the earlier copies {', '.join(gone)}")
+        s.text += f": {second}"
+        text = c.device.read(SMB_CONF) or ""
+        c.expect(text.startswith(SMB_HEADER) and f"\n[{share}]\n" in text and f"[{hand}]" not in text,
+                 "smb.conf is not UNOS's rendering with the share's section")
+        applied = files["smb.conf"]["sha256"]
+
+    with c.step("the Shares page names the section in the second copy, and names the check's first copy as an earlier "
+                "copy beside the others"):
+        problems = problems_of(c)
+        named = problems[0].partition(REPLACED_EARLIER)[2] if len(problems) == 1 else ""
+        c.expect(len(problems) == 1 and problems[0].startswith(copied_problem(hand, second)) and copy in named
+                 and all(name in named for name in earlier), f"it reports {problems}")
+        copied = problems[0]
 
     with c.step("with its folder replaced by a symbolic link on the host, the share is not served, and the Shares page "
                 "says why") as s:
@@ -2278,9 +2325,9 @@ def smbconf_check(c: Check) -> None:
         c.expect(c.device.read(f"{new_folder}/kept.txt") == DATA, "the folder's file is gone")
         c.expect(c.device.samba_files()["smb.conf"]["sha256"] == found, "smb.conf is not as the check found it")
 
-    with c.step(f"with the check's {REPLACED_COPY} deleted, a restart of the supervisor writes no file in /etc/samba, "
-                "and the Shares page reports no problem") as s:
-        left = c.device.hand_edit("restore", hand, edited["conf"])[1]
+    with c.step(f"with the check's two copies {REPLACED_COPY} deleted, a restart of the supervisor writes no file in "
+                "/etc/samba, and the Shares page reports no problem") as s:
+        left = c.device.hand_edit("restore", hand, *edited)[1]
         c.expect(sorted(left) == earlier, f"the copies {REPLACED_COPY} are {', '.join(sorted(left)) or 'none'}")
         before = c.device.samba_files()
         took = restart_and_wait(c)

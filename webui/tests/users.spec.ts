@@ -567,6 +567,45 @@ test.describe('Users page SMB (fake data)', () => {
     expect(fake.writes).toEqual([]);
   });
 
+  test('Tab never reaches the edit dialog under the Turn off SMB confirmation, which is usable again after it', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    await page.goto('/users');
+
+    await userRow(page, 'alice').getByRole('button', { name: 'Edit user alice' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit user alice' });
+    const allow = dialog.getByLabel('Allow SMB access');
+    await allow.click();
+    const confirm = page.getByRole('dialog', { name: 'Turn off SMB' });
+    await expect(confirm).toBeFocused();
+
+    // Shift+Tab and Tab from the confirmation, each for more presses than the page has elements
+    // that can take the focus, never focus a control of the edit dialog under it (ADR-0361).
+    const focusInEdit = () => dialog.evaluate((element) => element.contains(document.activeElement));
+    const presses = await page.locator('a[href], button, input, select, textarea, [tabindex]').count();
+    for (const key of ['Shift+Tab', 'Tab']) {
+      await confirm.focus();
+      for (let i = 1; i <= presses; i++) {
+        await page.keyboard.press(key);
+        expect(await focusInEdit(), `${key} pressed ${i} times`).toBe(false);
+      }
+    }
+
+    // Once the confirmation is closed, the edit dialog takes the focus and the keys again.
+    await confirm.focus();
+    await page.keyboard.press('Escape');
+    await expect(confirm).toBeHidden();
+    await expect(allow).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.getByLabel('Confirm new password')).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(allow).toBeFocused();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes).toEqual([]);
+  });
+
   test('every dialog is named by its own title, with a title id of its own', async ({
     authenticatedPage: page,
   }) => {

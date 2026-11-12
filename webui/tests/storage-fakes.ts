@@ -261,6 +261,12 @@ export interface FakeStorageOptions {
   importableResponse?: { status: number; json: unknown };
   /** Answer POST /filesystems/<uuid>/import with this instead of importing. */
   importResponse?: { status: number; json: unknown };
+  /**
+   * Called with the path of each GET (such as '/disks') when it is asked: its answer, made of the
+   * fake host's state at that moment, is sent once the promise returned resolves, as the answer
+   * of a slow lsblk or btrfs would be (the order of the page's loads, ADR-0360). Undefined: at once.
+   */
+  holdReads?: (path: string) => Promise<void> | undefined;
 }
 
 /** The 409 the supervisor sends when a path no longer holds the selected disk (pools.py). */
@@ -342,10 +348,16 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
       const request = route.request();
       const method = request.method();
       const path = new URL(request.url()).pathname.slice('/api/v1/storage'.length);
+      // A read is answered with the state of now, when options.holdReads lets it.
+      const hold = method === 'GET' ? options.holdReads?.(path) : undefined;
+      const answer = async (response: FakeResponse | { json: unknown }) => {
+        await hold;
+        return route.fulfill(response);
+      };
 
-      if (method === 'GET' && path === '/disks') return route.fulfill({ json: disks() });
+      if (method === 'GET' && path === '/disks') return answer({ json: disks() });
       if (method === 'GET' && path === '/pools') {
-        return route.fulfill({ json: pools.filter((pool) => !sharesItsLabel(pool)) });
+        return answer({ json: pools.filter((pool) => !sharesItsLabel(pool)) });
       }
       const scrub = path.match(/^\/pools\/([^/]+)\/scrub$/);
       if (scrub && ['GET', 'POST', 'DELETE'].includes(method)) {
@@ -353,11 +365,11 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         // btrfs answers only for a mounted filesystem; the fake does not invent its errors.
         if (!pools.some((p) => p.name === name && p.mounted)) return route.abort();
         if (method !== 'GET') writes.push({ method, path, body: method === 'POST' ? request.postDataJSON() : null });
-        return route.fulfill({ json: scrubStatus(name, method) });
+        return answer({ json: scrubStatus(name, method) });
       }
       if (method === 'GET' && path === '/filesystems/importable') {
         const found = [...pools.filter(sharesItsLabel).map(foundDuplicate), ...importable];
-        return route.fulfill(options.importableResponse ?? { json: found });
+        return answer(options.importableResponse ?? { json: found });
       }
       const imported = path.match(/^\/filesystems\/([^/]+)\/import$/);
       if (method === 'POST' && imported) {

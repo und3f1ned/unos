@@ -125,11 +125,13 @@
 	let devicesSeen: string | null = null; // the devices of the last message
 	let devicesHeld: string | null = null; // the last devices that stayed for a message
 	let devicesLoaded: string | null = null; // devicesHeld when the lists were last loaded
-	let followingDevices = false;
+	// The reload for the devices in flight: the number of its load, and devicesLoaded before it.
+	let deviceReload: { load: number; devices: string | null } | null = null;
 	$: dialogOpen =
 		showCreateModal || poolAction !== null || importTarget !== null || showDeleteModal || volumesPool !== null;
 	$: followBlockDevices($stats);
 	$: if (!dialogOpen) reloadForDevices();
+	$: if (dialogOpen) dropDeviceReload();
 
 	function followBlockDevices(message: WebSocketStats | null) {
 		const names = message?.disk_io?.disks?.map((disk) => disk.name);
@@ -143,12 +145,27 @@
 	}
 
 	function reloadForDevices() {
-		if (devicesHeld === devicesLoaded || loading || followingDevices || dialogOpen) return;
-		followingDevices = true;
-		loadData(false).finally(() => {
-			followingDevices = false;
+		if (devicesHeld === devicesLoaded || loading || deviceReload || dialogOpen) return;
+		const devices = devicesLoaded;
+		const reload = loadData(false, false);
+		// loadData took the number of its load before it first waited.
+		deviceReload = { load: listsLoad, devices };
+		reload.finally(() => {
+			deviceReload = null;
 			reloadForDevices();
 		});
+	}
+
+	/**
+	 * A dialog opened before the reload for the devices answered: its answers are not shown, so that
+	 * the dialog's lists stay as the user saw them, and it runs again once the dialog closes, unless
+	 * a newer load of the lists has started meanwhile.
+	 */
+	function dropDeviceReload() {
+		if (!deviceReload || deviceReload.load !== listsLoad) return;
+		listsLoad = ++loadSequence;
+		if (disksLoad === deviceReload.load) disksLoad = listsLoad;
+		devicesLoaded = deviceReload.devices;
 	}
 
 	onDestroy(() => {
@@ -159,52 +176,76 @@
 		return e instanceof Error ? e.message : String(e);
 	}
 
-	async function loadData(showSpinner = true) {
+	// The order of the page's loads (ADR-0360): each takes the next number, and its answers are
+	// shown only while it is the latest load of their list, so that one that answers late does not
+	// overwrite what a newer one, or a dialog opened meanwhile, shows.
+	let loadSequence = 0;
+	let listsLoad = 0; // the latest load of all the lists (loadData)
+	let disksLoad = 0; // the latest load of the disk list (loadData, reloadModalDisks)
+
+	/**
+	 * Load the disks, the pools, the filesystems found on the disks and the scrub statuses. The
+	 * error of the page (a scrub that did not start or stop) stays for a reload that the user did
+	 * not start, the one for the devices.
+	 */
+	async function loadData(showSpinner = true, startedByUser = true) {
+		const load = ++loadSequence;
+		listsLoad = disksLoad = load;
 		if (showSpinner) loading = true;
-		error = '';
+		if (startedByUser) error = '';
 		if (devicesHeld !== null) devicesLoaded = devicesHeld;
 		// Each list on its own: one that cannot be loaded says why in its card instead
 		// of looking empty, and the other ones are still shown (ADR-0271). The filesystems
 		// found on the disks have their own error as well (loadImportable).
-		const found = loadImportable();
+		const found = loadImportable(load);
 		const [diskList, poolList] = await Promise.allSettled([getDisks(), getPools()]);
-		if (diskList.status === 'fulfilled') {
-			disks = diskList.value;
-			disksError = '';
-		} else {
-			// For example 500 "lsblk failed: ..." when the host's disks cannot be listed.
-			disks = [];
-			disksError = messageOf(diskList.reason);
+		if (load === disksLoad) {
+			if (diskList.status === 'fulfilled') {
+				disks = diskList.value;
+				disksError = '';
+			} else {
+				// For example 500 "lsblk failed: ..." when the host's disks cannot be listed.
+				disks = [];
+				disksError = messageOf(diskList.reason);
+			}
+			disksLoading = false;
 		}
-		if (poolList.status === 'fulfilled') {
-			pools = poolList.value;
-			poolsError = '';
-		} else {
-			pools = [];
-			poolsError = messageOf(poolList.reason);
+		if (load === listsLoad) {
+			if (poolList.status === 'fulfilled') {
+				pools = poolList.value;
+				poolsError = '';
+			} else {
+				pools = [];
+				poolsError = messageOf(poolList.reason);
+			}
+			await loadScrubStatuses(load);
 		}
-		await loadScrubStatuses();
 		await found;
-		loading = false;
+		if (load === listsLoad) loading = false;
 	}
 
-	async function loadImportable() {
+	async function loadImportable(load: number) {
 		try {
-			importable = await getImportableFilesystems();
+			const found = await getImportableFilesystems();
+			if (load !== listsLoad) return;
+			importable = found;
 			importableError = '';
 		} catch (e) {
+			if (load !== listsLoad) return;
 			importable = [];
 			importableError = messageOf(e);
 		}
 	}
 
-	async function loadScrubStatuses() {
+	async function loadScrubStatuses(load: number) {
 		// Scrubbing needs a mounted filesystem.
 		for (const pool of pools.filter((p) => p.mounted)) {
+			if (load !== listsLoad) return;
 			try {
-				showScrubStatus(pool.name, await getScrubStatus(pool.name));
+				const status = await getScrubStatus(pool.name);
+				if (load === listsLoad) showScrubStatus(pool.name, status);
 			} catch (e) {
-				showScrubError(pool.name, e);
+				if (load === listsLoad) showScrubError(pool.name, e);
 			}
 		}
 	}
@@ -509,16 +550,21 @@
 	}
 
 	async function reloadModalDisks() {
+		const load = ++loadSequence;
+		disksLoad = load;
 		disksLoading = true;
 		disksError = '';
 		try {
-			disks = await getDisks();
+			const list = await getDisks();
+			if (load === disksLoad) disks = list;
 		} catch (e) {
 			// Do not offer the old list: it may no longer match the host.
-			disks = [];
-			disksError = messageOf(e);
+			if (load === disksLoad) {
+				disks = [];
+				disksError = messageOf(e);
+			}
 		} finally {
-			disksLoading = false;
+			if (load === disksLoad) disksLoading = false;
 		}
 	}
 

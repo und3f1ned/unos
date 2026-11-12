@@ -149,14 +149,60 @@ def copy_path_label(kind: str) -> str:
 
 
 def kept_copies(kind: str) -> list[str]:
-    """The paths of the copies of ``kind`` next to smb.conf, oldest first by the time in their name."""
+    """The paths of the copies of ``kind`` next to smb.conf, oldest first by the time in their name.
+
+    Only regular files count (lstat): a directory, a symbolic link or a FIFO with such a name is
+    neither a copy nor deleted (ADR-0362).
+    """
     directory = _conf_directory()
     pattern = re.compile(re.escape(f"{os.path.basename(settings.smb_conf_path)}.{kind}-") + _COPY_TIME_PATTERN)
     try:
         names = os.listdir(directory)
     except FileNotFoundError:
         return []
-    return [os.path.join(directory, name) for name in sorted(names) if pattern.fullmatch(name)]
+    found = []
+    for name in sorted(names):
+        if not pattern.fullmatch(name):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            if stat.S_ISREG(os.lstat(path).st_mode):
+                found.append(path)
+        except FileNotFoundError:
+            continue
+    return found
+
+
+def _holds(path: str, data: bytes) -> bool:
+    """Whether the copy at ``path`` is a regular file with exactly ``data``.
+
+    It is opened without following a symbolic link or waiting on a FIFO, an entry that replaced
+    the copy after kept_copies listed it, and read only when fstat shows a regular file of that
+    size. A copy that cannot be read holds nothing here.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        logger.warning("Could not read the copy %s: %s", os.path.basename(path), exc)
+        return False
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size != len(data):
+            return False
+        read = b""
+        while len(read) <= len(data):
+            chunk = os.read(fd, len(data) + 1 - len(read))
+            if not chunk:
+                break
+            read += chunk
+        return read == data
+    except OSError as exc:
+        logger.warning("Could not read the copy %s: %s", os.path.basename(path), exc)
+        return False
+    finally:
+        os.close(fd)
 
 
 def _stage(content: str) -> str:
@@ -286,18 +332,19 @@ class KeptCopy:
 
 
 def keep_copy(kind: str, data: bytes) -> KeptCopy:
-    """Copy smb.conf's bytes to a new <smb.conf>.<kind>-<UTC time>, unless the newest copy of
-    ``kind`` has exactly these bytes, and then delete the oldest copies of ``kind`` beyond
-    COPIES_KEPT, never the new one (ADR-0362).
+    """Copy smb.conf's bytes to a new <smb.conf>.<kind>-<UTC time>, unless a copy of ``kind``
+    has exactly these bytes, and then delete the oldest copies of ``kind`` beyond COPIES_KEPT,
+    never the new one (ADR-0362).
 
-    No copy is ever replaced, and none is refused for the number of copies. A copy that cannot
-    be written raises; an old one that cannot be deleted is logged and stays.
+    The newest COPIES_KEPT copies by the time in their names are compared, also one named
+    before the others by a clock set back; only those of this size are read. No copy is ever
+    replaced, and none is refused for the number of copies. A copy that cannot be written
+    raises; an old one that cannot be deleted is logged and stays.
     """
     copies = kept_copies(kind)
-    if copies:
-        with open(copies[-1], "rb") as f:
-            if f.read() == data:
-                return KeptCopy(copies[-1], tuple(reversed(copies[:-1])))
+    for copy in reversed(copies[-COPIES_KEPT:]):
+        if _holds(copy, data):
+            return KeptCopy(copy, tuple(other for other in reversed(copies) if other != copy))
     directory = _conf_directory()
     name = f"{os.path.basename(settings.smb_conf_path)}.{kind}-{datetime.now(timezone.utc).strftime(_COPY_TIME)}"
     path = os.path.join(directory, name)

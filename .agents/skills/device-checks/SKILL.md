@@ -132,8 +132,8 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   owner action. A backup is not named `unoscheck`: only the run that made it names one whose
   answer it lost (`FAIL  clean up: delete the check's backups`), and
   `scripts/dev/api.py DELETE /backup/<name>` removes it.
-- The smbconf check refuses to start beside an smb.conf that is not UNOS's, 10 copies
-  `smb.conf.unos-replaced-<time>` (its own copy would make UNOS delete the oldest, ADR-0362) or a
+- The smbconf check refuses to start beside an smb.conf that is not UNOS's, 9 copies
+  `smb.conf.unos-replaced-<time>` (its two copies would make UNOS delete the oldest, ADR-0362) or a
   problem on the Shares page. A run that lost its connection can
   leave smb.conf as it edited it, with the original in
   `/dev/shm/unos-scenario-unoscheck<6 hex digits>hand.conf`, a `smb.conf.unos-replaced-<time>`
