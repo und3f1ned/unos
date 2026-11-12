@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 from typing import Literal, Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -69,6 +69,22 @@ NOTHING_PENDING = "No reboot or shutdown is pending"
 _ups_monitor_running = False
 _ups_monitor_task: Optional[asyncio.Task] = None
 UPS_CHECK_INTERVAL = 30  # Check every 30 seconds
+# The monitor's last check of the UPS; None before its first one and while the UPS settings are
+# off (ADR-0356). Kept in RAM only.
+_ups_last_check: Optional["UPSStatus"] = None
+
+# NUT's upsc runs on the host (ADR-0356), under the host's timeout (ADR-0258): at most
+# UPSC_TIMEOUT seconds, SIGKILL UPSC_KILL_AFTER seconds later; nsenter is waited for UPSC_WAIT.
+UPSC_TIMEOUT = 10
+UPSC_KILL_AFTER = 5
+UPSC_WAIT = UPSC_TIMEOUT + UPSC_KILL_AFTER + 5
+UPSC_MISSING = "The host has no NUT client: upsc was not found. Install the package nut-client on the host"
+UPS_PASSWORD_WITHOUT_USERNAME = "The NUT password needs a username"
+# A UPS of NUT and its server, as upsc takes them in <ups>@<host>:<port>; they reach upsc on the
+# host as one argument (ADR-0293): a name of ups.conf, and a host name, IPv4 address or IPv6
+# address in brackets.
+UPS_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+UPS_HOST_PATTERN = r"^(?:[A-Za-z0-9][A-Za-z0-9.-]{0,252}|\[[0-9A-Fa-f:.]{2,45}\])$"
 
 
 class PowerConfig(BaseModel):
@@ -83,20 +99,43 @@ class PowerConfig(BaseModel):
     idle_timeout_minutes: int = 30
 
 
-class UPSConfig(BaseModel):
+class UPSSettings(BaseModel):
+    """The UPS settings without the NUT password, which no answer shows (ADR-0356)."""
     enabled: bool = False
-    host: str = "localhost"
-    port: int = 3493
-    ups_name: str = "ups"
+    host: str = Field(default="localhost", pattern=UPS_HOST_PATTERN)
+    port: int = Field(default=3493, ge=1, le=65535)
+    ups_name: str = Field(default="ups", pattern=UPS_NAME_PATTERN)
     username: Optional[str] = None
-    password: Optional[str] = None
     auto_shutdown: bool = True
     shutdown_battery_percent: int = 20
     shutdown_runtime_minutes: int = 5
 
+    @property
+    def ups_identifier(self) -> str:
+        """The UPS as upsc names it."""
+        return f"{self.ups_name}@{self.host}:{self.port}"
+
+
+class UPSConfig(UPSSettings):
+    """The UPS settings' file, with the NUT password: kept out of repr() and so out of the logs."""
+    password: Optional[str] = Field(default=None, repr=False)
+
+
+class UPSConfigRequest(UPSSettings):
+    """PUT /power/ups/config. The password is write-only: without one (absent, null or empty) the
+    stored one stays, and a request without a username stores none (ADR-0356)."""
+    password: Optional[str] = Field(default=None, repr=False)
+
+
+class UPSConfigAnswer(UPSSettings):
+    """GET and PUT /power/ups/config: the settings, and whether a NUT password is stored."""
+    has_password: bool = False
+
 
 class UPSStatus(BaseModel):
     available: bool
+    # Why the UPS could not be read (upsc missing on the host, upsd's error); None when it was.
+    reason: Optional[str] = None
     name: Optional[str] = None
     status: Optional[str] = None  # OL (online), OB (on battery), LB (low battery)
     charge_percent: Optional[int] = None
@@ -108,6 +147,20 @@ class UPSStatus(BaseModel):
     model: Optional[str] = None
     battery_type: Optional[str] = None
     last_checked: str = ""
+
+
+class UPSMonitorStatus(BaseModel):
+    """GET /power/ups/monitor/status (ADR-0356)."""
+    running: bool
+    enabled: bool
+    # Whether the monitor's last check read the UPS; False, with reason and last_checked None,
+    # before its first check and while the settings are off.
+    available: bool
+    reason: Optional[str] = None
+    last_checked: Optional[str] = None
+    auto_shutdown: bool
+    shutdown_battery_percent: int
+    shutdown_runtime_minutes: int
 
 
 class PowerStatus(BaseModel):
@@ -156,53 +209,75 @@ def save_config(config: PowerConfig) -> None:
     state_files.write_json(Path(CONFIG_FILE), config.model_dump(), sync=False)
 
 
+def _read_ups_config(data: object) -> UPSConfig:
+    """The decoded UPS settings' file. A refusal names the fields and why, never their values:
+    load_json logs it, and pydantic's own message repeats the values, the password among them
+    (ADR-0356)."""
+    try:
+        return UPSConfig.model_validate(data)
+    except ValidationError as exc:
+        fields = "; ".join(f"{'.'.join(str(part) for part in error['loc']) or 'the file'}: {error['type']}"
+                           for error in exc.errors())
+        raise ValueError(f"it holds no valid UPS settings ({fields})") from None
+
+
 def load_ups_config() -> UPSConfig:
     """The UPS settings; the defaults without a file, or for one kept as .bad (ADR-0324)."""
-    return state_files.load_json(Path(UPS_CONFIG_FILE), UPSConfig.model_validate, UPSConfig, what="the UPS settings")
+    return state_files.load_json(Path(UPS_CONFIG_FILE), _read_ups_config, UPSConfig, what="the UPS settings")
 
 
 def saved_ups_config() -> Optional[UPSConfig]:
     """The UPS settings that were saved; None while there are none (no file, or one kept as .bad)."""
-    return state_files.load_json(Path(UPS_CONFIG_FILE), UPSConfig.model_validate, lambda: None, what="the UPS settings")
+    return state_files.load_json(Path(UPS_CONFIG_FILE), _read_ups_config, lambda: None, what="the UPS settings")
 
 
 def save_ups_config(config: UPSConfig) -> None:
-    """Replace the UPS settings' file (ADR-0324)."""
-    state_files.write_json(Path(UPS_CONFIG_FILE), config.model_dump(), sync=False)
+    """Replace the UPS settings' file (ADR-0324); it holds the NUT password, so only its owner reads it."""
+    state_files.write_json(Path(UPS_CONFIG_FILE), config.model_dump(), sync=False, mode=0o600)
 
 
-def get_ups_status(config: UPSConfig) -> UPSStatus:
-    """Get UPS status using upsc command (NUT client)."""
+def _upsc(args: list[str]) -> tuple[Optional[str], Optional[str]]:
+    """Run NUT's upsc with ARGS on the host (ADR-0356): its output and None, or None and why it
+    could not run or what it reported. Blocking: run it off the event loop."""
+    cmd = ["timeout", f"--kill-after={UPSC_KILL_AFTER}", str(UPSC_TIMEOUT), "upsc", *args]
     try:
-        # Try to get UPS data via upsc
-        ups_identifier = f"{config.ups_name}@{config.host}:{config.port}"
-        result = subprocess.run(
-            ["upsc", ups_identifier],
-            capture_output=True, text=True, timeout=10
-        )
+        result = host.run_on_host(cmd, timeout=UPSC_WAIT, errors="replace")
+    except subprocess.TimeoutExpired:
+        return None, f"upsc did not answer within {UPSC_WAIT} seconds"
+    except OSError as exc:
+        return None, f"Could not run upsc: {exc}"
+    if result.returncode == 127:  # timeout(1) found no upsc
+        return None, UPSC_MISSING
+    if result.returncode in (124, 137):  # ended by timeout(1), with SIGKILL after --kill-after
+        return None, f"upsc did not answer within {UPSC_TIMEOUT} seconds"
+    if not result.ok:
+        output = " ".join((result.stderr or result.stdout).split())[:300]
+        return None, f"upsc could not read {args[-1]}: {output or f'exit status {result.returncode}'}"
+    return result.stdout, None
 
-        if result.returncode != 0:
-            return UPSStatus(available=False, last_checked=datetime.now().isoformat())
 
-        # Parse upsc output
-        data = {}
-        for line in result.stdout.strip().split("\n"):
-            if ":" in line:
-                key, value = line.split(":", 1)
-                data[key.strip()] = value.strip()
-
-        # Map NUT variables to our model
-        status = data.get("ups.status", "")
-        charge = data.get("battery.charge")
-        runtime = data.get("battery.runtime")
-        load = data.get("ups.load")
-        input_v = data.get("input.voltage")
-        output_v = data.get("output.voltage")
-
+def get_ups_status(config: UPSSettings) -> UPSStatus:
+    """The UPS's state, as upsc on the host reads it from upsd; unavailable with the reason when it
+    cannot be read. Blocking: run it off the event loop."""
+    checked = datetime.now().isoformat()
+    output, reason = _upsc([config.ups_identifier])
+    if output is None:
+        return UPSStatus(available=False, reason=reason, last_checked=checked)
+    data = {}
+    for line in output.splitlines():
+        key, sep, value = line.partition(":")
+        if sep:
+            data[key.strip()] = value.strip()
+    charge = data.get("battery.charge")
+    runtime = data.get("battery.runtime")
+    load = data.get("ups.load")
+    input_v = data.get("input.voltage")
+    output_v = data.get("output.voltage")
+    try:
         return UPSStatus(
             available=True,
             name=config.ups_name,
-            status=status,
+            status=data.get("ups.status", ""),  # OL (online), OB (on battery), LB (low battery)
             charge_percent=int(charge) if charge else None,
             runtime_minutes=int(float(runtime) / 60) if runtime else None,
             load_percent=int(load) if load else None,
@@ -211,29 +286,45 @@ def get_ups_status(config: UPSConfig) -> UPSStatus:
             manufacturer=data.get("ups.mfr"),
             model=data.get("ups.model"),
             battery_type=data.get("battery.type"),
-            last_checked=datetime.now().isoformat()
+            last_checked=checked,
         )
-    except subprocess.TimeoutExpired:
-        return UPSStatus(available=False, last_checked=datetime.now().isoformat())
-    except FileNotFoundError:
-        # upsc not installed
-        return UPSStatus(available=False, last_checked=datetime.now().isoformat())
-    except Exception:
-        return UPSStatus(available=False, last_checked=datetime.now().isoformat())
+    except ValueError as exc:
+        return UPSStatus(available=False, reason=f"upsc answered a value UNOS cannot read: {exc}",
+                         last_checked=checked)
+
+
+def _log_ups_change(previous: Optional[UPSStatus], status: UPSStatus, config: UPSSettings) -> None:
+    """Log a check of the monitor only when its outcome changes: a host without upsc gets one
+    line, not one every UPS_CHECK_INTERVAL seconds (ADR-0356)."""
+    if status.reason == (previous.reason if previous is not None else None):
+        return
+    if status.reason is None:
+        logger.info("The UPS monitor reads %s again", config.ups_identifier)
+    else:
+        logger.warning("The UPS monitor cannot read %s: %s", config.ups_identifier, status.reason)
 
 
 async def ups_monitor_loop():
-    """Background loop for UPS monitoring and auto-shutdown."""
-    global _ups_monitor_running
+    """Every UPS_CHECK_INTERVAL seconds while the UPS settings are enabled: read the UPS and shut
+    the host down on low battery.
+
+    While the UPS cannot be read (no upsc on the host, upsd out of reach) the monitor only keeps
+    the reason for GET /power/ups/monitor/status: it shuts nothing down, writes nothing and logs
+    the reason when it changes (ADR-0356). It reads the UPS once the host has upsc again.
+    """
+    global _ups_last_check
 
     while _ups_monitor_running:
         try:
             config = load_ups_config()
             if not config.enabled:
+                _ups_last_check = None
                 await asyncio.sleep(UPS_CHECK_INTERVAL)
                 continue
 
-            status = get_ups_status(config)
+            status = await asyncio.to_thread(get_ups_status, config)
+            _log_ups_change(_ups_last_check, status, config)
+            _ups_last_check = status
 
             if status.available and config.auto_shutdown:
                 # Check if we should shutdown
@@ -263,7 +354,7 @@ async def ups_monitor_loop():
                     subprocess.Popen(["shutdown", "-h", "+1", f"UPS auto-shutdown: {reason}"])
 
         except Exception as e:
-            print(f"UPS monitor error: {e}")
+            logger.warning("UPS monitor error: %s", e)
 
         await asyncio.sleep(UPS_CHECK_INTERVAL)
 
@@ -665,29 +756,53 @@ async def disable_wol(request: Request, interface: str, user=Depends(verify_toke
 
 @router.get("/ups/status", response_model=UPSStatus)
 async def get_ups_status_endpoint(_: dict = Depends(verify_token)):
-    """Get current UPS status."""
+    """The UPS's state, read now with upsc on the host: available false with the reason when it
+    cannot be read, such as UPSC_MISSING while the host has no upsc (ADR-0356)."""
     config = load_ups_config()
-    return get_ups_status(config)
+    return await asyncio.to_thread(get_ups_status, config)
 
 
-@router.get("/ups/config", response_model=UPSConfig)
+def _ups_config_answer(config: UPSConfig) -> UPSConfigAnswer:
+    """The settings without the NUT password, and whether one is stored (ADR-0356)."""
+    return UPSConfigAnswer(**config.model_dump(exclude={"password"}), has_password=bool(config.password))
+
+
+@router.get("/ups/config", response_model=UPSConfigAnswer)
 async def get_ups_config(_: dict = Depends(verify_token)):
-    """Get UPS configuration."""
-    return load_ups_config()
+    """The UPS settings, without the NUT password: has_password says whether one is stored."""
+    return _ups_config_answer(load_ups_config())
 
 
-@router.put("/ups/config", response_model=UPSConfig)
-async def update_ups_config(config: UPSConfig, _: dict = Depends(verify_token)):
-    """Update UPS configuration."""
-    save_ups_config(config)
-    return config
+@router.put("/ups/config", response_model=UPSConfigAnswer)
+async def update_ups_config(request: UPSConfigRequest, _: dict = Depends(verify_token)):
+    """Replace the UPS settings; the file is written only when they change (ADR-0214).
+
+    The NUT password is write-only (ADR-0356): a request without one (absent, null or empty)
+    keeps the stored one, a request without a username stores none, and a password without a
+    username is refused (400).
+    """
+    username = request.username or None
+    if request.password and username is None:
+        raise HTTPException(400, UPS_PASSWORD_WITHOUT_USERNAME)
+    saved = saved_ups_config()
+    if username is None:
+        password = None
+    elif request.password:
+        password = request.password
+    else:
+        password = saved.password if saved is not None else None
+    config = UPSConfig(**request.model_dump(exclude={"username", "password"}), username=username,
+                       password=password)
+    if config != saved:
+        save_ups_config(config)
+    return _ups_config_answer(config)
 
 
 @router.post("/ups/test")
 async def test_ups_connection(_: dict = Depends(verify_token)):
-    """Test UPS connection."""
+    """Read the UPS now; 503 with the reason when it cannot be read."""
     config = load_ups_config()
-    status = get_ups_status(config)
+    status = await asyncio.to_thread(get_ups_status, config)
 
     if status.available:
         return {
@@ -698,42 +813,35 @@ async def test_ups_connection(_: dict = Depends(verify_token)):
             "battery_charge": status.charge_percent
         }
     else:
-        raise HTTPException(503, "Unable to connect to UPS. Check NUT configuration.")
+        raise HTTPException(503, f"Unable to connect to the UPS: {status.reason}")
 
 
 @router.get("/ups/list")
 async def list_ups_devices(_: dict = Depends(verify_token)):
-    """List available UPS devices from NUT."""
+    """The UPSs that upsd of the settings' host serves, read with upsc on the host; an empty list
+    and the error when they cannot be read."""
     config = load_ups_config()
-    try:
-        result = subprocess.run(
-            ["upsc", "-l", f"{config.host}:{config.port}"],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode != 0:
-            return {"devices": [], "error": "Unable to list UPS devices"}
-
-        devices = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
-        return {"devices": devices}
-    except subprocess.TimeoutExpired:
-        return {"devices": [], "error": "Connection timeout"}
-    except FileNotFoundError:
-        return {"devices": [], "error": "NUT client (upsc) not installed"}
-    except Exception as e:
-        return {"devices": [], "error": str(e)}
+    output, reason = await asyncio.to_thread(_upsc, ["-l", f"{config.host}:{config.port}"])
+    if output is None:
+        return {"devices": [], "error": reason}
+    return {"devices": [line.strip() for line in output.splitlines() if line.strip()]}
 
 
-@router.get("/ups/monitor/status")
+@router.get("/ups/monitor/status", response_model=UPSMonitorStatus)
 async def get_ups_monitor_status(_: dict = Depends(verify_token)):
-    """Get UPS monitor status."""
+    """Whether the monitor runs, and whether its last check read the UPS, or why not (ADR-0356)."""
     config = load_ups_config()
-    return {
-        "running": _ups_monitor_running,
-        "enabled": config.enabled,
-        "auto_shutdown": config.auto_shutdown,
-        "shutdown_battery_percent": config.shutdown_battery_percent,
-        "shutdown_runtime_minutes": config.shutdown_runtime_minutes
-    }
+    check = _ups_last_check if config.enabled else None
+    return UPSMonitorStatus(
+        running=_ups_monitor_running,
+        enabled=config.enabled,
+        available=check is not None and check.available,
+        reason=check.reason if check is not None else None,
+        last_checked=check.last_checked if check is not None else None,
+        auto_shutdown=config.auto_shutdown,
+        shutdown_battery_percent=config.shutdown_battery_percent,
+        shutdown_runtime_minutes=config.shutdown_runtime_minutes,
+    )
 
 
 async def start_ups_monitor():

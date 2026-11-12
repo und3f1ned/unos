@@ -2634,11 +2634,14 @@
         "On battery below the set level, UNOS sends an alert and shuts the host down",
         "Test connection names a failure"
       ],
+      "verified_by": [
+        "supervisor/tests/test_ups.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0043"
       ],
-      "notes": "The monitor starts in the lifespan, but nothing tests it. Open: the device check and the re-check after a reboot (ADR-0018). In the supervisor container the monitor never shuts the host down (step 2): it starts the shutdown only when is_in_container() is false, and /.dockerenv makes it true (supervisor/src/power/router.py)."
+      "notes": "Safety fix 2026-11-12 (ADR-0356, not yet in this entry's adr list): GET and PUT /api/v1/power/ups/config answer has_password, never the NUT password; a PUT without a password (absent, null or empty) keeps the stored one, one without a username removes it, a password without a username is refused (400); /data/ups_config.json is written with mode 0600 and only on a change, and a damaged one is logged without its values. upsc runs on the host through src/host.py under timeout(1), off the event loop (OPTIONAL_HOST_TOOLS: nut-client), with ups_name, host and port checked. While the host has no upsc, GET /power/ups/status answers available false with the reason \"The host has no NUT client: upsc was not found. Install the package nut-client on the host\", POST /power/ups/test 503 with it, GET /power/ups/list an empty list with it as error, and GET /power/ups/monitor/status available false with it; the monitor then shuts nothing down, writes nothing and logs the reason once. supervisor/tests/test_ups.py checks this on a fake host, and the API part of steps 1 and 3 there. The web UI has no UPS page. Open: steps 1 to 3 (no UPS on the dev device; NUT is an owner install), the page in System > Power, the device check and the re-check after a reboot (ADR-0018). UNOS does not use the NUT username and password yet. In the supervisor container the monitor never shuts the host down (step 2): it starts the shutdown only when is_in_container() is false, and /.dockerenv makes it true (supervisor/src/power/router.py)."
     },
     {
       "id": "system.scheduled-power",

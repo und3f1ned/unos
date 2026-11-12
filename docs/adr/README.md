@@ -349,6 +349,7 @@ and this index, and `make check-fast` runs it.
 | [0332](0332-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner.md) | The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner | accepted | 2026-11-10 |
 | [0336](0336-http-notifications-that-cannot-connect-from-the-container-go-once-more-from-the-hosts-network.md) | An HTTP notification that cannot connect from the container goes once more from the host's network, with the host's curl | accepted | 2026-11-11 |
 | [0346](0346-the-dashboard-shows-the-cpu-or-soc-temperature-chosen-by-sensor-name-in-one-place.md) | The dashboard shows the CPU's or SoC's temperature, chosen by the sensor's name in one place on the server | accepted | 2026-11-11 |
+| [0356](0356-the-nut-password-is-write-only-and-upsc-runs-on-the-host.md) | The NUT password of the UPS settings is write-only, and upsc runs on the host, where its absence makes the UPS unavailable | accepted | 2026-11-12 |
 
 ## Web UI
 

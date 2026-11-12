@@ -289,6 +289,11 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A new user never inherits the SMB access of a deleted user who had the same
   id. After a restore, an account whose SMB user id belongs to another account
   on this server must turn SMB on again, and gets a new user id.
+- `GET` and `PUT /api/v1/power/ups/config` no longer answer the stored NUT
+  password: they answer `has_password`. A `PUT` without a password keeps the
+  stored one, and one without a username removes it. The settings file is
+  readable by its owner only, and a damaged one is logged without its values.
+  `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
 - Off-device copies: **System** → **Backup & Restore** copies the
@@ -755,6 +760,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- The UPS state was never read: `upsc` ran in the supervisor's container,
+  which has no NUT client. It now runs on the host, under a time limit and
+  off the event loop. While the host has no `upsc`, the UPS status, Test
+  connection and the UPS monitor's status answer that the UPS is unavailable
+  and name the missing package nut-client; the monitor then writes nothing,
+  logs it once and shuts nothing down.
 - `POST /api/v1/containers/{id}/restart` restarted UNOS's own containers,
   which stop and remove refuse; it now refuses them too (404).
 - Two-factor authentication set up in two tabs at once could be turned on
@@ -1155,9 +1166,9 @@ manager, encrypted backup uploads, health checks, CI checks).
 
 ### Known issues
 - Not working yet, each with an entry in `feature-list.json`:
-  - The UPS state is never read, because the supervisor image has no NUT client,
-    and the shutdown on low battery is skipped inside a container
-    (`system.ups-monitoring`).
+  - The UPS has no page and is set only through the API, its state is read
+    only where the host has NUT, which UNOS does not install, and the shutdown
+    on low battery is skipped inside a container (`system.ups-monitoring`).
   - Scheduled shutdown and wake times are stored, and nothing acts on them
     (`system.scheduled-power`).
   - Alerts are sent only for pool (RAID) errors and disk health (SMART)
