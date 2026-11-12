@@ -4,10 +4,12 @@ Backup archives are untrusted when they are restored: they can be uploaded,
 and a stolen administrator session must not be able to turn a crafted
 archive into arbitrary file writes on the host. Restore therefore:
 
-* decompresses the archive with a size limit and extracts only an allowlist
-  of regular files (``_FILE_MEMBERS``); links, devices, absolute paths and
-  ``..`` abort the restore, and tarfile's ``data`` filter is applied as a
-  second line of defence;
+* reads the archive in one pass over its gzip stream with a size limit
+  (``_read_archive``): every member is checked as it comes, only an allowlist
+  of regular files is taken (``_FILE_MEMBERS``), and of those only unos.db is
+  written to /tmp, as it comes, with tarfile's ``data`` filter as a second line
+  of defence; links, devices, absolute paths and ``..`` abort the restore,
+  also after unos.db, before anything is changed;
 * replaces the live database only after the restored copy passes
   ``PRAGMA integrity_check``, has a usable ``users`` table with an
   administrator and no triggers or views. The current database is copied
@@ -23,8 +25,8 @@ archive into arbitrary file writes on the host. Restore therefore:
   SMB lock, which also covers the post-restore step that renders smb.conf from
   the restored database.
 
-An uploaded backup is checked with the same limits and member checks in one
-pass over its gzip stream, which writes nothing (``_inspect_archive``).
+An uploaded backup is checked by the same pass, which then writes nothing
+(``_inspect_archive``).
 
 Backups created or uploaded here are written under a temporary name in
 BACKUP_DIR and get their final name only when complete
@@ -400,21 +402,6 @@ def _open_archive(backup_path: Path, passphrase: str | None) -> BinaryIO:
         raise BackupValidationError("Invalid passphrase or corrupted backup") from None
 
 
-def _decompress(source: BinaryIO, tar_path: Path) -> None:
-    """Decompress a gzip stream into ``tar_path``, refusing decompression bombs."""
-    total = 0
-    with open(tar_path, "wb") as out:
-        try:
-            with gzip.GzipFile(fileobj=source, mode="rb") as gz:
-                while chunk := gz.read(_CHUNK_SIZE):
-                    total += len(chunk)
-                    if total > MAX_TAR_BYTES:
-                        raise BackupValidationError("Backup archive is too large when decompressed")
-                    out.write(chunk)
-        except (gzip.BadGzipFile, EOFError, zlib.error) as e:
-            raise BackupValidationError("Invalid backup: corrupt archive") from e
-
-
 def _member_name(member: tarfile.TarInfo) -> str:
     """Normalize a member name; refuse absolute paths and ``..``."""
     name = member.name
@@ -427,10 +414,7 @@ def _member_name(member: tarfile.TarInfo) -> str:
 
 
 def _scan_members(tar: Iterable[tarfile.TarInfo]) -> dict[str, tarfile.TarInfo]:
-    """Validate every member and return the ones to extract, by normalized name.
-
-    ``tar`` is a TarFile, or the members of a tar stream (_stream_members).
-    """
+    """Validate every member of a tar stream (_stream_members) and return the files of _FILE_MEMBERS, by normalized name."""
     wanted: dict[str, tarfile.TarInfo] = {}
     seen: set[str] = set()
     try:
@@ -515,13 +499,6 @@ class _BackupTarFile(tarfile.TarFile):
     extended_bytes = 0  # the data of the extended headers read so far
 
 
-def _open_tar(tar_path: Path) -> tarfile.TarFile:
-    try:
-        return _BackupTarFile.open(tar_path, "r:")
-    except _CORRUPT_TAR_ERRORS as e:  # the first header is read here
-        raise BackupValidationError("Invalid backup: corrupt archive") from e
-
-
 def _restore_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo:
     """tarfile's data filter, without the modification time of the archive.
 
@@ -533,11 +510,16 @@ def _restore_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo:
 
 
 def _extract(tar: tarfile.TarFile, members: dict[str, tarfile.TarInfo], dest: Path) -> None:
+    """Extract ``members`` into ``dest`` through _restore_filter, whose refusals are BackupValidationError.
+
+    In a tar stream, only the current member can be extracted; its data cut short is
+    tarfile's ReadError, for the caller (_scan_members: a corrupt archive).
+    """
     if not hasattr(tarfile, "data_filter"):
         raise RuntimeError("Restoring backups requires Python 3.11.4 or newer (tarfile filters)")
     try:
         tar.extractall(dest, members=list(members.values()), filter=_restore_filter)
-    except tarfile.TarError as e:  # includes the data filter's refusals
+    except tarfile.FilterError as e:
         raise BackupValidationError(f"Invalid backup: {e}") from e
 
 
@@ -546,7 +528,7 @@ class _DecompressedStream:
 
     read() refuses a decompression bomb (more than MAX_TAR_BYTES in all) and
     reports damaged gzip data (header, deflate data, CRC or length, a stream
-    cut short, garbage after it) as a corrupt archive, like _decompress.
+    cut short, garbage after it) as a corrupt archive.
     """
 
     def __init__(self, gz: gzip.GzipFile) -> None:
@@ -568,52 +550,85 @@ class _DecompressedStream:
             pass
 
 
+class _DataPastTheLimit(BackupValidationError):
+    """A member's data would end past MAX_TAR_BYTES (_stream_members)."""
+
+    def __init__(self) -> None:
+        super().__init__("Backup archive is too large when decompressed")
+
+
 def _stream_members(
-    tar: tarfile.TarFile, stream: _DecompressedStream, manifest: list[bytes]
+    tar: tarfile.TarFile, stream: _DecompressedStream, manifest: list[bytes], dest: Path | None
 ) -> Iterator[tarfile.TarInfo]:
-    """The members of a tar stream, for _scan_members; reads manifest.json on the way.
+    """The members of a tar stream, for _scan_members; reads manifest.json, and extracts unos.db into ``dest``, on the way.
 
     A member is handed on before the next one is read, so _scan_members
     checks it first. tarfile skips the data of a member by reading it when
     the next one is asked for, up to tar.offset, where the next header
     starts: a member whose data would end past MAX_TAR_BYTES is refused
     before that (its size can be 2**63 or more).
-    manifest.json can only be read while it is the current member: it is
+    A member's data can only be read while it is the current member: it is
     read once _scan_members has accepted it, which it does only for a
-    regular file of at most MAX_CONFIG_BYTES. After the last member the
-    stream is read to its end, so that the size limit and the checks of gzip
-    cover all of it.
+    regular file of _FILE_MEMBERS within its limit. manifest.json is kept in
+    memory, and unos.db extracted into ``dest`` when it is not None (a
+    restore); scheduled_tasks.json, which a restore does not restore, is only
+    noted. After the last member the stream is read to its end, so that the
+    size limit and the checks of gzip cover all of it.
     """
     for member in tar:
         yield member
         # _scan_members did not refuse the member and asks for the next one.
         if tar.offset > MAX_TAR_BYTES:
-            raise BackupValidationError("Backup archive is too large when decompressed")
-        if member.isreg() and _member_name(member) == "manifest.json":
+            raise _DataPastTheLimit()
+        if not member.isreg():
+            continue
+        name = _member_name(member)
+        if name == "manifest.json":
             with tar.extractfile(member) as data:
                 manifest.append(data.read(MAX_CONFIG_BYTES + 1))
+        elif name == "unos.db" and dest is not None:
+            _extract(tar, {name: member}, dest)
     stream.read_to_end()
 
 
-def _inspect_archive(archive: Path) -> dict:
-    """Validate an archive in one pass over its gzip stream; return its manifest.
+def _read_archive(source: BinaryIO, dest: Path | None) -> tuple[dict, dict[str, tarfile.TarInfo]]:
+    """Validate a backup in one pass over its gzip stream ``source``; return its manifest and its files of _FILE_MEMBERS.
 
-    Nothing is written, in /tmp or anywhere: tarfile reads the decompressed
-    data as a stream (mode "r|"), _scan_members checks each member as it
-    comes, and only manifest.json is kept, in memory. Restore applies the
-    same limits and checks to the files it extracts.
+    tarfile reads the decompressed data as a stream (mode "r|"),
+    _scan_members checks each member as it comes, and manifest.json is kept
+    in memory. The check of an upload (``dest`` None) writes nothing, in /tmp
+    or anywhere. A restore (``dest`` its folder in /tmp) extracts unos.db
+    there as it comes, the one file it writes (ADR-0363); a member refused
+    after it refuses the backup as well, and the caller removes the folder.
+
+    A member whose data would end past MAX_TAR_BYTES is refused by the
+    upload at once, as too large (ADR-0345). A restore first reads the rest
+    of the stream, and answers as it did when it decompressed the whole
+    archive before reading it: too large when the stream is, otherwise a
+    corrupt archive, whose data ends before the header says.
     """
     manifest: list[bytes] = []
-    with _open_archive(archive, None) as source, gzip.GzipFile(fileobj=source, mode="rb") as gz:
+    with gzip.GzipFile(fileobj=source, mode="rb") as gz:
         stream = _DecompressedStream(gz)
         try:
             with _BackupTarFile.open(fileobj=stream, mode="r|") as tar:
-                _scan_members(_stream_members(tar, stream, manifest))
+                members = _scan_members(_stream_members(tar, stream, manifest, dest))
+        except _DataPastTheLimit as e:
+            if dest is None:
+                raise
+            stream.read_to_end()
+            raise BackupValidationError("Invalid backup: corrupt archive") from e
         except _CORRUPT_TAR_ERRORS as e:  # the first header is read by tarfile.open
             raise BackupValidationError("Invalid backup: corrupt archive") from e
     if not manifest:  # _scan_members refuses a backup without one
         raise BackupValidationError("Invalid backup: missing manifest")
-    return _parse_manifest(manifest[0])
+    return _parse_manifest(manifest[0]), members
+
+
+def _inspect_archive(archive: Path) -> dict:
+    """Validate an unencrypted backup without writing anything (_read_archive); return its manifest."""
+    with _open_archive(archive, None) as source:
+        return _read_archive(source, None)[0]
 
 
 def backup_temp_file(directory: Path, kind: str) -> Path:
@@ -781,6 +796,9 @@ def _prepare_smb(db_file: Path, db_path: Path) -> list[str]:
     conn = sqlite3.connect(str(db_file), isolation_level=None)
     try:
         conn.execute("PRAGMA trusted_schema = OFF")
+        # The rollback journal of this temporary copy stays in memory, not beside it in /tmp
+        # (ADR-0363); a crash loses the copy anyway.
+        conn.execute("PRAGMA journal_mode = MEMORY")
         conn.execute("BEGIN IMMEDIATE")
         try:
             authoritative = service.restored_smb_authoritative(conn)
@@ -846,17 +864,9 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
     with _temporary_files_of_restore():
         workdir = tempfile.TemporaryDirectory(prefix="unos-restore-")
     with workdir:
-        work = Path(workdir.name)
-        tar_path = work / "backup.tar"
-        extract_dir = work / "extract"
-        with _temporary_files_of_restore():
-            with _open_archive(backup_path, passphrase) as source:
-                _decompress(source, tar_path)
-            extract_dir.mkdir()
-            with _open_tar(tar_path) as tar:
-                members = _scan_members(tar)
-                _extract(tar, members, extract_dir)
-        manifest = _parse_manifest((extract_dir / "manifest.json").read_bytes())
+        extract_dir = Path(workdir.name)
+        with _temporary_files_of_restore(), _open_archive(backup_path, passphrase) as source:
+            manifest, members = _read_archive(source, extract_dir)
 
         # Validate everything before changing anything.
         db_path = _live_db_path()
@@ -1236,9 +1246,9 @@ async def restore_backup(
 ):
     """Restore from a backup file. Provide passphrase for encrypted backups.
 
-    The archive is decompressed and its files are extracted into /tmp first
-    (a tmpfs in RAM in the container); when they do not fit, the answer is
-    507 and nothing was restored.
+    The archive is checked in one pass over its gzip stream, which extracts
+    its database into /tmp (a tmpfs in RAM in the container); when it does
+    not fit, the answer is 507 and nothing was restored.
     """
     ensure_backup_dir()
     backup_path = _backup_path(filename)

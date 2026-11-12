@@ -752,6 +752,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   with HTTP 507, and the database copy of `update.sh` with an error
   (`update.sh` then asks whether to update without a backup, and stops
   without a terminal).
+- A restore checks the backup and extracts its database in one pass over the
+  archive, encrypted backups too, instead of decompressing the whole archive
+  into `/tmp` first: it needs about half the room in `/tmp` (and so in RAM) it
+  needed, the size of the database, and still refuses every archive it
+  refused. The manifest is read in memory, and the scheduled tasks of a
+  backup task's backup, which a restore does not restore, are no longer
+  extracted.
 - While a scrub runs, btrfs rewrites its progress file every 5 seconds, for
   hours on a large pool. The supervisor keeps that file (`/var/lib/btrfs`) in
   RAM instead of on the system disk; the result of the last scrub is

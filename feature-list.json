@@ -2265,10 +2265,16 @@
         "The peak use of /tmp during a restore is at most half of what it is today",
         "A restore still refuses every archive it refuses today"
       ],
+      "verified_by": [
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_backup_upload_check.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0177"
-      ]
+        "ADR-0177",
+        "ADR-0363"
+      ],
+      "notes": "Done in the code 2026-11-12 (ADR-0363). A restore reads the backup in one pass over its gzip stream, the pass of the upload check (_read_archive in supervisor/src/backup/router.py), encrypted backups after their decryption in memory as before, and writes only unos.db to /tmp, as it comes; the manifest is read into memory, scheduled_tasks.json only noted, and the SMB preparation keeps its rollback journal in memory. Step 1: test_a_restore_holds_at_most_half_as_much_in_tmp_as_before (plain and encrypted) measures the files in TMPDIR after every call that returns in the restore's thread, for a backup with a database of about 4 MiB: it failed on the code before with 8,540,791 bytes (the decompressed archive, the extracted files and the SQLite journal) against at most 4,257,827, half of the decompressed archive plus the files extracted from it, and now holds the database alone. Step 2: every refusal test of test_backup_restore.py passes unchanged, with the same answers (a member whose data would end past MAX_TAR_BYTES is still a corrupt archive for a restore, as for the decompressed archive, ADR-0363), and so do test_backup_upload_check.py and test_backup_files.py; test_a_database_cut_short_or_refused_after_it_leaves_nothing_in_tmp covers the database extracted before a refusal. The 507 test lost its decompression phase, which no longer exists: a /tmp that is too small now fails at unos.db. scripts/dev/scenario.py restore_check needs no change (its restores answer as before). Open: not host-level; on the dev device after a deploy, scripts/dev/scenario.sh restore and backups must still pass, and neither measures the peak of the container's /tmp, which a step of the restore check sampling df /tmp in the supervisor container during its restores could show."
     },
     {
       "id": "backup.edge-cases",

@@ -47,16 +47,15 @@ services:
           propagation: rshared
     # Temporary files in RAM: the container's writable layer is on the system
     # disk, on many boards an SD card, which writes wear out. The largest use
-    # is a restore (supervisor/src/backup/router.py): the decompressed
-    # archive, at most MAX_TAR_BYTES (640 MiB), and the files extracted from
-    # it, at most as much again, while a backup made meanwhile collects its
-    # files here: a copy of the database and the small files, at most as much
-    # again, or it could not be restored (deploy/update.sh copies the database
-    # here the same way). That is 1920 MiB, hence 2g, with a margin for the
-    # small users. Uploads write nothing here: an uploaded backup is checked
-    # in one pass, as a stream. A tmpfs takes RAM only for the files it holds:
-    # about twice the size of the database while a backup is restored, about
-    # its size while one is made, nothing in between. The limit keeps a
+    # is a restore (supervisor/src/backup/router.py), which reads the archive
+    # in one pass and extracts only the database here, at most MAX_DB_BYTES
+    # (512 MiB), while a backup made meanwhile collects its files here: a copy
+    # of the database and the small files, at most MAX_TAR_BYTES (640 MiB), or
+    # it could not be restored (deploy/update.sh copies the database here the
+    # same way). That is 1152 MiB; 2g leaves a margin. Uploads write nothing
+    # here: an uploaded backup is checked in one pass, as a stream. A tmpfs
+    # takes RAM only for the files it holds: about the size of the database
+    # while a backup is restored or made, nothing in between. The limit keeps a
     # runaway write to about a quarter of the RAM of an 8 GB board; beyond it,
     # writes fail with "No space left on device": a backup fails, and a
     # restore answers 507, before either has changed anything. noexec, nosuid
