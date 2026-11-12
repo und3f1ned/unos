@@ -1291,6 +1291,11 @@ class FakeNas:
                 self.apply()
             return self.user_info(uid)
         if method == "PUT":
+            if body.get("username", name) != name:
+                raise Refused(409, f"User {uid} is now '{name}'; reload the page")
+            if body.get("new_username", name) != name:
+                self.rename(uid, name, body)
+                return self.user_info(uid)
             self.users[uid]["password"] = body["password"]
             account = self.passdb.get(name)
             if account is not None:
@@ -1308,6 +1313,47 @@ class FakeNas:
             share["access"] = [a for a in share["access"] if a["username"] != name]
         self.end_sessions(name)
         return {"status": "ok", "message": "User deleted", "warnings": []}
+
+    def rename(self, uid: int, old: str, body: dict) -> None:
+        """PUT /auth/users/{id} with new_username (ADR-0363): the user's open SMB sessions end, its marked
+        host account keeps its uid under the new name, and so the files of the uid belong to the new
+        name; Samba's account of the old name goes, and an active account gets one of the new name
+        with the rename's password; the share access follows. The defects: rename-keeps-session,
+        rename-new-uid (a fresh uid, whose files are not the old ones) and rename-drops-access."""
+        new = body["new_username"]
+        if any(info["username"].lower() == new.lower() for other, info in self.users.items() if other != uid):
+            raise Refused(400, "Username already exists")
+        if old in self.passdb and "password" not in body:
+            raise Refused(400, f"A new password is needed to rename {old}: SMB is on for {old}, and Samba's account "
+                               "of the new name is made with it")
+        if "rename-keeps-session" not in self.bugs:
+            for session in self.sessions:
+                if session.user == old:
+                    session.killed = True
+        user = self.users[uid]
+        user["username"] = new
+        if "password" in body:
+            user["password"] = body["password"]
+        if old in self.accounts:
+            host_uid = self.accounts.pop(old)
+            if "rename-new-uid" in self.bugs:
+                host_uid, self.next_smb_uid = self.next_smb_uid, self.next_smb_uid + 1
+            else:
+                for node in self.fs.values():
+                    if node.owner == old:
+                        node.owner = new
+            self.accounts[new] = host_uid
+        if old in self.needed:
+            self.needed.discard(old)
+            self.needed.add(new)
+        if self.passdb.pop(old, None) is not None:
+            self.passdb[new] = {"password": body["password"], "history": [], "bad": 0, "locked": False}
+            self.passdb_mtime += 1
+        if "rename-drops-access" not in self.bugs:
+            for share in self.shares.values():
+                share["access"] = [{**a, "username": new} if a["user_id"] == uid and a["username"] == old else a
+                                   for a in share["access"]]
+        self.apply()
 
     def api_own(self, method, what, body):
         """A regular user's own routes (src/auth/router.py): the Account page's SMB card and the
@@ -1866,6 +1912,37 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
     levels = [tuple(a["level"] for a in body["access"]) for method, path, body, _ in nas.calls
               if method == "PATCH" and body and "access" in body]
     assert levels == [("read",), (), ("write",)]
+
+
+def test_the_smb_check_renames_its_user_and_goes_on_under_the_new_name(nas):
+    """auth.user-rename (ADR-0363): the check's user takes a new name with a new password, which UNOS and
+    Samba sign in while they refuse the old one; the steps after it and the user's Delete use the new name."""
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    text = "\n".join(step_lines(output))
+    for words in ("renaming the user to unoscheck1a2b3cr with a new password ends its open session",
+                  "keeps its uid under the new name", "the share's access follows the new name",
+                  "UNOS signs the user in as unoscheck1a2b3cr and refuses unoscheck1a2b3c",
+                  "Samba answered unoscheck1a2b3c NT_STATUS_LOGON_FAILURE"):
+        assert words in text, words
+    puts = [(path, body) for method, path, body, _ in nas.calls if method == "PUT"]
+    renames = [body for _, body in puts if "new_username" in body]
+    assert [(b["username"], b["new_username"], sorted(b)) for b in renames] == [
+        ("unoscheck1a2b3c", "unoscheck1a2b3cr", ["new_username", "password", "username"])]
+    assert [body["username"] for _, body in puts if "new_username" not in body] == ["unoscheck1a2b3cr"]
+    deletes = [params for method, path, _, params in nas.calls if method == "DELETE" and path.startswith("/auth/users/")]
+    assert {"username": "unoscheck1a2b3cr"} in deletes
+
+
+def test_with_a_guest_share_the_smb_check_leaves_samba_s_refusal_of_the_old_name_out(nas):
+    """Samba takes a user without a Samba account as a guest while a guest share exists (ADR-0339)."""
+    nas.shares["DATA"]["guest_ok"] = True
+    nas.installed = nas.smb_conf()
+    before = nas.snapshot()
+    status, output = run_check("smb", nas)
+    assert status == 0, output
+    assert "Samba's refusal of unoscheck1a2b3c is not tried, as the device has guest shares" in output
+    assert nas.snapshot() == before
 
 
 def test_the_smbconf_check_covers_the_steps_that_were_checked_by_hand(nas):
@@ -2429,6 +2506,9 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("smb", "samr-refusal-writes", "passdb.tdb changed at"),
     ("smb", "samr-refusal-changes-password", "the password answered NT_STATUS_LOGON_FAILURE after the refused change"),
     ("smb", "log-password", "no password of the check"),
+    ("smb", "rename-keeps-session", "renaming the user to unoscheck1a2b3cr with a new password ends its open session"),
+    ("smb", "rename-new-uid", "keeps its uid under the new name"),
+    ("smb", "rename-drops-access", "the share's access follows the new name"),
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
     ("volumes", "volume-delete-ignores-shares", "names the share"),
@@ -2608,7 +2688,7 @@ def test_the_smb_check_locks_its_account_last_and_deletes_it_locked(nas):
     lock = [int(line.split(".")[0].split()[1]) for line in step_lines(output)
             if "5 wrong passwords in a row lock the account" in line]
     assert lock and max(signed_in) == lock[0], output
-    assert deleted == [["unoscheck1a2b3c"]]
+    assert deleted == [["unoscheck1a2b3cr"]]  # the user's name since its rename (ADR-0363)
 
 
 def test_the_smb_check_asks_for_a_samr_password_change_that_samba_refuses(nas):
@@ -2627,7 +2707,7 @@ def test_the_smb_check_asks_for_a_samr_password_change_that_samba_refuses(nas):
     nas.smb_change_password = changing
     status, output = run_check("smb", nas)
     assert status == 0, output
-    assert changes == [("unoscheck1a2b3c", True, True, 0)]
+    assert changes == [("unoscheck1a2b3cr", True, True, 0)]  # the user's name since its rename (ADR-0363)
     steps = step_lines(output)
     samr = [n for n, line in enumerate(steps) if "through SAMR" in line]
     assert len(samr) == 1 and "NT_STATUS_PASSWORD_RESTRICTION" in steps[samr[0]], output

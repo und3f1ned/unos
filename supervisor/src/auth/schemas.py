@@ -82,6 +82,14 @@ class UserUpdate(BaseModel):
     # The username the request was built for: users.id is a plain rowid that
     # SQLite reuses after a deletion (409 when it is not the user's name).
     username: str | None = Field(default=None, max_length=64)
+    # A new name (ADR-0363); the name rule of new users runs in the handler, as for UserCreate.
+    new_username: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def _a_rename_names_the_user(self) -> "UserUpdate":
+        if self.new_username is not None and self.username is None:
+            raise ValueError("A rename must also send the user's current username")
+        return self
 
 
 # SMB access (ADR-0118)

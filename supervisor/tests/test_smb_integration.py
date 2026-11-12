@@ -57,7 +57,7 @@ DEVICE_SMB_CONF = """[global]
    guest ok = no
 """
 
-ALL_SAMBA_TOOLS = {"getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus",
+ALL_SAMBA_TOOLS = {"getent", "groupadd", "useradd", "userdel", "usermod", "smbpasswd", "pdbedit", "smbstatus",
                    "smbcontrol", "testparm"}
 
 # The real functions, recorded at import (before any fixture replaces them).
@@ -262,6 +262,40 @@ def test_whole_cycle(cycle):
     startup()
     startup()
     assert world.audit_file.read_bytes() == audit
+
+
+def test_a_renamed_user_keeps_its_share_access_under_the_new_name_and_a_start_changes_nothing(cycle):
+    """auth.user-rename (ADR-0363): smb.conf, rendered from the database, names the new name where
+    the old one had access, and the startup reconcile finds the renamed account consistent."""
+    c, fake, world = cycle, cycle.fake, cycle.world
+    test_id = world.ids["test"]
+    startup()
+    patch_share(c, {"path": f"{c.base}/data/shared"})
+    assert c.client.post(f"{API}/auth/users/{test_id}/smb/enable", json={"username": "test", "password": TEST_PW},
+                         headers=world.headers("admin")).status_code == 200
+    patch_share(c, {"access": [{"user_id": test_id, "username": "test", "level": "write"}]})
+    uid = fake.passwd["test"].uid
+
+    renamed = c.client.put(f"{API}/auth/users/{test_id}",
+                           json={"username": "test", "new_username": "tester", "password": NEW_TEST_PW},
+                           headers=world.headers("admin"))
+
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["smb"]["state"] == "active"
+    data = section(c.conf.read_text(), "DATA")
+    assert "   valid users = tester" in data and "   write list = tester" in data
+    assert [line for line in data if line.split("=")[-1].strip() in ("test", "root test", "test root")] == []
+    shares = c.client.get(f"{API}/shares/smb", headers=world.headers("admin")).json()
+    assert [(a["username"], a["level"], a["effective"]) for a in shares[0]["access"]] == [("tester", "write", True)]
+    assert (fake.passwd["tester"].uid, "test" in fake.passwd) == (uid, False)
+    assert (fake.passdb["tester"]["password"], "test" in fake.passdb) == (NEW_TEST_PW, False)
+
+    before = (c.conf.read_bytes(), dict(fake.passwd), dict(fake.passdb))
+    mark = len(fake.mutations)
+    startup()
+    assert (c.conf.read_bytes(), dict(fake.passwd), dict(fake.passdb)) == before
+    assert [argv for argv in fake.mutations[mark:] if argv[0] != "smbcontrol"] == []
+    assert world.row("test").linux_name == "tester" and world.row("test").password_state == "set"
 
 
 def test_a_host_without_samba_writes_the_audit_log_only_for_changes(cycle):

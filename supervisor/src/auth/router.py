@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from fastapi.security import HTTPAuthorizationCredentials
@@ -612,11 +613,15 @@ async def update_user(
     Promotion to administrator revokes SMB first (administrators never have an
     active SMB account) and deletes the user's share access. A new password of
     an active SMB account goes to Samba first and ends its open SMB sessions.
+    A new name (``new_username``) renames the user and their SMB account
+    (ADR-0363, _rename_user).
     """
+    new_name = validate_new_username(data.new_username) if data.new_username is not None else None
     new_hash = await asyncio.to_thread(hash_password, data.password) if data.password else None
     admin_name = current_user.username
     own_session = session_id_of(credentials.credentials) if current_user.id == user_id else None
     warnings: list[str] = []
+    renamed: _Renamed | None = None
 
     async with service.smb_lock():
         user, row = await _reload_target(db, user_id)
@@ -624,39 +629,62 @@ async def update_user(
             raise _user_is_now(user_id, user)
         username = user.username
 
-        changes = []
-        demoting_admin = data.is_admin is False and bool(user.is_admin)
-        promotion = None
-        if data.is_admin is True and not user.is_admin:
-            promotion = await accounts.revoke_for_promotion(db, user, row)
-        if data.is_admin is not None:
-            user.is_admin = data.is_admin
-            changes.append(f"is_admin={data.is_admin}")
-        smb_update = None
-        if data.password:
-            smb_update = await accounts.update_password_before_store(
-                db, user, row, data.password, current_password=None
-            )
-            user.hashed_password = new_hash
-            changes.append("password changed (also for SMB)" if smb_update else "password changed")
-            # Every session of the user ends in this commit (ADR-0329), but the administrator's
-            # own one when they set their own password.
-            await end_sessions(db, user.id, keep=own_session)
-
-        if demoting_admin:
-            await _ensure_an_admin_remains(db)
-
-        if promotion is not None:
-            # No SMB password went to Samba: a new administrator has no active
-            # account, so update_password_before_store() returned None. No
-            # write ran since revoke_for_promotion() (its writes are guarded,
-            # and end_sessions only reads before the commit); commit_revocation()
-            # guards the commit.
-            await accounts.commit_revocation(db, promotion)
-            warnings += await accounts.finish_promotion(db, promotion)
+        if new_name is not None and new_name != username:
+            if data.is_admin is not None and data.is_admin != bool(user.is_admin):
+                raise HTTPException(status_code=400, detail="Change the name and the role one at a time")
+            renamed = await _rename_user(db, user, row, new_name, data.password, new_hash)
         else:
-            warnings += await accounts.store_password(db, smb_update)
-        user, row = await _reload_target(db, user_id)
+            changes = []
+            demoting_admin = data.is_admin is False and bool(user.is_admin)
+            promotion = None
+            if data.is_admin is True and not user.is_admin:
+                promotion = await accounts.revoke_for_promotion(db, user, row)
+            if data.is_admin is not None:
+                user.is_admin = data.is_admin
+                changes.append(f"is_admin={data.is_admin}")
+            smb_update = None
+            if data.password:
+                smb_update = await accounts.update_password_before_store(
+                    db, user, row, data.password, current_password=None
+                )
+                user.hashed_password = new_hash
+                changes.append("password changed (also for SMB)" if smb_update else "password changed")
+                # Every session of the user ends in this commit (ADR-0329), but the administrator's
+                # own one when they set their own password.
+                await end_sessions(db, user.id, keep=own_session)
+
+            if demoting_admin:
+                await _ensure_an_admin_remains(db)
+
+            if promotion is not None:
+                # No SMB password went to Samba: a new administrator has no active
+                # account, so update_password_before_store() returned None. No
+                # write ran since revoke_for_promotion() (its writes are guarded,
+                # and end_sessions only reads before the commit); commit_revocation()
+                # guards the commit.
+                await accounts.commit_revocation(db, promotion)
+                warnings += await accounts.finish_promotion(db, promotion)
+            else:
+                warnings += await accounts.store_password(db, smb_update)
+            user, row = await _reload_target(db, user_id)
+
+    if renamed is not None:
+        changes = [f"renamed from {username}"]
+        if data.password:
+            changes.append("password changed (also for SMB)" if renamed.smb_on else "password changed")
+        await log_action(
+            action=AuditAction.USER_UPDATED,
+            request=request,
+            username=admin_name,
+            resource_type="user",
+            resource_id=new_name,
+            details=f"Updated user {new_name}: {', '.join(changes)}",
+        )
+        if renamed.had_row:
+            await _smb_audit(request, admin_name, new_name, f"SMB account renamed from {username} to {new_name}")
+        if renamed.smb_on:
+            await _smb_audit(request, admin_name, new_name, "SMB password set by an administrator")
+        return _user_response(renamed.user, renamed.row, renamed.warnings)
 
     # Audit log
     await log_action(
@@ -677,6 +705,48 @@ async def update_user(
         )
 
     return _user_response(user, row, warnings)
+
+
+@dataclass
+class _Renamed:
+    user: User
+    row: SmbAccount | None
+    had_row: bool       # the user had an SMB account row, which took the new name
+    smb_on: bool        # SMB was turned on again under the new name with the rename's password
+    warnings: list[str]
+
+
+async def _rename_user(
+    db: AsyncSession, user: User, row: SmbAccount | None, new_name: str, password: str | None, new_hash: str | None
+) -> _Renamed:
+    """Rename ``user`` to ``new_name`` (ADR-0363), under smb_lock, after the name rule.
+
+    A name that another user has, in any letter case, is refused (400): Samba and tdbsam take
+    such names as one account. The host follows first (accounts.rename_before_store), then the
+    new name, the password and the account and access rows are committed in one transaction, in
+    which every session of the user ends, the administrator's own too: tokens carry the name
+    (ADR-0329). An account that was active is turned on again under the new name with
+    ``password`` (accounts.finish_rename).
+    """
+    taken = await db.scalar(
+        select(User.username).where(func.lower(User.username) == new_name.lower(), User.id != user.id)
+    )
+    if taken is not None:
+        detail = "Username already exists" if taken == new_name else (
+            f"Username already exists as '{taken}': names that differ only in letter case are one account for Samba"
+        )
+        raise HTTPException(status_code=400, detail=detail)
+    user_id, had_row = user.id, row is not None
+    rename = await accounts.rename_before_store(db, user, row, new_name, password)
+    user.username = new_name
+    if new_hash is not None:
+        user.hashed_password = new_hash
+    await end_sessions(db, user_id)
+    await accounts.store_rename(db, user, row, rename)
+    user, row = await _reload_target(db, user_id)
+    warnings, smb_on = await accounts.finish_rename(db, user, row, rename, password)
+    user, row = await _reload_target(db, user_id)
+    return _Renamed(user, row, had_row, smb_on, warnings)
 
 
 @router.delete("/users/{user_id}")

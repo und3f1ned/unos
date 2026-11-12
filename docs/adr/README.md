@@ -204,7 +204,7 @@ and this index, and `make check-fast` runs it.
 | [0113](0113-which-usernames-can-be-smb-names.md) | Only usernames that fit the Linux name rule and clash with nothing can be SMB names | accepted | 2026-11-06 |
 | [0114](0114-sid-like-names-are-reserved.md) | Names that start with 's-' and a digit are reserved | accepted | 2026-11-06 |
 | [0115](0115-new-usernames-follow-the-smb-name-rule.md) | New UNOS usernames follow the SMB name rule and are unique ignoring case | accepted | 2026-11-06 |
-| [0116](0116-users-cannot-be-renamed.md) | UNOS users cannot be renamed yet | accepted | 2026-11-06 |
+| [0116](0116-users-cannot-be-renamed.md) | UNOS users cannot be renamed yet | superseded by [0363](0363-a-rename-moves-the-users-smb-account-to-the-new-name-keeping-its-uid.md) | 2026-11-06 |
 | [0117](0117-administrators-never-have-smb-access.md) | Administrators never have SMB access | accepted | 2026-11-06 |
 | [0118](0118-smb-is-opt-in-per-user.md) | SMB is opt-in per user: an administrator allows it, and a password activates it | accepted | 2026-11-06 |
 | [0119](0119-smb-password-is-the-unos-password.md) | The SMB password is the UNOS password, captured only where the plaintext is given | accepted | 2026-11-06 |
@@ -280,6 +280,7 @@ and this index, and `make check-fast` runs it.
 | [0349](0349-a-restore-refuses-a-backup-whose-database-gives-one-smb-uid-to-two-accounts.md) | A restore refuses a backup whose database gives one SMB uid to two accounts | accepted | 2026-11-11 |
 | [0353](0353-smb-uids-handed-out-are-recorded-and-a-restored-account-keeps-one-only-under-its-name.md) | SMB uids handed out are recorded for good, and a restored account keeps a recorded uid only under the name it went to | accepted | 2026-11-12 |
 | [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | Every replaced smb.conf is kept in a copy named with its UTC time, and the newest 10 of each kind stay | accepted | 2026-11-12 |
+| [0363](0363-a-rename-moves-the-users-smb-account-to-the-new-name-keeping-its-uid.md) | An administrator renames a user, and the user's SMB account moves to the new name with its uid | accepted | 2026-11-12 |
 
 ## Apps
 

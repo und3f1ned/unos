@@ -663,6 +663,89 @@ test.describe('Users page SMB (fake data)', () => {
     await expect(dialog.getByLabel('Allow SMB access')).toHaveCount(0);
   });
 
+  test('renaming a user with SMB on needs a new password, and the request names the user and the new name', async ({
+    authenticatedPage: page,
+  }) => {
+    // auth.user-rename (ADR-0363): Samba's account of the new name is made with the new password.
+    const fake = await fakeSmbApi(page, {
+      users: fakeUsers(),
+      shares: [fakeShare('media', { access: accessOf(fakeUsers(), [{ user_id: 2, username: 'alice', level: 'write' }]) })],
+    });
+    await page.goto('/users');
+
+    await userRow(page, 'alice').getByRole('button', { name: 'Edit user alice' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit user alice' });
+    const username = dialog.getByLabel('Username');
+    const save = dialog.getByRole('button', { name: 'Save' });
+    await expect(username).toHaveValue('alice');
+
+    await username.fill('Alicia');
+    await expect(dialog.getByText('Use 1–32 lowercase letters, digits, _ or -, starting with a letter')).toBeVisible();
+    await expect(save).toBeDisabled();
+
+    await username.fill('alicia');
+    await expect(dialog.getByText('The user signs in with the new name; their sessions end')).toBeVisible();
+    await expect(
+      dialog.getByText(
+        'SMB is on for alice: a rename needs a new password, which becomes the UNOS and SMB password of the new name',
+      ),
+    ).toBeVisible();
+    await expect(save).toBeDisabled();
+
+    // The role changes in another save.
+    await dialog.getByLabel('Administrator').check();
+    await expect(dialog.getByText('Change the name and the role one at a time')).toBeVisible();
+    await dialog.getByLabel('New password', { exact: true }).fill('e2e-Alicia-Password-1');
+    await dialog.getByLabel('Confirm new password').fill('e2e-Alicia-Password-1');
+    await expect(save).toBeDisabled();
+    await dialog.getByLabel('Administrator').uncheck();
+    await expect(dialog.getByText('Change the name and the role one at a time')).toHaveCount(0);
+
+    await save.click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes).toEqual([
+      {
+        method: 'PUT',
+        path: '/auth/users/2',
+        body: { username: 'alice', new_username: 'alicia', password: 'e2e-Alicia-Password-1' },
+      },
+    ]);
+    await expect(pageAlert(page, 'error')).toHaveCount(0);
+    await expect(page.getByText('User "alice" renamed to "alicia"')).toBeVisible();
+    await expect(userRow(page, 'alice')).toHaveCount(0);
+    await expect(smbBadge(page, 'alicia')).toHaveText('Active');
+    expect(fake.shares[0].access.map((a) => a.username)).toEqual(['alicia']);
+  });
+
+  test('a rename that the server refuses shows the reason, and a new password then only sets the password', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    await page.goto('/users');
+
+    await userRow(page, 'bob').getByRole('button', { name: 'Edit user bob' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit user bob' });
+    await dialog.getByLabel('Username').fill('carol');
+    // While the name changes, the new password does not turn SMB on: that is a save of its own.
+    await expect(dialog.getByLabel('Also turn SMB on with this password')).toHaveCount(0);
+    await dialog.getByLabel('New password', { exact: true }).fill('e2e-Bob-Password-1');
+    await dialog.getByLabel('Confirm new password').fill('e2e-Bob-Password-1');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+
+    await expect(dialog.locator('.alert', { hasText: 'The change was not made' })).toContainText(
+      'Username already exists',
+    );
+    await expect(dialog).toBeVisible();
+    expect(fake.writes).toEqual([
+      {
+        method: 'PUT',
+        path: '/auth/users/3',
+        body: { username: 'bob', new_username: 'carol', password: 'e2e-Bob-Password-1' },
+      },
+    ]);
+    await expect(userRow(page, 'bob')).toHaveCount(1);
+  });
+
   test('the delete confirmation reads whole, with the name in its place', async ({ authenticatedPage: page }) => {
     // Translated in parts around the name (ADR-0296), as is the Turn off SMB confirmation, which
     // 'allowing SMB acts at once, and turning it off asks first' reads whole.
@@ -873,6 +956,67 @@ test.describe('SMB activation (stand-in)', () => {
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(userRow(page, username)).toHaveCount(0);
+  });
+});
+
+// ---- A rename on the real server (auth.user-rename, ADR-0363): a user without SMB, which needs no Samba ----
+
+test.describe('Rename', () => {
+  let token = '';
+  const created: string[] = [];
+  const headers = () => ({ Authorization: `Bearer ${token}` });
+
+  test.beforeAll(async ({ request }) => {
+    token = await apiLogin(request, E2E_ADMIN);
+  });
+
+  test.afterAll(async ({ request }) => {
+    const response = await request.get('/api/v1/auth/users', { headers: headers() });
+    const users = (await response.json()) as { id: number; username: string }[];
+    for (const user of users.filter((u) => created.includes(u.username))) {
+      const name = encodeURIComponent(user.username);
+      await request.delete(`/api/v1/auth/users/${user.id}?username=${name}`, { headers: headers() });
+    }
+  });
+
+  test('a renamed user signs in with the new name, the old one is refused, and a taken name is refused', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    const suffix = Date.now().toString(36);
+    const [username, renamed] = [`e2e_rename_${suffix}`, `e2e_renamed_${suffix}`];
+    const password = 'e2e-Rename-Password-1';
+    const response = await request.post('/api/v1/auth/users', { headers: headers(), data: { username, password } });
+    expect(response.ok(), `create ${username}: HTTP ${response.status()}`).toBeTruthy();
+    created.push(username, renamed);
+    const session = await apiLogin(request, { username, password });
+
+    await page.goto('/users');
+    await userRow(page, username).getByRole('button', { name: `Edit user ${username}` }).click();
+    let dialog = page.getByRole('dialog', { name: `Edit user ${username}` });
+    await dialog.getByLabel('Username').fill(renamed);
+    await dialog.getByRole('button', { name: 'Save' }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText(`User "${username}" renamed to "${renamed}"`)).toBeVisible();
+    await expect(userRow(page, renamed)).toBeVisible();
+    await expect(userRow(page, username)).toHaveCount(0);
+    expect((await request.post('/api/v1/auth/login', { data: { username: renamed, password } })).status()).toBe(200);
+    expect((await request.post('/api/v1/auth/login', { data: { username, password } })).status()).toBe(401);
+    // The user's sessions carried the old name: they ended with the rename.
+    const me = await request.get('/api/v1/auth/me', { headers: { Authorization: `Bearer ${session}` } });
+    expect(me.status()).toBe(401);
+
+    // A name that another user has is refused with the reason, and the dialog stays.
+    await userRow(page, renamed).getByRole('button', { name: `Edit user ${renamed}` }).click();
+    dialog = page.getByRole('dialog', { name: `Edit user ${renamed}` });
+    await dialog.getByLabel('Username').fill(E2E_ADMIN.username);
+    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog.locator('.alert', { hasText: 'The change was not made' })).toContainText(
+      'Username already exists',
+    );
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(userRow(page, renamed)).toBeVisible();
   });
 });
 

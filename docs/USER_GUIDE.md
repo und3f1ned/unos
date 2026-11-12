@@ -1093,6 +1093,33 @@ are started and stopped on the **Containers** page.
 New accounts are regular users. To make one an administrator, edit it and
 tick **Administrator privileges**.
 
+### Renaming Users
+
+Edit the user and type the new name under **Name**, then click **Save**. The
+new name follows the rules of a new username (see above); a name that another
+user has, also in another letter case, is refused with the reason ("Username
+already exists", or "Username already exists as 'Bob': names that differ only
+in letter case are one account for Samba"). A name from before these rules
+(such as `Erin.Old`) can be changed to one that follows them, which also lets
+the user use SMB. Change the role in a save of its own.
+
+The user signs in with the new name from then on; the old name is refused,
+and every session of the user ends. Renaming yourself signs you out: sign in
+again with the new name. API tokens keep working.
+
+A user with SMB on keeps it under the new name, but needs a new password,
+which the dialog asks for: Samba keeps passwords by name, so the SMB account
+of the new name is made with it, and it is the user's UNOS password too. The
+user's open SMB connections end; Samba's account of the old name is removed;
+the user's host account on the NAS takes the new name and keeps its user id,
+so the files the user wrote stay theirs; and every share's access follows the
+new name. Update the name and the password on every computer and app that
+connects over SMB. When the host cannot take the new name (it has an account,
+a group or a Samba account of that name), or the user's SMB connections do not
+end, nothing is renamed and the dialog says why. When SMB could not be turned
+on again under the new name, the user is renamed with SMB **Password needed**,
+and the page shows why.
+
 ### User Roles
 
 | Role | Permissions |
@@ -1390,7 +1417,8 @@ regular users have no access to it.
   appears only in the login history), sign-outs, a user's own password
   changes (with an SMB account entry when the SMB password changed too) and
   turning two-factor authentication on or off (off as a **Warning**), each
-  by that user, users created, changed and deleted, pools created and
+  by that user, users created, changed (a rename with the old name) and
+  deleted, pools created and
   removed, volumes created and deleted, snapshots created, deleted and
   restored, containers started, restarted, stopped and removed on the
   **Containers** page, apps started, restarted and stopped on the **Apps**

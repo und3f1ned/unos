@@ -155,6 +155,7 @@ def test_host_tools_list_the_smb_account_programs():
         "groupadd": "passwd",
         "useradd": "passwd",
         "userdel": "passwd",
+        "usermod": "passwd",
         "smbpasswd": "samba-common-bin",
         "pdbedit": "samba",
         "smbstatus": "samba",
@@ -169,7 +170,7 @@ def test_the_account_tool_check_is_one_host_command(host_commands):
 
     assert missing is not None
     [cmd] = host_commands
-    assert cmd[3:] == ["sh", "getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus"]
+    assert cmd[3:] == ["sh", "getent", "groupadd", "useradd", "userdel", "usermod", "smbpasswd", "pdbedit", "smbstatus"]
 
 
 # ---------------------------------------------------------------------------

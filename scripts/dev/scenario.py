@@ -29,7 +29,12 @@ SD writes of each check (ADR-0214). The areas:
            without shares, the folder's 2770 root:unos-smb, a signed session that writes, New
            Folder and Upload in the share's folder (2770 and 660 root:unos-smb) changed over SMB,
            the access lowered to read and then removed during open sessions, a comment saved with
-           the expected version and a stale one refused, a password change that ends the open
+           the expected version and a stale one refused, a rename of the user with a new password
+           (ADR-0363) that ends the open session and keeps the marked host account's uid, and so
+           the user's files, under the new name, with a Samba account of the new name and none of
+           the old, the share's access and smb.conf's section following the new name, which signs
+           in to UNOS and to the share while the old one is refused (by Samba only where the device
+           has no guest share), a password change that ends the open
            session, the replaced password refused without a write to passdb.tdb, the new one
            taken, the user's own change of it over SAMR (smbpasswd -r, as Windows' Change a
            password asks for one) refused without a write (ADR-0342), a wrong password refused
@@ -1992,6 +1997,66 @@ def smb_check(c: Check) -> None:
 
     with c.step("the user gets read-write access again"):
         grant("write")
+
+    # auth.user-rename (ADR-0363): the user and its SMB account take a new name; the steps after these use it.
+    renamed, renamed_password = f"{user}r", c.secret()
+    with contextlib.ExitStack() as held:
+        with c.step(f"renaming the user to {renamed} with a new password ends its open session; its marked host "
+                    "account keeps its uid under the new name, and so do the files it wrote, and Samba has an "
+                    "account of the new name and none of the old") as s:
+            uids = {line.split(":")[0]: line.split(":")[2] for line in c.device.facts()["accounts"]}
+            smb = held.enter_context(c.device.smb_session(user, password, share))
+            done = smb.run("ls")
+            c.expect(done.ok, f"the session did not start: {done.status}")
+            c.on_cleanup(f"delete the user {renamed}", lambda: c.delete_user_named(renamed))
+            changed = c.call("PUT", f"/auth/users/{uid}",
+                             {"username": user, "new_username": renamed, "password": renamed_password})
+            found = (changed.get("smb") or {}).get("state")
+            c.expect(changed.get("username") == renamed and found == "active",
+                     f"the user is {changed.get('username')} with SMB {found}: {changed.get('warnings')}")
+            done = smb.run("ls")
+            c.expect(done.ended or done.status.startswith("NT_STATUS_"), f"the session answered: {tail(done.output, 200)}")
+            now = {line.split(":")[0]: line.split(":")[2] for line in c.device.facts()["accounts"]}
+            c.expect(user not in now, f"getent passwd still has {user}")
+            marked_account(c, renamed)
+            c.expect(now.get(renamed) == uids.get(user), f"{renamed} has uid {now.get(renamed)}, not {uids.get(user)}")
+            owner = c.device.stat([f"{folder}/a.txt"])[f"{folder}/a.txt"]
+            c.expect(owner.endswith(f" {renamed}:{SMB_GROUP}"), f"a.txt, written by {user}, is {owner}")
+            c.expect(user not in c.device.passdb_entries()[0], f"pdbedit -L still lists {user}")
+            s.text += f": {done.status}"
+    old, user, password = user, renamed, renamed_password
+
+    with c.step("the share's access follows the new name: the Shares API and smb.conf's section name it, and in a "
+                "signed session it writes in the share"):
+        access = [(a["username"], a["level"]) for a in c.get(f"/shares/smb/{share}")["access"]]
+        c.expect(access == [(user, "write")], f"the share's access is {access}")
+        section = smb_section(c.device.read(SMB_CONF) or "", share) or {}
+        c.expect(section.get("valid users") == user and section.get("write list") == user,
+                 f"valid users = {section.get('valid users')}, write list = {section.get('write list')}")
+        with c.device.smb_session(user, password, share) as smb:
+            done = smb.run("put data.txt renamed.txt")
+        c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
+        owner = c.device.stat([f"{folder}/renamed.txt"])[f"{folder}/renamed.txt"]
+        c.expect(owner.endswith(f" {user}:{SMB_GROUP}"), f"renamed.txt is {owner}")
+
+    with c.step(f"UNOS signs the user in as {user} and refuses {old}, and Samba refuses {old}") as s:
+        mine = c.api.as_user(user, password, USER_TOKEN.format(c.run))
+        c.on_cleanup(f"delete the token of {user} in the device's RAM", mine.forget_token)
+        me = c.get("/auth/me", api=mine)
+        c.expect(me.get("username") == user, f"the token is of {me}")
+        theirs = c.api.as_user(old, password, USER_TOKEN.format(c.run + "old"))
+        c.on_cleanup(f"delete the token of {old} in the device's RAM", theirs.forget_token)
+        try:
+            refused = f"it signed in as {c.get('/auth/me', api=theirs).get('username')}"
+        except relay.ApiError as error:
+            refused = str(error)
+        c.expect(refused.endswith("failed: HTTP 401"), f"the sign-in as {old}: {refused}")
+        if guests:  # Samba takes a user without a Samba account as a guest (ADR-0339)
+            s.text += f"; Samba's refusal of {old} is not tried, as the device has guest shares"
+        else:
+            listing = c.device.smb_list(old, password)
+            c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"{old} answered {listing.status}")
+            s.text += f": Samba answered {old} {listing.status}"
 
     with contextlib.ExitStack() as held:
         with c.step("a new password set by an administrator ends the user's open session") as s:
