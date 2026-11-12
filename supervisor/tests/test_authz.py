@@ -243,6 +243,10 @@ class TestRouteMatrix:
             ("POST", f"{API}/files/trash/restore"),
             ("DELETE", f"{API}/files/trash"),
             ("POST", f"{API}/files/trash/empty"),
+            # The hidden files that uploads left when the supervisor stopped (ADR-0350).
+            ("GET", f"{API}/files/upload-leftovers"),
+            ("POST", f"{API}/files/upload-leftovers/check"),
+            ("DELETE", f"{API}/files/upload-leftovers"),
             # Importing a pool found on the disks (ADR-0283): administrator-only with the storage router.
             ("GET", f"{API}/storage/filesystems/importable"),
             ("POST", f"{API}/storage/filesystems/{{uuid}}/import"),

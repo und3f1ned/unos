@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync, utimesSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Locator, Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
 
@@ -226,6 +228,8 @@ async function leaveTheWindowAndReturn(page: Page) {
 }
 
 const NO_POOL_FOLDER = 'No folder of the pools directory takes a new folder: the target has no pool to work in';
+const ONLY_THE_STAND_IN_FOLDERS =
+  "Only the stand-in's pools folder is on this machine, where the spec makes files in it; the test stack's is in its container";
 
 /** The Delete dialog of Files, about `count` items. */
 const deleteDialog = (page: Page, count: number) =>
@@ -1404,6 +1408,56 @@ test.describe('File Browser operations', () => {
     await expect(row(page, 'final.txt')).toBeVisible();
     expect(renames()).toBe(1);
     expect(await listNames(page, dir)).toEqual([' notes', 'final.txt']);
+  });
+
+  // files.upload-edge-cases (ADR-0350): the hidden file of an upload that the supervisor's stop
+  // interrupted, on a filesystem without unnamed files (vfat, exfat; macOS, where the stand-in runs).
+  test('offers to remove the hidden files of interrupted uploads, and asks first', async ({
+    authenticatedPage: page,
+  }) => {
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN_FOLDERS);
+    const dir = scratch!.path;
+    const left = join(dir, `.unos-upload-${randomBytes(8).toString('hex')}`);
+    writeFileSync(left, randomBytes(3 * 1024));
+    const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    utimesSync(left, anHourAgo, anHourAgo);
+    // Written a moment ago: an upload may still be writing it, so it is neither listed nor removed.
+    const young = join(dir, `.unos-upload-${randomBytes(8).toString('hex')}`);
+    writeFileSync(young, randomBytes(1024));
+    // The supervisor checks 10 minutes after its start, which the stand-in leaves out (its
+    // background tasks are off), and when asked.
+    const checked = await page.request.post('/api/v1/files/upload-leftovers/check', { headers: auth() });
+    expect(checked.ok(), `check: HTTP ${checked.status()}`).toBeTruthy();
+
+    await page.goto('/files');
+    const notice = page.getByRole('region', { name: 'Leftovers of interrupted uploads' });
+    await expect(notice).toContainText(
+      '1 hidden file that an upload left when the supervisor stopped in the middle of it takes 3 KB.',
+    );
+    const removeButton = notice.getByRole('button', { name: 'Remove…', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Remove 1 leftover of an upload', exact: true });
+
+    // Cancel, which has the keyboard focus, keeps the file.
+    await removeButton.click();
+    await expect(dialog).toContainText(left);
+    await expect(dialog).toContainText('3 KB, last written');
+    await expect(dialog).not.toContainText(young);
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(dialog).toHaveCount(0);
+    await expect(removeButton).toBeFocused();
+    expect(existsSync(left)).toBe(true);
+
+    await removeButton.click();
+    const removed = page.waitForRequest(
+      (request) => isApi('/files/upload-leftovers')(request) && request.method() === 'DELETE',
+    );
+    await dialog.getByRole('button', { name: 'Remove for good', exact: true }).click();
+    expect((await removed).postDataJSON()).toEqual([left]);
+    await expect(dialog).toHaveCount(0);
+    await expect(notice).toHaveCount(0);
+    expect(existsSync(left)).toBe(false);
+    expect(existsSync(young)).toBe(true);
   });
 
   test('an upload with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {

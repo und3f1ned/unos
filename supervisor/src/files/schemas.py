@@ -59,3 +59,18 @@ class TrashListing(BaseModel):
     items: list[TrashItem]  # newest first
     retention_days: int
     problems: list[str]  # the trashes that could not be read, each with the reason
+
+
+class UploadLeftover(BaseModel):
+    """A hidden file that an upload left when the supervisor stopped in the middle of it (ADR-0350)."""
+
+    path: str
+    size: int  # what had arrived, in bytes
+    modified: str  # when it was last written, in UTC with its offset
+
+
+class UploadLeftovers(BaseModel):
+    files: list[UploadLeftover]  # by path
+    checked: str | None  # when the last check ended, in UTC with its offset; None before the first
+    checking: bool  # a check runs
+    problems: list[str]  # the folders the check could not read, each with the reason

@@ -689,8 +689,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   restart, an update, a crash), nothing of it stays and its space is freed.
   Only in a folder on a disk mounted there by hand whose filesystem cannot
   do this (vfat or exfat, for example; the pools can), the file arrives as a
-  hidden `.unos-upload-...` file, which such a stop leaves behind: delete it
-  in the file manager.
+  hidden `.unos-upload-...` file, which such a stop leaves behind: the File
+  Browser offers to remove it.
 - The headers of each part of an upload form are limited to 8 KiB in total
   (HTTP 400 above that); browsers send a few hundred bytes.
 - `install.sh` writes the smb.conf that UNOS generates while there is no
@@ -1018,6 +1018,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   data for 2 minutes now fails with HTTP 408 ("The upload timed out: the
   client sent nothing for 120 seconds"), and nothing of it is kept; one
   that keeps sending, however slowly, goes on.
+- The hidden `.unos-upload-...` file that an upload leaves when the
+  supervisor stops in the middle of it, in a folder whose filesystem has no
+  unnamed files (a vfat or exfat disk mounted there by hand, for example),
+  was found only by looking for it. The supervisor now looks for such files
+  in every folder below the pools 10 minutes after each start, and when
+  asked (`POST /api/v1/files/upload-leftovers/check`); the File Browser
+  shows a notice with their number and size, and **Remove…** lists them and
+  removes them for good once you confirm. A file that an upload is still
+  writing, or that changed in the last 10 minutes, is never removed.
 - Backup upload and restore answered HTTP 500 for some malformed archives (a
   member size of 2^63 bytes or more, broken GNU sparse data, a long chain of
   extended headers), such as "cannot fit 'int' into an offset-sized

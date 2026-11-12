@@ -263,6 +263,22 @@ function fakeFiles(page: Page, folders: Folders): Promise<void> {
     },
   );
 }
+/** What the supervisor's check of leftovers of uploads found (ADR-0350): one deep in a folder with a long name. */
+const LEFTOVERS = {
+  files: [
+    { path: `${FAMILY}/Holiday photos 2025 (edited and sorted)/.unos-upload-0123456789abcdef`, size: 734_003_200,
+      modified: '2026-11-07T10:15:30+00:00' },
+    { path: `${DATA}/.unos-upload-fedcba9876543210`, size: 2_516_582, modified: '2026-11-07T10:15:31+00:00' },
+  ],
+  checked: '2026-11-07T10:25:30+00:00',
+  checking: false,
+  problems: [],
+};
+/** Answer the Files page's listings from FILES, and its check of leftovers of uploads with LEFTOVERS. */
+async function fakeFilesWithLeftovers(page: Page): Promise<void> {
+  await fakeFiles(page, FILES);
+  await serve(page, { '/api/v1/files/upload-leftovers': LEFTOVERS });
+}
 /** The row of the File Browser's entry at `path`. */
 const fileRow = (page: Page, path: string) =>
   page.locator('main div.grid').filter({ has: page.locator(`input[data-path="${path}"]`) });
@@ -720,6 +736,14 @@ const VIEWS: View[] = [
   },
   LONG_FOLDER_VIEW,
   {
+    // The notice of the hidden files that uploads left when the supervisor stopped (ADR-0350).
+    name: 'Files: leftovers of uploads',
+    path: '/files',
+    fake: fakeFilesWithLeftovers,
+    open: openData,
+    shows: (page) => page.getByRole('region', { name: /^(Leftovers of interrupted uploads|Остатки прерванных загрузок)$/ }),
+  },
+  {
     name: 'Trash',
     path: '/files/trash',
     fake: (page) => serve(page, { '/api/v1/files/trash': TRASH }),
@@ -895,6 +919,15 @@ const VIEWS: View[] = [
     fake: (page) => fakeStorageApi(page),
     open: (page) => page.getByRole('button', { name: /^(Create Pool|Создать пул)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    name: 'Dialog: remove leftovers of uploads',
+    path: '/files',
+    fake: fakeFilesWithLeftovers,
+    open: (page) => page.getByRole('button', { name: /^(Remove…|Удалить…)$/ }).click(),
+    shows: (page) => page.getByRole('dialog').getByText(LEFTOVERS.files[0].path),
     start: dialogTitle,
     end: dialogEnd,
   },
