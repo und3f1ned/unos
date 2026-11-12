@@ -50,6 +50,9 @@ significant step. Features and their state live in `feature-list.json`, decision
 - Later that afternoon (Log): a fourth batch, ADR-0360 to ADR-0362: the Storage page lists disks
   attached while it is open, open dialogs form a stack, and every replaced smb.conf is kept in a
   dated copy. `main` is a9adcb1 and its tree runs on the dev device.
+- That evening (Log): a fifth batch, ADR-0363 to ADR-0368: Repair permissions as a background
+  job, a restore in one streaming pass, no page polling the API, and renaming a user with its SMB
+  account. `main` is 7827340 and its tree runs on the dev device.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -89,15 +92,17 @@ significant step. Features and their state live in `feature-list.json`, decision
      `files.delete-to-trash` and `backup.edge-cases` on the checks around the reboot of 23:22 UTC,
      and on 2026-11-12 `files.upload-edge-cases` and `backup.drop-unused-include-options` on the
      checks around the reboot of 04:35 UTC, `storage.restore-copies-deletable` on the checks
-     around the reboot of 13:11 UTC, and `shares.keep-every-replaced-copy` on those around the
-     reboot of 14:45 UTC (Log); `shares.repair-permissions` waits for setfacl on the device
+     around the reboot of 13:11 UTC, `shares.keep-every-replaced-copy` on those around the
+     reboot of 14:45 UTC, and `shares.repair-in-background`, `backup.streaming-restore`,
+     `webui.no-http-polling` and `auth.user-rename` on those around the reboot of 19:37 UTC
+     (Log); `shares.repair-permissions` waits for setfacl on the device
      (the package acl, an owner action) and `shares.acl-aware-parent-check` for the owner's word
      on ADR-0193; the others need a device check first or, as `storage.pool-health`, a step the
      re-check could not show.
 
 ## Dev device
 
-State on 2026-11-12, 15:45 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-12, 20:40 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -105,7 +110,13 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs the tree of main a9adcb1 (the fourth batch, ADR-0360 to ADR-0362), deployed as 2bb76a8 at
+- Runs the tree of main 7827340 (the fifth batch, ADR-0363 to ADR-0368), deployed as 5deee90 at
+  20:14 UTC (SD MiB sync 2.941, build-supervisor 13.473, build-webui 19.176, up 6.012, check.sh
+  0.016), then `scenario.sh shares`, `restore` and `smb` OK. Before it, the integration tree
+  b9aaea5, deployed at 19:33 UTC and rebooted from the API at 19:37:03 UTC (the boot of 19:37:58;
+  both containers healthy by 19:38:50): `scenario.sh shares`, `restore`, `smb` and `backups` OK
+  before and after.
+- Before it, the tree of main a9adcb1 (the fourth batch, ADR-0360 to ADR-0362), deployed as 2bb76a8 at
   15:23 UTC (SD MiB sync 2.062, build-supervisor 12.875, build-webui 19.156, up 6.492, check.sh
   0.016), then `scenario.sh smbconf` (17 steps) and `smb` OK. Before it, the integration tree
   d149c3a, deployed at 14:42 UTC and rebooted from the API at 14:45:53 UTC (the boot of 14:46:49;
@@ -321,6 +332,34 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-12: A fifth batch: a repair job, a streaming restore, no polling, renamed users
+
+- Four entries, each test-first by an agent of its own: Repair permissions as a background job
+  with progress over the events socket, one at a time and a stop (`shares.repair-in-background`,
+  ADR-0363, superseding ADR-0155 and ADR-0006); a restore that checks and extracts the archive in
+  one streaming pass, half the room in /tmp (`backup.streaming-restore`, ADR-0364); no page polls
+  the API, with a check that fails for one (`webui.no-http-polling`, ADR-0365 to ADR-0367); and
+  renaming a user with its SMB account and uid (`auth.user-rename`, ADR-0368). The repair and
+  polling branches both added messages to the events socket; the merge keeps both. The ADRs were
+  renumbered in one pass; the repair entry's adr list line, the same in two branches, was then
+  corrected by hand.
+- Review, a reviewer per branch and a skeptic per pair: one major finding, fixed: after a restart
+  of the supervisor the Shares page kept a dead repair showing with only Stop. Fixed too: a share
+  deleted or renamed during its repair, an audit entry for a repair a stop cut short, the
+  scrubs after a reconnect, a stronger polling check, a file named unos.db/. in an archive, and
+  for renames each name of a uid recorded for restores, a stale row of the new name, and the
+  login history of a renamed user. `make check` passed on the fixes, and 298 E2E tests of the
+  pages touched. Merged as main 7827340.
+- Device check of the integration tree b9aaea5 around the reboot from the API at 19:37:03 UTC:
+  `scenario.sh shares` (3.945 and 3.227 MiB), `restore` (7.648 and 7.367), `smb` (32 steps
+  now, with the rename: 3.988 and 3.812) and `backups` (0.406 and 0.383) OK before and after.
+  After the deploy of the fixes (5deee90, 20:14 UTC): `shares`, `restore` and `smb` OK; that
+  restore measured 48.664 MiB, 35.5 of them in its read-only step 2 while the deploy's writes
+  still went on, and a run on the idle device right after it 7.262 MiB, as before.
+- Passing now: `shares.repair-in-background`, `backup.streaming-restore`,
+  `webui.no-http-polling`, `auth.user-rename`. The Linux-only tests of the repair walk wait for
+  the rootfs of `scripts/dev/linux-tests.sh` in the device's RAM (the owner's).
 
 ### 2026-11-12: A fourth batch: hot-plugged disks on the Storage page, a dialog stack, every smb.conf copy kept
 
