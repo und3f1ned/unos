@@ -32,6 +32,12 @@ significant step. Features and their state live in `feature-list.json`, decision
   scenario checks `shares` (ADR-0340; ADR-0339 supersedes ADR-0098) and `restore` (ADR-0341), so
   that `scenario.sh all` runs 10 areas, 147 steps. `main` is d6e98c0; the dev device runs 96db310,
   whose runtime differs from it only in a docstring (Dev device).
+- In the night of 2026-11-11 to 12 (Log): a batch of six MVP fixes, ADR-0342 to ADR-0349: Samba
+  refuses password changes over SAMR, a user's own sign-out, password and 2FA changes are audited,
+  an unmount without Docker is refused, backups hold no fstab and a gzip `.enc` upload is refused,
+  the dashboard shows the CPU's temperature, a stalled upload is cut off after 120 seconds, and the
+  file manager refuses bind mounts before a move. `main` is 405d318 and runs on the dev device;
+  `scenario.sh all` runs 148 steps.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -67,14 +73,16 @@ significant step. Features and their state live in `feature-list.json`, decision
      `backup.off-device-copies`, and that evening `deploy.container-logs-off-the-system-disk`,
      `shares.read-only-guest-share`, `shares.self-activation`,
      `shares.restore-keeps-smb-with-proof` and `backup.no-old-backup-import` on the checks around
-     the reboot of 19:26 UTC (Log); `shares.repair-permissions` waits for setfacl on the device
+     the reboot of 19:26 UTC, and `storage.commands-time-out-cleanly`, `system.temperatures`,
+     `files.delete-to-trash` and `backup.edge-cases` on the checks around the reboot of 23:22 UTC
+     (Log); `shares.repair-permissions` waits for setfacl on the device
      (the package acl, an owner action) and `shares.acl-aware-parent-check` for the owner's word
      on ADR-0193; the others need a device check first or, as `storage.pool-health`, a step the
      re-check could not show.
 
 ## Dev device
 
-State on 2026-11-11, 19:36 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-11, 23:50 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -82,7 +90,15 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 96db310 (ADR-0338: the access log keeps refused and failed requests only), its
+- Runs main 405d318 (the batch of ADR-0342 to ADR-0349), deployed at 23:44 UTC (SD MiB sync
+  1.000, build-supervisor 12.754, build-webui 19.102, up 5.977, check.sh 0.016); after it
+  `scenario.sh files` OK (1.148 MiB) and the upload and audit checks by hand. Before it, the
+  integration branch's tree 8ea5a08, deployed at 23:06 UTC (sync 4.035, build-supervisor 13.840,
+  build-webui 18.914, up 5.953), and rebooted from the API at 23:22:13 UTC (the boot of 23:23:10;
+  both containers healthy by 23:23:59; 8.7 MiB on the SD card from the boot to check.sh):
+  `scenario.sh all` (147 steps passed, 1 skipped) and the checks by hand OK before and after,
+  but for what the Log names. Samba's `[global]` has `check password script = /bin/false`.
+- Before it, main 96db310 (ADR-0338: the access log keeps refused and failed requests only), its
   supervisor deployed at 15:16 UTC (SD MiB sync 1.129, build-supervisor 12.336, up 3.250, check.sh
   0.016); `main` d6e98c0 differs from it at runtime only in a docstring of
   `supervisor/src/shares/smbconf.py`, so it was not deployed again. Rebooted from the API at
@@ -272,6 +288,57 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-12: Six MVP fixes, reviewed, merged and checked on the device across a reboot
+
+- Six branches, each test-first by an agent of its own, merged into one integration branch with
+  their ADRs renumbered in merge order: Samba's refusal of SAMR password changes
+  (`shares.password-changes-only-through-unos`, ADR-0342), the own-account audit entries
+  (`security.audit-admin-actions` step 4, ADR-0343), an unmount without Docker refused
+  (`storage.edge-cases` step 3, ADR-0344, superseding ADR-0070), the backup upload and restore
+  guards (`backup.edge-cases` and `shares.restore-uid-guards` step 1, ADR-0345, superseding
+  ADR-0166), the CPU's temperature (`system.temperatures`, ADR-0346) and the upload idle
+  timeout (`files.upload-edge-cases` step 1, ADR-0347). The agent of the last one stopped
+  before its commit; its staged change was committed through the hooks by the integrator.
+- Fresh-context review, one reviewer per branch and a skeptic per pair of branches, then one more
+  reviewer on the fix commits. Fixed: the smb check's SAMR step would have misread Samba 4.22's
+  answer (its smbpasswd prints MS-ERREF's description, not "Password restriction"); turning 2FA on
+  or off is conditioned on the current state and on the secret its code was checked against, and
+  a setup never replaces the secret of 2FA that is on; a move checks every item, a bind-mounted
+  file too, against the mount table before any moves (ADR-0348, superseding ADR-0170); AMD's Tdie
+  before Tctl; a restore refuses a database that gives one SMB uid to two accounts (ADR-0349); the
+  E2E stats fakes, stale ledger notes and ADR texts. Refuted: a second gzip pass of an upload
+  check, and a dated research note's sentence (given a dated remark instead). New ledger entry
+  `backup.drop-unused-include-options`. `make check` passed (6852 tests, then again on the last
+  fixes), the E2E specs of the pages touched passed on the stand-in (270). Merged as main 405d318.
+- Device check of tree 8ea5a08 (23:06 UTC deploy) around the reboot from the API at 23:22:13 UTC:
+  `scenario.sh all` OK before and after, 147 steps passed and 1 skipped (SD MiB files 1.242 and
+  0.094, volumes 0.488 and 0.488, smart 0.020 and 0.020, backups 0.355 and 0.363, smb 3.000 and
+  3.020, smbconf 2.219 and 2.359, shares 3.004 and 3.184, scrub 0.406 and 0.438, offsite 0.516
+  and 0.512, restore 7.332 and 7.574). The smb check's new step 21 got Samba's refusal of a SAMR
+  change (`smbpasswd -r`) with passdb.tdb unchanged; the restore check's backups hold no fstab.
+- Checks by hand, before and after the reboot (scripts of this session, not in the repository): the command
+  timeouts' scrub in a session of its own, its cancel, reset-stats, a SMART short test, Run now
+  of Scrub, Snapshot and SMART Test tasks, no Killed or Not started in the log (0.480 and 0.591
+  MiB); the dashboard's cpu_temperature equal to soc_thermal in sysfs; a volume's own trash, the
+  409 of a snapshot, the 0700 of a trash another account made, 0 MiB for a delete, a restore and
+  an expiry pass, an item kept across the reboot and an entry 31 days old gone after the pass at
+  the start (0.079 and 0.161 MiB); a gzip `.enc` upload refused; a user's own password change,
+  2FA on and off and sign-out in the audit log, kept across the reboot (0.713 and 0.706 MiB).
+- Two FAIL lines that are no defect of UNOS: the 408 of a stalled upload reached the client only
+  when it sent again, since Caddy holds an early answer while the client is silent; the
+  supervisor freed the upload's file at 120 seconds, and ADR-0347 now says so. The trash check's
+  comparison of the boot with the supervisor's start used the API's boot_time, which moved with
+  the clock's correction after the boot; `uptime -s` (23:23:10) and the container's start
+  (23:23:23) are in order.
+- Main 405d318 deployed at 23:44 UTC (its runtime adds to 8ea5a08 the move check of bind-mounted
+  files and the 2FA secret conditions): `scenario.sh files` OK and the upload and audit checks by
+  hand OK, but for the same 408 line; `check.sh` OK. No second reboot for that difference.
+- Passing now: `storage.commands-time-out-cleanly`, `system.temperatures`,
+  `files.delete-to-trash`, `backup.edge-cases`. Open: `shares.password-changes-only-through-unos`
+  (a Windows client, an owner action), `security.audit-admin-actions` (steps 1-3 and 5),
+  `storage.edge-cases` (steps 1, 2, 4 to 6 and 8, and step 7 with a real bind mount),
+  `shares.restore-uid-guards` (step 2), `files.upload-edge-cases` (step 2).
 
 ### 2026-11-11: The access log keeps refusals and failures, and the shares and restore checks pass across a reboot
 
