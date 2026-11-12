@@ -115,7 +115,11 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   them in this order under `scripts/dev/sd.sh measure clean -- ...`, and run the check again:
   shares, `scripts/dev/api.py DELETE /shares/smb/<name>`; users,
   `scripts/dev/api.py DELETE /auth/users/<id> --param username=<name>` (the id from
-  `GET /auth/users`); volumes, `scripts/dev/api.py DELETE /storage/pools/<pool>/volumes/<name>`;
+  `GET /auth/users`); the restored copies and snapshots in a check's volume, which its Delete
+  refuses, `scripts/dev/api.py DELETE /snapshots/copies/<name> --param subvolume=/mnt/pools/<pool>/<volume>`
+  and `scripts/dev/api.py DELETE /snapshots/<name> --param subvolume=/mnt/pools/<pool>/<volume>` (the
+  names from `GET /snapshots/copies` and `GET /snapshots/` with the same parameter); volumes,
+  `scripts/dev/api.py DELETE /storage/pools/<pool>/volumes/<name>`;
   a subvolume `<folder>/nest/sub` that the files check made, which no API route removes,
   `scripts/dev/ssh.sh 'btrfs subvolume delete /mnt/pools/<pool>/<folder>/nest/sub'`; items of
   the trash, `echo '["<path from GET /files/trash>"]' | scripts/dev/api.py DELETE /files/trash -`;

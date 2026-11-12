@@ -6,10 +6,13 @@
 		createSnapshot,
 		deleteSnapshot,
 		restoreSnapshot,
+		getRestoreCopies,
+		deleteRestoreCopy,
+		type RestoreCopy,
 		type SnapshotInfo,
 		type Subvolume
 	} from '$lib/api/snapshots';
-	import { Archive, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
+	import { Archive, Copy, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
 	import { Button, Card, Modal, Alert, Input, Select, EmptyState } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 
@@ -35,6 +38,13 @@
 	// Only the latest request updates the list: another pool or volume may have been chosen meanwhile.
 	let snapshotsRequest = 0;
 
+	// The copies that restores made right in the pool or volume chosen (ADR-0356); as for the
+	// snapshots, only the latest request updates the list.
+	let copies: RestoreCopy[] = [];
+	let copiesLoading = false;
+	let copiesError = '';
+	let copiesRequest = 0;
+
 	// Where the last restore put its copy.
 	let restoredTo = '';
 
@@ -50,6 +60,10 @@
 	let snapshotToDelete: SnapshotInfo | null = null;
 	let deleting = false;
 	let deleteError = '';
+
+	let copyToDelete: RestoreCopy | null = null;
+	let deletingCopy = false;
+	let deleteCopyError = '';
 
 	// A pool or a volume as the picker and the list's heading name it; reactive, as are the dates
 	// below, so that they follow a change of the language.
@@ -70,7 +84,7 @@
 	// Pools offered without their volumes, which could not be read (a disk that dropped off, say).
 	$: unreadVolumes = subvolumes.filter((sv) => sv.volumes_error);
 	$: selected = subvolumes.find((sv) => sv.path === selectedPath) ?? null;
-	$: busy = subvolumesLoading || snapshotsLoading;
+	$: busy = subvolumesLoading || snapshotsLoading || copiesLoading;
 	// The pool or volume that a restore makes its copy in.
 	$: restoreInto = snapshotToRestore
 		? (subvolumes.find((sv) => sv.path === snapshotToRestore?.subvolume) ?? null)
@@ -97,7 +111,7 @@
 		if (!subvolumes.some((sv) => sv.path === selectedPath)) {
 			selectedPath = subvolumes[0]?.path ?? '';
 		}
-		await loadSnapshots();
+		await Promise.all([loadSnapshots(), loadCopies()]);
 	}
 
 	async function loadSnapshots() {
@@ -123,10 +137,34 @@
 		}
 	}
 
+	async function loadCopies() {
+		const path = selectedPath;
+		const request = ++copiesRequest;
+		copiesError = '';
+		if (!path) {
+			copies = [];
+			copiesLoading = false;
+			return;
+		}
+		copiesLoading = true;
+		try {
+			const list = await getRestoreCopies(path);
+			if (request === copiesRequest) copies = list;
+		} catch (e) {
+			if (request === copiesRequest) {
+				copies = [];
+				copiesError = messageOf(e);
+			}
+		} finally {
+			if (request === copiesRequest) copiesLoading = false;
+		}
+	}
+
 	function choose(path: string) {
 		selectedPath = path;
 		restoredTo = '';
 		loadSnapshots();
+		loadCopies();
 	}
 
 	function openCreate() {
@@ -210,6 +248,34 @@
 			deleteError = messageOf(e);
 		} finally {
 			deleting = false;
+		}
+	}
+
+	function askDeleteCopy(copy: RestoreCopy) {
+		copyToDelete = copy;
+		deleteCopyError = '';
+	}
+
+	function closeDeleteCopy() {
+		if (deletingCopy) return;
+		copyToDelete = null;
+	}
+
+	async function handleDeleteCopy() {
+		if (!copyToDelete || deletingCopy) return;
+		deletingCopy = true;
+		deleteCopyError = '';
+		try {
+			await deleteRestoreCopy(copyToDelete.name, copyToDelete.subvolume);
+			deletingCopy = false;
+			copyToDelete = null;
+			// A copy of a pool's snapshot is a volume of the pool as well: the picker loses it.
+			await refresh();
+		} catch (e) {
+			// 409: in use, busy or holding subvolumes; 503: Docker did not answer
+			deleteCopyError = messageOf(e);
+		} finally {
+			deletingCopy = false;
 		}
 	}
 </script>
@@ -311,6 +377,54 @@
 											<Button variant="ghost" size="icon-sm" on:click={() => askDelete(snap)}>
 												<Trash2 class="w-4 h-4 text-error" />
 												<span class="sr-only">{$t('snapshots.deleteOne', { name: snap.name })}</span>
+											</Button>
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</Card>
+	{/if}
+
+	{#if selected}
+		<Card>
+			<h2 class="section-title mb-2">
+				<Copy class="w-5 h-5" />
+				{$t('snapshots.copies.of', { name: label(selected) })}
+			</h2>
+			<p class="text-sm text-secondary mb-4">{$t('snapshots.copies.hint')}</p>
+			{#if copiesLoading}
+				<p class="loading-text">{$t('snapshots.copies.loading')}</p>
+			{:else if copiesError}
+				<Alert variant="error" title={$t('snapshots.copies.loadError')}>{copiesError}</Alert>
+			{:else if copies.length === 0}
+				<p class="text-sm text-muted">{$t('snapshots.copies.empty')}</p>
+			{:else}
+				<div class="table-frame">
+					<table class="table" aria-label={$t('snapshots.copies.list')}>
+						<thead class="table-header">
+							<tr>
+								<th>{$t('snapshots.name')}</th>
+								<th>{$t('snapshots.copies.made')}</th>
+								<th><span class="sr-only">{$t('snapshots.actions')}</span></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each copies as copy (copy.path)}
+								<tr class="table-row align-top">
+									<td>
+										<p class="font-medium break-all">{copy.name}</p>
+										<p class="mono-xs text-muted break-all">{copy.path}</p>
+									</td>
+									<td class="whitespace-nowrap">{formatDate(copy.created)}</td>
+									<td>
+										<div class="flex justify-end gap-1">
+											<Button variant="ghost" size="icon-sm" on:click={() => askDeleteCopy(copy)}>
+												<Trash2 class="w-4 h-4 text-error" />
+												<span class="sr-only">{$t('snapshots.copies.deleteOne', { name: copy.name })}</span>
 											</Button>
 										</div>
 									</td>
@@ -440,6 +554,37 @@
 		</Button>
 		<Button variant="danger" class="flex-1" icon={Trash2} loading={deleting} on:click={handleDelete}>
 			{$t('snapshots.delete.submit')}
+		</Button>
+	</svelte:fragment>
+</Modal>
+
+<Modal
+	open={copyToDelete !== null}
+	title={$t('snapshots.copies.delete.title')}
+	danger
+	closable={!deletingCopy}
+	on:close={closeDeleteCopy}
+>
+	{#if copyToDelete}
+		<div class="space-y-4">
+			<p class="text-sm">
+				{$t('snapshots.copies.delete.before')}
+				<span class="font-semibold break-all">{copyToDelete.name}</span>
+				(<span class="mono-xs break-all">{copyToDelete.path}</span>){$t('snapshots.copies.delete.after')}
+			</p>
+			<p class="text-sm text-secondary">{$t('snapshots.copies.delete.inUse')}</p>
+			{#if deleteCopyError}
+				<Alert variant="error" title={$t('snapshots.copies.delete.failed')}>{deleteCopyError}</Alert>
+			{/if}
+		</div>
+	{/if}
+
+	<svelte:fragment slot="footer">
+		<Button variant="secondary" class="flex-1" disabled={deletingCopy} on:click={closeDeleteCopy}>
+			{$t('common.cancel')}
+		</Button>
+		<Button variant="danger" class="flex-1" icon={Trash2} loading={deletingCopy} on:click={handleDeleteCopy}>
+			{$t('snapshots.copies.delete.submit')}
 		</Button>
 	</svelte:fragment>
 </Modal>

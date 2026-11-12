@@ -69,6 +69,7 @@ class FakeSubvolumes:
         # filesystem uuid -> subvolume id -> (parent subvolume id, path from the top level)
         self.subvolumes: dict[str, dict[int, tuple[int, str]]] = {}
         self.snapshot_of: dict[int, int] = {}  # snapshot id -> id of the subvolume it copies
+        self.read_only: set[int] = set()  # the ids of read-only subvolumes (snapshots of the Snapshots page)
         self.quotas: set[str] = set()  # uuids of the filesystems with quotas enabled
         # subvolume id -> limit in bytes of its quota group (0/<id>); ids are unique here
         self.limits: dict[int, int] = {}
@@ -93,17 +94,27 @@ class FakeSubvolumes:
 
         fake._dispatch = dispatch
 
-    def add(self, uuid: str, path: str, parent: int = TOP_LEVEL, snapshot_of: int | None = None) -> int:
+    def add(self, uuid: str, path: str, parent: int = TOP_LEVEL, snapshot_of: int | None = None,
+            read_only: bool = False) -> int:
         """An existing subvolume at ``path`` (relative to the top level); returns its id.
 
-        Like btrfs, every new subvolume gets a higher id than all before it.
+        Like btrfs, every new subvolume gets a higher id than all before it. A snapshot
+        (``snapshot_of``) keeps the UUID of its source as its Parent UUID, also after the source
+        is deleted.
         """
         subvol_id = self._next_id
         self._next_id += 1
         self.subvolumes.setdefault(uuid, {})[subvol_id] = (parent, path)
         if snapshot_of is not None:
             self.snapshot_of[subvol_id] = snapshot_of
+        if read_only:
+            self.read_only.add(subvol_id)
         return subvol_id
+
+    @staticmethod
+    def uuid_of(subvol_id: int) -> str:
+        """The UUID that ``btrfs subvolume show`` prints for a subvolume of this fake."""
+        return f"5a1e0000-0000-4000-8000-{subvol_id:012d}"
 
     def paths(self, uuid: str) -> list[str]:
         return sorted(path for _, path in self.subvolumes.get(uuid, {}).values())
@@ -259,15 +270,19 @@ class FakeSubvolumes:
                 for snapshot, source in sorted(self.snapshot_of.items())
                 if source == subvol_id and snapshot in self.subvolumes[uuid]
             ]
+            source = self.snapshot_of.get(subvol_id)
             return HostResult(0, (
                 f"{path}\n"
                 f"\tName: \t\t\t{os.path.basename(path)}\n"
-                "\tParent UUID: \t\t-\n"
+                f"\tUUID: \t\t\t{self.uuid_of(subvol_id)}\n"
+                f"\tParent UUID: \t\t{'-' if source is None else self.uuid_of(source)}\n"
+                "\tReceived UUID: \t\t-\n"
+                "\tCreation time: \t\t2026-11-12 12:30:00 +0300\n"
                 f"\tSubvolume ID: \t\t{subvol_id}\n"
                 "\tGeneration: \t\t12\n"
                 f"\tParent ID: \t\t{parent}\n"
                 f"\tTop level ID: \t\t{parent}\n"
-                "\tFlags: \t\t\t-\n"
+                f"\tFlags: \t\t\t{'readonly' if subvol_id in self.read_only else '-'}\n"
                 "\tSnapshot(s):\n"
                 + "".join(snapshots)
             ), "")

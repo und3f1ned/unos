@@ -113,6 +113,10 @@ Avoid: subvolume (snapshots are subvolumes too), dataset.
 **Snapshot**: A read-only btrfs snapshot of a pool or a volume. Restoring one makes a writable copy
 and overwrites nothing (ADR-0011). Avoid: backup.
 
+**Restored copy**: The writable snapshot `restore_<date>_<time>` that restoring a snapshot makes right
+in the pool or the volume it was taken of; the Snapshots page lists and deletes it (ADR-0356). Avoid:
+snapshot, restore.
+
 **Trash**: The hidden folder `.unos-trash` at the top of each pool and volume that takes what Delete
 in Files deletes there, until it is restored, deleted for good, or deleted for good 30 days after
 its deletion (ADR-0259). Avoid: recycle bin, snapshot.

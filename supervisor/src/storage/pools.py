@@ -59,6 +59,7 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import docker
@@ -82,6 +83,7 @@ from .schemas import (
     ImportableFilesystem,
     PoolCreate,
     PoolInfo,
+    RestoreCopyInfo,
     ScrubStatus,
     VolumeCreate,
     VolumeInfo,
@@ -2087,6 +2089,10 @@ class VolumeNotFoundError(PoolNotFoundError):
     """The pool has no volume with this name (HTTP 404)."""
 
 
+class RestoreCopyNotFoundError(PoolNotFoundError):
+    """The pool or volume has no restored copy with this name (HTTP 404, ADR-0356)."""
+
+
 class VolumeKeptWithoutQuotaError(RuntimeError):
     """A create made the volume and keeps it, but without (or perhaps without) its quota (HTTP 500).
 
@@ -2271,22 +2277,33 @@ def _volume_id(pool: str, target: str, name: str, *, outcome: str = "was not del
 
     btrfs-progs resolves a path argument, so a volume is addressed by its
     id, which comes from the pool's own subvolume list, checked against the
-    filesystem (_volume_ids). PoolConflictError (HTTP 409) when the list
+    filesystem (_confirmed_id). PoolConflictError (HTTP 409) when the list
     gives the name only ids of other subvolumes; its message starts with
     "Volume '<name>' <outcome>". RuntimeError (HTTP 500) when btrfs cannot
     resolve an id the name was given.
     """
-    ids = _volume_candidates(target).get(name)
+    return _confirmed_id(pool, target, name, _volume_candidates(target).get(name), f"Volume '{name}' {outcome}")
+
+
+def _confirmed_id(pool: str, target: str, path: str, ids: list[int] | None, refusal: str) -> int | None:
+    """Which of ``ids``, the ids that the subvolume list gives ``path``, is the subvolume at ``path`` now.
+
+    ``path`` is from the top level of the pool mounted at ``target``; the
+    filesystem confirms each id (_volume_ids). None without ids.
+    PoolConflictError (HTTP 409), beginning with ``refusal``, when they all
+    belong to other subvolumes; RuntimeError (HTTP 500) when btrfs cannot
+    resolve one.
+    """
     if not ids:
         return None
-    found, verdicts, stderr = _volume_ids(target, {name: ids})
-    if name in found:
-        return found[name]
-    failed = [subvol_id for subvol_id in ids if verdicts[(subvol_id, name)] == "failed"]
+    found, verdicts, stderr = _volume_ids(target, {path: ids})
+    if path in found:
+        return found[path]
+    failed = [subvol_id for subvol_id in ids if verdicts[(subvol_id, path)] == "failed"]
     if failed:
         raise RuntimeError(f"Checking subvolume {failed[-1]} of {target} failed: {stderr or 'no answer'}")
     raise PoolConflictError(
-        f"Volume '{name}' {outcome}: the subvolume list of pool '{pool}' gives it "
+        f"{refusal}: the subvolume list of pool '{pool}' gives it "
         f"the id {ids[-1]}, which belongs to another subvolume. A subvolume whose "
         "name contains a line break can cause this."
     )
@@ -2471,31 +2488,33 @@ def _containers_on(
     }
 
 
-def _refuse_used_volume(name: str, volume_path: str) -> None:
-    """Refuse to delete the volume at ``volume_path`` while something uses it.
+def _refuse_used_subvolume(what: str, path: str) -> None:
+    """Refuse to delete the volume or restored copy at ``path`` while something uses it.
 
-    Users are running containers with a mount from the volume or from a
+    Users are running containers with a mount from the subvolume or from a
     folder in it, also through a Docker volume that binds such a folder, a
     symbolic link or another mount of the host (_containers_on), and SMB
-    shares and NFS exports of the volume or of a folder in it. Deleting the
+    shares and NFS exports of the subvolume or of a folder in it. Deleting the
     subvolume would leave them with a dead
     directory. A container, share or export of a parent folder (the whole
-    pool, say) does not count: it keeps working without the volume. The app
+    pool, or the volume around a restored copy) does not count: it keeps
+    working without the subvolume. The app
     label (APP_POOL_LABEL) is not used either: it names a pool, so it would
-    match every app of the pool.
+    match every app of the pool. ``what`` names the subvolume at the start of
+    the messages ("Volume 'documents'").
 
     PoolConflictError (HTTP 409) that names the users. DockerUnavailableError
     (HTTP 503) when Docker cannot be asked about the containers or their
     volumes, as for an unmount of the pool (_containers_using). RuntimeError (HTTP 500)
     when the containers' folders cannot be resolved on the host or the shares cannot be read. A copy or a restore of the off-device copy whose folders are the
-    volume or lie in it is refused first, as for an unmount of its pool (ADR-0337).
+    subvolume or lie in it is refused first, as for an unmount of its pool (ADR-0337).
     """
     from ..offsite import service as offsite  # it imports this module
 
-    copying = offsite.volume_user(volume_path)
+    copying = offsite.volume_user(path)
     if copying:
         raise PoolConflictError(
-            f"Volume '{name}' is used by the off-device copy: {copying}. Wait for it to end and try again."
+            f"{what} is used by the off-device copy: {copying}. Wait for it to end and try again."
         )
     try:
         with _docker_api() as api:
@@ -2503,19 +2522,19 @@ def _refuse_used_volume(name: str, volume_path: str) -> None:
     except Exception as exc:
         logger.warning("Could not list the running containers or their volumes: %s", exc)
         raise DockerUnavailableError(
-            f"Volume '{name}' was not deleted: Docker did not answer, so it is not known whether "
+            f"{what} was not deleted: Docker did not answer, so it is not known whether "
             f"a running container uses it. Try again when Docker is running ({exc})."
         ) from exc
     try:
-        containers = sorted(_containers_on(volume_path, running, bound, None))
+        containers = sorted(_containers_on(path, running, bound, None))
     except RuntimeError as exc:
-        raise RuntimeError(f"Volume '{name}' was not deleted: {exc}") from exc
+        raise RuntimeError(f"{what} was not deleted: {exc}") from exc
     try:
-        shares = sorted(s.name for s in smb.list_shares() if _points_into(s.path, volume_path))
-        exports = sorted({e.path for e in nfs.list_exports() if _points_into(e.path, volume_path)})
+        shares = sorted(s.name for s in smb.list_shares() if _points_into(s.path, path))
+        exports = sorted({e.path for e in nfs.list_exports() if _points_into(e.path, path)})
     except Exception as exc:
         raise RuntimeError(
-            f"Volume '{name}' was not deleted: the SMB shares and NFS exports could not be "
+            f"{what} was not deleted: the SMB shares and NFS exports could not be "
             f"read ({exc})"
         ) from exc
     users = [
@@ -2530,7 +2549,7 @@ def _refuse_used_volume(name: str, volume_path: str) -> None:
     if users:
         listed = users[-1] if len(users) == 1 else f"{', '.join(users[:-1])} and {users[-1]}"
         raise PoolConflictError(
-            f"Volume '{name}' is used by {listed}. Stop or remove them and try again."
+            f"{what} is used by {listed}. Stop or remove them and try again."
         )
 
 
@@ -2554,7 +2573,7 @@ def _delete_volume(
     pool's own subvolume list instead, checked against the filesystem
     (:func:`_volume_id`). Unless ``refuse_if_used`` is False, the
     volume's users are checked right before the delete
-    (:func:`_refuse_used_volume`). With ``created_after`` (a subvolume id
+    (:func:`_refuse_used_subvolume`). With ``created_after`` (a subvolume id
     from before a new volume was created), only a subvolume with a higher id
     is deleted: NewVolumeReplacedError otherwise.
     """
@@ -2567,13 +2586,26 @@ def _delete_volume(
             f"The new volume was not removed: the subvolume named '{name}' now (id "
             f"{subvol_id}) existed before it was created."
         )
+    _delete_subvolume(f"Volume '{name}'", target, subvol_id, name, refuse_if_used=refuse_if_used)
+    logger.info("Deleted volume '%s' of pool '%s'", name, pool)
+
+
+def _delete_subvolume(what: str, target: str, subvol_id: int, path: str, *, refuse_if_used: bool) -> None:
+    """``btrfs subvolume delete --subvolid``: the subvolume ``subvol_id`` at ``path`` (from the top
+    level) of the pool mounted at ``target``, a volume or a restored copy that ``what`` names.
+
+    Unless ``refuse_if_used`` is False, its users are checked right before
+    (_refuse_used_subvolume). PoolConflictError (HTTP 409) when it holds
+    snapshots or other subvolumes or is busy; RuntimeError (HTTP 500) when
+    btrfs fails otherwise.
+    """
     from ..offsite import service as offsite  # it imports this module
 
     # Under the lock with which a copy of the off-device copy names and opens its folders: either the
-    # check sees the copy, or the copy finds the volume gone (ADR-0337).
+    # check sees the copy, or the copy finds the subvolume gone (ADR-0337).
     with offsite.FOLDERS_LOCK if refuse_if_used else nullcontext():
         if refuse_if_used:
-            _refuse_used_volume(name, os.path.join(target, name))
+            _refuse_used_subvolume(what, os.path.join(target, path))
         result = host.run_on_host(
             ["btrfs", "subvolume", "delete", "--subvolid", str(subvol_id), target],
             timeout=VOLUME_TIMEOUT,
@@ -2583,13 +2615,12 @@ def _delete_volume(
         message = result.stderr.strip() or f"exit status {result.returncode}"
         if "not empty" in message.lower():
             raise PoolConflictError(
-                f"Volume '{name}' contains snapshots or other subvolumes ({message}). "
+                f"{what} contains snapshots or other subvolumes ({message}). "
                 "Delete them first."
             )
         if "busy" in message.lower():
-            raise PoolConflictError(f"Volume '{name}' is in use ({message}).")
-        raise RuntimeError(f"Deleting volume '{name}' failed: {message}")
-    logger.info("Deleted volume '%s' of pool '%s'", name, pool)
+            raise PoolConflictError(f"{what} is in use ({message}).")
+        raise RuntimeError(f"Deleting {what[:1].lower()}{what[1:]} failed: {message}")
 
 
 def _quotas_not_enabled(reason: str) -> bool:
@@ -2818,6 +2849,138 @@ def delete_volume(pool_name: str, volume_name: str) -> None:
     name = validate_volume_name(volume_name)
     with _lock:
         _delete_volume(pool, _mounted_pool_target(pool, write=True), name, refuse_if_used=True)
+
+
+# The name of the writable copy that Restore on the Snapshots page makes: restore_<date>_<time> in
+# UTC (RESTORE_PREFIX and utc_stamp of src/snapshots/router.py, ADR-0356).
+RESTORE_COPY_NAME = re.compile(r"restore_(?P<stamp>[0-9]{8}_[0-9]{6})")
+
+
+def _copy_time(name: str) -> str | None:
+    """The time in the name of a restored copy, in UTC with its offset; None for a name that a restore does not give."""
+    match = RESTORE_COPY_NAME.fullmatch(name)
+    if match is None:
+        return None
+    try:
+        made = datetime.strptime(match.group("stamp"), "%Y%m%d_%H%M%S")
+    except ValueError:  # restore_20261399_000000: no time
+        return None
+    return made.replace(tzinfo=timezone.utc).isoformat()
+
+
+def _made_by_restore(target: str, subvol_id: int) -> bool:
+    """Whether the subvolume ``subvol_id`` of the pool mounted at ``target`` is what a restore makes: a writable snapshot.
+
+    ``btrfs subvolume show -r <id>`` prints its Parent UUID, the subvolume
+    it was made of ("-" for one that ``btrfs subvolume create`` made), and its
+    Flags ("readonly" for a read-only snapshot, such as those of the Snapshots
+    page). Its first lines are the subvolume's path and name, which the
+    caller checked just before to be a copy's (no line break). RuntimeError
+    (HTTP 500) when btrfs fails.
+    """
+    result = host.run_on_host(
+        ["btrfs", "subvolume", "show", "-r", str(subvol_id), target], timeout=VOLUME_TIMEOUT, errors="replace"
+    )
+    if not result.ok:
+        raise RuntimeError(
+            f"Reading subvolume {subvol_id} of {target} failed: "
+            f"{result.stderr.strip() or f'exit status {result.returncode}'}"
+        )
+    fields: dict[str, str] = {}
+    for line in result.stdout.split("\n")[1:]:
+        key, colon, value = line.strip().partition(":")
+        if colon and key not in fields:
+            fields[key] = value.strip()
+    return fields.get("Parent UUID", "-") not in ("", "-") and "readonly" not in fields.get("Flags", "")
+
+
+def _copy_place(pool: str, target: str, volume: str | None) -> str:
+    """Where the restored copies of the pool mounted at ``target`` or of its volume ``volume`` are, from the top level ("" or "<volume>/").
+
+    VolumeNotFoundError (HTTP 404) when the pool has no volume ``volume``.
+    """
+    if volume is None:
+        return ""
+    if _volume_id(pool, target, volume, outcome="was not found") is None:
+        raise VolumeNotFoundError(f"Volume '{volume}' not found in pool '{pool}'")
+    return f"{volume}/"
+
+
+def _copy_candidates(target: str, place: str) -> dict[str, list[int]]:
+    """What the subvolume list of the pool mounted at ``target`` gives the names of restored copies right in ``place``: ids by path."""
+    candidates: dict[str, list[int]] = {}
+    for subvol_id, _, path in _list_subvolumes(target):
+        if path.startswith(place) and _copy_time(path[len(place):]) is not None:
+            ids = candidates.setdefault(path, [])
+            if subvol_id not in ids:
+                ids.append(subvol_id)
+    return candidates
+
+
+def list_restore_copies(pool_name: str, volume_name: str | None) -> list[RestoreCopyInfo]:
+    """The copies that restores of snapshots made right in a mounted pool or in its volume, newest first (ADR-0356).
+
+    A restore makes a writable snapshot ``restore_<date>_<time>`` (UTC) in
+    the pool or volume whose snapshot it restored. Listed is what has that
+    name with a time in it, is right there as the filesystem confirms
+    (_volume_ids, as for volumes) and is a writable snapshot
+    (_made_by_restore); its time is the one in its name. A copy made in
+    another folder (POST /snapshots/restore with target_path) is not listed.
+    PoolNotFoundError or VolumeNotFoundError (HTTP 404); PoolConflictError
+    (HTTP 409) when the pool is not mounted at its top level
+    (_mounted_pool_target); RuntimeError (HTTP 500) when btrfs fails.
+    """
+    pool = validate_pool_name(pool_name)
+    volume = None if volume_name is None else validate_volume_name(volume_name)
+    target = _mounted_pool_target(pool)
+    place = _copy_place(pool, target, volume)
+    found = _volume_ids(target, _copy_candidates(target, place))[0]
+    folder = os.path.join(target, volume) if volume else target
+    names = sorted((path[len(place):] for path, subvol_id in found.items() if _made_by_restore(target, subvol_id)),
+                   reverse=True)
+    return [
+        RestoreCopyInfo(name=name, pool=pool, volume=volume, subvolume=folder, path=os.path.join(folder, name),
+                        created=_copy_time(name))
+        for name in names
+    ]
+
+
+def delete_restore_copy(pool_name: str, volume_name: str | None, name: str) -> None:
+    """Delete the restored copy ``name`` right in a mounted pool or in its volume, by its subvolume id (ADR-0356).
+
+    Only what list_restore_copies lists is deleted: ValueError (HTTP 400)
+    for a name that a restore does not give, or for a subvolume that is not
+    a writable snapshot. Its id comes from the pool's subvolume list,
+    checked against the filesystem, and its users are checked right before,
+    as a volume's (_delete_subvolume). RestoreCopyNotFoundError or
+    VolumeNotFoundError (HTTP 404) when the copy or the volume is not there;
+    PoolConflictError (HTTP 409) when the
+    pool is not mounted, mounted read-only or not at its top level, the list
+    gives the copy only ids of other subvolumes, or the copy is used, busy
+    or holds subvolumes; DockerUnavailableError (HTTP 503) when Docker cannot
+    be asked; RuntimeError (HTTP 500) when btrfs fails. Nothing is deleted
+    then. The volume that held the copy can be deleted afterwards.
+    """
+    pool = validate_pool_name(pool_name)
+    volume = None if volume_name is None else validate_volume_name(volume_name)
+    if _copy_time(name) is None:
+        raise ValueError(f"'{name}' is not the name of a restored copy (restore_<date>_<time>)")
+    shown = f"{volume}/{name}" if volume else name
+    what = f"Restored copy '{shown}'"
+    with _lock:
+        target = _mounted_pool_target(pool, write=True)
+        place = _copy_place(pool, target, volume)
+        subvol_id = _confirmed_id(pool, target, shown, _copy_candidates(target, place).get(shown),
+                                  f"{what} was not deleted")
+        if subvol_id is None:
+            raise RestoreCopyNotFoundError(f"{what} not found in pool '{pool}'")
+        if not _made_by_restore(target, subvol_id):
+            raise ValueError(
+                f"'{shown}' of pool '{pool}' is not a copy that a restore made (a writable snapshot): "
+                "it was not deleted."
+            )
+        _delete_subvolume(what, target, subvol_id, shown, refuse_if_used=True)
+    logger.info("Deleted the restored copy '%s' of pool '%s'", shown, pool)
 
 
 # btrfs scrub start returns once the scrub runs in the background; status and
