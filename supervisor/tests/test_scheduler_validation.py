@@ -27,7 +27,8 @@ from src import host as host_module
 from src.auth.utils import verify_token
 from src.main import app
 from src.scheduler.schemas import ScheduledTask
-from src.storage import pools
+from src.storage import pools, scrubs
+from src.storage.schemas import ScrubStatus
 
 from .test_pool_persistence import install_fake_host
 from .test_snapshots import FakeBtrfs, local_time_9_hours_ahead_of_utc
@@ -1017,6 +1018,8 @@ async def test_scrub_task(env):
     assert ok
     assert _commands(env) == [["btrfs", "scrub", "start", str(env.pool)]]
     assert env.run.call_args.kwargs["timeout"] == scheduler.SCRUB_START_TIMEOUT == 60
+    # The Storage page follows it over the events socket (ADR-0365).
+    assert scrubs.current() == [ScrubStatus(pool="data", status="running").model_dump()]
 
 
 async def test_scrub_of_an_unmounted_pool_fails_without_btrfs(env, monkeypatch):

@@ -134,6 +134,10 @@ class FakeJournal:
         self.reads_for: float | None = None
         # The journalctl commands that still read on the host after the supervisor stopped waiting.
         self.still_reading: list[list[str]] = []
+        # The journalctl --follow commands started through host.stream_on_host, and what stops their
+        # start (an OSError: nsenter cannot start).
+        self.followers: list["FakeFollow"] = []
+        self.cannot_follow: OSError | None = None
 
     def add(self, message, *, minutes_ago, priority=6, identifier=None, comm=None, unit=None,
             transport="syslog", facility=None, boot=BOOT, **fields) -> dict:
@@ -191,16 +195,19 @@ class FakeJournal:
         return self._journalctl(cmd)
 
     def _since(self, value: str) -> int:
+        if value.startswith("@"):
+            return int(value[1:]) * 1_000_000  # seconds since the epoch
         number, unit, ago = value.split(" ")
         seconds = {"minute": 60, "minutes": 60, "hour": 3600, "hours": 3600, "day": 86400, "days": 86400}
         assert ago == "ago" and unit in seconds, f"the fake journalctl does not know --since={value}"
         return int((time.time() - int(number) * seconds[unit]) * 1_000_000)
 
-    def _journalctl(self, cmd: list[str]) -> HostResult:
+    def _parse(self, cmd: list[str]) -> SimpleNamespace:
+        """journalctl's options: the entries it selects (``wanted``) and where it starts."""
         if cmd[0] != "journalctl":
             raise AssertionError(f"the fake host does not know {cmd!r}")
-        output = fields = lines = priority = since = pattern = case_sensitive = None
-        reverse = dmesg = False
+        output = fields = lines = priority = since = pattern = case_sensitive = after_cursor = None
+        reverse = dmesg = follow = False
         units: list[str] = []
         matches: dict[str, set[str]] = {}
         for arg in cmd[1:]:
@@ -209,6 +216,8 @@ class FakeJournal:
                 continue
             if arg == "--reverse":
                 reverse = True
+            elif arg == "--follow":
+                follow = True
             elif arg == "--dmesg":
                 dmesg = True
             elif name == "--output":
@@ -216,7 +225,9 @@ class FakeJournal:
             elif name == "--output-fields":
                 fields = set(value.split(","))
             elif name == "--lines":
-                lines = int(value)
+                lines = None if value == "all" else int(value)
+            elif name == "--after-cursor":
+                after_cursor = value
             elif name == "--priority":
                 priority = LEVELS.index(value)
             elif name == "--since":
@@ -250,19 +261,78 @@ class FakeJournal:
                 return False
             return pattern is None or compiled.search(_text(entry["MESSAGE"])) is not None
 
-        selected = [entry for entry in self.entries if wanted(entry)]
-        if reverse:
-            selected = selected[::-1][:lines] if lines is not None else selected[::-1]
-        elif lines is not None:
-            selected = selected[-lines:]
-        if pattern is not None and not selected:
+        return SimpleNamespace(wanted=wanted, fields=fields, lines=lines, reverse=reverse, follow=follow,
+                               after_cursor=after_cursor, pattern=pattern)
+
+    def printed(self, entry: dict, fields: set[str] | None) -> str:
+        """An entry as journalctl --output=json prints it, without its line break."""
+        shown = (fields or set()) | {"__CURSOR", "__REALTIME_TIMESTAMP", "__MONOTONIC_TIMESTAMP", "_BOOT_ID"}
+        # Control characters escaped, everything else as it is: journalctl writes UTF-8, not ASCII.
+        return json.dumps({key: _printed(value) for key, value in entry.items() if fields is None or key in shown},
+                          ensure_ascii=False)
+
+    def _journalctl(self, cmd: list[str]) -> HostResult:
+        spec = self._parse(cmd)
+        assert not spec.follow and spec.after_cursor is None, "journalctl --follow runs through host.stream_on_host"
+        selected = [entry for entry in self.entries if spec.wanted(entry)]
+        if spec.reverse:
+            selected = selected[::-1][:spec.lines] if spec.lines is not None else selected[::-1]
+        elif spec.lines is not None:
+            selected = selected[-spec.lines:]
+        if spec.pattern is not None and not selected:
             # journalctl --grep copies grep: when it showed nothing, it exits with status 1, silently.
             return HostResult(1, "", "")
-        shown = (fields or set()) | {"__CURSOR", "__REALTIME_TIMESTAMP", "__MONOTONIC_TIMESTAMP", "_BOOT_ID"}
-        printed = [{key: _printed(value) for key, value in entry.items() if fields is None or key in shown}
-                   for entry in selected]
-        # Control characters escaped, everything else as it is: journalctl writes UTF-8, not ASCII.
-        return HostResult(0, "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in printed), "")
+        return HostResult(0, "".join(self.printed(entry, spec.fields) + "\n" for entry in selected), "")
+
+    def follow(self, cmd: list[str]) -> "FakeFollow":
+        """``journalctl --follow --lines=all`` from a cursor or a time, as host.stream_on_host starts it."""
+        self.calls.append(list(cmd))
+        if self.cannot_follow is not None:
+            raise self.cannot_follow
+        spec = self._parse(list(cmd))
+        assert spec.follow and spec.lines is None and not spec.reverse, f"not a follow from a position: {cmd!r}"
+        position = 0
+        if spec.after_cursor is not None:
+            cursors = [entry["__CURSOR"] for entry in self.entries]
+            assert spec.after_cursor in cursors, f"no entry has the cursor {spec.after_cursor}"
+            position = cursors.index(spec.after_cursor) + 1
+        follower = FakeFollow(self, list(cmd), spec, position)
+        self.followers.append(follower)
+        return follower
+
+
+class FakeFollow:
+    """``journalctl --follow`` on the fake host: the wanted entries from its position on, then each
+    one that the test adds, until it is stopped or the test ends it (``end``)."""
+
+    def __init__(self, journal: FakeJournal, cmd: list[str], spec: SimpleNamespace, position: int) -> None:
+        self.journal, self.cmd, self.spec, self.position = journal, cmd, spec, position
+        self.stopped = False
+        self.ended: HostResult | None = None
+
+    def end(self, returncode: int, stderr: str) -> None:
+        """journalctl exits by itself, with this status and error output."""
+        self.ended = HostResult(returncode, "", stderr)
+
+    async def readline(self) -> str | None:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            while self.position < len(self.journal.entries):
+                entry = self.journal.entries[self.position]
+                self.position += 1
+                if self.spec.wanted(entry):
+                    return self.journal.printed(entry, self.spec.fields)
+            if self.stopped or self.ended is not None:
+                return None
+            await asyncio.sleep(0.01)
+        raise AssertionError("a follow that nothing stopped")
+
+    async def result(self) -> HostResult:
+        assert self.ended is not None or self.stopped, "result() before the output ended"
+        return self.ended or HostResult(-15, "", "")
+
+    async def stop(self) -> None:
+        self.stopped = True
 
 
 def _forbidden(*args, **kwargs):
@@ -318,20 +388,30 @@ EXPECTED = {
 }
 
 
-@pytest.fixture
-def journal(monkeypatch):
-    """Host commands reach FakeJournal through nsenter's path; nothing runs on this machine."""
+def install_fake_journal(monkeypatch) -> "FakeJournal":
+    """Host commands reach FakeJournal through nsenter's path; nothing runs on this machine. The
+    journal fixture, and that of test_ws_auth.py's journal socket."""
     fake = FakeJournal()
     for message, minutes_ago, fields in JOURNAL:
         fake.add(message, minutes_ago=minutes_ago, **fields)
     monkeypatch.delenv("UNOS_HOST_EXEC", raising=False)
     monkeypatch.setattr(host_module, "run_on_host", fake.run)
+
+    async def stream_on_host(cmd):
+        return fake.follow(cmd)
+
+    monkeypatch.setattr(host_module, "stream_on_host", stream_on_host)
     for name in ("run", "Popen", "call", "check_call", "check_output"):
         monkeypatch.setattr(subprocess, name, _forbidden)
     monkeypatch.setattr(os, "system", _forbidden)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _forbidden)
     monkeypatch.setattr(asyncio, "create_subprocess_shell", _forbidden)
     return fake
+
+
+@pytest.fixture
+def journal(monkeypatch):
+    return install_fake_journal(monkeypatch)
 
 
 def _client(user):
@@ -463,6 +543,8 @@ class TestEntries:
             "message": "Started Session 3 of User admin.",
             "source": "journal",
             "unit": "systemd",
+            # Where the journal socket follows on after it (ADR-0364).
+            "cursor": f"s=4c1d;i=1;b={BOOT}",
         }]
 
     def test_an_entrys_program_is_its_syslog_identifier_else_its_command_else_its_unit(self, client, journal):

@@ -1,5 +1,4 @@
 import asyncio
-import subprocess
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -18,7 +17,7 @@ from ..security.validators import (
     validate_volume_name,
 )
 from ..shares import service as shares_service
-from . import disks, pools
+from . import disks, pools, scrubs
 from .schemas import (
     DiskInfo,
     ImportableFilesystem,
@@ -348,21 +347,22 @@ async def delete_volume_endpoint(
     return {"status": "deleted"}
 
 
-async def _scrub(func: Callable[[str], ScrubStatus], name: str) -> ScrubStatus:
-    """Run a btrfs scrub command for a pool in a worker thread (it can block on a busy disk)."""
+async def _scrub(func: Callable[[str], ScrubStatus], name: str, *, reads: bool = False) -> ScrubStatus:
+    """Run a btrfs scrub command for a pool in a worker thread (it can block on a busy disk), and
+    note its answer for the events socket (storage/scrubs.py, ADR-0365); for a read of the status
+    (``reads``), also why it failed."""
     validated_name = validate_pool_name(name)
     try:
-        return await asyncio.to_thread(func, validated_name)
+        status = await asyncio.to_thread(func, validated_name)
     except pools.PoolConflictError as e:  # a start on a pool that is not mounted
         raise HTTPException(status_code=409, detail=str(e))
-    except subprocess.TimeoutExpired as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"btrfs {' '.join(e.cmd[1:3])} did not answer within {pools.SCRUB_COMMAND_TIMEOUT} "
-            f"seconds: pool {validated_name} may not be responding",
-        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
+        detail = scrubs.failure(e, validated_name)
+        if reads:
+            scrubs.note(validated_name, detail)
+        raise HTTPException(status_code=500, detail=detail)
+    scrubs.note(validated_name, status)
+    return status
 
 
 @router.post("/pools/{name}/scrub", response_model=ScrubStatus)
@@ -384,7 +384,7 @@ async def get_scrub_status_endpoint(name: str, _=Depends(verify_token)):
     idle when no scrub is recorded and none runs; 500 with btrfs's error when it
     cannot report the status, or does not answer within SCRUB_COMMAND_TIMEOUT.
     """
-    return await _scrub(pools.get_scrub_status, name)
+    return await _scrub(pools.get_scrub_status, name, reads=True)
 
 
 @router.delete("/pools/{name}/scrub", response_model=ScrubStatus)

@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { getToken, handleUnauthorized } from '$lib/api/client';
 import { problems, type Problem } from '$lib/stores/problems';
+import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 
 // The parts of the stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface CpuStats {
@@ -191,6 +192,9 @@ export function connectWebSocket() {
     } else if (message.type === 'problems' && Array.isArray(message.data)) {
       // Administrators only: the problems that are still there (ADR-0332).
       problems.set(message.data as Problem[]);
+    } else if (message.type === 'scrubs' && Array.isArray(message.data)) {
+      // Administrators only: the scrubs that run, until they end (ADR-0365).
+      scrubs.set(message.data as ScrubUpdate[]);
     }
   };
 
@@ -225,6 +229,7 @@ export function disconnectWebSocket() {
   wsForbidden.set(false);
   stats.set(null);
   problems.set([]);
+  scrubs.set([]);
 }
 
 export function formatBytes(bytes: number): string {

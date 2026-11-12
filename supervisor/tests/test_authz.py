@@ -101,7 +101,7 @@ USER_ALLOWED = {
 }
 
 # Authenticated by their own handshake; see test_ws_auth.py.
-WEBSOCKETS = {"/ws/v1/events", "/ws/v1/logs/{container_id}"}
+WEBSOCKETS = {"/ws/v1/events", "/ws/v1/logs/{container_id}", "/ws/v1/journal"}
 
 PASSWORD = "correct-password"
 _PASSWORD_HASH = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decode()

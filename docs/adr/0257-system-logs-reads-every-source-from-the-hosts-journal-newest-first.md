@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: system
 decided-by: agent
+superseded-by: ADR-0364
 ---
 
 # ADR-0257: System > Logs reads every source from the host's journal, newest first, with one set of filters
 
 ## Context
+
+Superseded by ADR-0364: Auto follows new entries over the journal socket instead of asking again every 5 seconds.
 
 The readers of `supervisor/src/logs/router.py` ran journalctl inside the supervisor container, which has no journal, with `subprocess.run` on the event loop and no timeout. Kernel ran dmesg there; Samba, Authentication and Cron Jobs fell back to the container's `/var/log`, Docker and Web Server asked systemctl in the container, and UNOS Supervisor fell back to a docker CLI that the image lacks. journalctl and dmesg print the oldest entries first, and the tab showed them as received; a severity meant that level and the more severe ones for journalctl but only that level for dmesg, the time range did not reach the kernel, and the search looked only among the newest entries (system.logs-viewer).
 

@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 // The sources as GET /api/v1/logs/sources lists them: parts of the host's journal, with the
@@ -77,6 +77,20 @@ const ANSWERS: Record<string, Entry[]> = {
 };
 
 /**
+ * What the server lists for a query of GET /api/v1/logs/entries, or of the journal socket, from
+ * ANSWERS: a severity lists that level and the more severe ones, a search the entries whose message
+ * holds the text in any case, and the limit the newest entries.
+ */
+function listed(query: URLSearchParams): Entry[] {
+  const priority = query.get('priority');
+  const search = (query.get('search') ?? '').toLowerCase();
+  return (ANSWERS[query.get('source') ?? ''] ?? [])
+    .filter((e) => !priority || LEVELS.indexOf(e.priority) <= LEVELS.indexOf(priority))
+    .filter((e) => e.message.toLowerCase().includes(search))
+    .slice(0, Number(query.get('limit')));
+}
+
+/**
  * Answer the tab's requests as the server does, from ANSWERS: a severity lists that level and
  * the more severe ones, a search the entries whose message holds the text in any case, and the
  * limit the newest entries. Other requests of the logs API are aborted. Returns the query of every
@@ -101,13 +115,8 @@ async function fakeLogsApi(page: Page) {
     if (source === held) await released;
     if (failure) return route.fulfill({ status: 500, json: { detail: failure } });
     if (!(source in ANSWERS)) return route.fulfill({ status: 400, json: { detail: `Unknown log source: ${source}` } });
-    const priority = query.get('priority');
-    const search = (query.get('search') ?? '').toLowerCase();
-    const listed = ANSWERS[source]
-      .filter((e) => !priority || LEVELS.indexOf(e.priority) <= LEVELS.indexOf(priority))
-      .filter((e) => e.message.toLowerCase().includes(search))
-      .slice(0, Number(query.get('limit')));
-    return route.fulfill({ json: { entries: listed, total: listed.length } });
+    const entries = listed(query);
+    return route.fulfill({ json: { entries, total: entries.length } });
   });
   return {
     requests,
@@ -120,6 +129,42 @@ async function fakeLogsApi(page: Page) {
       failure = detail;
     },
   };
+}
+
+type JournalSocket = { query: URLSearchParams; route: WebSocketRoute; closedByPage: boolean };
+
+/**
+ * Stand in for the journal socket of Auto, /ws/v1/journal (supervisor/src/websocket/events.py,
+ * ADR-0364): it answers the auth message with auth_ok and the newest entries of the query of its
+ * URL, as GET /entries lists them; a test sends the new ones with `send`. Returns the sockets the
+ * page opened, the latest last.
+ */
+async function fakeJournalSocket(page: Page): Promise<JournalSocket[]> {
+  const sockets: JournalSocket[] = [];
+  await page.routeWebSocket(
+    (url) => url.pathname === '/ws/v1/journal',
+    (ws) => {
+      const socket: JournalSocket = { query: new URL(ws.url()).searchParams, route: ws, closedByPage: false };
+      sockets.push(socket);
+      ws.onMessage((message) => {
+        const first = JSON.parse(String(message));
+        if (first.type !== 'auth' || typeof first.token !== 'string' || !first.token) {
+          ws.close({ code: 4401, reason: 'unauthorized' });
+          return;
+        }
+        ws.send(JSON.stringify({ type: 'auth_ok' }));
+        ws.send(JSON.stringify({ type: 'entries', data: listed(socket.query) }));
+      });
+      ws.onClose(() => {
+        socket.closedByPage = true;
+      });
+    },
+  );
+  return sockets;
+}
+
+function send(socket: JournalSocket, message: object) {
+  socket.route.send(JSON.stringify(message));
 }
 
 const cells = (page: Page, column: number) => page.locator(`main table tbody tr td:nth-child(${column})`);
@@ -267,31 +312,100 @@ test.describe('System Logs with a fake journal', () => {
     expect(api.requests[api.requests.length - 1].get('limit')).toBe('50');
   });
 
-  test('Auto asks again every 5 seconds, but not while an answer is still coming', async ({
+  // webui.no-http-polling (ADR-0364): Auto follows the journal over a WebSocket, not by asking
+  // GET /entries again.
+  test('Auto follows new entries over the journal socket and never asks the API again', async ({
     authenticatedPage: page,
   }) => {
     await page.clock.install();
     const api = await fakeLogsApi(page);
+    const sockets = await fakeJournalSocket(page);
     await page.goto('/system#logs');
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+    expect(api.requests).toHaveLength(1);
 
-    await page.getByRole('button', { name: 'Auto', exact: true }).click();
-    await expect(page.getByText('Auto-refreshing every 5s')).toBeVisible();
-    await page.clock.fastForward('00:05');
-    await expect.poll(() => api.requests.length).toBe(2);
+    const auto = page.getByRole('button', { name: 'Auto', exact: true });
+    await auto.click();
+    await expect(page.getByText('Following new entries')).toBeVisible();
+    await expect.poll(() => sockets.length).toBe(1);
+    // The query of GET /entries, in the URL: the token goes in the first message (ADR-0031).
+    expect(Object.fromEntries(sockets[0].query)).toEqual({ source: 'journal', limit: '200' });
 
-    // A search through a large journal takes long: Auto waits for its answer.
-    api.hold('journal');
-    await page.clock.fastForward('00:05');
-    await expect.poll(() => api.requests.length).toBe(3);
-    await page.clock.fastForward('00:15');
-    await page.waitForTimeout(500);
-    expect(api.requests.length).toBe(3);
+    // Each new entry comes first, as the list is newest first.
+    const NEW = 'Out of memory: Killed process 4343 (node) total-vm:912345kB';
+    send(sockets[0], { type: 'entry', data: entry('journal', '2026-11-07T10:00:00+00:00', 'err', 'kernel', NEW) });
+    await expect(cells(page, 4)).toHaveText([NEW, OOM, FAILED_PASSWORD, NO_EXIT]);
+    await expect(page.getByText('Showing 4 log entries, newest first')).toBeVisible();
 
-    api.release();
-    await expect(page.getByText('Showing 3 log entries, newest first')).toBeVisible();
-    await page.clock.fastForward('00:05');
-    await expect.poll(() => api.requests.length).toBe(4);
+    // Time passes: nothing asks the API.
+    await page.clock.fastForward('01:00');
+    await page.waitForTimeout(300);
+    expect(api.requests).toHaveLength(1);
+
+    // A filter changed while Auto is on: the socket of the new query lists its entries.
+    await choose(page, 'Priority Level', 'Error');
+    await expect.poll(() => sockets.length).toBe(2);
+    await expect.poll(() => sockets[0].closedByPage).toBe(true);
+    expect(Object.fromEntries(sockets[1].query)).toEqual({ source: 'journal', limit: '200', priority: 'err' });
+    await expect(cells(page, 4)).toHaveText([OOM]);
+    await page.getByRole('button', { name: 'Kernel', exact: true }).click();
+    await expect.poll(() => sockets.length).toBe(3);
+    expect(sockets[2].query.get('source')).toBe('dmesg');
+    await expect(cells(page, 4)).toHaveText([OOM, USB_ERROR]);
+    expect(api.requests).toHaveLength(1);
+
+    // The list keeps the newest entries of the limit.
+    await choose(page, 'Limit', '50');
+    await expect.poll(() => sockets.length).toBe(4);
+    const many = Array.from({ length: 50 }, (_, i) =>
+      entry('dmesg', '2026-11-07T09:00:00+00:00', 'err', 'kernel', `usb 1-1: error ${i}`),
+    );
+    send(sockets[3], { type: 'entries', data: many });
+    await expect(page.getByText('Showing 50 log entries, newest first')).toBeVisible();
+    send(sockets[3], { type: 'entry', data: entry('dmesg', '2026-11-07T10:01:00+00:00', 'err', 'kernel', NEW) });
+    await expect(cells(page, 4).first()).toHaveText(NEW);
+    await expect(cells(page, 4)).toHaveCount(50);
+    await expect(cells(page, 4).last()).toHaveText('usb 1-1: error 48');
+
+    // Auto off: the socket closes, and the list stays.
+    await auto.click();
+    await expect.poll(() => sockets[3].closedByPage).toBe(true);
+    await expect(page.getByText('Following new entries')).toHaveCount(0);
+    await expect(cells(page, 4)).toHaveCount(50);
+    expect(api.requests).toHaveLength(1);
+  });
+
+  test('Auto stops when the journal socket ends, and says why', async ({ authenticatedPage: page }) => {
+    await fakeLogsApi(page);
+    const sockets = await fakeJournalSocket(page);
+    await page.goto('/system#logs');
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+    const auto = page.getByRole('button', { name: 'Auto', exact: true });
+
+    // The server's error, as GET /entries would answer it, instead of the entries.
+    await auto.click();
+    await expect.poll(() => sockets.length).toBe(1);
+    await expect(page.getByText('Following new entries')).toBeVisible();
+    send(sockets[0], { type: 'error', message: DID_NOT_ANSWER });
+    await sockets[0].route.close({ code: 1000, reason: 'journal error' });
+    await expect(page.getByText('Error loading logs')).toBeVisible();
+    await expect(page.getByText(DID_NOT_ANSWER)).toBeVisible();
+    await expect(page.getByText('Following new entries')).toHaveCount(0);
+
+    // A connection that is lost keeps the entries and says so.
+    await auto.click();
+    await expect.poll(() => sockets.length).toBe(2);
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+    await sockets[1].route.close({ code: 1011, reason: 'gone' });
+    await expect(page.getByText('Auto stopped: the connection to the server was lost')).toBeVisible();
+    await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
+    await expect(page.getByText('Following new entries')).toHaveCount(0);
+
+    // Auto again starts a new stream, and the notice goes.
+    await auto.click();
+    await expect.poll(() => sockets.length).toBe(3);
+    await expect(page.getByText('Following new entries')).toBeVisible();
+    await expect(page.getByText('Auto stopped: the connection to the server was lost')).toHaveCount(0);
   });
 
   test('a late answer for the source picked before does not replace the entries of the one picked last', async ({

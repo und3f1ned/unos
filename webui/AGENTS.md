@@ -39,9 +39,13 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   of the message it needs (`$stats.cpu`, `$stats.network.interfaces`). Rates come from the
   server; a page writes sizes and rates with the units of its catalog, as `NetworkTab.svelte` and
   `MonitorTab.svelte` do (ADR-0287).
-- The `setInterval` polling in `LogsTab.svelte` and the storage page predates that rule: new live
-  data comes over the WebSocket, as a container's log does (`streamContainerLogs` of
-  `$lib/api/containers.ts`, ADR-0255).
+- No page polls the API: other live data comes over a WebSocket of its own, as a container's log
+  (`streamContainerLogs` of `$lib/api/containers.ts`, ADR-0255) and the journal of System > Logs'
+  Auto do (`streamLogEntries` of `$lib/api/logs.ts`, ADR-0364), or as a message of
+  `/ws/v1/events` into a store, as the scrubs that run do (`$lib/stores/scrubs`, ADR-0365).
+  `scripts/polling-check.mjs`, which `supervisor/tests/test_webui_polling.py` runs, fails for a
+  `setInterval` whose callback reaches the API; `// polling-ignore: <reason>` above it exempts a
+  countdown that asks once when its time has run out (ADR-0363).
 - A WebSocket authenticates with its first message, `{"type": "auth", "token": ...}`; tokens stay
   out of URLs (ADR-0031). Close code 4401 ends the session, 4403 means forbidden.
 - HTTP goes through `$lib/api/client.ts`, one module per API area in `$lib/api/`: `api.get`,

@@ -531,6 +531,18 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- No page polls the API any more. **System** → **Logs**' **Auto** follows the
+  journal over the new WebSocket `/ws/v1/journal` (administrators only): the
+  newest entries of the chosen source, level, search and time range, then
+  each new one as the journal gets it, from a `journalctl --follow` on the
+  host that ends with the socket; it no longer reads the whole range again
+  every 5 seconds, and a lost connection stops it with a notice. The Storage
+  page follows a running scrub, also a scheduled one, over `/ws/v1/events`,
+  which sends administrators a `scrubs` message whenever the status of a
+  scrub that runs changes, instead of asking for the status every 2 seconds.
+  `GET /api/v1/logs/entries` answers each entry's journal `cursor`. A check
+  of the web UI's code (`webui/scripts/polling-check.mjs`, run by
+  `make test`) fails for a `setInterval` that reaches the API.
 - Every copy of an smb.conf that UNOS replaced is kept, not only the latest:
   a file with shares that UNOS did not create goes to a new
   `/etc/samba/smb.conf.unos-replaced-<UTC time>` before an apply, and a file

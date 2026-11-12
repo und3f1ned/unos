@@ -58,6 +58,19 @@ def _no_problems_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_scrubs_seen_yet(monkeypatch):
+    """The scrubs that the events socket follows are kept in RAM (ADR-0365): every test starts
+    without them, as the supervisor does."""
+    scrubs = sys.modules.get("src.storage.scrubs")
+    if scrubs is not None:
+        monkeypatch.setattr(scrubs, "_scrubs", {})
+        monkeypatch.setattr(scrubs, "_version", 0)
+        monkeypatch.setattr(scrubs, "_noted_at", {})
+        monkeypatch.setattr(scrubs, "_reading", None)
+        monkeypatch.setattr(scrubs, "_read_at", float("-inf"))
+
+
+@pytest.fixture(autouse=True)
 def _notification_files_in_tmp_path(monkeypatch, tmp_path):
     """The notification channels and their history are files under /data
     (src/notifications/router.py), and every alert that a monitor sends is recorded in the

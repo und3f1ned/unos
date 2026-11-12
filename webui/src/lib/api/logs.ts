@@ -1,4 +1,5 @@
-import { api } from "./client";
+import { api, getToken, handleUnauthorized } from "./client";
+import { WS_CLOSE_FORBIDDEN, WS_CLOSE_UNAUTHORIZED } from "$lib/stores/stats";
 
 export interface LogEntry {
   /** UTC with its offset, such as 2026-11-07T09:59:30+00:00; "" when the journal gives none. */
@@ -9,6 +10,8 @@ export interface LogEntry {
   source: string;
   /** The program that logged it. */
   unit?: string | null;
+  /** The journal's cursor of the entry. */
+  cursor?: string;
 }
 
 /** A part of the host's journal that GET /logs/entries reads (ADR-0257). */
@@ -58,16 +61,93 @@ export interface LogQueryParams {
   since?: string;
 }
 
-/** The newest entries of a source, newest first. */
-export async function getLogEntries(params: LogQueryParams = {}): Promise<LogsResponse> {
+/** The query of GET /logs/entries and of the journal socket. */
+function entriesQuery(params: LogQueryParams): string {
   const urlParams = new URLSearchParams();
   urlParams.append("source", params.source || "journal");
   urlParams.append("limit", (params.limit || 200).toString());
   if (params.priority) urlParams.append("priority", params.priority);
   if (params.search) urlParams.append("search", params.search);
   if (params.since) urlParams.append("since", params.since);
+  return urlParams.toString();
+}
 
-  return api.get<LogsResponse>(`/logs/entries?${urlParams.toString()}`);
+/** The newest entries of a source, newest first. */
+export async function getLogEntries(params: LogQueryParams = {}): Promise<LogsResponse> {
+  return api.get<LogsResponse>(`/logs/entries?${entriesQuery(params)}`);
+}
+
+/** How the journal socket ended: the server refused it (close code 4403), or the connection
+ * ended, after an error that onError gave or because it was lost. */
+export type JournalStreamEnd = "forbidden" | "ended";
+
+export interface JournalStreamHandlers {
+  /** The newest entries of the query, newest first, as GET /logs/entries lists them. */
+  onEntries(entries: LogEntry[]): void;
+  /** A new entry of the query, as the journal got it. */
+  onEntry(entry: LogEntry): void;
+  /** Why the server ended the stream: the journal could not be read, or a value was refused. */
+  onError(message: string): void;
+  /** The stream is over. Not called after close(). */
+  onEnd(reason: JournalStreamEnd): void;
+}
+
+export interface JournalStream {
+  /** Close the stream; no handler is called after this. */
+  close(): void;
+}
+
+/**
+ * Follow the host's journal over /ws/v1/journal (supervisor/src/websocket/events.py, ADR-0364):
+ * the newest entries of the query, then each new one. The query goes in the URL as that of
+ * GET /logs/entries; the token goes in the first message, never in the URL (ADR-0031), and a close
+ * with 4401 ends the session like an HTTP 401 does.
+ */
+export function streamLogEntries(params: LogQueryParams, handlers: JournalStreamHandlers): JournalStream {
+  const token = getToken();
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${protocol}//${window.location.host}/ws/v1/journal?${entriesQuery(params)}`);
+  let done = false;
+
+  socket.onopen = () => {
+    socket.send(JSON.stringify({ type: "auth", token }));
+  };
+
+  socket.onmessage = (event) => {
+    let message: { type?: unknown; data?: unknown; message?: unknown };
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (message.type === "entries" && Array.isArray(message.data)) handlers.onEntries(message.data as LogEntry[]);
+    else if (message.type === "entry" && message.data) handlers.onEntry(message.data as LogEntry);
+    else if (message.type === "error" && typeof message.message === "string") handlers.onError(message.message);
+  };
+
+  // No onerror handler: an error event is always followed by this close event.
+  socket.onclose = (event) => {
+    if (done) return;
+    done = true;
+    if (event.code === WS_CLOSE_UNAUTHORIZED) {
+      // Token expired or the account is gone: same as an HTTP 401.
+      handleUnauthorized(token);
+    }
+    handlers.onEnd(event.code === WS_CLOSE_FORBIDDEN ? "forbidden" : "ended");
+  };
+
+  return {
+    close() {
+      if (done) return;
+      done = true;
+      socket.onopen = null;
+      socket.onmessage = null;
+      socket.onclose = null;
+      if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+        socket.close(1000);
+      }
+    }
+  };
 }
 
 export async function getLogFileContent(

@@ -3256,9 +3256,24 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0006"
+        "ADR-0006",
+        "ADR-0363",
+        "ADR-0364",
+        "ADR-0365"
       ],
-      "notes": "Container details stream their log over /ws/v1/logs/{id} (ADR-0255, apps.containers-and-images), and UpdateTab.svelte no longer polls. setInterval polling of the API remains in LogsTab.svelte (Auto-refresh every 5 s) and routes/storage/+page.svelte (the scrub status)."
+      "notes": "Built: no page polls the API. Container details stream their log over /ws/v1/logs/{id} (ADR-0255, apps.containers-and-images: containers.spec.ts 'the log of a container streams live over the WebSocket'), and UpdateTab.svelte asks only on Check again (updates.spec.ts). System > Logs' Auto follows the host's journal over /ws/v1/journal (ADR-0364): the socket takes the values of GET /api/v1/logs/entries in its URL, sends the newest entries as that request answers them, then each new entry of the source, level and search from a `journalctl --follow --lines=all` on the host that starts --after-cursor= the newest entry it sent (or --since=@<the second it read at> when it sent none) and that HostStream.stop ends with its process group when the client leaves or its access is revoked (host.stream_on_host); errors send {\"type\": \"error\"} and close with 1000. The Storage page follows a running scrub over /ws/v1/events (ADR-0365): storage/scrubs.py keeps each pool whose scrub was seen running (the scrub API's answers, a status read's failure, the Scheduler's start), an administrator's events socket asks for a read of the scrubs that run at most every 2 seconds without waiting for it, and sends {\"type\": \"scrubs\"} whenever they change; nothing is read while no administrator is connected, and a read that a request answered meanwhile is dropped. Step 1: test_ws_auth.py TestTheJournalSocket, TestTheJournalSocketsErrors and TestTheJournalSocketsRoles (against test_logs_sources.py's FakeJournal, which follows from a cursor or a time), test_host_tools.py (the stream of a real local command, a forked child ended with the group, a line over the limit dropped), TestTheScrubsOnTheEventsSocket, test_storage.py TestScrubsForTheEventsSocket and test_scheduler_validation.py test_scrub_task; logs.spec.ts 'Auto follows new entries over the journal socket and never asks the API again' (page.clock runs a minute with no request) and 'Auto stops when the journal socket ends, and says why'; storage.spec.ts 'Scrub (fake data)' on a fake events socket (one status read at the load, none while a minute passes). Step 2: a static check, webui/scripts/polling-check.mjs, run by test_webui_polling.py (ADR-0363), not a spec that fakes timers: it reaches every component and every state, also those no spec brings about, and runs in make test; it failed on LogsTab.svelte, storage/+page.svelte and the countdown of NetworkTab.svelte, which reads the interfaces once when its time has run out and is exempted with polling-ignore. Open: the device check and the re-check after a reboot (ADR-0018). On the device: System > Logs with Auto shows a line that `logger -t unos-check` writes on the host within a few seconds without a reload, also with the search unos-check, and after Auto is turned off or the tab is left no journalctl --follow is left on the host (pgrep -af 'journalctl --follow'); a scrub started on the Storage page, and one of a Run now of a scheduled scrub task, shows its progress growing and then its result without a reload, and no GET of the scrub status follows the page's load (the browser's network view). scripts/dev/scenario.sh scrub could check the scrubs messages of /ws/v1/events while its scrub runs.",
+      "verified_by": [
+        "supervisor/tests/test_webui_polling.py",
+        "supervisor/tests/test_ws_auth.py",
+        "supervisor/tests/test_logs_sources.py",
+        "supervisor/tests/test_host_tools.py",
+        "supervisor/tests/test_storage.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/logs.spec.ts",
+        "webui/tests/storage.spec.ts",
+        "webui/tests/containers.spec.ts",
+        "webui/tests/updates.spec.ts"
+      ]
     },
     {
       "id": "webui.design-system-lint",

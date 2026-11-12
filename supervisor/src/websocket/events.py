@@ -27,11 +27,25 @@ A logs socket is closed with 1000 once the container's log ended (the
 container stopped) or could not be read, after a ``{"type": "error"}`` message
 with the reason.
 
+The journal socket ``/ws/v1/journal`` (administrators only) is System > Logs'
+Auto (ADR-0364). Its URL takes the values of ``GET /api/v1/logs/entries``
+(source, limit, priority, search, since). After auth_ok it sends
+``{"type": "entries", "data": [...]}``, the newest entries as that request
+answers them, newest first, and then ``{"type": "entry", "data": {...}}`` for
+each new entry of the source, level and search, as the journal gets it. A value
+it does not take, a journal that cannot be read and a journalctl that ends send
+``{"type": "error", "message": ...}`` and close the socket with 1000.
+
 The events socket sends administrators ``{"type": "problems", "data": [...]}``,
 the problems of the NAS that are still there (``health.problems``), right after
 auth_ok and whenever the list changes; regular users never get it, and a
 socket whose user is no longer an administrator at a re-check gets an empty
-list once and no more (ADR-0332).
+list once and no more (ADR-0332). It sends administrators
+``{"type": "scrubs", "data": [...]}`` too, each pool's scrub that was seen
+running with its last status or why it could not be read
+(``storage.scrubs.current``), after auth_ok once a scrub was seen running and
+whenever they change; while it is open, the scrubs that run are read again
+every 2 seconds (ADR-0365).
 """
 import asyncio
 import functools
@@ -51,6 +65,8 @@ from ..auth.utils import authenticate_token
 from ..config import get_settings
 from ..database import async_session
 from ..health import problems
+from ..logs import router as logs
+from ..storage import scrubs
 from ..system.sensors import cpu_temperature
 
 router = APIRouter()
@@ -413,6 +429,18 @@ async def _send_problems(websocket: WebSocket, is_admin: bool, sent: int | None)
     return version
 
 
+async def _send_scrubs(websocket: WebSocket, is_admin: bool, sent: int) -> int:
+    """Send an administrator the scrubs when they changed since the version ``sent`` (0: none seen
+    yet), after asking for a read of the ones that run; returns the version sent."""
+    if not is_admin:
+        return sent
+    scrubs.follow()
+    version = scrubs.version()
+    if version != sent:
+        await websocket.send_json({"type": "scrubs", "data": scrubs.current()})
+    return version
+
+
 @router.websocket("/ws/v1/events")
 async def websocket_endpoint(websocket: WebSocket):
     signed_in = await authenticate_websocket(websocket)
@@ -430,10 +458,12 @@ async def websocket_endpoint(websocket: WebSocket):
     disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
     revoked = asyncio.ensure_future(_watch_credential(token, on_user=note_role))
     sent_problems: int | None = None
+    sent_scrubs = 0
     try:
         # Start sending stats
         while not (disconnected.done() or revoked.done()):
             sent_problems = await _send_problems(websocket, role["admin"], sent_problems)
+            sent_scrubs = await _send_scrubs(websocket, role["admin"], sent_scrubs)
             stats = get_system_stats()
             await websocket.send_json(stats)
             await asyncio.wait(
@@ -464,6 +494,83 @@ async def container_logs_endpoint(websocket: WebSocket, container_id: str):
         await _stream_container_logs(websocket, container_id, signed_in[0])
     finally:
         release_socket()
+
+
+@router.websocket("/ws/v1/journal")
+async def journal_endpoint(websocket: WebSocket):
+    """Follow the host's journal for System > Logs (administrators only, ADR-0364)."""
+    signed_in = await authenticate_websocket(websocket, admin_only=True)
+    if signed_in is None:
+        return
+
+    try:
+        await _follow_journal(websocket, signed_in[0])
+    finally:
+        release_socket()
+
+
+async def _follow_journal(websocket: WebSocket, token: str) -> None:
+    disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
+    # Runs on its own timer, so access is re-checked while the journal is quiet too.
+    revoked = asyncio.ensure_future(_watch_credential(token, admin_only=True))
+    stream = None
+
+    async def until_done(work: "asyncio.Future[Any]") -> bool:
+        """Wait for ``work``; False, after the close that a revoked access needs, when the socket
+        must end first (the client left, or its access was revoked)."""
+        await asyncio.wait({work, disconnected, revoked}, return_when=asyncio.FIRST_COMPLETED)
+        if work.done() and not (disconnected.done() or revoked.done()):
+            return True
+        _finish(work)
+        if revoked.done() and not disconnected.done():
+            await _close(websocket, *revoked.result())
+        return False
+
+    try:
+        query = logs.journal_query(websocket.query_params)
+        # The follow starts after the newest entry read, or, when none is found, at this time.
+        started = time.time()
+        newest = asyncio.ensure_future(
+            logs.read_journal(
+                query.source, limit=query.limit, priority=query.priority,
+                since=query.since or None, search=query.search or None,
+            )
+        )
+        if not await until_done(newest):
+            return
+        entries = newest.result().entries
+        await websocket.send_json({"type": "entries", "data": [entry.model_dump() for entry in entries]})
+        stream = await logs.follow_journal(query, after=entries[0].cursor if entries else None, since=started)
+        while True:
+            next_line = asyncio.ensure_future(stream.readline())
+            if not await until_done(next_line):
+                return
+            line = next_line.result()
+            if line is None:
+                ended = await stream.result()
+                raise HTTPException(500, logs.journal_ended(ended))
+            entry = logs.journal_entry(line, query.source)
+            if entry is not None:
+                await websocket.send_json({"type": "entry", "data": entry.model_dump()})
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            message = exc.detail
+        else:
+            logger.exception("The journal socket failed")
+            message = logs.CANNOT_READ
+        if not disconnected.done():
+            try:
+                await websocket.send_json({"type": "error", "message": message})
+            except Exception:
+                pass
+            await _close(websocket, WS_CLOSE_NORMAL, "journal error")
+    finally:
+        _finish(disconnected)
+        _finish(revoked)
+        if stream is not None:
+            await stream.stop()
 
 
 async def _wait_for_disconnect(websocket: WebSocket) -> None:
