@@ -5,7 +5,7 @@ area: storage
 decided-by: agent
 ---
 
-# ADR-0356: Restored copies are listed and deleted on the Snapshots page, by subvolume id after the checks of a volume's Delete
+# ADR-0358: Restored copies are listed and deleted on the Snapshots page, by subvolume id after the checks of a volume's Delete
 
 ## Context
 

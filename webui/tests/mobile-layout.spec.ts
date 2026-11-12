@@ -204,7 +204,7 @@ const SNAPSHOTS = ['nightly_20261107_020000', 'before-upgrade_20261106_181500'].
   path: `${DATA}/.snapshots/${name}`,
   created: `2026-11-0${7 - i}T02:00:00+00:00`,
 }));
-// The copies that restores made right in the pool (GET /snapshots/copies, ADR-0356).
+// The copies that restores made right in the pool (GET /snapshots/copies, ADR-0358).
 const COPIES = ['restore_20261107_103000', 'restore_20261106_090000'].map((name, i) => ({
   name,
   pool: 'e2e_data',

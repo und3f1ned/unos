@@ -73,6 +73,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   change that changes nothing writes no entry, and saving a scheduled task unchanged or deleting one that
   is not there no longer rewrites the tasks file. When the entry cannot be
   written, the change still answers and the supervisor's log has it.
+- The **Action** filter of the Audit Log page offers only the actions that
+  UNOS records: **Firewall rule added**, **Firewall rule deleted** and **Ssl
+  cert uploaded**, which nothing recorded, are gone. An older entry whose
+  action UNOS no longer has is listed with its action as recorded, and the
+  `action` filter of the API finds it.
 - Each audit entry carries the hash of the one before it. An entry edited in
   the log file, and the entry after one that was removed, are marked **Chain
   broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest

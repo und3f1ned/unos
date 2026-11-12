@@ -1,5 +1,5 @@
 """The copies that a snapshot's restore made, listed and deleted on the Snapshots page
-(storage.restore-copies-deletable, ADR-0356).
+(storage.restore-copies-deletable, ADR-0358).
 
 Restore makes a writable snapshot ``restore_<date>_<time>`` (UTC) right in the pool or the volume
 whose snapshot it restored (src/snapshots/router.py). GET /snapshots/copies lists those of one pool

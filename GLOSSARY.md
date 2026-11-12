@@ -114,7 +114,7 @@ Avoid: subvolume (snapshots are subvolumes too), dataset.
 and overwrites nothing (ADR-0011). Avoid: backup.
 
 **Restored copy**: The writable snapshot `restore_<date>_<time>` that restoring a snapshot makes right
-in the pool or the volume it was taken of; the Snapshots page lists and deletes it (ADR-0356). Avoid:
+in the pool or the volume it was taken of; the Snapshots page lists and deletes it (ADR-0358). Avoid:
 snapshot, restore.
 
 **Trash**: The hidden folder `.unos-trash` at the top of each pool and volume that takes what Delete

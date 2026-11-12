@@ -82,7 +82,7 @@ export const en = {
 	'snapshots.delete.failed': 'Snapshot was not deleted',
 	'snapshots.delete.submit': 'Delete Snapshot',
 
-	// The copies that restores made right in the pool or volume chosen (ADR-0356).
+	// The copies that restores made right in the pool or volume chosen (ADR-0358).
 	'snapshots.copies.of': 'Restored copies in {name}',
 	'snapshots.copies.hint':
 		'Writable copies that Restore made here. Copy what you need from one, then delete it: a volume cannot be deleted while it holds one.',

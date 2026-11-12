@@ -93,6 +93,7 @@ and this index, and `make check-fast` runs it.
 | [0350](0350-pool-volume-snapshot-container-and-app-changes-are-audited-and-answer-when-their-entry-cannot-be-written.md) | Pool, volume, snapshot, container and app changes are audited, and answer when their entry cannot be written | accepted | 2026-11-12 |
 | [0351](0351-backups-power-scheduled-tasks-and-the-hosts-settings-are-audited-after-they-succeed.md) | Backups, power, scheduled tasks and the host's network and system settings are audited after they succeed, and answer when their entry cannot be written | accepted | 2026-11-12 |
 | [0357](0357-stored-certificates-are-not-served-yet-and-the-status-names-caddys-local-ca.md) | Stored certificates are not served yet, and the certificate status names Caddy's local CA | accepted | 2026-11-12 |
+| [0359](0359-the-audit-logs-action-filter-offers-only-written-actions-and-an-older-entrys-action-is-listed-as-recorded.md) | The audit log's Action filter offers only actions that the supervisor writes, and an older entry's action that AuditAction no longer has is listed as recorded | accepted | 2026-11-12 |
 
 ## Auth
 
@@ -150,7 +151,7 @@ and this index, and `make check-fast` runs it.
 | [0313](0313-a-scrub-runs-from-its-start-and-its-result-names-how-it-ended.md) | A scrub runs from its start, before btrfs records it, and its result names how it ended | accepted | 2026-11-09 |
 | [0344](0344-pool-unmount-and-delete-are-refused-when-docker-cannot-be-asked.md) | Pool unmount and delete are refused when Docker cannot be asked, respect Docker volumes, and odd names do not break storage | accepted | 2026-11-11 |
 | [0352](0352-volume-reads-container-folders-disk-names-and-deletes-withstand-renames-odd-names-links-and-new-mounts.md) | Volume reads, container folders, disk names and deletes withstand renames, odd names, links and new mounts | accepted | 2026-11-12 |
-| [0356](0356-restored-copies-are-listed-and-deleted-on-the-snapshots-page-by-subvolume-id.md) | Restored copies are listed and deleted on the Snapshots page, by subvolume id after the checks of a volume's Delete | accepted | 2026-11-12 |
+| [0358](0358-restored-copies-are-listed-and-deleted-on-the-snapshots-page-by-subvolume-id.md) | Restored copies are listed and deleted on the Snapshots page, by subvolume id after the checks of a volume's Delete | accepted | 2026-11-12 |
 
 ## Shares
 

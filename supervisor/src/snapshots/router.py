@@ -28,7 +28,7 @@ container (architecture.host-command-layer), which sees the pools at the
 same paths.
 
 The writable copies that restores made right in a pool or a volume are
-listed and deleted there too (GET and DELETE /snapshots/copies, ADR-0356):
+listed and deleted there too (GET and DELETE /snapshots/copies, ADR-0358):
 on the host, by storage/pools.py, which deletes a copy by its subvolume id
 after the checks of a volume's Delete.
 """
@@ -437,7 +437,7 @@ def _pool_and_volume(subvolume: str) -> tuple[str, str | None]:
 
 @router.get("/copies", response_model=list[RestoreCopyInfo])
 async def list_restore_copies(subvolume: str, _: dict = Depends(verify_token)):
-    """The copies that restores made right in the pool or volume ``subvolume``, newest first (ADR-0356).
+    """The copies that restores made right in the pool or volume ``subvolume``, newest first (ADR-0358).
 
     404 for an unknown pool or volume, 409 for a pool that is not mounted at
     its top level, 500 when btrfs fails.
@@ -448,7 +448,7 @@ async def list_restore_copies(subvolume: str, _: dict = Depends(verify_token)):
 
 @router.delete("/copies/{name}")
 async def delete_restore_copy(name: str, subvolume: str, request: Request, user: User = Depends(verify_token)):
-    """Delete a copy that a restore made right in the pool or volume ``subvolume``, by its subvolume id (ADR-0356).
+    """Delete a copy that a restore made right in the pool or volume ``subvolume``, by its subvolume id (ADR-0358).
 
     As a volume's Delete: 409 while a running container, an SMB share, an
     NFS export or the off-device copy uses it, 503 when Docker cannot be

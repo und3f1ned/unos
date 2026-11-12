@@ -38,7 +38,7 @@
 	// Only the latest request updates the list: another pool or volume may have been chosen meanwhile.
 	let snapshotsRequest = 0;
 
-	// The copies that restores made right in the pool or volume chosen (ADR-0356); as for the
+	// The copies that restores made right in the pool or volume chosen (ADR-0358); as for the
 	// snapshots, only the latest request updates the list.
 	let copies: RestoreCopy[] = [];
 	let copiesLoading = false;

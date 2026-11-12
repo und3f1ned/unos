@@ -2090,7 +2090,7 @@ class VolumeNotFoundError(PoolNotFoundError):
 
 
 class RestoreCopyNotFoundError(PoolNotFoundError):
-    """The pool or volume has no restored copy with this name (HTTP 404, ADR-0356)."""
+    """The pool or volume has no restored copy with this name (HTTP 404, ADR-0358)."""
 
 
 class VolumeKeptWithoutQuotaError(RuntimeError):
@@ -2852,7 +2852,7 @@ def delete_volume(pool_name: str, volume_name: str) -> None:
 
 
 # The name of the writable copy that Restore on the Snapshots page makes: restore_<date>_<time> in
-# UTC (RESTORE_PREFIX and utc_stamp of src/snapshots/router.py, ADR-0356).
+# UTC (RESTORE_PREFIX and utc_stamp of src/snapshots/router.py, ADR-0358).
 RESTORE_COPY_NAME = re.compile(r"restore_(?P<stamp>[0-9]{8}_[0-9]{6})")
 
 
@@ -2918,7 +2918,7 @@ def _copy_candidates(target: str, place: str) -> dict[str, list[int]]:
 
 
 def list_restore_copies(pool_name: str, volume_name: str | None) -> list[RestoreCopyInfo]:
-    """The copies that restores of snapshots made right in a mounted pool or in its volume, newest first (ADR-0356).
+    """The copies that restores of snapshots made right in a mounted pool or in its volume, newest first (ADR-0358).
 
     A restore makes a writable snapshot ``restore_<date>_<time>`` (UTC) in
     the pool or volume whose snapshot it restored. Listed is what has that
@@ -2946,7 +2946,7 @@ def list_restore_copies(pool_name: str, volume_name: str | None) -> list[Restore
 
 
 def delete_restore_copy(pool_name: str, volume_name: str | None, name: str) -> None:
-    """Delete the restored copy ``name`` right in a mounted pool or in its volume, by its subvolume id (ADR-0356).
+    """Delete the restored copy ``name`` right in a mounted pool or in its volume, by its subvolume id (ADR-0358).
 
     Only what list_restore_copies lists is deleted: ValueError (HTTP 400)
     for a name that a restore does not give, or for a subvolume that is not

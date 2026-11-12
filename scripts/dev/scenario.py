@@ -15,7 +15,7 @@ SD writes of each check (ADR-0214). The areas:
   volumes  A volume made without a quota and listed, one with a quota of 1 GiB (refused while
            quotas are off on the pool, else made with that limit), a Delete refused while a share
            uses the volume; a snapshot of the volume, whose Restore makes the copy restore_<time>
-           in it, a subvolume on the host listed with the volume's restored copies (ADR-0356), the
+           in it, a subvolume on the host listed with the volume's restored copies (ADR-0358), the
            copy's Delete refused while the share uses the copy and done once the share is gone,
            and, with the snapshot deleted, the volume's Delete.
   smart    The whole disks on the Storage page and on Disk Health, each disk's SMART data on both,
@@ -1628,7 +1628,7 @@ def volumes_check(c: Check) -> None:
         c.expect(made.get("path") == f"{vpath}/.snapshots/{snap}", f"it is at {made.get('path')}")
         c.expect(made["path"] in snapshots(), "it is not listed")
 
-    # storage.restore-copies-deletable (ADR-0356): the copy that a restore makes in the volume is
+    # storage.restore-copies-deletable (ADR-0358): the copy that a restore makes in the volume is
     # listed and deleted on the Snapshots page, and the volume can be deleted after it.
     with c.step("Restore of the snapshot makes a copy in the volume, a subvolume on the host, listed with the "
                 "volume's restored copies and not with its snapshots") as s:

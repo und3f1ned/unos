@@ -18,7 +18,7 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   found it;
 * the volumes check makes a snapshot of its volume and restores it: the copy restore_<time> is
   listed with the volume's restored copies, its Delete is refused while a share uses it and
-  removes it from the host afterwards, and the volume can be deleted then (ADR-0356); its fake
+  removes it from the host afterwards, and the volume can be deleted then (ADR-0358); its fake
   refuses the Delete of a volume that holds a snapshot or a copy, as btrfs does;
 * the restore check (ADR-0341) restores only the backup it made, twice: its fake restore keeps a
   restored SMB account only with the live password and uid (ADR-0141), keeps the live next uid
@@ -730,7 +730,7 @@ class FakeNas:
 
     def api_snapshots(self, method, parts, body, params, upload):
         """The Snapshots page's API on the pool's volumes: read-only snapshots in <volume>/.snapshots,
-        restores into writable copies restore_<time> right in the volume (ADR-0356)."""
+        restores into writable copies restore_<time> right in the volume (ADR-0358)."""
         folder = body["subvolume"] if method == "POST" and parts == [] else params.get("subvolume")
         if folder is not None and (folder not in self.fs or self.fs[folder].kind != "subvolume"):
             raise Refused(404, f"Subvolume not found: {folder}")
@@ -2609,7 +2609,7 @@ def test_the_volumes_check_takes_either_answer_to_a_quota(nas):
 
 
 def test_the_volumes_check_restores_a_snapshot_and_deletes_the_copy_and_then_the_volume(nas):
-    """storage.restore-copies-deletable (ADR-0356): a snapshot of the check's volume, its restore, the
+    """storage.restore-copies-deletable (ADR-0358): a snapshot of the check's volume, its restore, the
     copy listed with the volume's restored copies and a subvolume on the host, its Delete refused while
     a share uses it and done once the share is gone, and the volume's Delete after it."""
     status, output = run_check("volumes", nas)

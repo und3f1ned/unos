@@ -45,7 +45,7 @@ export async function deleteSnapshot(snapshotId: string, subvolume: string): Pro
   return api.delete(`/snapshots/${encodeURIComponent(snapshotId)}?subvolume=${encodeURIComponent(subvolume)}`);
 }
 
-/** A writable copy that a restore made right in a pool or a volume (ADR-0356). */
+/** A writable copy that a restore made right in a pool or a volume (ADR-0358). */
 export interface RestoreCopy {
   /** `restore_<date>_<time>`, in UTC. */
   name: string;

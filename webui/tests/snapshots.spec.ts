@@ -66,7 +66,7 @@ interface FakeSnapshot {
   created: string;
 }
 
-/** A copy that a restore made right in a pool or a volume (GET /snapshots/copies, ADR-0356). */
+/** A copy that a restore made right in a pool or a volume (GET /snapshots/copies, ADR-0358). */
 interface FakeCopy {
   name: string;
   pool: string;
@@ -466,7 +466,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     expect(dialogs).toEqual([]);
   });
 
-  // The copies that restores made (storage.restore-copies-deletable, ADR-0356): listed apart from the
+  // The copies that restores made (storage.restore-copies-deletable, ADR-0358): listed apart from the
   // snapshots, under the pool or volume they are right in, with the time in their names.
   const copyRows = (page: Page) => page.getByRole('table', { name: 'Restored copies' }).getByRole('row');
 

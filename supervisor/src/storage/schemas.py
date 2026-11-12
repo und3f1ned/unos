@@ -144,7 +144,7 @@ class VolumeInfo(BaseModel):
 
 
 class RestoreCopyInfo(BaseModel):
-    """A writable copy that a snapshot's restore made right in a pool or a volume (ADR-0356)."""
+    """A writable copy that a snapshot's restore made right in a pool or a volume (ADR-0358)."""
 
     name: str
     pool: str
