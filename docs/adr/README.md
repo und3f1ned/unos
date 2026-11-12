@@ -152,6 +152,7 @@ and this index, and `make check-fast` runs it.
 | [0344](0344-pool-unmount-and-delete-are-refused-when-docker-cannot-be-asked.md) | Pool unmount and delete are refused when Docker cannot be asked, respect Docker volumes, and odd names do not break storage | accepted | 2026-11-11 |
 | [0352](0352-volume-reads-container-folders-disk-names-and-deletes-withstand-renames-odd-names-links-and-new-mounts.md) | Volume reads, container folders, disk names and deletes withstand renames, odd names, links and new mounts | accepted | 2026-11-12 |
 | [0358](0358-restored-copies-are-listed-and-deleted-on-the-snapshots-page-by-subvolume-id.md) | Restored copies are listed and deleted on the Snapshots page, by subvolume id after the checks of a volume's Delete | accepted | 2026-11-12 |
+| [0360](0360-the-storage-page-loads-its-lists-again-when-the-block-devices-change.md) | The Storage page loads its lists again when the block devices of the stats stream change | accepted | 2026-11-12 |
 
 ## Shares
 

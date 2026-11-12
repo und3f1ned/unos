@@ -1213,10 +1213,15 @@
       "steps": [
         "Attach a USB disk while UNOS runs: Storage lists it within a minute, without a restart"
       ],
+      "verified_by": [
+        "supervisor/tests/test_disk_safety.py",
+        "webui/tests/storage.spec.ts"
+      ],
       "passes": false,
       "adr": [
         "ADR-0023"
-      ]
+      ],
+      "notes": "Built 2026-11-12 (ADR-0360). Cause: GET /api/v1/storage/disks already ran lsblk at every request in the host's namespaces, which see the host's /dev, /sys and udev database (test_disk_safety.py TestDisksEndpoint test_a_disk_attached_or_removed_after_a_request_is_in_the_next_answer passed on the code before the change); the Storage page asked for its lists only when it opened and when Create Pool opened. The page now loads its lists again when the block devices that the stats stream /ws/v1/events names (disk_io.disks, from /proc/diskstats) changed and stayed the same for one message, not while a dialog is open but once it closes. Tests first: the two specs of storage.spec.ts Physical disks (a disk attached while the page is open is listed without a reload and a removed one goes; while a dialog is open the lists stay, and are loaded once it closes) failed on the page before the change, the attached disk never listed. Left: the device check, attaching a spare USB disk with the Storage page open, needs a spare disk (an owner action). SMART of a disk attached after the supervisor started still fails, since smartctl runs in the container whose /dev lacks the new node (ADR-0360 Consequences): no entry yet."
     },
     {
       "id": "shares.smb-share",

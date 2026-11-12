@@ -183,6 +183,14 @@ When the disks cannot be listed, for example because `lsblk` fails on the
 host, the card says so with the reason instead of the list; the pools are
 still shown, and the other way round.
 
+A disk attached while UNOS runs, such as a USB disk, needs no restart: the
+page lists it within a few seconds, also while it is open, and a disk that
+is removed leaves the list the same way, together with the pools and the
+filesystems found on the disks. While a dialog of the page is open, its
+lists stay as they were until it closes. The SMART data of a disk attached
+after the supervisor started (**System** → **Disk Health**) can be read
+only once the supervisor has restarted.
+
 ### Creating a Storage Pool
 
 1. Go to **Storage**

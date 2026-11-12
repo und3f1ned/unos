@@ -162,7 +162,9 @@ def get_system_stats() -> dict:
         read_rate = (disk_io.read_bytes - _prev_disk_io.read_bytes) / time_delta
         write_rate = (disk_io.write_bytes - _prev_disk_io.write_bytes) / time_delta
 
-    # Per-disk stats
+    # Per-disk stats: every block device of /proc/diskstats, disks and partitions, which the
+    # kernel lists as soon as it has one, also one attached after the supervisor started. The
+    # Storage page loads its lists again when these names change (ADR-0360).
     disks = []
     disk_io_per = psutil.disk_io_counters(perdisk=True)
     for name, counters in disk_io_per.items():

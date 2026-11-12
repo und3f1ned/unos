@@ -1197,6 +1197,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   its mount point, on the root filesystem, which btrfs scrubbed if it was
   btrfs. It now fails with "Pool <name> is not mounted", as a scheduled
   snapshot does.
+- A disk attached while the Storage page was open, such as a USB disk, was
+  not shown until the page was opened again, nor was a removed one taken off
+  the list. The page now loads its lists again within a few seconds of the
+  host's block devices changing, as the stats stream reports them, and not
+  while one of its dialogs is open but once it closes (ADR-0360). SMART data
+  of a disk attached after the supervisor started still cannot be read until
+  the supervisor restarts: smartctl runs in the container, whose `/dev` lacks
+  the new disk.
 
 ### Known issues
 - Not working yet, each with an entry in `feature-list.json`:
