@@ -12,6 +12,28 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Security
+- **System** → **Security** no longer names a stored certificate as the one
+  in use: its **SSL/TLS Certificates** card and
+  `GET /api/v1/security/certificates/status` (now
+  `{"served_by": "caddy_local_ca"}`) name Caddy's local CA, which is what
+  browsers get, and list uploaded and self-signed certificates as stored,
+  **NOT SERVED** (`served: false`), since nothing hands them to the web
+  server yet. The listing no longer reads Caddy's certificates, which the
+  supervisor cannot see, and has no `active_certificate` or `auto_renew`.
+  openssl runs off the event loop with a timeout (10 s to read a certificate,
+  60 s to make one; a timeout answers 500, an upload no longer "Invalid
+  certificate format"). A certificate, its key and its chain are written to
+  temporary files and renamed over the old ones only once all are written,
+  one store or delete at a time: a failed write keeps the old files, two
+  stores never mix one certificate with another's key, a certificate stored
+  without a chain drops the old chain, and a symbolic link at a file's path
+  is replaced, never followed (keys 0600). A self-signed certificate's
+  organization is refused over 64 characters or with non-printable
+  characters, and its country unless it is two letters (422); the country
+  field takes two letters only, the dialog shows why a generation was
+  refused, a listing that cannot be loaded shows no earlier list and has
+  **Retry**, and a self-signed certificate made with an organization is
+  listed as self-signed, not as custom.
 - Samba refuses every SMB password change that a computer asks for over the
   network (Windows' **Change a password**, `smbpasswd -r`), so that SMB
   passwords change only in UNOS, under its password rules: the line
@@ -59,6 +81,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   change that changes nothing writes no entry, and saving a scheduled task unchanged or deleting one that
   is not there no longer rewrites the tasks file. When the entry cannot be
   written, the change still answers and the supervisor's log has it.
+- The **Action** filter of the Audit Log page offers only the actions that
+  UNOS records: **Firewall rule added**, **Firewall rule deleted** and **Ssl
+  cert uploaded**, which nothing recorded, are gone. An older entry whose
+  action UNOS no longer has is listed with its action as recorded, and the
+  `action` filter of the API finds it.
 - Each audit entry carries the hash of the one before it. An entry edited in
   the log file, and the entry after one that was removed, are marked **Chain
   broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest
@@ -289,8 +316,19 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A new user never inherits the SMB access of a deleted user who had the same
   id. After a restore, an account whose SMB user id belongs to another account
   on this server must turn SMB on again, and gets a new user id.
+- `GET` and `PUT /api/v1/power/ups/config` no longer answer the stored NUT
+  password: they answer `has_password`. A `PUT` without a password keeps the
+  stored one, and one without a username removes it. The settings file is
+  readable by its owner only, and a damaged one is logged without its values.
+  `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- The Snapshots page lists the copies that **Restore** made right in the pool
+  or volume chosen, `restore_<date>_<time>`, apart from the snapshots, with
+  their folder and time, and deletes them by their subvolume id after the
+  checks of a volume's Delete (running containers, SMB shares, NFS exports,
+  the off-device copy). A volume that held a copy can then be deleted; before,
+  no page could delete the copy, and the volume's Delete answered 409.
 - Off-device copies: **System** → **Backup & Restore** copies the
   configuration and the pools' folders with restic, encrypted with a password
   that only the NAS keeps, to a folder on a disk mounted below `/mnt` that is
@@ -755,6 +793,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- The UPS state was never read: `upsc` ran in the supervisor's container,
+  which has no NUT client. It now runs on the host, under a time limit and
+  off the event loop. While the host has no `upsc`, the UPS status, Test
+  connection and the UPS monitor's status answer that the UPS is unavailable
+  and name the missing package nut-client; the monitor then writes nothing,
+  logs it once and shuts nothing down. Values with decimals are read, and a
+  value that is no number leaves the others.
 - `POST /api/v1/containers/{id}/restart` restarted UNOS's own containers,
   which stop and remove refuse; it now refuses them too (404).
 - Two-factor authentication set up in two tabs at once could be turned on
@@ -1155,9 +1200,9 @@ manager, encrypted backup uploads, health checks, CI checks).
 
 ### Known issues
 - Not working yet, each with an entry in `feature-list.json`:
-  - The UPS state is never read, because the supervisor image has no NUT client,
-    and the shutdown on low battery is skipped inside a container
-    (`system.ups-monitoring`).
+  - The UPS has no page and is set only through the API, its state is read
+    only where the host has NUT, which UNOS does not install, and the shutdown
+    on low battery is skipped inside a container (`system.ups-monitoring`).
   - Scheduled shutdown and wake times are stored, and nothing acts on them
     (`system.scheduled-power`).
   - Alerts are sent only for pool (RAID) errors and disk health (SMART)

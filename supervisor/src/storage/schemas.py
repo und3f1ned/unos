@@ -143,6 +143,20 @@ class VolumeInfo(BaseModel):
     quota: int | None = None
 
 
+class RestoreCopyInfo(BaseModel):
+    """A writable copy that a snapshot's restore made right in a pool or a volume (ADR-0358)."""
+
+    name: str
+    pool: str
+    # The volume it is in; None for one in the pool's top folder.
+    volume: str | None = None
+    # The folder it is in: the pool's mountpoint or the volume's folder.
+    subvolume: str
+    path: str
+    # When the restore made it, from its name: UTC, with its offset ("2026-11-12T09:30:00+00:00").
+    created: str
+
+
 class ScrubStatus(BaseModel):
     pool: str
     # As btrfs scrub status prints it: "running", "finished", "aborted" (cancelled),

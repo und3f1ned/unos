@@ -28,6 +28,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.audit import router as audit_router
+from src.audit.changes import audit_change
 from src.audit.schemas import AuditAction, AuditEntry
 from src.auth import router as auth_router
 from src.main import app
@@ -199,7 +200,8 @@ class TestDamagedLines:
         with open(world.audit_file, "ab") as f:
             f.write(b'{"id": "half an entry\n')
             f.write(b"\xff\xfe not text\n")
-            f.write(b'{"id": "x", "timestamp": "2026-11-07T00:00:00", "action": "no_such_action"}\n')
+            # No action: an entry whose action AuditAction does not have is listed (ADR-0359).
+            f.write(b'{"id": "x", "timestamp": "2026-11-07T00:00:00", "severity": "info"}\n')
             f.write(b"[1, 2, 3]\n")
         log("after")
 
@@ -834,6 +836,101 @@ def test_the_web_ui_names_every_resource_type_as_the_server_records_it():
                            resource_type=resource_type, resource_id="carol")
         assert audit_router.AuditFilter(search=f"{english} carol".casefold()).matches(entry), english
         assert catalog["ru"][key]
+
+
+AUDIT_SCHEMAS = REPO / "supervisor" / "src" / "audit" / "schemas.py"
+
+
+def _written_actions() -> set[str]:
+    """The actions that the server's code writes into the audit log: every ``AuditAction.<NAME>``
+    that a module of supervisor/src names, but the enum's own. The code names an action only to
+    write it: as the action of a call (log_action, audit_change and the routers' wrappers of them)
+    or in a table of the actions that a route or the emergency command line writes."""
+    found = set()
+    for module in (REPO / "supervisor" / "src").rglob("*.py"):
+        if module == AUDIT_SCHEMAS:
+            continue
+        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
+                    and node.value.id == "AuditAction":
+                found.add(AuditAction[node.attr].value)
+    return found
+
+
+def test_the_action_filter_offers_only_actions_that_the_server_writes(world):
+    """Every action that the Action filter of the Audit Log page offers, the list of
+    GET /audit/actions, is written by the action it names, so that choosing it can find an entry
+    (step 5 of security.audit-admin-actions, ADR-0359): an action that nothing writes is removed."""
+    written = _written_actions()
+    # The scan finds the server's writers: calls, power's table and the emergency command line's.
+    assert {"login_failed", "task_run", "system_reboot", "system_shutdown", "password_change", "other"} <= written
+
+    offered = {action["value"] for action in get(world, "/actions")["actions"]}
+
+    assert sorted(offered - written) == []
+
+
+# An action that an older version wrote and AuditAction no longer has (ADR-0359).
+OLD_ACTION = "firewall_rule_added"
+
+
+class TestAnActionNoLongerWritten:
+    """An older entry whose action AuditAction no longer has is a valid entry (ADR-0359): listed,
+    counted, filtered, searched, summed up and exported with its action as recorded, and the
+    chain holds through it (ADR-0328)."""
+
+    @pytest.fixture
+    def old_entry(self, world):
+        log("before")
+        before = audit_entries(world.audit_file)[-1]
+        # As the writer stored it: chained to the entry before it.
+        old = {"id": "audit_old", "timestamp": datetime.now().isoformat(), "action": OLD_ACTION,
+               "severity": "info", "username": "admin", "ip_address": CLIENT,
+               "details": "Allowed TCP port 8080", "success": True, "prev_hash": before["hash"]}
+        old["hash"] = _entry_hash(old)
+        with open(world.audit_file, "ab") as f:
+            f.write(json.dumps(old).encode() + b"\n")
+        log("after")
+        return world
+
+    def test_it_is_listed_with_its_action_as_recorded_and_the_chain_holds(self, old_entry):
+        assert [(e["action"], e["details"], e["chain"]) for e in reversed(listed(old_entry))] == [
+            ("other", "before", "ok"),
+            (OLD_ACTION, "Allowed TCP port 8080", "ok"),
+            ("other", "after", "ok"),
+        ]
+
+    @pytest.mark.parametrize("params, expected", [
+        pytest.param({"action": OLD_ACTION}, ["audit_old"], id="its-action"),
+        pytest.param({"action": "firewall_rule"}, [], id="its-action-exactly"),
+        pytest.param({"search": "firewall rule added"}, ["audit_old"], id="the-search-by-its-words"),
+        pytest.param({"username": "admin", "search": "8080"}, ["audit_old"], id="the-other-filters"),
+    ])
+    def test_the_filters_find_it(self, old_entry, params, expected):
+        assert [e["id"] for e in get(old_entry, "/logs", **params)] == expected
+        assert get(old_entry, "/logs/count", **params) == {"count": len(expected)}
+
+    def test_the_exports_and_the_summary_hold_it(self, old_entry):
+        assert [e["action"] for e in get(old_entry, "/logs/export", action=OLD_ACTION)["entries"]] == [OLD_ACTION]
+        response = ask(old_entry, "/logs/export", format="csv", action=OLD_ACTION)
+        assert response.status_code == 200, response.text
+        header, *rows = csv.reader(io.StringIO(response.text, newline=""))
+        assert [row[header.index("Action")] for row in rows] == [OLD_ACTION]
+        assert get(old_entry, "/logs/summary")["by_action"] == {"other": 2, OLD_ACTION: 1}
+
+    @pytest.mark.parametrize("write", [
+        pytest.param(lambda: audit_router.log_action(OLD_ACTION, username="admin"), id="log_action"),
+        pytest.param(lambda: audit_change(OLD_ACTION, None, "admin", resource_type="host"), id="audit_change"),
+    ])
+    def test_no_writer_takes_it(self, world, write):
+        # The reader takes any name; a writer only a value of AuditAction, and writes nothing else.
+        log("before")
+        before = world.audit_file.read_bytes()
+
+        with pytest.raises(ValueError, match=OLD_ACTION):
+            asyncio.run(write())
+
+        assert world.audit_file.read_bytes() == before
 
 
 def _entry_hash(entry: dict) -> str:

@@ -296,6 +296,42 @@ test.describe('Audit log, more entries than one page', () => {
   });
 });
 
+// security.audit-admin-actions, step 5 (ADR-0359): the Action filter offers the actions that the
+// server writes, from the server's own list; the firewall and certificate actions, which nothing
+// wrote, are gone, and an older entry that names one of them shows its action as recorded.
+test.describe('Audit log, the actions of the filter', () => {
+  const OLD = {
+    id: 'audit_old', timestamp: '2026-11-07T14:30:12', action: 'firewall_rule_added', severity: 'info',
+    username: 'admin', ip_address: '192.0.2.10', user_agent: null, resource_type: null, resource_id: null,
+    details: 'Allowed TCP port 8080', success: true, prev_hash: null, hash: null, chain: null,
+  };
+
+  test('offers only the actions the server writes, and shows an older action as recorded', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.route(
+      (url) => url.pathname.startsWith('/api/v1/audit/'),
+      (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/v1/audit/logs') return route.fulfill({ json: [OLD] });
+        if (url.pathname === '/api/v1/audit/logs/count') return route.fulfill({ json: { count: 1 } });
+        if (url.pathname === '/api/v1/audit/actions') return route.continue();
+        return route.abort();
+      },
+    );
+    await page.goto('/audit');
+
+    await expect(timelineEntries(page)).toHaveCount(1);
+    await expect(timelineEntries(page).first()).toContainText('firewall_rule_added');
+    await expect(timelineEntries(page).first()).toContainText('Allowed TCP port 8080');
+
+    await page.getByRole('combobox', { name: 'Action' }).click();
+    await expect(page.getByRole('option', { name: 'Task run', exact: true })).toBeVisible();
+    const options = (await page.getByRole('option').allTextContents()).map((text) => text.trim());
+    expect(options.filter((option) => /firewall|ssl/i.test(option))).toEqual([]);
+  });
+});
+
 test.describe('Audit log, a broken hash chain', () => {
   // In the server's form (ADR-0328): the second entry was edited in the log file, so its
   // place in the chain is "broken"; the others hold.

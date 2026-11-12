@@ -1,8 +1,11 @@
+import asyncio
 import logging
 import os
 import subprocess
 import json
 import re
+import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -29,8 +32,16 @@ router = APIRouter(prefix="/security", tags=["security"])
 logger = logging.getLogger(__name__)
 
 FIREWALL_RULES_FILE = "/data/firewall_rules.json"
+# Uploaded and self-signed certificates. Stored, not served: Caddy serves the certificate of its
+# local CA, in the web UI's container, which has no access to this directory (ADR-0357).
 CERTS_DIR = "/data/certs"
-CADDY_CERTS_DIR = "/data/caddy/certificates"
+# Held by every store and delete of the stored certificates, which run in worker threads: two of
+# them never mix their files (ADR-0357).
+_CERTIFICATES_LOCK = threading.Lock()
+# How long openssl may take, in a worker thread (ADR-0021): reading a certificate takes well under
+# a second, making a 2048-bit RSA key a few seconds on a slow board.
+OPENSSL_READ_TIMEOUT = 10
+OPENSSL_GENERATE_TIMEOUT = 60
 # Longest username a login attempt keeps (in characters).
 LOGIN_ATTEMPT_USERNAME_CHARS = 128
 # The longest period that clearing the login history counts back (100 years, in days; ADR-0263).
@@ -119,6 +130,8 @@ async def clear_login_history(
 
 
 # ==================== Firewall Management ====================
+# Firewall and certificate changes write no audit entry, and AuditAction has no action for them
+# (ADR-0359).
 
 _FIREWALL_RULES = TypeAdapter(list[FirewallRule])
 
@@ -410,11 +423,83 @@ def _uploaded_certificate_name(common_name: str) -> str | None:
         return None
 
 
+def _write_certificate_file(path: Path, text: str, mode: int) -> None:
+    """Write ``text`` to ``path``, a new file created with ``mode``.
+
+    O_EXCL and O_NOFOLLOW: a file or a symbolic link already at ``path`` fails the write, and a
+    link's target stays as it was (ADR-0042).
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+
+
 def _write_private_key(path: Path, key: str) -> None:
     """Write ``key`` to ``path``, a file created readable and writable by the owner only (0600)."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        fh.write(key)
+    _write_certificate_file(path, key, 0o600)
+
+
+def _store_certificate(name: str, certificate: str, key: str, chain: str | None = None) -> None:
+    """Store a certificate, its key and its chain (when given) under ``name`` in CERTS_DIR.
+
+    Each file is written to a temporary file in CERTS_DIR first, ``.<random>.tmp``: short, so
+    that it fits NAME_MAX for every name, and never listed as a certificate. Only once every write
+    has succeeded are they renamed over the stored files, and a stored chain is removed when none
+    is given, as it belonged to the replaced certificate. A failed write leaves the stored files as
+    they were and no temporary file. A rename replaces a symbolic link at a file's path, never its
+    target (ADR-0042). Holds _CERTIFICATES_LOCK: blocking, call it in a worker thread (ADR-0357).
+    """
+    cert_file, key_file, chain_file = _certificate_files(name)
+    files = [
+        (cert_file, lambda path: _write_certificate_file(path, certificate, 0o644)),
+        (key_file, lambda path: _write_private_key(path, key)),
+    ]
+    if chain:
+        files.append((chain_file, lambda path: _write_certificate_file(path, chain, 0o644)))
+    with _CERTIFICATES_LOCK:
+        cert_file.parent.mkdir(parents=True, exist_ok=True)
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for stored, write in files:
+                temporary = stored.parent / f".{secrets.token_hex(8)}.tmp"
+                staged.append((temporary, stored))
+                write(temporary)
+            for temporary, stored in staged:
+                os.replace(temporary, stored)
+            if not chain:
+                chain_file.unlink(missing_ok=True)
+        finally:
+            for temporary, _ in staged:
+                temporary.unlink(missing_ok=True)
+
+
+def _delete_certificate_files(name: str) -> bool:
+    """Remove the stored files of the certificate ``name``; False when none is stored under it.
+
+    Holds _CERTIFICATES_LOCK, so that a store of the same name in between leaves no key without its
+    certificate: blocking, call it in a worker thread (ADR-0357).
+    """
+    cert_file, key_file, chain_file = _certificate_files(name)
+    with _CERTIFICATES_LOCK:
+        if not cert_file.exists():
+            return False
+        cert_file.unlink(missing_ok=True)
+        key_file.unlink(missing_ok=True)
+        chain_file.unlink(missing_ok=True)
+    return True
+
+
+def _openssl_error(error: Exception) -> str:
+    """What an answer says of ``error``: of an openssl that did not finish, how long it had."""
+    if isinstance(error, subprocess.TimeoutExpired):
+        return f"openssl did not finish within {error.timeout:g} seconds"
+    return str(error)
+
+
+def _pem_block(text: str, label: str) -> str | None:
+    """The first PEM block of type ``label`` ("CERTIFICATE", "PRIVATE KEY") in ``text``, or None."""
+    match = re.search(rf"-----BEGIN {label}-----\n.*?\n-----END {label}-----\n", text, re.DOTALL)
+    return match.group(0) if match else None
 
 
 def _subject_value(value: str) -> str:
@@ -445,7 +530,11 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
     """Parse a certificate and extract information using openssl x509.
 
     openssl reads the file named in ``source`` (["-in", path]) or, with
-    ``source`` empty, the PEM text ``pem`` on its standard input.
+    ``source`` empty, the PEM text ``pem`` on its standard input. It blocks:
+    call this in a worker thread. None when openssl does not read a
+    certificate there; an openssl that cannot run (OSError) or takes longer
+    than OPENSSL_READ_TIMEOUT seconds (subprocess.TimeoutExpired) raises, as
+    that says nothing about the certificate.
     """
     try:
         # Get subject, issuer, dates
@@ -454,7 +543,8 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
              "-subject", "-issuer", "-dates", "-fingerprint"],
             input=pem,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=OPENSSL_READ_TIMEOUT,
         )
 
         if result.returncode != 0:
@@ -466,16 +556,22 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
             "valid_from": "",
             "valid_until": "",
             "fingerprint": "",
-            "is_valid": False
+            "is_valid": False,
+            # The whole subject and issuer as openssl prints them: a certificate is
+            # self-signed when they are the same name.
+            "subject_name": "",
+            "issuer_name": "",
         }
 
         for line in result.stdout.split("\n"):
             if line.startswith("subject="):
+                info["subject_name"] = line.split("=", 1)[1].strip()
                 # Extract CN from subject
                 cn_match = re.search(r'CN\s*=\s*([^,/]+)', line)
                 if cn_match:
                     info["domain"] = cn_match.group(1).strip()
             elif line.startswith("issuer="):
+                info["issuer_name"] = line.split("=", 1)[1].strip()
                 # Extract issuer organization or CN
                 org_match = re.search(r'O\s*=\s*([^,/]+)', line)
                 cn_match = re.search(r'CN\s*=\s*([^,/]+)', line)
@@ -492,50 +588,23 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
             ["openssl", "x509", *source, "-noout", "-checkend", "0"],
             input=pem,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=OPENSSL_READ_TIMEOUT,
         )
         info["is_valid"] = verify_result.returncode == 0
 
         return info
+    except (OSError, subprocess.SubprocessError):
+        raise
     except Exception:
         return None
 
 
-def get_caddy_certificates() -> list[Certificate]:
-    """Get certificates managed by Caddy."""
-    certs = []
-    caddy_path = Path(CADDY_CERTS_DIR)
-
-    if not caddy_path.exists():
-        return certs
-
-    # Caddy stores certs in subdirectories by domain
-    for issuer_dir in caddy_path.iterdir():
-        if issuer_dir.is_dir():
-            for domain_dir in issuer_dir.iterdir():
-                if domain_dir.is_dir():
-                    cert_file = domain_dir / f"{domain_dir.name}.crt"
-                    if cert_file.exists():
-                        info = get_certificate_info(str(cert_file))
-                        if info:
-                            cert_type = CertificateType.LETS_ENCRYPT if "Let's Encrypt" in (info.get("issuer") or "") else CertificateType.CUSTOM
-                            certs.append(Certificate(
-                                id=f"caddy_{domain_dir.name}",
-                                type=cert_type,
-                                domain=info.get("domain") or domain_dir.name,
-                                issuer=info.get("issuer"),
-                                valid_from=info.get("valid_from"),
-                                valid_until=info.get("valid_until"),
-                                is_valid=info.get("is_valid", False),
-                                auto_renew=True,
-                                fingerprint=info.get("fingerprint")
-                            ))
-
-    return certs
-
-
 def get_custom_certificates() -> list[Certificate]:
-    """Get custom uploaded certificates."""
+    """The stored certificates (uploaded or self-signed), none of them served (ADR-0357).
+
+    Runs openssl for each: call this in a worker thread.
+    """
     certs = []
     certs_path = Path(CERTS_DIR)
 
@@ -549,8 +618,9 @@ def get_custom_certificates() -> list[Certificate]:
             continue
         info = get_certificate_info(str(cert_file))
         if info:
-            # Check if it's self-signed (issuer matches subject)
-            is_self_signed = info.get("issuer") == info.get("domain")
+            # Self-signed: the issuer is the subject. Comparing the issuer's O or CN with the
+            # subject's CN took one made with an organization for a custom certificate.
+            is_self_signed = bool(info.get("subject_name")) and info.get("issuer_name") == info.get("subject_name")
             certs.append(Certificate(
                 id=f"custom_{cert_file.stem}",
                 type=CertificateType.SELF_SIGNED if is_self_signed else CertificateType.CUSTOM,
@@ -559,7 +629,6 @@ def get_custom_certificates() -> list[Certificate]:
                 valid_from=info.get("valid_from"),
                 valid_until=info.get("valid_until"),
                 is_valid=info.get("is_valid", False),
-                auto_renew=False,
                 fingerprint=info.get("fingerprint")
             ))
 
@@ -568,58 +637,22 @@ def get_custom_certificates() -> list[Certificate]:
 
 @router.get("/certificates", response_model=CertificateListResponse)
 async def list_certificates(_: User = Depends(require_admin)):
-    """List all SSL/TLS certificates."""
-    caddy_certs = get_caddy_certificates()
-    custom_certs = get_custom_certificates()
-
-    all_certs = caddy_certs + custom_certs
-
-    # Determine active certificate (first valid one)
-    active = None
-    for cert in all_certs:
-        if cert.is_valid:
-            active = cert.id
-            break
-
-    return CertificateListResponse(
-        certificates=all_certs,
-        active_certificate=active
-    )
+    """The stored certificates, and what browsers get instead of them (ADR-0357)."""
+    try:
+        certificates = await asyncio.to_thread(get_custom_certificates)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise HTTPException(500, f"Failed to read the stored certificates: {_openssl_error(e)}")
+    return CertificateListResponse(certificates=certificates)
 
 
 @router.get("/certificates/status", response_model=CertificateStatus)
 async def get_certificate_status(_: User = Depends(require_admin)):
-    """Get current SSL/TLS certificate status."""
-    caddy_certs = get_caddy_certificates()
-    custom_certs = get_custom_certificates()
+    """What browsers get from https://<host>/: the certificate of Caddy's local CA (ADR-0025).
 
-    all_certs = caddy_certs + custom_certs
-
-    if not all_certs:
-        return CertificateStatus(has_certificate=False)
-
-    # Find the first valid certificate
-    for cert in all_certs:
-        if cert.is_valid:
-            return CertificateStatus(
-                has_certificate=True,
-                type=cert.type,
-                domain=cert.domain,
-                valid_until=cert.valid_until,
-                is_valid=True,
-                auto_renew=cert.auto_renew
-            )
-
-    # If no valid cert, return info about the first one
-    cert = all_certs[0]
-    return CertificateStatus(
-        has_certificate=True,
-        type=cert.type,
-        domain=cert.domain,
-        valid_until=cert.valid_until,
-        is_valid=False,
-        auto_renew=cert.auto_renew
-    )
+    Caddy runs in the web UI's container, the only one with its data (deploy/docker-compose.yml),
+    and nothing hands it a stored certificate (ADR-0357).
+    """
+    return CertificateStatus()
 
 
 @router.post("/certificates/self-signed")
@@ -630,10 +663,9 @@ async def generate_self_signed_certificate(
     """Generate a self-signed certificate. Admin only."""
     # The schema only accepts a host name or an IP address short enough for a
     # subject CN (and so for the file names), so the domain can name files in
-    # CERTS_DIR and go into -subj and -addext as it is.
+    # CERTS_DIR and go into -subj and -addext as it is; and an organization and
+    # a country that X.509 allows.
     domain = request.domain
-    cert_file, key_file, _chain_file = _certificate_files(domain)
-    cert_file.parent.mkdir(parents=True, exist_ok=True)
     san = f"IP:{domain}" if parse_ip_address(domain) is not None else f"DNS:{domain}"
 
     try:
@@ -644,22 +676,32 @@ async def generate_self_signed_certificate(
         if request.country:
             subject += f"/C={_subject_value(request.country)}"
 
-        # Generate self-signed certificate. openssl prints the new key, which
-        # is stored like an uploaded one once openssl has succeeded: one writer
-        # of keys (0600), and a failure leaves the stored key as it was.
-        result = subprocess.run([
-            "openssl", "req", "-x509", "-nodes",
-            "-days", str(request.validity_days),
-            "-newkey", "rsa:2048",
-            "-keyout", "-",
-            "-out", str(cert_file),
-            "-subj", subject,
-            "-addext", f"subjectAltName={san}"
-        ], capture_output=True, text=True)
+        # Generate self-signed certificate. openssl prints the new key and then
+        # the certificate, which are stored like uploaded ones once openssl has
+        # succeeded: one writer of the files, which follows no symbolic link
+        # (ADR-0042) and makes keys 0600, and an openssl that fails leaves the
+        # stored files as they were. -utf8: openssl counts the subject's
+        # characters as the schema does, not the bytes of their UTF-8.
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [
+                "openssl", "req", "-x509", "-nodes", "-utf8",
+                "-days", str(request.validity_days),
+                "-newkey", "rsa:2048",
+                "-keyout", "-",
+                "-subj", subject,
+                "-addext", f"subjectAltName={san}",
+            ],
+            capture_output=True, text=True, timeout=OPENSSL_GENERATE_TIMEOUT,
+        )
 
         if result.returncode != 0:
             raise HTTPException(500, f"Failed to generate certificate: {result.stderr}")
-        _write_private_key(key_file, result.stdout)
+        key = _pem_block(result.stdout, "PRIVATE KEY")
+        certificate = _pem_block(result.stdout, "CERTIFICATE")
+        if key is None or certificate is None:
+            raise HTTPException(500, "Failed to generate certificate: openssl printed no key or no certificate")
+        await asyncio.to_thread(_store_certificate, domain, certificate, key)
 
         return {
             "status": "ok",
@@ -669,7 +711,7 @@ async def generate_self_signed_certificate(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Failed to generate certificate: {str(e)}")
+        raise HTTPException(500, f"Failed to generate certificate: {_openssl_error(e)}")
 
 
 @router.post("/certificates/upload")
@@ -678,13 +720,10 @@ async def upload_certificate(
     current_user: User = Depends(require_admin)
 ):
     """Upload a custom SSL/TLS certificate. Admin only."""
-    certs_path = Path(CERTS_DIR)
-    certs_path.mkdir(parents=True, exist_ok=True)
-
     try:
         # Validate and parse the certificate to get domain. openssl reads it
         # on its standard input: no temporary file to leave in /tmp on errors.
-        info = get_pem_certificate_info(data.certificate)
+        info = await asyncio.to_thread(get_pem_certificate_info, data.certificate)
 
         if not info:
             raise HTTPException(400, "Invalid certificate format")
@@ -698,11 +737,9 @@ async def upload_certificate(
                 "(*.example.com) or an IP address, at most "
                 f"{MAX_CERTIFICATE_NAME_LENGTH} characters long",
             )
-        cert_file, key_file, chain_file = _certificate_files(domain)
-
-        # Text that cannot be encoded (a lone surrogate) would fail half-way
-        # through the writes below, with the certificate replaced and the old
-        # key or chain file emptied.
+        # Text that cannot be encoded (a lone surrogate) is a bad request: the
+        # write below would fail on it, and then leave the stored files as
+        # they were.
         for text, what in ((data.private_key, "private key"),
                            (data.chain or "", "certificate chain")):
             try:
@@ -710,13 +747,8 @@ async def upload_certificate(
             except UnicodeEncodeError:
                 raise HTTPException(400, f"Invalid {what} format") from None
 
-        # Save certificate and key
-        cert_file.write_text(data.certificate)
-        _write_private_key(key_file, data.private_key)
-
-        # Save chain if provided
-        if data.chain:
-            chain_file.write_text(data.chain)
+        await asyncio.to_thread(_store_certificate, domain, data.certificate, data.private_key,
+                                data.chain)
 
         return {
             "status": "ok",
@@ -727,7 +759,7 @@ async def upload_certificate(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"Failed to upload certificate: {str(e)}")
+        raise HTTPException(500, f"Failed to upload certificate: {_openssl_error(e)}")
 
 
 @router.delete("/certificates/{cert_id}")
@@ -744,19 +776,14 @@ async def delete_certificate(
     name = cert_id.removeprefix("custom_")
     if _uploaded_certificate_name(name) != name:
         raise HTTPException(400, "Invalid certificate id")
-    cert_file, key_file, chain_file = _certificate_files(name)
-
-    if not cert_file.exists():
-        raise HTTPException(404, "Certificate not found")
 
     try:
-        cert_file.unlink(missing_ok=True)
-        key_file.unlink(missing_ok=True)
-        chain_file.unlink(missing_ok=True)
-
-        return {"status": "ok", "message": "Certificate deleted"}
+        deleted = await asyncio.to_thread(_delete_certificate_files, name)
     except Exception as e:
         raise HTTPException(500, f"Failed to delete certificate: {str(e)}")
+    if not deleted:
+        raise HTTPException(404, "Certificate not found")
+    return {"status": "ok", "message": "Certificate deleted"}
 
 
 # ==================== Helper for login tracking ====================

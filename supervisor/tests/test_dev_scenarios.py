@@ -16,6 +16,10 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
 * every area (files, volumes, smart, backups, smb, smbconf, shares, scrub, offsite, restore) passes against
   the fake, prints a PASS line with its SD MiB for each step and a summary, and leaves the device as it
   found it;
+* the volumes check makes a snapshot of its volume and restores it: the copy restore_<time> is
+  listed with the volume's restored copies, its Delete is refused while a share uses it and
+  removes it from the host afterwards, and the volume can be deleted then (ADR-0358); its fake
+  refuses the Delete of a volume that holds a snapshot or a copy, as btrfs does;
 * the restore check (ADR-0341) restores only the backup it made, twice: its fake restore keeps a
   restored SMB account only with the live password and uid (ADR-0141), keeps the live next uid
   (ADR-0109), removes stale host accounts and renders smb.conf; its helper on the device lists
@@ -343,6 +347,7 @@ class FakeNas:
         # backups restored.
         self.databases: dict[str, dict] = {}
         self.restored: list[str] = []
+        self.restores = 0  # the restores of snapshots, which name their copies (restore_<time>)
         # The copies of the database that the restores keep (the newest 5), and an API token.
         self.copies: list[str] = []
         self.api_tokens = [{"id": 1, "user_id": 1, "name": "home assistant", "token_prefix": "unos_ab12", "is_active": True,
@@ -713,11 +718,68 @@ class FakeNas:
             if users and "volume-delete-ignores-shares" not in self.bugs:
                 raise Refused(409, f"Volume '{parts[3]}' is used by SMB shares ({', '.join(users)}). "
                                    "Stop or remove them and try again.")
+            if any(self.fs[p].kind == "subvolume" for p in self.subtree(path) if p != path):
+                # btrfs refuses to delete a subvolume that holds snapshots or copies.
+                raise Refused(409, f"Volume '{parts[3]}' contains snapshots or other subvolumes (ERROR: Could not "
+                                   "destroy subvolume/snapshot: Directory not empty). Delete them first.")
             self.remove(path)
             self.quota_of.pop(path, None)
             self.trash = {t: o for t, o in self.trash.items() if not t.startswith(path + "/")}
             return {"status": "deleted"}
         raise AssertionError(f"the fake does not know {method} /storage/{'/'.join(parts)}")
+
+    def api_snapshots(self, method, parts, body, params, upload):
+        """The Snapshots page's API on the pool's volumes: read-only snapshots in <volume>/.snapshots,
+        restores into writable copies restore_<time> right in the volume (ADR-0358)."""
+        folder = body["subvolume"] if method == "POST" and parts == [] else params.get("subvolume")
+        if folder is not None and (folder not in self.fs or self.fs[folder].kind != "subvolume"):
+            raise Refused(404, f"Subvolume not found: {folder}")
+        if parts == [] and method == "POST":
+            name = body.get("name") or "snap_20261112_100000"
+            path = f"{folder}/.snapshots/{name}"
+            if path in self.fs:
+                raise Refused(400, f"Snapshot already exists: {name}")
+            self.fs.setdefault(f"{folder}/.snapshots", Node("dir", 0o755))
+            self.fs[path] = Node("subvolume", 0o755)
+            return {"id": name, "name": name, "subvolume": folder, "path": path, "created": "2026-11-12T10:00:00+00:00"}
+        if parts == [] and method == "GET":
+            return [{"id": p.rsplit("/", 1)[1], "name": p.rsplit("/", 1)[1], "subvolume": folder, "path": p,
+                     "created": "2026-11-12T10:00:00+00:00"}
+                    for p in sorted(self.fs) if os.path.dirname(p) == f"{folder}/.snapshots"]
+        if parts == ["restore"]:
+            source = body["snapshot_path"]
+            if source not in self.fs:
+                raise Refused(404, f"Snapshot not found: {source}")
+            self.restores += 1
+            target = f"{source.rsplit('/.snapshots/', 1)[0]}/restore_20261112_1000{self.restores:02d}"
+            self.fs[target] = Node("subvolume", 0o755)
+            return {"status": "restored", "source": source, "target": target}
+        if parts == ["copies"]:
+            if "copies-not-listed" in self.bugs:
+                return []
+            return [{"name": p.rsplit("/", 1)[1], "pool": "data", "volume": folder.rsplit("/", 1)[1], "subvolume": folder,
+                     "path": p, "created": f"2026-11-12T10:00:{p[-2:]}+00:00"}
+                    for p in sorted(self.fs, reverse=True)
+                    if os.path.dirname(p) == folder and re.fullmatch(r"restore_\d{8}_\d{6}", p.rsplit("/", 1)[1])
+                    and self.fs[p].kind == "subvolume"]
+        if parts[:1] == ["copies"] and method == "DELETE":
+            path = f"{folder}/{parts[1]}"
+            shown = f"{folder.rsplit('/', 1)[1]}/{parts[1]}"
+            if path not in self.fs:
+                raise Refused(404, f"Restored copy '{shown}' not found in pool 'data'")
+            users = [n for n, s in self.shares.items() if s["path"] == path or s["path"].startswith(path + "/")]
+            if users and "copy-delete-ignores-shares" not in self.bugs:
+                raise Refused(409, f"Restored copy '{shown}' is used by SMB shares ({', '.join(users)}). "
+                                   "Stop or remove them and try again.")
+            self.remove(path)
+            return {"status": "deleted", "name": parts[1]}
+        if method == "DELETE" and len(parts) == 1:
+            path = f"{folder}/.snapshots/{parts[0]}"
+            if path not in self.fs:
+                raise Refused(404, f"Snapshot not found: {parts[0]}")
+            self.remove(path)
+            return {"status": "deleted", "id": parts[0]}
+        raise AssertionError(f"the fake does not know {method} /snapshots/{'/'.join(parts)}")
 
     def scrub_answer(self) -> dict:
         s = self.scrub
@@ -2308,6 +2370,8 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("files", "volume-deletable", "refused with 409"),
     ("files", "upload-mode", "644 root:root"),
     ("volumes", "volume-delete-ignores-shares", "names the share"),
+    ("volumes", "copies-not-listed", "listed with the volume's restored copies"),
+    ("volumes", "copy-delete-ignores-shares", "the copy's Delete is refused while the share"),
     ("smbconf", "status-misses-replaced-file", "names smb.conf as not UNOS's"),
     ("smbconf", "no-replaced-copy", "byte for byte"),
     ("smbconf", "access-without-folder", "access without a new folder is refused"),
@@ -2542,6 +2606,60 @@ def test_the_volumes_check_takes_either_answer_to_a_quota(nas):
     nas.quotas = True
     status, output = run_check("volumes", nas)
     assert status == 0 and "made with a limit of 1 GiB" in output, output
+
+
+def test_the_volumes_check_restores_a_snapshot_and_deletes_the_copy_and_then_the_volume(nas):
+    """storage.restore-copies-deletable (ADR-0358): a snapshot of the check's volume, its restore, the
+    copy listed with the volume's restored copies and a subvolume on the host, its Delete refused while
+    a share uses it and done once the share is gone, and the volume's Delete after it."""
+    status, output = run_check("volumes", nas)
+    assert status == 0, output
+    copy = f"{ROOT}/unoscheck1a2b3c/restore_20261112_100001"
+    done = [(method, path, body, params) for method, path, body, params in nas.calls if path.startswith("/snapshots")]
+    assert done == [
+        ("POST", "/snapshots/", {"subvolume": f"{ROOT}/unoscheck1a2b3c", "name": "unoscheck1a2b3c"}, {}),
+        ("GET", "/snapshots/", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+        ("POST", "/snapshots/restore", {"snapshot_path": f"{ROOT}/unoscheck1a2b3c/.snapshots/unoscheck1a2b3c"}, {}),
+        ("GET", "/snapshots/copies", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+        ("GET", "/snapshots/", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+        ("DELETE", "/snapshots/copies/restore_20261112_100001", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+        ("GET", "/snapshots/copies", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+        ("DELETE", "/snapshots/copies/restore_20261112_100001", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+        ("GET", "/snapshots/copies", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+        ("DELETE", "/snapshots/unoscheck1a2b3c", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+        # The clean-up of the volume looks for its copies first, which its Delete would refuse: the
+        # volume is gone by then (404).
+        ("GET", "/snapshots/copies", None, {"subvolume": f"{ROOT}/unoscheck1a2b3c"}),
+    ]
+    text = "\n".join(step_lines(output))
+    for words in ("a snapshot unoscheck1a2b3c of the volume is made and listed",
+                  "Restore of the snapshot makes a copy in the volume, a subvolume on the host, listed with the "
+                  f"volume's restored copies and not with its snapshots: {copy}",
+                  "the copy's Delete is refused while the share unoscheck1a2b3cs uses it, and names the share",
+                  "with the share deleted, the copy's Delete removes it, also on the host",
+                  "with its snapshot deleted, Delete removes the volume, also on the host"):
+        assert words in text, words
+    assert copy not in nas.fs and f"{ROOT}/unoscheck1a2b3c" not in nas.fs
+
+
+def test_the_volumes_check_removes_its_copy_and_snapshot_after_a_failed_step(nas):
+    """A step that fails while the volume holds the check's snapshot and copy: the clean-up deletes them
+    before the volume, whose Delete btrfs would refuse, also a copy that the list misses."""
+    before = nas.snapshot()
+    nas.bugs.add("copies-not-listed")
+    status, output = run_check("volumes", nas)
+    assert status == 1
+    assert "done  clean up: delete the volume unoscheck1a2b3c with its restored copies and snapshots" in output
+    assert nas.snapshot() == before, output
+
+
+def test_the_fake_refuses_to_delete_a_volume_that_holds_a_copy_as_btrfs_does(nas):
+    nas.fs[f"{ROOT}/media/restore_20261112_100001"] = Node("subvolume", 0o755)
+
+    answer = nas.request("DELETE", "/storage/pools/data/volumes/media")
+
+    assert answer.status_code == 409 and "contains snapshots or other subvolumes" in answer.text
+    assert f"{ROOT}/media" in nas.fs
 
 
 def test_the_volumes_check_reads_the_quota_on_the_host(nas):

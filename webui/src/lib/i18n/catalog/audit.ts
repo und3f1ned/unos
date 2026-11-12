@@ -92,9 +92,6 @@ export const en = {
 	'audit.action.taskUpdated': 'Task updated',
 	'audit.action.taskDeleted': 'Task deleted',
 	'audit.action.taskRun': 'Task run',
-	'audit.action.firewallRuleAdded': 'Firewall rule added',
-	'audit.action.firewallRuleDeleted': 'Firewall rule deleted',
-	'audit.action.sslCertUploaded': 'Ssl cert uploaded',
 	'audit.action.networkConfigChanged': 'Network config changed',
 	'audit.action.other': 'Other',
 
@@ -202,9 +199,6 @@ export const ru: Translation<typeof en> = {
 	'audit.action.taskUpdated': 'Задача изменена',
 	'audit.action.taskDeleted': 'Задача удалена',
 	'audit.action.taskRun': 'Задача запущена вручную',
-	'audit.action.firewallRuleAdded': 'Правило брандмауэра добавлено',
-	'audit.action.firewallRuleDeleted': 'Правило брандмауэра удалено',
-	'audit.action.sslCertUploaded': 'SSL-сертификат загружен',
 	'audit.action.networkConfigChanged': 'Сетевые настройки изменены',
 	'audit.action.other': 'Другое',
 

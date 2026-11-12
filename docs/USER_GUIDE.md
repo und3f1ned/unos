@@ -1384,14 +1384,17 @@ regular users have no access to it.
   no entry either. Mounting, unmounting and importing pools, creating
   containers and pulling or removing images on the **Containers** page, the
   snapshots that scheduled tasks take and clean up, the apps started when a
-  pool is mounted, suspend, the off-device copy, notifications, the firewall
-  and the TLS certificate write no entries yet, although **Action** lists
-  some such actions (feature-list entry `security.audit-admin-actions`).
+  pool is mounted, suspend, the off-device copy, notifications, the firewall,
+  the TLS certificates and clearing the login history write no entries.
+- **Action** offers only the actions that the NAS records. An older entry
+  whose action UNOS no longer has, such as `firewall_rule_added`, is listed
+  with its action as recorded.
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
 (with `limit` from 1 and `offset` from 0), `GET /api/v1/audit/logs/count` and
 `GET /api/v1/audit/logs/export` (`format=csv` or `json`) take `search`,
-`username`, `action`, `severity`, `start_date` and `end_date`. A bound covers
+`username`, `action`, `severity`, `start_date` and `end_date`; `action` takes
+any action name, also one that only older entries hold. A bound covers
 the whole unit it names, as the first and as the last one: a date
 (`YYYY-MM-DD`) its day, and a date and time (`YYYY-MM-DDTHH`, `THH:MM`,
 `THH:MM:SS`, or `THH:MM:SS` and a fraction of 1 to 6 digits) its hour,
@@ -1515,6 +1518,36 @@ There are no scheduled shutdown or wake times, and the UPS state has no page
 yet (feature-list entries `system.scheduled-power` and
 `system.ups-monitoring`).
 
+#### UPS (API only)
+
+The UPS settings and state are in the API only, for administrators. UNOS
+reads the UPS with NUT's `upsc` on the NAS, from the NUT server (`upsd`) that
+the settings name. UNOS does not install NUT; to read a UPS, install and
+configure it on the NAS (`sudo apt-get install nut`, or `nut-client` for a
+NUT server on another machine).
+
+- `GET /api/v1/power/ups/config` answers the settings with `has_password`,
+  which says whether a NUT password is stored: no answer contains the
+  password itself. `PUT` takes the settings with `password`: a body without
+  one (absent, null or empty) keeps the stored password, a body without a
+  `username` removes it, and a password without a username is refused (400).
+  `ups_name`, `host` (a host name, an IPv4 address, or an IPv6 address in
+  brackets) and `port` are checked, since they reach `upsc`. UNOS does not
+  use the username and password yet.
+- `GET /api/v1/power/ups/status` reads the UPS at once. When it cannot, it
+  answers `available: false` with the `reason`, for example "The host has no
+  NUT client: upsc was not found. Install the package nut-client on the
+  host". `POST /api/v1/power/ups/test` answers 503 with the same reason, and
+  `GET /api/v1/power/ups/list` an empty `devices` list with it as `error`.
+  Values with decimals are read, percentages and minutes as whole numbers; a
+  value that is no number is null, and the others are still read.
+- While the settings are `enabled`, the UPS monitor reads the UPS every 30
+  seconds. `GET /api/v1/power/ups/monitor/status` says whether its last check
+  read the UPS (`available`) and, when not, the `reason`. While the NAS has no
+  `upsc`, the monitor only checks again: it writes nothing, logs the reason
+  once, and shuts nothing down; it reads the UPS once NUT is installed. The
+  shutdown on low battery does not run in the supervisor's container yet.
+
 ### Disk Health
 
 - SMART health status and temperature of each disk, its SMART data under
@@ -1632,6 +1665,30 @@ twice at once can guard itself, for example with
 each run, as when it is saved: at most 4096 characters, without NUL
 characters.
 
+### HTTPS Certificates
+
+Under **SSL/TLS Certificates** on **System** → **Security** (administrators
+only), the badge names what browsers get over HTTPS: **Caddy's local CA**,
+the certificate that Caddy, the web server of UNOS, issues from its own
+certificate authority for the name in `UNOS_HOSTNAME` (see
+[HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)).
+**Manage** says so again and lists the **Stored Certificates**, each with its
+type, issuer, end date, **VALID** or **EXPIRED** and **NOT SERVED**.
+
+UNOS stores certificates but does not serve them yet: browsers keep getting
+the local CA's certificate whatever is stored (feature-list entry
+`security.custom-certificates`). **Generate Self-Signed** stores a certificate
+for a host name or an IP address (a name of at most 64 characters), valid for
+the days you choose, with an optional organization (at most 64 printable
+characters) and an optional country (two letters, such as `DE`); when UNOS
+refuses what you entered, the dialog says why. The API's
+`POST /api/v1/security/certificates/upload` stores a certificate with its key
+and chain under the name of its subject; a certificate stored under the same
+name replaces the old one with its key, and its chain too, which goes when the
+new certificate has none. A store that fails keeps the old files. The trash
+button deletes a stored certificate. When the certificates cannot be loaded,
+the card says so with the reason and **Retry**.
+
 ---
 
 ## Backups & Snapshots
@@ -1674,11 +1731,26 @@ taken of (for a snapshot of a pool, `/mnt/pools/<pool>/restore_<date>_<time>`).
 3. Click its **Restore** button and confirm. A message shows where the copy is.
 
 Copy what you need from it, for example in the **File Browser**. The copy of
-a pool snapshot is a volume of the pool: when you no longer need it, delete
-it with the pool's **Volumes** on the **Storage** page (see
-[Pool Operations](#pool-operations)). The copy of a volume's snapshot is a
-subvolume inside the volume: the web interface cannot delete it yet, and the
-volume cannot be deleted while it holds the copy.
+a pool snapshot is also a volume of the pool. The copy of a volume's snapshot
+is a subvolume inside the volume, and the volume cannot be deleted while it
+holds the copy.
+
+#### Restored Copies
+
+Below the snapshots, **Restored copies in** the pool or volume you chose lists
+the copies that Restore made right in it, newest first, with their folder and
+the time of the restore (from the name, shown in your browser's time zone).
+Only such copies are listed: a writable snapshot named
+`restore_<date>_<time>` right in the pool or the volume.
+
+To delete one, click its **Delete** button and confirm; its files are deleted
+with it, and this cannot be undone. As for a volume, the copy is not deleted
+while a running container, an SMB share or an NFS export uses it or a folder
+in it, or while an off-device copy or restore reads or writes there: the
+dialog names them. Stop or remove them and try again. When Docker does not
+answer, nothing is deleted either. A share or export of the volume around the
+copy does not count. Once its copies and snapshots are deleted, the volume
+can be deleted on the **Storage** page.
 
 #### Deleting a Snapshot
 

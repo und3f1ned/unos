@@ -339,9 +339,10 @@ def pools_in_use() -> set[str]:
 
 
 def volume_user(volume_path: str) -> Optional[str]:
-    """What of the off-device copy uses the volume at VOLUME_PATH, as pool_user says it: a target, a
-    folder that it copies or a restore's folder that is the volume or lies in it. A folder above it,
-    such as the whole pool, does not count, as for the volume's other users (storage/pools.py)."""
+    """What of the off-device copy uses the volume (or the restored copy of a snapshot) at VOLUME_PATH,
+    as pool_user says it: a target, a folder that it copies or a restore's folder that is the volume
+    or lies in it. A folder above it, such as the whole pool, does not count, as for the volume's
+    other users (storage/pools.py)."""
     activity = _activity
     if activity is None or not any(_inside(path, volume_path) for path in activity.paths):
         return None

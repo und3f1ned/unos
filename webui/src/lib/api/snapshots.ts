@@ -45,6 +45,33 @@ export async function deleteSnapshot(snapshotId: string, subvolume: string): Pro
   return api.delete(`/snapshots/${encodeURIComponent(snapshotId)}?subvolume=${encodeURIComponent(subvolume)}`);
 }
 
+/** A writable copy that a restore made right in a pool or a volume (ADR-0358). */
+export interface RestoreCopy {
+  /** `restore_<date>_<time>`, in UTC. */
+  name: string;
+  pool: string;
+  /** The volume it is in; null for one in the pool's top folder. */
+  volume: string | null;
+  /** The folder it is in: the pool's mountpoint or the volume's folder. */
+  subvolume: string;
+  path: string;
+  /** When the restore made it, from its name: UTC, with its offset. */
+  created: string;
+}
+
+/** The copies that restores made right in a pool or volume, newest first. */
+export async function getRestoreCopies(subvolume: string): Promise<RestoreCopy[]> {
+  return api.get<RestoreCopy[]>(`/snapshots/copies?subvolume=${encodeURIComponent(subvolume)}`);
+}
+
+/**
+ * Delete a restored copy by its subvolume id. HTTP 409 while a running container, an SMB share,
+ * an NFS export or the off-device copy uses it; 400 for what no restore made.
+ */
+export async function deleteRestoreCopy(name: string, subvolume: string): Promise<void> {
+  return api.delete(`/snapshots/copies/${encodeURIComponent(name)}?subvolume=${encodeURIComponent(subvolume)}`);
+}
+
 /**
  * A writable copy of the snapshot, `restore_<date>_<time>` (in UTC), in the
  * folder it was made of (or in targetPath); nothing is overwritten.

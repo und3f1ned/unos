@@ -106,7 +106,7 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 ### Planned
 
 Not working yet; each has an entry in [feature-list.json](feature-list.json), named in parentheses:
-- **UPS monitoring** (`system.ups-monitoring`) - The UPS state and the shutdown on low battery: the supervisor image has no NUT client, and the shutdown is skipped inside a container
+- **UPS monitoring** (`system.ups-monitoring`) - The UPS state and the shutdown on low battery: there is no UPS page, the API reads the state only where the host has NUT, which its owner installs, and the shutdown is skipped inside a container
 - **Scheduled power** (`system.scheduled-power`) - Shutdown and wake times are stored, and nothing acts on them
 - **Alerts for every event and channel** (`system.alert-events`) - Discord, Slack and webhook channels get no alerts, and the events chosen for a channel have no effect
 - **Host name and time zone** (`system.hostname-and-time-zone`) - Setting them from the web interface

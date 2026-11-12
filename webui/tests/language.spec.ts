@@ -129,15 +129,14 @@ test.describe('Language', () => {
       ],
     };
     const VALID_UNTIL = 'Nov  8 01:47:31 2027 GMT';
-    const CERTIFICATE_STATUS = { has_certificate: true, type: 'self_signed', domain: 'nas.local',
-      valid_until: VALID_UNTIL, is_valid: true, auto_renew: false };
+    const CERTIFICATE_STATUS = { served_by: 'caddy_local_ca' };
     const CERTIFICATES = {
       certificates: [
-        { id: 'custom_nas', type: 'self_signed', domain: 'nas.local', issuer: 'nas.local',
-          valid_from: 'Nov  8 01:47:31 2026 GMT', valid_until: VALID_UNTIL, is_valid: true, auto_renew: false,
+        { id: 'custom_nas.local', type: 'self_signed', domain: 'nas.local', issuer: 'nas.local',
+          valid_from: 'Nov  8 01:47:31 2026 GMT', valid_until: VALID_UNTIL, is_valid: true, served: false,
           fingerprint: null },
       ],
-      active_certificate: 'custom_nas',
+      served_by: 'caddy_local_ca',
     };
 
     test('come in the language of the page', async ({ authenticatedPage: page }) => {
@@ -157,14 +156,16 @@ test.describe('Language', () => {
       await main.getByRole('button', { name: 'Manage', exact: true }).click();
       const rule = main.locator('div.bg-slate-700').filter({ has: page.getByText('SSH', { exact: true }) });
 
-      // English: the firewall's words as before the catalogs; a certificate's type by its label
-      // and its dates in the browser's format, no longer as the server answers them.
+      // English: the firewall's words as before the catalogs; what browsers get and a certificate's
+      // type by their labels, and its dates in the browser's format, not as the server answers them.
       await expect(main.getByText('Default: Incoming deny, Outgoing allow', { exact: true })).toBeVisible();
       expect(await rule.locator('span').first().innerText()).toBe('DENY');
       await expect(rule.getByText('IN | TCP | Port: 22 | From: 192.168.1.0/24', { exact: true })).toBeVisible();
       // Text, not a regular expression: Playwright compares text with its white space collapsed,
       // the space before AM included.
-      await expect(main.getByText('Type: Self-signed | Expires: 11/8/2027, 1:47:31 AM', { exact: true })).toBeVisible();
+      await expect(main.getByText("Caddy's local CA", { exact: true })).toBeVisible();
+      await expect(main.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
+      await expect(main.getByText('NOT SERVED', { exact: true })).toBeVisible();
       await expect(main.getByText('Self-signed | Issuer: nas.local | Until: 11/8/2027, 1:47:31 AM', { exact: true }))
         .toBeVisible();
 
@@ -174,8 +175,9 @@ test.describe('Language', () => {
       expect(await rule.locator('span').first().innerText()).toBe('ЗАПРЕТИТЬ');
       await expect(rule.getByText('Входящие | TCP | Порт: 22 | Источник: 192.168.1.0/24', { exact: true }))
         .toBeVisible();
-      await expect(main.getByText('Тип: Самоподписанный | Истекает: 08.11.2027, 01:47:31', { exact: true }))
-        .toBeVisible();
+      await expect(main.getByText('Локальный ЦС Caddy', { exact: true })).toBeVisible();
+      await expect(main.getByText('HTTPS для браузеров: Локальный ЦС Caddy', { exact: true })).toBeVisible();
+      await expect(main.getByText('НЕ ОТДАЁТСЯ', { exact: true })).toBeVisible();
       await expect(main.getByText('Самоподписанный | Издатель: nas.local | До: 08.11.2027, 01:47:31', { exact: true }))
         .toBeVisible();
     });

@@ -14,7 +14,10 @@ SD writes of each check (ADR-0214). The areas:
            refuses.
   volumes  A volume made without a quota and listed, one with a quota of 1 GiB (refused while
            quotas are off on the pool, else made with that limit), a Delete refused while a share
-           uses the volume, and the Delete once the share is gone.
+           uses the volume; a snapshot of the volume, whose Restore makes the copy restore_<time>
+           in it, a subvolume on the host listed with the volume's restored copies (ADR-0358), the
+           copy's Delete refused while the share uses the copy and done once the share is gone,
+           and, with the snapshot deleted, the volume's Delete.
   smart    The whole disks on the Storage page and on Disk Health, each disk's SMART data on both,
            the refusal of the system disk and of what is not a disk, and a short self-test of
            each disk.
@@ -1558,11 +1561,32 @@ def volumes_check(c: Check) -> None:
         pool = c.pick_pool()
         name, root = pool["name"], pool["mountpoint"]
         s.text += f": {name} at {root}"
-    volume, quoted, share = c.run, c.run + "q", c.run + "s"
+    volume, quoted, share, snap = c.run, c.run + "q", c.run + "s", c.run
     vpath = f"{root}/{volume}"
 
     def volumes() -> list[dict]:
         return c.get(f"/storage/pools/{name}/volumes")
+
+    def copies() -> list[str]:
+        return [x["path"] for x in c.get("/snapshots/copies", {"subvolume": vpath})]
+
+    def snapshots() -> list[str]:
+        return [x["path"] for x in c.get("/snapshots/", {"subvolume": vpath})]
+
+    made_copies: list[str] = []  # the names of the restored copies whose restore answered
+
+    def remove_volume() -> None:
+        """The check's volume, with the restored copies and snapshots in it, which its Delete refuses
+        (all of them the check's): those that their lists name, so that a call whose answer was lost
+        is undone too, and the copies that the check made, also where the list misses one. A 404 of
+        the copies' list: the volume is gone."""
+        listed = c.get("/snapshots/copies", {"subvolume": vpath}, expect=(200, 404))
+        if isinstance(listed, list):
+            for copy in sorted({x["name"] for x in listed} | set(made_copies)):
+                c.call("DELETE", f"/snapshots/copies/{copy}", params={"subvolume": vpath}, expect=(200, 404))
+            for snapshot in c.get("/snapshots/", {"subvolume": vpath}):
+                c.call("DELETE", f"/snapshots/{snapshot['name']}", params={"subvolume": vpath}, expect=(200, 404))
+        c.delete_volume(name, volume)
 
     def state() -> dict:
         return {"the volumes": sorted(v["name"] for v in volumes()),
@@ -1572,7 +1596,7 @@ def volumes_check(c: Check) -> None:
         c.baseline(state)
 
     with c.step(f"a volume without a quota is made at {vpath}, listed and a subvolume on the host"):
-        c.on_cleanup(f"delete the volume {volume}", lambda: c.delete_volume(name, volume))
+        c.on_cleanup(f"delete the volume {volume} with its restored copies and snapshots", remove_volume)
         made = c.post(f"/storage/pools/{name}/volumes", {"name": volume, "quota": None})
         c.expect(made.get("path") == vpath, f"it is at {made.get('path')}")
         c.expect(volume in [v["name"] for v in volumes()], "it is not listed")
@@ -1599,8 +1623,40 @@ def volumes_check(c: Check) -> None:
         c.expect(share in json.dumps(answer), f"the 409 does not name the share: {answer}")
         c.expect(volume in [v["name"] for v in volumes()], "the volume is gone")
 
-    with c.step("with the share deleted, Delete removes the volume, also on the host"):
+    with c.step(f"a snapshot {snap} of the volume is made and listed"):
+        made = c.post("/snapshots/", {"subvolume": vpath, "name": snap})
+        c.expect(made.get("path") == f"{vpath}/.snapshots/{snap}", f"it is at {made.get('path')}")
+        c.expect(made["path"] in snapshots(), "it is not listed")
+
+    # storage.restore-copies-deletable (ADR-0358): the copy that a restore makes in the volume is
+    # listed and deleted on the Snapshots page, and the volume can be deleted after it.
+    with c.step("Restore of the snapshot makes a copy in the volume, a subvolume on the host, listed with the "
+                "volume's restored copies and not with its snapshots") as s:
+        target = c.post("/snapshots/restore", {"snapshot_path": made["path"]})["target"]
+        s.text += f": {target}"
+        copy = target.rsplit("/", 1)[1]
+        made_copies.append(copy)
+        c.expect(target == f"{vpath}/{copy}" and re.fullmatch(r"restore_\d{8}_\d{6}", copy),
+                 "it is not restore_<date>_<time> right in the volume")
+        c.expect(target in copies(), "it is not listed with the volume's restored copies")
+        c.expect(target not in snapshots(), "it is listed with the volume's snapshots")
+        c.expect(c.device.subvolume("show", target) == "subvolume", "btrfs does not show it as a subvolume")
+
+    with c.step(f"the copy's Delete is refused while the share {share} uses it, and names the share"):
         c.delete_share(share)
+        c.post("/shares/smb", {"name": share, "path": target})
+        answer = c.call("DELETE", f"/snapshots/copies/{copy}", params={"subvolume": vpath}, expect=409)
+        c.expect(share in json.dumps(answer), f"the 409 does not name the share: {answer}")
+        c.expect(target in copies(), "the copy is gone")
+
+    with c.step("with the share deleted, the copy's Delete removes it, also on the host"):
+        c.delete_share(share)
+        c.call("DELETE", f"/snapshots/copies/{copy}", params={"subvolume": vpath})
+        c.expect(target not in copies(), "it is still listed")
+        c.expect(c.device.subvolume("show", target) == "none", "btrfs still shows it")
+
+    with c.step("with its snapshot deleted, Delete removes the volume, also on the host"):
+        c.call("DELETE", f"/snapshots/{snap}", params={"subvolume": vpath})
         c.call("DELETE", f"/storage/pools/{name}/volumes/{volume}")
         c.expect(volume not in [v["name"] for v in volumes()], "it is still listed")
         stat_is(c, c.device.stat([vpath]), vpath, "missing")

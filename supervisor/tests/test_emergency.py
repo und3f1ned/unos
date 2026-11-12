@@ -740,7 +740,7 @@ class TestBesideTheSupervisor:
         assert waited, "the command wrote the audit log during a rotation of the supervisor"
         entries = audit_router.load_audit_log()
         assert [e.id for e in entries[:4]] == ["seeded-0", "seeded-1", "seeded-2", "supervisor"]
-        assert [(e.username, e.action.value) for e in entries[4:]] == [
+        assert [(e.username, e.action) for e in entries[4:]] == [
             ("root", "password_change"), ("root", "totp_disabled")]
 
 

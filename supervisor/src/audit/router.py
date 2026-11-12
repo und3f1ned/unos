@@ -357,10 +357,14 @@ async def log_action(
 ) -> AuditEntry:
     """Log an audit action.
 
+    ``action`` must be a value of AuditAction: a name that it does not have raises ValueError and
+    writes nothing, though AuditEntry.action takes any name, for the older entries (ADR-0359).
     An entry that cannot be appended, such as on a full /data, is reported in the supervisor's
     log as its JSON line, and the OSError goes to the caller, which decides whether its request
     still answers: a sign-in does (ADR-0251).
     """
+    action = AuditAction(action)
+
     # Get IP address and user agent from request
     ip_address = None
     user_agent = None
@@ -377,7 +381,7 @@ async def log_action(
     entry = AuditEntry(
         id=f"audit_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
         timestamp=datetime.now().isoformat(),
-        action=action,
+        action=action.value,
         severity=severity,
         username=_bounded(actual_username, MAX_USERNAME_CHARS),
         ip_address=ip_address,
@@ -449,7 +453,7 @@ def _bound(name: str, value: Optional[str], *, last: bool) -> Optional[str]:
 class AuditFilter:
     """What GET /logs, /logs/count and /logs/export select: every condition that is set."""
 
-    action: Optional[AuditAction] = None
+    action: Optional[str] = None  # any action name, also one that AuditAction no longer has
     username: Optional[str] = None
     severity: Optional[AuditSeverity] = None
     first: Optional[str] = None  # timestamps from this one on
@@ -468,7 +472,7 @@ class AuditFilter:
         if self.after is not None and entry.timestamp >= self.after:
             return False
         if self.search:
-            action = entry.action.value
+            action = entry.action
             # The resource as the page shows it: its type and id, a space between them.
             resource = " ".join(part for part in (entry.resource_type, entry.resource_id) if part)
             fields = (entry.username, action, action.replace("_", " "), entry.ip_address, entry.user_agent,
@@ -478,15 +482,16 @@ class AuditFilter:
 
 
 def audit_filter(
-    action: Optional[AuditAction] = None,
+    action: Optional[str] = None,
     username: Optional[str] = None,
     severity: Optional[AuditSeverity] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     search: Optional[str] = Query(None, max_length=MAX_SEARCH_CHARS),
 ) -> AuditFilter:
-    """The filters of the query: action, user name and severity exactly; start_date and
-    end_date inclusive (_bound); search case-insensitively in the user, the action, the client
+    """The filters of the query: action, user name and severity exactly (the action by its name, also
+    one of an older entry that AuditAction no longer has, ADR-0359); start_date and end_date
+    inclusive (_bound); search case-insensitively in the user, the action, the client
     address, the browser, the resource and the details."""
     return AuditFilter(
         action=action,
@@ -591,7 +596,7 @@ async def export_audit_logs(
         ])
         for entry in entries:
             writer.writerow([_spreadsheet_text(cell) for cell in (
-                entry.id, entry.timestamp, entry.action.value, entry.severity.value,
+                entry.id, entry.timestamp, entry.action, entry.severity.value,
                 entry.username or "", entry.ip_address or "",
                 entry.resource_type or "", entry.resource_id or "",
                 entry.details or "", entry.success
@@ -627,7 +632,7 @@ async def get_audit_summary(
     # Count by action
     action_counts = {}
     for entry in entries:
-        action = entry.action.value
+        action = entry.action
         action_counts[action] = action_counts.get(action, 0) + 1
 
     # Count by severity
@@ -656,7 +661,8 @@ async def get_audit_summary(
 
 @router.get("/actions")
 async def list_audit_actions(_: User = Depends(require_admin)):
-    """List all available audit action types."""
+    """The actions that the supervisor writes, which the Action filter of the Audit Log page offers
+    (ADR-0359)."""
     return {
         "actions": [
             {"value": action.value, "name": action.name}

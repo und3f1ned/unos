@@ -26,6 +26,11 @@ volumes (GET /snapshots/subvolumes), read on the host as the Storage page
 reads them (ADR-0243). The snapshot commands themselves still run in the
 container (architecture.host-command-layer), which sees the pools at the
 same paths.
+
+The writable copies that restores made right in a pool or a volume are
+listed and deleted there too (GET and DELETE /snapshots/copies, ADR-0358):
+on the host, by storage/pools.py, which deletes a copy by its subvolume id
+after the checks of a volume's Delete.
 """
 
 import asyncio
@@ -49,10 +54,14 @@ from ..security.validators import (
     pools_base,
     sanitize_error_message,
     validate_path_component,
+    validate_pool_name,
     validate_pools_path,
     validate_snapshot_name,
+    validate_volume_name,
 )
 from ..storage import disks, pools
+from ..storage.router import _call as call_storage
+from ..storage.schemas import RestoreCopyInfo
 from .schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore, SnapshotSubvolume
 
 router = APIRouter(prefix="/snapshots", tags=["snapshots"])
@@ -412,6 +421,50 @@ async def list_subvolumes(_: dict = Depends(verify_token)):
         return await asyncio.to_thread(_list_subvolumes)
     except Exception as exc:
         raise HTTPException(500, sanitize_error_message(exc)) from exc
+
+
+def _pool_and_volume(subvolume: str) -> tuple[str, str | None]:
+    """The pool, and the volume or None, of ``subvolume``: a pool's mountpoint or a volume's folder in it.
+
+    400 for any other path.
+    """
+    parts = _below_pools_base(Path(validate_pools_path(subvolume, what="Subvolume")))
+    if len(parts) > 2:
+        raise HTTPException(400, f"Restored copies are right in a pool or a volume, not in {subvolume}")
+    pool = validate_pool_name(parts[0])
+    return pool, (validate_volume_name(parts[1]) if len(parts) == 2 else None)
+
+
+@router.get("/copies", response_model=list[RestoreCopyInfo])
+async def list_restore_copies(subvolume: str, _: dict = Depends(verify_token)):
+    """The copies that restores made right in the pool or volume ``subvolume``, newest first (ADR-0358).
+
+    404 for an unknown pool or volume, 409 for a pool that is not mounted at
+    its top level, 500 when btrfs fails.
+    """
+    pool, volume = _pool_and_volume(subvolume)
+    return await call_storage(pools.list_restore_copies, pool, volume)
+
+
+@router.delete("/copies/{name}")
+async def delete_restore_copy(name: str, subvolume: str, request: Request, user: User = Depends(verify_token)):
+    """Delete a copy that a restore made right in the pool or volume ``subvolume``, by its subvolume id (ADR-0358).
+
+    As a volume's Delete: 409 while a running container, an SMB share, an
+    NFS export or the off-device copy uses it, 503 when Docker cannot be
+    asked. 400 for what is not such a copy, 404 when it is not there. The
+    audit log gets snapshot_deleted (ADR-0350).
+    """
+    pool, volume = _pool_and_volume(subvolume)
+    name = validate_path_component(name, what="Restored copy")
+    await call_storage(pools.delete_restore_copy, pool, volume, name)
+    folder = pools.pool_mountpoint(pool) if volume is None else os.path.join(pools.pool_mountpoint(pool), volume)
+    await audit_change(
+        AuditAction.SNAPSHOT_DELETED, request, user.username, resource_type="snapshot",
+        resource_id=os.path.join(folder, name), details=f"Deleted the restored copy {name} in {folder}",
+        severity=AuditSeverity.WARNING,
+    )
+    return {"status": "deleted", "name": name}
 
 
 @router.get("/", response_model=list[SnapshotInfo])
