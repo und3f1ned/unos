@@ -62,7 +62,8 @@
 	$: if (mounted) schedule(filters);
 
 	// The server's values, shown by the keys of their texts in the catalog (ADR-0287); a value
-	// without a key shows as it comes. The actions of AuditAction (supervisor/src/audit/schemas.py),
+	// without a key shows as it comes, such as the action of an older entry that AuditAction no
+	// longer has (ADR-0356). The actions of AuditAction (supervisor/src/audit/schemas.py),
 	// whose English names are the words the search finds (ADR-0298,
 	// supervisor/tests/test_audit_log.py), the severities and the types of resource it records.
 	const ACTION_NAMES: Record<string, string> = {
@@ -107,9 +108,6 @@
 		task_updated: 'audit.action.taskUpdated',
 		task_deleted: 'audit.action.taskDeleted',
 		task_run: 'audit.action.taskRun',
-		firewall_rule_added: 'audit.action.firewallRuleAdded',
-		firewall_rule_deleted: 'audit.action.firewallRuleDeleted',
-		ssl_cert_uploaded: 'audit.action.sslCertUploaded',
 		network_config_changed: 'audit.action.networkConfigChanged',
 		other: 'audit.action.other'
 	};

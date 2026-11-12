@@ -92,6 +92,7 @@ and this index, and `make check-fast` runs it.
 | [0343](0343-a-users-own-sign-out-password-and-two-factor-changes-are-audited-about-the-user.md) | A user's own sign-out, password change and two-factor changes are audited about the user, and answer when their entry cannot be written | accepted | 2026-11-11 |
 | [0350](0350-pool-volume-snapshot-container-and-app-changes-are-audited-and-answer-when-their-entry-cannot-be-written.md) | Pool, volume, snapshot, container and app changes are audited, and answer when their entry cannot be written | accepted | 2026-11-12 |
 | [0351](0351-backups-power-scheduled-tasks-and-the-hosts-settings-are-audited-after-they-succeed.md) | Backups, power, scheduled tasks and the host's network and system settings are audited after they succeed, and answer when their entry cannot be written | accepted | 2026-11-12 |
+| [0356](0356-the-audit-logs-action-filter-offers-only-written-actions-and-an-older-entrys-action-is-listed-as-recorded.md) | The audit log's Action filter offers only actions that the supervisor writes, and an older entry's action that AuditAction no longer has is listed as recorded | accepted | 2026-11-12 |
 
 ## Auth
 

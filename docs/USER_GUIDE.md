@@ -1385,13 +1385,16 @@ regular users have no access to it.
   containers and pulling or removing images on the **Containers** page, the
   snapshots that scheduled tasks take and clean up, the apps started when a
   pool is mounted, suspend, the off-device copy, notifications, the firewall
-  and the TLS certificate write no entries yet, although **Action** lists
-  some such actions (feature-list entry `security.audit-admin-actions`).
+  and the TLS certificates write no entries.
+- **Action** offers only the actions that the NAS records. An older entry
+  whose action UNOS no longer has, such as `firewall_rule_added`, is listed
+  with its action as recorded.
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
 (with `limit` from 1 and `offset` from 0), `GET /api/v1/audit/logs/count` and
 `GET /api/v1/audit/logs/export` (`format=csv` or `json`) take `search`,
-`username`, `action`, `severity`, `start_date` and `end_date`. A bound covers
+`username`, `action`, `severity`, `start_date` and `end_date`; `action` takes
+any action name, also one that only older entries hold. A bound covers
 the whole unit it names, as the first and as the last one: a date
 (`YYYY-MM-DD`) its day, and a date and time (`YYYY-MM-DDTHH`, `THH:MM`,
 `THH:MM:SS`, or `THH:MM:SS` and a fraction of 1 to 6 digits) its hour,

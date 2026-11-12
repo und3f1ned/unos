@@ -4,6 +4,10 @@ from enum import Enum
 
 
 class AuditAction(str, Enum):
+    """The actions that the supervisor writes into the audit log. Each is written by the action it
+    names: GET /audit/actions lists them all for the Action filter of the Audit Log page, and
+    tests/test_audit_log.py fails for a value that no module of src names (ADR-0356)."""
+
     # Authentication
     LOGIN_SUCCESS = "login_success"
     LOGIN_FAILED = "login_failed"
@@ -62,11 +66,6 @@ class AuditAction(str, Enum):
     TASK_DELETED = "task_deleted"
     TASK_RUN = "task_run"  # a run started by hand (ADR-0351)
 
-    # Security
-    FIREWALL_RULE_ADDED = "firewall_rule_added"
-    FIREWALL_RULE_DELETED = "firewall_rule_deleted"
-    SSL_CERT_UPLOADED = "ssl_cert_uploaded"
-
     # Network
     NETWORK_CONFIG_CHANGED = "network_config_changed"
 
@@ -83,7 +82,9 @@ class AuditSeverity(str, Enum):
 class AuditEntry(BaseModel):
     id: str
     timestamp: str
-    action: AuditAction
+    # A value of AuditAction when written; an older entry may name an action that AuditAction no
+    # longer has, which is listed, filtered and exported as recorded (ADR-0356).
+    action: str
     severity: AuditSeverity = AuditSeverity.INFO
     username: Optional[str] = None
     ip_address: Optional[str] = None

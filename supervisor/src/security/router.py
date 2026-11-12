@@ -119,6 +119,8 @@ async def clear_login_history(
 
 
 # ==================== Firewall Management ====================
+# Firewall and certificate changes write no audit entry, and AuditAction has no action for them
+# (ADR-0356).
 
 _FIREWALL_RULES = TypeAdapter(list[FirewallRule])
 
