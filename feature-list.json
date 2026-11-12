@@ -3257,7 +3257,12 @@
       "adr": [
         "ADR-0175",
         "ADR-0197"
-      ]
+      ],
+      "verified_by": [
+        "webui/tests/users.spec.ts",
+        "webui/tests/shares.spec.ts"
+      ],
+      "notes": "ADR-0360: Modal keeps a stack of open dialogs and only the top one answers Escape, whatever the markup order; a dialog takes the focus when it opens and gives it back to its opener when it closes. The Users page shows the Turn off SMB confirmation over the edit dialog (users.spec 'Escape closes only the Turn off SMB confirmation over the edit dialog, then the edit dialog'); 'every dialog is named by its own title, with a title id of its own' reads the confirmation's title id while the edit dialog is open under it and fails when the dialogs share one. Left for the feature pass: the Users page in a browser on the dev device after a deploy of the web UI."
     },
     {
       "id": "deploy.install-script",

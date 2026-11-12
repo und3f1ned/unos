@@ -793,6 +793,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- Escape closes only the dialog on top when one dialog opens over another:
+  turning **Allow SMB access** off in a user's edit dialog now asks over that
+  dialog, which stays open, and Escape closes the question first, then the
+  edit dialog. Which dialog Escape closed depended on the order of the dialogs
+  in the page. A dialog that opens takes the keyboard focus, so a key no
+  longer acts on the page or dialog under it, and when it closes the focus
+  goes back to the button or checkbox that opened it.
 - The UPS state was never read: `upsc` ran in the supervisor's container,
   which has no NUT client. It now runs on the host, under a time limit and
   off the event loop. While the host has no `upsc`, the UPS status, Test

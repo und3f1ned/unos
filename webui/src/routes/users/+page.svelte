@@ -574,37 +574,9 @@
 		</svelte:fragment>
 	</Modal>
 
-	<!-- Turn off SMB, asked from the edit dialog below. Declared before it on purpose: its Escape
-	     shows the edit dialog again before that dialog's key handler runs, and the edit dialog
-	     must stay open (Modal; users.spec 'Escape in the Turn off SMB confirmation ...'). -->
+	<!-- Edit user. -->
 	<Modal
-		open={confirmSmbOff}
-		title={$t('users.smbOff.title')}
-		size="md"
-		closable={!smbBusy}
-		on:close={cancelSmbOff}
-	>
-		{#if editing}
-			<!-- In parts around the name: ADR-0296. -->
-			<p>
-				{$t('users.smbOff.before')}
-				<strong class="text-content">{editing.username}</strong>{$t('users.smbOff.after')}
-			</p>
-		{/if}
-
-		<svelte:fragment slot="footer">
-			<Button variant="secondary" class="flex-1" disabled={smbBusy} on:click={cancelSmbOff}>
-				{$t('common.cancel')}
-			</Button>
-			<Button variant="danger" class="flex-1" loading={smbBusy} on:click={confirmTurnOffSmb}>
-				{$t('users.smbOff.submit')}
-			</Button>
-		</svelte:fragment>
-	</Modal>
-
-	<!-- Edit user; hidden while its SMB confirmation is shown (one dialog at a time). -->
-	<Modal
-		open={editing !== null && !confirmSmbOff}
+		open={editing !== null}
 		title={editing
 			? $t('users.edit.title', { name: editing.username })
 			: $t('users.edit.titleWithoutName')}
@@ -725,6 +697,33 @@
 			</Button>
 			<Button class="flex-1" loading={saving} disabled={!canSave} on:click={saveEdit}>
 				{$t('users.edit.save')}
+			</Button>
+		</svelte:fragment>
+	</Modal>
+
+	<!-- Turn off SMB, asked from the edit dialog, which stays open under it: Escape closes only
+	     the top dialog (Modal, ADR-0360). -->
+	<Modal
+		open={confirmSmbOff}
+		title={$t('users.smbOff.title')}
+		size="md"
+		closable={!smbBusy}
+		on:close={cancelSmbOff}
+	>
+		{#if editing}
+			<!-- In parts around the name: ADR-0296. -->
+			<p>
+				{$t('users.smbOff.before')}
+				<strong class="text-content">{editing.username}</strong>{$t('users.smbOff.after')}
+			</p>
+		{/if}
+
+		<svelte:fragment slot="footer">
+			<Button variant="secondary" class="flex-1" disabled={smbBusy} on:click={cancelSmbOff}>
+				{$t('common.cancel')}
+			</Button>
+			<Button variant="danger" class="flex-1" loading={smbBusy} on:click={confirmTurnOffSmb}>
+				{$t('users.smbOff.submit')}
 			</Button>
 		</svelte:fragment>
 	</Modal>

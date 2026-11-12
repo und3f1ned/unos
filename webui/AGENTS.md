@@ -8,7 +8,9 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 
 - Pages are built from `$lib/components/ui`: `Button`, `Card`, `Badge`, `Input`, `Select`,
   `Modal`, `Alert`, `ProgressBar`, `EmptyState`, `StatusDot`. `Input` and `Select` take a
-  `label`, and dialogs, lists and hints work with the keyboard and screen readers (ADR-0197).
+  `label`, and dialogs, lists and hints work with the keyboard and screen readers (ADR-0360).
+  A dialog asked from a dialog opens over it, which stays open: `Modal` keeps the stack of open
+  dialogs, and Escape closes only the top one, whatever the markup order.
 - Colours are the tokens of `tailwind.config.js`: `surface`, `surface-elevated`,
   `surface-overlay`, `surface-muted`; `content`, `content-secondary`, `content-muted`; `border`;
   `status-success`, `status-warning`, `status-error`, `status-info`. Icons take the classes of
