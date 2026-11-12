@@ -1504,7 +1504,7 @@ def _marked(*names, first_uid=70000):
     )
 
 
-# Import backups as the supervisor names them, oldest first (ADR-0360).
+# Import backups as the supervisor names them, oldest first (ADR-0362).
 _IMPORT_BACKUPS = ("smb.conf.unos-import-backup-20261101_120000_000000",
                    "smb.conf.unos-import-backup-20261112_101530_123456")
 
@@ -1890,7 +1890,7 @@ class TestUninstallScript:
         [
             # The device: UNOS imported the old file, install.sh never ran.
             (("smb.conf", _IMPORT_BACKUPS[1]), "stays", _IMPORT_BACKUPS[1:]),
-            # Two imports of files that UNOS did not write (ADR-0360), and a file of another name.
+            # Two imports of files that UNOS did not write (ADR-0362), and a file of another name.
             (("smb.conf", "smb.conf.unos-import-backup-notes.txt", *_IMPORT_BACKUPS[::-1]), "stays", _IMPORT_BACKUPS),
             (("smb.conf",), "stays", ()),
             # install.sh kept the file it replaced.
@@ -1921,7 +1921,7 @@ class TestUninstallScript:
             )
             assert "systemctl restart smbd" in text
         # The copies that the supervisor keeps of an smb.conf it did not write when
-        # it imports its shares, oldest first (ADR-0360); smb.conf.original is the
+        # it imports its shares, oldest first (ADR-0362); smb.conf.original is the
         # one that install.sh kept.
         if backup:
             listed = "".join(f"  {folder}/{name}\n" for name in backup)

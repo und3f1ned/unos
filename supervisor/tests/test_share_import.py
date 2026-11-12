@@ -133,7 +133,7 @@ async def run_import(env) -> bool:
 
 
 def backups(env) -> list[Path]:
-    """The import backups <smb.conf>.unos-import-backup-<UTC time>, oldest first (ADR-0360)."""
+    """The import backups <smb.conf>.unos-import-backup-<UTC time>, oldest first (ADR-0362)."""
     pattern = re.compile(r"smb\.conf\.unos-import-backup-\d{8}_\d{6}_\d{6}")
     return sorted(env.samba / name for name in os.listdir(env.samba) if pattern.fullmatch(name))
 
@@ -643,7 +643,7 @@ class TestDeviceFiles:
         assert (share.guest_ok, share.access) == (False, {})
         assert share.notes[0] == "Guest access was not restored"
         assert share.notes[1].startswith("Ownership settings (force user = nobody")
-        # The live file, which UNOS did not write, is kept before the import (ADR-0360).
+        # The live file, which UNOS did not write, is kept before the import (ADR-0362).
         assert state(env).report[0] == (
             f"Imported 1 share(s) from {env.conf}; the previous file is kept as {backup(env)}")
         assert backup(env) is not None
@@ -959,7 +959,7 @@ class TestCopy:
         assert result.closed_shares == ["DATA"]
 
     async def test_every_import_backup_is_kept_with_its_date(self, env):
-        """ADR-0360: an import of another file that UNOS did not write keeps it in a backup of its
+        """ADR-0362: an import of another file that UNOS did not write keeps it in a backup of its
         own, named with the UTC time of the copy; the earlier backup keeps its bytes."""
         write_conf(env, DEVICE_CONF)
         earlier = env.samba / "smb.conf.unos-import-backup-20261101_120000_000000"

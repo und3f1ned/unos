@@ -58,7 +58,7 @@ COMMENT_MAX_LENGTH = 256
 CACHE_DIRECTORY = "/run/samba"
 # Copies kept next to smb.conf, each named <smb.conf>.<kind>-<UTC time of the copy>: a file
 # that an import found and UNOS did not write, and a file with share sections that UNOS did not
-# render. The newest COPIES_KEPT of each kind are kept (ADR-0360).
+# render. The newest COPIES_KEPT of each kind are kept (ADR-0362).
 IMPORT_BACKUP = "unos-import-backup"
 REPLACED = "unos-replaced"
 COPIES_KEPT = 10
@@ -288,7 +288,7 @@ class KeptCopy:
 def keep_copy(kind: str, data: bytes) -> KeptCopy:
     """Copy smb.conf's bytes to a new <smb.conf>.<kind>-<UTC time>, unless the newest copy of
     ``kind`` has exactly these bytes, and then delete the oldest copies of ``kind`` beyond
-    COPIES_KEPT, never the new one (ADR-0360).
+    COPIES_KEPT, never the new one (ADR-0362).
 
     No copy is ever replaced, and none is refused for the number of copies. A copy that cannot
     be written raises; an old one that cannot be deleted is logged and stays.

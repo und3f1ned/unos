@@ -3,14 +3,14 @@ status: superseded
 date: 2026-11-06
 area: shares
 decided-by: agent
-superseded-by: ADR-0360
+superseded-by: ADR-0362
 ---
 
 # ADR-0092: Foreign share sections are saved to smb.conf.unos-replaced before an apply
 
 ## Context
 
-Superseded by ADR-0360: every copy of foreign share sections is kept, named with its UTC time, the newest 10 of them.
+Superseded by ADR-0362: every copy of foreign share sections is kept, named with its UTC time, the newest 10 of them.
 
 After the one-time import (ADR-0084), every apply replaces smb.conf with UNOS's rendering. A share section that someone added to the file afterwards, by hand or through an older release running after an automatic rollback of `deploy/update.sh`, is neither a database row nor rendered by UNOS, and the next apply would drop it without a trace.
 

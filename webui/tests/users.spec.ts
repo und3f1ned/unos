@@ -268,7 +268,7 @@ test.describe('Users page SMB (fake data)', () => {
     const confirm = page.getByRole('dialog', { name: 'Turn off SMB' });
     await allow.click();
     await expect(confirm).toContainText('Turn off SMB for carol? Their open SMB connections are ended.');
-    // Over the edit dialog, which stays open under it (ADR-0360).
+    // Over the edit dialog, which stays open under it (ADR-0361).
     await expect(dialog).toBeVisible();
     await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toBeHidden();
@@ -547,7 +547,7 @@ test.describe('Users page SMB (fake data)', () => {
     const allow = dialog.getByLabel('Allow SMB access');
     await allow.click();
     // The confirmation opens over the edit dialog, which stays open under it, and takes the
-    // keyboard focus: a key no longer reaches the checkbox under it (ADR-0360).
+    // keyboard focus: a key no longer reaches the checkbox under it (ADR-0361).
     const confirm = page.getByRole('dialog', { name: 'Turn off SMB' });
     await expect(confirm).toBeVisible();
     await expect(dialog).toBeVisible();

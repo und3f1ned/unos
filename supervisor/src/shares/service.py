@@ -877,7 +877,7 @@ def _read_live_source() -> tuple[str, smb.KeptCopy | None]:
     """The live smb.conf as text, and the import backup that holds its bytes (sync).
 
     A file that UNOS did not render is copied to a new <smb.conf>.unos-import-backup-<UTC time>
-    first, unless the newest import backup has exactly these bytes (ADR-0360).
+    first, unless the newest import backup has exactly these bytes (ADR-0362).
     """
     data = smb.read_conf_bytes()
     if data is None:
@@ -1108,7 +1108,7 @@ def _foreign_sections(old_text: str, row_names: Collection[str]) -> list[str]:
 
 def _prepare_file(new_text: str, row_names: Collection[str], install: bool) -> StagedConfig:
     """Read smb.conf, copy it when it has foreign sections, stage and testparm the new
-    text (and install it with ``install``), in one worker thread (ADR-0089, ADR-0360).
+    text (and install it with ``install``), in one worker thread (ADR-0089, ADR-0362).
 
     Raises SambaConfigError, and leaves smb.conf unchanged, when the file
     cannot be read or staged or testparm rejects it or cannot check it: any

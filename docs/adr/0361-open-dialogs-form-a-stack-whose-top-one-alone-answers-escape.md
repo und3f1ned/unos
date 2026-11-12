@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0197]
 ---
 
-# ADR-0360: Open dialogs form a stack whose top one alone answers Escape, and the focus moves into a dialog and back to its opener
+# ADR-0361: Open dialogs form a stack whose top one alone answers Escape, and the focus moves into a dialog and back to its opener
 
 ## Context
 

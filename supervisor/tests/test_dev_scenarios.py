@@ -26,7 +26,7 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   the members of a plain and of an encrypted backup as src/backup/router.py writes them;
 * the smbconf check (ADR-0309) shows what an smb.conf edited by hand does: the Shares page names
   the file before an apply, the apply copies it byte for byte to a new
-  smb.conf.unos-replaced-<time> and keeps the earlier copies (ADR-0360), a share
+  smb.conf.unos-replaced-<time> and keeps the earlier copies (ADR-0362), a share
   that is not served gets access only with a new folder, and a restart of the supervisor writes
   no file in /etc/samba; its hand edit runs without the read-only namespace, and its helpers on
   the device touch only a check's own section and share folder;
@@ -377,7 +377,7 @@ class FakeNas:
         self.secrets: list[str] = []  # api.DeviceApi's: dev.env's secrets
         # /etc/samba: smb.conf as installed (UNOS's rendering, or as edited by hand), the other
         # files, their times of change; the copies of the hand-edit helper in RAM; the problem of
-        # a copy, which the supervisor keeps in memory until it restarts (ADR-0360).
+        # a copy, which the supervisor keeps in memory until it restarts (ADR-0362).
         self.installed = self.smb_conf()
         self.samba = {"smb.conf.unos-import-backup-20261106_120000_000000": "[global]\n   workgroup = WORKGROUP\n",
                       "gdbcommands": "bt\n"}
@@ -584,7 +584,7 @@ class FakeNas:
     def apply(self) -> None:
         """An apply after a share change (ADR-0089): share sections that UNOS did not render go to
         a new smb.conf.unos-replaced-<time> first, unless the newest copy holds these bytes, and the
-        oldest copies beyond the newest 10 are deleted (ADR-0360); an unchanged rendering writes
+        oldest copies beyond the newest 10 are deleted (ADR-0362); an unchanged rendering writes
         nothing. The defect deletes-earlier-copies keeps only the new copy."""
         self.guest_once = getattr(self, "guest_once", False) or bool(self.guests_rendered())
         old, new = self.installed, self.smb_conf()
@@ -1890,7 +1890,7 @@ def test_the_smbconf_check_puts_a_hand_edited_smb_conf_back_after_a_failure(nas)
 
 
 def test_after_a_lost_answer_the_smbconf_check_restarts_the_supervisor_for_the_copy_s_problem(nas):
-    """The copy's problem stays until the supervisor restarts (ADR-0360): when the steps end
+    """The copy's problem stays until the supervisor restarts (ADR-0362): when the steps end
     after an apply copied the hand-edited file, the clean-up deletes the copy and restarts the
     supervisor, so that the Shares page reports no problem of the check."""
     before = nas.snapshot()
@@ -2443,7 +2443,7 @@ def test_the_checks_fail_on_the_defects_they_exist_for(nas, area, bug, words):
                                    "a section that UNOS did not write", "a problem"])
 def test_the_smbconf_check_does_not_start_beside_ten_copies_a_foreign_smb_conf_or_a_problem(nas, found):
     """With 10 copies smb.conf.unos-replaced-<time>, the check's copy would make UNOS delete the
-    oldest, which the check did not make (ADR-0360); an apply would also copy a section that UNOS
+    oldest, which the check did not make (ADR-0362); an apply would also copy a section that UNOS
     did not write, which the check's clean-up deletes with the copy (it keeps a header of UNOS's,
     so the status does not name it, ADR-0249); an smb.conf that is not UNOS's, which the status
     names only once an apply has run since the start, or a problem on the Shares page would make
@@ -2467,7 +2467,7 @@ def test_the_smbconf_check_does_not_start_beside_ten_copies_a_foreign_smb_conf_o
 
 def test_the_smbconf_check_keeps_the_earlier_copies(nas):
     """Earlier copies smb.conf.unos-replaced-<time> stay through the check's apply and clean-up,
-    and the Shares page names them beside the check's copy (ADR-0360)."""
+    and the Shares page names them beside the check's copy (ADR-0362)."""
     earlier = [f"smb.conf.unos-replaced-202611{day:02d}_120000_000000" for day in range(1, 10)]
     for name in earlier:
         nas.samba[name] = f"[global]\n\n[{name[-6:]}]\n   path = /srv/old\n"
@@ -3473,7 +3473,7 @@ def test_the_hand_edit_helper_refuses_what_is_not_its_own(tmp_path, args, why):
 
 
 def test_the_hand_edit_helper_refuses_beside_ten_copies(tmp_path):
-    """With 10 copies, the check's apply would make UNOS delete the oldest (ADR-0360); nine are fine."""
+    """With 10 copies, the check's apply would make UNOS delete the oldest (ADR-0362); nine are fine."""
     (tmp_path / "samba").mkdir()
     (tmp_path / "shm").mkdir()
     conf = tmp_path / "samba" / "smb.conf"

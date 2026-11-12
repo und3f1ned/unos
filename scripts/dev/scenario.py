@@ -41,7 +41,7 @@ SD writes of each check (ADR-0214). The areas:
   smbconf  smb.conf edited by hand and what the Shares page says (ADR-0309): a share section
            added by hand (available = no) and UNOS's header removed, which the Shares page names
            before an apply; a new share whose apply copies that file byte for byte to a new
-           smb.conf.unos-replaced-<time>, keeping the earlier copies (ADR-0360), and makes
+           smb.conf.unos-replaced-<time>, keeping the earlier copies (ADR-0362), and makes
            smb.conf UNOS's again, and the copy and the earlier ones named on the Shares page; a
            comment saved with the expected version and a stale one refused;
            the share's folder replaced by a symbolic link, so that the share is not served, with
@@ -206,7 +206,7 @@ SAMBA_LOGS = ("/var/log/samba/log.smbd", "/var/log/samba/log.nmbd")
 SAMBA_RUN_LOG = "/run/samba/log.samba"
 # The copies of an smb.conf with share sections that UNOS did not write, in /etc/samba, each named
 # with the UTC time of the copy; an apply that makes one deletes the oldest beyond the newest
-# REPLACED_COPIES_KEPT (src/shares/smb.py, ADR-0360; test_dev_scenarios.py compares).
+# REPLACED_COPIES_KEPT (src/shares/smb.py, ADR-0362; test_dev_scenarios.py compares).
 REPLACED_COPY = "smb.conf.unos-replaced-<time>"
 REPLACED_COPY_NAME = re.compile(r"smb\.conf\.unos-replaced-\d{8}_\d{6}_\d{6}")
 REPLACED_COPIES_KEPT = 10
@@ -214,7 +214,7 @@ REPLACED_COPIES_KEPT = 10
 # src/shares/service.py words it (test_dev_scenarios.py compares).
 CONF_NOT_UNOS = "smb.conf was replaced or removed after UNOS wrote it"
 # The fixed lines that end every share section UNOS renders (src/shares/smbconf.py; ADR-0147,
-# ADR-0150): a share section without them is one that UNOS did not write (ADR-0360).
+# ADR-0150): a share section without them is one that UNOS did not write (ADR-0362).
 UNOS_SHARE_LINES = (("veto files", "/.snapshots/.unos-trash/"), ("force group", "unos-smb"), ("create mask", "0660"),
                     ("force create mode", "0660"), ("directory mask", "2770"), ("force directory mode", "2770"))
 NOT_SHARES = ("global", "homes", "printers", "print$")
@@ -2078,7 +2078,7 @@ def smb_check(c: Check) -> None:
 
 
 def copied_problem(section: str, copy: str) -> str:
-    """The start of the Shares page's problem after an apply copied SECTION to COPY (ADR-0360)."""
+    """The start of the Shares page's problem after an apply copied SECTION to COPY (ADR-0362)."""
     return f"smb.conf had shares that UNOS did not create ({section}); they are kept in {copy}"
 
 
@@ -2118,7 +2118,7 @@ def restart_and_wait(c: Check) -> int:
 
 
 def restart_if_named(c: Check, section: str) -> None:
-    """The copy's problem stays until the supervisor restarts (ADR-0360): restart it when the
+    """The copy's problem stays until the supervisor restarts (ADR-0362): restart it when the
     Shares page still names the check's section."""
     if any(section in p for p in problems_of(c)):
         restart_and_wait(c)
@@ -2203,7 +2203,7 @@ def smbconf_check(c: Check) -> None:
         c.expect(len(problems) == 1 and problems[0].startswith(CONF_NOT_UNOS), f"it reports {problems}")
 
     with c.step(f"a new share {share} applies smb.conf: the hand-edited file goes byte for byte into a new "
-                f"{REPLACED_COPY}, the earlier copies stay (ADR-0360), and smb.conf is UNOS's again, with the share's "
+                f"{REPLACED_COPY}, the earlier copies stay (ADR-0362), and smb.conf is UNOS's again, with the share's "
                 f"section and without [{hand}]") as s:
         c.on_cleanup(f"delete the share {share} and its folders", remove_share)
         made = c.post("/shares/smb", {"name": share, "path": folder})

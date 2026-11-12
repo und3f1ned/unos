@@ -369,7 +369,7 @@ print_smb_leftovers() {
         echo "Samba configuration: $SAMBA_DIR/smb.conf stays, and Samba still serves"
         echo "the shares it lists, guest shares to anyone on your network."
         # The supervisor's import backups, each named with the UTC time it was
-        # taken; the glob lists them oldest first (ADR-0360).
+        # taken; the glob lists them oldest first (ADR-0362).
         local import_backups=() backup
         for backup in "$SAMBA_DIR"/smb.conf.unos-import-backup-*; do
             if [[ ${backup##*/} =~ ^smb\.conf\.unos-import-backup-[0-9]{8}_[0-9]{6}_[0-9]{6}$ ]] && [ -f "$backup" ]; then

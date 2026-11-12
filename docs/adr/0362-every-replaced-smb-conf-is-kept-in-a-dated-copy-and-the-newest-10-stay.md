@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0085, ADR-0092]
 ---
 
-# ADR-0360: Every replaced smb.conf is kept in a copy named with its UTC time, and the newest 10 of each kind stay
+# ADR-0362: Every replaced smb.conf is kept in a copy named with its UTC time, and the newest 10 of each kind stay
 
 ## Context
 

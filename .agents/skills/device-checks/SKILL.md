@@ -133,7 +133,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   answer it lost (`FAIL  clean up: delete the check's backups`), and
   `scripts/dev/api.py DELETE /backup/<name>` removes it.
 - The smbconf check refuses to start beside an smb.conf that is not UNOS's, 10 copies
-  `smb.conf.unos-replaced-<time>` (its own copy would make UNOS delete the oldest, ADR-0360) or a
+  `smb.conf.unos-replaced-<time>` (its own copy would make UNOS delete the oldest, ADR-0362) or a
   problem on the Shares page. A run that lost its connection can
   leave smb.conf as it edited it, with the original in
   `/dev/shm/unos-scenario-unoscheck<6 hex digits>hand.conf`, a `smb.conf.unos-replaced-<time>`
@@ -143,7 +143,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   stays), the copy removed only when it holds nothing but the check's section beside UNOS's, the
   link removed and the folder moved back; remove the share (and a user `unoscheck<6 hex
   digits>`) as above, and restart the supervisor if the Shares page still names the section
-  (ADR-0360).
+  (ADR-0362).
 - The smb check needs smbclient and stdbuf on the device (its first steps say which is
   missing): installing a package is an owner action (ADR-0211).
 - A run of the shares check that lost its connection can leave, besides its share, user and

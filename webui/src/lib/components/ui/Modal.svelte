@@ -3,7 +3,7 @@
 	let titleCount = 0;
 
 	// The stack of open dialogs, by title id in the order they opened: the last one is on top,
-	// and only it answers Escape, whatever the order in which the page declares them (ADR-0360).
+	// and only it answers Escape, whatever the order in which the page declares them (ADR-0361).
 	// Read when a key comes, not in a reactive statement: the dialog that opens or closes changes
 	// it while the page updates.
 	const openModals: string[] = [];

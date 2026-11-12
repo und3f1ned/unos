@@ -171,13 +171,13 @@ def temp_files(env) -> list[str]:
 
 
 def copies(env, kind: str = "unos-replaced") -> list[str]:
-    """The names of the copies <smb.conf>.<kind>-<UTC time> next to smb.conf, oldest first (ADR-0360)."""
+    """The names of the copies <smb.conf>.<kind>-<UTC time> next to smb.conf, oldest first (ADR-0362)."""
     pattern = re.compile(rf"smb\.conf\.{re.escape(kind)}-\d{{8}}_\d{{6}}_\d{{6}}")
     return sorted(name for name in os.listdir(env.samba) if pattern.fullmatch(name))
 
 
 def copy_time(name: str) -> datetime:
-    """The UTC time in the name of a copy (ADR-0360)."""
+    """The UTC time in the name of a copy (ADR-0362)."""
     return datetime.strptime(name.rsplit("-", 1)[1], "%Y%m%d_%H%M%S_%f")
 
 
@@ -715,7 +715,7 @@ class TestReplaced:
     OLD_RELEASE = "\n[legacy]\n   path = {pool}/legacy\n   browseable = yes\n   read only = no\n   guest ok = no\n"
 
     async def test_every_copy_is_kept_with_its_time(self, env):
-        """ADR-0360: each file with share sections that UNOS did not render gets a copy of its own,
+        """ADR-0362: each file with share sections that UNOS did not render gets a copy of its own,
         named with the UTC time of the copy; an earlier copy is never replaced."""
         add_share(env, "docs", "docs", access={ALICE: "read"})
         await apply(env)
@@ -756,7 +756,7 @@ class TestReplaced:
             f"create them again on the Shares page; earlier copies (UNOS keeps the newest 10): {first}")
 
     async def test_the_newest_ten_copies_are_kept(self, env):
-        """ADR-0360: a new copy deletes the oldest beyond 10; nothing is refused, and no other file
+        """ADR-0362: a new copy deletes the oldest beyond 10; nothing is refused, and no other file
         of /etc/samba is touched."""
         add_share(env, "docs", "docs", access={ALICE: "read"})
         await apply(env)
@@ -782,7 +782,7 @@ class TestReplaced:
 
     async def test_a_copy_named_before_the_others_is_not_the_one_deleted(self, env):
         """A clock set back (a board without a clock of its own, before NTP) names the new copy
-        before the others: the oldest of the others goes, and the new copy stays (ADR-0360)."""
+        before the others: the oldest of the others goes, and the new copy stays (ADR-0362)."""
         add_share(env, "docs", "docs", access={ALICE: "read"})
         await apply(env)
         rendered = env.conf.read_text()
@@ -799,7 +799,7 @@ class TestReplaced:
         assert rest == future[1:]
 
     async def test_a_failed_copy_keeps_smb_conf(self, env, monkeypatch):
-        """ADR-0360: sections that UNOS did not render are copied before they are
+        """ADR-0362: sections that UNOS did not render are copied before they are
         overwritten; without the copy, smb.conf is not replaced."""
         add_share(env, "docs", "docs", access={ALICE: "read"})
         old = f"[global]\n   workgroup = OLD\n[legacy]\n   path = {env.pool}/legacy\n   read only = no\n"
@@ -1297,7 +1297,7 @@ class TestSmbHelpers:
 
     def test_keep_copy_never_replaces_a_file(self, env, monkeypatch):
         """Two copies in one microsecond, or a clock set back onto an earlier copy's time: the
-        link fails, the earlier file keeps its bytes, and no temporary file is left (ADR-0360)."""
+        link fails, the earlier file keeps its bytes, and no temporary file is left (ADR-0362)."""
         (env.samba / "smb.conf.unos-replaced-20261112_101530_123456").write_bytes(b"earlier")
 
         class Frozen(datetime):
