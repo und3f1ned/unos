@@ -89,6 +89,12 @@ than the screen, as on a phone held sideways, scrolls to its buttons. Narrower
 than 640 pixels, the File Browser leaves out the **Modified** column, and each
 entry of **System Logs** shows its time, level and program above the message.
 
+A dialog takes the keyboard focus when it opens; when it closes, the focus goes
+back to the button that opened it, if that button is still there. Escape
+closes a dialog. A question asked from a dialog, such as turning off SMB in a
+user's edit dialog, opens over that dialog, and Escape closes only the dialog
+on top.
+
 ### Language
 
 The web interface is in English or Russian. Choose the language on the **Account**
