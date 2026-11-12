@@ -782,7 +782,12 @@ in your storage pools from the web interface. It starts in the pools directory
   open another folder while they upload. A file with the same name is
   replaced. An upload that gets no data for 2 minutes (the network dropped,
   or the computer went to sleep) fails, and nothing of it is kept: upload
-  the file again.
+  the file again. Until a file has arrived in full it is not in the folder,
+  and if UNOS stops in the middle of the upload (a restart, an update, a
+  power cut), nothing of it stays; only on a disk mounted there by hand
+  whose filesystem cannot do this (vfat or exfat, for example) it stays as
+  a hidden `.unos-upload-...` file (see
+  [Leftovers of interrupted uploads](#leftovers-of-interrupted-uploads)).
 - **New Folder** - Click **+** at the top right, type the name, then press
   Enter or click **Create**.
 - **Keyboard and screen readers** - The name of each folder and file is a
@@ -818,6 +823,27 @@ A folder that contains a subvolume (such as a snapshot) or a mounted
 filesystem cannot be deleted here, or moved to another pool or volume. When
 one appears below a folder while the folder is deleted for good, the delete
 stops there: what it deleted before stays deleted, and the message says so.
+
+### Leftovers of interrupted uploads
+
+A hidden `.unos-upload-` file with 16 letters and digits after the dash is
+what an upload into a folder on a vfat or exfat disk (or another filesystem
+mounted there by hand without unnamed files) had received when UNOS stopped
+in the middle of it. It holds only part of the file, and nothing uses it.
+
+- UNOS looks for such files in every folder of the pools and of the disks
+  mounted in them, 10 minutes after each start; it leaves out the trash and
+  the snapshots. Scripts can ask for a check at once with
+  `POST /api/v1/files/upload-leftovers/check`, for example after mounting a
+  disk.
+- While it found any, the File Browser shows **Leftovers of interrupted
+  uploads** above the list, with their number and the space they take.
+  **Remove…** lists each file with its folder, size and the time it was last
+  written, and **Remove for good** deletes them at once, without the trash;
+  that cannot be undone, so Cancel has the keyboard focus. Nothing removes
+  them otherwise.
+- A file that an upload is still writing, or that changed in the last 10
+  minutes, is never listed or removed.
 
 ### Trash
 

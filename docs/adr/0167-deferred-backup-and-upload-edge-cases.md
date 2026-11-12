@@ -1,13 +1,16 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-06
 area: backup
 decided-by: agent
+superseded-by: ADR-0354
 ---
 
 # ADR-0167: Fix the deferred backup and upload edge cases of slice 1
 
 ## Context
+
+Superseded by ADR-0354: the backup cases were decided by ADR-0345, the stalled upload by ADR-0347, and the hidden files that a stop leaves of uploads by ADR-0354.
 
 The reviews of Phase 1 slice 1 left a few low-severity backup and upload cases open. They are recorded here so that a later slice fixes them instead of finding them again.
 

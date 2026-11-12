@@ -117,6 +117,11 @@ and overwrites nothing (ADR-0011). Avoid: backup.
 in Files deletes there, until it is restored, deleted for good, or deleted for good 30 days after
 its deletion (ADR-0259). Avoid: recycle bin, snapshot.
 
+**Upload leftover**: A hidden `.unos-upload-<16 hex digits>` file that a stop of the supervisor left
+in a folder in the middle of a file manager upload, where the folder's filesystem has no unnamed
+files; the File Browser lists them and removes them for good when an administrator confirms
+(ADR-0354). Avoid: temporary file, partial upload.
+
 **Recovery runbook**: `docs/RECOVERY.md`: how another Linux machine reads a pool's files without
 writing to its disks, also with a disk missing, and how root runs the emergency reset (ADR-0285).
 Avoid: disaster recovery plan, repair guide.

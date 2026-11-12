@@ -11,8 +11,11 @@
     copyItems,
     moveItems,
     formatSize,
+    listUploadLeftovers,
+    removeUploadLeftovers,
     type FileInfo,
     type DirectoryListing,
+    type UploadLeftover,
   } from "$lib/api/files";
   import { Alert, Button, Input, Modal } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
@@ -64,7 +67,64 @@
   // "Copy here" / "Move here" is chosen.
   let pending: { mode: Transfer; paths: string[] } | null = null;
 
-  onMount(() => load());
+  // The hidden files that uploads left when the supervisor stopped in the middle of them, as its
+  // last check found them (ADR-0354): the notice above the list offers to remove them.
+  let leftovers: UploadLeftover[] = [];
+  // The Remove dialog: the files it is about while it is open, whether the removal is on its way,
+  // and the server's refusal. The notice's Remove button and the dialog's Cancel, for the focus.
+  let removingLeftovers: UploadLeftover[] | null = null;
+  let leftoversSending = false;
+  let leftoversError = "";
+  let leftoversButtonSlot: HTMLSpanElement | null = null;
+  let leftoversCancelSlot: HTMLSpanElement | null = null;
+
+  onMount(() => {
+    load();
+    loadLeftovers();
+  });
+
+  // Without an answer the page shows no notice; the rest of it works as before.
+  async function loadLeftovers() {
+    try {
+      leftovers = (await listUploadLeftovers()).files;
+    } catch {
+      leftovers = [];
+    }
+  }
+
+  // Cancel takes the keyboard focus: a removal cannot be undone.
+  async function askRemoveLeftovers() {
+    removingLeftovers = leftovers;
+    leftoversError = "";
+    await tick();
+    leftoversCancelSlot?.querySelector("button")?.focus();
+  }
+
+  async function closeLeftovers() {
+    if (leftoversSending) return;
+    removingLeftovers = null;
+    await tick();
+    leftoversButtonSlot?.querySelector("button")?.focus();
+  }
+
+  // The server checks every file before it removes any: a refusal keeps the dialog open with its reason.
+  async function handleRemoveLeftovers() {
+    if (!removingLeftovers || leftoversSending) return;
+    leftoversError = "";
+    leftoversSending = true;
+    try {
+      await removeUploadLeftovers(removingLeftovers.map((file) => file.path));
+      removingLeftovers = null;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return;
+      leftoversError = e instanceof Error ? e.message : String(e);
+    } finally {
+      leftoversSending = false;
+    }
+    await loadLeftovers();
+    // The open folder may have listed them.
+    await refresh();
+  }
 
   async function load(path?: string) {
     loading = true;
@@ -452,6 +512,8 @@
   // the day of the last change. Fixed widths, so that the rows, each a grid, line up.
   const columnsClass = "grid-cols-[auto_minmax(0,1fr)_5rem] sm:grid-cols-[auto_1fr_100px_150px]";
 
+  $: leftoversSize = leftovers.reduce((sum, file) => sum + file.size, 0);
+
   // Sizes in the units of the page's language.
   $: units = [$t("files.unit.b"), $t("files.unit.kb"), $t("files.unit.mb"), $t("files.unit.gb"), $t("files.unit.tb")];
 </script>
@@ -498,6 +560,23 @@
     <div role="alert">
       <Alert variant="error" dismissible class="mb-4" on:dismiss={() => (error = "")}>{error}</Alert>
     </div>
+  {/if}
+
+  {#if leftovers.length > 0}
+    <!-- A region named by its title, which screen readers can go to. -->
+    <section aria-label={$t("files.leftovers.title")} class="mb-4">
+      <Alert variant="warning" title={$t("files.leftovers.title")}>
+        <p>{$t("files.leftovers.found", { n: leftovers.length, size: formatSize(leftoversSize, units) })}</p>
+        <p class="mt-1">{$t("files.leftovers.hint")}</p>
+        <div class="mt-2 flex flex-wrap gap-2">
+          <span bind:this={leftoversButtonSlot} class="contents">
+            <Button variant="secondary" size="sm" icon={Trash2} on:click={askRemoveLeftovers}>
+              {$t("files.leftovers.remove")}
+            </Button>
+          </span>
+        </div>
+      </Alert>
+    </section>
   {/if}
 
   <!-- Breadcrumbs -->
@@ -769,5 +848,55 @@
         {$t("files.moveToTrash")}
       </Button>
     </span>
+  </svelte:fragment>
+</Modal>
+
+<Modal
+  open={removingLeftovers !== null}
+  title={$t("files.leftovers.dialogTitle", { n: removingLeftovers?.length ?? 0 })}
+  closable={!leftoversSending}
+  on:close={closeLeftovers}
+>
+  {#if removingLeftovers}
+    <div class="space-y-3">
+      <p class="text-sm">{$t("files.leftovers.confirm", { n: removingLeftovers.length })}</p>
+      <ul class="space-y-2">
+        {#each removingLeftovers as file (file.path)}
+          <li class="card-nested py-2 text-sm">
+            <p class="font-mono break-all">{file.path}</p>
+            <p class="text-content-secondary">
+              {$t("files.leftovers.file", {
+                size: formatSize(file.size, units),
+                time: new Date(file.modified).toLocaleString($intlLocale),
+              })}
+            </p>
+          </li>
+        {/each}
+      </ul>
+      {#if leftoversError}
+        <!-- role="alert": screen readers announce the server's refusal. -->
+        <div role="alert">
+          <Alert variant="error" title={$t("files.leftovers.failed")}>{leftoversError}</Alert>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  <svelte:fragment slot="footer">
+    <span bind:this={leftoversCancelSlot} class="contents">
+      <Button variant="secondary" class="flex-1" disabled={leftoversSending} on:click={closeLeftovers}>
+        {$t("common.cancel")}
+      </Button>
+    </span>
+    <Button
+      variant="danger"
+      class="flex-1"
+      icon={Trash2}
+      loading={leftoversSending}
+      disabled={leftoversSending}
+      on:click={handleRemoveLeftovers}
+    >
+      {$t("files.leftovers.removeForGood")}
+    </Button>
   </svelte:fragment>
 </Modal>

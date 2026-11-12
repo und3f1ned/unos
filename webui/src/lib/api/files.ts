@@ -122,6 +122,35 @@ export async function emptyTrash(): Promise<{ deleted: number }> {
   return api.post("/files/trash/empty");
 }
 
+/** A hidden file that an upload left when the supervisor stopped in the middle of it (ADR-0354). */
+export interface UploadLeftover {
+  path: string;
+  /** What had arrived, in bytes. */
+  size: number;
+  /** When it was last written, in UTC with its offset. */
+  modified: string;
+}
+
+export interface UploadLeftovers {
+  /** By path. */
+  files: UploadLeftover[];
+  /** When the last check ended; null before the first, which runs 10 minutes after the supervisor's start. */
+  checked: string | null;
+  checking: boolean;
+  /** The folders the check could not read, each with the reason. */
+  problems: string[];
+}
+
+/** What the last check found below the pools directory, each file looked at again. */
+export async function listUploadLeftovers(): Promise<UploadLeftovers> {
+  return api.get<UploadLeftovers>("/files/upload-leftovers");
+}
+
+/** Remove such files for good; answers the ones that were there. */
+export async function removeUploadLeftovers(paths: string[]): Promise<{ removed: string[] }> {
+  return api.delete("/files/upload-leftovers", paths);
+}
+
 /**
  * `bytes` in the largest unit that keeps it at 1 or more, with one decimal at most: "1.5 MB".
  * `units` names bytes, KB, MB, GB and TB in the language of the page: files.unit.* of the catalogs

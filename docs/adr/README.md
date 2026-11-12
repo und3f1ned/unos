@@ -296,7 +296,7 @@ and this index, and `make check-fast` runs it.
 | [0041](0041-off-device-backup-slice.md) | Give off-device backup of user data its own slice | superseded by [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | 2026-11-05 |
 | [0165](0165-backup-restore-flows-and-unique-names.md) | Backups restore from the tab, accept encrypted uploads and get unique names | accepted | 2026-11-06 |
 | [0166](0166-uploaded-backups-checked-in-one-pass.md) | Uploaded backups are checked in one streaming pass that writes nothing | superseded by [0345](0345-backups-hold-neither-fstab-nor-netplan-and-an-encrypted-upload-that-is-gzip-data-is-refused.md) | 2026-11-06 |
-| [0167](0167-deferred-backup-and-upload-edge-cases.md) | Fix the deferred backup and upload edge cases of slice 1 | proposed | 2026-11-06 |
+| [0167](0167-deferred-backup-and-upload-edge-cases.md) | Fix the deferred backup and upload edge cases of slice 1 | superseded by [0354](0354-leftovers-of-uploads-are-found-after-each-start-and-removed-only-when-an-administrator-asks.md) | 2026-11-06 |
 | [0240](0240-scheduled-backups-encrypted-with-a-key-derived-from-the-passphrase.md) | Backup tasks encrypt every backup with a key derived from their passphrase and stored in a file of its own | superseded by [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | 2026-11-07 |
 | [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | Backup tasks encrypt every backup with a key derived from their passphrase, stored in a file of its own that is set aside when damaged | accepted | 2026-11-10 |
 | [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested | accepted | 2026-11-11 |
@@ -315,6 +315,7 @@ and this index, and `make check-fast` runs it.
 | [0273](0273-file-manager-entries-in-share-folders-get-2770-and-0660.md) | New folders and uploads of the file manager in a share folder get 2770 and 0660 | superseded by [0274](0274-apps-of-linuxserver-images-can-run-in-unos-smb-and-only-they-get-share-folders.md) | 2026-11-08 |
 | [0347](0347-an-upload-that-gets-no-data-for-120-seconds-is-cut-off-with-408.md) | An upload that gets no data for 120 seconds is cut off with 408 | accepted | 2026-11-11 |
 | [0348](0348-the-file-manager-refuses-bind-mounts-before-a-move-and-busy-entries-with-409.md) | The file manager never deletes, renames or moves volumes, subvolumes or mounts, bind mounts included, and a busy entry is a conflict | accepted | 2026-11-11 |
+| [0354](0354-leftovers-of-uploads-are-found-after-each-start-and-removed-only-when-an-administrator-asks.md) | Leftovers of uploads are found after each start and removed only when an administrator asks | accepted | 2026-11-12 |
 
 ## System
 
