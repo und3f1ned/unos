@@ -464,13 +464,14 @@ def validate_username(name: str) -> str:
 
 def validate_new_username(name: str) -> str:
     """
-    Validate the name of a new UNOS user (first-run setup and user creation).
+    Validate the name of a new UNOS user (first-run setup, user creation and a rename, ADR-0368).
 
     New users get names that SMB accounts can use (shares.constants): 1 to 32
     lowercase letters, digits, '_' and '-', starting with a letter, and not a
-    name reserved for the system. Existing users keep their names; SMB is
-    unavailable for names that break the rule. Checked in the handlers (not by
-    a Pydantic validator), so a bad name is a 400 with a plain message.
+    name reserved for the system. Existing users keep their names until an
+    administrator renames them; SMB is unavailable for names that break the
+    rule. Checked in the handlers (not by a Pydantic validator), so a bad name
+    is a 400 with a plain message.
 
     Raises:
         HTTPException(400): If the name breaks the rule

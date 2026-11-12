@@ -29,7 +29,12 @@ SD writes of each check (ADR-0214). The areas:
            without shares, the folder's 2770 root:unos-smb, a signed session that writes, New
            Folder and Upload in the share's folder (2770 and 660 root:unos-smb) changed over SMB,
            the access lowered to read and then removed during open sessions, a comment saved with
-           the expected version and a stale one refused, a password change that ends the open
+           the expected version and a stale one refused, a rename of the user with a new password
+           (ADR-0368) that ends the open session and keeps the marked host account's uid, and so
+           the user's files, under the new name, with a Samba account of the new name and none of
+           the old, the share's access and smb.conf's section following the new name, which signs
+           in to UNOS and to the share while the old one with its old password is refused (by
+           Samba only where the device has no guest share), a password change that ends the open
            session, the replaced password refused without a write to passdb.tdb, the new one
            taken, the user's own change of it over SAMR (smbpasswd -r, as Windows' Change a
            password asks for one) refused without a write (ADR-0342), a wrong password refused
@@ -55,11 +60,12 @@ SD writes of each check (ADR-0214). The areas:
            folder in "theirs" is refused with 409 and the reason, and a share of "theirs" itself
            is accepted with the warning that names its owner, reported on the Shares page and
            refused by Repair permissions (ADR-0193); a share on a new folder with entries of
-           other groups and modes made over ssh, which Repair permissions gives the group
-           unos-smb, group read and write and setgid on folders, keeping their owners, while a
+           other groups and modes made over ssh, which Repair permissions, answered at once
+           (202) running and waited for until the Shares API names its end (ADR-0363), gives the
+           group unos-smb, group read and write and setgid on folders, keeping their owners, while a
            private file and folder, a symbolic link and the file outside the share that it
            points to stay as they were, and an ACL entry (where the device has setfacl) stays
-           with the group bits as its mask (ADR-0155); the last run with its counts on the Shares
+           with the group bits as its mask (ADR-0363); the last run with its counts on the Shares
            API, and Repair refused while the share's folder is a symbolic link; a regular user
            without SMB, signed in with its own token, whose password of 7 characters (which
            UNOS's own rules allow) and one with a tab SMB refuses with the reason, while UNOS
@@ -1992,6 +1998,67 @@ def smb_check(c: Check) -> None:
     with c.step("the user gets read-write access again"):
         grant("write")
 
+    # auth.user-rename (ADR-0368): the user and its SMB account take a new name; the steps after these use it.
+    renamed, renamed_password = f"{user}r", c.secret()
+    with contextlib.ExitStack() as held:
+        with c.step(f"renaming the user to {renamed} with a new password ends its open session; its marked host "
+                    "account keeps its uid under the new name, and so do the files it wrote, and Samba has an "
+                    "account of the new name and none of the old") as s:
+            uids = {line.split(":")[0]: line.split(":")[2] for line in c.device.facts()["accounts"]}
+            smb = held.enter_context(c.device.smb_session(user, password, share))
+            done = smb.run("ls")
+            c.expect(done.ok, f"the session did not start: {done.status}")
+            c.on_cleanup(f"delete the user {renamed}", lambda: c.delete_user_named(renamed))
+            changed = c.call("PUT", f"/auth/users/{uid}",
+                             {"username": user, "new_username": renamed, "password": renamed_password})
+            found = (changed.get("smb") or {}).get("state")
+            c.expect(changed.get("username") == renamed and found == "active",
+                     f"the user is {changed.get('username')} with SMB {found}: {changed.get('warnings')}")
+            done = smb.run("ls")
+            c.expect(done.ended or done.status.startswith("NT_STATUS_"), f"the session answered: {tail(done.output, 200)}")
+            now = {line.split(":")[0]: line.split(":")[2] for line in c.device.facts()["accounts"]}
+            c.expect(user not in now, f"getent passwd still has {user}")
+            marked_account(c, renamed)
+            c.expect(now.get(renamed) == uids.get(user), f"{renamed} has uid {now.get(renamed)}, not {uids.get(user)}")
+            owner = c.device.stat([f"{folder}/a.txt"])[f"{folder}/a.txt"]
+            c.expect(owner.endswith(f" {renamed}:{SMB_GROUP}"), f"a.txt, written by {user}, is {owner}")
+            c.expect(user not in c.device.passdb_entries()[0], f"pdbedit -L still lists {user}")
+            s.text += f": {done.status}"
+    # The old name keeps its own password: Samba's account of the old name, had it stayed, would take it.
+    old, old_password, user, password = user, password, renamed, renamed_password
+
+    with c.step("the share's access follows the new name: the Shares API and smb.conf's section name it, and in a "
+                "signed session it writes in the share"):
+        access = [(a["username"], a["level"]) for a in c.get(f"/shares/smb/{share}")["access"]]
+        c.expect(access == [(user, "write")], f"the share's access is {access}")
+        section = smb_section(c.device.read(SMB_CONF) or "", share) or {}
+        c.expect(section.get("valid users") == user and section.get("write list") == user,
+                 f"valid users = {section.get('valid users')}, write list = {section.get('write list')}")
+        with c.device.smb_session(user, password, share) as smb:
+            done = smb.run("put data.txt renamed.txt")
+        c.expect(done.ok, f"smbclient: {done.status} {tail(done.output, 200)}")
+        owner = c.device.stat([f"{folder}/renamed.txt"])[f"{folder}/renamed.txt"]
+        c.expect(owner.endswith(f" {user}:{SMB_GROUP}"), f"renamed.txt is {owner}")
+
+    with c.step(f"UNOS signs the user in as {user} and refuses {old}, and Samba refuses {old}") as s:
+        mine = c.api.as_user(user, password, USER_TOKEN.format(c.run))
+        c.on_cleanup(f"delete the token of {user} in the device's RAM", mine.forget_token)
+        me = c.get("/auth/me", api=mine)
+        c.expect(me.get("username") == user, f"the token is of {me}")
+        theirs = c.api.as_user(old, old_password, USER_TOKEN.format(c.run + "old"))
+        c.on_cleanup(f"delete the token of {old} in the device's RAM", theirs.forget_token)
+        try:
+            refused = f"it signed in as {c.get('/auth/me', api=theirs).get('username')}"
+        except relay.ApiError as error:
+            refused = str(error)
+        c.expect(refused.endswith("failed: HTTP 401"), f"the sign-in as {old}: {refused}")
+        if guests:  # Samba takes a user without a Samba account as a guest (ADR-0339)
+            s.text += f"; Samba's refusal of {old} is not tried, as the device has guest shares"
+        else:
+            listing = c.device.smb_list(old, old_password)
+            c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"{old} answered {listing.status}")
+            s.text += f": Samba answered {old} {listing.status}"
+
     with contextlib.ExitStack() as held:
         with c.step("a new password set by an administrator ends the user's open session") as s:
             smb = held.enter_context(c.device.smb_session(user, password, share))
@@ -2340,6 +2407,25 @@ def smbconf_check(c: Check) -> None:
 
 # --- shares: the sticky parent, Repair permissions, the user's own SMB, a guest share ---------
 
+# How long the shares check waits for the end of its repair, which runs in the background
+# (ADR-0363), and how often it asks: its share holds a few entries (the tests make both short).
+REPAIR_WAIT = 300
+REPAIR_POLL = 1
+
+
+def repair_until_it_ends(c: Check, share: str, started: Any) -> tuple[dict, int]:
+    """The run of Repair permissions of SHARE that started at STARTED once GET .../repair-permissions,
+    the share's last finished run, answers it, and how many answers named the run before it (or none)."""
+    deadline = time.monotonic() + REPAIR_WAIT
+    before = 0
+    while True:
+        last = c.get(f"/shares/smb/{share}/repair-permissions", expect=(200, 404))
+        if isinstance(last, dict) and last.get("started_at") == started:
+            return last, before
+        before += 1
+        c.expect(time.monotonic() < deadline, f"the repair of {share} did not end within {REPAIR_WAIT} s")
+        time.sleep(REPAIR_POLL)
+
 
 def smb_state(answer: dict) -> str:
     """The state of GET /auth/me/smb's answer, with whether SMB is allowed and the code is asked."""
@@ -2441,7 +2527,7 @@ def shares_check(c: Check) -> None:
         c.expect(problems == [], f"the Shares page reports {problems}")
         s.text += f": {detail}"
 
-    # shares.repair-permissions (ADR-0155, ADR-0156).
+    # shares.repair-permissions and shares.repair-in-background (ADR-0363, ADR-0156).
     with c.step(f"the share {share} on a new folder makes the folder 2770 root:unos-smb, and smb.conf gets its "
                 "section, closed (available = no) while nobody has access"):
         c.on_cleanup(f"delete {folder} for good", lambda: c.delete_for_good(folder))
@@ -2469,9 +2555,13 @@ def shares_check(c: Check) -> None:
             found = c.device.acl(f"{folder}/acl.txt")
             c.expect(f"user:{other['user']}:r--" in found and "mask::r--" in found, f"its ACL is {found}")
 
-    with c.step("Repair permissions gives them the group unos-smb, group read and write, and setgid on the folder, "
-                "and keeps their owners") as s:
-        result = c.post(f"/shares/smb/{share}/repair-permissions")
+    with c.step("Repair permissions answers at once (202) that it runs, in the background (ADR-0363), and by its "
+                "end, which the Shares API then answers as the last run, it gives them the group unos-smb, group "
+                "read and write, and setgid on the folder, and keeps their owners") as s:
+        started = c.post(f"/shares/smb/{share}/repair-permissions", expect=202)
+        c.expect(isinstance(started, dict) and started.get("share") == share and started.get("state") == "running"
+                 and started.get("finished_at") is None and started.get("started_at"), f"it answered {started}")
+        result, before = repair_until_it_ends(c, share, started["started_at"])
         c.expect(result.get("state") == "done" and not result.get("errors"),
                  f"it ended {result.get('state')}: {result.get('message')} {result.get('error_samples')}")
         facts = c.device.stat(sorted(entries) + [folder])
@@ -2479,7 +2569,7 @@ def shares_check(c: Check) -> None:
         for path, (want, after) in entries.items():
             if want != after:
                 stat_is(c, facts, path, after)
-        s.text += f": {result.get('message')}"
+        s.text += f": {result.get('message')} (GET named it after {before} earlier answer(s))"
 
     with c.step("it leaves the private file and folder, what the folder holds, the symbolic link and the file outside "
                 "the share that the link points to as they were"):

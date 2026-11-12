@@ -810,11 +810,19 @@
         "A user with SMB keeps it under the new name: Samba's account of the old name is removed, and the one of the new name is made with the password that the rename asks for",
         "A new name that breaks the name rule, or exists in another case, is refused with the reason"
       ],
+      "verified_by": [
+        "supervisor/tests/test_smb_accounts.py",
+        "supervisor/tests/test_smb_integration.py",
+        "supervisor/tests/test_restore_accounts.py",
+        "webui/tests/users.spec.ts",
+        "supervisor/tests/test_dev_scenarios.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0116"
+        "ADR-0116",
+        "ADR-0368"
       ],
-      "notes": "Today PUT /auth/users/{id} answers 409 for another name (ADR-0116)."
+      "notes": "Built on the branch auth.user-rename (ADR-0368), not deployed yet. PUT /auth/users/{id} takes new_username with the current username; a user with SMB on needs a new password, the host account is renamed with usermod -l and keeps its uid, Samba's account of the old name is removed and the new name's made with the password, and the share access and smb.conf follow. Host-level (usermod, Samba's passdb, smb.conf): passes only after the device check and its re-check after a reboot (ADR-0018). The check: scripts/dev/scenario.sh smb, whose steps rename the check's user with a new password (its open session ends, the marked host account keeps its uid and the files it wrote, pdbedit -L lists the new name and not the old), show the share's access and smb.conf's section under the new name with a signed session that writes, and sign the new name in to UNOS while the old one, tried with its old password, is refused by UNOS and by Samba (Samba's refusal only where the device has no guest share). smb_uid_names records each name of a renamed uid, so a backup made before or after the rename, restored after the user's deletion, keeps the uid (supervisor/tests/test_restore_accounts.py); usernames_taken bounds a regular user's login history by when the name was taken (TestRename). Not on the device: the refusals of the name rule, of a name in another case and of a name the host has, the busy account and the failed commit (supervisor/tests/test_smb_accounts.py TestRename), and the edit dialog (webui/tests/users.spec.ts on the stand-in)."
     },
     {
       "id": "storage.disk-list",
@@ -1913,12 +1921,20 @@
         "Shares shows the job's progress and its end over the WebSocket, without polling",
         "One repair runs at a time: a second start while one runs is refused"
       ],
+      "verified_by": [
+        "supervisor/tests/test_share_repair_job.py",
+        "supervisor/tests/test_ws_auth.py",
+        "supervisor/tests/test_share_repair.py",
+        "webui/tests/shares.spec.ts",
+        "supervisor/tests/test_dev_scenarios.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0155",
-        "ADR-0006"
+        "ADR-0006",
+        "ADR-0363"
       ],
-      "notes": "Today one request repairs for at most 240 s and 5 million entries; then the state is incomplete, and a new run continues (ADR-0155)."
+      "notes": "Built 2026-11-12 (ADR-0363, which supersedes ADR-0155 and ADR-0006): POST .../repair-permissions answers 202 at once with the job running and walks in a daemon thread of its own until the share is done, stopped (DELETE on the same path, 202; 409 when no repair of that share runs) or 24 hours have passed (repair.TIME_LIMIT_SECONDS; no entry limit); a second start of any share while one runs answers 409 \"A permissions repair is already running\". The walk reports its counts about once a second, and /ws/v1/events sends administrators {\"type\": \"repair\"} with the running job and then its end, which GET then answers as the share's last run; the Repair dialog shows the counts and Stop repair, the share's card says Repairing permissions, and the page reads the shares again at the end, without polling. Backend tests: test_share_repair_job.py, test_ws_auth.py (TestTheRepairOnTheEventsSocket); the walk's stop and progress and the endpoints on real folders are Linux-only tests of test_share_repair.py, not run on macOS. E2E: webui/tests/shares.spec.ts on the stand-in. Host-level (it changes files on the pools): done only after the device check and a reboot check (ADR-0018). Open on the dev device: scripts/dev/scenario.sh shares, whose Repair step now expects the 202 answer running and waits until GET names the run's end, with each step's SD MiB; a second start and the stop cannot be shown there, since the check's share is repaired in moments; a repair of a large share, followed on the Shares page and stopped there, is a check by hand. Review fixes 2026-11-12: the events socket sends administrators the repair right after auth_ok, null when none has run, and the web UI keeps it (null too), so a restart no longer leaves a dead repair showing; a share deleted, renamed or moved stops its repair, and the last result is kept by share id; a stop of the supervisor stops the repair and waits up to 5 s for its audit entry; the end is published only after the audit write; the walk re-reads the mount table with each progress report."
     },
     {
       "id": "shares.nfs-exports-parser",
@@ -2265,10 +2281,16 @@
         "The peak use of /tmp during a restore is at most half of what it is today",
         "A restore still refuses every archive it refuses today"
       ],
+      "verified_by": [
+        "supervisor/tests/test_backup_restore.py",
+        "supervisor/tests/test_backup_upload_check.py"
+      ],
       "passes": false,
       "adr": [
-        "ADR-0177"
-      ]
+        "ADR-0177",
+        "ADR-0364"
+      ],
+      "notes": "Done in the code 2026-11-12 (ADR-0364). A restore reads the backup in one pass over its gzip stream, the pass of the upload check (_read_archive in supervisor/src/backup/router.py), encrypted backups after their decryption in memory as before, and writes only unos.db to /tmp, as it comes; the manifest is read into memory, scheduled_tasks.json only noted, and the SMB preparation keeps its rollback journal in memory. Step 1: test_a_restore_holds_at_most_half_as_much_in_tmp_as_before (plain and encrypted) measures the files in TMPDIR after every call that returns in the restore's thread, for a backup with a database of about 4 MiB: it failed on the code before with 8,540,791 bytes (the decompressed archive, the extracted files and the SQLite journal) against at most 4,257,827, half of the decompressed archive plus the files extracted from it, and now holds the database alone. Step 2: every refusal test of test_backup_restore.py passes unchanged, with the same answers (a member whose data would end past MAX_TAR_BYTES is still a corrupt archive for a restore, as for the decompressed archive, ADR-0364), and so do test_backup_upload_check.py and test_backup_files.py; test_a_database_cut_short_or_refused_after_it_leaves_nothing_in_tmp covers the database extracted before a refusal. The 507 test lost its decompression phase, which no longer exists: a /tmp that is too small now fails at unos.db. scripts/dev/scenario.py restore_check needs no change (its restores answer as before). Open: not host-level; on the dev device after a deploy, scripts/dev/scenario.sh restore and backups must still pass, and neither measures the peak of the container's /tmp, which a step of the restore check sampling df /tmp in the supervisor container during its restores could show. Review fix 2026-11-12: _scan_members refuses a regular file whose name, after at most one leading ./, is not its normalized path (unos.db/. passed as unos.db and failed with EISDIR, 500): test_a_file_whose_name_is_not_its_plain_path_is_refused and the upload cases file-named-as-a-folder and manifest-named-as-a-folder failed first (ADR-0364)."
     },
     {
       "id": "backup.edge-cases",
@@ -3256,9 +3278,24 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0006"
+        "ADR-0006",
+        "ADR-0365",
+        "ADR-0366",
+        "ADR-0367"
       ],
-      "notes": "Container details stream their log over /ws/v1/logs/{id} (ADR-0255, apps.containers-and-images), and UpdateTab.svelte no longer polls. setInterval polling of the API remains in LogsTab.svelte (Auto-refresh every 5 s) and routes/storage/+page.svelte (the scrub status)."
+      "notes": "Built: no page polls the API. Container details stream their log over /ws/v1/logs/{id} (ADR-0255, apps.containers-and-images: containers.spec.ts 'the log of a container streams live over the WebSocket'), and UpdateTab.svelte asks only on Check again (updates.spec.ts). System > Logs' Auto follows the host's journal over /ws/v1/journal (ADR-0366): the socket takes the values of GET /api/v1/logs/entries in its URL, sends the newest entries as that request answers them, then each new entry of the source, level and search from a `journalctl --follow --lines=all` on the host that starts --after-cursor= the newest entry it sent (or --since=@<the second it read at> when it sent none) and that HostStream.stop ends with its process group when the client leaves or its access is revoked (host.stream_on_host); errors send {\"type\": \"error\"} and close with 1000. The Storage page follows a running scrub over /ws/v1/events (ADR-0367): storage/scrubs.py keeps each pool whose scrub was seen running (the scrub API's answers, a status read's failure, the Scheduler's start), an administrator's events socket asks for a read of the scrubs that run at most every 2 seconds without waiting for it, and sends {\"type\": \"scrubs\"} whenever they change; nothing is read while no administrator is connected, and a read that a request answered meanwhile is dropped. Step 1: test_ws_auth.py TestTheJournalSocket, TestTheJournalSocketsErrors and TestTheJournalSocketsRoles (against test_logs_sources.py's FakeJournal, which follows from a cursor or a time), test_host_tools.py (the stream of a real local command, a forked child ended with the group, a line over the limit dropped), TestTheScrubsOnTheEventsSocket, test_storage.py TestScrubsForTheEventsSocket and test_scheduler_validation.py test_scrub_task; logs.spec.ts 'Auto follows new entries over the journal socket and never asks the API again' (page.clock runs a minute with no request) and 'Auto stops when the journal socket ends, and says why'; storage.spec.ts 'Scrub (fake data)' on a fake events socket (one status read at the load, none while a minute passes). Step 2: a static check, webui/scripts/polling-check.mjs, run by test_webui_polling.py (ADR-0365), not a spec that fakes timers: it reaches every component and every state, also those no spec brings about, and runs in make test; it failed on LogsTab.svelte, storage/+page.svelte and the countdown of NetworkTab.svelte, which reads the interfaces once when its time has run out and is exempted with polling-ignore. Open: the device check and the re-check after a reboot (ADR-0018). On the device: System > Logs with Auto shows a line that `logger -t unos-check` writes on the host within a few seconds without a reload, also with the search unos-check, and after Auto is turned off or the tab is left no journalctl --follow is left on the host (pgrep -af 'journalctl --follow'); a scrub started on the Storage page, and one of a Run now of a scheduled scrub task, shows its progress growing and then its result without a reload, and no GET of the scrub status follows the page's load (the browser's network view). scripts/dev/scenario.sh scrub could check the scrubs messages of /ws/v1/events while its scrub runs. Review fixes 2026-11-12: after the events socket drops and connects again, the Storage page reads each mounted pool it shows running or unreadable (storage.spec.ts 'after the events socket connects again, the page reads each scrub it shows running or unreadable' failed first). The polling check follows exported functions of src/ .ts modules and fails a timer that changes a store or a variable an API-reaching $: statement reads (TestOtherModules, TestWhatATimerChanges; gaps in ADR-0365).",
+      "verified_by": [
+        "supervisor/tests/test_webui_polling.py",
+        "supervisor/tests/test_ws_auth.py",
+        "supervisor/tests/test_logs_sources.py",
+        "supervisor/tests/test_host_tools.py",
+        "supervisor/tests/test_storage.py",
+        "supervisor/tests/test_scheduler_validation.py",
+        "webui/tests/logs.spec.ts",
+        "webui/tests/storage.spec.ts",
+        "webui/tests/containers.spec.ts",
+        "webui/tests/updates.spec.ts"
+      ]
     },
     {
       "id": "webui.design-system-lint",

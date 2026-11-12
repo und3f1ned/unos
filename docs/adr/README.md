@@ -57,7 +57,7 @@ and this index, and `make check-fast` runs it.
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
 | [0002](0002-two-containers-on-an-existing-linux-host.md) | UNOS runs on an existing Linux host as a web UI and a privileged supervisor container | accepted | 2026-01-23 |
-| [0006](0006-real-time-data-over-websocket.md) | Real-time data goes over WebSocket, never HTTP polling | accepted | 2026-01-25 |
+| [0006](0006-real-time-data-over-websocket.md) | Real-time data goes over WebSocket, never HTTP polling | superseded by [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | 2026-01-25 |
 | [0020](0020-host-changes-through-host-py.md) | Host changes go through src/host.py, which runs argv lists in the host's namespaces | accepted | 2026-11-05 |
 | [0021](0021-blocking-work-off-the-event-loop.md) | Blocking work runs off the event loop, with timeouts | accepted | 2026-11-05 |
 | [0022](0022-database-migrations-with-alembic.md) | Adopt Alembic for database migrations | proposed | 2026-11-05 |
@@ -65,6 +65,7 @@ and this index, and `make check-fast` runs it.
 | [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits | accepted | 2026-11-08 |
 | [0308](0308-a-sign-in-writes-at-most-0-1-mib-to-the-sd-card.md) | A sign-in in the middle of the write-ahead log writes at most 0.1 MiB to the SD card | accepted | 2026-11-09 |
 | [0324](0324-json-state-files-are-replaced-through-a-rename-and-one-that-cannot-be-read-is-kept-as-bad.md) | JSON state files are replaced through a rename, and one that cannot be read is kept as .bad | accepted | 2026-11-10 |
+| [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | Repair permissions runs as a background job that reports over the events socket, where live data goes | accepted | 2026-11-12 |
 
 ## Security
 
@@ -148,11 +149,12 @@ and this index, and `make check-fast` runs it.
 | [0289](0289-commands-in-the-container-are-killed-at-their-timeout-and-not-waited-for.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, and a command still stuck is not started again | superseded by [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | 2026-11-08 |
 | [0290](0290-commands-in-the-container-are-killed-at-their-timeout-and-a-cleanup-without-an-answer-fails.md) | Commands of btrfs and smartctl in the container are killed at their timeout without a wait, a command still stuck is not started again, and a snapshot cleanup without an answer fails its run | accepted | 2026-11-08 |
 | [0311](0311-a-scrub-starts-only-on-a-mounted-pool-through-one-helper.md) | A scrub starts only on a pool whose btrfs filesystem is mounted, through one helper | accepted | 2026-11-09 |
-| [0313](0313-a-scrub-runs-from-its-start-and-its-result-names-how-it-ended.md) | A scrub runs from its start, before btrfs records it, and its result names how it ended | accepted | 2026-11-09 |
+| [0313](0313-a-scrub-runs-from-its-start-and-its-result-names-how-it-ended.md) | A scrub runs from its start, before btrfs records it, and its result names how it ended | superseded by [0367](0367-the-storage-page-follows-a-running-scrub-over-the-events-socket.md) | 2026-11-09 |
 | [0344](0344-pool-unmount-and-delete-are-refused-when-docker-cannot-be-asked.md) | Pool unmount and delete are refused when Docker cannot be asked, respect Docker volumes, and odd names do not break storage | accepted | 2026-11-11 |
 | [0352](0352-volume-reads-container-folders-disk-names-and-deletes-withstand-renames-odd-names-links-and-new-mounts.md) | Volume reads, container folders, disk names and deletes withstand renames, odd names, links and new mounts | accepted | 2026-11-12 |
 | [0358](0358-restored-copies-are-listed-and-deleted-on-the-snapshots-page-by-subvolume-id.md) | Restored copies are listed and deleted on the Snapshots page, by subvolume id after the checks of a volume's Delete | accepted | 2026-11-12 |
 | [0360](0360-the-storage-page-loads-its-lists-again-when-the-block-devices-change.md) | The Storage page loads its lists again when the block devices of the stats stream change | accepted | 2026-11-12 |
+| [0367](0367-the-storage-page-follows-a-running-scrub-over-the-events-socket.md) | A scrub runs from its start, its result names how it ended, and the Storage page follows it over the events socket | accepted | 2026-11-12 |
 
 ## Shares
 
@@ -202,7 +204,7 @@ and this index, and `make check-fast` runs it.
 | [0113](0113-which-usernames-can-be-smb-names.md) | Only usernames that fit the Linux name rule and clash with nothing can be SMB names | accepted | 2026-11-06 |
 | [0114](0114-sid-like-names-are-reserved.md) | Names that start with 's-' and a digit are reserved | accepted | 2026-11-06 |
 | [0115](0115-new-usernames-follow-the-smb-name-rule.md) | New UNOS usernames follow the SMB name rule and are unique ignoring case | accepted | 2026-11-06 |
-| [0116](0116-users-cannot-be-renamed.md) | UNOS users cannot be renamed yet | accepted | 2026-11-06 |
+| [0116](0116-users-cannot-be-renamed.md) | UNOS users cannot be renamed yet | superseded by [0368](0368-a-rename-moves-the-users-smb-account-to-the-new-name-keeping-its-uid.md) | 2026-11-06 |
 | [0117](0117-administrators-never-have-smb-access.md) | Administrators never have SMB access | accepted | 2026-11-06 |
 | [0118](0118-smb-is-opt-in-per-user.md) | SMB is opt-in per user: an administrator allows it, and a password activates it | accepted | 2026-11-06 |
 | [0119](0119-smb-password-is-the-unos-password.md) | The SMB password is the UNOS password, captured only where the plaintext is given | accepted | 2026-11-06 |
@@ -241,7 +243,7 @@ and this index, and `make check-fast` runs it.
 | [0152](0152-share-folders-created-through-the-pool-mount.md) | Share folders are created only through the pool's mount, checked on descriptors | accepted | 2026-11-06 |
 | [0153](0153-share-folders-only-below-root-only-folders.md) | Share folders are created only below folders that only root can change | accepted | 2026-11-06 |
 | [0154](0154-unos-never-changes-existing-folder-modes.md) | UNOS never changes the mode of an existing folder, and the owner runs the chmod | accepted | 2026-11-06 |
-| [0155](0155-repair-permissions-only-on-request.md) | Guest-era permissions are fixed only by an explicit per-share Repair | accepted | 2026-11-06 |
+| [0155](0155-repair-permissions-only-on-request.md) | Guest-era permissions are fixed only by an explicit per-share Repair | superseded by [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | 2026-11-06 |
 | [0156](0156-repair-walks-with-descriptors.md) | Repair walks the folder tree with descriptors and opens nothing it must not | accepted | 2026-11-06 |
 | [0157](0157-smb-audits-only-real-changes.md) | The SMB code audits only real changes, and problems go to the status | superseded by [0320](0320-smb-changes-are-audited-with-actions-of-their-own-and-the-rollback-era-safeguards-stay-for-restores-and-hand-edits.md) | 2026-11-06 |
 | [0158](0158-netbios-stays-until-discovery.md) | NetBIOS stays until a discovery slice adds WS-Discovery and Bonjour | superseded by [0275](0275-windows-finds-the-nas-through-wsdd2-macos-through-bonjour-and-netbios-is-off.md) | 2026-11-06 |
@@ -278,6 +280,7 @@ and this index, and `make check-fast` runs it.
 | [0349](0349-a-restore-refuses-a-backup-whose-database-gives-one-smb-uid-to-two-accounts.md) | A restore refuses a backup whose database gives one SMB uid to two accounts | accepted | 2026-11-11 |
 | [0353](0353-smb-uids-handed-out-are-recorded-and-a-restored-account-keeps-one-only-under-its-name.md) | SMB uids handed out are recorded for good, and a restored account keeps a recorded uid only under the name it went to | accepted | 2026-11-12 |
 | [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | Every replaced smb.conf is kept in a copy named with its UTC time, and the newest 10 of each kind stay | accepted | 2026-11-12 |
+| [0368](0368-a-rename-moves-the-users-smb-account-to-the-new-name-keeping-its-uid.md) | An administrator renames a user, and the user's SMB account moves to the new name with its uid | accepted | 2026-11-12 |
 
 ## Apps
 
@@ -307,6 +310,7 @@ and this index, and `make check-fast` runs it.
 | [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested | accepted | 2026-11-11 |
 | [0345](0345-backups-hold-neither-fstab-nor-netplan-and-an-encrypted-upload-that-is-gzip-data-is-refused.md) | Backups hold neither fstab nor netplan, and an encrypted upload that is gzip data is refused | accepted | 2026-11-11 |
 | [0355](0355-the-backup-api-has-no-include-options-and-a-manifest-names-no-options.md) | The backup API has no include_ options, and a backup's manifest names no options | accepted | 2026-11-12 |
+| [0364](0364-a-restore-checks-the-archive-and-extracts-its-database-in-one-streaming-pass.md) | A restore checks the archive and extracts its database in one streaming pass | accepted | 2026-11-12 |
 
 ## Files
 
@@ -341,7 +345,7 @@ and this index, and `make check-fast` runs it.
 | [0245](0245-system-network-shows-ipv6-link-speeds-and-the-administrative-state.md) | System > Network shows IPv6, link speeds from sysfs and each interface's administrative state | accepted | 2026-11-07 |
 | [0246](0246-interfaces-with-vlans-stay-enabled-and-the-revert-follows-the-host.md) | An interface that carries VLANs is not disabled, and a disable's saved state and the page's reports follow what the host shows | accepted | 2026-11-07 |
 | [0247](0247-wake-on-lan-from-power-off-depends-on-the-board.md) | Waking a host that is off by Wake-on-LAN depends on its board, and the Power tab says so | accepted | 2026-11-07 |
-| [0257](0257-system-logs-reads-every-source-from-the-hosts-journal-newest-first.md) | System > Logs reads every source from the host's journal, newest first, with one set of filters | accepted | 2026-11-07 |
+| [0257](0257-system-logs-reads-every-source-from-the-hosts-journal-newest-first.md) | System > Logs reads every source from the host's journal, newest first, with one set of filters | superseded by [0366](0366-system-logs-follows-new-journal-entries-over-the-journal-socket.md) | 2026-11-07 |
 | [0258](0258-a-journal-read-ends-on-the-host-and-two-run-at-a-time.md) | A journal read of System > Logs ends on the host after 30 seconds, two run at a time, and a search without a match lists nothing | accepted | 2026-11-07 |
 | [0260](0260-notification-channels-of-every-kind-name-failed-deliveries-and-keep-a-full-history.md) | Notification channels of every kind are set up in the web UI, a delivery counts only on success, and the history lists every notification sent | superseded by [0326](0326-notification-channels-their-history-and-damaged-files-of-them.md) | 2026-11-07 |
 | [0264](0264-schedules-follow-the-clock-of-the-hosts-time-zone.md) | Schedules follow the clock of the host's time zone, read from its /etc/localtime link, with fixed rules for the changes of daylight saving time | superseded by [0266](0266-schedules-follow-the-hosts-time-zone-as-last-read.md) | 2026-11-07 |
@@ -355,6 +359,7 @@ and this index, and `make check-fast` runs it.
 | [0336](0336-http-notifications-that-cannot-connect-from-the-container-go-once-more-from-the-hosts-network.md) | An HTTP notification that cannot connect from the container goes once more from the host's network, with the host's curl | accepted | 2026-11-11 |
 | [0346](0346-the-dashboard-shows-the-cpu-or-soc-temperature-chosen-by-sensor-name-in-one-place.md) | The dashboard shows the CPU's or SoC's temperature, chosen by the sensor's name in one place on the server | accepted | 2026-11-11 |
 | [0356](0356-the-nut-password-is-write-only-and-upsc-runs-on-the-host.md) | The NUT password of the UPS settings is write-only, and upsc runs on the host, where its absence makes the UPS unavailable | accepted | 2026-11-12 |
+| [0366](0366-system-logs-follows-new-journal-entries-over-the-journal-socket.md) | System > Logs reads every source from the host's journal, newest first, and its Auto follows new entries over the journal socket | accepted | 2026-11-12 |
 
 ## Web UI
 
@@ -375,6 +380,7 @@ and this index, and `make check-fast` runs it.
 | [0300](0300-the-storage-page-writes-its-values-in-the-pages-language-and-keeps-the-servers-reasons.md) | The Storage page writes its sizes and the start of a scrub in the page's language and keeps the server's reasons and btrfs's names | accepted | 2026-11-08 |
 | [0302](0302-below-the-md-breakpoint-the-sidebar-is-a-drawer-and-only-a-table-scrolls-sideways.md) | Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways | accepted | 2026-11-08 |
 | [0361](0361-open-dialogs-form-a-stack-whose-top-one-alone-answers-escape.md) | Open dialogs form a stack whose top one alone answers Escape, and the focus moves into a dialog and back to its opener | accepted | 2026-11-12 |
+| [0365](0365-a-check-of-webui-src-fails-for-a-setinterval-that-reaches-the-api.md) | A check of webui/src fails for a setInterval whose callback reaches the API | accepted | 2026-11-12 |
 
 ## Deploy
 

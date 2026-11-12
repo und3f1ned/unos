@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import {
 		getDisks,
 		getPools,
@@ -57,7 +57,8 @@
 		Select
 	} from '$lib/components/ui';
 	import { intlLocale, locale, t } from '$lib/i18n';
-	import { stats, type WebSocketStats } from '$lib/stores/stats';
+	import { stats, wsConnected, type WebSocketStats } from '$lib/stores/stats';
+	import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
 
@@ -108,7 +109,6 @@
 	let scrubStatuses: Record<string, ScrubStatus> = {};
 	// Why a pool's scrub status could not be read: shown instead of the last one (ADR-0313).
 	let scrubErrors: Record<string, string> = {};
-	let scrubPollingIntervals: Record<string, ReturnType<typeof setInterval>> = {};
 	let startingScrub: Record<string, boolean> = {};
 
 	onMount(async () => {
@@ -167,10 +167,6 @@
 		if (disksLoad === deviceReload.load) disksLoad = listsLoad;
 		devicesLoaded = deviceReload.devices;
 	}
-
-	onDestroy(() => {
-		Object.values(scrubPollingIntervals).forEach((interval) => clearInterval(interval));
-	});
 
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
@@ -250,45 +246,65 @@
 		}
 	}
 
-	/** Show a pool's scrub as btrfs reports it, and ask again every 2 seconds while it runs. */
+	/** Show a pool's scrub as btrfs reports it. */
 	function showScrubStatus(poolName: string, status: ScrubStatus) {
 		delete scrubErrors[poolName];
 		scrubErrors = scrubErrors;
 		scrubStatuses[poolName] = status;
 		scrubStatuses = scrubStatuses;
-		if (status.status === 'running') {
-			startScrubPolling(poolName);
-		} else {
-			stopScrubPolling(poolName);
-		}
 	}
 
 	/**
 	 * The status could not be read (e.g. btrfs did not answer): say why instead of the last
-	 * one, and stop asking. The last one still decides the button, so that a scrub that was
-	 * running can be cancelled.
+	 * one. The last one still decides the button, so that a scrub that was running can be
+	 * cancelled.
 	 */
 	function showScrubError(poolName: string, e: unknown) {
-		stopScrubPolling(poolName);
 		scrubErrors[poolName] = messageOf(e);
 		scrubErrors = scrubErrors;
 	}
 
-	function startScrubPolling(poolName: string) {
-		if (scrubPollingIntervals[poolName]) return;
-		scrubPollingIntervals[poolName] = setInterval(async () => {
-			try {
-				showScrubStatus(poolName, await getScrubStatus(poolName));
-			} catch (e) {
-				showScrubError(poolName, e);
-			}
-		}, 2000);
+	// A scrub that runs is followed over /ws/v1/events, which sends the status of each one whenever
+	// it changed, until the scrub ended or its status could not be read (ADR-0367): the page asks
+	// for the status only when it loads its lists and when the socket connected again (below).
+	$: followScrubs($scrubs);
+
+	function followScrubs(updates: ScrubUpdate[]) {
+		for (const update of updates) {
+			if ('error' in update) showScrubError(update.pool, update.error);
+			else showScrubStatus(update.pool, update);
+		}
 	}
 
-	function stopScrubPolling(poolName: string) {
-		if (!scrubPollingIntervals[poolName]) return;
-		clearInterval(scrubPollingIntervals[poolName]);
-		delete scrubPollingIntervals[poolName];
+	// The events socket dropped and connected again, maybe to a supervisor that restarted and
+	// follows none of the scrubs it followed (ADR-0367): the page asks once for each scrub it shows
+	// running or could not read, and that read makes the server follow it again.
+	let socketWasUp = false;
+	let socketDropped = false;
+	$: followSocket($wsConnected);
+
+	function followSocket(connected: boolean) {
+		if (!connected) {
+			socketDropped = socketWasUp;
+			return;
+		}
+		socketWasUp = true;
+		if (!socketDropped) return;
+		socketDropped = false;
+		readShownScrubsAgain();
+	}
+
+	async function readShownScrubsAgain() {
+		const shown = pools.filter(
+			(pool) => pool.mounted && (scrubStatuses[pool.name]?.status === 'running' || pool.name in scrubErrors)
+		);
+		for (const pool of shown) {
+			try {
+				showScrubStatus(pool.name, await getScrubStatus(pool.name));
+			} catch (e) {
+				showScrubError(pool.name, e);
+			}
+		}
 	}
 
 	async function handleStartScrub(poolName: string) {
@@ -307,8 +323,8 @@
 
 	async function handleCancelScrub(poolName: string) {
 		try {
-			// btrfs can still report the scrub as running for a moment: then it is followed
-			// until it stopped (ADR-0313).
+			// btrfs can still report the scrub as running for a moment: then the events socket
+			// sends it once it stopped (ADR-0367).
 			showScrubStatus(poolName, await cancelScrub(poolName));
 		} catch (e) {
 			error = messageOf(e);

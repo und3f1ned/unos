@@ -159,6 +159,7 @@
 	// The user as the dialog was opened: every request carries this username,
 	// so a change never reaches another user who got the same id meanwhile.
 	let editing: User | null = null;
+	let editUsername = '';
 	let editIsAdmin = false;
 	let editPassword = '';
 	let editConfirm = '';
@@ -173,21 +174,41 @@
 	let shareAccessRequest = 0;
 
 	$: editState = editing?.smb?.state;
+	// A new name (ADR-0368): the role changes in another save, and a user with SMB on needs a new
+	// password, which Samba's account of the new name gets.
+	$: renaming = editing !== null && editUsername !== editing.username;
+	$: editUsernameError =
+		renaming && !USERNAME_PATTERN.test(editUsername) ? $t('users.username.invalid') : '';
+	$: renameWithRole = renaming && editing !== null && editIsAdmin !== editing.is_admin;
+	$: renameNeedsPassword = renaming && editState === 'active';
 	$: promoting = editing !== null && !editing.is_admin && editIsAdmin;
 	$: adminWarning =
 		promoting &&
 		(editState === 'active' || editState === 'password_needed' || editHasShareAccess !== false);
 	$: turnOnWithPassword =
-		editState === 'password_needed' && !editIsAdmin && alsoTurnOnSmb && editPassword !== '';
+		editState === 'password_needed' &&
+		!editIsAdmin &&
+		alsoTurnOnSmb &&
+		editPassword !== '' &&
+		!renaming;
 	$: editPasswordReady =
 		editPassword === '' ||
 		(editPassword.length >= MIN_PASSWORD_LENGTH && editConfirm === editPassword);
-	$: editChanged = editing !== null && (editIsAdmin !== editing.is_admin || editPassword !== '');
-	$: canSave = editChanged && editPasswordReady && !saving && !smbBusy;
+	$: editChanged =
+		editing !== null && (editIsAdmin !== editing.is_admin || editPassword !== '' || renaming);
+	$: canSave =
+		editChanged &&
+		editPasswordReady &&
+		!editUsernameError &&
+		!renameWithRole &&
+		!(renameNeedsPassword && editPassword === '') &&
+		!saving &&
+		!smbBusy;
 	$: smbToggleDisabled = saving || smbBusy || promoting;
 
 	function openEdit(user: User) {
 		editing = user;
+		editUsername = user.username;
 		editIsAdmin = user.is_admin;
 		editPassword = '';
 		editConfirm = '';
@@ -255,6 +276,7 @@
 		if (!editing || !canSave) return;
 		const target = editing;
 		const password = editPassword;
+		const newName = renaming ? editUsername : null;
 		saving = true;
 		editError = '';
 		try {
@@ -264,16 +286,20 @@
 				result = await enableUserSmb(target.id, target.username, password);
 			} else {
 				const data: UserUpdate = { username: target.username };
+				if (newName !== null) data.new_username = newName;
 				if (editIsAdmin !== target.is_admin) data.is_admin = editIsAdmin;
 				if (password) data.password = password;
 				result = await updateUser(target.id, data);
 			}
 			saving = false;
 			closeEdit(true);
-			showOutcome($t('users.edit.done', { name: target.username }), [
-				...editWarnings,
-				...(result.warnings ?? [])
-			]);
+			showOutcome(
+				newName !== null
+					? $t('users.edit.renamed', { old: target.username, name: newName })
+					: $t('users.edit.done', { name: target.username }),
+				[...editWarnings, ...(result.warnings ?? [])]
+			);
+			// After renaming yourself, your session has ended: this load's 401 signs you out.
 			await loadUsers(false);
 		} catch (e) {
 			await handleEditError(e, target);
@@ -590,6 +616,23 @@
 				class="space-y-5 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
 			>
 				<section class="space-y-2">
+					<h3 class="card-title">{$t('users.edit.nameTitle')}</h3>
+					<Input
+						id="edit-username"
+						label={$t('common.username')}
+						bind:value={editUsername}
+						autocomplete="off"
+						maxlength={32}
+						hint={renaming ? $t('users.edit.renameHint') : ''}
+						error={editUsernameError}
+						disabled={saving || smbBusy}
+					/>
+					{#if renaming && $currentUser?.id === editing.id}
+						<Alert variant="info">{$t('users.edit.renameSelf')}</Alert>
+					{/if}
+				</section>
+
+				<section class="space-y-2">
 					<h3 class="card-title">{$t('users.role')}</h3>
 					<label class="flex items-center gap-2 cursor-pointer">
 						<input
@@ -600,7 +643,9 @@
 						/>
 						{$t('users.edit.admin')}
 					</label>
-					{#if adminWarning}
+					{#if renameWithRole}
+						<Alert variant="warning">{$t('users.edit.renameAndRole')}</Alert>
+					{:else if adminWarning}
 						<Alert variant="warning">
 							{$t('users.edit.adminWarning', { name: editing.username })}
 						</Alert>
@@ -628,9 +673,11 @@
 						error={confirmError(editPassword, editConfirm)}
 						disabled={saving}
 					/>
-					{#if editState === 'active'}
+					{#if renameNeedsPassword}
+						<p class="form-hint">{$t('users.edit.renameSmb', { name: editing.username })}</p>
+					{:else if editState === 'active'}
 						<p class="form-hint">{$t('users.edit.smbPassword')}</p>
-					{:else if editState === 'password_needed' && !editIsAdmin}
+					{:else if editState === 'password_needed' && !editIsAdmin && !renaming}
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input
 								type="checkbox"

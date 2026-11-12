@@ -37,6 +37,7 @@ from src.auth.models import User
 from src.database import Base, get_db
 from src.host import HostResult
 from src.main import app
+from src.security.models import LoginAttempt
 from src.shares import accounts, constants, interfaces, service, smb, smbconf
 from src.shares.account_state import ADMIN_REASON
 from src.shares.models import SmbAccount, SmbShare, SmbShareAccess, SmbState
@@ -2371,8 +2372,9 @@ class TestSelfFlowErrors:
         source = (SRC / "shares" / "accounts.py").read_text()
         built = re.findall(r"\b(\w+)\(\d{3}, f\"[^\"\n]*\{(?:_last_line\(|_clean\(str\(exc\)\))", source)
 
-        # The two of Samba's account policies (ADR-0278, ADR-0334) reach only the reconcile's problems.
-        assert built.count("SmbHostCommandFailed") == 11
+        # The two of Samba's account policies (ADR-0278, ADR-0334) reach only the reconcile's problems;
+        # usermod's reaches only an administrator's rename (ADR-0368).
+        assert built.count("SmbHostCommandFailed") == 12
         assert set(built) == {"SmbHostCommandFailed", "SmbConfNotUnos"}
 
 
@@ -2720,6 +2722,410 @@ class TestUsernamesInRequests:
         response = world.client.post(f"{API}/auth/users/{world.ids['alice']}/smb/enable",
                                      json={"username": "alice", "enabled": True}, headers=world.headers("admin"))
         assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# rename (auth.user-rename, ADR-0368)
+# ---------------------------------------------------------------------------
+
+RENAME_NEEDS_PASSWORD = (
+    "A new password is needed to rename alice: SMB is on for alice, and Samba's account of the new name "
+    "is made with it"
+)
+
+
+def login(world: World, name: str, password: str) -> httpx.Response:
+    return world.client.post(f"{API}/auth/login", json={"username": name, "password": password})
+
+
+def share_access(world: World, share_id: int) -> list[tuple[int, str, str]]:
+    with Session(world.engine) as session:
+        return [(a.user_id, a.username, a.level) for a in session.scalars(
+            select(SmbShareAccess).where(SmbShareAccess.share_id == share_id))]
+
+
+def share_version(world: World, share_id: int) -> int:
+    with Session(world.engine) as session:
+        return session.get(SmbShare, share_id).version
+
+
+class TestRename:
+    """An administrator renames a user: PUT /auth/users/{id} with the current username and the new one."""
+
+    def test_a_user_without_smb_signs_in_with_the_new_name_and_the_old_one_is_refused(self, world):
+        old_session = world.headers("bob")
+
+        response = world.put_user("bob", username="bob", new_username="robert")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["username"] == "robert"
+        assert response.json()["smb"]["state"] == "off"
+        assert world.user("bob").username == "robert"
+        assert login(world, "robert", BOB_PW).status_code == 200
+        refused = login(world, "bob", BOB_PW)
+        assert refused.status_code == 401
+        assert refused.json()["detail"] == "Incorrect username or password"
+        # The user's sessions carry the old name: they end with the rename.
+        assert world.client.get(f"{API}/auth/me", headers=old_session).status_code == 401
+        # No SMB account: the host is not asked.
+        assert world.fake.calls == []
+        world.apply.assert_not_awaited()
+        updated = [e for e in world.audit() if e["action"] == "user_updated"]
+        assert [(e["resource_id"], e["details"]) for e in updated] == [("robert", "Updated user robert: renamed from bob")]
+        assert world.smb_audit() == []
+
+    def test_an_active_smb_account_follows_the_new_name_with_the_password_of_the_rename(self, world):
+        world.make_active("alice", 70000, ALICE_PW)
+        media = world.add_share("media", ("alice", "write"))
+        version = share_version(world, media)
+        pid = world.fake.add_session("alice", ["media"])
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert (body["username"], body["smb"]["state"], body["smb"]["linux_name"], body["smb"]["uid"]) == (
+            "alicia", "active", "alicia", 70000)
+        assert body["warnings"] == []
+        # The marked host account keeps its uid under the new name, and so the files it owns.
+        assert "alice" not in world.fake.passwd
+        assert world.fake.passwd["alicia"] == accounts.HostAccount(
+            "alicia", 70000, 70000, "UNOS SMB user", "/nonexistent", "/usr/sbin/nologin")
+        # Samba's account of the old name is gone; the new name's has the password of the rename.
+        assert "alice" not in world.fake.passdb
+        assert (world.fake.passdb["alicia"]["name"], world.fake.passdb["alicia"]["password"]) == ("alicia", SET_PW)
+        argvs = world.fake.argvs()
+        assert world.fake.commands("usermod") == [["usermod", "-l", "alicia", "alice"]]
+        assert (argvs.index(["smbcontrol", str(pid), "shutdown"]) < argvs.index(["usermod", "-l", "alicia", "alice"])
+                < argvs.index(["pdbedit", "-x", "-u", "alice"]) < argvs.index(["smbpasswd", "-s", "-a", "alicia"]))
+        assert world.fake.commands("useradd") == [] and world.fake.commands("userdel") == []
+        assert ["sync", "/etc"] in argvs
+        assert world.fake.stdin_of("smbpasswd") == [f"{SET_PW}\n{SET_PW}\n"]
+        # The rows follow the new name; the share's access follows it, and smb.conf is rendered again.
+        row = world.row("alice")
+        assert (row.linux_name, row.uid, row.enabled, row.password_state) == ("alicia", 70000, True, "set")
+        assert share_access(world, media) == [(world.ids["alice"], "alicia", "write")]
+        assert share_version(world, media) == version + 1
+        world.apply.assert_awaited()
+        # The password of the rename is the UNOS password too.
+        assert login(world, "alicia", SET_PW).status_code == 200
+        assert login(world, "alicia", ALICE_PW).status_code == 401
+        assert login(world, "alice", SET_PW).status_code == 401
+        assert world.smb_audit() == [
+            ("alicia", "SMB account renamed from alice to alicia", "info"),
+            ("alicia", "SMB password set by an administrator", "info"),
+        ]
+        updated = [e["details"] for e in world.audit() if e["action"] == "user_updated"]
+        assert updated == ["Updated user alicia: renamed from alice, password changed (also for SMB)"]
+
+    def test_an_active_smb_account_needs_the_password(self, world):
+        world.make_active("alice", 70000, ALICE_PW)
+
+        response = world.put_user("alice", username="alice", new_username="alicia")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == RENAME_NEEDS_PASSWORD
+        assert world.fake.calls == []
+        assert world.user("alice").username == "alice"
+        assert world.row("alice").password_state == "set"
+
+    def test_the_e2e_fakes_answer_with_the_servers_texts(self):
+        """webui/tests/shares-fakes.ts answers a rename with the server's texts word for word (ADR-0189)."""
+        fakes = (SRC.parents[1] / "webui" / "tests" / "shares-fakes.ts").read_text(encoding="utf-8")
+
+        assert RENAME_NEEDS_PASSWORD == accounts._rename_needs_password("alice")
+        assert ("`A new password is needed to rename ${name}: SMB is on for ${name}, and Samba's account of the new "
+                "name is made with it`") in fakes
+        assert f'"Use {constants.NAME_RULE}"' in fakes
+        assert "const USERNAME_RULE = /^[a-z][a-z0-9_-]{0,31}$/;" in fakes
+        assert constants.LINUX_NAME_PATTERN.pattern == r"^[a-z][a-z0-9_-]{0,31}\Z"
+        for text in ("'Username already exists'", "'Change the name and the role one at a time'",
+                     "`Username already exists as '${taken.username}': names that differ only in letter case are one "
+                     "account for Samba`"):
+            assert text in fakes, text
+
+    def test_a_password_that_smb_refuses_renames_nothing(self, world):
+        world.make_active("alice", 70000, ALICE_PW)
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=COMMON_PW)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == COMMON_RULE
+        assert world.fake.calls == []
+        assert world.user("alice").username == "alice"
+
+    def test_a_turned_off_account_keeps_its_uid_under_the_new_name_without_a_password(self, world):
+        world.deactivated("alice", 70000)
+        world.add_share("media", ("alice", "read"))
+
+        response = world.put_user("alice", username="alice", new_username="alicia")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["smb"]["state"] == "password_needed"
+        assert world.fake.commands("usermod") == [["usermod", "-l", "alicia", "alice"]]
+        assert world.fake.passwd["alicia"].uid == 70000 and "alice" not in world.fake.passwd
+        assert world.fake.commands("smbpasswd") == []
+        row = world.row("alice")
+        assert (row.linux_name, row.uid, row.password_state) == ("alicia", 70000, "needed")
+        assert world.smb_audit() == [("alicia", "SMB account renamed from alice to alicia", "info")]
+
+    def test_an_allowed_account_without_a_host_account_changes_the_database_only(self, world):
+        world.make_allowed("alice")
+
+        response = world.put_user("alice", username="alice", new_username="alicia")
+
+        assert response.status_code == 200, response.text
+        assert world.fake.calls == []
+        assert world.row("alice").linux_name == "alicia"
+        assert response.json()["smb"]["state"] == "password_needed"
+
+    @pytest.mark.parametrize("new, reason", [
+        ("Alicia", "Use 1 to 32 characters: lowercase letters, digits, '_' and '-', starting with a letter"),
+        ("1alice", "Use 1 to 32 characters: lowercase letters, digits, '_' and '-', starting with a letter"),
+        ("root", "'root' is reserved for the system"),
+        ("s-1x", "Names that start with 's-' and a digit are reserved: Samba reads them as security identifiers (SIDs)"),
+    ])
+    def test_a_name_that_breaks_the_name_rule_is_refused_with_the_reason(self, world, new, reason):
+        world.make_active("alice", 70000, ALICE_PW)
+
+        response = world.put_user("alice", username="alice", new_username=new, password=SET_PW)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == f"Invalid username. {reason}"
+        assert world.fake.calls == []
+        assert world.user("alice").username == "alice"
+
+    def test_a_name_that_exists_is_refused(self, world):
+        response = world.put_user("bob", username="bob", new_username="alice")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Username already exists"
+        assert world.user("bob").username == "bob"
+
+    def test_a_name_that_exists_in_another_case_is_refused_with_the_reason(self, world):
+        world.add_user("Carol", "Carol-pass-2026")  # a name from before the name rule
+
+        response = world.put_user("bob", username="bob", new_username="carol")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "Username already exists as 'Carol': names that differ only in letter case are one account for Samba"
+        )
+        assert world.user("bob").username == "bob"
+
+    def test_a_name_from_before_the_name_rule_can_take_its_lower_case(self, world):
+        world.add_user("Carol", "Carol-pass-2026")
+
+        response = world.put_user("Carol", username="Carol", new_username="carol")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["smb"]["state"] == "off"
+        assert login(world, "carol", "Carol-pass-2026").status_code == 200
+
+    def test_the_same_name_renames_nothing(self, world):
+        world.make_active("alice", 70000, ALICE_PW)
+
+        response = world.put_user("alice", username="alice", new_username="alice")
+
+        assert response.status_code == 200
+        assert world.fake.calls == []
+        assert world.row("alice").password_state == "set"
+
+    def test_a_rename_names_the_current_username(self, world):
+        response = world.put_user("bob", new_username="robert")
+
+        assert response.status_code == 422
+        assert world.user("bob").username == "bob"
+
+    def test_a_rename_with_a_stale_username_is_refused(self, world):
+        response = world.put_user("bob", username="carol", new_username="robert")
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == f"User {world.ids['bob']} is now 'bob'; reload the page"
+        assert world.user("bob").username == "bob"
+
+    def test_the_name_and_the_role_change_one_at_a_time(self, world):
+        response = world.put_user("bob", username="bob", new_username="robert", is_admin=True)
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Change the name and the role one at a time"
+        assert (world.user("bob").username, world.user("bob").is_admin) == ("bob", False)
+
+    def test_a_regular_user_cannot_rename(self, world):
+        response = world.client.put(f"{API}/auth/users/{world.ids['bob']}", json={"username": "bob", "new_username": "x"},
+                                    headers=world.headers("alice"))
+
+        assert response.status_code == 403
+        assert world.user("bob").username == "bob"
+
+    def test_an_administrator_who_renames_themselves_signs_in_again_with_the_new_name(self, world):
+        own = world.headers("admin")
+
+        response = world.client.put(f"{API}/auth/users/{world.ids['admin']}",
+                                    json={"username": "admin", "new_username": "root2"}, headers=own)
+
+        assert response.status_code == 200, response.text
+        assert world.client.get(f"{API}/auth/me", headers=own).status_code == 401
+        assert login(world, "root2", ADMIN_PW).status_code == 200
+
+    def test_a_host_account_of_the_new_name_that_unos_did_not_create_refuses_the_rename(self, world):
+        world.make_active("alice", 70000, ALICE_PW)
+        world.fake.add_account("alicia", 1001, gid=1001, gecos="Alicia", home="/home/alicia", shell="/bin/bash")
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "The user alice was not renamed: a host account named alicia exists that UNOS did not create; "
+            "choose another name or remove it on the host (pdbedit -x -u alicia; userdel alicia)"
+        )
+        assert world.fake.mutating_calls() == []
+        assert world.user("alice").username == "alice"
+        assert world.row("alice").password_state == "set"
+
+    @pytest.mark.parametrize("taken, detail", [
+        ("group", "The user alice was not renamed: a host group named alicia exists; this name cannot be used for SMB"),
+        ("passdb", "The user alice was not renamed: a Samba account named Alicia exists that UNOS did not create; "
+                   "Samba treats it as alicia. Choose another name or remove it on the host (pdbedit -x -u Alicia)"),
+        ("stale", "The user alice was not renamed: a host account named alicia is left from an earlier SMB account; "
+                  "choose another name, or rename after the next start of UNOS, which removes it"),
+    ])
+    def test_a_name_that_the_host_has_refuses_the_rename(self, world, taken, detail):
+        world.make_active("alice", 70000, ALICE_PW)
+        if taken == "group":
+            world.fake.add_group("alicia", 1001)
+        elif taken == "passdb":
+            world.fake.add_passdb("Alicia", uid=1001)
+        else:
+            world.fake.add_account("alicia", 70001)
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == detail
+        assert world.fake.mutating_calls() == []
+        assert world.user("alice").username == "alice"
+
+    def test_an_account_still_in_use_is_not_renamed(self, world):
+        world.make_active("alice", 70000, ALICE_PW)
+        world.fake.busy["alice"] = 3
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "The user alice was not renamed: the host account alice is still in use by an SMB connection; "
+            "try again later"
+        )
+        assert len(world.fake.commands("usermod")) == 3
+        assert world.fake.passwd["alice"].uid == 70000 and "alicia" not in world.fake.passwd
+        assert world.fake.passdb["alice"]["password"] == ALICE_PW
+        assert world.user("alice").username == "alice"
+        assert world.row("alice").password_state == "set"
+
+    def test_a_failed_commit_renames_the_host_account_back(self, world, failing_commit):
+        world.make_active("alice", 70000, ALICE_PW)
+        failing_commit.fail_at = 1
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == DATABASE_BUSY
+        assert world.fake.commands("usermod") == [["usermod", "-l", "alicia", "alice"], ["usermod", "-l", "alice", "alicia"]]
+        assert world.fake.passwd["alice"].uid == 70000 and "alicia" not in world.fake.passwd
+        assert world.user("alice").username == "alice"
+        assert bcrypt.checkpw(ALICE_PW.encode(), world.user("alice").hashed_password.encode())
+        # Samba's password of the old name was removed before the commit: the row says so.
+        assert "alice" not in world.fake.passdb
+        row = world.row("alice")
+        assert (row.linux_name, row.uid, row.password_state) == ("alice", 70000, "needed")
+
+    def test_smb_that_cannot_be_turned_on_again_leaves_the_user_renamed_with_the_reason(self, world):
+        world.make_active("alice", 70000, ALICE_PW)
+        world.add_share("media", ("alice", "write"))
+        world.fake.fail[("smbpasswd",)] = (1, "tdb locked")
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+
+        assert response.status_code == 200, response.text
+        assert response.json()["username"] == "alicia"
+        assert response.json()["smb"]["state"] == "password_needed"
+        assert response.json()["warnings"] == [
+            "User renamed, but SMB access could not be turned on again: Samba did not accept the password: tdb locked"
+        ]
+        assert "alice" not in world.fake.passdb and "alicia" not in world.fake.passdb
+        # smb.conf no longer names the old name.
+        world.apply.assert_awaited()
+        assert login(world, "alicia", SET_PW).status_code == 200
+
+    def test_a_row_that_another_id_left_with_the_new_name_goes_in_the_renames_commit(self, world):
+        """A row of an earlier user of another id with the new name (SQLite enforces no foreign keys)
+        is deleted before the user's row takes the name: the row's UPDATE never meets it."""
+        world.make_active("alice", 70000, ALICE_PW)
+        with closing(sqlite3.connect(world.path)) as conn:
+            conn.execute("INSERT INTO smb_accounts (user_id, linux_name, uid, enabled, password_state, created_at) "
+                         "VALUES (99, 'alicia', NULL, 0, 'needed', CURRENT_TIMESTAMP)")
+            conn.commit()
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+
+        assert response.status_code == 200, response.text
+        assert world.fake.commands("usermod") == [["usermod", "-l", "alicia", "alice"]]
+        row = world.row("alice")
+        assert (row.linux_name, row.uid, row.password_state) == ("alicia", 70000, "set")
+        with closing(sqlite3.connect(world.path)) as conn:
+            assert conn.execute("SELECT user_id, linux_name FROM smb_accounts").fetchall() == [
+                (world.ids["alice"], "alicia")]
+
+    def test_the_uid_keeps_each_name_it_went_by(self, world):
+        """smb_uids keeps the first name of a uid (ADR-0353); smb_uid_names gets the old and the new
+        name of every rename of an account with a uid, in the rename's commit (ADR-0368)."""
+        world.make_active("alice", 70000, ALICE_PW)
+
+        assert world.put_user("alice", username="alice", new_username="alicia", password=SET_PW).status_code == 200
+        assert world.put_user("alice", username="alicia", new_username="ally", password=NEW_PW).status_code == 200
+        world.make_allowed("bob")
+        assert world.put_user("bob", username="bob", new_username="robert").status_code == 200
+
+        with closing(sqlite3.connect(world.path)) as conn:
+            assert conn.execute("SELECT uid, linux_name FROM smb_uids").fetchall() == [(70000, "alice")]
+            assert conn.execute("SELECT uid, linux_name FROM smb_uid_names ORDER BY linux_name").fetchall() == [
+                (70000, "alice"), (70000, "alicia"), (70000, "ally")]
+
+    def test_a_rename_records_a_uid_that_smb_uids_lacks_under_the_old_name(self, world):
+        """A row from before smb_uids (ADR-0353) that no start recorded yet."""
+        world.deactivated("alice", 70000)
+        with closing(sqlite3.connect(world.path)) as conn:
+            conn.execute("DELETE FROM smb_uids")
+            conn.commit()
+
+        assert world.put_user("alice", username="alice", new_username="alicia").status_code == 200
+
+        with closing(sqlite3.connect(world.path)) as conn:
+            assert conn.execute("SELECT uid, linux_name FROM smb_uids").fetchall() == [(70000, "alice")]
+
+    def test_a_name_that_a_rename_freed_shows_its_new_holder_none_of_the_earlier_sign_ins(self, world):
+        """The history is kept by name (ADR-0263): a user who takes a name sees the attempts on it from
+        the moment they took it, not the sign-ins of its earlier holder (ADR-0368)."""
+        with Session(world.engine) as session:
+            for name in ("alice", "bob"):
+                session.get(User, world.ids[name]).created_at = datetime(2025, 1, 1)
+            session.add_all([
+                LoginAttempt(username="alice", ip_address="10.0.0.2", success=True, timestamp=datetime(2026, 1, 5, 8)),
+                LoginAttempt(username="bob", ip_address="10.0.0.3", success=True, timestamp=datetime(2026, 1, 5, 9)),
+            ])
+            session.commit()
+
+        assert world.put_user("alice", username="alice", new_username="alicia").status_code == 200
+        assert world.put_user("bob", username="bob", new_username="alice").status_code == 200
+        world.ids["alicia"], world.ids["alice"] = world.ids["alice"], world.ids["bob"]
+        assert login(world, "alice", BOB_PW).status_code == 200
+
+        history = world.client.get(f"{API}/security/login-history", headers=world.headers("alice")).json()
+        assert [(a["username"], a["ip_address"]) for a in history["attempts"]] == [("alice", "testclient")]
+        assert (history["total"], history["success_count"]) == (1, 1)
+        everyone = world.client.get(f"{API}/security/login-history?username=alice", headers=world.headers("admin"))
+        assert everyone.json()["total"] == 2  # administrators see every attempt on the name
 
 
 # ---------------------------------------------------------------------------

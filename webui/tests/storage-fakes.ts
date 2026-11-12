@@ -327,6 +327,54 @@ export async function fakeBlockDevices(page: Page): Promise<(devices: string[]) 
   };
 }
 
+/** A pool's scrub as /ws/v1/events sends administrators: its status, or why it could not be read. */
+export type FakeScrubUpdate = FakeScrubStatus | { pool: string; error: string };
+
+/** The fake /ws/v1/events of fakeScrubEvents. */
+export interface FakeScrubEvents {
+  /** Send one scrubs message, as the server does whenever the status of a scrub that runs changed. */
+  (scrubs: FakeScrubUpdate[]): Promise<void>;
+  /**
+   * Close the socket as a supervisor that restarts does (1012), and wait until the page has signed
+   * in again: the new socket follows no scrub until one is seen running.
+   */
+  restart(): Promise<void>;
+}
+
+/**
+ * Stand in for /ws/v1/events with the scrubs that run (supervisor/src/storage/scrubs.py, ADR-0367):
+ * the fake answers the page's auth message with auth_ok; the function returned sends one scrubs
+ * message. The page signs in again after a reload or a restart: the function sends on the latest
+ * socket.
+ */
+export async function fakeScrubEvents(page: Page): Promise<FakeScrubEvents> {
+  let socket: WebSocketRoute | null = null;
+  let signIns = 0;
+  await page.routeWebSocket('**/ws/v1/events', (ws) => {
+    ws.onMessage((message) => {
+      if (JSON.parse(String(message)).type !== 'auth') return;
+      ws.send(JSON.stringify({ type: 'auth_ok' }));
+      socket = ws;
+      signIns += 1;
+    });
+  });
+  const signedIn = () =>
+    expect.poll(() => socket !== null, { message: 'the page signed in to the events socket' }).toBe(true);
+  const send = async (scrubs: FakeScrubUpdate[]) => {
+    await signedIn();
+    socket!.send(JSON.stringify({ type: 'scrubs', data: scrubs }));
+  };
+  const restart = async () => {
+    await signedIn();
+    const before = signIns;
+    const closing = socket!;
+    socket = null;
+    await closing.close({ code: 1012, reason: 'Service Restart' });
+    await expect.poll(() => signIns, { message: 'the page signed in to the events socket again' }).toBe(before + 1);
+  };
+  return Object.assign(send, { restart });
+}
+
 /** Serve the disks and pools; returns the list of write requests made. */
 export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {}): Promise<RecordedWrite[]> {
   const disks = options.disks ?? (() => FAKE_DISKS);

@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-01-25
 area: architecture
 decided-by: owner
+superseded-by: ADR-0363
 ---
 
 # ADR-0006: Real-time data goes over WebSocket, never HTTP polling
 
 ## Context
+
+Superseded by ADR-0363: Repair permissions runs as a background job whose progress and end the events socket sends; the live-data rules stay.
 
 The dashboard shows CPU, memory, network, disk I/O and process data that change every second, and container logs grow while they are watched. Polling HTTP endpoints with timers from every open page multiplies the requests and lets each page compute rates its own way. On 2026-01-25 the web UI moved to a WebSocket-first design.
 

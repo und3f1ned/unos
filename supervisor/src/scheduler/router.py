@@ -74,6 +74,8 @@ from ..security.validators import (
 from ..snapshots.router import AUTO_SNAPSHOT_PREFIX, delete_snapshot_by_id, make_snapshot, utc_stamp
 from ..storage import disks as storage_disks
 from ..storage import pools as storage_pools
+from ..storage import scrubs as storage_scrubs
+from ..storage.schemas import ScrubStatus
 from .schemas import ScheduledTask, ScheduledTaskInfo, TaskRun, TaskType, ScheduleFrequency
 
 router = APIRouter(
@@ -757,6 +759,8 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
                 )
             if result.returncode != 0:
                 return False, result.stderr
+            # The Storage page follows it over the events socket (ADR-0367).
+            storage_scrubs.note(task.target_pool, ScrubStatus(pool=task.target_pool, status="running"))
             return True, "Scrub started"
 
         elif task.task_type == TaskType.SMART_TEST:

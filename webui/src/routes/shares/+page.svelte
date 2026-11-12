@@ -14,6 +14,7 @@
 		type NfsExport,
 		type NfsExportClient,
 		type NfsServiceStatus,
+		type RepairResult,
 		type SharePath,
 		type SmbServiceStatus,
 		type SmbShare
@@ -27,6 +28,7 @@
 		ShareFormModal
 	} from '$lib/components/shares';
 	import { t } from '$lib/i18n';
+	import { isRepairOf, repairJob } from '$lib/stores/repair';
 
 	// i18n-ignore: the names of the protocols, the same in every language
 	const tabs = [
@@ -77,6 +79,20 @@
 		host = window.location.hostname;
 		void loadAll();
 	});
+
+	// A repair of a share's permissions runs in the background (ADR-0363): its card says so, and
+	// when the events socket says that it ended, the shares are read again (their permissions).
+	let followedRepair: RepairResult | null = null;
+	$: followRepair($repairJob);
+
+	function followRepair(job: RepairResult | null) {
+		const ended =
+			followedRepair?.state === 'running' &&
+			job?.state !== 'running' &&
+			isRepairOf(job, followedRepair.share);
+		followedRepair = job;
+		if (ended) void reloadSmb();
+	}
 
 	function messageOf(e: unknown): string {
 		return e instanceof Error ? e.message : String(e);
@@ -437,6 +453,7 @@
 								{share}
 								{host}
 								dismissing={dismissing[share.name] ?? false}
+								repairing={$repairJob?.state === 'running' && isRepairOf($repairJob, share.name)}
 								on:edit={(event) => openEdit(event.detail)}
 								on:repair={(event) => (repairing = event.detail.name)}
 								on:delete={(event) => openDelete(event.detail)}
@@ -535,7 +552,7 @@
 {/if}
 
 {#if repairing}
-	<RepairPermissionsModal name={repairing} on:close={() => (repairing = null)} on:repaired={reloadSmb} />
+	<RepairPermissionsModal name={repairing} on:close={() => (repairing = null)} />
 {/if}
 
 <Modal

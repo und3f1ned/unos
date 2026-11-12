@@ -47,6 +47,8 @@ class RestoreSnapshot:
     next_uid: int = SMB_UID_MIN
     # smb_uids of the live database: (uid, linux name) of every uid handed out on this NAS (ADR-0353).
     handed_out: tuple[tuple[int, str], ...] = ()
+    # smb_uid_names of the live database: (uid, linux name) of each name a uid went by (ADR-0368).
+    uid_names: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass(frozen=True)

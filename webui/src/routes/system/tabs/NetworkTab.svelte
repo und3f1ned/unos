@@ -209,6 +209,8 @@
   function syncTicker(active: boolean) {
     now = Date.now();
     if (active && !ticker) {
+      // polling-ignore: a countdown; when a disable's time has run out, the interfaces are read
+      // once to see whether the host turned it back on (ADR-0365).
       ticker = setInterval(onTick, 1000);
     } else if (!active && ticker) {
       clearInterval(ticker);

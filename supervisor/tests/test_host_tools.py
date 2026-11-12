@@ -1,6 +1,7 @@
 """host.missing_host_binaries: one host command lists the programs the host lacks.
 
-Also how host.run_on_host decodes the output of a command. These tests run
+Also how host.run_on_host decodes the output of a command, and how host.stream_on_host reads a
+command while it runs and ends it. These tests run
 the commands locally (UNOS_HOST_EXEC=local), so they need /bin/sh but no
 nsenter and no privileges.
 """
@@ -9,6 +10,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -153,6 +155,7 @@ def test_host_tools_list_the_smb_account_programs():
         "groupadd": "passwd",
         "useradd": "passwd",
         "userdel": "passwd",
+        "usermod": "passwd",
         "smbpasswd": "samba-common-bin",
         "pdbedit": "samba",
         "smbstatus": "samba",
@@ -167,7 +170,7 @@ def test_the_account_tool_check_is_one_host_command(host_commands):
 
     assert missing is not None
     [cmd] = host_commands
-    assert cmd[3:] == ["sh", "getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus"]
+    assert cmd[3:] == ["sh", "getent", "groupadd", "useradd", "userdel", "usermod", "smbpasswd", "pdbedit", "smbstatus"]
 
 
 # ---------------------------------------------------------------------------
@@ -195,3 +198,77 @@ def test_errors_reach_the_async_wrapper_too():
     result = asyncio.run(host.run_on_host_async(NOT_UTF8_OUTPUT, errors="replace"))
 
     assert result.stdout == "ID 300 path x�\n"
+
+
+# host.stream_on_host: a command whose output is read while it runs, such as journalctl --follow
+# (ADR-0366), ended by HostStream.stop with its process group.
+
+
+def _gone(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_a_stream_gives_each_line_as_it_comes_and_stop_ends_what_the_command_forked():
+    """nsenter forks for --pid and does not pass a signal on (ADR-0258): stop ends the whole group,
+    as here the sleep that sh forked."""
+    async def follow():
+        stream = await host.stream_on_host(["sh", "-c", 'echo first; sleep 300 & echo "$!"; wait'])
+        first = await stream.readline()
+        forked = int(await stream.readline())
+        await stream.stop()
+        return first, forked
+
+    first, forked = asyncio.run(follow())
+
+    assert first == "first"
+    assert _gone(forked), "the forked command still runs"
+
+
+def test_a_stream_that_ends_gives_none_then_its_status_and_error_output():
+    async def follow():
+        stream = await host.stream_on_host(["sh", "-c", "printf 'out\\377\\n'; echo why >&2; exit 3"])
+        lines = [await stream.readline(), await stream.readline()]
+        result = await stream.result()
+        await stream.stop()  # nothing left to end
+        return lines, result
+
+    lines, result = asyncio.run(follow())
+
+    assert lines == ["out\N{REPLACEMENT CHARACTER}", None]
+    assert result == host.HostResult(3, "", "why\n")
+
+
+def test_a_line_over_the_limit_is_dropped(monkeypatch):
+    monkeypatch.setattr(host, "STREAM_LINE_LIMIT", 16)
+
+    async def follow():
+        stream = await host.stream_on_host(["sh", "-c", "printf '%040d\\nok\\n' 0"])
+        lines = [await stream.readline(), await stream.readline()]
+        await stream.stop()
+        return lines
+
+    assert asyncio.run(follow()) == ["ok", None]
+
+
+def test_a_stream_runs_through_nsenter_by_default(monkeypatch):
+    monkeypatch.delenv("UNOS_HOST_EXEC")
+    started = []
+
+    async def create_subprocess_exec(*args, **kwargs):
+        started.append((args, kwargs))
+        raise FileNotFoundError("nsenter")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+    with pytest.raises(OSError):
+        asyncio.run(host.stream_on_host(["journalctl", "--follow"]))
+
+    ((args, kwargs),) = started
+    assert list(args) == [*host._NSENTER_PREFIX, "journalctl", "--follow"]
+    assert kwargs["start_new_session"] is True

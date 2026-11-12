@@ -35,13 +35,19 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 ## Data
 
 - Live data comes from the store `stats` of `$lib/stores/stats`, with `wsConnected` and
-  `wsForbidden`, which `/ws/v1/events` feeds every 2 seconds (ADR-0006); a page reads the objects
-  of the message it needs (`$stats.cpu`, `$stats.network.interfaces`). Rates come from the
-  server; a page writes sizes and rates with the units of its catalog, as `NetworkTab.svelte` and
-  `MonitorTab.svelte` do (ADR-0287).
-- The `setInterval` polling in `LogsTab.svelte` and the storage page predates that rule: new live
-  data comes over the WebSocket, as a container's log does (`streamContainerLogs` of
-  `$lib/api/containers.ts`, ADR-0255).
+  `wsForbidden`, which `/ws/v1/events` feeds every 2 seconds (ADR-0363); a page reads the objects
+  of the message it needs (`$stats.cpu`, `$stats.network.interfaces`). The same socket fills the
+  stores `problems` and `repairJob` (the running or last repair of a share's permissions) for
+  administrators. Rates come from the server; a page writes sizes and rates with the units of its
+  catalog, as `NetworkTab.svelte` and `MonitorTab.svelte` do (ADR-0287).
+- No page polls the API: other live data comes over a WebSocket of its own, as a container's log
+  (`streamContainerLogs` of `$lib/api/containers.ts`, ADR-0255) and the journal of System > Logs'
+  Auto do (`streamLogEntries` of `$lib/api/logs.ts`, ADR-0366), or as a message of
+  `/ws/v1/events` into a store, as the scrubs that run do (`$lib/stores/scrubs`, ADR-0367).
+  `scripts/polling-check.mjs`, which `supervisor/tests/test_webui_polling.py` runs, fails for a
+  `setInterval` whose callback reaches the API, also through an exported function of another
+  module under `src/`, or changes a store or a variable that an API-reaching `$:` statement reads; `// polling-ignore: <reason>` above it exempts a
+  countdown that asks once when its time has run out (ADR-0365).
 - A WebSocket authenticates with its first message, `{"type": "auth", "token": ...}`; tokens stay
   out of URLs (ADR-0031). Close code 4401 ends the session, 4403 means forbidden.
 - HTTP goes through `$lib/api/client.ts`, one module per API area in `$lib/api/`: `api.get`,

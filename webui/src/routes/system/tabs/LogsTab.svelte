@@ -1,6 +1,15 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { getLogEntries, getLogSources, type LogEntry, type LogPriority, type LogSource } from "$lib/api/logs";
+  import {
+    getLogEntries,
+    getLogSources,
+    streamLogEntries,
+    type JournalStream,
+    type LogEntry,
+    type LogPriority,
+    type LogQueryParams,
+    type LogSource
+  } from "$lib/api/logs";
   import { Button, Card, Badge, Alert, EmptyState, Select } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import {
@@ -104,8 +113,12 @@
     { value: "1000", label: "1000" }
   ];
 
+  // Auto: the entries come from the journal socket, the newest ones of the filters and then each
+  // new one as the journal gets it (ADR-0366); nothing asks GET /entries again.
   let autoRefresh = false;
-  let refreshInterval: ReturnType<typeof setInterval> | null = null;
+  let stream: JournalStream | null = null;
+  // Why Auto stopped by itself: the connection was lost, or the server refused it (4403).
+  let autoStopped: "" | "lost" | "forbidden" = "";
   let showFilters = true;
   // The number of the newest request: the answer of an older one (a source picked
   // before, an earlier refresh) arrives too late to be shown.
@@ -127,9 +140,7 @@
   });
 
   onDestroy(() => {
-    if (refreshInterval) {
-      clearInterval(refreshInterval);
-    }
+    stream?.close();
   });
 
   async function loadSources() {
@@ -141,20 +152,31 @@
     }
   }
 
-  // The entries as the server lists them: the newest first (ADR-0257).
+  // The filters of a request. The limit is read here, not from a $: statement, which would update
+  // only after the call that changed it.
+  function query(): LogQueryParams {
+    return {
+      source,
+      limit: Number(limitStr),
+      priority: priority || undefined,
+      search: search || undefined,
+      since: since || undefined
+    };
+  }
+
+  // The entries as the server lists them: the newest first (ADR-0366); with Auto, from the
+  // journal socket.
   async function loadLogs() {
     const request = ++latestRequest;
     loading = true;
     error = "";
+    autoStopped = "";
+    if (autoRefresh) {
+      follow();
+      return;
+    }
     try {
-      const result = await getLogEntries({
-        source,
-        // Read here, not from a $: statement, which would update only after this call.
-        limit: Number(limitStr),
-        priority: priority || undefined,
-        search: search || undefined,
-        since: since || undefined
-      });
+      const result = await getLogEntries(query());
       if (request !== latestRequest) return;
       entries = result.entries;
     } catch (e) {
@@ -175,8 +197,8 @@
     loadLogs();
   }
 
-  // A search waits for the answer that is still coming, like Auto: asking again
-  // would only add another journalctl on the host behind it (ADR-0258).
+  // A search waits for the answer that is still coming: asking again would only
+  // add another journalctl on the host behind it (ADR-0258).
   function handleSearch() {
     if (loading) return;
     loadLogs();
@@ -195,17 +217,42 @@
     loadLogs();
   }
 
+  /** Open the journal socket for the filters of now, in place of the one before. */
+  function follow() {
+    stream?.close();
+    const limit = Number(limitStr);
+    stream = streamLogEntries(query(), {
+      onEntries(list) {
+        entries = list;
+        loading = false;
+      },
+      onEntry(entry) {
+        // The newest first, and no more than the limit.
+        entries = [entry, ...entries].slice(0, limit);
+      },
+      onError(message) {
+        // As an error of GET /entries: no entries belong to the request that failed.
+        entries = [];
+        error = message;
+      },
+      onEnd(reason) {
+        stream = null;
+        autoRefresh = false;
+        loading = false;
+        if (!error) autoStopped = reason === "forbidden" ? "forbidden" : "lost";
+      }
+    });
+  }
+
   function toggleAutoRefresh() {
     autoRefresh = !autoRefresh;
     if (autoRefresh) {
-      refreshInterval = setInterval(() => {
-        // A slow answer, such as a search through a large journal, is waited
-        // for: asking again would start another journalctl on the host.
-        if (!loading) loadLogs();
-      }, 5000);
-    } else if (refreshInterval) {
-      clearInterval(refreshInterval);
-      refreshInterval = null;
+      loadLogs();
+    } else {
+      // The entries stay as they are.
+      stream?.close();
+      stream = null;
+      loading = false;
     }
   }
 
@@ -445,7 +492,11 @@
         {#if autoRefresh}
           <span class="text-xs text-success flex items-center gap-1">
             <span class="w-2 h-2 bg-success rounded-full animate-pulse"></span>
-            {$t("logs.autoRefreshing")}
+            {$t("logs.following")}
+          </span>
+        {:else if autoStopped}
+          <span class="text-xs text-warning">
+            {$t(autoStopped === "forbidden" ? "logs.autoForbidden" : "logs.autoLost")}
           </span>
         {/if}
       </div>

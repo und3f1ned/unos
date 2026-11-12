@@ -45,6 +45,7 @@ from .auth.router import router as auth_router
 from .system.router import router as system_router
 from .storage.router import router as storage_router
 from .shares.router import router as shares_router
+from .shares import repair_router
 from .shares.repair_router import router as shares_repair_router
 from .containers.router import router as containers_router
 from .apps.router import router as apps_router
@@ -186,6 +187,9 @@ async def lifespan(app: FastAPI):
         # The copies and restores of the off-device copy that Run now and Restore files started end
         # with their restic, and are recorded as stopped (ADR-0337); the Scheduler's end with it.
         await stop_offsite()
+        # A running repair of a share's permissions stops before its next entry and writes its audit
+        # entry, for which the stop waits a few seconds (ADR-0363).
+        await asyncio.to_thread(repair_router.stop_for_shutdown)
         # Last, when nothing uses the database any more: its last commits go from unos.db-wal
         # into unos.db (ADR-0306).
         await checkpoint_db()

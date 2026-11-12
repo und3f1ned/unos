@@ -18,6 +18,7 @@ import {
   SWAPPED_DISKS,
   dockerUnavailable,
   fakeBlockDevices,
+  fakeScrubEvents,
   fakeStorageApi,
   mountedElsewhere,
   noScrub,
@@ -729,8 +730,9 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
 
 // storage.scrub: what btrfs reports while a scrub runs and after it (GET, POST and
 // DELETE /storage/pools/{name}/scrub; the values are the supervisor's parse of
-// `btrfs scrub status`, test_storage.py TestScrubStatus). The page asks again
-// every 2 seconds while the scrub runs.
+// `btrfs scrub status`, test_storage.py TestScrubStatus). While the scrub runs, the
+// page follows it over the events socket, which sends its status whenever it changed
+// (webui.no-http-polling, ADR-0367): the page asks for it only when it loads.
 test.describe('Scrub (fake data)', () => {
   const GIB = 1024 ** 3;
   const STARTED = 'Fri Nov  6 10:00:00 2026';
@@ -739,8 +741,19 @@ test.describe('Scrub (fake data)', () => {
   });
   const running = (scrubbed: number, duration: number) =>
     scrub('running', { bytes_scrubbed: scrubbed, duration, rate: scrubbed ? 16 * 1024 ** 2 : 0 });
+  // The page's requests for the status of a scrub.
+  const statusReads = (page: Page) => {
+    let reads = 0;
+    page.on('request', (request) => {
+      if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/v1/storage/pools/e2e_data/scrub') {
+        reads += 1;
+      }
+    });
+    return () => reads;
+  };
 
   test('a scrub shows its progress and, at the end, its result', async ({ authenticatedPage: page }) => {
+    await page.clock.install();
     let host = noScrub('e2e_data');
     const writes = await fakeStorageApi(page, {
       pools: [HEALTHY_POOL],
@@ -749,6 +762,8 @@ test.describe('Scrub (fake data)', () => {
         return host;
       },
     });
+    const sendScrubs = await fakeScrubEvents(page);
+    const reads = statusReads(page);
     await page.goto('/storage');
 
     const card = poolCard(page, 'e2e_data');
@@ -762,7 +777,7 @@ test.describe('Scrub (fake data)', () => {
     await expect(start).toHaveCount(0);
     expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/scrub', body: {} }]);
 
-    host = running(GIB, 64);
+    await sendScrubs([running(GIB, 64)]);
     const progress = card.getByRole('progressbar', { name: 'Scrub progress' });
     await expect(progress).toHaveAttribute('aria-valuenow', '25');
     await expect(card.getByText('1.0 GB / 4.0 GB')).toBeVisible();
@@ -770,31 +785,32 @@ test.describe('Scrub (fake data)', () => {
     await expect(card.getByText('16.0 MB/s')).toBeVisible();
     await expect(card.getByText('0:01:04')).toBeVisible();
 
-    host = running(3 * GIB, 192);
+    // Time passes: the page does not ask for the status.
+    await page.clock.fastForward('01:00');
+    await page.waitForTimeout(300);
+    await expect(progress).toHaveAttribute('aria-valuenow', '25');
+    expect(reads()).toBe(1);
+
+    await sendScrubs([running(3 * GIB, 192)]);
     await expect(progress).toHaveAttribute('aria-valuenow', '75');
 
-    host = scrub('finished', { duration: 256, rate: 16 * 1024 ** 2 });
+    await sendScrubs([scrub('finished', { duration: 256, rate: 16 * 1024 ** 2 })]);
     await expect(card.getByText('Last scrub: No errors')).toBeVisible();
     await expect(card.getByText(STARTED)).toBeVisible();
     await expect(card.getByText('Scrub in progress')).toHaveCount(0);
     await expect(progress).toHaveCount(0);
     await expect(start).toBeVisible();
     expect(writes).toHaveLength(1);
+    expect(reads()).toBe(1);
   });
 
   test('cancel stops a running scrub, and the result says it was cancelled', async ({ authenticatedPage: page }) => {
-    let host = running(2 * GIB, 128);
-    let cancelled = 0;
     const writes = await fakeStorageApi(page, {
       pools: [HEALTHY_POOL],
-      scrubStatus: (_pool, method) => {
-        if (method === 'DELETE') cancelled += 1;
-        // btrfs scrub cancel has returned; for a moment btrfs still reports the scrub running.
-        if (cancelled === 1 && method === 'DELETE') return host;
-        if (cancelled) host = scrub('aborted', { duration: 130, rate: 16 * 1024 ** 2 });
-        return host;
-      },
+      // btrfs scrub cancel has returned; for a moment btrfs still reports the scrub running.
+      scrubStatus: (_pool, method) => (method === 'DELETE' ? running(2.5 * GIB, 160) : running(2 * GIB, 128)),
     });
+    const sendScrubs = await fakeScrubEvents(page);
     await page.goto('/storage');
 
     const card = poolCard(page, 'e2e_data');
@@ -802,45 +818,46 @@ test.describe('Scrub (fake data)', () => {
     await expect(card.getByText('50.0%')).toBeVisible();
 
     await card.getByRole('button', { name: 'Cancel Scrub' }).click();
-    // The page asks again until btrfs no longer reports the scrub as running.
+    // The answer of the cancel: still running.
+    await expect(card.getByText('62.5%')).toBeVisible();
+    await expect(card.getByText('Scrub in progress')).toBeVisible();
+    expect(writes).toEqual([{ method: 'DELETE', path: '/pools/e2e_data/scrub', body: null }]);
+    // The events socket sends it once btrfs no longer reports the scrub as running.
+    await sendScrubs([scrub('aborted', { duration: 130, rate: 16 * 1024 ** 2 })]);
     await expect(card.getByText('Last scrub: cancelled before it finished')).toBeVisible();
     await expect(card.getByText(/No errors/)).toHaveCount(0);
     await expect(card.getByText('Scrub in progress')).toHaveCount(0);
     await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeVisible();
-    expect(writes).toEqual([{ method: 'DELETE', path: '/pools/e2e_data/scrub', body: null }]);
+    expect(writes).toHaveLength(1);
   });
 
   test('a scrub status that cannot be read says why instead of a stale progress', async ({
     authenticatedPage: page,
   }) => {
-    // The supervisor's 500 when btrfs scrub status does not answer (storage/router.py _scrub).
+    // The supervisor's 500 when btrfs scrub status does not answer (storage/scrubs.py failure).
     const unreadable = 'btrfs scrub status did not answer within 60 seconds: pool e2e_data may not be responding';
-    let fails = false;
     let cancelled = false;
     const writes = await fakeStorageApi(page, {
-      pools: [HEALTHY_POOL],
-      scrubStatus: (_pool, method) => {
+      pools: [HEALTHY_POOL, { ...HEALTHY_POOL, name: 'e2e_other', uuid: '00000000-0000-4000-8000-0000000000e8',
+        mountpoint: '/mnt/pools/e2e_other' }],
+      scrubStatus: (pool, method) => {
+        if (pool !== 'e2e_data') return noScrub(pool);
         if (method === 'DELETE') cancelled = true;
         return cancelled ? scrub('aborted', { duration: 70 }) : running(GIB, 64);
       },
     });
-    // Registered after fakeStorageApi, so it sees the status requests first.
-    await page.route(
-      (url) => url.pathname === '/api/v1/storage/pools/e2e_data/scrub',
-      (route) =>
-        fails && route.request().method() === 'GET'
-          ? route.fulfill({ status: 500, json: { detail: unreadable } })
-          : route.fallback(),
-    );
+    const sendScrubs = await fakeScrubEvents(page);
     await page.goto('/storage');
 
     const card = poolCard(page, 'e2e_data');
     await expect(card.getByText('Scrub in progress')).toBeVisible();
-    fails = true;
+    await sendScrubs([{ pool: 'e2e_data', error: unreadable }]);
     await expect(card.getByText('Could not read the scrub status')).toBeVisible();
     await expect(card.getByText(unreadable)).toBeVisible();
     await expect(card.getByText('Scrub in progress')).toHaveCount(0);
     await expect(card.getByRole('progressbar', { name: 'Scrub progress' })).toHaveCount(0);
+    // The other pool's card is not about it.
+    await expect(poolCard(page, 'e2e_other').getByText('Could not read the scrub status')).toHaveCount(0);
     // It was running when it was last read: it can still be cancelled.
     await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toHaveCount(0);
     await card.getByRole('button', { name: 'Cancel Scrub' }).click();
@@ -849,11 +866,59 @@ test.describe('Scrub (fake data)', () => {
     expect(writes).toEqual([{ method: 'DELETE', path: '/pools/e2e_data/scrub', body: null }]);
 
     // The next load reads it again.
-    fails = false;
     cancelled = false;
     await page.reload();
     await expect(card.getByText('Scrub in progress')).toBeVisible();
     await expect(card.getByText('Could not read the scrub status')).toHaveCount(0);
+  });
+
+  test('after the events socket connects again, the page reads each scrub it shows running or unreadable', async ({
+    authenticatedPage: page,
+  }) => {
+    // A supervisor that restarted follows none of the scrubs it followed (ADR-0367): the page asks
+    // once for each one it shows running or could not read, and that read makes the server follow
+    // it again.
+    const unreadable = 'btrfs scrub status did not answer within 60 seconds: pool e2e_slow may not be responding';
+    const mounted = (name: string, uuid: string) => ({ ...HEALTHY_POOL, name, uuid, mountpoint: `/mnt/pools/${name}` });
+    let restarted = false;
+    await fakeStorageApi(page, {
+      pools: [
+        HEALTHY_POOL,
+        mounted('e2e_slow', '00000000-0000-4000-8000-0000000000e8'),
+        mounted('e2e_idle', '00000000-0000-4000-8000-0000000000e9'),
+      ],
+      scrubStatus: (pool) => {
+        if (pool === 'e2e_idle') return noScrub(pool);
+        // e2e_data's scrub ended while the supervisor restarted; e2e_slow's still runs.
+        if (pool === 'e2e_data' && restarted) return scrub('finished', { duration: 256 });
+        return { ...running(GIB, 64), pool };
+      },
+    });
+    const events = await fakeScrubEvents(page);
+    const reads: Record<string, number> = {};
+    page.on('request', (request) => {
+      const pool = new URL(request.url()).pathname.match(/^\/api\/v1\/storage\/pools\/([^/]+)\/scrub$/)?.[1];
+      if (request.method() === 'GET' && pool) reads[pool] = (reads[pool] ?? 0) + 1;
+    });
+    await page.goto('/storage');
+
+    const data = poolCard(page, 'e2e_data');
+    const slow = poolCard(page, 'e2e_slow');
+    await expect(data.getByText('Scrub in progress')).toBeVisible();
+    await expect(slow.getByText('Scrub in progress')).toBeVisible();
+    await events([{ pool: 'e2e_slow', error: unreadable }]);
+    await expect(slow.getByText('Could not read the scrub status')).toBeVisible();
+    expect(reads).toEqual({ e2e_data: 1, e2e_slow: 1, e2e_idle: 1 });
+
+    restarted = true;
+    await events.restart();
+    await expect(data.getByText('Last scrub: No errors')).toBeVisible();
+    await expect(data.getByText('Scrub in progress')).toHaveCount(0);
+    await expect(slow.getByText('Could not read the scrub status')).toHaveCount(0);
+    await expect(slow.getByText('Scrub in progress')).toBeVisible();
+    await expect(poolCard(page, 'e2e_idle').getByText(/Last scrub|Scrub in progress/)).toHaveCount(0);
+    await page.waitForTimeout(300);
+    expect(reads).toEqual({ e2e_data: 2, e2e_slow: 2, e2e_idle: 1 });
   });
 
   test('the last scrub says how many errors it found, and whether it was stopped', async ({

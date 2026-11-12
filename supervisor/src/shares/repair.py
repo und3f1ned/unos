@@ -11,11 +11,12 @@ share or would open something to the group that is not meant for it:
   outside the share), FIFOs, sockets and device nodes;
 - other filesystems: btrfs subvolumes (volumes, snapshots) and every mount
   point inside the share, also a bind mount of the same filesystem, which has
-  the same st_dev. The mount points of /proc/self/mountinfo are skipped by
-  their path, without even an lstat, which would reach into the mounted
-  filesystem (a stalled FUSE or NFS mount blocks it); and every opened entry
-  must be on the mount of the share's folder, by the mount ID of its
-  descriptor, which a folder renamed during the walk cannot change;
+  the same st_dev. The mount points of /proc/self/mountinfo, which the walk
+  reads again with each progress report, are skipped by their path, without
+  even an lstat, which would reach into the mounted filesystem (a stalled
+  FUSE or NFS mount blocks it); and every opened entry must be on the mount
+  of the share's folder, by the mount ID of its descriptor, which a folder
+  renamed during the walk cannot change;
 - ``.snapshots`` folders;
 - private entries, which only their owner can use (no group or other bits,
   such as a 0600 key or a 0700 folder); a private folder is not entered;
@@ -37,14 +38,20 @@ as "raced". At most ``max_depth + 1`` folder descriptors are open at a time.
 
 Linux only (os.O_PATH, /proc). Every write goes to the share's pool, none to
 the system disk; a second run writes nothing.
+
+repair_router.py runs it as a background job (ADR-0363): it reports its
+progress about once a second, stops when asked, and stops by itself only
+after 24 hours. Both are checked between entries: no stop ends a call that
+blocks (a disk that stalls), until that call returns.
 """
 
 import errno
 import os
 import re
 import stat
+import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -68,9 +75,15 @@ SKIP_REASONS = (
 # At most this many entries in skipped_paths and in error_samples.
 MAX_SAMPLES = 20
 
-INCOMPLETE_MESSAGE = (
-    "Stopped after 4 minutes; run it again to continue (already repaired entries are skipped quickly)"
-)
+# The bound of a walk (ADR-0363): far more than a share of tens of millions of entries takes, and
+# still an end for a walk that never finishes, such as one in a tree that an app fills as fast as
+# it is walked, which would otherwise hold the one repair that may run.
+TIME_LIMIT_SECONDS = 24 * 3600
+# How often the walk reports its progress; the events socket sends it every 2 seconds.
+PROGRESS_INTERVAL_SECONDS = 1.0
+_AGAIN = "run it again to continue (already repaired entries are skipped quickly)"
+INCOMPLETE_MESSAGE = f"Stopped after 24 hours; {_AGAIN}"
+STOPPED_MESSAGE = f"Stopped by an administrator; {_AGAIN}"
 
 # A file its owner may execute keeps that as group execute: 0o770.
 EXECUTABLE_FILE_MODE = constants.SHARE_FILE_MODE | 0o110
@@ -86,10 +99,12 @@ _OCTAL_ESCAPE = re.compile(rb"\\([0-7]{3})")
 
 
 class RepairResult(BaseModel):
+    """A repair: while it runs (state "running", finished_at None, the counts so far), then its result."""
+
     share: str
-    state: Literal["done", "incomplete", "failed"]
+    state: Literal["running", "done", "incomplete", "failed"]
     started_at: datetime
-    finished_at: datetime
+    finished_at: datetime | None
     visited: int
     changed: int
     skipped: dict[str, int]      # keys: other_filesystem, snapshots, symlink, special, hardlink, private, too_deep, raced
@@ -103,18 +118,23 @@ def repair_tree(
     path: str,
     *,
     gid: int,
-    time_limit: float = 240.0,
-    max_entries: int = 5_000_000,
+    time_limit: float = TIME_LIMIT_SECONDS,
+    max_entries: int | None = None,
     max_depth: int = 64,
+    progress: Callable[[RepairResult], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> RepairResult:
     """Repair the permissions of the share folder ``path`` and of everything below it.
 
     ``path`` is a share's stored path: a folder inside a pool, in the normal
     form below the pools base (ADR-0145). ``gid`` is the group to give (the
     SMB group; a parameter for tests). The walk stops with the state
-    "incomplete" after ``time_limit`` seconds or ``max_entries`` visited
-    entries; a second run gets on quickly, since entries that are already
-    right are only examined. An entry that cannot be changed (EPERM, EACCES,
+    "incomplete" after ``time_limit`` seconds, after ``max_entries`` visited
+    entries (no limit when None; tests stop a walk at a known entry with it)
+    or once ``stop`` is set; a second run gets on quickly, since entries that
+    are already right are only examined. While it walks, ``progress`` gets
+    the counts so far, as a result with the state "running", about every
+    PROGRESS_INTERVAL_SECONDS. An entry that cannot be changed (EPERM, EACCES,
     EROFS, EIO, ...) is counted, with a sample, and the walk goes on. When the
     share's folder cannot be opened without following a symlink, is not on
     its pool's mount, or is a folder that is never shared (a pool root, app
@@ -169,15 +189,19 @@ def repair_tree(
             gid=gid,
             root_dev=root.st_dev,
             root_mount=root_mount,
+            folder=PurePosixPath(path).parts,
             mount_points=_mount_points_inside(mounts, PurePosixPath(path).parts),
             file_flags=o_path | os.O_NOFOLLOW | os.O_CLOEXEC,
             deadline=deadline,
             max_entries=max_entries,
             max_depth=max_depth,
+            started_at=started_at,
+            progress=progress,
+            stop=stop,
         )
         stack.append(_Folder(root_fd, iter(names), "", 0))
         root_fd = None  # closed with the stack from now on
-        finished = walk.run(stack, root)
+        stopped = walk.run(stack, root)
     finally:
         if root_fd is not None:
             _close(root_fd)
@@ -185,8 +209,8 @@ def repair_tree(
             _close(folder.fd)
 
     tally = walk.tally
-    if not finished:
-        return tally.result("incomplete", started_at, INCOMPLETE_MESSAGE)
+    if stopped is not None:
+        return tally.result("incomplete", started_at, stopped)
     if tally.errors == 1:
         return tally.result("done", started_at, "Permissions repaired, except for 1 entry that could not be changed.")
     if tally.errors:
@@ -233,7 +257,7 @@ class _Tally:
             share="",
             state=state,
             started_at=started_at,
-            finished_at=datetime.now(timezone.utc),
+            finished_at=None if state == "running" else datetime.now(timezone.utc),
             visited=self.visited,
             changed=self.changed,
             skipped=dict(self.skipped),
@@ -253,28 +277,38 @@ class _Walk:
         gid: int,
         root_dev: int,
         root_mount: int,
+        folder: tuple[str, ...],
         mount_points: set[str],
         file_flags: int,
         deadline: float,
-        max_entries: int,
+        max_entries: int | None,
         max_depth: int,
+        started_at: datetime,
+        progress: Callable[[RepairResult], None] | None,
+        stop: threading.Event | None,
     ) -> None:
         self.gid = gid
         self.root_dev = root_dev
         self.root_mount = root_mount  # the mount ID of the share's folder
+        self.folder = folder  # the share's folder, as path components
         self.mount_points = mount_points  # relative paths
         self.file_flags = file_flags
         self.deadline = deadline
         self.max_entries = max_entries
         self.max_depth = max_depth
+        self.started_at = started_at
+        self.progress = progress
+        self.next_report = time.monotonic() + PROGRESS_INTERVAL_SECONDS
+        self.stop = stop
         self.tally = _Tally()
 
-    def run(self, stack: list[_Folder], root: os.stat_result) -> bool:
+    def run(self, stack: list[_Folder], root: os.stat_result) -> str | None:
         """Fix the share's folder (the only folder on ``stack``), then visit everything below it.
 
-        Returns False when a limit stopped the walk. A folder's descriptor is
-        closed when the folder is taken off the stack; the caller closes the
-        descriptors still on it.
+        Returns None when the walk is done, or the message of why it stopped
+        early (a limit, or ``stop``). A folder's descriptor is closed when the
+        folder is taken off the stack; the caller closes the descriptors still
+        on it.
         """
         self.tally.visited += 1
         self._fix(".", root, constants.SHARE_DIR_MODE, stack[0].fd, through_proc=False)
@@ -285,13 +319,36 @@ class _Walk:
                 stack.pop()
                 _close(folder.fd)
                 continue
-            if self.tally.visited >= self.max_entries or time.monotonic() >= self.deadline:
-                return False
+            stopped = self._stopped()
+            if stopped is not None:
+                return stopped
             self.tally.visited += 1
             child = self._visit(folder, name, f"{folder.path}/{name}" if folder.path else name)
             if child is not None:
                 stack.append(child)
-        return True
+        return None
+
+    def _stopped(self) -> str | None:
+        """Why the walk stops before its next entry, or None.
+
+        When a report is due, it reports the progress and reads the mount
+        table again: a mount made inside the share while it is walked, such
+        as an app's FUSE mount, is skipped by its path from then on.
+        """
+        if self.stop is not None and self.stop.is_set():
+            return STOPPED_MESSAGE
+        now = time.monotonic()
+        if now >= self.deadline or (self.max_entries is not None and self.tally.visited >= self.max_entries):
+            return INCOMPLETE_MESSAGE
+        if now >= self.next_report:
+            self.next_report = now + PROGRESS_INTERVAL_SECONDS
+            if self.progress is not None:
+                self.progress(self.tally.result("running", self.started_at, ""))
+            try:
+                self.mount_points = _mount_points_inside(_read_mounts(), self.folder)
+            except OSError:
+                pass  # the last ones stay; every opened entry is still checked by its mount ID
+        return None
 
     def _visit(self, parent: _Folder, name: str, path: str) -> _Folder | None:
         """Examine one entry; returns it when it is a folder to enter."""

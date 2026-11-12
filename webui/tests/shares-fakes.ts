@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page, type WebSocketRoute } from '@playwright/test';
 
 // Canned answers of the SMB share, NFS export, user and account APIs for UI
 // tests that must never change a real share, export, user or SMB account.
@@ -38,6 +38,14 @@ export const SMB_CONF_REPLACED =
 // constants.COMMON_PASSWORD_RULE); supervisor/tests/test_smb_accounts.py checks it against the server.
 export const COMMON_PASSWORD_RULE =
   'SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first';
+// The name rule of new and renamed users (constants.LINUX_NAME_PATTERN and NAME_RULE), and the
+// refusal of a rename without a password while SMB is on (ADR-0368); supervisor/tests/test_smb_accounts.py
+// checks them against the server.
+const USERNAME_RULE = /^[a-z][a-z0-9_-]{0,31}$/;
+export const NAME_RULE_TEXT =
+  "Use 1 to 32 characters: lowercase letters, digits, '_' and '-', starting with a letter";
+export const renameNeedsPassword = (name: string) =>
+  `A new password is needed to rename ${name}: SMB is on for ${name}, and Samba's account of the new name is made with it`;
 
 // The answers of supervisor/src/shares/nfs.py (ADR-0292, ADR-0293), word for word;
 // supervisor/tests/test_nfs.py checks them against the server.
@@ -122,9 +130,10 @@ export interface FakeServiceStatus {
 
 export interface FakeRepairResult {
   share: string;
-  state: 'done' | 'incomplete' | 'failed';
+  state: 'running' | 'done' | 'incomplete' | 'failed';
   started_at: string;
-  finished_at: string;
+  /** null while it runs. */
+  finished_at: string | null;
   visited: number;
   changed: number;
   skipped: Record<string, number>;
@@ -201,10 +210,14 @@ export interface FakeSmbApi {
   shares: FakeShare[];
   status: FakeServiceStatus;
   paths: SharePathInfo[];
-  /** Last repair result per share name (lower case), as GET .../repair-permissions answers. */
+  /** Last finished repair per share name (lower case), as GET .../repair-permissions answers. */
   repairs: Record<string, FakeRepairResult>;
-  /** Answer of POST .../repair-permissions (default: a "done" run). */
+  /** Answer of POST .../repair-permissions (default: 202 with the run started, running). */
   repairAnswer: FakeResponse | null;
+  /** The share whose repair runs since a POST answered 202, until fakeRepairEvents' end(). */
+  repairing: string | null;
+  /** Answer of DELETE .../repair-permissions (default: 202 for the running repair, else 409). */
+  repairStopAnswer: FakeResponse | null;
   /** Warnings of the answers to share changes (create, PATCH, delete), e.g. a failed reload. */
   changeWarnings: string[];
   /**
@@ -332,6 +345,17 @@ export function setPoolMounted(fake: FakeSmbApi, pool: string, mounted: boolean)
   fake.status.guest_shares = [...kept, ...guests].sort(byLowerCase);
 }
 
+// The answer to a stop of a share that no repair runs for (supervisor/src/shares/repair_router.py).
+export const REPAIR_NOT_RUNNING = 'No permissions repair of this share is running';
+// The message of a repair that an administrator stopped (supervisor/src/shares/repair.py).
+export const REPAIR_STOPPED =
+  'Stopped by an administrator; run it again to continue (already repaired entries are skipped quickly)';
+
+/** A repair as it starts: running, nothing counted yet. */
+export function repairStarted(share: string, extra: Partial<FakeRepairResult> = {}): FakeRepairResult {
+  return repairResult(share, { state: 'running', finished_at: null, visited: 0, changed: 0, ...extra });
+}
+
 export function repairResult(share: string, extra: Partial<FakeRepairResult> = {}): FakeRepairResult {
   return {
     share,
@@ -432,6 +456,39 @@ function sameEntries(a: AccessEntry[], b: AccessEntry[]): boolean {
   return a.map(entryKey).sort().join('|') === b.map(entryKey).sort().join('|');
 }
 
+/**
+ * Stand in for the events socket /ws/v1/events (supervisor/src/websocket/events.py), which sends
+ * administrators the repair of a share's permissions while it runs and when it ends (ADR-0363): the
+ * fake answers the page's auth message with auth_ok; progress() sends a running repair, and end()
+ * keeps a finished one as its share's last run, which GET .../repair-permissions of `fake` then
+ * answers, and sends it.
+ */
+export async function fakeRepairEvents(
+  page: Page,
+  fake: FakeSmbApi,
+): Promise<{ progress: (job: FakeRepairResult) => Promise<void>; end: (result: FakeRepairResult) => Promise<void> }> {
+  let socket: WebSocketRoute | null = null;
+  await page.routeWebSocket('**/ws/v1/events', (ws) => {
+    ws.onMessage((message) => {
+      if (JSON.parse(String(message)).type !== 'auth') return;
+      ws.send(JSON.stringify({ type: 'auth_ok' }));
+      socket = ws;
+    });
+  });
+  const send = async (job: FakeRepairResult) => {
+    await expect.poll(() => socket !== null, { message: 'the page signed in to the events socket' }).toBe(true);
+    socket!.send(JSON.stringify({ type: 'repair', data: job }));
+  };
+  return {
+    progress: send,
+    end: async (result) => {
+      fake.repairs[result.share.toLowerCase()] = result;
+      fake.repairing = null;
+      await send(result);
+    },
+  };
+}
+
 /** Serve the SMB, share and user APIs from fake state; returns the state. */
 export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Promise<FakeSmbApi> {
   const users = options.users ?? [fakeUser(1, 'admin', 'unavailable', { is_admin: true })];
@@ -442,6 +499,8 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
     paths: options.paths ?? FAKE_PATHS,
     repairs: {},
     repairAnswer: null,
+    repairing: null,
+    repairStopAnswer: null,
     changeWarnings: [],
     userWarnings: [],
     // The signed-in user of the specs is the administrator, who cannot use SMB.
@@ -457,6 +516,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
     intercept: null,
   };
 
+  let repairStarts = 0;
   const findShare = (name: string) => fake.shares.find((s) => s.name.toLowerCase() === name.toLowerCase());
   const findUser = (id: number) => fake.users.find((u) => u.id === id);
 
@@ -557,9 +617,17 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         return last ? ok(last) : detail(404, 'No repair has run for this share since UNOS started');
       }
       if (method === 'POST') {
-        const result = fake.repairAnswer ?? ok(repairResult(name));
-        if (result.status === 200) fake.repairs[name.toLowerCase()] = result.json as FakeRepairResult;
-        return result;
+        // Each run starts at a time of its own, as on the server.
+        repairStarts += 1;
+        const started_at = `2026-11-06T11:00:${String(repairStarts).padStart(2, '0')}`;
+        const answer = fake.repairAnswer ?? { status: 202, json: repairStarted(findShare(name)!.name, { started_at }) };
+        if (answer.status === 202) fake.repairing = (answer.json as FakeRepairResult).share;
+        return answer;
+      }
+      if (method === 'DELETE') {
+        if (fake.repairStopAnswer) return fake.repairStopAnswer;
+        const running = fake.repairing?.toLowerCase() === name.toLowerCase();
+        return running ? { status: 202, json: repairStarted(fake.repairing!) } : detail(409, REPAIR_NOT_RUNNING);
       }
     }
     const one = path.match(/^\/shares\/smb\/([^/]+)$/);
@@ -649,7 +717,35 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         return ok({ status: 'ok', message: 'User deleted', warnings: [...fake.userWarnings] });
       }
       if (method === 'PUT' && !userPath[2]) {
+        if (data.new_username !== undefined && data.username === undefined) return missing('body', 'username');
         if (data.username !== undefined && data.username !== user.username) return stale();
+        const newName = typeof data.new_username === 'string' ? data.new_username : user.username;
+        if (newName !== user.username) {
+          // A rename (ADR-0368), with the server's refusals of src/auth/router.py and accounts.py.
+          if (!USERNAME_RULE.test(newName)) return detail(400, `Invalid username. ${NAME_RULE_TEXT}`);
+          const taken = fake.users.find((u) => u !== user && u.username.toLowerCase() === newName.toLowerCase());
+          if (taken) {
+            return detail(
+              400,
+              taken.username === newName
+                ? 'Username already exists'
+                : `Username already exists as '${taken.username}': names that differ only in letter case are one account for Samba`,
+            );
+          }
+          if (data.is_admin !== undefined && data.is_admin !== user.is_admin) {
+            return detail(400, 'Change the name and the role one at a time');
+          }
+          if (user.smb.state === 'active' && typeof data.password !== 'string') {
+            return detail(400, renameNeedsPassword(user.username));
+          }
+          const old = user.username;
+          user.username = newName;
+          if (user.smb.allowed) user.smb = { ...user.smb, linux_name: newName };
+          for (const share of fake.shares) {
+            share.access = share.access.map((a) => (a.user_id === user.id && a.username === old ? { ...a, username: newName } : a));
+          }
+          return ok({ ...user, warnings: [...fake.userWarnings] });
+        }
         if (data.is_admin === true && !user.is_admin) {
           user.is_admin = true;
           user.smb = smbStatus('unavailable', user.username);

@@ -1,4 +1,4 @@
-"""Repair permissions (ADR-0155, ADR-0156): shares/repair.py and shares/repair_router.py.
+"""Repair permissions (ADR-0363, ADR-0156): shares/repair.py and shares/repair_router.py.
 
 The walk runs on real temporary folders with the test's own group
 (gid=os.getgid()), so it needs neither root nor the SMB group, and modes are
@@ -34,6 +34,7 @@ from src.shares import accounts, constants, repair, repair_router, service
 from src.shares.models import SmbShare
 from src.storage import pools
 from .audit_helpers import audit_entries
+from .test_share_repair_job import _the_end
 
 pytestmark = pytest.mark.skipif(
     not hasattr(os, "O_PATH"), reason="Repair permissions needs os.O_PATH (Linux): runs in the Linux test runner"
@@ -97,13 +98,20 @@ def _add_mounts(tmp_path: Path, *lines: str) -> None:
         file.write("".join(lines))
 
 
+def _reset_router() -> None:
+    repair_router._last_results.clear()
+    repair_router._job = None
+    repair_router._running = None
+    repair_router.limiter.reset()
+
+
 @pytest.fixture(autouse=True)
 def fresh_router_state():
-    repair_router._last_results.clear()
-    repair_router.limiter.reset()
+    _reset_router()
     yield
-    repair_router._last_results.clear()
-    repair_router.limiter.reset()
+    if repair_router._running is not None:
+        _the_end()
+    _reset_router()
 
 
 @pytest.fixture
@@ -620,13 +628,40 @@ class TestWalk:
 
         assert result.state == "incomplete"
         assert result.message == (
-            "Stopped after 4 minutes; run it again to continue (already repaired entries are skipped quickly)"
+            "Stopped after 24 hours; run it again to continue (already repaired entries are skipped quickly)"
         )
         assert result.visited == 1  # the share's folder
         assert [_mode(path) for path in files] == [0o644, 0o644]
         again = _repair(share)
         assert again.state == "done"
         assert [_mode(path) for path in files] == [0o660, 0o660]
+
+    def test_a_stop_ends_the_walk_before_its_next_entry(self, share):
+        files = [_file(share / f"f{i}.txt", 0o644) for i in range(3)]
+        stop = threading.Event()
+        stop.set()
+
+        result = _repair(share, stop=stop)
+
+        assert (result.state, result.visited, result.changed) == ("incomplete", 1, 1)  # the share's folder
+        assert result.message == (
+            "Stopped by an administrator; run it again to continue (already repaired entries are skipped quickly)"
+        )
+        assert _mode(share) == 0o2770
+        assert [_mode(path) for path in files] == [0o644] * 3
+
+    def test_the_walk_reports_its_progress_while_it_runs(self, share, monkeypatch):
+        for i in range(3):
+            _file(share / f"f{i}.txt", 0o644)
+        monkeypatch.setattr(repair, "PROGRESS_INTERVAL_SECONDS", 0)
+        reports = []
+
+        result = _repair(share, progress=reports.append)
+
+        assert [report.visited for report in reports] == [1, 2, 3]
+        assert {(report.state, report.finished_at, report.message) for report in reports} == {("running", None, "")}
+        assert {report.started_at for report in reports} == {result.started_at}
+        assert (result.state, result.visited, result.changed) == ("done", 4, 4)
 
     @pytest.mark.parametrize("code", [errno.EPERM, errno.EACCES, errno.EROFS, errno.EIO])
     def test_an_entry_that_cannot_be_changed_is_counted_and_the_walk_goes_on(self, share, monkeypatch, code):
@@ -757,7 +792,8 @@ def api(base, share, tmp_path, monkeypatch):
 
     service.share_problem, accounts.gid_problem and
     pools._mounted_pool_target are replaced by fakes that the test steers
-    through ``checks``; repair_tree runs for real, with calls recorded.
+    through ``checks``; repair_tree runs for real, with calls recorded as
+    (path, gid). A start answers at once; _the_end() waits for the end.
     """
     path = tmp_path / "repair.db"
     engine = create_engine(f"sqlite:///{path}")
@@ -800,7 +836,7 @@ def api(base, share, tmp_path, monkeypatch):
     real_repair_tree = repair.repair_tree
 
     def repair_tree(path, **kwargs):
-        checks.walks.append((path, kwargs))
+        checks.walks.append((path, kwargs["gid"]))
         return real_repair_tree(path, **kwargs)
 
     audit = tmp_path / "audit.jsonl"
@@ -837,22 +873,24 @@ def _nothing_walked(api, *files: Path) -> None:
 
 
 class TestEndpoints:
-    def test_repair_answers_and_keeps_the_result_by_name_in_any_case(self, api):
+    def test_repair_runs_in_the_background_and_keeps_the_result_of_the_share_in_any_case(self, api):
         data = _file(api.share / "a.txt", 0o644)
 
         response = api.client.post(URL.format("media"))
 
-        assert response.status_code == 200, response.text
-        body = response.json()
+        assert response.status_code == 202, response.text
+        assert (response.json()["share"], response.json()["state"]) == ("Media", "running")
+        body = _the_end().model_dump(mode="json")
         assert body["share"] == "Media"
+        assert body["started_at"] == response.json()["started_at"]
         assert (body["state"], body["visited"], body["changed"], body["errors"]) == ("done", 2, 2, 0)
         assert body["skipped"] == NOTHING_SKIPPED
         assert (_mode(api.share), _mode(data)) == (0o2770, 0o660)
         assert api.checks.share_ids == [1]
         assert api.checks.pool_calls == [("data", True)]
-        assert api.checks.walks == [(str(api.share), {"gid": GID})]  # constants.SMB_GROUP_GID
+        assert api.checks.walks == [(str(api.share), GID)]  # constants.SMB_GROUP_GID
         assert api.client.get(URL.format("MEDIA")).json() == body
-        assert list(repair_router._last_results) == ["media"]
+        assert list(repair_router._last_results) == [1]  # by the share's id
 
     def test_get_before_any_repair_is_404(self, api):
         response = api.client.get(URL.format("Media"))
@@ -873,7 +911,8 @@ class TestEndpoints:
         _file(api.share / "a.txt", 0o644)
         os.mkfifo(api.share / "pipe")
 
-        api.client.post(URL.format("Media"))
+        assert api.client.post(URL.format("Media")).status_code == 202
+        _the_end()
 
         [entry] = _audit(api)
         assert entry["action"] == "share_permissions_repaired"
@@ -1059,24 +1098,24 @@ class TestEndpoints:
             return recording_repair_tree(path, **kwargs)
 
         monkeypatch.setattr(repair, "repair_tree", slow_repair_tree)
-        first = []
-        worker = threading.Thread(target=lambda: first.append(TestClient(api.app).post(URL.format("Media"))))
-        worker.start()
         try:
+            first = api.client.post(URL.format("Media"))
             assert started.wait(60)
             second = api.client.post(URL.format("Media"))
         finally:
             release.set()
-            worker.join(60)
+        end = _the_end()
 
+        assert first.status_code == 202
         assert second.status_code == 409
         assert second.json()["detail"] == "A permissions repair is already running"
-        assert [response.status_code for response in first] == [200]
+        assert end.state == "done"
         assert len(api.checks.walks) == 1
         assert _mode(data) == 0o660
         assert len(_audit(api)) == 1
-        # The lock is free again.
-        assert api.client.post(URL.format("Media")).status_code == 200
+        # The slot is free again.
+        assert api.client.post(URL.format("Media")).status_code == 202
+        _the_end()
 
     def test_a_folder_swapped_for_a_symlink_after_the_checks_fails_and_changes_nothing(self, api, tmp_path, monkeypatch):
         data = _file(api.share / "a.txt", 0o644)
@@ -1092,8 +1131,8 @@ class TestEndpoints:
 
         response = api.client.post(URL.format("Media"))
 
-        assert response.status_code == 200
-        body = response.json()
+        assert response.status_code == 202
+        body = _the_end().model_dump(mode="json")
         assert (body["state"], body["visited"], body["changed"]) == ("failed", 0, 0)
         assert (_mode(elsewhere), _mode(secret)) == (0o755, 0o644)
         moved = api.base / "data" / "moved"
@@ -1114,6 +1153,7 @@ class TestEndpoints:
 
         assert api.client.post(URL.format("Media")).status_code == 403
         assert api.client.get(URL.format("Media")).status_code == 403
+        assert api.client.delete(URL.format("Media")).status_code == 403
         _nothing_walked(api, data)
 
     def test_the_endpoints_require_an_administrator_without_the_router_dependency(self, api):
@@ -1127,4 +1167,5 @@ class TestEndpoints:
 
         assert client.post(URL.format("Media")).status_code == 403
         assert client.get(URL.format("Media")).status_code == 403
+        assert client.delete(URL.format("Media")).status_code == 403
         assert api.checks.walks == []

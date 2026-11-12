@@ -54,6 +54,11 @@ export interface UserUpdate {
   password?: string;
   /** The username the change was prepared for: 409 when the id now belongs to another user. */
   username?: string;
+  /**
+   * A new name (ADR-0368), sent with `username`. A user with SMB on also needs `password`: Samba's
+   * account of the new name is made with it.
+   */
+  new_username?: string;
 }
 
 /** A share the signed-in user can open over SMB (GET /auth/me/smb). */

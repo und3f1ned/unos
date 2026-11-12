@@ -300,8 +300,9 @@ For each pool, you can:
   again
 - **Add Devices** - Expand the pool
 - **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
-  the pool shows its progress (bytes, percent, rate and duration), updated
-  every 2 seconds, and **Cancel Scrub** stops it. At the end it shows the
+  the pool shows its progress (bytes, percent, rate and duration), which UNOS
+  sends the open page as it changes, about every 2 seconds, also for a
+  scheduled scrub, and **Cancel Scrub** stops it. At the end it shows the
   result with the time the scrub started, as btrfs writes it (in English, such
   as `Fri Nov  6 10:00:00 2026`) or, when the interface is in another language,
   the same date and time in that language's format: **Last scrub: No errors**, the
@@ -312,8 +313,10 @@ For each pool, you can:
   cancel, for example because the btrfs process that ran it was killed.
   When UNOS restarts, for example with the host, it forgets the result of
   the last scrub: the pool then shows none, also when the restart stopped a
-  scrub. When btrfs cannot report the status, the pool says so with the
-  reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
+  scrub. A page left open meanwhile asks again, once its connection to UNOS
+  is back, for each scrub it showed running or could not read, and follows
+  the ones that still run. When btrfs cannot report the status, the pool
+  says so with the reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
   scheduled scrub of a pool that is not mounted fails without scrubbing
   anything. For a pool that does not answer, see below
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
@@ -602,9 +605,20 @@ until you press **Repair permissions** on the share. A share marked
   such as 0600 keys or a 0700 folder;
 - changes no owner and no file content;
 - skips snapshots, volumes and other mounts inside the share, symbolic
-  links, and files with more than one hard link;
-- can take minutes, and stops after 4 minutes: run it again to continue
-  (entries that are already right are skipped quickly).
+  links, and files with more than one hard link.
+
+It runs in the background until the whole share is done, which can take
+hours on a large share: the dialog shows how many entries it has checked and
+changed so far, and can be closed meanwhile; the share's card then says
+**Repairing permissions**, and the page updates the share when the repair
+ends. Open the dialog again to see the result as **Last run**; a renamed
+share keeps it, until UNOS restarts. One repair runs at a time: another one
+is refused until it ends. **Stop repair** ends it early, and so do deleting
+the share, changing its name or folder, a restart of UNOS, or 24 hours of
+running; the [Audit Log](#audit-log) says what stopped it. What it changed
+stays changed, and a new run continues quickly (entries that are already
+right are skipped quickly). A disk that stops answering holds the repair
+until it answers again: no stop ends it sooner.
 
 It changes the permissions of existing files and cannot be undone
 automatically. It is refused while a folder above the share's folder can be
@@ -1084,6 +1098,36 @@ are started and stopped on the **Containers** page.
 New accounts are regular users. To make one an administrator, edit it and
 tick **Administrator privileges**.
 
+### Renaming Users
+
+Edit the user and type the new name under **Name**, then click **Save**. The
+new name follows the rules of a new username (see above); a name that another
+user has, also in another letter case, is refused with the reason ("Username
+already exists", or "Username already exists as 'Bob': names that differ only
+in letter case are one account for Samba"). A name from before these rules
+(such as `Erin.Old`) can be changed to one that follows them, which also lets
+the user use SMB. Change the role in a save of its own.
+
+The user signs in with the new name from then on; the old name is refused,
+and every session of the user ends. Renaming yourself signs you out: sign in
+again with the new name. API tokens keep working. The user's
+[login history](#login-history) starts again at the rename: it lists the
+sign-ins with the new name from then on, not those with the old name, nor
+those of anyone who had the new name before.
+
+A user with SMB on keeps it under the new name, but needs a new password,
+which the dialog asks for: Samba keeps passwords by name, so the SMB account
+of the new name is made with it, and it is the user's UNOS password too. The
+user's open SMB connections end; Samba's account of the old name is removed;
+the user's host account on the NAS takes the new name and keeps its user id,
+so the files the user wrote stay theirs; and every share's access follows the
+new name. Update the name and the password on every computer and app that
+connects over SMB. When the host cannot take the new name (it has an account,
+a group or a Samba account of that name), or the user's SMB connections do not
+end, nothing is renamed and the dialog says why. When SMB could not be turned
+on again under the new name, the user is renamed with SMB **Password needed**,
+and the page shows why.
+
 ### User Roles
 
 | Role | Permissions |
@@ -1283,11 +1327,12 @@ left.
 
 Under **Login History** on the **Account** page (administrators: **System** →
 **Security**), **View History** lists the latest 50 sign-ins, newest first:
-those of your own account since it was created (an account created with the
-name of a deleted one does not see that account's), and for administrators
-those of every account, also of deleted accounts and the attempts with names
-that do not exist. Each entry shows **SUCCESS** or **FAILED** with the reason
-(such as "Incorrect username or password" or "Invalid 2FA code"), the
+those with your account's name since your account got it, when it was created
+or last renamed (an account that gets the name of a deleted or renamed one
+does not see that account's), and for administrators those of every account,
+also of deleted accounts, of names given up by a rename and the attempts with
+names that do not exist. Each entry shows **SUCCESS** or **FAILED** with the
+reason (such as "Incorrect username or password" or "Invalid 2FA code"), the
 account, the time in your browser's time zone, the address of the computer
 that signed in (not that of the web interface's proxy) and the browser. Above
 the list are the number of attempts and how many succeeded and failed;
@@ -1381,7 +1426,8 @@ regular users have no access to it.
   appears only in the login history), sign-outs, a user's own password
   changes (with an SMB account entry when the SMB password changed too) and
   turning two-factor authentication on or off (off as a **Warning**), each
-  by that user, users created, changed and deleted, pools created and
+  by that user, users created, changed (a rename with the old name) and
+  deleted, pools created and
   removed, volumes created and deleted, snapshots created, deleted and
   restored, containers started, restarted, stopped and removed on the
   **Containers** page, apps started, restarted and stopped on the **Apps**
@@ -1617,9 +1663,15 @@ that logged it and its message. The filters narrow the list:
   not matter. The matches are highlighted in the messages, also while you
   type; log messages are always shown as text.
 
-**Auto** reloads the list every 5 seconds. Auto and **Search** wait while an
-answer is still coming. When the journal cannot be read, the tab shows why
-instead of the list. A search through a large journal can take long: after
+**Auto** follows the journal: the tab lists the newest entries again and then
+adds each new entry of the chosen source, level and search at the top as the
+journal gets it, keeping the newest entries of the limit, and says
+**Following new entries**. A filter or source changed while Auto is on is
+followed from then on; clicking Auto again stops it and keeps the list. When
+the connection to UNOS is lost, Auto stops with **Auto stopped: the
+connection to the server was lost** and the list stays. **Search** waits
+while an answer is still coming. When the journal cannot be read, the tab
+shows why instead of the list. A search through a large journal can take long: after
 30 seconds UNOS stops journalctl on the host and the tab reports that it did
 not answer; a shorter time range helps.
 

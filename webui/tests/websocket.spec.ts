@@ -69,12 +69,14 @@ test.describe('Live stats WebSocket', () => {
     const token = await page.evaluate(() => localStorage.getItem('token'));
     expect(JSON.parse(socket.sent[0])).toEqual({ type: 'auth', token });
 
-    // auth_ok, then the problems, which an administrator gets (none: the stand-in runs no
-    // monitors, ADR-0332), then the stats stream.
-    await expect.poll(() => socket.received.length, { timeout: 15000 }).toBeGreaterThan(2);
+    // auth_ok, then the problems and the repair of a share's permissions, which an administrator
+    // gets (none: the stand-in runs no monitors, ADR-0332, and no repair ran, ADR-0363), then the
+    // stats stream.
+    await expect.poll(() => socket.received.length, { timeout: 15000 }).toBeGreaterThan(3);
     expect(JSON.parse(socket.received[0]).type).toBe('auth_ok');
     expect(JSON.parse(socket.received[1])).toEqual({ type: 'problems', data: [] });
-    expect(JSON.parse(socket.received[2]).type).toBe('stats');
+    expect(JSON.parse(socket.received[2])).toEqual({ type: 'repair', data: null });
+    expect(JSON.parse(socket.received[3]).type).toBe('stats');
     expect(socket.closed).toBe(false);
     await expect(page.getByText('WebSocket disconnected')).toHaveCount(0);
   });

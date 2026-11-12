@@ -27,7 +27,8 @@ from src import host as host_module
 from src.auth.utils import verify_token
 from src.main import app
 from src.scheduler.schemas import ScheduledTask
-from src.storage import pools
+from src.storage import pools, scrubs
+from src.storage.schemas import ScrubStatus
 
 from .test_pool_persistence import install_fake_host
 from .test_snapshots import FakeBtrfs, local_time_9_hours_ahead_of_utc
@@ -1017,6 +1018,8 @@ async def test_scrub_task(env):
     assert ok
     assert _commands(env) == [["btrfs", "scrub", "start", str(env.pool)]]
     assert env.run.call_args.kwargs["timeout"] == scheduler.SCRUB_START_TIMEOUT == 60
+    # The Storage page follows it over the events socket (ADR-0367).
+    assert scrubs.current() == [ScrubStatus(pool="data", status="running").model_dump()]
 
 
 async def test_scrub_of_an_unmounted_pool_fails_without_btrfs(env, monkeypatch):
@@ -1253,18 +1256,9 @@ def test_scheduled_backup_passes_restore_validation(backup_env):
     assert backup_router._inspect_archive(plain)["type"] == "scheduled"
     extracted = env.tmp / "extracted"
     extracted.mkdir()
-    with backup_router._open_tar(_gunzip(plain, env.tmp / "a.tar")) as tar:
-        backup_router._extract(tar, backup_router._scan_members(tar), extracted)
+    with open(plain, "rb") as source:
+        backup_router._read_archive(source, extracted)
     backup_router._verify_database(extracted / "unos.db")
-
-
-def _gunzip(src, dest):
-    import gzip
-    import shutil
-
-    with gzip.open(src, "rb") as fin, open(dest, "wb") as fout:
-        shutil.copyfileobj(fin, fout)
-    return dest
 
 
 async def test_custom_command_runs_with_a_shell_off_the_event_loop(env):

@@ -59,3 +59,19 @@ class UserSession(Base):
     # When the token expires (UTC, without a zone, as SQLite keeps it): rows of expired
     # sessions go at the next sign-in.
     expires_at = Column(DateTime, nullable=False)
+
+
+class UsernameTaken(Base):
+    """When a rename last gave a name to a user (ADR-0368). The login history is kept by name, so
+    a regular user sees the attempts on their name from the later of their account's creation and
+    this time on (ADR-0263): a name that a rename freed shows its next holder none of the earlier
+    holder's sign-ins. A rename writes the row of the new name in its commit. A row names no
+    user, so a deletion leaves it: whoever holds the name later took it at their creation, which
+    comes after, or by a rename, which writes the row again.
+    """
+
+    __tablename__ = "usernames_taken"
+
+    username = Column(String, primary_key=True)
+    # SQLite's CURRENT_TIMESTAMP, as users.created_at and login_attempts.timestamp have it.
+    taken_at = Column(DateTime, nullable=False, server_default=func.now())

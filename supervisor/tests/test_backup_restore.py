@@ -8,9 +8,10 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
 import tarfile
 import tempfile
-from contextlib import closing
+from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -462,6 +463,24 @@ def test_duplicate_members_are_rejected(env):
     _assert_untouched(env)
 
 
+@pytest.mark.parametrize("member", ["unos.db/.", "unos.db/", "./unos.db/.", "unos.db//"])
+def test_a_file_whose_name_is_not_its_plain_path_is_refused(env, member):
+    """A regular file named "unos.db/." passed the scan as unos.db, and its extraction failed with
+    EISDIR: a 500 whose message showed a temporary path. A file's name in the archive must be its
+    plain path, after at most one leading "./"."""
+    name = _store(env, [_file("manifest.json", MANIFEST), _file(member, _good_db(env))])
+    response = _restore(env, name)
+    assert (response.status_code, response.json()["detail"]) == (400, f"Unsafe path in backup archive: {member!r}")
+    _assert_untouched(env)
+
+
+def test_a_file_named_with_a_leading_dot_slash_restores(env):
+    name = _store(env, [_file("./manifest.json", MANIFEST), _file("./unos.db", _good_db(env))])
+    response = _restore(env, name)
+    assert response.status_code == 200, response.text
+    assert _usernames(env.db_path) == {"admin2", "bob"}
+
+
 def test_oversized_member_is_rejected(env, monkeypatch):
     monkeypatch.setitem(backup_router._FILE_MEMBERS, "unos.db", 1024)
     name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
@@ -732,9 +751,9 @@ def test_extended_headers_beyond_what_a_backup_needs_are_refused_by_upload(env, 
 
 # --- a full /tmp ------------------------------------------------------------------
 #
-# A restore writes the decompressed archive and the files extracted from it
-# into /tmp, a tmpfs of 2 GiB in RAM in the container. When they did not fit,
-# the restore answered 500 "Failed to restore backup: [Errno 28] No space left
+# A restore writes the database it extracts from the archive into /tmp, a
+# tmpfs of 2 GiB in RAM in the container. When the files of a restore did not
+# fit, it answered 500 "Failed to restore backup: [Errno 28] No space left
 # on device", which reads like a full system disk.
 
 NO_ROOM = "Not enough room in /tmp for the temporary files of the restore: nothing was restored"
@@ -743,8 +762,8 @@ NO_ROOM = "Not enough room in /tmp for the temporary files of the restore: nothi
 class _FullTmp:
     """A /tmp with room for ``room`` bytes: a write past it fails with ENOSPC, as on a full tmpfs.
 
-    Files opened for writing under ``root``, by the backup router
-    (_decompress) and by tarfile (extraction), count against the room;
+    Files opened for writing under ``root``, by the backup router and by
+    tarfile (extraction), count against the room;
     ``failed`` is the name of the file whose write failed.
     """
 
@@ -804,35 +823,29 @@ def full_tmp(env, monkeypatch):
 
 
 def _big_backup(env) -> str:
-    """A backup with the database and 1 MiB of other data; its tar is the first file /tmp gets."""
+    """A backup with the database and 1 MiB of other data before it; the database is the one file /tmp gets."""
     return _store(env, [_file("manifest.json", MANIFEST), _file("padding", os.urandom(1024 * 1024)),
                         _file("unos.db", _good_db(env)), _file("smb.conf", f"[docs]\n   path = {env.pools}/data/docs\n".encode())])
-
-
-def _tar_size(env, name: str) -> int:
-    return len(gzip.decompress((env.backup_dir / name).read_bytes()))
 
 
 def _no_room(*args, **kwargs):
     raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
 
 
-@pytest.mark.parametrize("phase", ["decompress", "extract", "temporary-directory"])
+@pytest.mark.parametrize("phase", ["extract", "temporary-directory"])
 def test_a_restore_that_does_not_fit_in_tmp_answers_507_and_changes_nothing(env, full_tmp, monkeypatch, phase):
     name = _big_backup(env)
     with monkeypatch.context() as patch_:
-        if phase == "decompress":
-            full_tmp.room = 64 * 1024
-        elif phase == "extract":
-            full_tmp.room = _tar_size(env, name) + 1024  # the tar fits, not the database extracted from it
+        if phase == "extract":
+            full_tmp.room = 4096  # less than the database
         else:
             patch_.setattr(tempfile, "mkdtemp", _no_room)
 
         response = _restore(env, name)
 
     assert (response.status_code, response.json()["detail"]) == (507, NO_ROOM)
-    if phase != "temporary-directory":
-        assert full_tmp.failed == {"decompress": "backup.tar", "extract": "unos.db"}[phase]
+    if phase == "extract":
+        assert full_tmp.failed == "unos.db"
     _assert_untouched(env)  # database and smb.conf, and no copy of the database kept
     assert sorted(os.listdir(env.samba)) == ["smb.conf"]
     assert os.listdir(env.tmp / "tmp") == []  # the temporary directory is removed
@@ -844,6 +857,104 @@ def test_a_restore_that_does_not_fit_in_tmp_answers_507_and_changes_nothing(env,
     assert response.status_code == 200, response.text
     assert response.json()["restored"] == ["database", "smb_config"]
     assert _usernames(env.db_path) == {"admin2", "bob"}
+
+
+# --- the peak of /tmp -------------------------------------------------------------
+#
+# backup.streaming-restore: a restore decompressed the whole archive into /tmp and then
+# extracted its files from that copy, so /tmp held the decompressed archive and the files
+# extracted from it at once, about twice the database.
+
+
+def _bytes_in(root: Path) -> int:
+    """What the files under ``root`` hold now, in bytes."""
+    total = 0
+    for folder, _, files in os.walk(root):
+        for name in files:
+            with suppress(FileNotFoundError):
+                total += os.lstat(os.path.join(folder, name)).st_size
+    return total
+
+
+@pytest.fixture
+def peak_of_tmp(env, monkeypatch):
+    """/tmp in env.tmp/tmp, and the most bytes its files held at once while a restore ran (``.bytes``).
+
+    Measured after every call that returns in the restore's thread (sys.setprofile): Python's
+    files, tarfile and SQLite write within calls of C functions, whose returns the profiler
+    sees, and only a removal makes a file smaller.
+    """
+    tmp = env.tmp / "tmp"
+    tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp))
+    peak = SimpleNamespace(bytes=0)
+    real_restore = backup_router._restore
+
+    def measure(frame, event, arg):
+        if event in ("return", "c_return", "c_exception"):
+            peak.bytes = max(peak.bytes, _bytes_in(tmp))
+
+    def restore(*args):
+        sys.setprofile(measure)
+        try:
+            return real_restore(*args)
+        finally:
+            sys.setprofile(None)
+
+    monkeypatch.setattr(backup_router, "_restore", restore)
+    return peak
+
+
+def _database_of(env, size: int) -> bytes:
+    """A good database (as _good_db) of about ``size`` bytes: a table of random data besides its users."""
+    path = env.tmp / "large.db"
+    _make_db(path, users=[("admin2", 1), ("bob", 0)])
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("CREATE TABLE filler (data BLOB)")
+        conn.executemany("INSERT INTO filler VALUES (?)", ((os.urandom(4000),) for _ in range(size // 4096)))
+        conn.commit()
+    return path.read_bytes()
+
+
+def test_a_database_cut_short_or_refused_after_it_leaves_nothing_in_tmp(env, monkeypatch):
+    """unos.db is extracted as the archive is read (ADR-0364): its data cut short is a corrupt archive,
+    as a member refused after it refuses the backup, and the restore leaves nothing in /tmp."""
+    tmp = env.tmp / "tmp"
+    tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp))
+    db = _raw("unos.db", _good_db(env))
+    cut_short = MANIFEST_MEMBER + db[:-4096]
+    refused_after = MANIFEST_MEMBER + db + _raw("evil", kind=tarfile.SYMTYPE, fields={157: b"/etc/passwd"}) + END_OF_TAR
+
+    for archive, detail in ((cut_short, CORRUPT), (refused_after, "Backup archive contains a link or special file: 'evil'")):
+        (env.backup_dir / "bad.tar.gz").write_bytes(gzip.compress(archive))
+
+        response = _restore(env, "bad.tar.gz")
+
+        assert (response.status_code, response.json()["detail"]) == (400, detail)
+        _assert_untouched(env)
+        assert os.listdir(tmp) == []
+
+
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plain", "encrypted"])
+def test_a_restore_holds_at_most_half_as_much_in_tmp_as_before(env, peak_of_tmp, encrypted):
+    """The restore checks the archive and extracts unos.db from it in one pass over its gzip
+    stream (ADR-0364): /tmp holds the database, without the decompressed archive beside it."""
+    db = _database_of(env, 4 * 1024 * 1024)
+    archive = _tar_gz([_file("manifest.json", MANIFEST), _file("unos.db", db)])
+    # What a restore held in /tmp at once before: the decompressed archive and the files extracted from it.
+    before = len(gzip.decompress(archive)) + len(MANIFEST) + len(db)
+    name, body = ("large.tar.gz.enc", {"passphrase": "correct horse"}) if encrypted else ("large.tar.gz", None)
+    (env.backup_dir / name).write_bytes(backup_router.encrypt_file(archive, "correct horse") if encrypted else archive)
+
+    response = _restore(env, name, body)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["restored"] == ["database", "smb_config"]
+    assert _usernames(env.db_path) == {"admin2", "bob"}
+    # At least the database: the measurement sees what the restore writes there.
+    assert len(db) <= peak_of_tmp.bytes <= before / 2, (peak_of_tmp.bytes, before)
+    assert os.listdir(env.tmp / "tmp") == []
 
 
 def test_a_full_data_disk_is_not_reported_as_a_full_tmp(env, monkeypatch):

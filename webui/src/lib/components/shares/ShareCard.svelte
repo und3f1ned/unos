@@ -11,6 +11,8 @@
 	export let host = '';
 	/** The import notes are being dismissed. */
 	export let dismissing = false;
+	/** A repair of the share's permissions runs (ADR-0363). */
+	export let repairing = false;
 
 	const dispatch = createEventDispatcher<{
 		edit: SmbShare;
@@ -66,6 +68,9 @@
 				{/if}
 				{#if share.permissions_ok === false}
 					<Badge variant="warning">{$t('shares.card.permissions')}</Badge>
+				{/if}
+				{#if repairing}
+					<Badge variant="info">{$t('shares.card.repairing')}</Badge>
 				{/if}
 			</div>
 			<p class="mono-xs text-muted break-all">{share.path}</p>

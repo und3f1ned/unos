@@ -323,6 +323,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Administrators rename users in the **Users** page's edit dialog
+  (`PUT /api/v1/auth/users/{id}` with `new_username` and the current
+  `username`): the user signs in with the new name, the old one is refused,
+  and the user's sessions end. A name that breaks the name rule, or that
+  another user has in any letter case, is refused with the reason. A user with
+  SMB on needs a new password: the open SMB connections end, Samba's account
+  of the old name is removed, the host account takes the new name with its
+  uid (`usermod -l`, a new host tool of the package passwd), Samba gets an
+  account of the new name with the new password, and the share access and
+  smb.conf follow the new name. A backup made before or after a rename,
+  restored after the user was deleted, brings the user's SMB account back with
+  its uid. A renamed user's login history starts at the rename, so a user who
+  gets a name that a rename freed sees none of its earlier holder's sign-ins.
 - The Snapshots page lists the copies that **Restore** made right in the pool
   or volume chosen, `restore_<date>_<time>`, apart from the snapshots, with
   their folder and time, and deletes them by their subvolume id after the
@@ -521,7 +534,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   exists.
 - Repair permissions (Shares page): gives the existing files and folders of a
   share the group `unos-smb` and group read and write access
-  (`POST /api/v1/shares/smb/{name}/repair-permissions`). It does not change
+  (`POST /api/v1/shares/smb/{name}/repair-permissions`). It runs in the
+  background, one repair at a time, until the share is done: the start
+  answers at once (202), the Shares page shows its progress and its end,
+  which `/ws/v1/events` sends administrators (`{"type": "repair"}`), and
+  **Stop repair** (`DELETE` on the same path) ends it early; it stops by
+  itself after 24 hours. `GET` on the same path answers the share's last
+  finished run. Deleting a share or changing its name or folder stops its
+  repair, and a stop of UNOS stops it with an audit entry; after a restart the
+  page no longer shows a repair as running. It does not change
   ACL entries (`setfacl`): on a file or folder that has them, the group
   permissions it sets are the ACL's mask, so the users and groups named there
   keep their access and can get more, and `unos-smb` gets only what the ACL's
@@ -531,6 +552,22 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- No page polls the API any more. **System** → **Logs**' **Auto** follows the
+  journal over the new WebSocket `/ws/v1/journal` (administrators only): the
+  newest entries of the chosen source, level, search and time range, then
+  each new one as the journal gets it, from a `journalctl --follow` on the
+  host that ends with the socket; it no longer reads the whole range again
+  every 5 seconds, and a lost connection stops it with a notice. The Storage
+  page follows a running scrub, also a scheduled one, over `/ws/v1/events`,
+  which sends administrators a `scrubs` message whenever the status of a
+  scrub that runs changes, instead of asking for the status every 2 seconds.
+  `GET /api/v1/logs/entries` answers each entry's journal `cursor`. A check
+  of the web UI's code (`webui/scripts/polling-check.mjs`, run by
+  `make test`) fails for a `setInterval` that reaches the API, also through a
+  function of another module of the web UI, or that changes a store or a
+  variable that a `$:` statement reaching the API reads. After the events
+  socket connects again, for example to a supervisor that restarted, the
+  Storage page asks once for each scrub it shows running or could not read.
 - Every copy of an smb.conf that UNOS replaced is kept, not only the latest:
   a file with shares that UNOS did not create goes to a new
   `/etc/samba/smb.conf.unos-replaced-<UTC time>` before an apply, and a file
@@ -752,6 +789,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   with HTTP 507, and the database copy of `update.sh` with an error
   (`update.sh` then asks whether to update without a backup, and stops
   without a terminal).
+- A restore checks the backup and extracts its database in one pass over the
+  archive, encrypted backups too, instead of decompressing the whole archive
+  into `/tmp` first: it needs about half the room in `/tmp` (and so in RAM) it
+  needed, the size of the database, and still refuses every archive it
+  refused. The manifest is read in memory, and the scheduled tasks of a
+  backup task's backup, which a restore does not restore, are no longer
+  extracted. A file whose name in the archive is not its plain path, such as
+  `unos.db/.`, is refused with 400 by the upload and by a restore, which
+  answered 500 with a temporary path.
 - While a scrub runs, btrfs rewrites its progress file every 5 seconds, for
   hours on a large pool. The supervisor keeps that file (`/var/lib/btrfs`) in
   RAM instead of on the system disk; the result of the last scrub is

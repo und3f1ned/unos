@@ -55,16 +55,16 @@ from . import account_state, constants, interfaces, models, service, smb, smbcon
 logger = logging.getLogger(__name__)
 
 # The programs of every account host step (the tool check looks for all of them).
-SAMBA_TOOLS = ("getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus")
+SAMBA_TOOLS = ("getent", "groupadd", "useradd", "userdel", "usermod", "smbpasswd", "pdbedit", "smbstatus")
 TOOLS_HINT = "install samba and samba-common-bin"
 
 LOOKUP_TIMEOUT = 10    # getent, the tool check
-CHANGE_TIMEOUT = 30    # groupadd, useradd, userdel, smbpasswd, pdbedit
+CHANGE_TIMEOUT = 30    # groupadd, useradd, userdel, usermod, smbpasswd, pdbedit
 SESSION_TIMEOUT = 15   # smbstatus, smbcontrol <pid> shutdown
 FLUSH_TIMEOUT = 60     # sync /etc
 
-# userdel of a deleted user's account: the smbd processes that were just shut
-# down need a moment to exit.
+# userdel of a deleted user's account and usermod of a renamed one: the smbd processes that were
+# just shut down need a moment to exit.
 USERDEL_ATTEMPTS = 3
 USERDEL_RETRY_SECONDS = 1.0
 
@@ -564,6 +564,32 @@ def _remove_host_account(name: str, *, expected_uid: int | None = None) -> str:
     if result.returncode == 8:
         return "busy"
     raise SmbHostCommandFailed(503, f"userdel could not remove the host account {name}: {_last_line(result)}")
+
+
+def _rename_host_account(old: str, new: str, uid: int) -> str:
+    """``usermod -l <new> <old>`` of the marked account ``old`` with ``uid`` (ADR-0368): "renamed",
+    "missing" or "busy". The account keeps its uid, and so the files it owns on the pools.
+
+    The account is read again right before: one that is not ours, or has another uid, is not
+    this user's and is never renamed (ADR-0192).
+    """
+    old = _checked_name(old, "usermod")
+    new = _checked_name(new, "usermod")
+    uid = _checked_uid(uid, "usermod")
+    account = _read_host_account(old)
+    if account is None or not account.ours or account.uid != uid:
+        return "missing"
+    result = _run(["usermod", "-l", new, old], timeout=CHANGE_TIMEOUT)
+    if result.returncode == 0:
+        logger.info("Renamed the host account %s to %s (uid %d)", old, new, uid)
+        return "renamed"
+    if result.returncode == 6:
+        return "missing"
+    if result.returncode == 8:
+        return "busy"
+    if result.returncode == 9:
+        raise SmbHostError(409, f"a host account named {new} exists")
+    raise SmbHostCommandFailed(503, f"usermod could not rename the host account {old} to {new}: {_last_line(result)}")
 
 
 def set_samba_password(name: str, password: str, *, restoring: bool = False) -> None:
@@ -1589,6 +1615,199 @@ async def finish_user_removal(db: AsyncSession, removal: UserRemoval) -> list[st
 
 
 # --------------------------------------------------------------------------
+# Rename (ADR-0368)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Rename:
+    """What rename_before_store() did on the host before the commit that renames the user."""
+    user_id: int
+    old: str
+    new: str
+    uid: int | None         # the uid of the user's own host account (the row's), or None: the host is not asked
+    reactivate: bool        # SMB was on: it is turned on again under the new name with the rename's password
+    renamed: bool = False   # usermod -l renamed the host account
+    revoked: bool = False   # Samba's account of the old name was removed
+    warnings: list[str] = field(default_factory=list)
+
+
+def _rename_needs_password(name: str) -> str:
+    return (
+        f"A new password is needed to rename {name}: SMB is on for {name}, and Samba's account of the new "
+        "name is made with it"
+    )
+
+
+def _name_taken_on_host(new: str, setting_password: bool) -> None:
+    """In a worker thread, before the host changes: the host can take ``new`` (ADR-0113), else 409."""
+    _require_tools()
+    if setting_password:
+        _require_unos_smb_conf()
+    accounts = read_host_accounts()
+    passdb = read_passdb_names()
+    account = accounts.get(new)
+    if account is not None and not account.ours:
+        raise SmbHostError(
+            409,
+            f"a host account named {new} exists that UNOS did not create; choose another name or remove it on "
+            f"the host (pdbedit -x -u {new}; userdel {new})",
+        )
+    if account is not None:
+        raise SmbHostError(
+            409,
+            f"a host account named {new} is left from an earlier SMB account; choose another name, or rename "
+            "after the next start of UNOS, which removes it",
+        )
+    if read_group(new) is not None:
+        raise SmbHostError(409, f"a host group named {new} exists; this name cannot be used for SMB")
+    stored = passdb.get(new.lower())
+    if stored is not None:
+        shown = _shown(stored)
+        treated = f"; Samba treats it as {new}" if stored != new else ""
+        raise SmbHostError(
+            409,
+            f"a Samba account named {shown} exists that UNOS did not create{treated}. Choose another name or "
+            f"remove it on the host (pdbedit -x -u {shown})",
+        )
+
+
+def _rename_on_host(rename: Rename) -> None:
+    """In a worker thread: the old name's SMB sessions end, its marked host account takes the new
+    name (retried while an smbd process of it still runs), then Samba's account of the old name
+    goes. A failure after usermod renames the account back; ``rename`` records what was done."""
+    old, new, uid = rename.old, rename.new, rename.uid
+    rename.warnings += end_smb_sessions([old])
+    for attempt in range(USERDEL_ATTEMPTS):
+        outcome = _rename_host_account(old, new, uid)  # type: ignore[arg-type]
+        if outcome != "busy":
+            rename.renamed = outcome == "renamed"
+            break
+        if attempt + 1 < USERDEL_ATTEMPTS:
+            time.sleep(USERDEL_RETRY_SECONDS)
+            end_smb_sessions([old])  # a client that connected again meanwhile
+    else:
+        raise SmbHostError(409, f"the host account {old} is still in use by an SMB connection; try again later")
+    try:
+        rename.revoked = delete_samba_entry(old)
+    except SmbHostError as error:
+        failure = _rename_back(rename)
+        if failure is not None:
+            error.message += f"; {failure}"
+        raise
+    finally:
+        if rename.renamed:
+            flush_etc()
+
+
+def _rename_back(rename: Rename) -> str | None:
+    """Undo usermod after a step that failed (thread): None when done or nothing to undo, else why not."""
+    if not rename.renamed:
+        return None
+    try:
+        outcome = _rename_host_account(rename.new, rename.old, rename.uid)  # type: ignore[arg-type]
+    except SmbHostError as error:
+        outcome = error.message
+    if outcome == "renamed":
+        rename.renamed = False
+        flush_etc()
+        return None
+    failure = f"the host account {rename.new} could not be renamed back to {rename.old}: {outcome}"
+    logger.warning("%s", failure)
+    return failure
+
+
+async def rename_before_store(
+    db: AsyncSession, user: User, row: models.SmbAccount | None, new: str, password: str | None
+) -> Rename:
+    """Step 1 of a rename (ADR-0368): the host follows before the caller stores the new name.
+
+    An active account needs ``password`` (400 otherwise, or for one that SMB refuses): Samba keeps
+    passwords by name, and the account of the new name is made with it after the commit
+    (finish_rename). A row with a uid has a host account: the host must be able to take the new
+    name (409 with the reason, before anything changes); its SMB sessions end, usermod renames it
+    and Samba's account of the old name is removed. A failure answers with the reason, and the host
+    is as it was but for the sessions and, when usermod could not be undone, the account's name.
+    """
+    old = user.username
+    active = _is_active(user, row)
+    if active:
+        if password is None:
+            raise HTTPException(status_code=400, detail=_rename_needs_password(old))
+        problem = constants.smb_password_problem(password)
+        if problem is not None:
+            raise HTTPException(status_code=400, detail=problem)
+    own_uid = row.uid if row is not None and row.linux_name == old and _valid_uid(row.uid) else None
+    rename = Rename(user_id=user.id, old=old, new=new, uid=own_uid, reactivate=active)
+    if own_uid is None:
+        return rename
+    prefix = f"The user {_shown(old)} was not renamed"
+    try:
+        await asyncio.to_thread(_name_taken_on_host, new, active)
+        await asyncio.to_thread(_rename_on_host, rename)
+    except SmbConfNotUnos as error:
+        raise HTTPException(status_code=409, detail=f"{prefix}: {_smb_conf_not_unos(error, by_admin=True)}") from None
+    except SmbHostError as error:
+        raise _http(error, prefix) from None
+    return rename
+
+
+async def store_rename(db: AsyncSession, user: User, row: models.SmbAccount | None, rename: Rename) -> None:
+    """Step 2 of a rename: commit the caller's changes of the user (its new name, set by the caller)
+    with the account row, which takes the new name and needs its password again, and the user's
+    access rows (service.rename_access_of_user). smb_uids keeps the name a uid first went to
+    (ADR-0353), and smb_uid_names gets the old and the new name of the uid (ADR-0368). A failed
+    write or commit is rolled back, usermod is undone, and when Samba's account of the old name
+    was removed, the row says 'needed' (503)."""
+    try:
+        # A row that an earlier user of another id left with this name would block the name. It goes
+        # first: the row's change below would be flushed before this DELETE, and meet it.
+        await db.execute(
+            delete(models.SmbAccount).where(
+                models.SmbAccount.linux_name == rename.new, models.SmbAccount.user_id != rename.user_id
+            )
+        )
+        if rename.uid is not None:
+            await _record_uids(db, [(rename.uid, rename.old)])
+            names = sqlite_dialect.insert(models.SmbUidName.__table__).on_conflict_do_nothing()
+            await db.execute(names, [{"uid": rename.uid, "linux_name": name} for name in (rename.old, rename.new)])
+        if row is not None:
+            if row.linux_name != rename.old:
+                _reset_mismatched_row(row, user)
+            row.linux_name = rename.new
+            row.password_state = "needed"
+            row.password_set_at = None
+        await service.rename_access_of_user(db, rename.user_id, rename.old, rename.new)
+        await db.commit()
+    except Exception as exc:
+        logger.warning("Saving the rename of %s failed: %s", _shown(rename.old), type(exc).__name__)
+        await _rollback(db)
+        failure = await asyncio.to_thread(_rename_back, rename)
+        if rename.revoked:
+            await _revoked_but_not_saved(db, rename.user_id, rename.old)
+        detail = DATABASE_BUSY if failure is None else f"{DATABASE_BUSY}; {failure}"
+        raise HTTPException(status_code=503, detail=detail) from None
+
+
+async def finish_rename(
+    db: AsyncSession, user: User, row: models.SmbAccount | None, rename: Rename, password: str | None
+) -> tuple[list[str], bool]:
+    """Step 3, after the commit: an account that was active is turned on again under the new name
+    with ``password`` (activate), which renders smb.conf; when that fails, smb.conf is rendered
+    without the old name and the reason is a warning. Returns the warnings and whether SMB is on."""
+    warnings = list(rename.warnings)
+    if not rename.reactivate or password is None:
+        return warnings, False
+    try:
+        flow = await activate(db, user, row, password, by_admin=True, new_hash=None)
+    except HTTPException as exc:
+        warnings.append(f"User renamed, but SMB access could not be turned on again: {exc.detail}")
+        warnings += await _apply(db)
+        return warnings, False
+    return warnings + flow.warnings, True
+
+
+# --------------------------------------------------------------------------
 # Startup and post-restore reconcile (ADR-0138)
 # --------------------------------------------------------------------------
 
@@ -2066,8 +2285,10 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
 
 _SQLITE = sqlite_dialect.dialect()
 _DATETIME = DateTime().dialect_impl(_SQLITE).result_processor(_SQLITE, None)
-# The model's smb_uids table, which a restore makes anew in the extracted database (ADR-0353).
+# The model's smb_uids and smb_uid_names tables, which a restore makes anew in the extracted
+# database (ADR-0353, ADR-0368).
 _SMB_UIDS_DDL = str(CreateTable(models.SmbUid.__table__).compile(dialect=_SQLITE)).strip()
+_SMB_UID_NAMES_DDL = str(CreateTable(models.SmbUidName.__table__).compile(dialect=_SQLITE)).strip()
 
 
 def _loads_as_datetime(value: object) -> bool:
@@ -2091,9 +2312,19 @@ def _as_bool(value: object) -> bool | None:
     return None
 
 
+def _uid_pairs(conn: sqlite3.Connection, table: str) -> list[tuple[int, str]]:
+    """The (uid, linux_name) rows of ``table`` with a valid uid and a string name; none when the
+    table is missing or has another layout."""
+    try:
+        found = conn.execute(f"SELECT uid, linux_name FROM {table} ORDER BY uid, linux_name").fetchall()
+    except sqlite3.Error:
+        return []
+    return [(uid, name) for uid, name in found if _valid_uid(uid) and isinstance(name, str)]
+
+
 def snapshot_for_restore(db_path: pathlib.Path | None) -> interfaces.RestoreSnapshot:
-    """The SMB accounts, next_uid and smb_uids (ADR-0353) of the live database before a restore
-    replaces it (sync, worker thread)."""
+    """The SMB accounts, next_uid, smb_uids (ADR-0353) and smb_uid_names (ADR-0368) of the live
+    database before a restore replaces it (sync, worker thread)."""
     if db_path is None:
         return interfaces.RestoreSnapshot()
     try:
@@ -2134,16 +2365,13 @@ def snapshot_for_restore(db_path: pathlib.Path | None) -> interfaces.RestoreSnap
             stored = None
         if stored is not None and _valid_next_uid(stored[0]):
             next_uid = stored[0]
-        try:
-            handed_out = tuple(
-                (uid, name) for uid, name in conn.execute("SELECT uid, linux_name FROM smb_uids ORDER BY uid")
-                if _valid_uid(uid) and isinstance(name, str)
-            )
-        except sqlite3.Error:
-            handed_out = ()
+        handed_out = tuple(_uid_pairs(conn, "smb_uids"))
+        uid_names = tuple(_uid_pairs(conn, "smb_uid_names"))
     finally:
         conn.close()
-    return interfaces.RestoreSnapshot(accounts=tuple(accounts), next_uid=next_uid, handed_out=handed_out)
+    return interfaces.RestoreSnapshot(
+        accounts=tuple(accounts), next_uid=next_uid, handed_out=handed_out, uid_names=uid_names
+    )
 
 
 def _proven(prev: interfaces.PrevAccount | None, username: object, hashed: object, is_admin: bool,
@@ -2177,10 +2405,13 @@ def prepare_restored_accounts(
     # account of another name (a backup of another installation allocated from the
     # same range): that account owns its files on the pools under this uid.
     live_uids = {p.uid: (p.username, p.linux_name) for p in snapshot.accounts if _valid_uid(p.uid)}
-    # Every uid handed out on this NAS and the name it went to (ADR-0353). A uid that no live
-    # account holds may still own the files of a deleted user on the pools: a restored row of
-    # another name never takes it.
+    # Every uid handed out on this NAS and the name it went to (ADR-0353), and the names it went by
+    # through renames (ADR-0368). A uid that no live account holds may still own the files of a
+    # deleted user on the pools: a restored row of another name never takes it.
     handed_out = dict(snapshot.handed_out)
+    known_names: dict[int, set[str]] = {}
+    for uid, name in [*snapshot.handed_out, *snapshot.uid_names]:
+        known_names.setdefault(uid, set()).add(name)
     users = {
         user_id: (username, hashed, bool(is_admin))
         for user_id, username, hashed, is_admin in conn.execute(
@@ -2200,7 +2431,7 @@ def prepare_restored_accounts(
         holder = live_uids.get(uid) if _valid_uid(uid) else None
         taken = holder is not None and holder != (username, linux_name)
         if holder is None and _valid_uid(uid):
-            taken = handed_out.get(uid, linux_name) != linux_name
+            taken = linux_name not in known_names.get(uid, {linux_name})
         keep = not taken and password_state == "set" and _proven(
             previous.get(username) if isinstance(username, str) else None,
             username, hashed, is_admin, linux_name, uid,
@@ -2271,17 +2502,27 @@ def prepare_restored_accounts(
     # Last come the backup's own rows that it can read, for the uids still missing: the old
     # installation's backup, restored after a reinstall, brings the uids of its deleted users. They
     # can only reserve more uids; a uid named above keeps that name.
+    # smb_uid_names likewise (ADR-0368): the live rows, then the backup's own for the uids that this
+    # NAS did not know before the restore, so a backup never adds a name to a uid of this NAS. Every
+    # uid with a name is recorded in smb_uids too, so no activation hands it out again.
     restored = conn.execute("SELECT uid, linux_name FROM smb_accounts").fetchall()
-    try:
-        backup_record = conn.execute("SELECT uid, linux_name FROM smb_uids").fetchall()
-    except sqlite3.Error:
-        backup_record = []  # no table, or another layout
-    for uid, name in [(p.uid, p.linux_name) for p in snapshot.accounts] + restored + backup_record:
+    backup_record = _uid_pairs(conn, "smb_uids")
+    known_here = set(known_names) | {p.uid for p in snapshot.accounts if _valid_uid(p.uid)}
+    names = sorted(
+        {(uid, name) for uid, name in snapshot.uid_names if constants.is_valid_linux_name(name)}
+        | {(uid, name) for uid, name in _uid_pairs(conn, "smb_uid_names")
+           if uid not in known_here and constants.is_valid_linux_name(name)}
+    )
+    live_accounts = [(p.uid, p.linux_name) for p in snapshot.accounts]
+    for uid, name in live_accounts + restored + backup_record + names:
         if _valid_uid(uid) and constants.is_valid_linux_name(name):
             handed_out.setdefault(uid, name)
     conn.execute("DROP TABLE IF EXISTS smb_uids")
     conn.execute(_SMB_UIDS_DDL)
     conn.executemany("INSERT INTO smb_uids (uid, linux_name) VALUES (?, ?)", sorted(handed_out.items()))
+    conn.execute("DROP TABLE IF EXISTS smb_uid_names")
+    conn.execute(_SMB_UID_NAMES_DDL)
+    conn.executemany("INSERT INTO smb_uid_names (uid, linux_name) VALUES (?, ?)", names)
 
     # uid floor: never below the restored value, the live value or any uid seen or handed out.
     restored_uids = [uid for uid, _ in restored if _valid_uid(uid)]

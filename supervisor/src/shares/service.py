@@ -1393,6 +1393,28 @@ async def delete_access_of_user(db: AsyncSession, user_id: int) -> int:
     return len(rows)
 
 
+async def rename_access_of_user(db: AsyncSession, user_id: int, old: str, new: str) -> None:
+    """A user's rename (ADR-0368): their access rows, written for ``old``, name ``new`` (ADR-0133);
+    a row of the id written for another name is stale (ADR-0137) and is deleted, so that it never
+    becomes access of the new name. The shares of these rows get version + 1 (flushed, not
+    committed). The caller holds smb_lock()."""
+    rows = (
+        await db.execute(
+            select(models.SmbShareAccess)
+            .where(models.SmbShareAccess.user_id == user_id)
+            .execution_options(**_FRESH)
+        )
+    ).scalars().all()
+    if not rows:
+        return
+    stale = [row.id for row in rows if row.username != old]
+    for row in rows:
+        if row.username == old:
+            row.username = new
+    await db.flush()
+    await _delete_access_rows(db, stale, {row.share_id for row in rows})
+
+
 async def purge_orphans(db: AsyncSession) -> int:
     """Delete stale access rows (ADR-0137), flushed in the caller's transaction.
 
@@ -2109,7 +2131,8 @@ async def _create_share_locked(db: AsyncSession, data: schemas.SmbShareCreate) -
 
 
 async def update_share(db: AsyncSession, name: str, data: schemas.SmbShareUpdate) -> ShareChange:
-    """PATCH /shares/smb/{name} (ADR-0134): only the fields that are sent change. Takes smb_lock()."""
+    """PATCH /shares/smb/{name} (ADR-0134): only the fields that are sent change. A new name or
+    folder stops a running repair of the share (ADR-0363). Takes smb_lock()."""
     async with smb_lock():
         try:
             return await _update_share_locked(db, name, data)
@@ -2162,11 +2185,17 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
 
     changes: list[str] = []
     guest_turned_on = False
+    # What a running repair of the share must stop for (ADR-0363): another name than in letter
+    # case (Samba's names ignore it), another folder.
+    moved: list[str] = []
     if new_name != share.name:
         changes.append(f"name {old_name}→{new_name}")
+        if _text(new_name).lower() != old_name.lower():
+            moved.append("name")
         share.name = new_name
     if new_path != share.path:
         changes.append(f"path {_text(share.path)}→{new_path}")
+        moved.append("folder")
         share.path = new_path
     if "comment" in sent and data.comment != share.comment:
         changes.append("comment")
@@ -2194,6 +2223,8 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
     await db.flush()
     final_name = _text(share.name)
     result, render = await _stage_commit_install(db)
+    if moved:
+        _stop_repair(share_id, f"a change of the share's {' and '.join(moved)}")
 
     warnings = list(result.warnings)
     if folder is not None and folder.existed and folder.permissions_ok is False:
@@ -2214,19 +2245,28 @@ async def _update_share_locked(db: AsyncSession, name: str, data: schemas.SmbSha
     )
 
 
+def _stop_repair(share_id: object, stopped_by: str, *, deleted: bool = False) -> None:
+    """Stop the running repair of the share, if one runs (repair_router.stop_for_share, ADR-0363)."""
+    from . import repair_router  # lazily: repair_router imports this module
+
+    repair_router.stop_for_share(share_id, stopped_by, deleted=deleted)
+
+
 async def delete_share(db: AsyncSession, name: str) -> ShareChange:
     """DELETE /shares/smb/{name}: the row and its access rows; the folder is kept.
 
-    The shrink rule (ADR-0103) closes the share's open tree connects. Takes smb_lock().
+    The shrink rule (ADR-0103) closes the share's open tree connects, and a
+    running repair of the share stops (ADR-0363). Takes smb_lock().
     """
     async with smb_lock():
         try:
             await _import_if_needed_locked(db)
             share = await _load_share(db, name)
-            share_name, share_path = _text(share.name), _text(share.path)
+            share_id, share_name, share_path = share.id, _text(share.name), _text(share.path)
             await db.delete(share)  # the ORM cascade deletes its access rows
             await db.flush()
             result, _ = await _stage_commit_install(db)
+            _stop_repair(share_id, "the deletion of the share", deleted=True)
         except Exception:
             await _rollback(db)
             raise

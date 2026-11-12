@@ -17,7 +17,7 @@ from sqlalchemy import select, func, desc
 from .. import state_files
 from ..database import get_db
 from ..auth.utils import client_ip, require_admin, verify_token
-from ..auth.models import User
+from ..auth.models import User, UsernameTaken
 from .models import LoginAttempt
 from .schemas import (
     LoginAttemptResponse, LoginHistoryResponse,
@@ -55,16 +55,24 @@ def _visible_attempts(current_user: User, username: str | None) -> list:
 
     Administrators see every attempt, or those with ``username``. The history is kept by
     name, also for names without an account, so a regular user sees the attempts on their
-    name since their account was created (ADR-0263): not those of a deleted account whose
-    name was given to them. Both times are SQLite's CURRENT_TIMESTAMP, text to the second;
+    name since their account was created (ADR-0263) and since a rename last gave them the
+    name (usernames_taken, ADR-0368): not those of a deleted or renamed account whose name
+    was given to them. The times are SQLite's CURRENT_TIMESTAMP, text to the second;
     datetime() compares them so, and a sign-in in the second of the account's creation is
     the account's (a time bound from Python has microseconds and, as text, comes later).
     """
     if current_user.is_admin:
         return [LoginAttempt.username == username] if username else []
+    since = func.datetime(current_user.created_at)
+    taken = (
+        select(func.datetime(UsernameTaken.taken_at))
+        .where(UsernameTaken.username == current_user.username)
+        .scalar_subquery()
+    )
     return [
         LoginAttempt.username == current_user.username,
-        func.datetime(LoginAttempt.timestamp) >= func.datetime(current_user.created_at),
+        func.datetime(LoginAttempt.timestamp) >= since,
+        func.datetime(LoginAttempt.timestamp) >= func.coalesce(taken, since),
     ]
 
 
