@@ -1,7 +1,9 @@
 import subprocess
 import json
 import logging
+import math
 import os
+import stat
 import asyncio
 import threading
 from pathlib import Path
@@ -236,6 +238,22 @@ def save_ups_config(config: UPSConfig) -> None:
     state_files.write_json(Path(UPS_CONFIG_FILE), config.model_dump(), sync=False, mode=0o600)
 
 
+def narrow_ups_config_mode() -> None:
+    """Give the UPS settings' file, and the one kept as .bad, the mode 0600 of save_ups_config when
+    they have another one, such as the 0644 that the version before ADR-0356 gave the file with the
+    NUT password, or a file put in place by hand. A file of mode 0600 is left as it is (ADR-0214).
+    Logs a failure, never raises: the supervisor starts."""
+    path = Path(UPS_CONFIG_FILE)
+    for file in (path, state_files.bad_path(path)):
+        try:
+            if stat.S_IMODE(os.stat(file).st_mode) != 0o600:
+                os.chmod(file, 0o600)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            logger.warning("Could not make %s readable by its owner only: %s", file, exc)
+
+
 def _upsc(args: list[str]) -> tuple[Optional[str], Optional[str]]:
     """Run NUT's upsc with ARGS on the host (ADR-0356): its output and None, or None and why it
     could not run or what it reported. Blocking: run it off the event loop."""
@@ -256,6 +274,17 @@ def _upsc(args: list[str]) -> tuple[Optional[str], Optional[str]]:
     return result.stdout, None
 
 
+def _ups_number(data: dict[str, str], key: str) -> Optional[float]:
+    """The variable KEY of upsc's answer as a number, with decimals or without ("100", "23.4"); None
+    when upsc gave none or one that is no finite number. Each value stands on its own: one that
+    cannot be read leaves the others, and the UPS stays available (ADR-0356)."""
+    try:
+        number = float(data[key])
+    except (KeyError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def get_ups_status(config: UPSSettings) -> UPSStatus:
     """The UPS's state, as upsc on the host reads it from upsd; unavailable with the reason when it
     cannot be read. Blocking: run it off the event loop."""
@@ -268,29 +297,23 @@ def get_ups_status(config: UPSSettings) -> UPSStatus:
         key, sep, value = line.partition(":")
         if sep:
             data[key.strip()] = value.strip()
-    charge = data.get("battery.charge")
-    runtime = data.get("battery.runtime")
-    load = data.get("ups.load")
-    input_v = data.get("input.voltage")
-    output_v = data.get("output.voltage")
-    try:
-        return UPSStatus(
-            available=True,
-            name=config.ups_name,
-            status=data.get("ups.status", ""),  # OL (online), OB (on battery), LB (low battery)
-            charge_percent=int(charge) if charge else None,
-            runtime_minutes=int(float(runtime) / 60) if runtime else None,
-            load_percent=int(load) if load else None,
-            input_voltage=float(input_v) if input_v else None,
-            output_voltage=float(output_v) if output_v else None,
-            manufacturer=data.get("ups.mfr"),
-            model=data.get("ups.model"),
-            battery_type=data.get("battery.type"),
-            last_checked=checked,
-        )
-    except ValueError as exc:
-        return UPSStatus(available=False, reason=f"upsc answered a value UNOS cannot read: {exc}",
-                         last_checked=checked)
+    charge = _ups_number(data, "battery.charge")
+    runtime = _ups_number(data, "battery.runtime")
+    load = _ups_number(data, "ups.load")
+    return UPSStatus(
+        available=True,
+        name=config.ups_name,
+        status=data.get("ups.status", ""),  # OL (online), OB (on battery), LB (low battery)
+        charge_percent=int(charge) if charge is not None else None,
+        runtime_minutes=int(runtime / 60) if runtime is not None else None,
+        load_percent=int(load) if load is not None else None,
+        input_voltage=_ups_number(data, "input.voltage"),
+        output_voltage=_ups_number(data, "output.voltage"),
+        manufacturer=data.get("ups.mfr"),
+        model=data.get("ups.model"),
+        battery_type=data.get("battery.type"),
+        last_checked=checked,
+    )
 
 
 def _log_ups_change(previous: Optional[UPSStatus], status: UPSStatus, config: UPSSettings) -> None:
@@ -845,8 +868,9 @@ async def get_ups_monitor_status(_: dict = Depends(verify_token)):
 
 
 async def start_ups_monitor():
-    """Start the UPS monitor on app startup."""
+    """Start the UPS monitor on app startup, after narrowing the mode of the UPS settings' file."""
     global _ups_monitor_running, _ups_monitor_task
+    narrow_ups_config_mode()
     _ups_monitor_running = True
     _ups_monitor_task = asyncio.create_task(ups_monitor_loop())
 

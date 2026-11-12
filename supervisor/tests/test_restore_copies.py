@@ -47,6 +47,43 @@ def add_copy(host, path: str, parent: int = test_volumes.TOP_LEVEL, *, of: int =
     return host.subvols.add(DATA_UUID, path, parent=parent, snapshot_of=of)
 
 
+def rename_before_show(monkeypatch, host, subvol_id: int, path: str) -> None:
+    """Rename the subvolume ``subvol_id`` to ``path`` (from the top level) right before btrfs describes it.
+
+    That is after the checks of its path, and anyone who can write in the volume can rename it.
+    """
+    real = host_module.run_on_host
+
+    def run_on_host(argv, *args, **kwargs):
+        if argv[:3] == ["btrfs", "subvolume", "show"] and argv[4] == str(subvol_id):
+            parent, _ = host.subvols.subvolumes[DATA_UUID][subvol_id]
+            host.subvols.subvolumes[DATA_UUID][subvol_id] = (parent, path)
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(host_module, "run_on_host", run_on_host)
+
+
+# Names that a rename gives a subvolume at a copy's path between the checks of its path and its
+# description by `btrfs subvolume show` (by id: the description prints the new name), and whether
+# that subvolume is a copy. The first three hold lines like those of the description and are given
+# to a subvolume made by hand: the lines would tell a writable snapshot. A parser that stopped at
+# the first "Snapshot(s):" line would take the second.
+_UUID = test_volumes.FakeSubvolumes.uuid_of(300)
+_PARENT_UUID = test_volumes.FakeSubvolumes.uuid_of(301)
+RENAMES = {
+    "its own Parent UUID and Flags": (f"{COPY}\n\tParent UUID: \t\t{_PARENT_UUID}\n\tFlags: \t\t\t-", False),
+    "keys, then its own Snapshot(s)": (
+        f"{COPY}\n\tName: \t\t\t{COPY}\n\tUUID: \t\t\t{_UUID}\n\tParent UUID: \t\t{_PARENT_UUID}\n"
+        "\tFlags: \t\t\t-\n\tSnapshot(s):",
+        False,
+    ),
+    "its own Snapshot(s), then keys": (
+        f"{COPY}\n\tSnapshot(s):\n\tParent UUID: \t\t{_PARENT_UUID}\n\tFlags: \t\t\t-", False
+    ),
+    "another copy's name": ("restore_20261112_093005", True),
+}
+
+
 def copy_info(name: str, volume: str | None = "documents") -> dict:
     """An entry of GET /snapshots/copies."""
     folder = f"{POOL}/{volume}" if volume else POOL
@@ -110,6 +147,34 @@ class TestList:
 
         assert response.status_code == 200, response.text
         assert response.json() == []
+
+    @pytest.mark.parametrize("rename", RENAMES.values(), ids=RENAMES.keys())
+    def test_a_description_with_forged_or_other_names_is_not_taken(self, api, host, documents, monkeypatch,
+                                                                    rename):
+        # Each of Name, UUID, Parent UUID and Flags must be a line of the description exactly once,
+        # and the Name the copy's.
+        name, a_copy = rename
+        if a_copy:
+            subvol_id = add_copy(host, f"documents/{COPY}", documents)
+        else:
+            subvol_id = host.subvols.add(DATA_UUID, f"documents/{COPY}", parent=documents)
+        rename_before_show(monkeypatch, host, subvol_id, f"documents/{name}")
+
+        response = api.get(COPIES, params={"subvolume": DOCUMENTS})
+
+        assert response.status_code == 200, response.text
+        assert response.json() == []
+
+    def test_a_copy_with_snapshots_of_its_own_is_listed(self, api, host, documents):
+        # The description of a subvolume ends with the paths of its snapshots, after "Snapshot(s):".
+        copy = add_copy(host, f"documents/{COPY}", documents)
+        host.subvols.add(DATA_UUID, f"documents/.snapshots/{COPY}", parent=documents, snapshot_of=copy,
+                         read_only=True)
+
+        response = api.get(COPIES, params={"subvolume": DOCUMENTS})
+
+        assert response.status_code == 200, response.text
+        assert response.json() == [copy_info(COPY)]
 
     def test_an_unknown_volume_is_not_found(self, api, host, documents):
         response = api.get(COPIES, params={"subvolume": f"{POOL}/photos"})
@@ -302,6 +367,24 @@ class TestDelete:
         assert response.status_code == 200, response.text
         [delete] = _btrfs_calls(host, "subvolume", "delete")
         assert delete[4] != str(documents) and "documents" in host.subvols.paths(DATA_UUID)
+
+    @pytest.mark.parametrize("rename", RENAMES.values(), ids=RENAMES.keys())
+    def test_a_description_with_forged_or_other_names_is_refused(self, api, host, documents, monkeypatch, rename):
+        name, a_copy = rename
+        if a_copy:
+            subvol_id = add_copy(host, f"documents/{COPY}", documents)
+        else:
+            subvol_id = host.subvols.add(DATA_UUID, f"documents/{COPY}", parent=documents)
+        rename_before_show(monkeypatch, host, subvol_id, f"documents/{name}")
+
+        response = api.delete(f"{COPIES}/{COPY}", params={"subvolume": DOCUMENTS})
+
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == (
+            f"'documents/{COPY}' of pool 'data' is not a copy that a restore made (a writable snapshot): "
+            "it was not deleted."
+        )
+        assert host.changes == []
 
     def test_only_ids_of_other_subvolumes_are_a_conflict(self, api, host, documents):
         host.subvols.add(DATA_UUID, f"x\nID {documents} gen 12 top level {documents} path documents/{COPY}")

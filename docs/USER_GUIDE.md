@@ -1384,8 +1384,8 @@ regular users have no access to it.
   no entry either. Mounting, unmounting and importing pools, creating
   containers and pulling or removing images on the **Containers** page, the
   snapshots that scheduled tasks take and clean up, the apps started when a
-  pool is mounted, suspend, the off-device copy, notifications, the firewall
-  and the TLS certificates write no entries.
+  pool is mounted, suspend, the off-device copy, notifications, the firewall,
+  the TLS certificates and clearing the login history write no entries.
 - **Action** offers only the actions that the NAS records. An older entry
   whose action UNOS no longer has, such as `firewall_rule_added`, is listed
   with its action as recorded.
@@ -1539,6 +1539,8 @@ NUT server on another machine).
   NUT client: upsc was not found. Install the package nut-client on the
   host". `POST /api/v1/power/ups/test` answers 503 with the same reason, and
   `GET /api/v1/power/ups/list` an empty `devices` list with it as `error`.
+  Values with decimals are read, percentages and minutes as whole numbers; a
+  value that is no number is null, and the others are still read.
 - While the settings are `enabled`, the UPS monitor reads the UPS every 30
   seconds. `GET /api/v1/power/ups/monitor/status` says whether its last check
   read the UPS (`available`) and, when not, the `reason`. While the NAS has no
@@ -1677,12 +1679,15 @@ UNOS stores certificates but does not serve them yet: browsers keep getting
 the local CA's certificate whatever is stored (feature-list entry
 `security.custom-certificates`). **Generate Self-Signed** stores a certificate
 for a host name or an IP address (a name of at most 64 characters), valid for
-the days you choose, with an optional organization (at most 64 characters)
-and an optional country (two letters, such as `DE`); the API's
+the days you choose, with an optional organization (at most 64 printable
+characters) and an optional country (two letters, such as `DE`); when UNOS
+refuses what you entered, the dialog says why. The API's
 `POST /api/v1/security/certificates/upload` stores a certificate with its key
-and chain under the name of its subject. The trash button deletes a stored
-certificate. When the certificates cannot be loaded, the card says so with
-the reason.
+and chain under the name of its subject; a certificate stored under the same
+name replaces the old one with its key, and its chain too, which goes when the
+new certificate has none. A store that fails keeps the old files. The trash
+button deletes a stored certificate. When the certificates cannot be loaded,
+the card says so with the reason and **Retry**.
 
 ---
 

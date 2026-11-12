@@ -203,6 +203,7 @@ export const en = {
 	'account.certs.organizationPlaceholder': 'e.g., My Home',
 	'account.certs.country': 'Country Code (optional)',
 	'account.certs.countryPlaceholder': 'e.g., US',
+	'account.certs.countryHint': 'Two letters, such as DE',
 	'account.certs.generating': 'Generating...',
 	'account.certs.generate': 'Generate',
 	// The types of certificate.
@@ -430,6 +431,7 @@ export const ru: Translation<typeof en> = {
 	'account.certs.organizationPlaceholder': 'например, Мой дом',
 	'account.certs.country': 'Код страны (необязательно)',
 	'account.certs.countryPlaceholder': 'например, RU',
+	'account.certs.countryHint': 'Две латинские буквы, например DE',
 	'account.certs.generating': 'Создание...',
 	'account.certs.generate': 'Создать',
 	'account.certs.selfSigned': 'Самоподписанный',

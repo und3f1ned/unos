@@ -28,6 +28,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.audit import router as audit_router
+from src.audit.changes import audit_change
 from src.audit.schemas import AuditAction, AuditEntry
 from src.auth import router as auth_router
 from src.main import app
@@ -916,6 +917,20 @@ class TestAnActionNoLongerWritten:
         header, *rows = csv.reader(io.StringIO(response.text, newline=""))
         assert [row[header.index("Action")] for row in rows] == [OLD_ACTION]
         assert get(old_entry, "/logs/summary")["by_action"] == {"other": 2, OLD_ACTION: 1}
+
+    @pytest.mark.parametrize("write", [
+        pytest.param(lambda: audit_router.log_action(OLD_ACTION, username="admin"), id="log_action"),
+        pytest.param(lambda: audit_change(OLD_ACTION, None, "admin", resource_type="host"), id="audit_change"),
+    ])
+    def test_no_writer_takes_it(self, world, write):
+        # The reader takes any name; a writer only a value of AuditAction, and writes nothing else.
+        log("before")
+        before = world.audit_file.read_bytes()
+
+        with pytest.raises(ValueError, match=OLD_ACTION):
+            asyncio.run(write())
+
+        assert world.audit_file.read_bytes() == before
 
 
 def _entry_hash(entry: dict) -> str:

@@ -87,7 +87,11 @@
   // Until the stored certificates have loaded, the card does not say that there are none.
   let certificatesLoaded = false;
   let certLoading = false;
+  // Why the last load of the certificates failed: reset by every load.
+  let certLoadError = "";
+  // Why a delete failed; why a generation failed, shown in its dialog.
   let certError = "";
+  let genCertError = "";
   let certSuccess = "";
   let showCertModal = false;
   let showGenCertModal = false;
@@ -439,27 +443,36 @@
   // Certificate functions
   async function loadCertificateStatus() {
     certLoading = true;
+    certLoadError = "";
     try {
       certStatus = await getCertificateStatus();
       const resp = await getCertificates();
       certificates = resp.certificates;
       certificatesLoaded = true;
     } catch (e) {
+      // No list is known: not the one of an earlier load, and not "none".
+      certificates = [];
       certificatesLoaded = false;
-      certError = $t("account.certs.loadFailed", { error: messageOf(e) });
+      certLoadError = $t("account.certs.loadFailed", { error: messageOf(e) });
     } finally {
       certLoading = false;
     }
   }
 
+  function openGenerateDialog() {
+    genCertError = "";
+    showGenCertModal = true;
+  }
+
   async function handleGenerateCert() {
     if (!newCert.domain) {
-      certError = $t("account.certs.domainRequired");
+      genCertError = $t("account.certs.domainRequired");
       return;
     }
 
     certLoading = true;
-    certError = "";
+    genCertError = "";
+    certSuccess = "";
     try {
       await generateSelfSignedCert({
         domain: newCert.domain,
@@ -472,7 +485,7 @@
       newCert = { domain: "", validity_days: 365, organization: "", country: "" };
       await loadCertificateStatus();
     } catch (e: any) {
-      certError = e.message || $t("account.certs.generateFailed");
+      genCertError = e.message || $t("account.certs.generateFailed");
     } finally {
       certLoading = false;
     }
@@ -482,6 +495,8 @@
     if (!confirm($t("account.certs.confirmDelete"))) return;
 
     certLoading = true;
+    certError = "";
+    certSuccess = "";
     try {
       await deleteCertificate(certId);
       certSuccess = $t("account.certs.deleted");
@@ -848,17 +863,20 @@
     </div>
 
     {#if certSuccess}
-      <div class="mb-4 p-3 bg-green-500/20 border border-green-500 text-green-400 rounded-lg flex items-center gap-2">
-        <CheckCircle class="w-5 h-5" />
-        {certSuccess}
-      </div>
+      <Alert variant="success" class="mb-4">{certSuccess}</Alert>
     {/if}
 
     {#if certError}
-      <div class="mb-4 p-3 bg-red-500/20 border border-red-500 text-red-400 rounded-lg flex items-center gap-2">
-        <AlertCircle class="w-5 h-5" />
-        {certError}
-      </div>
+      <Alert variant="error" class="mb-4">{certError}</Alert>
+    {/if}
+
+    {#if certLoadError}
+      <Alert variant="error" class="mb-4">
+        <p>{certLoadError}</p>
+        <Button variant="secondary" size="sm" class="mt-3" loading={certLoading} on:click={loadCertificateStatus}
+          >{$t("common.retry")}</Button
+        >
+      </Alert>
     {/if}
 
     <p class="text-sm text-slate-400">
@@ -879,7 +897,7 @@
         <div class="flex flex-wrap justify-between items-center gap-2">
           <h4 class="font-medium">{$t("account.certs.stored")}</h4>
           <button
-            on:click={() => showGenCertModal = true}
+            on:click={openGenerateDialog}
             class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm flex items-center gap-1"
           >
             <Plus class="w-4 h-4" />
@@ -1298,6 +1316,11 @@
       </h3>
 
       <form on:submit|preventDefault={handleGenerateCert} class="space-y-4">
+        <!-- In the dialog: behind its overlay a refusal could not be read. -->
+        {#if genCertError}
+          <Alert variant="error">{genCertError}</Alert>
+        {/if}
+
         <div>
           <label class="block text-sm font-medium text-slate-400 mb-1">{$t("account.certs.domain")}</label>
           <input
@@ -1336,7 +1359,10 @@
           <input
             type="text"
             bind:value={newCert.country}
+            minlength="2"
             maxlength="2"
+            pattern="[A-Za-z][A-Za-z]"
+            title={$t("account.certs.countryHint")}
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg focus:outline-none focus:border-blue-500"
             placeholder={$t("account.certs.countryPlaceholder")}
           />

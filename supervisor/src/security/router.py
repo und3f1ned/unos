@@ -4,6 +4,8 @@ import os
 import subprocess
 import json
 import re
+import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -33,6 +35,9 @@ FIREWALL_RULES_FILE = "/data/firewall_rules.json"
 # Uploaded and self-signed certificates. Stored, not served: Caddy serves the certificate of its
 # local CA, in the web UI's container, which has no access to this directory (ADR-0357).
 CERTS_DIR = "/data/certs"
+# Held by every store and delete of the stored certificates, which run in worker threads: two of
+# them never mix their files (ADR-0357).
+_CERTIFICATES_LOCK = threading.Lock()
 # How long openssl may take, in a worker thread (ADR-0021): reading a certificate takes well under
 # a second, making a 2048-bit RSA key a few seconds on a slow board.
 OPENSSL_READ_TIMEOUT = 10
@@ -419,12 +424,12 @@ def _uploaded_certificate_name(common_name: str) -> str | None:
 
 
 def _write_certificate_file(path: Path, text: str, mode: int) -> None:
-    """Write ``text`` to ``path``, a file created with ``mode``.
+    """Write ``text`` to ``path``, a new file created with ``mode``.
 
-    O_NOFOLLOW: a symbolic link at ``path`` fails the write with ELOOP and its target stays as it
-    was (ADR-0042).
+    O_EXCL and O_NOFOLLOW: a file or a symbolic link already at ``path`` fails the write, and a
+    link's target stays as it was (ADR-0042).
     """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
     with os.fdopen(fd, "w") as fh:
         fh.write(text)
 
@@ -435,13 +440,53 @@ def _write_private_key(path: Path, key: str) -> None:
 
 
 def _store_certificate(name: str, certificate: str, key: str, chain: str | None = None) -> None:
-    """Store a certificate, its key and its chain (when given) under ``name`` in CERTS_DIR."""
+    """Store a certificate, its key and its chain (when given) under ``name`` in CERTS_DIR.
+
+    Each file is written to a temporary file in CERTS_DIR first, ``.<random>.tmp``: short, so
+    that it fits NAME_MAX for every name, and never listed as a certificate. Only once every write
+    has succeeded are they renamed over the stored files, and a stored chain is removed when none
+    is given, as it belonged to the replaced certificate. A failed write leaves the stored files as
+    they were and no temporary file. A rename replaces a symbolic link at a file's path, never its
+    target (ADR-0042). Holds _CERTIFICATES_LOCK: blocking, call it in a worker thread (ADR-0357).
+    """
     cert_file, key_file, chain_file = _certificate_files(name)
-    cert_file.parent.mkdir(parents=True, exist_ok=True)
-    _write_certificate_file(cert_file, certificate, 0o644)
-    _write_private_key(key_file, key)
+    files = [
+        (cert_file, lambda path: _write_certificate_file(path, certificate, 0o644)),
+        (key_file, lambda path: _write_private_key(path, key)),
+    ]
     if chain:
-        _write_certificate_file(chain_file, chain, 0o644)
+        files.append((chain_file, lambda path: _write_certificate_file(path, chain, 0o644)))
+    with _CERTIFICATES_LOCK:
+        cert_file.parent.mkdir(parents=True, exist_ok=True)
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for stored, write in files:
+                temporary = stored.parent / f".{secrets.token_hex(8)}.tmp"
+                staged.append((temporary, stored))
+                write(temporary)
+            for temporary, stored in staged:
+                os.replace(temporary, stored)
+            if not chain:
+                chain_file.unlink(missing_ok=True)
+        finally:
+            for temporary, _ in staged:
+                temporary.unlink(missing_ok=True)
+
+
+def _delete_certificate_files(name: str) -> bool:
+    """Remove the stored files of the certificate ``name``; False when none is stored under it.
+
+    Holds _CERTIFICATES_LOCK, so that a store of the same name in between leaves no key without its
+    certificate: blocking, call it in a worker thread (ADR-0357).
+    """
+    cert_file, key_file, chain_file = _certificate_files(name)
+    with _CERTIFICATES_LOCK:
+        if not cert_file.exists():
+            return False
+        cert_file.unlink(missing_ok=True)
+        key_file.unlink(missing_ok=True)
+        chain_file.unlink(missing_ok=True)
+    return True
 
 
 def _openssl_error(error: Exception) -> str:
@@ -511,16 +556,22 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
             "valid_from": "",
             "valid_until": "",
             "fingerprint": "",
-            "is_valid": False
+            "is_valid": False,
+            # The whole subject and issuer as openssl prints them: a certificate is
+            # self-signed when they are the same name.
+            "subject_name": "",
+            "issuer_name": "",
         }
 
         for line in result.stdout.split("\n"):
             if line.startswith("subject="):
+                info["subject_name"] = line.split("=", 1)[1].strip()
                 # Extract CN from subject
                 cn_match = re.search(r'CN\s*=\s*([^,/]+)', line)
                 if cn_match:
                     info["domain"] = cn_match.group(1).strip()
             elif line.startswith("issuer="):
+                info["issuer_name"] = line.split("=", 1)[1].strip()
                 # Extract issuer organization or CN
                 org_match = re.search(r'O\s*=\s*([^,/]+)', line)
                 cn_match = re.search(r'CN\s*=\s*([^,/]+)', line)
@@ -567,8 +618,9 @@ def get_custom_certificates() -> list[Certificate]:
             continue
         info = get_certificate_info(str(cert_file))
         if info:
-            # Check if it's self-signed (issuer matches subject)
-            is_self_signed = info.get("issuer") == info.get("domain")
+            # Self-signed: the issuer is the subject. Comparing the issuer's O or CN with the
+            # subject's CN took one made with an organization for a custom certificate.
+            is_self_signed = bool(info.get("subject_name")) and info.get("issuer_name") == info.get("subject_name")
             certs.append(Certificate(
                 id=f"custom_{cert_file.stem}",
                 type=CertificateType.SELF_SIGNED if is_self_signed else CertificateType.CUSTOM,
@@ -685,9 +737,9 @@ async def upload_certificate(
                 "(*.example.com) or an IP address, at most "
                 f"{MAX_CERTIFICATE_NAME_LENGTH} characters long",
             )
-        # Text that cannot be encoded (a lone surrogate) would fail half-way
-        # through the writes below, with the certificate replaced and the old
-        # key or chain file emptied.
+        # Text that cannot be encoded (a lone surrogate) is a bad request: the
+        # write below would fail on it, and then leave the stored files as
+        # they were.
         for text, what in ((data.private_key, "private key"),
                            (data.chain or "", "certificate chain")):
             try:
@@ -724,19 +776,14 @@ async def delete_certificate(
     name = cert_id.removeprefix("custom_")
     if _uploaded_certificate_name(name) != name:
         raise HTTPException(400, "Invalid certificate id")
-    cert_file, key_file, chain_file = _certificate_files(name)
-
-    if not cert_file.exists():
-        raise HTTPException(404, "Certificate not found")
 
     try:
-        cert_file.unlink(missing_ok=True)
-        key_file.unlink(missing_ok=True)
-        chain_file.unlink(missing_ok=True)
-
-        return {"status": "ok", "message": "Certificate deleted"}
+        deleted = await asyncio.to_thread(_delete_certificate_files, name)
     except Exception as e:
         raise HTTPException(500, f"Failed to delete certificate: {str(e)}")
+    if not deleted:
+        raise HTTPException(404, "Certificate not found")
+    return {"status": "ok", "message": "Certificate deleted"}
 
 
 # ==================== Helper for login tracking ====================

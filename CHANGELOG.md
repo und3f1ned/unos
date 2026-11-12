@@ -22,10 +22,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   supervisor cannot see, and has no `active_certificate` or `auto_renew`.
   openssl runs off the event loop with a timeout (10 s to read a certificate,
   60 s to make one; a timeout answers 500, an upload no longer "Invalid
-  certificate format"), certificate and key files are written without
-  following a symbolic link at their path (keys 0600), and a self-signed
-  certificate's organization is refused over 64 characters and its country
-  unless it is two letters (422).
+  certificate format"). A certificate, its key and its chain are written to
+  temporary files and renamed over the old ones only once all are written,
+  one store or delete at a time: a failed write keeps the old files, two
+  stores never mix one certificate with another's key, a certificate stored
+  without a chain drops the old chain, and a symbolic link at a file's path
+  is replaced, never followed (keys 0600). A self-signed certificate's
+  organization is refused over 64 characters or with non-printable
+  characters, and its country unless it is two letters (422); the country
+  field takes two letters only, the dialog shows why a generation was
+  refused, a listing that cannot be loaded shows no earlier list and has
+  **Retry**, and a self-signed certificate made with an organization is
+  listed as self-signed, not as custom.
 - Samba refuses every SMB password change that a computer asks for over the
   network (Windows' **Change a password**, `smbpasswd -r`), so that SMB
   passwords change only in UNOS, under its password rules: the line
@@ -790,7 +798,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   off the event loop. While the host has no `upsc`, the UPS status, Test
   connection and the UPS monitor's status answer that the UPS is unavailable
   and name the missing package nut-client; the monitor then writes nothing,
-  logs it once and shuts nothing down.
+  logs it once and shuts nothing down. Values with decimals are read, and a
+  value that is no number leaves the others.
 - `POST /api/v1/containers/{id}/restart` restarted UNOS's own containers,
   which stop and remove refuse; it now refuses them too (404).
 - Two-factor authentication set up in two tabs at once could be turned on

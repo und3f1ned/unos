@@ -246,6 +246,92 @@ test.describe('Security Settings', () => {
     await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
   });
 
+  test('a failed reload of the certificates shows no stale list, and a reload clears its error', async ({
+    authenticatedPage: page,
+  }) => {
+    // A name of this run's own, deleted in the test.
+    const domain = `e2e-${Date.now().toString(36)}.home.arpa`;
+    const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
+    const loadError = card.getByText('Could not load the certificates: Request failed', { exact: true });
+    let failing = false;
+    await page.route(
+      (url) => url.pathname === '/api/v1/security/certificates',
+      (route) => (failing ? route.fulfill(SERVER_ERROR) : route.continue()),
+    );
+    await page.goto('/system#security');
+    const headers = { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('token'))}` };
+    try {
+      expect((await page.request.post('/api/v1/security/certificates/self-signed', {
+        data: { domain }, headers,
+      })).ok()).toBeTruthy();
+      await page.goto('/system#security');
+      await card.getByRole('button', { name: 'Manage', exact: true }).click();
+      const row = card.locator('div.bg-slate-700').filter({ has: page.getByText(domain, { exact: true }) });
+      await expect(row).toBeVisible();
+
+      // The delete succeeds, the reload after it fails: the deleted certificate is not listed.
+      failing = true;
+      page.once('dialog', (confirm) => confirm.accept());
+      await row.getByRole('button', { name: `Delete ${domain}` }).click();
+      await expect(card.getByText('Certificate deleted')).toBeVisible();
+      await expect(loadError).toBeVisible();
+      await expect(card.getByText(domain, { exact: true })).toHaveCount(0);
+      await expect(card.getByText('No certificates found')).toHaveCount(0);
+
+      failing = false;
+      await card.locator('.alert-error').getByRole('button', { name: 'Retry' }).click();
+      await expect(loadError).toHaveCount(0);
+      await expect(card.getByText(domain, { exact: true })).toHaveCount(0);
+    } finally {
+      // Gone already when the test passed: 404 then.
+      await page.request.delete(`/api/v1/security/certificates/custom_${domain}`, { headers });
+    }
+  });
+
+  test('the country of a self-signed certificate takes two letters only', async ({ authenticatedPage: page }) => {
+    const sent: string[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/v1/security/certificates/self-signed') sent.push(request.method());
+    });
+    await page.goto('/system#security');
+    const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
+    await card.getByRole('button', { name: 'Manage', exact: true }).click();
+    await card.getByRole('button', { name: 'Generate Self-Signed' }).click();
+    const dialog = page.locator('.modal-overlay');
+    await dialog.getByPlaceholder('e.g., nas.local or 192.168.1.100').fill('nas.local');
+    const country = dialog.getByPlaceholder('e.g., US');
+
+    for (const value of ['D', '12', 'D1']) {
+      await country.fill(value);
+      await dialog.getByRole('button', { name: 'Generate', exact: true }).click();
+      expect(await country.evaluate((input: HTMLInputElement) => input.validity.valid), value).toBe(false);
+    }
+    expect(sent).toEqual([]);
+    await expect(dialog).toBeVisible();
+  });
+
+  test('a generation that the server refuses says why in its dialog', async ({ authenticatedPage: page }) => {
+    // The server's message for a domain that is no host name (422, SelfSignedCertRequest).
+    const refusal = 'Value error, must be a host name (letters, digits and hyphens, separated by dots) or an IP address';
+    await page.goto('/system#security');
+    const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
+    await card.getByRole('button', { name: 'Manage', exact: true }).click();
+    await card.getByRole('button', { name: 'Generate Self-Signed' }).click();
+    const dialog = page.locator('.modal-overlay');
+    await dialog.getByPlaceholder('e.g., nas.local or 192.168.1.100').fill('my nas');
+    await dialog.getByRole('button', { name: 'Generate', exact: true }).click();
+
+    await expect(dialog.locator('.alert-error').getByText(refusal, { exact: true })).toBeVisible();
+    // Not behind the dialog, where it could not be read.
+    await expect(card.getByText(refusal)).toHaveCount(0);
+
+    // A dialog opened again starts without it.
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await card.getByRole('button', { name: 'Generate Self-Signed' }).click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText(refusal)).toHaveCount(0);
+  });
+
   test('should display 2FA enable button when disabled', async ({ authenticatedPage: page }) => {
     await page.goto('/system#security');
     await page.waitForTimeout(1000);

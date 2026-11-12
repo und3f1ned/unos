@@ -2868,15 +2868,24 @@ def _copy_time(name: str) -> str | None:
     return made.replace(tzinfo=timezone.utc).isoformat()
 
 
-def _made_by_restore(target: str, subvol_id: int) -> bool:
-    """Whether the subvolume ``subvol_id`` of the pool mounted at ``target`` is what a restore makes: a writable snapshot.
+# The lines of `btrfs subvolume show` that tell a restored copy (_made_by_restore).
+_COPY_KEYS = ("Name", "UUID", "Parent UUID", "Flags")
+
+
+def _made_by_restore(target: str, subvol_id: int, name: str) -> bool:
+    """Whether subvolume ``subvol_id`` of the pool at ``target`` is what a restore makes: a writable snapshot ``name``.
 
     ``btrfs subvolume show -r <id>`` prints its Parent UUID, the subvolume
     it was made of ("-" for one that ``btrfs subvolume create`` made), and its
     Flags ("readonly" for a read-only snapshot, such as those of the Snapshots
-    page). Its first lines are the subvolume's path and name, which the
-    caller checked just before to be a copy's (no line break). RuntimeError
-    (HTTP 500) when btrfs fails.
+    page). It also prints the subvolume's path and Name, and after
+    "Snapshot(s):" the paths of its snapshots. Anyone who can write in the
+    pool chooses those names, and a rename after the caller's checks of the
+    path can put line breaks and lines like btrfs's own into them, a
+    "Snapshot(s):" line too. So the answer is False unless each of Name,
+    UUID, Parent UUID and Flags is a line exactly once in the whole output
+    and the Name is ``name`` (ADR-0358). RuntimeError (HTTP 500) when btrfs
+    fails.
     """
     result = host.run_on_host(
         ["btrfs", "subvolume", "show", "-r", str(subvol_id), target], timeout=VOLUME_TIMEOUT, errors="replace"
@@ -2886,12 +2895,15 @@ def _made_by_restore(target: str, subvol_id: int) -> bool:
             f"Reading subvolume {subvol_id} of {target} failed: "
             f"{result.stderr.strip() or f'exit status {result.returncode}'}"
         )
-    fields: dict[str, str] = {}
-    for line in result.stdout.split("\n")[1:]:
-        key, colon, value = line.strip().partition(":")
-        if colon and key not in fields:
-            fields[key] = value.strip()
-    return fields.get("Parent UUID", "-") not in ("", "-") and "readonly" not in fields.get("Flags", "")
+    fields: dict[str, list[str]] = {key: [] for key in _COPY_KEYS}
+    for line in result.stdout.split("\n"):
+        key, colon, value = line.lstrip().partition(":")
+        if colon and key in fields:
+            fields[key].append(value.lstrip(" \t"))  # btrfs's spaces and tabs before the value; nothing after it
+    if any(len(values) != 1 for values in fields.values()):
+        return False
+    [shown], [parent], [flags] = fields["Name"], fields["Parent UUID"], fields["Flags"]
+    return shown == name and parent.strip() not in ("", "-") and "readonly" not in flags
 
 
 def _copy_place(pool: str, target: str, volume: str | None) -> str:
@@ -2923,9 +2935,12 @@ def list_restore_copies(pool_name: str, volume_name: str | None) -> list[Restore
     A restore makes a writable snapshot ``restore_<date>_<time>`` (UTC) in
     the pool or volume whose snapshot it restored. Listed is what has that
     name with a time in it, is right there as the filesystem confirms
-    (_volume_ids, as for volumes) and is a writable snapshot
-    (_made_by_restore); its time is the one in its name. A copy made in
-    another folder (POST /snapshots/restore with target_path) is not listed.
+    (_volume_ids, as for volumes) and is a writable snapshot of that name
+    (_made_by_restore); its time is the one in its name. A copy that
+    POST /snapshots/restore with target_path put into a folder that is
+    neither a pool's top folder nor a volume, or a copy that was renamed,
+    is not listed; one put into another pool or volume is listed and
+    deleted there.
     PoolNotFoundError or VolumeNotFoundError (HTTP 404); PoolConflictError
     (HTTP 409) when the pool is not mounted at its top level
     (_mounted_pool_target); RuntimeError (HTTP 500) when btrfs fails.
@@ -2936,8 +2951,8 @@ def list_restore_copies(pool_name: str, volume_name: str | None) -> list[Restore
     place = _copy_place(pool, target, volume)
     found = _volume_ids(target, _copy_candidates(target, place))[0]
     folder = os.path.join(target, volume) if volume else target
-    names = sorted((path[len(place):] for path, subvol_id in found.items() if _made_by_restore(target, subvol_id)),
-                   reverse=True)
+    names = sorted((path[len(place):] for path, subvol_id in found.items()
+                    if _made_by_restore(target, subvol_id, path[len(place):])), reverse=True)
     return [
         RestoreCopyInfo(name=name, pool=pool, volume=volume, subvolume=folder, path=os.path.join(folder, name),
                         created=_copy_time(name))
@@ -2949,8 +2964,9 @@ def delete_restore_copy(pool_name: str, volume_name: str | None, name: str) -> N
     """Delete the restored copy ``name`` right in a mounted pool or in its volume, by its subvolume id (ADR-0358).
 
     Only what list_restore_copies lists is deleted: ValueError (HTTP 400)
-    for a name that a restore does not give, or for a subvolume that is not
-    a writable snapshot. Its id comes from the pool's subvolume list,
+    for a name that a restore does not give, or for a subvolume that btrfs
+    does not describe as a writable snapshot of that name, plainly
+    (_made_by_restore). Its id comes from the pool's subvolume list,
     checked against the filesystem, and its users are checked right before,
     as a volume's (_delete_subvolume). RestoreCopyNotFoundError or
     VolumeNotFoundError (HTTP 404) when the copy or the volume is not there;
@@ -2974,7 +2990,7 @@ def delete_restore_copy(pool_name: str, volume_name: str | None, name: str) -> N
                                   f"{what} was not deleted")
         if subvol_id is None:
             raise RestoreCopyNotFoundError(f"{what} not found in pool '{pool}'")
-        if not _made_by_restore(target, subvol_id):
+        if not _made_by_restore(target, subvol_id, name):
             raise ValueError(
                 f"'{shown}' of pool '{pool}' is not a copy that a restore made (a writable snapshot): "
                 "it was not deleted."

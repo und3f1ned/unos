@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -542,6 +543,24 @@ def _files_under(root: Path) -> list[str]:
     return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
 
 
+def _openssl_is_openssl() -> bool:
+    """Whether the openssl command on PATH is OpenSSL's. The tests that run it rely on OpenSSL:
+    LibreSSL's (macOS's /usr/bin/openssl) writes the key of ``-keyout -`` to a file named "-"
+    instead of its standard output."""
+    if shutil.which("openssl") is None:
+        return False
+    try:
+        version = subprocess.run(["openssl", "version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return version.stdout.startswith("OpenSSL")
+
+
+# The tests that run the real openssl.
+needs_openssl = pytest.mark.skipif(
+    not _openssl_is_openssl(), reason="needs OpenSSL's openssl command, not LibreSSL's")
+
+
 class TestCertificateDomainValidation:
     @pytest.mark.parametrize("domain", INVALID_DOMAINS)
     def test_schema_refuses_anything_but_host_names_and_addresses(self, domain):
@@ -819,7 +838,7 @@ class TestPrivateKeyMode:
         assert key_file.read_text() == "KEY"
         assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
 
-    @pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+    @needs_openssl
     def test_self_signed_key_file_is_0600(self, upload_env, admin_api):
         """The real openssl prints the new key, and _write_private_key stores it as it stores an
         uploaded one: 0600 under the usual umask, whatever mode openssl would give a file of its
@@ -886,7 +905,7 @@ def _upload(admin_api, certificate: str, private_key: str = "KEY", chain: str | 
                           headers={"Content-Type": "application/json"})
 
 
-@pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+@needs_openssl
 class TestCertificateUploadLeavesNoTemporaryFile:
     """openssl reads an uploaded certificate on its standard input.
 
@@ -989,7 +1008,7 @@ class TestCertificateUploadLeavesNoTemporaryFile:
         assert (upload_env.certs / "nas.local.crt").read_text() == TEST_CERTIFICATE
 
 
-@pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+@needs_openssl
 class TestStoredCertificates:
     """What a failed generation keeps, and what the listing shows and the delete takes, with the
     real openssl."""
@@ -1028,7 +1047,7 @@ class TestStoredCertificates:
 
 # ==================== What browsers get (security.custom-certificates, ADR-0357) ====================
 
-@pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+@needs_openssl
 class TestCertificateStatusNamesWhatIsServed:
     """Caddy serves only its local CA: nothing hands stored certificates to the web UI's
     container (deploy/docker-compose.yml mounts caddy-data only there). The status says so, and a
@@ -1136,8 +1155,9 @@ class TestOpensslRunsOffTheEventLoop:
 
 
 class TestCertificateFilesFollowNoLink:
-    """A symbolic link at a certificate's file path is not followed: the write fails and the
-    link's target stays as it was (ADR-0042)."""
+    """A symbolic link at a certificate's file path is not followed: the new file is renamed over
+    the link, or the link is removed with the stale chain, and the link's target stays as it was
+    (ADR-0042, ADR-0357)."""
 
     @pytest.fixture
     def victim(self, certs):
@@ -1152,21 +1172,22 @@ class TestCertificateFilesFollowNoLink:
 
         response = _upload_as(monkeypatch, admin_api, "nas.local")
 
-        assert response.status_code == 500, response.text
-        assert response.json()["detail"].startswith("Failed to upload certificate: ")
+        assert response.status_code == 200, response.text
         assert victim.read_text() == "keep me"
-        assert (certs.dir / f"nas.local{suffix}").is_symlink()
+        assert not (certs.dir / f"nas.local{suffix}").is_symlink()
+        assert {path.name: path.read_text() for path in certs.dir.iterdir()} == {
+            "nas.local.crt": "PEM", "nas.local.key": "KEY", "nas.local.chain.pem": "CHAIN"}
 
-    @pytest.mark.parametrize("suffix", [".crt", ".key"])
+    @pytest.mark.parametrize("suffix", [".crt", ".key", ".chain.pem"])
     def test_self_signed(self, certs, admin_api, victim, suffix):
         (certs.dir / f"nas.local{suffix}").symlink_to(victim)
 
         response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
 
-        assert response.status_code == 500, response.text
-        assert response.json()["detail"].startswith("Failed to generate certificate: ")
+        assert response.status_code == 200, response.text
         assert victim.read_text() == "keep me"
-        assert (certs.dir / f"nas.local{suffix}").is_symlink()
+        assert {path.name: path.read_text() for path in certs.dir.iterdir()} == {
+            "nas.local.crt": GENERATED_CERTIFICATE, "nas.local.key": GENERATED_KEY}
 
 
 class TestSelfSignedSubjectValidation:
@@ -1183,16 +1204,42 @@ class TestSelfSignedSubjectValidation:
         ("country", ""),
         ("country", "DE\n"),
         ("country", "ÄÖ"),
-    ])
+        # Control, format, private-use and unassigned characters (Unicode category C), and a lone
+        # surrogate, which JSON can carry as an escape but UTF-8 cannot encode.
+        ("organization", "Home\nLab"),
+        ("organization", "Home\x00"),
+        ("organization", "Home\x7f"),
+        ("organization", "Home\u200bLab"),
+        ("organization", "Home\ue000"),
+        ("organization", "Home\U000e0080"),
+        ("organization", "Home\ud800"),
+    ], ids=repr)
     def test_refused_with_422_before_openssl(self, certs, admin_api, field, value):
-        response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local", field: value})
+        # json.dumps escapes a lone surrogate as JSON can (httpx would fail to encode it).
+        response = admin_api.post(f"{API}/self-signed",
+                                  content=json.dumps({"domain": "nas.local", field: value}),
+                                  headers={"Content-Type": "application/json"})
 
         assert response.status_code == 422, response.text
         assert certs.calls == []
         assert _files_under(certs.root) == []
 
+    @pytest.mark.parametrize("organization,message", [
+        ("Home\tLab", "the organization must hold printable characters only"),
+        ("Home\ud800", "the organization must be text that UTF-8 can encode"),
+    ], ids=["control", "surrogate"])
+    def test_an_organization_that_is_not_printable_text_says_why(self, certs, admin_api,
+                                                                  organization, message):
+        response = admin_api.post(f"{API}/self-signed",
+                                  content=json.dumps({"domain": "nas.local", "organization": organization}),
+                                  headers={"Content-Type": "application/json"})
+
+        assert response.status_code == 422, response.text
+        assert [error["msg"] for error in response.json()["detail"]] == [f"Value error, {message}"]
+
     @pytest.mark.parametrize("organization,country", [
         ("x" * 64, "DE"), ("Home/Lab", "de"), (None, None), ("", None),
+        ("Müller & Söhne GmbH", "DE"), ("Дом", "RU"),
     ])
     def test_accepted(self, certs, admin_api, organization, country):
         response = admin_api.post(f"{API}/self-signed", json={
@@ -1208,7 +1255,7 @@ class TestSelfSignedSubjectValidation:
             subject += f"/C={country}"
         assert cmd[cmd.index("-subj") + 1] == subject
 
-    @pytest.mark.skipif(shutil.which("openssl") is None, reason="needs the openssl command")
+    @needs_openssl
     def test_an_organization_of_64_letters_beyond_ascii(self, upload_env, admin_api):
         """openssl counts characters as the check does only with -utf8: without it, every byte
         of UTF-8 counted, and 64 such letters failed after the key was made."""
@@ -1224,6 +1271,23 @@ class TestSelfSignedSubjectValidation:
             capture_output=True, text=True, check=True, timeout=30,
         ).stdout
         assert f"O={organization}" in subject
+
+
+@needs_openssl
+@pytest.mark.parametrize("organization", [None, "Home Lab"])
+def test_a_self_signed_certificate_is_listed_as_self_signed(upload_env, admin_api, organization):
+    """Self-signed means that the issuer is the subject. The listing compared the issuer's O (or,
+    without one, its CN) with the subject's CN, so a certificate generated with an organization
+    was listed as Custom (security.custom-certificates, review of 2026-11-12)."""
+    body = {"domain": "nas.local", "country": "DE"}
+    if organization:
+        body["organization"] = organization
+    assert admin_api.post(f"{API}/self-signed", json=body).status_code == 200
+
+    listed = admin_api.get(API).json()
+
+    stored = [c for c in listed["certificates"] if c["id"] == "custom_nas.local"]
+    assert [c["type"] for c in stored] == ["self_signed"]
 
 
 class TestCertificateErrorAnswers:
@@ -1258,3 +1322,167 @@ class TestCertificateErrorAnswers:
         assert (response.status_code, response.json()) == (
             500, {"detail": f"Failed to delete certificate: [Errno {errno.EACCES}] {os.strerror(errno.EACCES)}"})
         assert (certs.dir / "nas.local.crt").read_text() == "CERT"
+
+
+# ==================== Stores and deletes (security.custom-certificates, ADR-0357) ====================
+
+def _upload_without_chain(monkeypatch, admin_api, common_name: str):
+    """Upload a certificate and its key, without a chain, whose subject CN is ``common_name``."""
+    monkeypatch.setattr("src.security.router.get_pem_certificate_info",
+                        lambda pem: {"domain": common_name, "issuer": "x"})
+    return admin_api.post(f"{API}/upload", json={"certificate": "PEM", "private_key": "KEY"})
+
+
+class TestCertificateStoreIsAtomic:
+    """A store writes every new file under a temporary name first and renames them over the stored
+    ones only once all are written: a failed write leaves the stored certificate, key and chain as
+    they were, and no temporary file behind."""
+
+    @pytest.fixture
+    def stored(self, certs):
+        certs.dir.mkdir(parents=True)
+        old = {"nas.local.crt": "old certificate", "nas.local.key": "old key",
+               "nas.local.chain.pem": "old chain"}
+        for name, text in old.items():
+            (certs.dir / name).write_text(text)
+        return old
+
+    @pytest.mark.parametrize("store", ["upload", "self-signed"])
+    def test_a_failed_key_write_changes_nothing(self, certs, admin_api, monkeypatch, stored, store):
+        real_open = os.open
+
+        def full_for_keys(path, flags, mode=0o777, *args, **kwargs):
+            # A key is the one file made 0600.
+            if mode == 0o600:
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+            return real_open(path, flags, mode, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", full_for_keys)
+        if store == "upload":
+            response = _upload_as(monkeypatch, admin_api, "nas.local")
+        else:
+            response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
+
+        assert response.status_code == 500, response.text
+        assert {path.name: path.read_text() for path in certs.dir.iterdir()} == stored
+
+    @pytest.mark.parametrize("store", ["upload", "self-signed"])
+    def test_a_certificate_stored_without_a_chain_drops_the_old_chain(self, certs, admin_api,
+                                                                     monkeypatch, stored, store):
+        # The chain belonged to the replaced certificate.
+        if store == "upload":
+            response = _upload_without_chain(monkeypatch, admin_api, "nas.local")
+            new = {"nas.local.crt": "PEM", "nas.local.key": "KEY"}
+        else:
+            response = admin_api.post(f"{API}/self-signed", json={"domain": "nas.local"})
+            new = {"nas.local.crt": GENERATED_CERTIFICATE, "nas.local.key": GENERATED_KEY}
+
+        assert response.status_code == 200, response.text
+        assert {path.name: path.read_text() for path in certs.dir.iterdir()} == new
+
+    def test_a_new_chain_replaces_the_old_one(self, certs, admin_api, monkeypatch, stored):
+        assert _upload_as(monkeypatch, admin_api, "nas.local").status_code == 200
+
+        assert {path.name: path.read_text() for path in certs.dir.iterdir()} == {
+            "nas.local.crt": "PEM", "nas.local.key": "KEY", "nas.local.chain.pem": "CHAIN"}
+
+
+class TestCertificateStoresAndDeletesDoNotMix:
+    """Stores and deletes run in worker threads (ADR-0021) and hold one lock, so that two of them
+    never leave the certificate of one beside the key of another (ADR-0357)."""
+
+    @pytest.fixture
+    def paused(self, monkeypatch):
+        """Pauses the thread named "first" when its key reaches nas.local.key (by a write of that
+        file or a rename onto it), until ``go_on`` is set."""
+        at_key = threading.Event()
+        go_on = threading.Event()
+        real_open, real_replace = os.open, os.replace
+
+        def pause(path):
+            if (threading.current_thread().name == "first" and not at_key.is_set()
+                    and os.path.basename(os.fsdecode(path)) == "nas.local.key"):
+                at_key.set()
+                assert go_on.wait(10)
+
+        def opening(path, *args, **kwargs):
+            pause(path)
+            return real_open(path, *args, **kwargs)
+
+        def replacing(source, target, *args, **kwargs):
+            pause(target)
+            return real_replace(source, target, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", opening)
+        monkeypatch.setattr(os, "replace", replacing)
+        return SimpleNamespace(at_key=at_key, go_on=go_on)
+
+    @staticmethod
+    def _thread(name: str, errors: list, function, *args) -> threading.Thread:
+        def run():
+            try:
+                function(*args)
+            except BaseException as error:  # noqa: BLE001 - reported by the test
+                errors.append(error)
+        return threading.Thread(target=run, name=name)
+
+    def _interleave(self, paused, first: threading.Thread, second: threading.Thread) -> None:
+        """Start ``first``; once it is at its key, start ``second`` and give it time to finish
+        (without the lock it does; with it it waits); then let ``first`` go on."""
+        first.start()
+        assert paused.at_key.wait(10)
+        second.start()
+        second.join(0.5)
+        paused.go_on.set()
+        first.join(10)
+        second.join(10)
+        assert not first.is_alive() and not second.is_alive()
+
+    def test_two_interleaving_stores_keep_a_matching_pair(self, certs, paused):
+        from src.security.router import _store_certificate
+
+        errors = []
+        self._interleave(
+            paused,
+            self._thread("first", errors, _store_certificate, "nas.local", "CERT 1", "KEY 1"),
+            self._thread("second", errors, _store_certificate, "nas.local", "CERT 2", "KEY 2"),
+        )
+
+        assert errors == []
+        pair = ((certs.dir / "nas.local.crt").read_text(), (certs.dir / "nas.local.key").read_text())
+        assert pair in {("CERT 1", "KEY 1"), ("CERT 2", "KEY 2")}
+
+    def test_a_delete_during_a_store_leaves_no_key_without_its_certificate(self, certs, admin_api,
+                                                                          paused):
+        from src.security.router import _store_certificate
+
+        certs.dir.mkdir(parents=True)
+        (certs.dir / "nas.local.crt").write_text("OLD CERT")
+        (certs.dir / "nas.local.key").write_text("OLD KEY")
+        errors, answers = [], []
+        self._interleave(
+            paused,
+            self._thread("first", errors, _store_certificate, "nas.local", "CERT 1", "KEY 1"),
+            self._thread("second", errors,
+                         lambda: answers.append(admin_api.delete(f"{API}/custom_nas.local").status_code)),
+        )
+
+        assert (errors, answers) == ([], [200])
+        assert _files_under(certs.root) == []
+
+    def test_a_delete_runs_in_a_worker_thread(self, certs, admin_api, monkeypatch):
+        certs.dir.mkdir(parents=True)
+        for suffix in (".crt", ".key", ".chain.pem"):
+            (certs.dir / f"nas.local{suffix}").write_text("x")
+        on_loop = []
+        real_unlink = Path.unlink
+
+        def unlink(self, missing_ok=False):
+            on_loop.append(_on_event_loop())
+            return real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", unlink)
+
+        assert admin_api.delete(f"{API}/custom_nas.local").status_code == 200
+        assert on_loop == [False, False, False]
+        assert list(certs.dir.iterdir()) == []

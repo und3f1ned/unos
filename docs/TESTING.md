@@ -331,6 +331,12 @@ restic is not installed here: for the off-device copy the stand-in runs the fake
 its state directory and counts none of it as the system disk (ADR-0337). The test stack has no
 restic, and its pools share the filesystem of its data volume, which the copy refuses as the
 system disk: it skips the main flow of `tests/offsite.spec.ts`.
+The stand-in's supervisor makes self-signed certificates (`tests/security.spec.ts`) with the
+`openssl` first on its PATH, which must be OpenSSL's, as in the supervisor's image, not
+LibreSSL's, macOS's `/usr/bin/openssl`: LibreSSL writes the key of `-keyout -` to a file named
+`-` in the supervisor's working directory instead of its standard output, and the generation
+fails. Put OpenSSL first on PATH (Homebrew's `openssl`). The backend tests that run the real
+openssl (`supervisor/tests/test_security.py`) skip without OpenSSL's.
 
 The tests that restore a backup ("Restoring backups" in `tests/backup-restore.spec.ts`) replace
 the database and `smb.conf` of the target. They run only when the target is on this machine

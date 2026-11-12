@@ -357,10 +357,14 @@ async def log_action(
 ) -> AuditEntry:
     """Log an audit action.
 
+    ``action`` must be a value of AuditAction: a name that it does not have raises ValueError and
+    writes nothing, though AuditEntry.action takes any name, for the older entries (ADR-0359).
     An entry that cannot be appended, such as on a full /data, is reported in the supervisor's
     log as its JSON line, and the OSError goes to the caller, which decides whether its request
     still answers: a sign-in does (ADR-0251).
     """
+    action = AuditAction(action)
+
     # Get IP address and user agent from request
     ip_address = None
     user_agent = None
@@ -377,7 +381,7 @@ async def log_action(
     entry = AuditEntry(
         id=f"audit_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
         timestamp=datetime.now().isoformat(),
-        action=action,
+        action=action.value,
         severity=severity,
         username=_bounded(actual_username, MAX_USERNAME_CHARS),
         ip_address=ip_address,

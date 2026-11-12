@@ -150,6 +150,21 @@ def _files(folder: Path) -> dict[str, tuple[int, int]]:
     return {str(p): (p.stat().st_ino, p.stat().st_mtime_ns) for p in sorted(folder.rglob("*"))}
 
 
+def _start_and_stop_the_monitor(monkeypatch) -> None:
+    """Start and stop the UPS monitor as the supervisor's lifespan does, with a loop that does nothing."""
+    async def idle():
+        pass
+
+    async def lifespan():
+        await power.start_ups_monitor()
+        await power.stop_ups_monitor()
+
+    monkeypatch.setattr(power, "ups_monitor_loop", idle)
+    monkeypatch.setattr(power, "_ups_monitor_running", False)
+    monkeypatch.setattr(power, "_ups_monitor_task", None)
+    asyncio.run(lifespan())
+
+
 # ---------------------------------------------------------------------------
 # The NUT password is write-only
 # ---------------------------------------------------------------------------
@@ -254,6 +269,35 @@ class TestPasswordIsWriteOnly:
 
         assert PASSWORD not in repr(power.load_ups_config())
 
+    def test_a_settings_file_that_others_can_read_gets_mode_0600_at_the_start(self, settings_file, monkeypatch):
+        # Written with the password and mode 0644 by a version before ADR-0356, and one kept as .bad.
+        _store(settings_file, username="monuser", password=PASSWORD)
+        kept = settings_file.with_name("ups_config.json.bad")
+        kept.write_text(json.dumps({"password": PASSWORD, "port": "none"}))
+        content = {}
+        for path in (settings_file, kept):
+            path.chmod(0o644)
+            content[path] = path.read_bytes()
+
+        _start_and_stop_the_monitor(monkeypatch)
+
+        assert {path: stat.S_IMODE(path.stat().st_mode) for path in content} == {settings_file: 0o600, kept: 0o600}
+        assert {path: path.read_bytes() for path in content} == content
+
+    def test_a_settings_file_of_mode_0600_is_left_as_it_is(self, settings_file, monkeypatch):
+        _store(settings_file, username="monuser", password=PASSWORD)
+        settings_file.chmod(0o600)
+        before = _files(settings_file.parent), settings_file.stat().st_ctime_ns
+
+        _start_and_stop_the_monitor(monkeypatch)
+
+        assert (_files(settings_file.parent), settings_file.stat().st_ctime_ns) == before
+
+    def test_without_a_settings_file_the_start_makes_none(self, settings_file, monkeypatch):
+        _start_and_stop_the_monitor(monkeypatch)
+
+        assert list(settings_file.parent.iterdir()) == []
+
 
 # ---------------------------------------------------------------------------
 # upsc runs on the host
@@ -274,6 +318,30 @@ class TestUpscOnTheHost:
         assert (answer["status"], answer["charge_percent"], answer["runtime_minutes"]) == ("OL", 100, 30)
         assert (answer["model"], answer["manufacturer"], answer["load_percent"]) == ("Ellipse PRO 650", "EATON", 17)
         assert fake_host.calls == [UPSC]
+
+    def test_values_with_decimals_are_read(self, client, fake_host, settings_file):
+        # NUT's drivers print some values with decimals.
+        fake_host.nut_client = True
+        fake_host.upsd["ups"].update({"battery.charge": "99.5", "battery.runtime": "1830.0", "ups.load": "23.4"})
+        _store(settings_file)
+
+        answer = client.get(f"{API}/status").json()
+
+        assert (answer["available"], answer["reason"]) == (True, None)
+        assert (answer["charge_percent"], answer["runtime_minutes"], answer["load_percent"]) == (99, 30, 23)
+
+    def test_a_value_that_cannot_be_read_is_left_out_and_the_others_are_read(self, client, fake_host, settings_file):
+        fake_host.nut_client = True
+        fake_host.upsd["ups"].update({"battery.charge": "unknown", "ups.load": "nan", "input.voltage": "inf"})
+        _store(settings_file)
+
+        response = client.get(f"{API}/status")
+
+        assert response.status_code == 200, response.text
+        answer = response.json()
+        assert (answer["available"], answer["reason"]) == (True, None)
+        assert (answer["charge_percent"], answer["load_percent"], answer["input_voltage"]) == (None, None, None)
+        assert (answer["status"], answer["runtime_minutes"], answer["output_voltage"]) == ("OL", 30, 229.0)
 
     def test_without_upsc_the_status_is_unavailable_and_says_why(self, client, fake_host, settings_file):
         _store(settings_file)
@@ -418,6 +486,22 @@ class TestMonitor:
             (logging.WARNING, f"The UPS monitor cannot read ups@localhost:3493: {UPSC_MISSING}"),
             (logging.INFO, "The UPS monitor reads ups@localhost:3493 again"),
         ]
+        answer = client.get(f"{API}/monitor/status").json()
+        assert (answer["available"], answer["reason"]) == (True, None)
+
+    def test_a_changing_value_with_decimals_logs_nothing(
+        self, client, fake_host, settings_file, fresh_monitor, monkeypatch, caplog
+    ):
+        fake_host.nut_client = True
+        _store(settings_file)
+
+        with caplog.at_level(logging.DEBUG):
+            for load in ("23.4", "24.1", "25.0"):
+                fake_host.upsd["ups"]["ups.load"] = load
+                _run_monitor(monkeypatch, rounds=1)
+
+        assert fake_host.calls == [UPSC] * 3
+        assert [r.getMessage() for r in caplog.records if r.name == power.__name__] == []
         answer = client.get(f"{API}/monitor/status").json()
         assert (answer["available"], answer["reason"]) == (True, None)
 

@@ -37,8 +37,10 @@ everything", in translation), as for ADR-0340.
   | `backup_*`, `system_reboot`, `system_shutdown`, `settings_changed`, `network_config_changed`, `task_*` | the backup, power, network, system and scheduler routers (ADR-0351) |
   | `other` | API tokens and new recovery codes, the clearing of the log and the entry that says its end was cut (ADR-0328) |
 
-- An entry's `action` is the name as recorded (`AuditEntry.action: str`); writers still pass an
-  `AuditAction` to `log_action`. An older entry that names an action `AuditAction` no longer has is
+- An entry's `action` is the name as recorded (`AuditEntry.action: str`). Writers still pass an
+  `AuditAction`: `log_action`, and so `audit_change`, takes the action through
+  `AuditAction(action)`, so a name that it does not have raises `ValueError` and writes nothing.
+  An older entry that names an action `AuditAction` no longer has is
   a valid entry: listed, counted, summed up by `/logs/summary`, exported, found by the search and by
   the `action` filter, which takes any action name exactly, as `username` does, and its place in
   the hash chain holds (ADR-0328). The page shows such an action as it comes, `firewall_rule_added`,
@@ -47,19 +49,25 @@ everything", in translation), as for ADR-0340.
 - Tests: `test_the_action_filter_offers_only_actions_that_the_server_writes` of
   `supervisor/tests/test_audit_log.py` fails for an action of `GET /audit/actions` that no module
   of `supervisor/src` names outside the enum (an AST scan for `AuditAction.<NAME>`; the code names
-  an action only to write it); `TestAnActionNoLongerWritten` there, whose damaged-lines test now
-  uses a line without an action; the test "the actions of the filter" of `webui/tests/audit.spec.ts`.
+  an action only to write it); `TestAnActionNoLongerWritten` there, whose `test_no_writer_takes_it`
+  fails when `log_action` or `audit_change` writes a name that `AuditAction` does not have;
+  `TestDamagedLines` there, whose damaged line now has no action; the test "the actions of the
+  filter" of `webui/tests/audit.spec.ts`.
 
 ## Consequences
 
 - Choosing any action in the filter can find entries; a new action that nothing writes fails the
   test before it reaches the page.
 - Changes of the firewall (turning it on or off, rules, reset) and of the certificates (upload,
-  self-signed, delete) write no audit entry. `security.host-firewall` and
-  `security.custom-certificates`, which make them act on the host and serve the certificate, add
-  their actions with the routes that write them.
-- `GET /audit/logs?action=<name>` with a name that no entry has answers no entries where it
-  answered 422; the page sends only the names of `GET /audit/actions`.
+  self-signed, delete) write no audit entry, and neither does clearing the login history
+  (`DELETE /security/login-history`, in the same router). Auditing them is an open item in the
+  notes of `security.audit-admin-actions`: `security.host-firewall` and
+  `security.custom-certificates`, which make the firewall act on the host and serve the
+  certificate, do not track it. The clearing needs a resource type that the Audit Log page names
+  (ADR-0287), which this change, kept to the filter, did not add.
+- `GET /audit/logs?action=<name>` with a name that `AuditAction` does not have answers the
+  matching entries (often none) where it answered 422; the page sends only the names of
+  `GET /audit/actions`.
 - An entry put into the log file by hand with an action of its choosing is listed with it, marked
   **Chain broken** unless its hashes were made for it, as for any edit (ADR-0328).
 

@@ -1,5 +1,6 @@
 import ipaddress
 import re
+import unicodedata
 from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict
@@ -80,9 +81,17 @@ _COUNTRY_CODE = re.compile(r"[A-Za-z]{2}")
 
 
 def validate_organization(value: str) -> str:
-    """The organization of a self-signed certificate: at most 64 characters."""
+    """The organization of a self-signed certificate: at most 64 characters, text that UTF-8 can
+    encode (openssl reads the subject as UTF-8), without the characters of Unicode's category C:
+    control, format, surrogate, private-use and unassigned ones."""
     if len(value) > MAX_ORGANIZATION_LENGTH:
         raise ValueError(f"the organization must be at most {MAX_ORGANIZATION_LENGTH} characters long")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("the organization must be text that UTF-8 can encode") from None
+    if any(unicodedata.category(character).startswith("C") for character in value):
+        raise ValueError("the organization must hold printable characters only")
     return value
 
 
