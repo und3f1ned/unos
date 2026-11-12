@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page, type WebSocketRoute } from '@playwright/test';
 
 // Canned /api/v1/storage responses for UI tests that must never format,
 // mount or unmount a real disk. fakeStorageApi() answers every storage request
@@ -261,6 +261,12 @@ export interface FakeStorageOptions {
   importableResponse?: { status: number; json: unknown };
   /** Answer POST /filesystems/<uuid>/import with this instead of importing. */
   importResponse?: { status: number; json: unknown };
+  /**
+   * Called with the path of each GET (such as '/disks') when it is asked: its answer, made of the
+   * fake host's state at that moment, is sent once the promise returned resolves, as the answer
+   * of a slow lsblk or btrfs would be (the order of the page's loads, ADR-0360). Undefined: at once.
+   */
+  holdReads?: (path: string) => Promise<void> | undefined;
 }
 
 /** The 409 the supervisor sends when a path no longer holds the selected disk (pools.py). */
@@ -298,6 +304,29 @@ function unmountedPool(pool: FakePool): FakePool {
   };
 }
 
+/**
+ * Stand in for the stats stream /ws/v1/events (supervisor/src/websocket/events.py) with the
+ * block devices of the fake host: the stand-in's own stream names the devices of this machine.
+ * The fake answers the page's auth message with auth_ok; the function returned sends one stats
+ * message whose disk_io.disks names ``devices``, as the server does every 2 seconds with each
+ * device of /proc/diskstats (disks and partitions, without loop and RAM devices).
+ */
+export async function fakeBlockDevices(page: Page): Promise<(devices: string[]) => Promise<void>> {
+  let socket: WebSocketRoute | null = null;
+  await page.routeWebSocket('**/ws/v1/events', (ws) => {
+    ws.onMessage((message) => {
+      if (JSON.parse(String(message)).type !== 'auth') return;
+      ws.send(JSON.stringify({ type: 'auth_ok' }));
+      socket = ws;
+    });
+  });
+  return async (devices) => {
+    await expect.poll(() => socket !== null, { message: 'the page signed in to the stats stream' }).toBe(true);
+    const disks = devices.map((name) => ({ name, read_bytes: 0, write_bytes: 0, read_count: 0, write_count: 0 }));
+    socket!.send(JSON.stringify({ type: 'stats', data: { disk_io: { disks } } }));
+  };
+}
+
 /** Serve the disks and pools; returns the list of write requests made. */
 export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {}): Promise<RecordedWrite[]> {
   const disks = options.disks ?? (() => FAKE_DISKS);
@@ -319,10 +348,16 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
       const request = route.request();
       const method = request.method();
       const path = new URL(request.url()).pathname.slice('/api/v1/storage'.length);
+      // A read is answered with the state of now, when options.holdReads lets it.
+      const hold = method === 'GET' ? options.holdReads?.(path) : undefined;
+      const answer = async (response: FakeResponse | { json: unknown }) => {
+        await hold;
+        return route.fulfill(response);
+      };
 
-      if (method === 'GET' && path === '/disks') return route.fulfill({ json: disks() });
+      if (method === 'GET' && path === '/disks') return answer({ json: disks() });
       if (method === 'GET' && path === '/pools') {
-        return route.fulfill({ json: pools.filter((pool) => !sharesItsLabel(pool)) });
+        return answer({ json: pools.filter((pool) => !sharesItsLabel(pool)) });
       }
       const scrub = path.match(/^\/pools\/([^/]+)\/scrub$/);
       if (scrub && ['GET', 'POST', 'DELETE'].includes(method)) {
@@ -330,11 +365,11 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         // btrfs answers only for a mounted filesystem; the fake does not invent its errors.
         if (!pools.some((p) => p.name === name && p.mounted)) return route.abort();
         if (method !== 'GET') writes.push({ method, path, body: method === 'POST' ? request.postDataJSON() : null });
-        return route.fulfill({ json: scrubStatus(name, method) });
+        return answer({ json: scrubStatus(name, method) });
       }
       if (method === 'GET' && path === '/filesystems/importable') {
         const found = [...pools.filter(sharesItsLabel).map(foundDuplicate), ...importable];
-        return route.fulfill(options.importableResponse ?? { json: found });
+        return answer(options.importableResponse ?? { json: found });
       }
       const imported = path.match(/^\/filesystems\/([^/]+)\/import$/);
       if (method === 'POST' && imported) {

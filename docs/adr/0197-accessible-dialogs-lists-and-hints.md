@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: webui
 decided-by: agent
+superseded-by: ADR-0361
 ---
 
 # ADR-0197: Dialogs, lists and hints in the web UI work with keyboard and screen readers
 
 ## Context
+
+Superseded by ADR-0361: open dialogs form a stack whose top one alone answers Escape, and the focus moves into a dialog and back to its opener.
 
 The shared UI components (ADR-0012) had accessibility gaps that the SMB pages exposed. Every dialog had the same title id, one Escape closed two dialogs when one was shown again over another, a long error pushed a dialog's buttons out of a 720 px window, a level list opened again right after a choice showed the previous rows, and hints that existed only as `title` attributes were out of reach of keyboard, touch and screen-reader users.
 

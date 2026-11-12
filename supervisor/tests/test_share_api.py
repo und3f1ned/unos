@@ -1047,10 +1047,11 @@ class TestStatus:
         assert api.create(access=access((ALICE, "read"))).status_code == 200
         api.conf.write_text(api.conf.read_text() + f"\n[legacy]\n   path = {api.pool}/legacy\n   read only = no\n")
         assert api.patch("docs", comment="Team").status_code == 200
-        assert (api.samba / "smb.conf.unos-replaced").exists()
+        (copy,) = [name for name in os.listdir(api.samba) if name.startswith("smb.conf.unos-replaced-")]
+        assert re.fullmatch(r"smb\.conf\.unos-replaced-\d{8}_\d{6}_\d{6}", copy)
 
         assert api.client.get(f"{API}/smb-status").json()["problems"] == [
-            "smb.conf had shares that UNOS did not create (legacy); they are kept in smb.conf.unos-replaced: "
+            "smb.conf had shares that UNOS did not create (legacy); they are kept in " + copy + ": "
             "create them again on the Shares page"]
 
     def test_a_failed_apply(self, api):

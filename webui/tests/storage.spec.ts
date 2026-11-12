@@ -17,6 +17,7 @@ import {
   HEALTHY_POOL,
   SWAPPED_DISKS,
   dockerUnavailable,
+  fakeBlockDevices,
   fakeStorageApi,
   mountedElsewhere,
   noScrub,
@@ -170,6 +171,266 @@ test.describe('Physical disks (fake data)', () => {
     await page.reload();
     await expect(disks.getByRole('row')).toHaveCount(1 + FAKE_DISKS.length);
     await expect(disks.getByText('Could not load the disks')).toHaveCount(0);
+  });
+
+  // storage.hot-plugged-disks (ADR-0360): the server lists the host's disks afresh at each
+  // request, and the page asks again when the block devices of the stats stream change.
+  const BOOT = ['e2e-sd0', 'e2e-sd0p1'];
+  const STICK = LISTED_DISKS[4];
+  const STICK_CELLS = ['/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '-', 'Has data'];
+
+  /** Count the page's requests for the disk list. */
+  function diskListRequests(page: Page): () => number {
+    let count = 0;
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/v1/storage/disks') count += 1;
+    });
+    return () => count;
+  }
+
+  test('a disk attached while the page is open is listed without a reload, and a removed one goes', async ({
+    authenticatedPage: page,
+  }) => {
+    let hostDisks: readonly (typeof LISTED_DISKS)[number][] = FAKE_DISKS;
+    await fakeStorageApi(page, { disks: () => hostDisks });
+    const sendDevices = await fakeBlockDevices(page);
+    const requests = diskListRequests(page);
+    await page.goto('/storage');
+    // A page that loaded again would lose this.
+    await page.evaluate(() => Object.assign(window, { e2eSamePage: true }));
+
+    const rows = disksCard(page).getByRole('row');
+    const cells = (path: string) =>
+      rows.filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
+    await expect(rows).toHaveCount(1 + FAKE_DISKS.length);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2']);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2']);
+    expect(requests()).toBe(1);
+
+    // The USB stick is plugged in: the kernel names it at once, its partition a moment later,
+    // and the page asks once the devices stayed the same for a message.
+    hostDisks = [...FAKE_DISKS, STICK];
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4', 'e2e-sd4p1']);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4', 'e2e-sd4p1']);
+    await expect(cells('/dev/e2e-sd4')).toHaveText(STICK_CELLS);
+    await expect(rows).toHaveCount(1 + FAKE_DISKS.length + 1);
+    expect(requests()).toBe(2);
+
+    // Unplugged again.
+    hostDisks = FAKE_DISKS;
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2']);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2']);
+    await expect(rows).toHaveCount(1 + FAKE_DISKS.length);
+    await expect(cells('/dev/e2e-sd4')).toHaveCount(0);
+    expect(requests()).toBe(3);
+    expect(await page.evaluate(() => 'e2eSamePage' in window)).toBe(true);
+  });
+
+  test('while a dialog is open the lists stay as they are, and are loaded again once it closes', async ({
+    authenticatedPage: page,
+  }) => {
+    let hostDisks: readonly (typeof LISTED_DISKS)[number][] = FAKE_DISKS;
+    await fakeStorageApi(page, { disks: () => hostDisks });
+    const sendDevices = await fakeBlockDevices(page);
+    const requests = diskListRequests(page);
+    await page.goto('/storage');
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2']);
+    await expect(disksCard(page).getByRole('row')).toHaveCount(1 + FAKE_DISKS.length);
+
+    await page.getByRole('button', { name: 'Create Pool', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create Storage Pool' });
+    const choices = dialog.getByRole('checkbox');
+    await expect(choices).toHaveCount(FAKE_DISKS.length);
+    // Opening the dialog loads the disk list (the page's first load, then the dialog's).
+    expect(requests()).toBe(2);
+
+    hostDisks = [...FAKE_DISKS, STICK];
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    // Time enough for a reload that should not come: nothing changes under the user's selection.
+    await page.waitForTimeout(1000);
+    await expect(choices).toHaveCount(FAKE_DISKS.length);
+    expect(requests()).toBe(2);
+
+    // Closing the dialog loads the lists, without another message of the stream.
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(disksCard(page).getByRole('row')).toHaveCount(1 + FAKE_DISKS.length + 1);
+    await expect(
+      disksCard(page).getByRole('row').filter({ has: page.getByRole('cell', { name: '/dev/e2e-sd4', exact: true }) }),
+    ).toBeVisible();
+    expect(requests()).toBe(3);
+  });
+
+  // The stick once the host mounted it, as lsblk then reports it (storage/disks.py).
+  const MOUNTED_STICK = {
+    ...STICK, mountpoint: '/media/camera', mountpoints: ['/media/camera'], in_use: true,
+    in_use_reason: 'Mounted at /media/camera',
+  };
+  type HostDisk = (typeof LISTED_DISKS)[number] | typeof MOUNTED_STICK;
+
+  /**
+   * Hold the fake's answers to the reads asked between hold() and stop() until release(), each
+   * with the fake host's state when it was asked: a slow lsblk or btrfs.
+   */
+  function heldReads() {
+    let gate: Promise<void> | undefined;
+    let open = () => {};
+    const held: string[] = [];
+    return {
+      holdReads: (path: string) => {
+        if (gate) held.push(path);
+        return gate;
+      },
+      hold: () => {
+        gate = new Promise((resolve) => (open = resolve));
+      },
+      stop: () => {
+        gate = undefined;
+      },
+      /** Wait until the reads of a load of the lists are held. */
+      loadHeld: () =>
+        expect.poll(() => [...held].sort()).toEqual(['/disks', '/filesystems/importable', '/pools']),
+      /** Send the held answers, and give the page the time to show them. */
+      release: async (page: Page) => {
+        const answered = held.map((path) =>
+          page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/storage${path}`),
+        );
+        open();
+        await Promise.all(answered);
+        await page.waitForTimeout(500);
+      },
+    };
+  }
+
+  test('a device reload that answers after a dialog opened changes nothing in it, and runs again once it closes', async ({
+    authenticatedPage: page,
+  }) => {
+    let hostDisks: readonly HostDisk[] = FAKE_DISKS;
+    const reads = heldReads();
+    await fakeStorageApi(page, { disks: () => hostDisks, holdReads: reads.holdReads });
+    const sendDevices = await fakeBlockDevices(page);
+    const requests = diskListRequests(page);
+    await page.goto('/storage');
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2']);
+    await expect(disksCard(page).getByRole('row')).toHaveCount(1 + FAKE_DISKS.length);
+
+    // The stick is plugged in, and the host is slow to answer the reload that follows.
+    hostDisks = [...FAKE_DISKS, STICK];
+    reads.hold();
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    await reads.loadHeld();
+    reads.stop();
+
+    // Meanwhile the host mounted the stick, and Create Pool lists the disks as they are now.
+    hostDisks = [...FAKE_DISKS, MOUNTED_STICK];
+    await page.getByRole('button', { name: 'Create Pool', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create Storage Pool' });
+    const stick = dialog.getByRole('checkbox', { name: /\/dev\/e2e-sd4/ });
+    await expect(stick).toBeDisabled();
+    await expect(dialog.getByText('Not available: Mounted at /media/camera')).toBeVisible();
+    expect(requests()).toBe(3);
+
+    // The reload's late answer, the stick not mounted yet, does not reach the dialog.
+    await reads.release(page);
+    await expect(stick).toBeDisabled();
+    await expect(dialog.getByText('Not available: Mounted at /media/camera')).toBeVisible();
+    expect(requests()).toBe(3);
+
+    // The reload runs again once the dialog closes: the pools and the filesystems found too.
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect.poll(requests).toBe(4);
+    const row = disksCard(page)
+      .getByRole('row')
+      .filter({ has: page.getByRole('cell', { name: '/dev/e2e-sd4', exact: true }) });
+    await expect(row.getByRole('cell')).toHaveText([
+      '/dev/e2e-sd4', 'E2E Stick', '29.8 GB', 'SSD', 'exfat "CAMERA"', '/media/camera',
+      'In use Mounted at /media/camera',
+    ]);
+  });
+
+  test('a device reload that answers after the user unmounted a pool does not show it mounted again', async ({
+    authenticatedPage: page,
+  }) => {
+    let hostDisks: readonly (typeof LISTED_DISKS)[number][] = FAKE_DISKS;
+    const reads = heldReads();
+    const writes = await fakeStorageApi(page, {
+      disks: () => hostDisks,
+      pools: [HEALTHY_POOL],
+      holdReads: reads.holdReads,
+    });
+    const sendDevices = await fakeBlockDevices(page);
+    const requests = diskListRequests(page);
+    await page.goto('/storage');
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2']);
+    const card = poolCard(page, 'e2e_data');
+    await expect(badge(card, 'Healthy')).toBeVisible();
+
+    hostDisks = [...FAKE_DISKS, STICK];
+    reads.hold();
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    await reads.loadHeld();
+    reads.stop();
+
+    await card.getByRole('button', { name: 'Unmount', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Unmount Pool' });
+    await dialog.getByRole('button', { name: 'Unmount', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/unmount', body: {} }]);
+    await expect(badge(card, 'Not mounted')).toBeVisible();
+    await expect(disksCard(page).getByRole('row')).toHaveCount(1 + FAKE_DISKS.length + 1);
+    expect(requests()).toBe(3);
+
+    // The reload's late answer still has the pool mounted: the page keeps the newer lists.
+    await reads.release(page);
+    await expect(badge(card, 'Not mounted')).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Unmount', exact: true })).toHaveCount(0);
+    await expect(card.getByText('Could not read the scrub status')).toHaveCount(0);
+    // The load after the unmount had the devices of now: nothing to load again.
+    await page.waitForTimeout(500);
+    expect(requests()).toBe(3);
+  });
+
+  test('a reload for the devices keeps the error of the page, and a load the user starts clears it', async ({
+    authenticatedPage: page,
+  }) => {
+    // The supervisor's 500 when btrfs scrub start does not answer (storage/router.py _scrub).
+    const notStarted = 'btrfs scrub start did not answer within 60 seconds: pool e2e_data may not be responding';
+    let hostDisks: readonly (typeof LISTED_DISKS)[number][] = FAKE_DISKS;
+    await fakeStorageApi(page, { disks: () => hostDisks, pools: [HEALTHY_POOL] });
+    // Registered after fakeStorageApi, so it sees the start first.
+    await page.route(
+      (url) => url.pathname === '/api/v1/storage/pools/e2e_data/scrub',
+      (route) =>
+        route.request().method() === 'POST'
+          ? route.fulfill({ status: 500, json: { detail: notStarted } })
+          : route.fallback(),
+    );
+    const sendDevices = await fakeBlockDevices(page);
+    const requests = diskListRequests(page);
+    await page.goto('/storage');
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2']);
+    const card = poolCard(page, 'e2e_data');
+    await card.getByRole('button', { name: 'Scrub', exact: true }).click();
+    const alert = page.getByText(notStarted);
+    await expect(alert).toBeVisible();
+
+    hostDisks = [...FAKE_DISKS, STICK];
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    await sendDevices([...BOOT, 'e2e-hd1', 'e2e-hd2', 'e2e-sd4']);
+    await expect(disksCard(page).getByRole('row')).toHaveCount(1 + FAKE_DISKS.length + 1);
+    expect(requests()).toBe(2);
+    await expect(alert).toBeVisible();
+
+    // The load after an unmount is the user's.
+    await card.getByRole('button', { name: 'Unmount', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Unmount Pool' }).getByRole('button', { name: 'Unmount', exact: true }).click();
+    await expect(badge(card, 'Not mounted')).toBeVisible();
+    await expect(alert).toHaveCount(0);
   });
 
   test('a pool list that cannot be loaded says why, and the disks are still shown', async ({

@@ -268,7 +268,8 @@ test.describe('Users page SMB (fake data)', () => {
     const confirm = page.getByRole('dialog', { name: 'Turn off SMB' });
     await allow.click();
     await expect(confirm).toContainText('Turn off SMB for carol? Their open SMB connections are ended.');
-    await expect(dialog).toBeHidden();
+    // Over the edit dialog, which stays open under it (ADR-0361).
+    await expect(dialog).toBeVisible();
     await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toBeHidden();
     await expect(allow).toBeChecked();
@@ -534,7 +535,41 @@ test.describe('Users page SMB (fake data)', () => {
     await expect(smbBadge(page, 'bob')).toHaveText('Password needed');
   });
 
-  test('Escape in the Turn off SMB confirmation returns to the edit dialog', async ({ authenticatedPage: page }) => {
+  test('Escape closes only the Turn off SMB confirmation over the edit dialog, then the edit dialog', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    await page.goto('/users');
+
+    const edit = userRow(page, 'alice').getByRole('button', { name: 'Edit user alice' });
+    await edit.click();
+    const dialog = page.getByRole('dialog', { name: 'Edit user alice' });
+    const allow = dialog.getByLabel('Allow SMB access');
+    await allow.click();
+    // The confirmation opens over the edit dialog, which stays open under it, and takes the
+    // keyboard focus: a key no longer reaches the checkbox under it (ADR-0361).
+    const confirm = page.getByRole('dialog', { name: 'Turn off SMB' });
+    await expect(confirm).toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(confirm).toBeFocused();
+
+    // Escape is the top dialog's alone, whatever the order of the dialogs in the page: the edit
+    // dialog stays open, and the focus is back on the checkbox that asked.
+    await page.keyboard.press('Escape');
+    await expect(confirm).toBeHidden();
+    await expect(dialog).toBeVisible();
+    await expect(allow).toBeChecked();
+    await expect(allow).toBeFocused();
+    // The next Escape closes the edit dialog, and the focus is on the button that opened it.
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(edit).toBeFocused();
+    expect(fake.writes).toEqual([]);
+  });
+
+  test('Tab never reaches the edit dialog under the Turn off SMB confirmation, which is usable again after it', async ({
+    authenticatedPage: page,
+  }) => {
     const fake = await fakeSmbApi(page, { users: fakeUsers() });
     await page.goto('/users');
 
@@ -543,16 +578,30 @@ test.describe('Users page SMB (fake data)', () => {
     const allow = dialog.getByLabel('Allow SMB access');
     await allow.click();
     const confirm = page.getByRole('dialog', { name: 'Turn off SMB' });
-    await expect(confirm).toBeVisible();
-    await expect(dialog).toBeHidden();
+    await expect(confirm).toBeFocused();
 
+    // Shift+Tab and Tab from the confirmation, each for more presses than the page has elements
+    // that can take the focus, never focus a control of the edit dialog under it (ADR-0361).
+    const focusInEdit = () => dialog.evaluate((element) => element.contains(document.activeElement));
+    const presses = await page.locator('a[href], button, input, select, textarea, [tabindex]').count();
+    for (const key of ['Shift+Tab', 'Tab']) {
+      await confirm.focus();
+      for (let i = 1; i <= presses; i++) {
+        await page.keyboard.press(key);
+        expect(await focusInEdit(), `${key} pressed ${i} times`).toBe(false);
+      }
+    }
+
+    // Once the confirmation is closed, the edit dialog takes the focus and the keys again.
+    await confirm.focus();
     await page.keyboard.press('Escape');
     await expect(confirm).toBeHidden();
-    // That Escape showed the edit dialog again before the edit dialog's own Escape handler ran
-    // (the confirmation is declared first): it did not close the edit dialog as well.
-    await expect(dialog).toBeVisible();
-    await expect(allow).toBeChecked();
-    await page.keyboard.press('Escape');
+    await expect(allow).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.getByLabel('Confirm new password')).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(allow).toBeFocused();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(dialog).toBeHidden();
     expect(fake.writes).toEqual([]);
   });
@@ -563,7 +612,8 @@ test.describe('Users page SMB (fake data)', () => {
     const fake = await fakeSmbApi(page, { users: fakeUsers() });
     await page.goto('/users');
 
-    // The title id of each dialog, read while it is open (one dialog is open at a time).
+    // The title id of each dialog, read while it is open; the confirmation's while the edit
+    // dialog is open under it, so that two titles are on the page at once.
     const titleIds: string[] = [];
     async function readTitleId(dialog: Locator, title: string) {
       await expect(dialog).toBeVisible();
@@ -585,6 +635,7 @@ test.describe('Users page SMB (fake data)', () => {
     await edit.getByLabel('Allow SMB access').click();
     const confirm = page.getByRole('dialog', { name: 'Turn off SMB' });
     await readTitleId(confirm, 'Turn off SMB');
+    await expect(edit).toBeVisible();
     await confirm.getByRole('button', { name: 'Cancel' }).click();
     await edit.getByRole('button', { name: 'Close', exact: true }).click();
 

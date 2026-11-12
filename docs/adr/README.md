@@ -152,6 +152,7 @@ and this index, and `make check-fast` runs it.
 | [0344](0344-pool-unmount-and-delete-are-refused-when-docker-cannot-be-asked.md) | Pool unmount and delete are refused when Docker cannot be asked, respect Docker volumes, and odd names do not break storage | accepted | 2026-11-11 |
 | [0352](0352-volume-reads-container-folders-disk-names-and-deletes-withstand-renames-odd-names-links-and-new-mounts.md) | Volume reads, container folders, disk names and deletes withstand renames, odd names, links and new mounts | accepted | 2026-11-12 |
 | [0358](0358-restored-copies-are-listed-and-deleted-on-the-snapshots-page-by-subvolume-id.md) | Restored copies are listed and deleted on the Snapshots page, by subvolume id after the checks of a volume's Delete | accepted | 2026-11-12 |
+| [0360](0360-the-storage-page-loads-its-lists-again-when-the-block-devices-change.md) | The Storage page loads its lists again when the block devices of the stats stream change | accepted | 2026-11-12 |
 
 ## Shares
 
@@ -170,14 +171,14 @@ and this index, and `make check-fast` runs it.
 | [0082](0082-smb-code-writes-only-on-real-changes.md) | The SMB code writes to the system disk only when accounts or shares change | accepted | 2026-11-06 |
 | [0083](0083-import-smb-conf-when-the-shares-table-is-empty.md) | Shares are imported from smb.conf whenever the shares table is empty | superseded by [0084](0084-import-the-existing-smb-conf-once.md) | 2026-11-06 |
 | [0084](0084-import-the-existing-smb-conf-once.md) | The existing smb.conf is imported once per database, controlled by a marker | accepted | 2026-11-06 |
-| [0085](0085-keep-the-original-smb-conf-as-import-backup.md) | The original smb.conf is kept once as smb.conf.unos-import-backup | accepted | 2026-11-06 |
+| [0085](0085-keep-the-original-smb-conf-as-import-backup.md) | The original smb.conf is kept once as smb.conf.unos-import-backup | superseded by [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | 2026-11-06 |
 | [0086](0086-the-import-only-narrows-access.md) | The smb.conf import only narrows access and reports every option it drops | accepted | 2026-11-06 |
 | [0087](0087-hardened-pinned-global-section.md) | UNOS renders a hardened [global] section with pinned values | superseded by [0281](0281-hardened-pinned-global-section-with-auth-audit-logging.md) | 2026-11-06 |
 | [0088](0088-fail-safe-share-sections.md) | Share sections never express a restriction by leaving a line out | accepted | 2026-11-06 |
 | [0089](0089-apply-is-checked-by-testparm-and-atomic.md) | Every apply is checked by testparm and installed atomically | accepted | 2026-11-06 |
 | [0090](0090-reload-all-and-retry-failed-reloads.md) | Samba is reloaded with smbcontrol all, and failed reloads and closes are retried | accepted | 2026-11-06 |
 | [0091](0091-testparm-tolerates-two-unknown-parameters.md) | The testparm check tolerates only two parameters that older Samba lacks | accepted | 2026-11-06 |
-| [0092](0092-copy-foreign-sections-before-overwriting.md) | Foreign share sections are saved to smb.conf.unos-replaced before an apply | accepted | 2026-11-06 |
+| [0092](0092-copy-foreign-sections-before-overwriting.md) | Foreign share sections are saved to smb.conf.unos-replaced before an apply | superseded by [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | 2026-11-06 |
 | [0093](0093-globals-is-a-reserved-share-name.md) | The share name 'globals' is reserved like 'global' | accepted | 2026-11-06 |
 | [0094](0094-samba-cache-in-ram-and-syslog-logging.md) | Samba keeps its cache in /run/samba and logs to syslog | superseded by [0277](0277-samba-logs-failed-sign-ins-to-syslog-and-keeps-its-log-file-in-ram.md) | 2026-11-06 |
 | [0095](0095-smb-answers-lan-addresses-only.md) | SMB answers only LAN addresses, through hosts allow in [global] | accepted | 2026-11-06 |
@@ -276,6 +277,7 @@ and this index, and `make check-fast` runs it.
 | [0342](0342-samba-refuses-every-password-change-over-samr-so-smb-passwords-change-only-through-unos.md) | Samba refuses every password change over SAMR with a check password script that always fails, so SMB passwords change only through UNOS | accepted | 2026-11-11 |
 | [0349](0349-a-restore-refuses-a-backup-whose-database-gives-one-smb-uid-to-two-accounts.md) | A restore refuses a backup whose database gives one SMB uid to two accounts | accepted | 2026-11-11 |
 | [0353](0353-smb-uids-handed-out-are-recorded-and-a-restored-account-keeps-one-only-under-its-name.md) | SMB uids handed out are recorded for good, and a restored account keeps a recorded uid only under the name it went to | accepted | 2026-11-12 |
+| [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | Every replaced smb.conf is kept in a copy named with its UTC time, and the newest 10 of each kind stay | accepted | 2026-11-12 |
 
 ## Apps
 
@@ -361,7 +363,7 @@ and this index, and `make check-fast` runs it.
 | [0174](0174-users-manage-their-smb-on-the-account-page.md) | Regular users manage their own SMB access on the Account page | accepted | 2026-11-06 |
 | [0175](0175-deferred-ui-scheduler-and-tooling-items.md) | Fix the deferred UI, scheduler, container and tooling items | proposed | 2026-11-06 |
 | [0196](0196-windows-hint-uses-ipv6-literal-net.md) | The Windows connection hint uses the ipv6-literal.net form for IPv6 hosts | accepted | 2026-11-07 |
-| [0197](0197-accessible-dialogs-lists-and-hints.md) | Dialogs, lists and hints in the web UI work with keyboard and screen readers | accepted | 2026-11-07 |
+| [0197](0197-accessible-dialogs-lists-and-hints.md) | Dialogs, lists and hints in the web UI work with keyboard and screen readers | superseded by [0361](0361-open-dialogs-form-a-stack-whose-top-one-alone-answers-escape.md) | 2026-11-07 |
 | [0271](0271-the-storage-page-says-in-each-card-why-its-list-could-not-be-loaded.md) | The Storage page loads the disks and the pools apart and says in each card why its list could not be loaded | accepted | 2026-11-07 |
 | [0287](0287-the-web-ui-takes-its-texts-from-catalogs-in-english-and-russian.md) | The web UI takes its texts from catalogs in English and Russian, chosen on the Account page and checked by make frontend | accepted | 2026-11-08 |
 | [0291](0291-the-app-store-translates-its-own-texts-and-not-the-app-catalog.md) | The App Store gives each category one label and shows the app catalog's texts as the server answers them | proposed | 2026-11-08 |
@@ -372,6 +374,7 @@ and this index, and `make check-fast` runs it.
 | [0299](0299-the-shares-page-writes-a-locations-kind-in-its-language-from-the-name-the-server-answers.md) | The Shares page writes a location's kind in its language from the name that the server answers | accepted | 2026-11-08 |
 | [0300](0300-the-storage-page-writes-its-values-in-the-pages-language-and-keeps-the-servers-reasons.md) | The Storage page writes its sizes and the start of a scrub in the page's language and keeps the server's reasons and btrfs's names | accepted | 2026-11-08 |
 | [0302](0302-below-the-md-breakpoint-the-sidebar-is-a-drawer-and-only-a-table-scrolls-sideways.md) | Below the md breakpoint the sidebar is a drawer, and on a phone only a table scrolls sideways | accepted | 2026-11-08 |
+| [0361](0361-open-dialogs-form-a-stack-whose-top-one-alone-answers-escape.md) | Open dialogs form a stack whose top one alone answers Escape, and the focus moves into a dialog and back to its opener | accepted | 2026-11-12 |
 
 ## Deploy
 
@@ -420,7 +423,7 @@ and this index, and `make check-fast` runs it.
 | [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | The dev device admits inbound IPv6 to its services only from the LAN | accepted | 2026-11-08 |
 | [0303](0303-the-dev-device-runs-its-nfs-server.md) | The dev device runs its NFS server | accepted | 2026-11-08 |
 | [0304](0304-the-scenario-checks-of-the-dev-device-are-scripts-that-remove-what-they-make.md) | The scenario checks of the dev device are scripts that remove what they make and report each step's SD writes | accepted | 2026-11-08 |
-| [0309](0309-the-smbconf-scenario-check-edits-smb-conf-by-hand-and-restarts-the-supervisor.md) | The smbconf scenario check edits smb.conf by hand and restarts the supervisor | accepted | 2026-11-09 |
+| [0309](0309-the-smbconf-scenario-check-edits-smb-conf-by-hand-and-restarts-the-supervisor.md) | The smbconf scenario check edits smb.conf by hand and restarts the supervisor | superseded by [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | 2026-11-09 |
 | [0314](0314-the-scrub-scenario-check-scrubs-the-pool-cancels-a-scrub-and-runs-a-scheduled-one.md) | The scrub scenario check scrubs the pool, cancels a scrub and runs a scheduled one | accepted | 2026-11-09 |
 | [0340](0340-the-shares-scenario-check-makes-a-guest-share-a-users-own-smb-activation-and-a-repair.md) | The shares scenario check makes a guest share, a user's own SMB activation and a repair | accepted | 2026-11-11 |
 | [0341](0341-the-restore-scenario-check-restores-a-backup-it-made-moments-before.md) | The restore scenario check restores a backup it made moments before | accepted | 2026-11-11 |

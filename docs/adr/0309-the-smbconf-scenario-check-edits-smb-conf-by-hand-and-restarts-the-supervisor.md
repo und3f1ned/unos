@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-09
 area: device
 decided-by: agent
+superseded-by: ADR-0362
 ---
 
 # ADR-0309: The smbconf scenario check edits smb.conf by hand and restarts the supervisor
 
 ## Context
+
+Superseded by ADR-0362: the check's apply makes a dated copy beside the earlier ones, a second hand edit makes a second, it refuses beside 9 copies, and ADR-0362 restates the rules that stay.
 
 The steps of `shares.smb-conf-and-status` (a share section that UNOS did not write, copied to
 `smb.conf.unos-replaced`, and the status panel's problems) and of `shares.edit-and-delete` (a

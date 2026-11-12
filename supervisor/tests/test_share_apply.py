@@ -10,13 +10,14 @@ admin is an administrator.
 import asyncio
 import logging
 import os
+import re
 import sqlite3
 import stat
 import subprocess
 import sys
 import threading
 from contextlib import asynccontextmanager, closing
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -167,6 +168,21 @@ def expected(env, *shares) -> str:
 
 def temp_files(env) -> list[str]:
     return sorted(name for name in os.listdir(env.samba) if name.endswith(".unos-tmp"))
+
+
+def copies(env, kind: str = "unos-replaced") -> list[str]:
+    """The names of the copies <smb.conf>.<kind>-<UTC time> next to smb.conf, oldest first (ADR-0362)."""
+    pattern = re.compile(rf"smb\.conf\.{re.escape(kind)}-\d{{8}}_\d{{6}}_\d{{6}}")
+    return sorted(name for name in os.listdir(env.samba) if pattern.fullmatch(name))
+
+
+def copy_time(name: str) -> datetime:
+    """The UTC time in the name of a copy (ADR-0362)."""
+    return datetime.strptime(name.rsplit("-", 1)[1], "%Y%m%d_%H%M%S_%f")
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # --- the apply pipeline (ADR-0089) ----------------------------------------------------------------
@@ -613,7 +629,7 @@ class TestClosedShares:
         assert result.warnings == ["Open connections to bad.name were not closed: not a valid share name"]
         assert env.host.closed() == []
         assert service.last_apply().pending_close == set()
-        assert not Path(str(env.conf) + ".unos-replaced").exists()  # it has the fixed lines of a UNOS section
+        assert copies(env) == []  # it has the fixed lines of a UNOS section
 
 
 class TestImportBeforeApply:
@@ -630,7 +646,8 @@ class TestImportBeforeApply:
         result = await apply(env)
         assert result.changed is True
         assert env.conf.read_text() == expected(env, ("docs", "docs", "", False, [], ["alice"]))
-        assert Path(str(env.conf) + ".unos-import-backup").read_text().startswith("[global]\n workgroup = HOME")
+        (backup,) = copies(env, "unos-import-backup")
+        assert (env.samba / backup).read_text().startswith("[global]\n workgroup = HOME")
 
     async def test_a_failed_import_blocks_the_apply(self, not_imported, monkeypatch):
         env = not_imported
@@ -662,7 +679,7 @@ class TestImportBeforeApply:
         with closing(sqlite3.connect(env.db_path)) as conn:
             assert conn.execute("SELECT name FROM smb_shares").fetchall() == []
             assert conn.execute("SELECT * FROM smb_state").fetchall() == []
-        assert not Path(str(env.conf) + ".unos-import-backup").exists()
+        assert copies(env, "unos-import-backup") == []
         assert env.host.calls == []
 
 
@@ -697,66 +714,133 @@ class TestPoolList:
 class TestReplaced:
     OLD_RELEASE = "\n[legacy]\n   path = {pool}/legacy\n   browseable = yes\n   read only = no\n   guest ok = no\n"
 
-    async def test_sections_unos_did_not_render_are_copied_once(self, env, monkeypatch):
+    async def test_every_copy_is_kept_with_its_time(self, env):
+        """ADR-0362: each file with share sections that UNOS did not render gets a copy of its own,
+        named with the UTC time of the copy; an earlier copy is never replaced."""
         add_share(env, "docs", "docs", access={ALICE: "read"})
         await apply(env)
         rendered = env.conf.read_text()
         old = rendered + self.OLD_RELEASE.format(pool=env.pool)
         env.conf.write_text(old)
-        copies = []
-        real_write = smb._write_file_durably
-        monkeypatch.setattr(smb, "_write_file_durably",
-                            lambda path, data: (copies.append(path), real_write(path, data)))
 
+        before = utc_now()
         result = await apply(env)
+        after = utc_now()
 
-        replaced = Path(str(env.conf) + ".unos-replaced")
-        assert replaced.read_text() == old
+        (first,) = copies(env)
+        assert before <= copy_time(first) <= after
+        assert (env.samba / first).read_text() == old
+        assert stat.S_IMODE((env.samba / first).stat().st_mode) == 0o600
         assert result.changed is True and "[legacy]" not in env.conf.read_text()
         assert result.closed_shares == ["legacy"]
-        problem = ("smb.conf had shares that UNOS did not create (legacy); they are kept in smb.conf.unos-replaced: "
-                   "create them again on the Shares page")
-        assert service.last_apply().replaced_problem == problem
-        assert copies == [str(replaced)]
+        assert service.last_apply().replaced_problem == (
+            f"smb.conf had shares that UNOS did not create (legacy); they are kept in {first}: "
+            "create them again on the Shares page")
+        assert temp_files(env) == []
 
-        env.conf.write_text(old)  # the same file again: the identical copy is not rewritten
+        env.conf.write_text(old)  # the same file again: the newest copy has these bytes, nothing is written
         await apply(env)
-        assert copies == [str(replaced)]
-        assert replaced.read_text() == old
+        assert copies(env) == [first]
 
-        # Another foreign section later (a rollback-era release, a hand edit): the copy is
-        # rewritten with it, unless it already holds exactly these bytes (ADR-0092).
+        # Another foreign section later (a rollback-era release, a hand edit): a second copy,
+        # and the first keeps its text.
         later = rendered + f"\n[later]\n   path = {env.pool}/later\n   read only = no\n"
         env.conf.write_text(later)
         result = await apply(env)
         assert result.changed is True and "[later]" not in env.conf.read_text()
-        assert copies == [str(replaced), str(replaced)]
-        assert replaced.read_text() == later
-        assert service.last_apply().replaced_problem == problem.replace("(legacy)", "(later)")
+        kept, second = copies(env)
+        assert kept == first and (env.samba / first).read_text() == old
+        assert (env.samba / second).read_text() == later
+        assert service.last_apply().replaced_problem == (
+            f"smb.conf had shares that UNOS did not create (later); they are kept in {second}: "
+            f"create them again on the Shares page; earlier copies (UNOS keeps the newest 10): {first}")
+
+    async def test_the_newest_ten_copies_are_kept(self, env):
+        """ADR-0362: a new copy deletes the oldest beyond 10; nothing is refused, and no other file
+        of /etc/samba is touched."""
+        add_share(env, "docs", "docs", access={ALICE: "read"})
+        await apply(env)
+        rendered = env.conf.read_text()
+        earlier = [f"smb.conf.unos-replaced-202611{day:02d}_120000_000000" for day in range(1, 11)]
+        others = ["smb.conf.unos-replaced", "smb.conf.unos-replaced-notes", "smb.conf.unos-replaced-20261101_1200",
+                  "smb.conf.unos-import-backup-20261031_120000_000000"]
+        for name in earlier + others:
+            (env.samba / name).write_text(name)
+        env.conf.write_text(rendered + self.OLD_RELEASE.format(pool=env.pool))
+
+        result = await apply(env)
+
+        assert result.changed is True
+        kept = copies(env)
+        assert kept[:9] == earlier[1:] and len(kept) == 10 and kept[9] not in earlier
+        assert not (env.samba / earlier[0]).exists()
+        assert all((env.samba / name).read_text() == name for name in others)
+        assert service.last_apply().replaced_problem == (
+            f"smb.conf had shares that UNOS did not create (legacy); they are kept in {kept[9]}: create them again "
+            f"on the Shares page; earlier copies (UNOS keeps the newest 10): {', '.join(reversed(earlier[1:]))}")
+        assert temp_files(env) == []
+
+    async def test_a_copy_named_before_the_others_is_not_the_one_deleted(self, env):
+        """A clock set back (a board without a clock of its own, before NTP) names the new copy
+        before the others: the oldest of the others goes, and the new copy stays (ADR-0362)."""
+        add_share(env, "docs", "docs", access={ALICE: "read"})
+        await apply(env)
+        rendered = env.conf.read_text()
+        future = [f"smb.conf.unos-replaced-209911{day:02d}_120000_000000" for day in range(1, 11)]
+        for name in future:
+            (env.samba / name).write_text(name)
+        old = rendered + self.OLD_RELEASE.format(pool=env.pool)
+        env.conf.write_text(old)
+
+        await apply(env)
+
+        new, *rest = copies(env)
+        assert (env.samba / new).read_text() == old
+        assert rest == future[1:]
+
+    async def test_a_file_copied_while_the_clock_was_set_back_is_not_copied_again(self, env):
+        """The copy that holds the file is named before a newer copy of another file, as after a
+        clock set back: the apply writes no copy and names that one (ADR-0362)."""
+        add_share(env, "docs", "docs", access={ALICE: "read"})
+        await apply(env)
+        rendered = env.conf.read_text()
+        old = rendered + self.OLD_RELEASE.format(pool=env.pool)
+        set_back = "smb.conf.unos-replaced-20261101_120000_000000"
+        newer = "smb.conf.unos-replaced-20261110_120000_000000"
+        (env.samba / set_back).write_text(old)
+        (env.samba / newer).write_text(rendered + "\n[later]\n   path = /srv/later\n")
+        env.conf.write_text(old)
+
+        result = await apply(env)
+
+        assert result.changed is True and "[legacy]" not in env.conf.read_text()
+        assert copies(env) == [set_back, newer]
+        assert service.last_apply().replaced_problem == (
+            f"smb.conf had shares that UNOS did not create (legacy); they are kept in {set_back}: create them again "
+            f"on the Shares page; earlier copies (UNOS keeps the newest 10): {newer}")
 
     async def test_a_failed_copy_keeps_smb_conf(self, env, monkeypatch):
-        """ADR-0092: sections that UNOS did not render are copied before they are overwritten;
-        without the copy, smb.conf is not replaced."""
+        """ADR-0362: sections that UNOS did not render are copied before they are
+        overwritten; without the copy, smb.conf is not replaced."""
         add_share(env, "docs", "docs", access={ALICE: "read"})
         old = f"[global]\n   workgroup = OLD\n[legacy]\n   path = {env.pool}/legacy\n   read only = no\n"
         env.conf.write_text(old)
-        replaced = Path(str(env.conf) + ".unos-replaced")
-        real_replace = os.replace
+        real_link = os.link
 
-        def replace(src, dst, **kwargs):
-            if str(dst) == str(replaced):
+        def link(src, dst, **kwargs):
+            if os.path.basename(dst).startswith("smb.conf.unos-replaced-"):
                 raise PermissionError(13, "Permission denied")
-            return real_replace(src, dst, **kwargs)
+            return real_link(src, dst, **kwargs)
 
-        monkeypatch.setattr(os, "replace", replace)
+        monkeypatch.setattr(os, "link", link)
         with pytest.raises(smb.SambaConfigError) as raised:
             await apply(env)
 
         assert str(raised.value) == (
-            f"smb.conf has shares that UNOS did not create (legacy), and they could not be copied to {replaced}: "
-            "[Errno 13] Permission denied")
+            "smb.conf has shares that UNOS did not create (legacy), and they could not be copied to "
+            f"{env.conf}.unos-replaced-<UTC time>: [Errno 13] Permission denied")
         assert env.conf.read_text() == old
-        assert not replaced.exists() and temp_files(env) == []
+        assert copies(env) == [] and temp_files(env) == []
         assert env.host.calls == []  # no testparm, no reload, no close
         assert (service.last_apply().ok, service.last_apply().message) == (False, str(raised.value))
         assert service.last_apply().replaced_problem is None
@@ -768,14 +852,14 @@ class TestReplaced:
         sql(env, "DELETE FROM smb_share_access WHERE share_id = 2", "DELETE FROM smb_shares WHERE id = 2")
         result = await apply(env)
         assert result.closed_shares == ["gone"]
-        assert not Path(str(env.conf) + ".unos-replaced").exists()
+        assert copies(env) == []
         assert service.last_apply().replaced_problem is None
 
     async def test_debian_default_sections_are_not_copied(self, env):
         env.conf.write_text("[global]\n workgroup = WORKGROUP\n[homes]\n browseable = no\n"
                             "[printers]\n path = /var/spool\n[print$]\n path = /var/lib/samba/printers\n")
         result = await apply(env)
-        assert not Path(str(env.conf) + ".unos-replaced").exists()
+        assert copies(env) == []
         assert sorted(result.closed_shares) == ["homes", "printers"]
         assert result.warnings == ["Open connections to print$ were not closed: not a valid share name"]
 
@@ -1117,11 +1201,11 @@ class TestEnsureImported:
 class TestStaleTempFiles:
     def test_only_staged_files_are_removed(self, env):
         for name in (".smb.conf.abc123.unos-tmp", ".smb.conf.x.unos-tmp", "smb.conf", ".smb.conf.keep",
-                     "notes.unos-tmp", "smb.conf.unos-import-backup"):
+                     "notes.unos-tmp", "smb.conf.unos-import-backup-20261112_101530_123456"):
             (env.samba / name).write_text("x")
         assert smb.remove_stale_temp_files() == [".smb.conf.abc123.unos-tmp", ".smb.conf.x.unos-tmp"]
         assert sorted(os.listdir(env.samba)) == [".smb.conf.keep", "notes.unos-tmp", "smb.conf",
-                                                 "smb.conf.unos-import-backup"]
+                                                 "smb.conf.unos-import-backup-20261112_101530_123456"]
         assert smb.remove_stale_temp_files() == []
 
     def test_missing_directory(self, env, monkeypatch):
@@ -1215,16 +1299,150 @@ class TestSmbHelpers:
         ok, why = smb._reload_samba()
         assert ok is False and "nsenter" in why and "not active" in why
 
-    def test_write_file_durably(self, env):
-        target = env.samba / "copy"
-        smb._write_file_durably(str(target), b"\xff bytes")
-        assert target.read_bytes() == b"\xff bytes"
+    def test_keep_copy_writes_a_new_file_named_with_its_utc_time(self, env):
+        before = utc_now()
+        kept = smb.keep_copy(smb.IMPORT_BACKUP, b"\xff first")
+        after = utc_now()
+        (name,) = copies(env, "unos-import-backup")
+        assert kept == smb.KeptCopy(path=str(env.samba / name), earlier=())
+        assert before <= copy_time(name) <= after
+        assert (env.samba / name).read_bytes() == b"\xff first"
+        assert stat.S_IMODE((env.samba / name).stat().st_mode) == 0o600
         assert temp_files(env) == []
 
-    def test_keep_import_backup_never_overwrites(self, env):
-        assert smb.keep_import_backup(b"first") is True
-        assert smb.keep_import_backup(b"second") is False
-        assert Path(smb.import_backup_path()).read_bytes() == b"first"
+        assert smb.keep_copy(smb.IMPORT_BACKUP, b"\xff first") == kept  # the newest copy has these bytes
+        second = smb.keep_copy(smb.IMPORT_BACKUP, b"second")
+        assert second.earlier == (kept.path,) and Path(second.path).read_bytes() == b"second"
+        assert copies(env, "unos-import-backup") == [name, os.path.basename(second.path)]
+        assert copies(env, "unos-replaced") == []
+
+    def test_keep_copy_never_replaces_a_file(self, env, monkeypatch):
+        """Two copies in one microsecond, or a clock set back onto an earlier copy's time: the
+        link fails, the earlier file keeps its bytes, and no temporary file is left (ADR-0362)."""
+        (env.samba / "smb.conf.unos-replaced-20261112_101530_123456").write_bytes(b"earlier")
+
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 11, 12, 10, 15, 30, 123456, tzinfo=tz)
+
+        monkeypatch.setattr(smb, "datetime", Frozen)
+        with pytest.raises(FileExistsError):
+            smb.keep_copy(smb.REPLACED, b"new")
+        assert (env.samba / "smb.conf.unos-replaced-20261112_101530_123456").read_bytes() == b"earlier"
+        assert temp_files(env) == []
+
+    def test_a_copy_that_cannot_be_deleted_is_logged(self, env, monkeypatch, caplog):
+        for day in range(1, 11):
+            (env.samba / f"smb.conf.unos-replaced-202611{day:02d}_120000_000000").write_bytes(b"x")
+        real_unlink = os.unlink
+
+        def unlink(path, *args, **kwargs):
+            if os.path.basename(path) == "smb.conf.unos-replaced-20261101_120000_000000":
+                raise PermissionError(13, "Permission denied")
+            return real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "unlink", unlink)
+        with caplog.at_level(logging.WARNING, logger="src.shares.smb"):
+            kept = smb.keep_copy(smb.REPLACED, b"new")
+        assert Path(kept.path).read_bytes() == b"new"
+        assert len(copies(env)) == 11
+        assert "Could not delete the old copy smb.conf.unos-replaced-20261101_120000_000000" in caplog.text
+
+    def test_only_regular_files_are_copies(self, env):
+        """A directory, a symbolic link or a FIFO with the name of a copy is neither listed, read
+        nor deleted (ADR-0362)."""
+        (env.samba / "notes").write_bytes(b"same")
+        directory = env.samba / "smb.conf.unos-replaced-20261101_120000_000000"
+        directory.mkdir()
+        link = env.samba / "smb.conf.unos-replaced-20261102_120000_000000"
+        link.symlink_to("notes")
+        fifo = env.samba / "smb.conf.unos-replaced-20261103_120000_000000"
+        os.mkfifo(fifo)
+        regular = env.samba / "smb.conf.unos-replaced-20261104_120000_000000"
+        regular.write_bytes(b"other")
+
+        assert smb.kept_copies(smb.REPLACED) == [str(regular)]
+        kept = smb.keep_copy(smb.REPLACED, b"same")  # the link's target holds these bytes: no copy
+        assert kept.path not in (str(link), str(regular)) and Path(kept.path).read_bytes() == b"same"
+        assert kept.earlier == (str(regular),)
+        assert directory.is_dir() and link.is_symlink() and stat.S_ISFIFO(os.lstat(fifo).st_mode)
+        assert smb.kept_copies(smb.REPLACED) == [str(regular), kept.path]
+
+    @staticmethod
+    def listed_once(monkeypatch, raced: Path) -> None:
+        """kept_copies lists RACED first once, as if a copy had been replaced after the listing."""
+        real = smb.kept_copies
+        calls: list[str] = []
+
+        def listing(kind: str) -> list[str]:
+            calls.append(kind)
+            return [str(raced), *real(kind)] if len(calls) == 1 else real(kind)
+
+        monkeypatch.setattr(smb, "kept_copies", listing)
+
+    @pytest.mark.parametrize("entry", ["link", "directory"])
+    def test_an_entry_that_replaced_a_copy_after_the_listing_is_not_read(self, env, monkeypatch, entry):
+        """The read opens a copy without following a symbolic link and checks with fstat that it
+        is a regular file: a link to a file with these bytes, or a directory, is no copy, and a new
+        copy is written (ADR-0362)."""
+        raced = env.samba / "smb.conf.unos-replaced-20261101_120000_000000"
+        if entry == "link":
+            (env.samba / "notes").write_bytes(b"same")
+            raced.symlink_to("notes")
+        else:
+            raced.mkdir()
+        self.listed_once(monkeypatch, raced)
+        kept = smb.keep_copy(smb.REPLACED, b"same")
+        assert kept.path != str(raced) and Path(kept.path).read_bytes() == b"same"
+        assert os.path.lexists(raced) and temp_files(env) == []
+
+    def test_a_fifo_that_replaced_a_copy_is_not_waited_on(self, env, monkeypatch):
+        """A FIFO opened for a blocking read would hold the apply until something writes to it;
+        here a writer puts these bytes into it once a reader waits (ADR-0362)."""
+        fifo = env.samba / "smb.conf.unos-replaced-20261101_120000_000000"
+        os.mkfifo(fifo)
+        done = threading.Event()
+
+        def writer() -> None:
+            while not done.wait(0.01):
+                try:
+                    fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                except OSError:  # nobody reads yet
+                    continue
+                try:
+                    os.write(fd, b"same")
+                except OSError:
+                    pass
+                finally:
+                    os.close(fd)
+                return
+
+        thread = threading.Thread(target=writer, daemon=True)
+        thread.start()
+        self.listed_once(monkeypatch, fifo)
+        try:
+            kept = smb.keep_copy(smb.REPLACED, b"same")
+        finally:
+            done.set()
+            thread.join(5)
+        assert kept.path != str(fifo) and Path(kept.path).read_bytes() == b"same"
+
+    def test_no_copy_when_any_copy_holds_these_bytes(self, env):
+        """A copy written while the clock was set back is named before a newer one: it still holds
+        these bytes, so nothing is written (ADR-0362)."""
+        newer = env.samba / "smb.conf.unos-replaced-20261110_120000_000000"
+        newer.write_bytes(b"newer")
+        set_back = env.samba / "smb.conf.unos-replaced-20261101_120000_000000"
+        set_back.write_bytes(b"same")
+        (env.samba / "smb.conf.unos-replaced-20261105_120000_000000").write_bytes(b"sam")  # shorter: not read
+
+        kept = smb.keep_copy(smb.REPLACED, b"same")
+
+        assert kept == smb.KeptCopy(path=str(set_back), earlier=(
+            str(newer), str(env.samba / "smb.conf.unos-replaced-20261105_120000_000000")))
+        assert copies(env) == [set_back.name, "smb.conf.unos-replaced-20261105_120000_000000", newer.name]
+        assert temp_files(env) == []
 
 
 # --- share mutations and the startup -----------------
@@ -1297,15 +1515,14 @@ class TestShareMutations:
         add_share(env, "docs", "docs", access={ALICE: "write"})
         old = f"[global]\n   workgroup = OLD\n[legacy]\n   path = {env.pool}/legacy\n   read only = no\n"
         env.conf.write_text(old)
-        replaced = str(env.conf) + ".unos-replaced"
-        real_replace = os.replace
+        real_link = os.link
 
-        def replace(src, dst, **kwargs):
-            if str(dst) == replaced:
+        def link(src, dst, **kwargs):
+            if os.path.basename(dst).startswith("smb.conf.unos-replaced-"):
                 raise PermissionError(13, "Permission denied")
-            return real_replace(src, dst, **kwargs)
+            return real_link(src, dst, **kwargs)
 
-        monkeypatch.setattr(os, "replace", replace)
+        monkeypatch.setattr(os, "link", link)
         created = client.post("/api/v1/shares/smb", json={"name": "new", "path": f"{env.pool}/new"})
         changed = client.patch("/api/v1/shares/smb/docs", json={"browseable": False})
         deleted = client.delete("/api/v1/shares/smb/docs")
@@ -1317,7 +1534,7 @@ class TestShareMutations:
         assert rows(env, "SELECT name, browseable, version FROM smb_shares") == [("docs", 1, 1)]
         assert rows(env, "SELECT username, level FROM smb_share_access") == [("alice", "write")]
         assert env.conf.read_text() == old
-        assert temp_files(env) == [] and not os.path.exists(replaced)
+        assert temp_files(env) == [] and copies(env) == []
         assert env.host.calls == []
 
     async def test_a_mutation_imports_first_and_the_import_commits_none_of_its_rows(self, mutations, monkeypatch):

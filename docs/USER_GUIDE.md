@@ -89,6 +89,13 @@ than the screen, as on a phone held sideways, scrolls to its buttons. Narrower
 than 640 pixels, the File Browser leaves out the **Modified** column, and each
 entry of **System Logs** shows its time, level and program above the message.
 
+A dialog takes the keyboard focus when it opens; when it closes, the focus goes
+back to the element that had the focus when the dialog opened, if that element
+is still there. Escape closes a dialog. A question asked from a dialog, such as
+turning off SMB in a user's edit dialog, opens over that dialog, and Escape
+closes only the dialog on top. Until the question closes, the dialog under it
+takes neither the focus nor clicks: Tab skips its fields and buttons.
+
 ### Language
 
 The web interface is in English or Russian. Choose the language on the **Account**
@@ -182,6 +189,16 @@ interface's language as the browser writes it, such as 59.6 GB.
 When the disks cannot be listed, for example because `lsblk` fails on the
 host, the card says so with the reason instead of the list; the pools are
 still shown, and the other way round.
+
+A disk attached while UNOS runs, such as a USB disk, needs no restart: the
+page lists it within a few seconds, also while it is open, and a disk that
+is removed leaves the list the same way, together with the pools and the
+filesystems found on the disks. While a dialog of the page is open, its
+lists stay as they were until it closes, also when the host answers a
+reload that began before it opened, and an error message at the top of the
+page stays through such a reload. The SMART data of a disk attached
+after the supervisor started (**System** → **Disk Health**) can be read
+only once the supervisor has restarted.
 
 ### Creating a Storage Pool
 
@@ -447,6 +464,21 @@ SMB shares give Windows, macOS and Linux computers on your network access to
 folders of your pools. UNOS writes the whole Samba configuration
 (`/etc/samba/smb.conf`) from its database; changes made to that file by hand
 are overwritten.
+
+Before UNOS overwrites a file with shares it did not create, it keeps a copy
+in `/etc/samba`, named with the time of the copy in UTC:
+`smb.conf.unos-replaced-<time>`, for example
+`smb.conf.unos-replaced-20261112_101530_123456`, and, for the file whose
+shares UNOS imported at its first start, `smb.conf.unos-import-backup-<time>`.
+Every such file gets a copy of its own, unless one of the newest 10 copies of
+its kind already holds exactly the same text; UNOS keeps the newest 10 copies
+of each kind and deletes older ones. Only regular files count as copies: a
+folder or a link with such a name is left alone. Until the supervisor
+restarts, the status panel of the **Shares** page names the shares and the
+copy that holds them ("smb.conf had shares that UNOS did not create (...);
+they are kept in smb.conf.unos-replaced-...: create them again on the Shares
+page"), followed by the other copies, newest first; the import report names
+the import backup in the same way.
 
 #### How Access Works
 

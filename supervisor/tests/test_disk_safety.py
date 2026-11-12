@@ -713,6 +713,26 @@ class TestDisksEndpoint:
             "sdg": (False, True, "Member of pool 'media'", True, "media"),
         }
 
+    def test_a_disk_attached_or_removed_after_a_request_is_in_the_next_answer(self, api, nas):
+        # storage.hot-plugged-disks (ADR-0360): every request runs lsblk on the host, which
+        # sees the host's /dev, /sys and udev database, so nothing that the supervisor read
+        # before, at its start or at an earlier request, hides a disk attached since.
+        def names():
+            return [disk["name"] for disk in api.get("/api/v1/storage/disks").json()]
+
+        assert names() == ["sda", "sdb", "sdc", "nvme0n1"]
+
+        nas.add_disk("sdd", model="USB Disk", serial="USB-1", fstype="exfat", label="CAMERA")
+        response = api.get("/api/v1/storage/disks")
+
+        assert response.status_code == 200, response.text
+        sdd = response.json()[-1]
+        assert (sdd["path"], sdd["model"], sdd["serial"], sdd["label"], sdd["has_data"], sdd["in_use"]) == (
+            "/dev/sdd", "USB Disk", "USB-1", "CAMERA", True, False)
+
+        nas.tree = [node for node in nas.tree if node["name"] != "sdb"]
+        assert names() == ["sda", "sdc", "nvme0n1", "sdd"]
+
     def test_a_disk_list_that_cannot_be_read_answers_500_with_the_reason(self, api, nas):
         nas.fail[("lsblk",)] = (1, "lsblk: failed to access sysfs directory: /sys/dev/block")
 

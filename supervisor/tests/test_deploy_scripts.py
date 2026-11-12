@@ -1504,6 +1504,11 @@ def _marked(*names, first_uid=70000):
     )
 
 
+# Import backups as the supervisor names them, oldest first (ADR-0362).
+_IMPORT_BACKUPS = ("smb.conf.unos-import-backup-20261101_120000_000000",
+                   "smb.conf.unos-import-backup-20261112_101530_123456")
+
+
 class TestUninstallScript:
     def _run(
         self, tmp_path, commands="remove_samba_passwords", *, passwd=_PASSWD, passdb=_PASSDB, fail=(), samba=(),
@@ -1884,11 +1889,13 @@ class TestUninstallScript:
         "samba, says, backup",
         [
             # The device: UNOS imported the old file, install.sh never ran.
-            (("smb.conf", "smb.conf.unos-import-backup"), "stays", True),
-            (("smb.conf",), "stays", False),
+            (("smb.conf", _IMPORT_BACKUPS[1]), "stays", _IMPORT_BACKUPS[1:]),
+            # Two imports of files that UNOS did not write (ADR-0362), and a file of another name.
+            (("smb.conf", "smb.conf.unos-import-backup-notes.txt", *_IMPORT_BACKUPS[::-1]), "stays", _IMPORT_BACKUPS),
+            (("smb.conf",), "stays", ()),
             # install.sh kept the file it replaced.
-            (("smb.conf", "smb.conf.original"), "original", False),
-            (("smb.conf", "smb.conf.original", "smb.conf.unos-import-backup"), "original", False),
+            (("smb.conf", "smb.conf.original"), "original", ()),
+            (("smb.conf", "smb.conf.original", _IMPORT_BACKUPS[0]), "original", ()),
         ],
     )
     def test_the_completion_says_what_happens_to_smb_conf(self, tmp_path, samba, says, backup):
@@ -1913,15 +1920,18 @@ class TestUninstallScript:
                 "guest shares to anyone on your network." in text
             )
             assert "systemctl restart smbd" in text
-        # The copy that the supervisor keeps of an smb.conf it did not write when
-        # it imports its shares (ADR-0085); smb.conf.original is the one that
-        # install.sh kept.
-        assert (
-            f"The smb.conf that UNOS replaced with its own (UNOS imported its shares from it) is "
-            f"{folder}/smb.conf.unos-import-backup. Check it before you copy it back: it may give every Samba "
-            "account access to its shares." in text
-        ) is backup
-        assert ("unos-import-backup" in text) is backup
+        # The copies that the supervisor keeps of an smb.conf it did not write when
+        # it imports its shares, oldest first (ADR-0362); smb.conf.original is the
+        # one that install.sh kept.
+        if backup:
+            listed = "".join(f"  {folder}/{name}\n" for name in backup)
+            assert (
+                "The smb.conf files that UNOS replaced with its own (UNOS imported their\n"
+                "shares) are kept, each named with the UTC time it was replaced, oldest\n"
+                f"first:\n{listed}Check one before you copy it back: it may give every Samba account\n"
+                "access to its shares.\n"
+            ) in result.stdout
+        assert ("unos-import-backup" in text) is bool(backup)
         assert "The file from before UNOS is" not in text
 
     def test_with_smb_conf_original_smbd_restarts_once(self, tmp_path):
