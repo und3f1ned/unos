@@ -81,6 +81,8 @@ settings = get_settings()
 BASE_PATH = settings.pools_base_path
 # The mount table of the supervisor's mount namespace. Module level so tests can move it.
 MOUNTINFO = "/proc/self/mountinfo"
+# /proc/self/fdinfo/<fd> names the mount that an open descriptor is on (mnt_id).
+FDINFO = "/proc/self/fdinfo"
 
 _CHUNK_SIZE = 1024 * 1024
 _NAME_MAX_BYTES = 255
@@ -352,10 +354,11 @@ def _refuse_nested_filesystems(
 ) -> None:
     """Refuse when a subvolume, snapshot or mount point lies at or below the directory ``parts``.
 
-    ``dir_fd`` is the directory that contains it. shutil.rmtree, and the
-    copy and delete of a move to another filesystem, go into subvolumes and
-    mounted filesystems below a folder: deleting it would delete their
-    files too. A subvolume or another filesystem has another st_dev than
+    ``dir_fd`` is the directory that contains it. The copy of a move to
+    another filesystem goes into subvolumes and mounted filesystems below a
+    folder, and a delete of the folder would stop at them part way
+    (_remove_tree): the folder is refused before anything is changed. A
+    subvolume or another filesystem has another st_dev than
     the folder; a bind mount from the same filesystem does not, so the mount
     table is checked as well. ``mount_points`` is a table read before
     (_mount_points); by default it is read now.
@@ -1037,10 +1040,108 @@ def _remove_entry(dir_fd: int, parts: list[str], action: str, expected: os.stat_
     name = parts[-1]
     st = _recheck_entry(dir_fd, parts, action, expected)
     if stat.S_ISDIR(st.st_mode):
-        # rmtree with dir_fd uses the fd-based, symlink-attack-safe walk.
-        shutil.rmtree(name, dir_fd=dir_fd)
+        _remove_tree(dir_fd, parts, action, st)
     else:
         os.unlink(name, dir_fd=dir_fd)
+
+
+def _mount_id(fd: int) -> int | None:
+    """The ID of the mount that the open descriptor ``fd`` is on: the mnt_id of FDINFO/<fd>.
+
+    A bind mount from the same filesystem has the st_dev of the folder it is
+    in; its mount ID differs. None where the kernel has no FDINFO (not
+    Linux: the tests on macOS). OSError when it cannot be read otherwise.
+    """
+    try:
+        with open(f"{FDINFO}/{fd}", "rb") as info:
+            lines = info.read().split(b"\n")
+    except FileNotFoundError:
+        if not os.path.isdir(FDINFO):
+            return None
+        raise
+    for line in lines:
+        if line.startswith(b"mnt_id:") and line[len(b"mnt_id:"):].strip().isdigit():
+            return int(line[len(b"mnt_id:"):].strip())
+    raise OSError(errno.EINVAL, f"{FDINFO}/{fd} has no mount ID")
+
+
+def _remove_tree(dir_fd: int, parts: list[str], action: str, expected: os.stat_result) -> None:
+    """Delete the directory ``parts[-1]`` in ``dir_fd``, with everything in it, without following symlinks.
+
+    ``expected`` is its lstat() from the checks right before (_recheck_entry).
+    A walk on descriptors, one per level of depth: each directory is opened
+    without following a symlink and must be on the device and the mount of
+    the folder before anything in it is deleted. A subvolume or a mount, a
+    bind mount from the same filesystem too, that appears below the folder
+    after the checks stops the delete with 409 (storage.edge-cases, step
+    8): shutil.rmtree went into it and deleted its files. What was deleted
+    before stays deleted, and the answer says so.
+    """
+    name = parts[-1]
+    # Per level: its descriptor, its name in the level above, its path below the folder, the subdirectories left.
+    stack: list[tuple[int, str, str, list[str]]] = []
+
+    def enter(fd: int, entry: str, path: str) -> None:
+        """Check the directory ``fd``, put it on the stack and delete what in it is not a directory."""
+        try:
+            if os.fstat(fd).st_dev != expected.st_dev or _mount_id(fd) != mount:
+                raise HTTPException(
+                    409,
+                    f"'{_shown(name)}' contains '{_shown(path)}', a separate subvolume or filesystem (such "
+                    f"as a snapshot or a mount point), and cannot be {action} in the file manager. It "
+                    f"appeared during the delete, which stopped there: part of '{_shown(name)}' was "
+                    "deleted before that.",
+                )
+            with os.scandir(fd) as entries:
+                listed = [(item.name, item.is_dir(follow_symlinks=False)) for item in entries]
+        except BaseException:
+            os.close(fd)
+            raise
+        stack.append((fd, entry, path, sorted((child for child, is_dir in listed if is_dir), reverse=True)))
+        for child, is_dir in listed:
+            if not is_dir:
+                _unlink_if_there(child, fd)
+
+    top_fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    try:
+        if not os.path.samestat(os.fstat(top_fd), expected):
+            raise HTTPException(409, f"'{_shown(name)}' was replaced in the meantime, so it was not {action}.")
+        mount = _mount_id(top_fd)
+    except BaseException:
+        os.close(top_fd)
+        raise
+    try:
+        enter(top_fd, name, "")
+        while stack:
+            fd, entry, path, names = stack[-1]
+            if not names:
+                stack.pop()
+                os.close(fd)
+                if stack:
+                    os.rmdir(entry, dir_fd=stack[-1][0])
+                continue
+            child = names.pop()
+            try:
+                child_fd = os.open(child, _DIR_FLAGS, dir_fd=fd)
+            except OSError as exc:
+                if exc.errno in (errno.ENOTDIR, errno.ELOOP):  # a file or a symlink took its place since
+                    _unlink_if_there(child, fd)
+                elif exc.errno != errno.ENOENT:
+                    raise
+                continue
+            enter(child_fd, child, f"{path}/{child}" if path else child)
+    finally:
+        for fd, _, _, _ in stack:
+            os.close(fd)
+    os.rmdir(name, dir_fd=dir_fd)
+
+
+def _unlink_if_there(name: str, dir_fd: int) -> None:
+    """Delete the entry ``name`` (not a directory) in ``dir_fd``; one that is gone already is no error."""
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        pass
 
 
 def _plan_transfer(sources: list[str], destination: str, *, moving: bool) -> tuple[list[str], list[list[str]]]:

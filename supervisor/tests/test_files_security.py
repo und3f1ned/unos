@@ -1288,6 +1288,49 @@ def test_a_mount_point_that_appears_after_the_first_check_is_still_refused(env, 
     assert _trash(env.pool) == ([] if permanent else [("first.txt", "file", b"1")])
 
 
+@pytest.mark.parametrize("appears", ["subvolume", "bind mount"])
+def test_a_delete_stops_at_a_subvolume_or_mount_that_appears_below_the_folder_while_it_runs(
+    env, monkeypatch, appears
+):
+    """After every check, while the folder is deleted (storage.edge-cases, step 8).
+
+    shutil.rmtree went into it and deleted its files. The walk of the delete checks the device
+    and the mount of every folder before it deletes anything in it. A bind mount from the
+    same filesystem has the folder's st_dev: only its mount ID (/proc/self/fdinfo) differs.
+    """
+    folder = env.pool / "later"
+    (folder / "a").mkdir(parents=True)
+    (folder / "a" / "notes.txt").write_text("notes")
+    disk = folder / "z" / "disk"
+    disk.mkdir(parents=True)
+    (disk / "data.txt").write_text("data")
+    recheck = files_router._recheck_entry
+
+    def recheck_then_mount(*args, **kwargs):
+        st = recheck(*args, **kwargs)
+        if appears == "subvolume":
+            monkeypatch.setattr(files_router, "os", _OsWithSubvolumes([disk]))
+        else:
+            env.mounts.mount(disk, root="/elsewhere")
+            bound = os.stat(disk)
+            monkeypatch.setattr(
+                files_router, "_mount_id",
+                lambda fd: 41 if os.path.samestat(os.fstat(fd), bound) else 29, raising=False,
+            )
+        return st
+
+    monkeypatch.setattr(files_router, "_recheck_entry", recheck_then_mount)
+
+    response = _delete(env.client, [folder], permanent=True)
+
+    assert response.status_code == 409, f"{response.text}, left: {_tree(env.pool)}"
+    assert response.json()["detail"] == (
+        f"{CONTAINS.format('later', 'z/disk', 'deleted')} It appeared during the delete, which "
+        "stopped there: part of 'later' was deleted before that."
+    )
+    assert _tree(folder) == ["z", "z/disk", "z/disk/data.txt"]
+
+
 def test_ordinary_folders_are_still_deleted_for_good(env, monkeypatch):
     """Deep and wide trees; symlinks to directories (also to a mounted filesystem) are not followed."""
     folder = env.pool / "tree"

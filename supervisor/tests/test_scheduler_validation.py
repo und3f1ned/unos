@@ -216,6 +216,20 @@ def test_disk_targets_are_normalized(env, disk, stored):
     assert _stored(env)[0]["target_disk"] == stored
 
 
+# Whole disks whose names have more letters than four (storage.edge-cases, step 5): the
+# SMART task answered 400 "Invalid disk name format" for disks that the Storage page lists.
+@pytest.mark.parametrize("name", ["sdaaa", "xvdaa", "dasda", "dasdaa"])
+def test_disks_with_longer_names_are_targets(env, name):
+    env.host.add_disk(name, serial="LONG-1")
+
+    response = env.client.post(
+        "/api/v1/scheduler/tasks", json=_task(task_type="smart_test", target_pool=None, target_disk=name)
+    )
+
+    assert response.status_code == 200, response.text
+    assert _stored(env)[0]["target_disk"] == f"/dev/{name}"
+
+
 @pytest.mark.parametrize(
     "disk",
     ["/dev//dev/sda", "sda; reboot", "../sda", "/dev/../etc/passwd", "sda\n", "", None, "dev/sda",
