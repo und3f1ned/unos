@@ -47,6 +47,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   write-only and upsc on the host, the certificates' honest status, restored copies listed and
   deleted on the Snapshots page, and the audit log's action filter. `main` is b01cf92 and its
   tree runs on the dev device.
+- Later that afternoon (Log): a fourth batch, ADR-0360 to ADR-0362: the Storage page lists disks
+  attached while it is open, open dialogs form a stack, and every replaced smb.conf is kept in a
+  dated copy. `main` is a9adcb1 and its tree runs on the dev device.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -85,15 +88,16 @@ significant step. Features and their state live in `feature-list.json`, decision
      the reboot of 19:26 UTC, and `storage.commands-time-out-cleanly`, `system.temperatures`,
      `files.delete-to-trash` and `backup.edge-cases` on the checks around the reboot of 23:22 UTC,
      and on 2026-11-12 `files.upload-edge-cases` and `backup.drop-unused-include-options` on the
-     checks around the reboot of 04:35 UTC, and `storage.restore-copies-deletable` on the checks
-     around the reboot of 13:11 UTC (Log); `shares.repair-permissions` waits for setfacl on the device
+     checks around the reboot of 04:35 UTC, `storage.restore-copies-deletable` on the checks
+     around the reboot of 13:11 UTC, and `shares.keep-every-replaced-copy` on those around the
+     reboot of 14:45 UTC (Log); `shares.repair-permissions` waits for setfacl on the device
      (the package acl, an owner action) and `shares.acl-aware-parent-check` for the owner's word
      on ADR-0193; the others need a device check first or, as `storage.pool-health`, a step the
      re-check could not show.
 
 ## Dev device
 
-State on 2026-11-12, 13:50 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-12, 15:45 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -101,7 +105,13 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs the tree of main b01cf92 (the third batch, ADR-0356 to ADR-0359), deployed as 0a5294c at
+- Runs the tree of main a9adcb1 (the fourth batch, ADR-0360 to ADR-0362), deployed as 2bb76a8 at
+  15:23 UTC (SD MiB sync 2.062, build-supervisor 12.875, build-webui 19.156, up 6.492, check.sh
+  0.016), then `scenario.sh smbconf` (17 steps) and `smb` OK. Before it, the integration tree
+  d149c3a, deployed at 14:42 UTC and rebooted from the API at 14:45:53 UTC (the boot of 14:46:49;
+  both containers healthy by 14:47:40): `scenario.sh smbconf`, `smb` and `files` OK before and
+  after.
+- Before it, the tree of main b01cf92 (the third batch, ADR-0356 to ADR-0359), deployed as 0a5294c at
   13:29 UTC (SD MiB sync 1.617, build-supervisor 13.117, build-webui 19.270, up 6.020, check.sh
   0.016). Before it, the integration tree 8150936, deployed at 13:08 UTC (sync 3.000,
   build-supervisor 13.484, build-webui 19.344, up 6.188), and rebooted from the API at 13:11:00
@@ -311,6 +321,33 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-12: A fourth batch: hot-plugged disks on the Storage page, a dialog stack, every smb.conf copy kept
+
+- Five entries were taken; two were built already: `auth.api-token-last-used-throttle` waits only
+  for its device measurement, which needs an API token on the device (a credential, the owner's,
+  ADR-0024), and `apps.no-legacy-default-pool` only had one stale test comment, reworded. New:
+  the Storage page reloads its lists when the stats stream's block devices change
+  (`storage.hot-plugged-disks`, ADR-0360), open dialogs form a stack whose top one alone answers
+  Escape and under which the others are inert (`webui.dialog-stack`, ADR-0361), and every replaced
+  smb.conf and import backup is kept in a dated copy, the newest 10 of each kind
+  (`shares.keep-every-replaced-copy`, ADR-0362, superseding ADR-0085, ADR-0092 and ADR-0309).
+  SMART of a hot-plugged disk got an entry of its own, `storage.hot-plugged-disks-smart`.
+- The merges were plain and renumbered in one commit; the device cycle ran on the integration
+  tree while the review ran. Review, one reviewer per branch and a skeptic: no blocker; fixed:
+  the Storage page's loads numbered so a late answer cannot overwrite a newer one, a device
+  reload leaving the error alert, the dialogs under the top one made inert, a depth per dialog,
+  only regular files counted as copies, no copy written when any kept one has the same bytes,
+  and the smbconf check making two copies to show that the first stays. `make check` passed on
+  the fixes, and 272 E2E tests of the pages touched. Merged as main a9adcb1.
+- Device check of the integration tree d149c3a around the reboot from the API at 14:45:53 UTC:
+  `scenario.sh smbconf` (2.988 and 2.477 MiB), `smb` (3.617 and 3.148) and `files` (0.148 and
+  0.125) OK before and after. After the deploy of the fixes (2bb76a8, 15:23 UTC): `smbconf` OK
+  with its 17 steps (3.469 MiB) and `smb` OK (3.070 MiB). No second reboot for the fixes.
+- Passing now: `shares.keep-every-replaced-copy`. Open: `storage.hot-plugged-disks` and
+  `storage.hot-plugged-disks-smart` (a spare disk, the owner's), `webui.dialog-stack` (the Users
+  page in a browser on the device), `auth.api-token-last-used-throttle` (its measurement with an
+  API token, the owner's).
 
 ### 2026-11-12: A third batch of four, checked on the device across a reboot, faster
 
