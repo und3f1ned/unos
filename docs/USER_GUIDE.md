@@ -1515,6 +1515,34 @@ There are no scheduled shutdown or wake times, and the UPS state has no page
 yet (feature-list entries `system.scheduled-power` and
 `system.ups-monitoring`).
 
+#### UPS (API only)
+
+The UPS settings and state are in the API only, for administrators. UNOS
+reads the UPS with NUT's `upsc` on the NAS, from the NUT server (`upsd`) that
+the settings name. UNOS does not install NUT; to read a UPS, install and
+configure it on the NAS (`sudo apt-get install nut`, or `nut-client` for a
+NUT server on another machine).
+
+- `GET /api/v1/power/ups/config` answers the settings with `has_password`,
+  which says whether a NUT password is stored: no answer contains the
+  password itself. `PUT` takes the settings with `password`: a body without
+  one (absent, null or empty) keeps the stored password, a body without a
+  `username` removes it, and a password without a username is refused (400).
+  `ups_name`, `host` (a host name, an IPv4 address, or an IPv6 address in
+  brackets) and `port` are checked, since they reach `upsc`. UNOS does not
+  use the username and password yet.
+- `GET /api/v1/power/ups/status` reads the UPS at once. When it cannot, it
+  answers `available: false` with the `reason`, for example "The host has no
+  NUT client: upsc was not found. Install the package nut-client on the
+  host". `POST /api/v1/power/ups/test` answers 503 with the same reason, and
+  `GET /api/v1/power/ups/list` an empty `devices` list with it as `error`.
+- While the settings are `enabled`, the UPS monitor reads the UPS every 30
+  seconds. `GET /api/v1/power/ups/monitor/status` says whether its last check
+  read the UPS (`available`) and, when not, the `reason`. While the NAS has no
+  `upsc`, the monitor only checks again: it writes nothing, logs the reason
+  once, and shuts nothing down; it reads the UPS once NUT is installed. The
+  shutdown on low battery does not run in the supervisor's container yet.
+
 ### Disk Health
 
 - SMART health status and temperature of each disk, its SMART data under
