@@ -531,6 +531,18 @@ manager, encrypted backup uploads, health checks, CI checks).
 - A status panel on the Shares page.
 
 ### Changed
+- Every copy of an smb.conf that UNOS replaced is kept, not only the latest:
+  a file with shares that UNOS did not create goes to a new
+  `/etc/samba/smb.conf.unos-replaced-<UTC time>` before an apply, and a file
+  whose shares UNOS imports to a new
+  `/etc/samba/smb.conf.unos-import-backup-<UTC time>` (for example
+  `smb.conf.unos-replaced-20261112_101530_123456`), unless the newest copy of
+  its kind holds exactly the same bytes. A copy never replaces another; UNOS
+  keeps the newest 10 of each kind and deletes the older ones, never the new
+  one, and refuses nothing for their number. The Shares page's problem and the
+  import report name the new copy and the earlier ones, newest first, and the
+  import report also names an import backup that an earlier attempt of the
+  same import wrote.
 - Backups, by hand, by backup tasks and for off-device copies, no longer hold
   the supervisor container's `/etc/fstab` and `/etc/netplan` files, which
   describe nothing of the host, and the options `include_pools` and
@@ -620,7 +632,7 @@ manager, encrypted backup uploads, health checks, CI checks).
 - UNOS generates the whole `/etc/samba/smb.conf` from its database, and hand
   edits are overwritten. At its first start the supervisor imports the shares
   of an existing smb.conf once into the database and keeps that file as
-  `smb.conf.unos-import-backup`. Share options that UNOS does not know are not
+  `smb.conf.unos-import-backup-<UTC time>`. Share options that UNOS does not know are not
   kept; they are listed on the Shares page. Hand-made global settings are
   replaced by the hardened defaults. Restrictions in the imported `[global]`
   (`hosts allow`, `hosts deny`, `invalid users`, required encryption, a
@@ -787,8 +799,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   message says how to remove them, names the accounts whose Samba password it
   could not remove (when `pdbedit` failed), and says that
   `/etc/samba/smb.conf` stays, with the shares it lists (guest shares too),
-  naming `smb.conf.unos-import-backup`, the smb.conf that UNOS replaced with
-  its own, unless `install.sh` kept the file it replaced (`smb.conf.original`),
+  listing the import backups `smb.conf.unos-import-backup-<UTC time>`, the
+  smb.conf files that UNOS replaced with its own, oldest first, unless
+  `install.sh` kept the file it replaced (`smb.conf.original`),
   which is restored through a temporary file: a copy that fails leaves
   smb.conf as UNOS wrote it.
 

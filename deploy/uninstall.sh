@@ -368,11 +368,21 @@ print_smb_leftovers() {
     else
         echo "Samba configuration: $SAMBA_DIR/smb.conf stays, and Samba still serves"
         echo "the shares it lists, guest shares to anyone on your network."
-        if [ -f "$SAMBA_DIR/smb.conf.unos-import-backup" ]; then
-            echo "The smb.conf that UNOS replaced with its own (UNOS imported its"
-            echo "shares from it) is $SAMBA_DIR/smb.conf.unos-import-backup. Check it"
-            echo "before you copy it back: it may give every Samba account access to"
-            echo "its shares."
+        # The supervisor's import backups, each named with the UTC time it was
+        # taken; the glob lists them oldest first (ADR-0360).
+        local import_backups=() backup
+        for backup in "$SAMBA_DIR"/smb.conf.unos-import-backup-*; do
+            if [[ ${backup##*/} =~ ^smb\.conf\.unos-import-backup-[0-9]{8}_[0-9]{6}_[0-9]{6}$ ]] && [ -f "$backup" ]; then
+                import_backups+=("$backup")
+            fi
+        done
+        if [ ${#import_backups[@]} -gt 0 ]; then
+            echo "The smb.conf files that UNOS replaced with its own (UNOS imported their"
+            echo "shares) are kept, each named with the UTC time it was replaced, oldest"
+            echo "first:"
+            printf '  %s\n' "${import_backups[@]}"
+            echo "Check one before you copy it back: it may give every Samba account"
+            echo "access to its shares."
         fi
         echo "To change what Samba serves, edit or replace smb.conf, then run:"
         echo "  systemctl restart smbd"

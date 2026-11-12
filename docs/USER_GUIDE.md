@@ -448,6 +448,20 @@ folders of your pools. UNOS writes the whole Samba configuration
 (`/etc/samba/smb.conf`) from its database; changes made to that file by hand
 are overwritten.
 
+Before UNOS overwrites a file with shares it did not create, it keeps a copy
+in `/etc/samba`, named with the time of the copy in UTC:
+`smb.conf.unos-replaced-<time>`, for example
+`smb.conf.unos-replaced-20261112_101530_123456`, and, for the file whose
+shares UNOS imported at its first start, `smb.conf.unos-import-backup-<time>`.
+Every such file gets a copy of its own, unless the newest copy already holds
+exactly the same text; UNOS keeps the newest 10 copies of each kind and
+deletes older ones. Until the supervisor restarts, the status panel of the
+**Shares** page names the shares and the copy that holds them ("smb.conf had
+shares that UNOS did not create (...); they are kept in
+smb.conf.unos-replaced-...: create them again on the Shares page"), followed
+by the earlier copies, newest first; the import report names the import
+backup in the same way.
+
 #### How Access Works
 
 - **SMB is off for every user until an administrator allows it** on the

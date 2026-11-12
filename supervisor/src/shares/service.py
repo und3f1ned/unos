@@ -798,7 +798,7 @@ def _plan_import(
     *,
     restored: bool,
     source_label: str,
-    copy_written: bool,
+    kept: smb.KeptCopy | None,
     taken: Collection[str],
 ) -> _ImportPlan:
     """The shares, notes and report of an import of ``text`` (sync; reads the filesystem)."""
@@ -846,8 +846,11 @@ def _plan_import(
     report: list[str] = []
     if shares or not ctx.unos:
         line = f"Imported {len(shares)} share(s) from {source_label}"
-        if copy_written:
-            line += f"; the previous file is kept as {smb.import_backup_path()}"
+        if kept is not None:
+            line += f"; the previous file is kept as {kept.path}"
+            if kept.earlier:
+                line += (f"; earlier import backups (UNOS keeps the newest {smb.COPIES_KEPT}): "
+                         + ", ".join(kept.earlier))
         report.append(line)
     report.extend(skipped)
     report.extend(parsed.notes)
@@ -870,20 +873,20 @@ def _plan_import(
     return _ImportPlan(shares=shares, report=report)
 
 
-def _read_live_source() -> tuple[str, bool]:
-    """The live smb.conf as text, and whether its original bytes were copied now (sync).
+def _read_live_source() -> tuple[str, smb.KeptCopy | None]:
+    """The live smb.conf as text, and the import backup that holds its bytes (sync).
 
-    A file that UNOS did not render is copied to <smb.conf>.unos-import-backup
-    first (never over an existing copy).
+    A file that UNOS did not render is copied to a new <smb.conf>.unos-import-backup-<UTC time>
+    first, unless the newest import backup has exactly these bytes (ADR-0360).
     """
     data = smb.read_conf_bytes()
     if data is None:
-        return "", False
+        return "", None
     text = data.decode("utf-8", "surrogateescape")
-    copied = False
+    kept = None
     if not text.startswith(smbconf.HEADER):
-        copied = smb.keep_import_backup(data)
-    return text, copied
+        kept = smb.keep_copy(smb.IMPORT_BACKUP, data)
+    return text, kept
 
 
 async def _marker_set(db: AsyncSession) -> bool:
@@ -906,7 +909,7 @@ async def _run_import(db: AsyncSession) -> _ImportPlan | None:
         await db.execute(select(models.SmbState.pending_import_source).where(models.SmbState.id == 1))
     ).scalar_one_or_none()
     pool_names = await _pool_names()
-    text, copy_written = await asyncio.to_thread(_read_live_source)
+    text, kept = await asyncio.to_thread(_read_live_source)
     source_label = smb.settings.smb_conf_path
     users = [
         _ImportUser(id=row.id, username=row.username, is_admin=bool(row.is_admin))
@@ -923,7 +926,7 @@ async def _run_import(db: AsyncSession) -> _ImportPlan | None:
         pool_names,
         restored=source is not None,
         source_label=source_label,
-        copy_written=copy_written,
+        kept=kept,
         taken=taken,
     )
 
@@ -1038,7 +1041,7 @@ class LastApply:
     # access, which a tree connect keeps (Samba caches it per connection). The
     # next full reload makes them pending closes again.
     close_after_full_reload: set[str] = field(default_factory=set)
-    replaced_problem: str | None = None    # the .unos-replaced status problem, until restart
+    replaced_problem: str | None = None    # the status problem of a copy of foreign sections, until restart
 
 
 _last_apply = LastApply()
@@ -1105,7 +1108,7 @@ def _foreign_sections(old_text: str, row_names: Collection[str]) -> list[str]:
 
 def _prepare_file(new_text: str, row_names: Collection[str], install: bool) -> StagedConfig:
     """Read smb.conf, copy it when it has foreign sections, stage and testparm the new
-    text (and install it with ``install``), in one worker thread (ADR-0089, ADR-0092).
+    text (and install it with ``install``), in one worker thread (ADR-0089, ADR-0360).
 
     Raises SambaConfigError, and leaves smb.conf unchanged, when the file
     cannot be read or staged or testparm rejects it or cannot check it: any
@@ -1124,18 +1127,22 @@ def _prepare_file(new_text: str, row_names: Collection[str], install: bool) -> S
 
     foreign = _foreign_sections(old_text, row_names)
     if foreign:
-        copy = smb.replaced_path()
         try:
-            smb.keep_replaced(old_bytes)
+            kept = smb.keep_copy(smb.REPLACED, old_bytes)
         except Exception as exc:
             raise smb.SambaConfigError(
                 f"smb.conf has shares that UNOS did not create ({', '.join(foreign)}), and they could not "
-                f"be copied to {copy}: {_reason(exc)}"
+                f"be copied to {smb.copy_path_label(smb.REPLACED)}: {_reason(exc)}"
             ) from exc
         staged.replaced_problem = (
             f"smb.conf had shares that UNOS did not create ({', '.join(foreign)}); they are kept in "
-            f"{os.path.basename(copy)}: create them again on the Shares page"
+            f"{os.path.basename(kept.path)}: create them again on the Shares page"
         )
+        if kept.earlier:
+            staged.replaced_problem += (
+                f"; earlier copies (UNOS keeps the newest {smb.COPIES_KEPT}): "
+                + ", ".join(os.path.basename(path) for path in kept.earlier)
+            )
 
     try:
         tmp = smb._stage(new_text)

@@ -248,7 +248,8 @@ is then restored, with NetBIOS (nmbd) on again. The network discovery
 services avahi-daemon and wsdd2 keep running. If the supervisor replaced an
 existing smb.conf with its own (after a manual installation, for example), it
 kept that file, whose shares it imported, as
-`/etc/samba/smb.conf.unos-import-backup`.
+`/etc/samba/smb.conf.unos-import-backup-<UTC time>` (the newest 10 such
+copies), and the script lists them.
 
 ## Contributing
 

@@ -1548,8 +1548,9 @@ class TestNotAuthoritative:
         assert _db_rows(env, "SELECT shares_imported_at IS NOT NULL, pending_import_source FROM smb_state") == [
             (1, None)]
         assert env.smb_conf.read_text() == _render(env, ("live", f"{env.data}/live", "", True, False, (), ("alice",)))
-        # The live file, which UNOS did not write, is kept before the import (ADR-0085).
-        assert Path(str(env.smb_conf) + ".unos-import-backup").read_text().startswith("[global]\n   workgroup = HOME")
+        # The live file, which UNOS did not write, is kept before the import (ADR-0360).
+        (backup,) = env.smb_conf.parent.glob("smb.conf.unos-import-backup-*")
+        assert backup.read_text().startswith("[global]\n   workgroup = HOME")
         (entry,) = [e for e in audit_entries(env.audit) if e["resource_type"] == "smb"]
         assert "imported 1 share(s) from smb.conf" in entry["details"]
 

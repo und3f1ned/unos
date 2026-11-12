@@ -1747,11 +1747,19 @@
         "Several import backups are kept, each with its date"
       ],
       "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_share_apply.py",
+        "supervisor/tests/test_share_import.py",
+        "supervisor/tests/test_share_api.py",
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_dev_scenarios.py"
+      ],
       "adr": [
         "ADR-0195",
         "ADR-0250",
         "ADR-0164"
-      ]
+      ],
+      "notes": "Built 2026-11-12 (ADR-0360, which supersedes ADR-0085 and ADR-0092). Each smb.conf with share sections that UNOS did not render gets a copy of its own before an apply, /etc/samba/smb.conf.unos-replaced-<UTC time YYYYMMDD_HHMMSS_ffffff>, and each live smb.conf that the import finds without UNOS's header an import backup /etc/samba/smb.conf.unos-import-backup-<UTC time>, unless the newest copy of its kind has exactly these bytes; a copy is hard-linked to its name and never replaces a file, and after it the copies of its kind beyond the newest 10 are deleted, never the new one (smb.keep_copy, smb.COPIES_KEPT). The status problem names the new copy and the earlier ones, newest first, until the supervisor restarts; the import report names the import backup and the earlier ones; deploy/uninstall.sh lists the import backups oldest first. Asserted on fakes: step 1 by test_share_apply.py (TestReplaced: a second event keeps the first copy, the newest 10, a clock set back, a failed copy; TestSmbHelpers) and test_share_api.py (TestStatus); step 2 by test_share_import.py (TestCopy: an earlier import backup stays beside the new one, each with its time, the newest 10) and test_deploy_scripts.py (the uninstall's list). The smbconf scenario check (scripts/dev/scenario.py) refuses to start beside 10 replaced copies, takes the one new name as its copy, expects the earlier copies to stay and to be named on the Shares page, and deletes only its own copy (test_dev_scenarios.py). Open: the device check, scripts/dev/scenario.sh smbconf after a deploy of these runtime files, on the owner's request (ADR-0304), and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214). The device's undated /etc/samba/smb.conf.unos-import-backup of the earlier single copy is neither listed nor deleted (ADR-0207): renaming it to the dated form, or deleting it, is the owner's call."
     },
     {
       "id": "shares.samba-runtime-writes",
