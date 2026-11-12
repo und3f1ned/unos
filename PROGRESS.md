@@ -43,6 +43,10 @@ significant step. Features and their state live in `feature-list.json`, decision
   host's settings; the rest of `storage.edge-cases`; recorded SMB uids for restores; leftovers
   of interrupted uploads found and removed on request; and the backup API without its unused
   options. `main` is 641f2a5 and runs on the dev device.
+- On 2026-11-12 in the afternoon (Log): a third batch, ADR-0356 to ADR-0359: the NUT password
+  write-only and upsc on the host, the certificates' honest status, restored copies listed and
+  deleted on the Snapshots page, and the audit log's action filter. `main` is b01cf92 and its
+  tree runs on the dev device.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -81,14 +85,15 @@ significant step. Features and their state live in `feature-list.json`, decision
      the reboot of 19:26 UTC, and `storage.commands-time-out-cleanly`, `system.temperatures`,
      `files.delete-to-trash` and `backup.edge-cases` on the checks around the reboot of 23:22 UTC,
      and on 2026-11-12 `files.upload-edge-cases` and `backup.drop-unused-include-options` on the
-     checks around the reboot of 04:35 UTC (Log); `shares.repair-permissions` waits for setfacl on the device
+     checks around the reboot of 04:35 UTC, and `storage.restore-copies-deletable` on the checks
+     around the reboot of 13:11 UTC (Log); `shares.repair-permissions` waits for setfacl on the device
      (the package acl, an owner action) and `shares.acl-aware-parent-check` for the owner's word
      on ADR-0193; the others need a device check first or, as `storage.pool-health`, a step the
      re-check could not show.
 
 ## Dev device
 
-State on 2026-11-12, 04:55 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-12, 13:50 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -96,7 +101,14 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 641f2a5 (the second batch, ADR-0350 to ADR-0355), deployed on 2026-11-12 at 04:27
+- Runs the tree of main b01cf92 (the third batch, ADR-0356 to ADR-0359), deployed as 0a5294c at
+  13:29 UTC (SD MiB sync 1.617, build-supervisor 13.117, build-webui 19.270, up 6.020, check.sh
+  0.016). Before it, the integration tree 8150936, deployed at 13:08 UTC (sync 3.000,
+  build-supervisor 13.484, build-webui 19.344, up 6.188), and rebooted from the API at 13:11:00
+  UTC (the boot of 13:11:56; both containers healthy by 13:12:50): `scenario.sh volumes` and
+  `files` and the checks by hand of the batch OK before and after, but for the line the Log
+  names.
+- Before it, main 641f2a5 (the second batch, ADR-0350 to ADR-0355), deployed on 2026-11-12 at 04:27
   UTC (SD MiB sync 3.898, build-supervisor 13.688, build-webui 18.734, up 6.281, check.sh
   0.016), and rebooted from the API at 04:35:30 UTC (the boot of 04:36:49; both containers
   healthy by 04:37:17; 8.7 MiB on the SD card from the boot to check.sh): `scenario.sh all`
@@ -299,6 +311,35 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-12: A third batch of four, checked on the device across a reboot, faster
+
+- Four branches, each test-first by an agent of its own: the NUT password write-only and upsc
+  on the host (`system.ups-monitoring`, a safety fix, ADR-0356), the certificates' honest status
+  (`security.custom-certificates`, ADR-0357), restored copies listed and deleted
+  (`storage.restore-copies-deletable`, ADR-0358) and step 5 of `security.audit-admin-actions`,
+  the action filter (ADR-0359). The certificates agent stopped before its commit; its staged
+  work was checked (backend tests, 161 E2E tests, svelte-check, the texts) and committed through
+  the hooks. To go faster, as the owner asked, the last merges were plain and renumbered in one
+  commit, and the device cycle ran on the integration tree while the review's fixes were made.
+- Fresh-context review, one reviewer per branch and a skeptic per pair: no blocker; fixed: an old
+  0644 UPS settings file, UPS values with decimals, the certificate store made atomic under a
+  lock, the country field and the dialog's errors, a stale certificate list, printable
+  organizations, a copy's btrfs description forged through its name, and log_action taking only
+  known actions. The device check showed one more, fixed: a self-signed certificate made with an
+  organization was listed as Custom. `make check` passed on the fixes, and 202 E2E tests of the
+  pages touched. Merged as main b01cf92.
+- Device check of the integration tree 8150936 around the reboot from the API at 13:11:00 UTC:
+  `scenario.sh volumes` (11 steps, now with a restored copy) and `files` OK before and after (SD
+  MiB 1.516 and 0.910, 0.121 and 0.121); the checks by hand (0.421 and 0.644 MiB) OK but for the
+  self-signed type above. After the deploy of the fixes (0a5294c, 13:29 UTC): `scenario.sh
+  volumes` OK (1.559 MiB) and the checks by hand (0.969 MiB) OK; their one FAIL line read the
+  key's and the certificate's stat in each other's place, a fault of the check script (the key
+  is 600, the certificate 644), corrected since. No second reboot for the fixes.
+- Passing now: `storage.restore-copies-deletable`. Open: `system.ups-monitoring` (no UPS, NUT an
+  owner install), `security.custom-certificates` (serving stored certificates),
+  `security.audit-admin-actions` (pools, containers, apps and network interfaces on the device;
+  auditing the firewall, the certificates and the login history's clearing).
 
 ### 2026-11-12: A second batch of six, reviewed, merged and checked on the device across a reboot
 
