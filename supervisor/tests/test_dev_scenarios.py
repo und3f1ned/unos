@@ -345,6 +345,8 @@ class FakeNas:
         # (smb_state.next_uid, ADR-0109).
         self.needed: set[str] = set()
         self.next_smb_uid = 70003
+        # The password each renamed user had under its old name (ADR-0368): name -> password.
+        self.passwords_at_rename: dict[str, str] = {}
         self.shares = {"DATA": {"path": f"{ROOT}/shared", "comment": "", "access": [], "version": 1}}
         self.backups = {"unos_backup_20261107_000000.tar.gz": None}  # name -> passphrase
         # What the check's backups hold: the database (database()) and smb.conf at their time; the
@@ -1331,6 +1333,7 @@ class FakeNas:
                 if session.user == old:
                     session.killed = True
         user = self.users[uid]
+        self.passwords_at_rename[old] = user.get("password")
         user["username"] = new
         if "password" in body:
             user["password"] = body["password"]
@@ -1916,9 +1919,18 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
 
 def test_the_smb_check_renames_its_user_and_goes_on_under_the_new_name(nas):
     """auth.user-rename (ADR-0368): the check's user takes a new name with a new password, which UNOS and
-    Samba sign in while they refuse the old one; the steps after it and the user's Delete use the new name."""
+    Samba sign in while they refuse the old one; the steps after it and the user's Delete use the new name.
+    The old name is tried with its own password, which Samba's account of the old name would take."""
+    tried = []
+    real_list, real_as_user = nas.smb_list, nas.as_user
+    nas.smb_list = lambda user, password: (tried.append(("samba", user, password)), real_list(user, password))[1]
+    nas.as_user = lambda user, password, cache: (tried.append(("unos", user, password)),
+                                                 real_as_user(user, password, cache))[1]
     status, output = run_check("smb", nas)
     assert status == 0, output
+    old_password = nas.passwords_at_rename["unoscheck1a2b3c"]
+    assert [(kind, password) for kind, user, password in tried if user == "unoscheck1a2b3c"][-2:] == [
+        ("unos", old_password), ("samba", old_password)]
     text = "\n".join(step_lines(output))
     for words in ("renaming the user to unoscheck1a2b3cr with a new password ends its open session",
                   "keeps its uid under the new name", "the share's access follows the new name",

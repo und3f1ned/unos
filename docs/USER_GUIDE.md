@@ -313,8 +313,10 @@ For each pool, you can:
   cancel, for example because the btrfs process that ran it was killed.
   When UNOS restarts, for example with the host, it forgets the result of
   the last scrub: the pool then shows none, also when the restart stopped a
-  scrub. When btrfs cannot report the status, the pool says so with the
-  reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
+  scrub. A page left open meanwhile asks again, once its connection to UNOS
+  is back, for each scrub it showed running or could not read, and follows
+  the ones that still run. When btrfs cannot report the status, the pool
+  says so with the reason. Scheduled scrubs are set up in **System** → **Scheduler**; a
   scheduled scrub of a pool that is not mounted fails without scrubbing
   anything. For a pool that does not answer, see below
 - **Volumes** - (mounted pools) List, create and delete volumes: btrfs
@@ -609,11 +611,14 @@ It runs in the background until the whole share is done, which can take
 hours on a large share: the dialog shows how many entries it has checked and
 changed so far, and can be closed meanwhile; the share's card then says
 **Repairing permissions**, and the page updates the share when the repair
-ends. Open the dialog again to see the result as **Last run**. One repair
-runs at a time: another one is refused until it ends. **Stop repair** ends it
-early, and so does a restart of UNOS, or 24 hours of running; what it changed
+ends. Open the dialog again to see the result as **Last run**; a renamed
+share keeps it, until UNOS restarts. One repair runs at a time: another one
+is refused until it ends. **Stop repair** ends it early, and so do deleting
+the share, changing its name or folder, a restart of UNOS, or 24 hours of
+running; the [Audit Log](#audit-log) says what stopped it. What it changed
 stays changed, and a new run continues quickly (entries that are already
-right are skipped quickly).
+right are skipped quickly). A disk that stops answering holds the repair
+until it answers again: no stop ends it sooner.
 
 It changes the permissions of existing files and cannot be undone
 automatically. It is refused while a folder above the share's folder can be
@@ -1105,7 +1110,10 @@ the user use SMB. Change the role in a save of its own.
 
 The user signs in with the new name from then on; the old name is refused,
 and every session of the user ends. Renaming yourself signs you out: sign in
-again with the new name. API tokens keep working.
+again with the new name. API tokens keep working. The user's
+[login history](#login-history) starts again at the rename: it lists the
+sign-ins with the new name from then on, not those with the old name, nor
+those of anyone who had the new name before.
 
 A user with SMB on keeps it under the new name, but needs a new password,
 which the dialog asks for: Samba keeps passwords by name, so the SMB account
@@ -1319,11 +1327,12 @@ left.
 
 Under **Login History** on the **Account** page (administrators: **System** →
 **Security**), **View History** lists the latest 50 sign-ins, newest first:
-those of your own account since it was created (an account created with the
-name of a deleted one does not see that account's), and for administrators
-those of every account, also of deleted accounts and the attempts with names
-that do not exist. Each entry shows **SUCCESS** or **FAILED** with the reason
-(such as "Incorrect username or password" or "Invalid 2FA code"), the
+those with your account's name since your account got it, when it was created
+or last renamed (an account that gets the name of a deleted or renamed one
+does not see that account's), and for administrators those of every account,
+also of deleted accounts, of names given up by a rename and the attempts with
+names that do not exist. Each entry shows **SUCCESS** or **FAILED** with the
+reason (such as "Incorrect username or password" or "Invalid 2FA code"), the
 account, the time in your browser's time zone, the address of the computer
 that signed in (not that of the web interface's proxy) and the browser. Above
 the list are the number of attempts and how many succeeded and failed;

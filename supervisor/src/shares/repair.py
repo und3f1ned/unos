@@ -11,11 +11,12 @@ share or would open something to the group that is not meant for it:
   outside the share), FIFOs, sockets and device nodes;
 - other filesystems: btrfs subvolumes (volumes, snapshots) and every mount
   point inside the share, also a bind mount of the same filesystem, which has
-  the same st_dev. The mount points of /proc/self/mountinfo are skipped by
-  their path, without even an lstat, which would reach into the mounted
-  filesystem (a stalled FUSE or NFS mount blocks it); and every opened entry
-  must be on the mount of the share's folder, by the mount ID of its
-  descriptor, which a folder renamed during the walk cannot change;
+  the same st_dev. The mount points of /proc/self/mountinfo, which the walk
+  reads again with each progress report, are skipped by their path, without
+  even an lstat, which would reach into the mounted filesystem (a stalled
+  FUSE or NFS mount blocks it); and every opened entry must be on the mount
+  of the share's folder, by the mount ID of its descriptor, which a folder
+  renamed during the walk cannot change;
 - ``.snapshots`` folders;
 - private entries, which only their owner can use (no group or other bits,
   such as a 0600 key or a 0700 folder); a private folder is not entered;
@@ -40,7 +41,8 @@ the system disk; a second run writes nothing.
 
 repair_router.py runs it as a background job (ADR-0363): it reports its
 progress about once a second, stops when asked, and stops by itself only
-after 24 hours.
+after 24 hours. Both are checked between entries: no stop ends a call that
+blocks (a disk that stalls), until that call returns.
 """
 
 import errno
@@ -187,6 +189,7 @@ def repair_tree(
             gid=gid,
             root_dev=root.st_dev,
             root_mount=root_mount,
+            folder=PurePosixPath(path).parts,
             mount_points=_mount_points_inside(mounts, PurePosixPath(path).parts),
             file_flags=o_path | os.O_NOFOLLOW | os.O_CLOEXEC,
             deadline=deadline,
@@ -274,6 +277,7 @@ class _Walk:
         gid: int,
         root_dev: int,
         root_mount: int,
+        folder: tuple[str, ...],
         mount_points: set[str],
         file_flags: int,
         deadline: float,
@@ -286,6 +290,7 @@ class _Walk:
         self.gid = gid
         self.root_dev = root_dev
         self.root_mount = root_mount  # the mount ID of the share's folder
+        self.folder = folder  # the share's folder, as path components
         self.mount_points = mount_points  # relative paths
         self.file_flags = file_flags
         self.deadline = deadline
@@ -324,15 +329,25 @@ class _Walk:
         return None
 
     def _stopped(self) -> str | None:
-        """Why the walk stops before its next entry, or None; reports the progress when it is due."""
+        """Why the walk stops before its next entry, or None.
+
+        When a report is due, it reports the progress and reads the mount
+        table again: a mount made inside the share while it is walked, such
+        as an app's FUSE mount, is skipped by its path from then on.
+        """
         if self.stop is not None and self.stop.is_set():
             return STOPPED_MESSAGE
         now = time.monotonic()
         if now >= self.deadline or (self.max_entries is not None and self.tally.visited >= self.max_entries):
             return INCOMPLETE_MESSAGE
-        if self.progress is not None and now >= self.next_report:
+        if now >= self.next_report:
             self.next_report = now + PROGRESS_INTERVAL_SECONDS
-            self.progress(self.tally.result("running", self.started_at, ""))
+            if self.progress is not None:
+                self.progress(self.tally.result("running", self.started_at, ""))
+            try:
+                self.mount_points = _mount_points_inside(_read_mounts(), self.folder)
+            except OSError:
+                pass  # the last ones stay; every opened entry is still checked by its mount ID
         return None
 
     def _visit(self, parent: _Folder, name: str, path: str) -> _Folder | None:

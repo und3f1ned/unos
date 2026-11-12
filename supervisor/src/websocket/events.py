@@ -49,9 +49,10 @@ every 2 seconds (ADR-0367).
 
 It also sends administrators ``{"type": "repair", "data": {...}}``, the running
 repair of a share's permissions with its counts so far, or the last one that
-ended (``shares.repair_router.current_job``), right after auth_ok when a repair
-has run since the start and whenever it changes; regular users never get it
-(ADR-0363).
+ended (``shares.repair_router.current_job``), right after auth_ok, with
+``"data": null`` when none has run since the start (a web UI that reconnects
+after a restart learns that its repair no longer runs), and whenever it
+changes; regular users never get it (ADR-0363).
 """
 import asyncio
 import functools
@@ -73,7 +74,7 @@ from ..database import async_session
 from ..health import problems
 from ..logs import router as logs
 from ..storage import scrubs
-from ..shares import repair, repair_router
+from ..shares import repair_router
 from ..system.sensors import cpu_temperature
 
 router = APIRouter()
@@ -448,16 +449,19 @@ async def _send_scrubs(websocket: WebSocket, is_admin: bool, sent: int) -> int:
     return version
 
 
-async def _send_repair(
-    websocket: WebSocket, is_admin: bool, sent: repair.RepairResult | None
-) -> repair.RepairResult | None:
-    """Send an administrator the repair job when it is another than ``sent`` (each change of the
-    job is a new object); returns what an administrator has seen, None for anyone else."""
+# What _send_repair has sent a socket before its first repair message.
+_NO_REPAIR_SENT = object()
+
+
+async def _send_repair(websocket: WebSocket, is_admin: bool, sent: object) -> object:
+    """Send an administrator the repair job, None before any, when it is another than ``sent``
+    (_NO_REPAIR_SENT: nothing sent yet; each change of the job is a new object); returns what was
+    sent, _NO_REPAIR_SENT for anyone else."""
     if not is_admin:
-        return None
+        return _NO_REPAIR_SENT
     job = repair_router.current_job()
-    if job is not None and job is not sent:
-        await websocket.send_json({"type": "repair", "data": job.model_dump(mode="json")})
+    if job is not sent:
+        await websocket.send_json({"type": "repair", "data": None if job is None else job.model_dump(mode="json")})
     return job
 
 
@@ -479,7 +483,7 @@ async def websocket_endpoint(websocket: WebSocket):
     revoked = asyncio.ensure_future(_watch_credential(token, on_user=note_role))
     sent_problems: int | None = None
     sent_scrubs = 0
-    sent_repair: repair.RepairResult | None = None
+    sent_repair: object = _NO_REPAIR_SENT
     try:
         # Start sending stats
         while not (disconnected.done() or revoked.done()):

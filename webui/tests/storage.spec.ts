@@ -872,6 +872,55 @@ test.describe('Scrub (fake data)', () => {
     await expect(card.getByText('Could not read the scrub status')).toHaveCount(0);
   });
 
+  test('after the events socket connects again, the page reads each scrub it shows running or unreadable', async ({
+    authenticatedPage: page,
+  }) => {
+    // A supervisor that restarted follows none of the scrubs it followed (ADR-0367): the page asks
+    // once for each one it shows running or could not read, and that read makes the server follow
+    // it again.
+    const unreadable = 'btrfs scrub status did not answer within 60 seconds: pool e2e_slow may not be responding';
+    const mounted = (name: string, uuid: string) => ({ ...HEALTHY_POOL, name, uuid, mountpoint: `/mnt/pools/${name}` });
+    let restarted = false;
+    await fakeStorageApi(page, {
+      pools: [
+        HEALTHY_POOL,
+        mounted('e2e_slow', '00000000-0000-4000-8000-0000000000e8'),
+        mounted('e2e_idle', '00000000-0000-4000-8000-0000000000e9'),
+      ],
+      scrubStatus: (pool) => {
+        if (pool === 'e2e_idle') return noScrub(pool);
+        // e2e_data's scrub ended while the supervisor restarted; e2e_slow's still runs.
+        if (pool === 'e2e_data' && restarted) return scrub('finished', { duration: 256 });
+        return { ...running(GIB, 64), pool };
+      },
+    });
+    const events = await fakeScrubEvents(page);
+    const reads: Record<string, number> = {};
+    page.on('request', (request) => {
+      const pool = new URL(request.url()).pathname.match(/^\/api\/v1\/storage\/pools\/([^/]+)\/scrub$/)?.[1];
+      if (request.method() === 'GET' && pool) reads[pool] = (reads[pool] ?? 0) + 1;
+    });
+    await page.goto('/storage');
+
+    const data = poolCard(page, 'e2e_data');
+    const slow = poolCard(page, 'e2e_slow');
+    await expect(data.getByText('Scrub in progress')).toBeVisible();
+    await expect(slow.getByText('Scrub in progress')).toBeVisible();
+    await events([{ pool: 'e2e_slow', error: unreadable }]);
+    await expect(slow.getByText('Could not read the scrub status')).toBeVisible();
+    expect(reads).toEqual({ e2e_data: 1, e2e_slow: 1, e2e_idle: 1 });
+
+    restarted = true;
+    await events.restart();
+    await expect(data.getByText('Last scrub: No errors')).toBeVisible();
+    await expect(data.getByText('Scrub in progress')).toHaveCount(0);
+    await expect(slow.getByText('Could not read the scrub status')).toHaveCount(0);
+    await expect(slow.getByText('Scrub in progress')).toBeVisible();
+    await expect(poolCard(page, 'e2e_idle').getByText(/Last scrub|Scrub in progress/)).toHaveCount(0);
+    await page.waitForTimeout(300);
+    expect(reads).toEqual({ e2e_data: 2, e2e_slow: 2, e2e_idle: 1 });
+  });
+
   test('the last scrub says how many errors it found, and whether it was stopped', async ({
     authenticatedPage: page,
   }) => {

@@ -187,6 +187,9 @@ export function connectWebSocket() {
     if (message.type === 'auth_ok') {
       authenticatedAt = Date.now();
       wsConnected.set(true);
+      // A new socket, maybe to a supervisor that restarted: the scrubs the last one sent need not
+      // run any more, and this one sends those that its supervisor saw running (ADR-0367).
+      scrubs.set([]);
     } else if (message.type === 'stats' && message.data) {
       if (!authenticatedAt) authenticatedAt = Date.now();
       wsConnected.set(true);
@@ -197,9 +200,10 @@ export function connectWebSocket() {
     } else if (message.type === 'scrubs' && Array.isArray(message.data)) {
       // Administrators only: the scrubs that run, until they end (ADR-0367).
       scrubs.set(message.data as ScrubUpdate[]);
-    } else if (message.type === 'repair' && message.data) {
-      // Administrators only: the running or last repair of a share's permissions (ADR-0363).
-      repairJob.set(message.data as RepairResult);
+    } else if (message.type === 'repair') {
+      // Administrators only, right after auth_ok and on each change: the running or last repair of
+      // a share's permissions, null when none has run since the supervisor started (ADR-0363).
+      repairJob.set((message.data ?? null) as RepairResult | null);
     }
   };
 

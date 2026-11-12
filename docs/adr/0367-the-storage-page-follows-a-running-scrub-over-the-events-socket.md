@@ -48,13 +48,21 @@ restated here.
   before it finished", each followed by ", N error(s) found" when btrfs counted errors until then;
   each result with the time the scrub started. Nothing is shown for idle. The page asks for each
   mounted pool's status when it loads its lists, and shows each status of the scrubs messages
-  (`scrubs` of `webui/src/lib/stores/scrubs.ts`) as it shows an answer. A status that cannot be read
+  (`scrubs` of `webui/src/lib/stores/scrubs.ts`) as it shows an answer. When the events socket
+  connects again after it dropped (`wsConnected` of `webui/src/lib/stores/stats.ts` turns true
+  after false, while the page is open), maybe to a supervisor that restarted and follows none of
+  the scrubs it followed, the page asks once for the status of each mounted pool it shows running
+  or could not read: that read makes the server follow a scrub that still runs, and a scrub that
+  ended meanwhile shows its result instead of a frozen progress. `auth_ok` empties the store, so
+  that no message of the old socket is shown again. A status that cannot be read
   is shown as "Could not read the scrub status" with the reason, instead of the last one; the last
   one still decides the button, so that a scrub that was running can be cancelled.
 - Tests: `supervisor/tests/test_storage.py` (`TestScrubStatus`, `TestScrubsForTheEventsSocket`),
   `supervisor/tests/test_ws_auth.py` (`TestTheScrubsOnTheEventsSocket`),
   `supervisor/tests/test_scheduler_validation.py` (`test_scrub_task`), `webui/tests/storage.spec.ts`
-  (`Scrub (fake data)`, on route fakes and a fake events socket).
+  (`Scrub (fake data)`, on route fakes and a fake events socket that can restart: `after the events
+  socket connects again, the page reads each scrub it shows running or unreadable` failed with the
+  progress frozen before the page asked again).
 
 ## Consequences
 
@@ -65,5 +73,6 @@ restated here.
   a running scrub, and Cancel Scrub would cancel the replace. UNOS starts no replace.
 - A cancelled or interrupted scrub never passes for a check of the whole pool: Scrub starts a new
   one. A restart of the supervisor, also with the host, forgets the last result (ADR-0171) and the
-  scrubs it followed: a scrub that runs then joins at the page's next load.
+  scrubs it followed: a scrub that runs then joins at the page's next load, or when a page that
+  showed it running or unreadable connects to the events socket again.
 - A status that could not be read is asked for again at the next load of the page.

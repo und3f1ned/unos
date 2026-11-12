@@ -178,6 +178,11 @@ HOSTILE = [
          "Unsafe path in backup archive: 'netplan/../../evil.yaml'"),
     Case("backslash", lambda: _tar_gz([_file("manifest.json", MANIFEST), _file("a\\..\\evil", b"x")]),
          "Unsafe path in backup archive: " + repr("a\\..\\evil")),
+    # Accepted as unos.db by the check, while its restore failed with 500 (EISDIR).
+    Case("file-named-as-a-folder", lambda: _tar_gz([_file("manifest.json", MANIFEST), _file("unos.db/.", DB)]),
+         "Unsafe path in backup archive: 'unos.db/.'"),
+    Case("manifest-named-as-a-folder", lambda: _tar_gz([_file("manifest.json/", MANIFEST)]),
+         "Unsafe path in backup archive: 'manifest.json/'"),
     Case("oversized-database",
          lambda: _gz(_members([_file("manifest.json", MANIFEST)])
                      + _header("unos.db", backup_router.MAX_DB_BYTES + 1) + END_OF_TAR),
@@ -225,6 +230,8 @@ ACCEPTED = [
     Case("two-gzip-members", lambda: _gz(_tar([_file("manifest.json", MANIFEST), _file("unos.db", DB)])[:1536])
          + _gz(_tar([_file("manifest.json", MANIFEST), _file("unos.db", DB)])[1536:]), ""),
     Case("data-after-the-end-of-the-tar", lambda: _gz(gzip.decompress(_backup()) + b"not a tar header" * 100), ""),
+    Case("names-with-a-leading-dot-slash", lambda: _tar_gz([_file("./manifest.json", MANIFEST), _file("./unos.db", DB)]),
+         ""),
     # backup.edge-cases (ADR-0345): backups no longer hold the container's fstab and netplan
     # files, and those of a backup that still holds them are ignored like any other name,
     # whatever their size.

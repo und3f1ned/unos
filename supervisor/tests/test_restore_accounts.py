@@ -21,7 +21,7 @@ from src.security.models import LoginAttempt
 from src.shares import accounts, interfaces
 from src.shares.models import SmbAccount, SmbState
 
-from .test_smb_accounts import ALICE_PW, BOB_PW, World
+from .test_smb_accounts import ALICE_PW, BOB_PW, SET_PW, World
 
 DAVE_PW = "Dave-pass-2026x"
 HASH_A = "$2b$04$" + "a" * 53  # bcrypt-shaped placeholders; the proof compares the strings
@@ -379,6 +379,88 @@ class TestHandedOutUids:
         assert next_uid(restored) == 70081
 
 
+def rename_record(path: Path, *pairs: tuple[int, str]) -> None:
+    """smb_uid_names rows (uid, name), as the renames of that installation write them (ADR-0368)."""
+    raw(path, *(f"INSERT INTO smb_uid_names (uid, linux_name) VALUES ({uid}, '{name}')" for uid, name in pairs))
+
+
+def uid_names(path: Path) -> list[tuple]:
+    with closing(sqlite3.connect(path)) as conn:
+        return conn.execute("SELECT uid, linux_name FROM smb_uid_names ORDER BY uid, linux_name").fetchall()
+
+
+class TestRenamedUids:
+    """ADR-0368: a rename keeps the uid, and smb_uid_names records each name the uid went by. A
+    restored row keeps a recorded uid under any of them."""
+
+    def test_the_snapshot_reads_the_names(self, live):
+        rename_record(live, (70001, "dave"), (70001, "davy"))
+        raw(live, "INSERT INTO smb_uid_names (uid, linux_name) VALUES (90000, 'zed'), (70006, X'00')")
+
+        assert accounts.snapshot_for_restore(live).uid_names == ((70001, "dave"), (70001, "davy"))
+
+    @pytest.mark.parametrize("name, kept", [("dave", True), ("davy", True), ("erin", False)])
+    def test_a_uid_goes_to_each_name_it_went_by_and_to_no_other(self, live, tmp_path, name, kept):
+        """dave turned SMB on here (70001), was renamed to davy and deleted. A backup made before or after
+        the rename brings him back with his uid; one that gives it to erin does not."""
+        record(live, (70001, "dave"))
+        rename_record(live, (70001, "dave"), (70001, "davy"))
+        restored = make_db(tmp_path / "restored.db", users=[(8, name, HASH_B, False)],
+                           rows=[account(8, name, 70001, password_state="needed", password_set_at=None)])
+
+        messages = prepare(restored, accounts.snapshot_for_restore(live), authoritative=True)
+
+        assert rows(restored)[8][1] == (70001 if kept else None)
+        assert messages == ([] if kept else [f"SMB must be turned on again for {name}"])
+
+    def test_a_uid_with_names_but_not_in_smb_uids_goes_to_no_other_name(self, live, tmp_path):
+        rename_record(live, (70001, "dave"), (70001, "davy"))
+        restored = make_db(tmp_path / "restored.db", users=[(8, "erin", HASH_B, False)],
+                           rows=[account(8, "erin", 70001)])
+
+        assert prepare(restored, accounts.snapshot_for_restore(live), authoritative=True) == [
+            "SMB must be turned on again for erin"]
+        assert rows(restored)[8][1] is None
+
+    def test_the_restored_database_gets_the_names_of_this_nas(self, live, tmp_path):
+        """The live names, and the backup's own for the uids this NAS did not know before the restore (the
+        old installation's backup after a reinstall); every uid with a name is recorded in smb_uids, so no
+        activation hands it out again. The backup names no uid this NAS knew, and a backup without the
+        table, or with another layout, adds nothing."""
+        record(live, (70001, "dave"))
+        rename_record(live, (70001, "dave"), (70001, "davy"), (70050, "gus"), (70050, "gil"))
+        restored = make_db(tmp_path / "restored.db", users=[(2, "alice", HASH_A, False)],
+                           rows=[account(2, "alice", 70000)], next_uid=70001)
+        rename_record(restored, (70000, "mallory"), (70001, "mallory"), (70002, "mallory"), (70050, "mallory"),
+                      (70080, "zed"), (70080, "zoe"), (70081, "Bad name"), (90000, "xavier"))
+
+        prepare(restored, accounts.snapshot_for_restore(live), authoritative=True)
+
+        assert uid_names(restored) == [(70001, "dave"), (70001, "davy"), (70050, "gil"), (70050, "gus"),
+                                       (70080, "zed"), (70080, "zoe")]
+        with closing(sqlite3.connect(restored)) as conn:
+            assert dict(conn.execute("SELECT uid, linux_name FROM smb_uids")) == {
+                70000: "alice", 70001: "dave", 70002: "carol", 70050: "gil", 70080: "zed"}
+        assert next_uid(restored) == 70081
+
+    @pytest.mark.parametrize("backup_table", [
+        pytest.param(("DROP TABLE smb_uid_names",), id="no-table"),
+        pytest.param(("DROP TABLE smb_uid_names", "CREATE TABLE smb_uid_names (uid TEXT, owner TEXT NOT NULL)",
+                      "INSERT INTO smb_uid_names VALUES ('70080', 'zed')"), id="another-layout"),
+    ])
+    def test_a_backup_without_names_it_can_read(self, live, tmp_path, backup_table):
+        rename_record(live, (70001, "dave"), (70001, "davy"))
+        restored = make_db(tmp_path / "restored.db", users=[(2, "alice", HASH_A, False)],
+                           rows=[account(2, "alice", 70000)], next_uid=70001)
+        raw(restored, *backup_table)
+
+        prepare(restored, accounts.snapshot_for_restore(live), authoritative=True)
+
+        assert uid_names(restored) == [(70001, "dave"), (70001, "davy")]
+        with closing(sqlite3.connect(restored)) as conn:
+            assert [column[1] for column in conn.execute("PRAGMA table_info(smb_uid_names)")] == ["uid", "linux_name"]
+
+
 class TestCarryOver:
     def test_accounts_are_carried_over_by_username(self, live, tmp_path):
         # A database whose shares were never imported: not authoritative (ADR-0141).
@@ -643,6 +725,40 @@ class TestWholePath:
         assert prepare(restored, snapshot, authoritative=True) == messages
         swap_in(world, restored)
         reconcile(world)
+        enabled = world.self_enable(name, password)
+        assert enabled.status_code == 200, enabled.text
+        assert enabled.json()["account"]["uid"] == uid
+        assert useradd_uids(world)[-1] == (str(uid), name)
+
+    @pytest.mark.parametrize("name, password, messages, uid", [
+        ("alicia", SET_PW, [], 70000),
+        ("alice", ALICE_PW, [], 70000),
+        ("bob", BOB_PW, ["SMB must be turned on again for bob"], 70001),
+    ], ids=["a-backup-after-the-rename", "a-backup-before-the-rename", "another-name"])
+    def test_the_uid_of_a_renamed_user_deleted_after_the_backup(self, world, tmp_path, name, password, messages, uid):
+        """ADR-0368: alice turned SMB on here (70000), was renamed to alicia and deleted; her files keep
+        70000. A backup of this NAS made after the rename, or before it, brings her back with her uid;
+        one that gives 70000 to bob does not."""
+        before = archive_users(world, "admin", "alice", "bob")
+        world.make_active("alice", 70000, ALICE_PW)
+        renamed = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+        assert renamed.status_code == 200, renamed.text
+        world.ids["alicia"] = world.ids.pop("alice")
+        after = archive_users(world, "admin", "alicia", "bob")
+        assert world.delete_user("alicia").status_code == 200
+        assert "alicia" not in world.fake.passwd
+        snapshot = accounts.snapshot_for_restore(world.path)
+        user_id = world.ids["bob"] if name == "bob" else world.ids["alicia"]
+        restored = make_db(
+            tmp_path / "restored.db", users=before if name == "alice" else after,
+            rows=[account(user_id, name, 70000, password_state="needed", password_set_at=None)],
+            next_uid=70001,
+        )
+
+        assert prepare(restored, snapshot, authoritative=True) == messages
+        swap_in(world, restored)
+        reconcile(world)
+        world.ids[name] = user_id
         enabled = world.self_enable(name, password)
         assert enabled.status_code == 200, enabled.text
         assert enabled.json()["account"]["uid"] == uid

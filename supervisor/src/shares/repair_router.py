@@ -5,9 +5,12 @@ job in a thread of its own and answers at once (202) with the job running; one
 repair runs at a time. The job, while it runs and once it ended, is
 ``current_job()``, which the events socket sends to administrators
 (websocket/events.py). DELETE asks the running repair of a share to stop. GET
-answers the last finished result of a share since UNOS started. The job and
-the results are kept in memory only: a restart of the supervisor ends a
-running repair without a result.
+answers the last finished result of a share since UNOS started. A deletion of
+the share, or a change of its name or folder, stops its repair as well
+(``stop_for_share``, which shares/service.py calls), and a stop of the
+supervisor stops it and waits a moment for its audit entry
+(``stop_for_shutdown``, from main.py's lifespan). The job and the results are
+kept in memory only: a restart of the supervisor forgets them.
 
 main.py includes this router in the administrator-only routers; the endpoints
 also require an administrator themselves.
@@ -47,8 +50,11 @@ class _Running:
     """The repair that runs: its share and how to stop it."""
 
     share_id: int
+    name: str  # the share's name when it started: a stop finds the repair by it once the share is gone
     stop: threading.Event = field(default_factory=threading.Event)
-    stopped_by: str | None = None  # the administrator who asked it to stop
+    stopped_by: str | None = None  # who or what asked it to stop, for its audit entry
+    share_deleted: bool = False  # its share was deleted: its result is not kept
+    thread: threading.Thread | None = None
 
 
 # The repair that runs, or None: one at a time. Set and checked on the event
@@ -57,8 +63,14 @@ _running: _Running | None = None
 # The running repair, or the last one since UNOS started, of any share; None
 # before the first. Each change is a new object, which the events socket sends.
 _job: repair.RepairResult | None = None
-# The last result of each share since UNOS started, by the share's name in lower case.
-_last_results: dict[str, repair.RepairResult] = {}
+# The last result of each share since UNOS started, by the share's id: a rename keeps it, and a
+# deletion drops it (a new share can get the id again).
+_last_results: dict[int, repair.RepairResult] = {}
+# Held while a repair's end is published, and while a share's deletion drops its result: an end
+# that comes during the deletion keeps no result.
+_end_lock = threading.Lock()
+# How long a stop of the supervisor waits for the stopped walk to write its audit entry.
+SHUTDOWN_WAIT_SECONDS = 5.0
 
 SHARE_NOT_FOUND = "Share not found"
 NO_RESULT = "No repair has run for this share since UNOS started"
@@ -171,7 +183,7 @@ async def repair_share_permissions(
     # No await from the check to the start: two starts cannot both pass it.
     if _running is not None:
         raise HTTPException(status_code=409, detail=ALREADY_RUNNING)
-    running = _Running(share_id=share.id)
+    running = _Running(share_id=share.id, name=share.name)
     started = repair.RepairResult(
         share=share.name, state="running", started_at=datetime.now(timezone.utc), finished_at=None, visited=0,
         changed=0, skipped=dict.fromkeys(repair.SKIP_REASONS, 0), skipped_paths=[], errors=0, error_samples=[],
@@ -184,12 +196,13 @@ async def repair_share_permissions(
     # would hold for hours; a daemon thread, so that a stop of the supervisor
     # does not wait for the walk.
     try:
-        threading.Thread(
+        running.thread = threading.Thread(
             target=_repair_and_record,
             args=(running, started, request, username, share.path),
             name="share-repair",
             daemon=True,
-        ).start()
+        )
+        running.thread.start()
     except RuntimeError as exc:  # no thread could be started: nothing runs
         _running = None
         _publish(before)
@@ -206,17 +219,27 @@ async def stop_repair(
     """Ask the running repair of a share to stop; answers the job as it is now (ADR-0363).
 
     The walk stops before its next entry and ends "incomplete": what it
-    changed stays changed, and a new run continues quickly. 404 for an
-    unknown share; 409 when no repair of this share runs.
+    changed stays changed, and a new run continues quickly. The repair of a
+    share that is gone (deleted while a call of the walk on its folder had
+    not returned) is found by the name it started with. 404 for an unknown
+    share; 409 when no repair of this share runs.
     """
-    share = await _find_share(db, name)
+    result = await db.execute(
+        select(models.SmbShare.id).where(models.SmbShare.name == name).order_by(models.SmbShare.id)
+    )
+    share_id = result.scalar()
     running = _running
-    if running is None or running.share_id != share.id:
-        raise HTTPException(status_code=409, detail=NOT_RUNNING)
-    if running.stopped_by is None:
-        running.stopped_by = admin.username
-    running.stop.set()
-    return _job
+    if running is not None and (
+        running.share_id == share_id
+        or (running.name.lower() == name.lower() and await _share_by_id(db, running.share_id) is None)
+    ):
+        if running.stopped_by is None:
+            running.stopped_by = admin.username
+        running.stop.set()
+        return _job
+    if share_id is None:
+        raise HTTPException(status_code=404, detail=SHARE_NOT_FOUND)
+    raise HTTPException(status_code=409, detail=NOT_RUNNING)
 
 
 @router.get("/smb/{name}/repair-permissions", response_model=repair.RepairResult)
@@ -227,7 +250,7 @@ async def get_repair_result(
 ) -> repair.RepairResult:
     """The last repair result of a share since UNOS started; 404 when there is none."""
     share = await _find_share(db, name)
-    result = _last_results.get(share.name.lower())
+    result = _last_results.get(share.id)
     if result is None:
         raise HTTPException(status_code=404, detail=NO_RESULT)
     return result
@@ -268,14 +291,53 @@ def _pool_of(path: object) -> str | None:
     return parts[0] if parts else None
 
 
+def stop_for_share(share_id: int, stopped_by: str, *, deleted: bool = False) -> None:
+    """Stop the running repair of the share ``share_id``, if one runs, naming ``stopped_by`` in its
+    audit entry; with ``deleted`` (the share was deleted), also forget the share's last result.
+
+    shares/service.py calls it once a deletion of the share, or a change of its name or folder, is
+    committed: the walk would go on in a folder that is no longer the share's, under a name that
+    no longer finds it.
+    """
+    with _end_lock:
+        if deleted:
+            _last_results.pop(share_id, None)
+        running = _running
+        if running is None or running.share_id != share_id:
+            return
+        if deleted:
+            running.share_deleted = True
+    if running.stopped_by is None:
+        running.stopped_by = stopped_by
+    running.stop.set()
+
+
+def stop_for_shutdown(timeout: float = SHUTDOWN_WAIT_SECONDS) -> None:
+    """Stop the running repair, if one runs, and wait up to ``timeout`` seconds for its end, so that
+    its audit entry is written before the supervisor stops (main.py's lifespan). Blocking.
+
+    A walk blocked in a call on the folder (a stalled disk) does not end in time: the supervisor
+    stops without its entry.
+    """
+    running = _running
+    if running is None:
+        return
+    if running.stopped_by is None:
+        running.stopped_by = "a stop of the supervisor"
+    running.stop.set()
+    if running.thread is not None:
+        running.thread.join(timeout)
+
+
 def _repair_and_record(
     running: _Running, started: repair.RepairResult, request: Request, username: str, path: str
 ) -> None:
-    """The job (its own thread): walk, publishing the progress, then keep, audit and publish the end.
+    """The job (its own thread): walk, publishing the progress, then audit, keep and publish the end.
 
     Progress and end carry the share's name and the time of the start, as
-    the start answered them. The end is published, and another repair may
-    start, only after the audit entry was written.
+    the start answered them. Only once the audit entry is written does the
+    end become the share's last result and the job, and can another repair
+    start: all three at the same moment.
     """
     global _running
     mark = {"share": started.share, "started_at": started.started_at}
@@ -294,7 +356,6 @@ def _repair_and_record(
             "message": f"The repair stopped on an unexpected error: {sanitize_error_message(exc)}",
         })
     result = result.model_copy(update=mark)
-    _last_results[started.share.lower()] = result
     skipped = sum(result.skipped.values())
     details = f"Repaired permissions: {result.changed} changed, {skipped} skipped, {result.errors} errors ({result.state})"
     if running.stopped_by is not None and result.state == "incomplete":
@@ -313,5 +374,8 @@ def _repair_and_record(
     except OSError:
         pass  # log_action has written the entry to the supervisor's log
     finally:
-        _publish(result)
-        _running = None
+        with _end_lock:
+            if not running.share_deleted:
+                _last_results[running.share_id] = result
+            _publish(result)
+            _running = None

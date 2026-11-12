@@ -818,7 +818,7 @@ class TestTheProblemsOnTheEventsSocket:
                 "title": "Pool 'data' is degraded", "detail": "1 device(s) of the pool are missing.",
                 "since": "2026-11-10T10:00:00+00:00",
             }]}
-            assert ws.receive_json()["type"] == "stats"
+            assert [ws.receive_json()["type"] for _ in range(2)] == ["repair", "stats"]
 
             asyncio.run(problems.update("tasks", _found(_problem("task_failed:task_1", "warning", "Task 'a' failed"))))
             assert [item["key"] for item in _next_problems(ws)["data"]] == ["pool_degraded:data", "task_failed:task_1"]
@@ -833,7 +833,7 @@ class TestTheProblemsOnTheEventsSocket:
             _auth(ws, admin_token)
             assert ws.receive_json() == {"type": "auth_ok"}
             assert ws.receive_json() == {"type": "problems", "data": []}
-            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+            assert [ws.receive_json()["type"] for _ in range(11)] == ["repair"] + ["stats"] * 10
 
     def test_a_regular_user_never_gets_them(self, client, user_token, fast_recheck, alerts):
         asyncio.run(problems.update("pools", _found(_problem())))
@@ -907,7 +907,7 @@ class TestTheScrubsOnTheEventsSocket:
         with client.websocket_connect("/ws/v1/events") as ws:
             _auth(ws, admin_token)
             assert ws.receive_json() == {"type": "auth_ok"}
-            assert [ws.receive_json()["type"] for _ in range(11)] == ["problems"] + ["stats"] * 10
+            assert [ws.receive_json()["type"] for _ in range(12)] == ["problems", "repair"] + ["stats"] * 10
         assert btrfs.reads == 0
 
     def test_an_administrator_follows_a_running_scrub_until_it_ends(self, client, admin_token, fast_recheck, btrfs):
@@ -1045,6 +1045,19 @@ class TestTheRepairOnTheEventsSocket:
             repair_router._publish(_repair_job("done", visited=9000))
             end = _next_repair(ws)["data"]
             assert (end["state"], end["visited"], end["finished_at"]) == ("done", 9000, "2026-11-12T11:00:00Z")
+
+    def test_an_administrator_gets_none_after_auth_ok_before_any_repair(
+            self, client, admin_token, fast_recheck, alerts, no_repair):
+        # A web UI that reconnects after a restart of the supervisor learns that no repair runs.
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "problems"
+            assert ws.receive_json() == {"type": "repair", "data": None}
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+
+            repair_router._publish(_repair_job())
+            assert _next_repair(ws)["data"]["state"] == "running"
 
     def test_an_unchanged_job_is_not_sent_again(self, client, admin_token, fast_recheck, alerts, no_repair):
         repair_router._publish(_repair_job("done", visited=9))

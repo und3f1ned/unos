@@ -873,7 +873,7 @@ def _nothing_walked(api, *files: Path) -> None:
 
 
 class TestEndpoints:
-    def test_repair_runs_in_the_background_and_keeps_the_result_by_name_in_any_case(self, api):
+    def test_repair_runs_in_the_background_and_keeps_the_result_of_the_share_in_any_case(self, api):
         data = _file(api.share / "a.txt", 0o644)
 
         response = api.client.post(URL.format("media"))
@@ -890,7 +890,7 @@ class TestEndpoints:
         assert api.checks.pool_calls == [("data", True)]
         assert api.checks.walks == [(str(api.share), GID)]  # constants.SMB_GROUP_GID
         assert api.client.get(URL.format("MEDIA")).json() == body
-        assert list(repair_router._last_results) == ["media"]
+        assert list(repair_router._last_results) == [1]  # by the share's id
 
     def test_get_before_any_repair_is_404(self, api):
         response = api.client.get(URL.format("Media"))

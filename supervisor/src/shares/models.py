@@ -145,6 +145,23 @@ class SmbUid(Base):
     linux_name = Column(String(32), nullable=False)
 
 
+class SmbUidName(Base):
+    """Each name a uid went by through renames (ADR-0368): a rename of an account with a uid writes
+    the old and the new name, in its commit. smb_uids keeps the first name; a restored account
+    keeps a recorded uid under any name of the two tables. Like smb_uids, no row is ever deleted,
+    and a restore makes the table anew: the live rows, then the backup's rows for uids that this
+    NAS did not know.
+    """
+
+    __tablename__ = "smb_uid_names"
+    __table_args__ = (
+        CheckConstraint(f"uid BETWEEN {SMB_UID_MIN} AND {SMB_UID_MAX}", name="ck_smb_uid_names_uid_range"),
+    )
+
+    uid = Column(Integer, primary_key=True, autoincrement=False)
+    linux_name = Column(String(32), primary_key=True)
+
+
 async def get_smb_state(db: AsyncSession) -> SmbState:
     """The single SmbState row; added to the session (flushed, not committed) when missing."""
     state = await db.get(SmbState, 1)

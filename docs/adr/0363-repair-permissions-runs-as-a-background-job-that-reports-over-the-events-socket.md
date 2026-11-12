@@ -34,7 +34,10 @@ Repair permissions (ADR-0155), now a background job:
 - Only an administrator's Repair permissions of one share gives its files and folders the group
   unos-smb and the modes 2770 for folders and 0660 for files (0770 when the owner may execute),
   which removes the access that group and other bits gave other accounts; nothing does it
-  automatically. Owners and contents never change. How it walks the tree is ADR-0156.
+  automatically. Owners and contents never change. How it walks the tree is ADR-0156; in a walk
+  that can take hours, it reads the mount table again with each progress report, so that a mount
+  made inside the share meanwhile (an app's FUSE mount) is skipped by its path, unexamined, from
+  then on.
 - `POST /api/v1/shares/smb/{name}/repair-permissions` needs a served share on a pool that is mounted
   writable, a gid 70000 that no other group has (ADR-0151) and a safe parent chain (ADR-0153);
   otherwise it answers 409 and walks nothing. Then it answers 202 at once with the job: the share's
@@ -53,22 +56,37 @@ Repair permissions (ADR-0155), now a background job:
   (already repaired entries are skipped quickly)"; the audit entry of its end names who stopped it.
   Without it, a run of hours on the wrong share, or one that slows the pool when it is needed, could
   end only with a restart of the supervisor; what a stopped run changed stays changed, and a new run
-  continues quickly.
+  continues quickly. The stop, like the 24-hour bound, is checked between entries: it cannot end a
+  walk blocked in a system call on the folder (a stalled disk), which stops only once the call
+  returns.
+- A deletion of the share, or a change of its name (other than in letter case) or of its folder,
+  stops its repair too once committed (`repair_router.stop_for_share`), and its audit entry names it
+  ("stopped by the deletion of the share", "a change of the share's name", "a change of the
+  share's folder"): the walk would go on in a folder that is no longer the share's, under a name
+  that no longer finds it. `DELETE` finds the repair of a share whose row is gone by the name it
+  started with.
 - Its progress and end: the walk reports its counts about once a second
   (`repair.PROGRESS_INTERVAL_SECONDS`). `repair_router.current_job()` is the running repair or the
   last one that ended, and `/ws/v1/events` sends it to administrators as
-  `{"type": "repair", "data": ...}`, right after auth_ok when a repair has run since the start and
-  whenever it changes, at most every 2 seconds; regular users never get it. The web UI keeps it in
-  the store `repairJob` of `webui/src/lib/stores/repair.ts`: the Repair dialog shows the counts and a
-  Stop repair button and can be closed, the share's card says Repairing permissions, and the Shares
-  page reads its shares again when the repair ends. Nothing polls.
-- Its end is kept in memory as the share's last result, which `GET` on the same path answers, and
-  one audit entry is written per run when it ends. A restart of the supervisor ends a running repair
-  without a result or an audit entry.
+  `{"type": "repair", "data": ...}`, right after auth_ok, with `"data": null` when none has run since
+  the start, and whenever it changes, at most every 2 seconds; regular users never get it. The web
+  UI keeps what each message carries, null included, in the store `repairJob` of
+  `webui/src/lib/stores/repair.ts`, so that after a restart of the supervisor, whose socket it signs
+  in to again, it no longer shows a repair that ended with it: the Repair dialog shows the counts
+  and a Stop repair button and can be closed, the share's card says Repairing permissions, and the
+  Shares page reads its shares again when the repair ends. Nothing polls.
+- Its end: one audit entry is written per run, and only then does the end become, at the same
+  moment, the job, the share's last result (which `GET` on the same path answers) and a free slot
+  for the next repair. The last results are kept in memory by the share's id: a rename keeps the
+  result, a deletion drops it. A stop of the supervisor stops a running repair as an administrator's
+  stop does, "stopped by a stop of the supervisor", and waits up to 5 seconds
+  (`repair_router.SHUTDOWN_WAIT_SECONDS`) for its audit entry; a walk blocked in a system call ends
+  without one. A restart forgets the job and the results.
 - It does not change ACL entries: on a file with an ACL the group bits it sets become the ACL's
   mask, so named users and groups keep their access and can get more, and unos-smb gets only what
   the owning-group entry gives. The Repair dialog and `docs/USER_GUIDE.md` say so.
-- Tests: `supervisor/tests/test_share_repair_job.py` (start, one at a time, stop, roles),
+- Tests: `supervisor/tests/test_share_repair_job.py` (start, one at a time, stop, the end, a share
+  deleted, renamed or moved, a stop of the supervisor, mounts made during the walk, roles),
   `test_share_repair.py` (the walk's stop and progress, Linux), `test_ws_auth.py`
   (`TestTheRepairOnTheEventsSocket`), `test_ws_stats.py`, `webui/tests/shares.spec.ts` and
   `webui/tests/websocket.spec.ts`; on the device, `scripts/dev/scenario.sh shares`, which waits for
@@ -79,8 +97,9 @@ Repair permissions (ADR-0155), now a background job:
 - One run repairs a large share, and the page shows how far it got; a stopped or bounded run is
   continued by a new one.
 - Other accounts, and apps that run as their own user, lose access to a repaired share (ADR-0160).
-- Not all of the web UI follows the no-polling rule yet: the scrub status on the Storage page and the
-  auto-refresh of the Logs tab poll HTTP endpoints with timers.
+- The scrub status on the Storage page and the Auto of System > Logs, which still polled HTTP
+  endpoints with timers when this was decided, now follow the events socket (ADR-0367) and a journal
+  socket of their own (ADR-0366).
 
 ## Considered options
 

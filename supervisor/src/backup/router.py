@@ -431,6 +431,9 @@ def _scan_members(tar: Iterable[tarfile.TarInfo]) -> dict[str, tarfile.TarInfo]:
                 raise BackupValidationError(
                     f"Backup archive contains a link or special file: {name[:100]!r}"
                 )
+            # A file is extracted under its name in the archive: "unos.db/." would be a folder's entry.
+            if member.name.removeprefix("./") != name:
+                raise BackupValidationError(f"Unsafe path in backup archive: {member.name[:100]!r}")
             limit = _FILE_MEMBERS.get(name)
             if limit is None:
                 continue  # not part of a UNOS backup: ignored

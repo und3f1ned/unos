@@ -57,7 +57,7 @@
 		Select
 	} from '$lib/components/ui';
 	import { intlLocale, locale, t } from '$lib/i18n';
-	import { stats, type WebSocketStats } from '$lib/stores/stats';
+	import { stats, wsConnected, type WebSocketStats } from '$lib/stores/stats';
 	import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
@@ -266,13 +266,44 @@
 
 	// A scrub that runs is followed over /ws/v1/events, which sends the status of each one whenever
 	// it changed, until the scrub ended or its status could not be read (ADR-0367): the page asks
-	// for the status only when it loads its lists.
+	// for the status only when it loads its lists and when the socket connected again (below).
 	$: followScrubs($scrubs);
 
 	function followScrubs(updates: ScrubUpdate[]) {
 		for (const update of updates) {
 			if ('error' in update) showScrubError(update.pool, update.error);
 			else showScrubStatus(update.pool, update);
+		}
+	}
+
+	// The events socket dropped and connected again, maybe to a supervisor that restarted and
+	// follows none of the scrubs it followed (ADR-0367): the page asks once for each scrub it shows
+	// running or could not read, and that read makes the server follow it again.
+	let socketWasUp = false;
+	let socketDropped = false;
+	$: followSocket($wsConnected);
+
+	function followSocket(connected: boolean) {
+		if (!connected) {
+			socketDropped = socketWasUp;
+			return;
+		}
+		socketWasUp = true;
+		if (!socketDropped) return;
+		socketDropped = false;
+		readShownScrubsAgain();
+	}
+
+	async function readShownScrubsAgain() {
+		const shown = pools.filter(
+			(pool) => pool.mounted && (scrubStatuses[pool.name]?.status === 'running' || pool.name in scrubErrors)
+		);
+		for (const pool of shown) {
+			try {
+				showScrubStatus(pool.name, await getScrubStatus(pool.name));
+			} catch (e) {
+				showScrubError(pool.name, e);
+			}
 		}
 	}
 

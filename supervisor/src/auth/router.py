@@ -22,7 +22,7 @@ from ..shares.models import SmbAccount, SmbShare
 
 # Rate limiter for auth endpoints
 limiter = Limiter(key_func=get_remote_address)
-from .models import User, APIToken
+from .models import User, APIToken, UsernameTaken
 from .schemas import (
     UserCreate, UserResponse, Token, LoginRequest, PasswordChange,
     UserUpdate, TOTPSetupResponse, TOTPVerifyRequest, TOTPEnableRequest,
@@ -725,8 +725,9 @@ async def _rename_user(
     such names as one account. The host follows first (accounts.rename_before_store), then the
     new name, the password and the account and access rows are committed in one transaction, in
     which every session of the user ends, the administrator's own too: tokens carry the name
-    (ADR-0329). An account that was active is turned on again under the new name with
-    ``password`` (accounts.finish_rename).
+    (ADR-0329), and the new name's row of usernames_taken says from when the user's login history
+    shows the attempts on it (ADR-0368). An account that was active is turned on again under the
+    new name with ``password`` (accounts.finish_rename).
     """
     taken = await db.scalar(
         select(User.username).where(func.lower(User.username) == new_name.lower(), User.id != user.id)
@@ -737,8 +738,14 @@ async def _rename_user(
         )
         raise HTTPException(status_code=400, detail=detail)
     user_id, had_row = user.id, row is not None
+    # Read before the host steps; written by the commit of store_rename, which undoes them when it fails.
+    taken_before = await db.get(UsernameTaken, new_name)
     rename = await accounts.rename_before_store(db, user, row, new_name, password)
     user.username = new_name
+    if taken_before is None:
+        db.add(UsernameTaken(username=new_name))
+    else:
+        taken_before.taken_at = func.now()
     if new_hash is not None:
         user.hashed_password = new_hash
     await end_sessions(db, user_id)

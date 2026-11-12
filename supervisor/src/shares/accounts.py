@@ -1756,21 +1756,27 @@ async def store_rename(db: AsyncSession, user: User, row: models.SmbAccount | No
     """Step 2 of a rename: commit the caller's changes of the user (its new name, set by the caller)
     with the account row, which takes the new name and needs its password again, and the user's
     access rows (service.rename_access_of_user). smb_uids keeps the name a uid first went to
-    (ADR-0353). A failed write or commit is rolled back, usermod is undone, and when Samba's
-    account of the old name was removed, the row says 'needed' (503)."""
+    (ADR-0353), and smb_uid_names gets the old and the new name of the uid (ADR-0368). A failed
+    write or commit is rolled back, usermod is undone, and when Samba's account of the old name
+    was removed, the row says 'needed' (503)."""
     try:
+        # A row that an earlier user of another id left with this name would block the name. It goes
+        # first: the row's change below would be flushed before this DELETE, and meet it.
+        await db.execute(
+            delete(models.SmbAccount).where(
+                models.SmbAccount.linux_name == rename.new, models.SmbAccount.user_id != rename.user_id
+            )
+        )
+        if rename.uid is not None:
+            await _record_uids(db, [(rename.uid, rename.old)])
+            names = sqlite_dialect.insert(models.SmbUidName.__table__).on_conflict_do_nothing()
+            await db.execute(names, [{"uid": rename.uid, "linux_name": name} for name in (rename.old, rename.new)])
         if row is not None:
             if row.linux_name != rename.old:
                 _reset_mismatched_row(row, user)
             row.linux_name = rename.new
             row.password_state = "needed"
             row.password_set_at = None
-        # A row that an earlier user of another id left with this name would block the name.
-        await db.execute(
-            delete(models.SmbAccount).where(
-                models.SmbAccount.linux_name == rename.new, models.SmbAccount.user_id != rename.user_id
-            )
-        )
         await service.rename_access_of_user(db, rename.user_id, rename.old, rename.new)
         await db.commit()
     except Exception as exc:
@@ -2279,8 +2285,10 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
 
 _SQLITE = sqlite_dialect.dialect()
 _DATETIME = DateTime().dialect_impl(_SQLITE).result_processor(_SQLITE, None)
-# The model's smb_uids table, which a restore makes anew in the extracted database (ADR-0353).
+# The model's smb_uids and smb_uid_names tables, which a restore makes anew in the extracted
+# database (ADR-0353, ADR-0368).
 _SMB_UIDS_DDL = str(CreateTable(models.SmbUid.__table__).compile(dialect=_SQLITE)).strip()
+_SMB_UID_NAMES_DDL = str(CreateTable(models.SmbUidName.__table__).compile(dialect=_SQLITE)).strip()
 
 
 def _loads_as_datetime(value: object) -> bool:
@@ -2304,9 +2312,19 @@ def _as_bool(value: object) -> bool | None:
     return None
 
 
+def _uid_pairs(conn: sqlite3.Connection, table: str) -> list[tuple[int, str]]:
+    """The (uid, linux_name) rows of ``table`` with a valid uid and a string name; none when the
+    table is missing or has another layout."""
+    try:
+        found = conn.execute(f"SELECT uid, linux_name FROM {table} ORDER BY uid, linux_name").fetchall()
+    except sqlite3.Error:
+        return []
+    return [(uid, name) for uid, name in found if _valid_uid(uid) and isinstance(name, str)]
+
+
 def snapshot_for_restore(db_path: pathlib.Path | None) -> interfaces.RestoreSnapshot:
-    """The SMB accounts, next_uid and smb_uids (ADR-0353) of the live database before a restore
-    replaces it (sync, worker thread)."""
+    """The SMB accounts, next_uid, smb_uids (ADR-0353) and smb_uid_names (ADR-0368) of the live
+    database before a restore replaces it (sync, worker thread)."""
     if db_path is None:
         return interfaces.RestoreSnapshot()
     try:
@@ -2347,16 +2365,13 @@ def snapshot_for_restore(db_path: pathlib.Path | None) -> interfaces.RestoreSnap
             stored = None
         if stored is not None and _valid_next_uid(stored[0]):
             next_uid = stored[0]
-        try:
-            handed_out = tuple(
-                (uid, name) for uid, name in conn.execute("SELECT uid, linux_name FROM smb_uids ORDER BY uid")
-                if _valid_uid(uid) and isinstance(name, str)
-            )
-        except sqlite3.Error:
-            handed_out = ()
+        handed_out = tuple(_uid_pairs(conn, "smb_uids"))
+        uid_names = tuple(_uid_pairs(conn, "smb_uid_names"))
     finally:
         conn.close()
-    return interfaces.RestoreSnapshot(accounts=tuple(accounts), next_uid=next_uid, handed_out=handed_out)
+    return interfaces.RestoreSnapshot(
+        accounts=tuple(accounts), next_uid=next_uid, handed_out=handed_out, uid_names=uid_names
+    )
 
 
 def _proven(prev: interfaces.PrevAccount | None, username: object, hashed: object, is_admin: bool,
@@ -2390,10 +2405,13 @@ def prepare_restored_accounts(
     # account of another name (a backup of another installation allocated from the
     # same range): that account owns its files on the pools under this uid.
     live_uids = {p.uid: (p.username, p.linux_name) for p in snapshot.accounts if _valid_uid(p.uid)}
-    # Every uid handed out on this NAS and the name it went to (ADR-0353). A uid that no live
-    # account holds may still own the files of a deleted user on the pools: a restored row of
-    # another name never takes it.
+    # Every uid handed out on this NAS and the name it went to (ADR-0353), and the names it went by
+    # through renames (ADR-0368). A uid that no live account holds may still own the files of a
+    # deleted user on the pools: a restored row of another name never takes it.
     handed_out = dict(snapshot.handed_out)
+    known_names: dict[int, set[str]] = {}
+    for uid, name in [*snapshot.handed_out, *snapshot.uid_names]:
+        known_names.setdefault(uid, set()).add(name)
     users = {
         user_id: (username, hashed, bool(is_admin))
         for user_id, username, hashed, is_admin in conn.execute(
@@ -2413,7 +2431,7 @@ def prepare_restored_accounts(
         holder = live_uids.get(uid) if _valid_uid(uid) else None
         taken = holder is not None and holder != (username, linux_name)
         if holder is None and _valid_uid(uid):
-            taken = handed_out.get(uid, linux_name) != linux_name
+            taken = linux_name not in known_names.get(uid, {linux_name})
         keep = not taken and password_state == "set" and _proven(
             previous.get(username) if isinstance(username, str) else None,
             username, hashed, is_admin, linux_name, uid,
@@ -2484,17 +2502,27 @@ def prepare_restored_accounts(
     # Last come the backup's own rows that it can read, for the uids still missing: the old
     # installation's backup, restored after a reinstall, brings the uids of its deleted users. They
     # can only reserve more uids; a uid named above keeps that name.
+    # smb_uid_names likewise (ADR-0368): the live rows, then the backup's own for the uids that this
+    # NAS did not know before the restore, so a backup never adds a name to a uid of this NAS. Every
+    # uid with a name is recorded in smb_uids too, so no activation hands it out again.
     restored = conn.execute("SELECT uid, linux_name FROM smb_accounts").fetchall()
-    try:
-        backup_record = conn.execute("SELECT uid, linux_name FROM smb_uids").fetchall()
-    except sqlite3.Error:
-        backup_record = []  # no table, or another layout
-    for uid, name in [(p.uid, p.linux_name) for p in snapshot.accounts] + restored + backup_record:
+    backup_record = _uid_pairs(conn, "smb_uids")
+    known_here = set(known_names) | {p.uid for p in snapshot.accounts if _valid_uid(p.uid)}
+    names = sorted(
+        {(uid, name) for uid, name in snapshot.uid_names if constants.is_valid_linux_name(name)}
+        | {(uid, name) for uid, name in _uid_pairs(conn, "smb_uid_names")
+           if uid not in known_here and constants.is_valid_linux_name(name)}
+    )
+    live_accounts = [(p.uid, p.linux_name) for p in snapshot.accounts]
+    for uid, name in live_accounts + restored + backup_record + names:
         if _valid_uid(uid) and constants.is_valid_linux_name(name):
             handed_out.setdefault(uid, name)
     conn.execute("DROP TABLE IF EXISTS smb_uids")
     conn.execute(_SMB_UIDS_DDL)
     conn.executemany("INSERT INTO smb_uids (uid, linux_name) VALUES (?, ?)", sorted(handed_out.items()))
+    conn.execute("DROP TABLE IF EXISTS smb_uid_names")
+    conn.execute(_SMB_UID_NAMES_DDL)
+    conn.executemany("INSERT INTO smb_uid_names (uid, linux_name) VALUES (?, ?)", names)
 
     # uid floor: never below the restored value, the live value or any uid seen or handed out.
     restored_uids = [uid for uid, _ in restored if _valid_uid(uid)]

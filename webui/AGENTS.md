@@ -45,7 +45,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   Auto do (`streamLogEntries` of `$lib/api/logs.ts`, ADR-0366), or as a message of
   `/ws/v1/events` into a store, as the scrubs that run do (`$lib/stores/scrubs`, ADR-0367).
   `scripts/polling-check.mjs`, which `supervisor/tests/test_webui_polling.py` runs, fails for a
-  `setInterval` whose callback reaches the API; `// polling-ignore: <reason>` above it exempts a
+  `setInterval` whose callback reaches the API, also through an exported function of another
+  module under `src/`, or changes a store or a variable that an API-reaching `$:` statement reads; `// polling-ignore: <reason>` above it exempts a
   countdown that asks once when its time has run out (ADR-0365).
 - A WebSocket authenticates with its first message, `{"type": "auth", "token": ...}`; tokens stay
   out of URLs (ADR-0031). Close code 4401 ends the session, 4403 means forbidden.

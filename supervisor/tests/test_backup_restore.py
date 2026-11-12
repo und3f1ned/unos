@@ -463,6 +463,24 @@ def test_duplicate_members_are_rejected(env):
     _assert_untouched(env)
 
 
+@pytest.mark.parametrize("member", ["unos.db/.", "unos.db/", "./unos.db/.", "unos.db//"])
+def test_a_file_whose_name_is_not_its_plain_path_is_refused(env, member):
+    """A regular file named "unos.db/." passed the scan as unos.db, and its extraction failed with
+    EISDIR: a 500 whose message showed a temporary path. A file's name in the archive must be its
+    plain path, after at most one leading "./"."""
+    name = _store(env, [_file("manifest.json", MANIFEST), _file(member, _good_db(env))])
+    response = _restore(env, name)
+    assert (response.status_code, response.json()["detail"]) == (400, f"Unsafe path in backup archive: {member!r}")
+    _assert_untouched(env)
+
+
+def test_a_file_named_with_a_leading_dot_slash_restores(env):
+    name = _store(env, [_file("./manifest.json", MANIFEST), _file("./unos.db", _good_db(env))])
+    response = _restore(env, name)
+    assert response.status_code == 200, response.text
+    assert _usernames(env.db_path) == {"admin2", "bob"}
+
+
 def test_oversized_member_is_rejected(env, monkeypatch):
     monkeypatch.setitem(backup_router._FILE_MEMBERS, "unos.db", 1024)
     name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])

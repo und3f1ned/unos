@@ -33,8 +33,8 @@ SD writes of each check (ADR-0214). The areas:
            (ADR-0368) that ends the open session and keeps the marked host account's uid, and so
            the user's files, under the new name, with a Samba account of the new name and none of
            the old, the share's access and smb.conf's section following the new name, which signs
-           in to UNOS and to the share while the old one is refused (by Samba only where the device
-           has no guest share), a password change that ends the open
+           in to UNOS and to the share while the old one with its old password is refused (by
+           Samba only where the device has no guest share), a password change that ends the open
            session, the replaced password refused without a write to passdb.tdb, the new one
            taken, the user's own change of it over SAMR (smbpasswd -r, as Windows' Change a
            password asks for one) refused without a write (ADR-0342), a wrong password refused
@@ -2024,7 +2024,8 @@ def smb_check(c: Check) -> None:
             c.expect(owner.endswith(f" {renamed}:{SMB_GROUP}"), f"a.txt, written by {user}, is {owner}")
             c.expect(user not in c.device.passdb_entries()[0], f"pdbedit -L still lists {user}")
             s.text += f": {done.status}"
-    old, user, password = user, renamed, renamed_password
+    # The old name keeps its own password: Samba's account of the old name, had it stayed, would take it.
+    old, old_password, user, password = user, password, renamed, renamed_password
 
     with c.step("the share's access follows the new name: the Shares API and smb.conf's section name it, and in a "
                 "signed session it writes in the share"):
@@ -2044,7 +2045,7 @@ def smb_check(c: Check) -> None:
         c.on_cleanup(f"delete the token of {user} in the device's RAM", mine.forget_token)
         me = c.get("/auth/me", api=mine)
         c.expect(me.get("username") == user, f"the token is of {me}")
-        theirs = c.api.as_user(old, password, USER_TOKEN.format(c.run + "old"))
+        theirs = c.api.as_user(old, old_password, USER_TOKEN.format(c.run + "old"))
         c.on_cleanup(f"delete the token of {old} in the device's RAM", theirs.forget_token)
         try:
             refused = f"it signed in as {c.get('/auth/me', api=theirs).get('username')}"
@@ -2054,7 +2055,7 @@ def smb_check(c: Check) -> None:
         if guests:  # Samba takes a user without a Samba account as a guest (ADR-0339)
             s.text += f"; Samba's refusal of {old} is not tried, as the device has guest shares"
         else:
-            listing = c.device.smb_list(old, password)
+            listing = c.device.smb_list(old, old_password)
             c.expect(not listing.ok and listing.status == "NT_STATUS_LOGON_FAILURE", f"{old} answered {listing.status}")
             s.text += f": Samba answered {old} {listing.status}"
 

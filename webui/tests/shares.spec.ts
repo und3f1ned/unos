@@ -1,4 +1,4 @@
-import type { APIRequestContext, Locator, Page } from '@playwright/test';
+import type { APIRequestContext, Locator, Page, WebSocketRoute } from '@playwright/test';
 import { E2E_ADMIN, test, expect } from './fixtures';
 import {
   FAKE_PATHS,
@@ -864,6 +864,41 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(result.getByText(REPAIR_STOPPED)).toBeVisible();
     await expect(stop).toHaveCount(0);
     await expect(dialog.getByRole('button', { name: 'Repair permissions' })).toBeVisible();
+  });
+
+  test('a repair that a restart of the supervisor ended can be run again', async ({ authenticatedPage: page }) => {
+    await fakeSmbApi(page, { users: fakeUsers(), shares: [fakeShare('docs', { available: true })] });
+    // The events socket: after auth_ok, a supervisor that runs no repair and has run none since it
+    // started sends the repair as null (supervisor/src/websocket/events.py, ADR-0363).
+    const sockets: WebSocketRoute[] = [];
+    await page.routeWebSocket('**/ws/v1/events', (ws) => {
+      ws.onMessage((message) => {
+        if (JSON.parse(String(message)).type !== 'auth') return;
+        ws.send(JSON.stringify({ type: 'auth_ok' }));
+        if (sockets.length > 0) ws.send(JSON.stringify({ type: 'repair', data: null }));
+        sockets.push(ws);
+      });
+    });
+    await page.goto('/shares');
+    const card = shareCard(page, 'docs');
+    await card.getByRole('button', { name: 'Repair permissions' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Repair permissions of docs' });
+    await dialog.getByRole('button', { name: 'Repair permissions' }).click();
+    const running = dialog.getByRole('region', { name: 'Repair in progress' });
+    await expect.poll(() => sockets.length, { message: 'the page signed in to the events socket' }).toBe(1);
+    sockets[0].send(JSON.stringify({ type: 'repair', data: repairStarted('docs', { visited: 40, changed: 12 }) }));
+    await expect(running).toContainText('40 checked, 12 changed, 0 errors');
+    await expect(dialog.getByRole('button', { name: 'Stop repair' })).toBeVisible();
+
+    // The supervisor restarts, which ends its repair: the socket closes, and the page signs in again.
+    await sockets[0].close({ code: 1012, reason: 'service restart' });
+    await expect.poll(() => sockets.length, { message: 'the page signed in again', timeout: 15_000 }).toBe(2);
+
+    await expect(running).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Stop repair' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Repair permissions' })).toBeEnabled();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(card.locator('.badge', { hasText: /^Repairing permissions$/ })).toHaveCount(0);
   });
 
   test('the SMB status is shown as alerts', async ({ authenticatedPage: page }) => {

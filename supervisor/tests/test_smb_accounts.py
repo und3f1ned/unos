@@ -37,6 +37,7 @@ from src.auth.models import User
 from src.database import Base, get_db
 from src.host import HostResult
 from src.main import app
+from src.security.models import LoginAttempt
 from src.shares import accounts, constants, interfaces, service, smb, smbconf
 from src.shares.account_state import ADMIN_REASON
 from src.shares.models import SmbAccount, SmbShare, SmbShareAccess, SmbState
@@ -3056,6 +3057,75 @@ class TestRename:
         # smb.conf no longer names the old name.
         world.apply.assert_awaited()
         assert login(world, "alicia", SET_PW).status_code == 200
+
+    def test_a_row_that_another_id_left_with_the_new_name_goes_in_the_renames_commit(self, world):
+        """A row of an earlier user of another id with the new name (SQLite enforces no foreign keys)
+        is deleted before the user's row takes the name: the row's UPDATE never meets it."""
+        world.make_active("alice", 70000, ALICE_PW)
+        with closing(sqlite3.connect(world.path)) as conn:
+            conn.execute("INSERT INTO smb_accounts (user_id, linux_name, uid, enabled, password_state, created_at) "
+                         "VALUES (99, 'alicia', NULL, 0, 'needed', CURRENT_TIMESTAMP)")
+            conn.commit()
+
+        response = world.put_user("alice", username="alice", new_username="alicia", password=SET_PW)
+
+        assert response.status_code == 200, response.text
+        assert world.fake.commands("usermod") == [["usermod", "-l", "alicia", "alice"]]
+        row = world.row("alice")
+        assert (row.linux_name, row.uid, row.password_state) == ("alicia", 70000, "set")
+        with closing(sqlite3.connect(world.path)) as conn:
+            assert conn.execute("SELECT user_id, linux_name FROM smb_accounts").fetchall() == [
+                (world.ids["alice"], "alicia")]
+
+    def test_the_uid_keeps_each_name_it_went_by(self, world):
+        """smb_uids keeps the first name of a uid (ADR-0353); smb_uid_names gets the old and the new
+        name of every rename of an account with a uid, in the rename's commit (ADR-0368)."""
+        world.make_active("alice", 70000, ALICE_PW)
+
+        assert world.put_user("alice", username="alice", new_username="alicia", password=SET_PW).status_code == 200
+        assert world.put_user("alice", username="alicia", new_username="ally", password=NEW_PW).status_code == 200
+        world.make_allowed("bob")
+        assert world.put_user("bob", username="bob", new_username="robert").status_code == 200
+
+        with closing(sqlite3.connect(world.path)) as conn:
+            assert conn.execute("SELECT uid, linux_name FROM smb_uids").fetchall() == [(70000, "alice")]
+            assert conn.execute("SELECT uid, linux_name FROM smb_uid_names ORDER BY linux_name").fetchall() == [
+                (70000, "alice"), (70000, "alicia"), (70000, "ally")]
+
+    def test_a_rename_records_a_uid_that_smb_uids_lacks_under_the_old_name(self, world):
+        """A row from before smb_uids (ADR-0353) that no start recorded yet."""
+        world.deactivated("alice", 70000)
+        with closing(sqlite3.connect(world.path)) as conn:
+            conn.execute("DELETE FROM smb_uids")
+            conn.commit()
+
+        assert world.put_user("alice", username="alice", new_username="alicia").status_code == 200
+
+        with closing(sqlite3.connect(world.path)) as conn:
+            assert conn.execute("SELECT uid, linux_name FROM smb_uids").fetchall() == [(70000, "alice")]
+
+    def test_a_name_that_a_rename_freed_shows_its_new_holder_none_of_the_earlier_sign_ins(self, world):
+        """The history is kept by name (ADR-0263): a user who takes a name sees the attempts on it from
+        the moment they took it, not the sign-ins of its earlier holder (ADR-0368)."""
+        with Session(world.engine) as session:
+            for name in ("alice", "bob"):
+                session.get(User, world.ids[name]).created_at = datetime(2025, 1, 1)
+            session.add_all([
+                LoginAttempt(username="alice", ip_address="10.0.0.2", success=True, timestamp=datetime(2026, 1, 5, 8)),
+                LoginAttempt(username="bob", ip_address="10.0.0.3", success=True, timestamp=datetime(2026, 1, 5, 9)),
+            ])
+            session.commit()
+
+        assert world.put_user("alice", username="alice", new_username="alicia").status_code == 200
+        assert world.put_user("bob", username="bob", new_username="alice").status_code == 200
+        world.ids["alicia"], world.ids["alice"] = world.ids["alice"], world.ids["bob"]
+        assert login(world, "alice", BOB_PW).status_code == 200
+
+        history = world.client.get(f"{API}/security/login-history", headers=world.headers("alice")).json()
+        assert [(a["username"], a["ip_address"]) for a in history["attempts"]] == [("alice", "testclient")]
+        assert (history["total"], history["success_count"]) == (1, 1)
+        everyone = world.client.get(f"{API}/security/login-history?username=alice", headers=world.headers("admin"))
+        assert everyone.json()["total"] == 2  # administrators see every attempt on the name
 
 
 # ---------------------------------------------------------------------------
