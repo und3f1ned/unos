@@ -7,8 +7,11 @@ installing and uninstalling apps each write one entry of their action, with the 
 the client address and browser of the request and the resource, after the change was made. A
 refused or failed request, and one that changed nothing (a pool that was not there to remove, a
 start of a running container, a stop of a stopped one), write none (ADR-0320: entries record
-real changes). An entry that cannot be written, as on a full /data, is in the supervisor's log,
-and the change, already made, answers as it does otherwise (ADR-0251, ADR-0343).
+real changes). A request that made part of its change and then failed writes its action as
+failed, with what it did (a pool create that formatted the disks, a removal that unmounted the
+pool, an uninstall that stopped the app). An entry that cannot be written, as on a full /data,
+is in the supervisor's log, and the change, already made, answers as it does otherwise
+(ADR-0251, ADR-0343).
 """
 from __future__ import annotations
 
@@ -32,6 +35,7 @@ from src.auth.utils import verify_token
 from src.containers import docker as docker_module
 from src.database import Base, get_db
 from src.main import app
+from src.storage import pools
 from src.storage import router as storage_router
 
 from .audit_helpers import audit_entries
@@ -60,11 +64,12 @@ CONTAINERS = "/api/v1/containers"
 APPS = "/api/v1/apps"
 
 
-def entry(action: str, resource_type: str, resource_id: str, details: str, severity: str = "info") -> dict:
+def entry(action: str, resource_type: str, resource_id: str, details: str, severity: str = "info",
+          success: bool = True) -> dict:
     """An entry of the administrator ADMIN, from CLIENT with BROWSER, as the audit log keeps it."""
     return {"action": action, "username": ADMIN, "ip_address": CLIENT, "user_agent": BROWSER,
             "resource_type": resource_type, "resource_id": resource_id, "details": details,
-            "severity": severity, "success": True}
+            "severity": severity, "success": success}
 
 
 def picked(record: dict) -> dict:
@@ -141,6 +146,62 @@ class TestPools:
         assert not host.mounted("/mnt/pools/data")
         assert entries(audit_file) == [
             entry("pool_deleted", "pool", "data", "Removed the pool data; its disks and their data were kept", "warning")
+        ]
+
+    def test_a_create_that_fails_after_formatting_writes_a_failed_entry(self, admin, audit_file, host):
+        # mkfs.btrfs formatted the disk, then the mount failed: it wrote no entry.
+        host.add_disk("sdc", serial="WD-3")
+        host.fail[("mount",)] = (32, "mount: /mnt/pools/tank: wrong fs type")
+
+        response = admin.post(POOLS, json={"name": "tank", "devices": ["/dev/sdc"], "raid_level": "single",
+                                           "confirm_name": "tank"})
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == "Mounting /mnt/pools/tank failed: mount: /mnt/pools/tank: wrong fs type"
+        assert entries(audit_file) == [
+            entry("pool_created", "pool", "tank", "Formatted /dev/sdc for the pool tank (single); then: Mounting "
+                  "/mnt/pools/tank failed: mount: /mnt/pools/tank: wrong fs type", success=False)
+        ]
+
+    def test_removing_a_pool_that_is_not_mounted_writes_pool_deleted(self, admin, audit_file, host):
+        # "media" is not mounted: the removal deletes its empty mountpoint.
+        response = admin.delete(f"{POOLS}/media")
+
+        assert response.status_code == 200, response.text
+        assert "/mnt/pools/media" not in host.dirs
+        assert entries(audit_file) == [
+            entry("pool_deleted", "pool", "media", "Removed the pool media; its disks and their data were kept",
+                  "warning")
+        ]
+
+    @pytest.mark.parametrize("failure", ["fstab", "mount again"])
+    def test_a_removal_that_fails_after_unmounting_writes_a_failed_entry(
+        self, admin, audit_file, host, monkeypatch, failure
+    ):
+        # The pool was unmounted, then the removal failed: it wrote no entry.
+        if failure == "fstab":
+            def write_fails(new_text, old_text):
+                raise RuntimeError("Writing /etc/fstab failed: No space left on device")
+
+            monkeypatch.setattr(pools, "_write_fstab", write_fails)
+            status, error = 500, "Writing /etc/fstab failed: No space left on device"
+        else:
+            # Still in use elsewhere after the umount, and mounting it again fails.
+            host.held.add(DATA_UUID)
+            host.fail[("mount",)] = (32, "mount: /mnt/pools/data: wrong fs type")
+            status, error = 409, (
+                "/mnt/pools/data was unmounted on the host, but the filesystem is still in use elsewhere "
+                "(for example by a container's bind mount), and mounting it again failed: Mounting "
+                "/mnt/pools/data failed: mount: /mnt/pools/data: wrong fs type. Stop the apps and "
+                "containers that use the pool before removing its disks."
+            )
+
+        response = admin.delete(f"{POOLS}/data")
+
+        assert (response.status_code, response.json()["detail"]) == (status, error)
+        assert not host.mounted("/mnt/pools/data")
+        assert entries(audit_file) == [
+            entry("pool_deleted", "pool", "data", f"Unmounted the pool data; then: {error}", "warning", success=False)
         ]
 
     def test_removing_a_pool_that_is_not_there_writes_nothing(self, admin, audit_file, host):
@@ -391,6 +452,17 @@ class TestContainers:
         assert [r.status_code for r in (failed, missing, system)] == [500, 404, 404]
         assert entries(audit_file) == []
 
+    def test_a_system_container_is_not_restarted(self, admin, audit_file, docker):
+        # Stop and remove refused UNOS's own containers; restart restarted them.
+        supervisor = running(docker.add(_container("unos-supervisor", {}, [])))
+
+        response = admin.post(f"{CONTAINERS}/unos-supervisor/restart")
+
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "Cannot restart system container"
+        supervisor.restart.assert_not_called()
+        assert entries(audit_file) == []
+
     def test_a_stop_whose_entry_cannot_be_written_stops_and_answers(
         self, admin, audit_file, docker, monkeypatch, caplog
     ):
@@ -482,7 +554,7 @@ class TestApps:
 
     def test_refused_and_failed_app_changes_write_nothing(self, admin, audit_file, docker):
         docker.add(_container("web", {}, []))  # no app of the catalog
-        logs = running(docker.add(app_container("logs")))
+        logs = docker.add(app_container("logs"))  # stopped: the uninstall's stop changes nothing
         logs.remove.side_effect = APIError("removal of container logs is already in progress")
 
         not_an_app = admin.delete(f"{APPS}/installed/web")
@@ -491,6 +563,22 @@ class TestApps:
 
         assert [r.status_code for r in (not_an_app, missing, failed)] == [400, 404, 500]
         assert entries(audit_file) == []
+
+    def test_an_uninstall_that_stopped_the_app_and_could_not_remove_it_writes_a_failed_stop(
+        self, admin, audit_file, docker
+    ):
+        # The app ran: the uninstall stopped it, then its removal failed, and it wrote no entry.
+        logs = running(docker.add(app_container("logs")))
+        logs.remove.side_effect = APIError("removal of container logs is already in progress")
+
+        response = admin.delete(f"{APPS}/installed/logs")
+
+        assert response.status_code == 500, response.text
+        logs.stop.assert_called_once_with()
+        assert entries(audit_file) == [
+            entry("container_stopped", "container", "logs", "Stopped the app logs; then: Failed to remove: "
+                  "removal of container logs is already in progress", success=False)
+        ]
 
     def test_an_uninstall_whose_entry_cannot_be_written_removes_the_app_and_answers(
         self, admin, audit_file, docker, monkeypatch, caplog

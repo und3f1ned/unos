@@ -1287,7 +1287,7 @@ class TestAccountStep:
     def test_the_uid_of_a_deleted_user_goes_to_no_restored_account(self, smb_env, monkeypatch):
         """shares.restore-uid-guards step 2 (ADR-0353): dave had 70005 on this NAS and was deleted, so
         only smb_uids knows it. A backup that gives 70005 to alice restores her without it, and the
-        live database keeps this NAS's record, not the backup's."""
+        live database keeps this NAS's record; the backup's own record adds only the uids it lacks."""
         env = smb_env
         monkeypatch.setattr(accounts, "snapshot_for_restore", REAL_SNAPSHOT)
         monkeypatch.setattr(accounts, "prepare_restored_accounts", REAL_PREPARE)
@@ -1302,7 +1302,7 @@ class TestAccountStep:
         assert response.status_code == 200, response.text
         assert "SMB must be turned on again for alice" in response.json()["warnings"]
         assert _db_rows(env, "SELECT linux_name, uid, password_state FROM smb_accounts") == [("alice", None, "needed")]
-        assert _db_rows(env, "SELECT uid, linux_name FROM smb_uids") == [(70005, "dave")]
+        assert _db_rows(env, "SELECT uid, linux_name FROM smb_uids") == [(70005, "dave"), (70006, "zed")]
         assert _db_rows(env, "SELECT next_uid FROM smb_state") == [(70010,)]
 
 

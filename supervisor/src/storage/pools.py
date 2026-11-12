@@ -165,6 +165,33 @@ class PoolBusyError(PoolConflictError):
     """The pool cannot be unmounted because it is in use (HTTP 409)."""
 
 
+class PoolLeftUnmountedError(PoolBusyError):
+    """The host unmounted the pool, it is still in use elsewhere, and mounting it again failed (HTTP 409)."""
+
+
+class PoolFormattedError(RuntimeError):
+    """A step of Create Pool after mkfs.btrfs failed: the new pool's devices are formatted (HTTP 500).
+
+    The message is that of ``cause``; the endpoint writes pool_created as failed (ADR-0350).
+    """
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+class PoolPartlyRemovedError(Exception):
+    """Remove Pool failed after it changed part of the host; ``done`` says what (ADR-0350).
+
+    Answered as ``cause`` is; the endpoint writes pool_deleted as failed.
+    """
+
+    def __init__(self, done: str, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.done = done
+        self.cause = cause
+
+
 # --------------------------------------------------------------------------
 # Host /etc/fstab
 # --------------------------------------------------------------------------
@@ -914,7 +941,10 @@ def _containers_using(name: str, target: str, mounts: list[disks.HostMount]) -> 
             f"Pool '{name}' was left mounted: Docker did not answer, so it is not known whether a "
             f"running container keeps data on it. Try again when Docker is running ({exc})."
         ) from exc
-    users = _containers_on(target, running, bound, mounts)
+    try:
+        users = _containers_on(target, running, bound, mounts)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Pool '{name}' was left mounted: {exc}") from exc
     users.update(
         _container_name(container)
         for container in running
@@ -1269,7 +1299,7 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
     try:
         _mount_by_uuid(uuid, target)
     except Exception as exc:
-        raise PoolBusyError(
+        raise PoolLeftUnmountedError(
             f"{target} was unmounted on the host, but the filesystem is still in use "
             f"elsewhere ({reason}), and mounting it again failed: {exc}. Stop the apps "
             "and containers that use the pool before removing its disks."
@@ -1453,16 +1483,35 @@ def delete_pool(name: str) -> bool:
     asked about the containers: nothing is changed then. Returns whether it
     changed anything: False when the pool was neither mounted nor in the
     fstab and had no mountpoint left, the case of a name that is no pool
-    (its audit entry is written for a real change only, ADR-0320).
+    (its audit entry is written for a real change only, ADR-0320). A step
+    that fails after the pool was unmounted or its fstab entry dropped
+    raises PoolPartlyRemovedError, which says what was done (ADR-0350).
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
     with _lock:
         mounts = disks.host_mounts()
         mounted = any(m.target == target for m in mounts)
-        _unmount_pool_target(name, target, mounts)
-        forgotten = _forget_fstab_entry(name)
-        removed = _remove_mountpoint_dir(target)
+        unmounted = forgotten = False
+        try:
+            try:
+                _unmount_pool_target(name, target, mounts)
+            except PoolLeftUnmountedError:
+                unmounted = True
+                raise
+            unmounted = mounted
+            forgotten = _forget_fstab_entry(name)
+            removed = _remove_mountpoint_dir(target)
+        except Exception as exc:
+            if unmounted and forgotten:
+                raise PoolPartlyRemovedError(
+                    f"Unmounted the pool {name} and dropped its fstab entry", exc
+                ) from exc
+            if unmounted:
+                raise PoolPartlyRemovedError(f"Unmounted the pool {name}", exc) from exc
+            if forgotten:
+                raise PoolPartlyRemovedError(f"Dropped the fstab entry of the pool {name}", exc) from exc
+            raise
         return mounted or forgotten or removed
 
 
@@ -1547,7 +1596,8 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
 
     Devices are checked against the host's current state (system disk,
     mounted, member of a mounted pool, existing data) and checked again right
-    before mkfs runs.
+    before mkfs runs. A step after mkfs that fails raises PoolFormattedError
+    (HTTP 500), with the step's message.
     """
     name = validate_pool_name(pool.name)
     if pool.confirm_name != name:
@@ -1603,9 +1653,13 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
             raise RuntimeError(f"mkfs.btrfs failed: {result.stderr.strip()}")
         logger.info("Created btrfs pool '%s' on %s", name, ", ".join(validated_devices))
 
-        uuid = _new_filesystem_uuid(result.stdout, validated_devices[0])
-        _mount_and_persist(name, uuid, already_mounted=False)
-        return get_pool(name)
+        try:
+            uuid = _new_filesystem_uuid(result.stdout, validated_devices[0])
+            _mount_and_persist(name, uuid, already_mounted=False)
+            return get_pool(name)
+        except Exception as exc:
+            # The devices are formatted: the audit log records that (ADR-0350).
+            raise PoolFormattedError(exc) from exc
 
 
 # --------------------------------------------------------------------------
@@ -1999,6 +2053,8 @@ async def reconcile_pools_on_startup() -> list[dict[str, str]]:
 
 # Seconds a btrfs subvolume or quota group command may take.
 VOLUME_TIMEOUT = 120
+# Seconds realpath may take on the host to resolve the folders that containers mount (_host_paths).
+HOST_PATHS_TIMEOUT = 10
 # Id of the top-level subvolume of every btrfs filesystem (BTRFS_FS_TREE_OBJECTID).
 _TOP_LEVEL_SUBVOLUME = 5
 # A line of `btrfs subvolume list`; the path is relative to the top level
@@ -2295,19 +2351,34 @@ def _host_paths(paths: set[str]) -> dict[str, str]:
     of the local driver binds (its device option), as they were written: a
     relative one is resolved from /, the folder in which dockerd runs, and
     ``realpath`` on the host resolves the symbolic links and keeps the parts
-    that do not exist. RuntimeError when it fails.
+    that do not exist. A network or FUSE mount that hangs would hold it,
+    and the pools' lock with it: it runs under the host's ``timeout``, which
+    kills it after HOST_PATHS_TIMEOUT seconds (ADR-0258). RuntimeError when it
+    fails or does not answer; the callers say what was not done.
     """
     def absolute(path: str) -> str:
         return path if path.startswith("/") else f"/{path}"
 
     given = sorted({absolute(path) for path in paths})
-    result = host.run_on_host(
-        ["realpath", "--canonicalize-missing", "--zero", "--", *given], timeout=15, errors="surrogateescape"
+    hung = RuntimeError(
+        f"realpath did not resolve the folders that containers mount within {HOST_PATHS_TIMEOUT} "
+        "seconds: a network or FUSE mount of the host may not answer"
     )
+    try:
+        result = host.run_on_host(
+            ["timeout", "--signal=KILL", str(HOST_PATHS_TIMEOUT),
+             "realpath", "--canonicalize-missing", "--zero", "--", *given],
+            timeout=HOST_PATHS_TIMEOUT + 5,
+            errors="surrogateescape",
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise hung from exc
+    if result.returncode in (124, 137):  # ended by timeout(1); with SIGKILL, timeout ends itself too
+        raise hung
     resolved = result.stdout.split("\0")
     if not result.ok or len(resolved) != len(given) + 1 or resolved[-1]:
         raise RuntimeError(
-            "Could not resolve the folders that containers mount on the host: "
+            "the folders that containers mount could not be resolved on the host: "
             f"{result.stderr.strip() or f'exit status {result.returncode}'}"
         )
     by_given = dict(zip(given, resolved))
@@ -2570,9 +2641,9 @@ def _limit_new_volume(pool: str, target: str, name: str, quota: int, newest: int
     Returns None when the quota is set, otherwise why not (the caller then
     removes the new volume again). PoolConflictError (HTTP 409) when the
     subvolume list gives the name only ids of other subvolumes, and
-    RuntimeError (HTTP 500) when it cannot be read or checked: either says
-    that the volume was created without its quota (storage.edge-cases,
-    step 6).
+    RuntimeError (HTTP 500) when it cannot be read or checked, or btrfs does
+    not answer within VOLUME_TIMEOUT: either says that the volume was
+    created without its quota (storage.edge-cases, step 6).
     """
     outcome = "was created without its quota"
     try:
@@ -2581,6 +2652,11 @@ def _limit_new_volume(pool: str, target: str, name: str, quota: int, newest: int
         raise
     except RuntimeError as exc:
         raise RuntimeError(f"Volume '{name}' {outcome}: {exc}. Delete it and create it again.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Volume '{name}' {outcome}: btrfs did not answer within {VOLUME_TIMEOUT} seconds. "
+            "Delete it and create it again."
+        ) from exc
     if new_id is None or new_id <= newest:
         return "it was renamed or replaced right after it was created"
     result = host.run_on_host(
@@ -2623,8 +2699,8 @@ def create_volume(pool_name: str, volume: VolumeCreate) -> VolumeInfo:
     existed before (whatever can rename entries in the pool's top directory
     could have given it that name). The new volume stays without its quota
     when the subvolume list gives its name only ids of other subvolumes
-    (409), or cannot be read (500). When something took the name between
-    the check and the create, btrfs refuses the create: PoolConflictError
+    (409), or cannot be read or checked in time (500). When something took
+    the name between the check and the create, btrfs refuses the create: PoolConflictError
     (HTTP 409) that says what is there (_entry_at).
     """
     pool = validate_pool_name(pool_name)

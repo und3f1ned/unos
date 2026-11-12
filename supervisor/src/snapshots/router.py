@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Request
 
+from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import verify_token
@@ -52,7 +53,6 @@ from ..security.validators import (
     validate_snapshot_name,
 )
 from ..storage import disks, pools
-from ..storage.router import audit_change
 from .schemas import SnapshotInfo, SnapshotCreate, SnapshotRestore, SnapshotSubvolume
 
 router = APIRouter(prefix="/snapshots", tags=["snapshots"])
@@ -431,7 +431,7 @@ async def create_snapshot(req: SnapshotCreate, request: Request, user: User = De
 
     snap_path = await asyncio.to_thread(make_snapshot, subvol_path, name)
     await audit_change(
-        request, user, AuditAction.SNAPSHOT_CREATED, resource_type="snapshot", resource_id=str(snap_path),
+        AuditAction.SNAPSHOT_CREATED, request, user.username, resource_type="snapshot", resource_id=str(snap_path),
         details=f"Created the read-only snapshot {name} of {subvol_path}",
     )
 
@@ -455,7 +455,7 @@ async def delete_snapshot(
 
     await asyncio.to_thread(delete_snapshot_by_id, subvol_path, name, snapshot_id)
     await audit_change(
-        request, user, AuditAction.SNAPSHOT_DELETED, resource_type="snapshot",
+        AuditAction.SNAPSHOT_DELETED, request, user.username, resource_type="snapshot",
         resource_id=str(subvol_path / SNAPSHOT_DIR_NAME / name),
         details=f"Deleted the snapshot {name} of {subvol_path}", severity=AuditSeverity.WARNING,
     )
@@ -514,7 +514,8 @@ async def restore_snapshot(req: SnapshotRestore, request: Request, user: User = 
     subvolume, name = _validate_snapshot_path(req.snapshot_path)
     restored = await asyncio.to_thread(_restore, subvolume, name, req.snapshot_path, req.target_path)
     await audit_change(
-        request, user, AuditAction.SNAPSHOT_RESTORED, resource_type="snapshot", resource_id=restored["source"],
+        AuditAction.SNAPSHOT_RESTORED, request, user.username, resource_type="snapshot",
+        resource_id=restored["source"],
         details=f"Restored the snapshot as the writable copy {restored['target']}",
     )
     return restored

@@ -145,9 +145,9 @@ async def get_interface(name: str, _=Depends(verify_token)):
     return await _interface(entries[0])
 
 
-async def _audit_interface(request: Request, user, name: str, details: str) -> None:
+async def _audit_interface(request: Request, user, name: str, details: str, *, success: bool = True) -> None:
     await audit_change(AuditAction.NETWORK_CONFIG_CHANGED, request, user.username,
-                       resource_type="network_interface", resource_id=name, details=details)
+                       resource_type="network_interface", resource_id=name, details=details, success=success)
 
 
 @router.post("/interfaces/{name}/down")
@@ -171,8 +171,20 @@ async def keep_interface_down(request: Request, name: str, user=Depends(verify_t
 
 @router.post("/interfaces/{name}/up")
 async def bring_interface_up(request: Request, name: str, user=Depends(verify_token)):
-    """Enable an interface, with the addresses and routes its disable saved."""
-    if await links.enable(name):
+    """Enable an interface, with the addresses and routes its disable saved.
+
+    An Enable that turned it on is audited; as failed when not all of them could be restored,
+    which answers 500 (ADR-0351).
+    """
+    try:
+        enabled = await links.enable(name)
+    except links.PartlyEnabled as exc:
+        await _audit_interface(
+            request, user, name,
+            f"Enabled, but its saved addresses and routes could not all be restored: {exc.reason}", success=False,
+        )
+        raise
+    if enabled:
         await _audit_interface(request, user, name, "Enabled")
     return {"status": "success", "interface": name, "state": "up"}
 

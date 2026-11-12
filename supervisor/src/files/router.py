@@ -2074,20 +2074,37 @@ async def stop_trash_expiry() -> None:
 _UPLOAD_TEMP_NAME = re.compile(r"\.unos-upload-[0-9a-f]{16}")
 # Seconds that a hidden upload file must have been unchanged to count as a leftover, and after the
 # start of the supervisor at which the first check runs: by then every file that the stop before
-# it left is that old. An upload gets data at least every UPLOAD_IDLE_TIMEOUT (120) seconds and
-# writes it at once, or is cut off and its file removed (ADR-0347): a file unchanged for 10
-# minutes is no upload's, also not one of a supervisor that the set of this one does not know.
+# it left is that old. The files of this supervisor's uploads are known by their names
+# (_uploads_in_progress), however long ago they were written: receive_upload writes only once it
+# holds about 768 KiB, so the file of a slow upload can stay unchanged for long. This rule is for
+# a writer that the set cannot know, a supervisor process that has not ended yet: a file that it
+# wrote in the last 10 minutes is left alone.
 UPLOAD_LEFTOVER_AGE = 10 * 60
 # The folder of the snapshots of a pool or a volume (ADR-0011), which the check does not enter:
 # a snapshot is a read-only copy, and walking each would read the tree once per snapshot.
 _SNAPSHOTS = ".snapshots"
+# How many folders below the pools directory the check goes down. It keeps a descriptor open for
+# each folder on its way, so a deeper tree could use up the descriptors of the whole supervisor;
+# the folders below are not entered and are named among the problems, as Repair permissions does.
+_LEFTOVER_MAX_DEPTH = 64
+
+
+class _FoundLeftover:
+    """A leftover as the check found it: GET answers this without looking at the disk again."""
+
+    __slots__ = ("parts", "size", "mtime")
+
+    def __init__(self, parts: list[str], st: os.stat_result) -> None:
+        self.parts = parts  # its components below the pools directory
+        self.size = st.st_size
+        self.mtime = st.st_mtime
 
 
 class _LeftoverCheck:
     """What the last check of leftovers found, and the check that runs."""
 
     def __init__(self) -> None:
-        self.found: list[list[str]] = []  # the leftovers, by their components below the base
+        self.found: list[_FoundLeftover] = []  # by path
         self.problems: list[str] = []  # the folders it could not read
         self.checked: datetime | None = None  # when it ended
         self.task: asyncio.Task | None = None
@@ -2109,17 +2126,46 @@ def _not_a_leftover(name: str, st: os.stat_result, now: datetime) -> str | None:
     return None
 
 
-def _find_upload_leftovers(now: datetime) -> tuple[list[list[str]], list[str]]:
+def _mount_roots() -> set[tuple[int, int]] | None:
+    """The st_dev and st_ino of the root of every mount at or below the pools directory; None without the mount table.
+
+    Only such a folder can be met twice in a walk: the root of a bind mount
+    is the folder it shows again (it has that folder's st_dev and st_ino),
+    and a filesystem mounted twice has one root.
+    """
+    try:
+        points = _read_mount_points()
+    except OSError:
+        return None
+    base = os.fsencode(_base_dir())
+    roots = set()
+    for point in points:
+        if point != base and not point.startswith(base.rstrip(b"/") + b"/"):
+            continue
+        try:
+            st = os.stat(point, follow_symlinks=False)
+        except OSError:  # gone since the table was read
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            roots.add((st.st_dev, st.st_ino))
+    return roots
+
+
+def _find_upload_leftovers(now: datetime) -> tuple[list[_FoundLeftover], list[str]]:
     """The leftovers of uploads below the pools directory, by path, and the folders that could not be read.
 
     It walks every folder from the pools directory down, also on the
-    filesystems mounted there (where most leftovers are), each one once (a
-    bind mount that shows a folder again is not walked twice), one
-    component at a time without following symbolic links. The trash and
-    the snapshots are left out. It only reads.
+    filesystems mounted there (where most leftovers are), one component at a
+    time without following symbolic links, at most _LEFTOVER_MAX_DEPTH
+    folders down. Each folder is walked once: a bind mount that shows a
+    folder again is not walked twice. For that it remembers only the roots
+    of mounts that it walked (_mount_roots), so its memory does not grow
+    with the number of folders; every folder only when the mount table
+    cannot be read. The trash and the snapshots are left out. It only reads.
     """
-    found: list[list[str]] = []
+    found: list[_FoundLeftover] = []
     problems: list[str] = []
+    roots = _mount_roots()
     seen: set[tuple[int, int]] = set()
     # The open folders from the pools directory down to the one walked, each with the subfolders left to walk.
     stack: list[tuple[list[str], int, Iterator[str]]] = []
@@ -2129,10 +2175,12 @@ def _find_upload_leftovers(now: datetime) -> tuple[list[list[str]], list[str]]:
         subfolders = []
         try:
             st = os.fstat(fd)
-            if (st.st_dev, st.st_ino) in seen:
-                os.close(fd)
-                return
-            seen.add((st.st_dev, st.st_ino))
+            folder = (st.st_dev, st.st_ino)
+            if roots is None or folder in roots:
+                if folder in seen:
+                    os.close(fd)
+                    return
+                seen.add(folder)
             with os.scandir(fd) as entries:
                 for entry in entries:
                     if entry.is_dir(follow_symlinks=False):
@@ -2144,11 +2192,17 @@ def _find_upload_leftovers(now: datetime) -> tuple[list[list[str]], list[str]]:
                         except FileNotFoundError:
                             continue
                         if _not_a_leftover(entry.name, entry_st, now) is None:
-                            found.append([*parts, entry.name])
+                            found.append(_FoundLeftover([*parts, entry.name], entry_st))
         except OSError as exc:
             os.close(fd)
             problems.append(_unreadable(parts, exc))
             return
+        if subfolders and len(parts) >= _LEFTOVER_MAX_DEPTH:
+            problems.append(
+                f"The folders in {_shown(_display_path(parts))} are too deep to check: "
+                f"more than {_LEFTOVER_MAX_DEPTH} folders below {_shown(_base_dir())}"
+            )
+            subfolders = []
         stack.append((parts, fd, iter(sorted(subfolders))))
 
     try:
@@ -2170,7 +2224,7 @@ def _find_upload_leftovers(now: datetime) -> tuple[list[list[str]], list[str]]:
     finally:
         for _, fd, _ in stack:
             os.close(fd)
-    found.sort(key=_display_path)
+    found.sort(key=lambda leftover: _display_path(leftover.parts))
     return found, problems
 
 
@@ -2195,97 +2249,90 @@ async def check_upload_leftovers() -> None:
     await asyncio.shield(task)
 
 
-def _upload_leftover(parts: list[str], now: datetime) -> UploadLeftover | None:
-    """The leftover ``parts`` that a check found, as the API lists it; None when it is not one any more."""
-    try:
-        dir_fd = _open_parent_or_none(parts)
-    except OSError as exc:
-        if exc.errno in _GONE:
-            return None
-        raise
-    if dir_fd is None:
-        return None
-    try:
-        st = _lstat_at(dir_fd, parts[-1])
-    finally:
-        os.close(dir_fd)
-    if st is None or _not_a_leftover(parts[-1], st, now) is not None:
-        return None
-    return UploadLeftover(
-        path=_display_path(parts),
-        size=st.st_size,
-        modified=datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(),
-    )
-
-
 def _list_upload_leftovers(checking: bool) -> UploadLeftovers:
-    """What GET /files/upload-leftovers answers: what the last check found that still is a leftover."""
-    now = _now()
+    """What GET /files/upload-leftovers answers: what the last check found, as it found it.
+
+    It does not look at the disks: a mount that hangs would hold a worker
+    thread for each visit to the File Browser. A removal looks at each file
+    again, and drops from this list the ones that are gone or changed.
+    """
     files = []
     problems = list(_leftovers.problems)
-    for parts in _leftovers.found:
-        path = _display_path(parts)
+    for leftover in _leftovers.found:
+        path = _display_path(leftover.parts)
         if _shown(path) != path:
             # JSON cannot carry it, and a path shown otherwise would not lead back to the file.
             problems.append(f"{_shown(path)} is not listed: its path is not UTF-8")
             continue
-        try:
-            leftover = _upload_leftover(parts, now)
-        except OSError as exc:
-            problems.append(_unreadable(parts[:-1], exc))
-            continue
-        if leftover is not None:
-            files.append(leftover)
+        modified = datetime.fromtimestamp(leftover.mtime, timezone.utc).isoformat()
+        files.append(UploadLeftover(path=path, size=leftover.size, modified=modified))
     checked = _leftovers.checked
     return UploadLeftovers(
         files=files, checked=checked.isoformat() if checked else None, checking=checking, problems=problems
     )
 
 
+def _same_file(a: os.stat_result, b: os.stat_result) -> bool:
+    """Whether the lstat() results ``a`` and ``b`` are of one file that was not written in between."""
+    return (a.st_dev, a.st_ino, a.st_mtime_ns) == (b.st_dev, b.st_ino, b.st_mtime_ns)
+
+
 def _remove_upload_leftovers(paths: list[str]) -> list[str]:
-    """Remove the leftovers ``paths`` for good; answers the ones that were there.
+    """Remove the leftovers ``paths`` for good; answers the ones it removed.
 
     Every path is checked before any file is removed: it names a leftover
-    (_not_a_leftover), or nothing any more.
+    (_not_a_leftover), or nothing any more. Each file is looked at again
+    right before its unlink, through the descriptor of the folder that was
+    checked: one replaced or written since is left alone. A file that is
+    gone or is not a leftover any more leaves the list of the last check,
+    also when the request is refused for it.
     """
     now = _now()
-    targets = []
-    for path in paths:
-        parts = _split(path)
-        if not parts or not _UPLOAD_TEMP_NAME.fullmatch(parts[-1]):
-            raise HTTPException(400, f"Not the hidden file of an upload: {_shown(path)}")
-        dir_fd = _open_parent_or_none(parts)
-        if dir_fd is None:
-            continue
-        try:
+    folders: dict[tuple[str, ...], int] = {}  # the descriptors of the folders checked
+    dropped: list[list[str]] = []  # what leaves the list of the last check
+    try:
+        targets = []
+        for path in paths:
+            parts = _split(path)
+            if not parts or not _UPLOAD_TEMP_NAME.fullmatch(parts[-1]):
+                raise HTTPException(400, f"Not the hidden file of an upload: {_shown(path)}")
+            dir_fd = folders.get(tuple(parts[:-1]))
+            if dir_fd is None:
+                dir_fd = _open_parent_or_none(parts)
+                if dir_fd is None:
+                    dropped.append(parts)
+                    continue
+                folders[tuple(parts[:-1])] = dir_fd
             st = _lstat_at(dir_fd, parts[-1])
-        finally:
-            os.close(dir_fd)
-        if st is None:
-            continue
-        problem = _not_a_leftover(parts[-1], st, now)
-        if problem is not None:
-            raise HTTPException(409, f"Nothing was removed: {_shown(path)} {problem}.")
-        targets.append((path, parts))
+            if st is None:
+                dropped.append(parts)
+                continue
+            problem = _not_a_leftover(parts[-1], st, now)
+            if problem is not None:
+                dropped.append(parts)
+                raise HTTPException(409, f"Nothing was removed: {_shown(path)} {problem}.")
+            targets.append((path, parts, dir_fd, st))
 
-    removed = []
-    for path, parts in targets:
-        try:
-            dir_fd = _open_dir(parts[:-1])
+        removed = []
+        for path, parts, dir_fd, st in targets:
             try:
-                os.unlink(parts[-1], dir_fd=dir_fd)
-            finally:
-                os.close(dir_fd)
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            if not removed:
-                raise
-            raise _done_before(exc, len(removed), len(paths), "removed") from exc
-        removed.append(path)
-    gone = [parts for _, parts in targets]
-    _leftovers.found = [parts for parts in _leftovers.found if parts not in gone]
-    return removed
+                current = _lstat_at(dir_fd, parts[-1])
+                if current is not None and _same_file(current, st):
+                    os.unlink(parts[-1], dir_fd=dir_fd)
+                    removed.append(path)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                if not removed:
+                    raise
+                raise _done_before(exc, len(removed), len(paths), "removed") from exc
+            dropped.append(parts)
+        return removed
+    finally:
+        for fd in folders.values():
+            os.close(fd)
+        if dropped:
+            _leftovers.found = [leftover for leftover in _leftovers.found if leftover.parts not in dropped]
 
 
 _upload_leftover_task: asyncio.Task | None = None
@@ -2460,10 +2507,11 @@ async def empty_trash(_: dict = Depends(verify_token)):
 async def list_upload_leftovers(_: dict = Depends(verify_token)):
     """The hidden files that uploads left when the supervisor stopped, as the last check found them (ADR-0354).
 
-    Each is looked at again: one that is gone, or was changed since, is left out.
+    Without looking at the disks again: a removal does, and drops from the
+    list the files that are gone or changed since.
     """
     task = _leftovers.task
-    return await _run(_list_upload_leftovers, task is not None and not task.done())
+    return _list_upload_leftovers(task is not None and not task.done())
 
 
 @router.post("/upload-leftovers/check", response_model=UploadLeftovers)
@@ -2480,6 +2528,7 @@ async def remove_upload_leftovers(paths: list[str], _: dict = Depends(verify_tok
     Every path is checked before any file is removed: a path that is not of
     a hidden upload file answers 400, and a file that is not a leftover
     (not a regular file, an upload's in progress, or changed in the last
-    10 minutes) 409.
+    10 minutes) 409. A file replaced or written between that check and its
+    unlink is left alone, and not among the removed.
     """
     return {"removed": await _run(_remove_upload_leftovers, paths)}

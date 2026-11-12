@@ -7,7 +7,8 @@ running a scheduled task, disabling, keeping and enabling a network interface, a
 host name or the time zone each write one entry of their action, with the administrator, the
 client address and browser of the request and the resource. Only a change that was made writes
 one, after it was made (ADR-0320): a refused or failed request and one that found nothing to change
-write none. A reboot's or shutdown's entry is in the log when the answer comes, a minute before
+write none, and an Enable that turned the interface on but could not restore all its saved
+addresses writes its entry as failed. A reboot's or shutdown's entry is in the log when the answer comes, a minute before
 logind acts. An entry that cannot be written, as on a full /data, is in the supervisor's log, and
 the change, which is made already, answers as it does otherwise (as a sign-in does, ADR-0251).
 
@@ -62,11 +63,11 @@ ZONES = "Etc/UTC\nEurope/Berlin\nEurope/Moscow\n"
 
 
 def entry(action: str, resource_type: str, resource_id: str | None = None, details: str | None = None,
-          severity: str = "info") -> dict:
+          severity: str = "info", success: bool = True) -> dict:
     """An entry of a change that the administrator made from CLIENT with BROWSER."""
     return {"action": action, "username": "admin", "ip_address": CLIENT, "user_agent": BROWSER,
             "resource_type": resource_type, "resource_id": resource_id, "details": details,
-            "severity": severity, "success": True}
+            "severity": severity, "success": success}
 
 
 def picked(found: dict) -> dict:
@@ -518,6 +519,23 @@ class TestNetwork:
 
         assert response.status_code == 200, response.text
         assert entries(audit_file) == []
+
+    def test_an_enable_that_restored_part_of_the_addresses_is_in_the_audit_log_as_failed(
+        self, network_host, audit_file
+    ):
+        # The interface came up, but not all of its saved addresses: it wrote no entry.
+        assert client().post(f"{API}/network/interfaces/eth1/down").status_code == 200
+        network_host.restore_fails = True
+
+        response = client().post(f"{API}/network/interfaces/eth1/up")
+
+        assert response.status_code == 500
+        assert network_host.links["eth1"]["enabled"] is True
+        assert entries(audit_file)[1:] == [
+            entry("network_config_changed", "network_interface", "eth1",
+                  "Enabled, but its saved addresses and routes could not all be restored: "
+                  "RTNETLINK answers: Invalid argument", success=False),
+        ]
 
     def test_a_refused_disable_writes_no_entry(self, network_host, audit_file):
         response = client().post(f"{API}/network/interfaces/wlan0/down")

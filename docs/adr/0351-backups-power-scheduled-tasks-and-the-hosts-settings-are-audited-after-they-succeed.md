@@ -36,14 +36,20 @@ through the features, ask no questions; I allow everything", in translation).
   | `PUT /network/hostname`, `PUT /system/timezone` | `settings_changed` | `host` | "Host name changed from unos to nas", "Time zone changed from Etc/UTC to Europe/Berlin" |
 
   Warning marks what makes the NAS unavailable or replaces its configuration and ends every
-  session; the rest is info. No passphrase, command or other value of a task is in an entry,
-  only the names of the fields that changed.
-- Real changes only (ADR-0320): a refused or failed request writes none, also one that changed
-  part of the state before it failed (an Enable whose saved addresses could not all be
-  restored); a restore that restored nothing, a cancel with nothing pending, Wake-on-LAN, a
-  host name or a time zone as they were, an Enable of an enabled interface and an edit that
-  changes no field write none. Such an edit and the deletion of a task that is not there no
-  longer rewrite the tasks file (ADR-0214).
+  session; the rest is info. A task edit's details hold the names of the fields that changed
+  and, for a rename, the old name; never the command or the passphrase.
+- Real changes only (ADR-0320): a refused or failed request writes none; a restore that
+  restored nothing, a cancel with nothing pending, Wake-on-LAN, a host name or a time zone as
+  they were, an Enable of an enabled interface and an edit that changes no field write none.
+  Such an edit and the deletion of a task that is not there no longer rewrite the tasks file
+  (ADR-0214).
+- An Enable that turned the interface on but could not restore all its saved addresses and
+  routes (exit status 2 of `unos-network-restore`) answers 500 and writes
+  `network_config_changed` with success false (**Failed** on the Audit Log page): "Enabled, but
+  its saved addresses and routes could not all be restored: <error>" (`PartlyEnabled` of
+  `supervisor/src/network/links.py`). The interface is on: an entry of a failure records that
+  part of the change, as ADR-0350 does for a pool create or removal that failed part way. The
+  agent chose this under the owner's delegation, as for ADR-0340.
 - A restore writes its entry in its own task, which a cancelled request does not stop
   (`_restore_and_reconcile` of `supervisor/src/backup/router.py`).
 - A reboot or shutdown writes its entry as soon as `shutdown -r +1` or `shutdown -h +1` was

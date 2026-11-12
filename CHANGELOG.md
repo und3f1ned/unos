@@ -42,16 +42,20 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed and uninstalled, with the administrator, the address, the browser
   and the resource. A refused or failed change, and one that changed nothing
   (a pool that was not there, a start of a running container, a stop of a
-  stopped one), writes no entry. When the entry cannot be written, the change
-  still answers and the supervisor's log has it.
+  stopped one), writes no entry. A change that failed part way writes its
+  entry as failed, with what was done: a pool create that formatted the
+  disks, a removal that unmounted the pool or dropped its fstab entry, an
+  uninstall that stopped the app. When the entry cannot be written, the
+  change still answers and the supervisor's log has it.
 - The audit log records backups created, uploaded, restored and deleted,
   reboots and shutdowns scheduled (as a warning, before the host goes down)
   and cancelled, scheduled tasks created, changed (naming the changed
-  fields), enabled, disabled, deleted and run by hand (the new action
+  fields and, for a rename, the old name), enabled, disabled, deleted and run by hand (the new action
   **Task run**), network interfaces disabled, kept disabled and enabled,
   Wake-on-LAN turned on or off, and a new host name or time zone, with the
-  administrator, the address and the browser. A change that changes nothing
-  writes no entry, and saving a scheduled task unchanged or deleting one that
+  administrator, the address and the browser. An enable that turned an
+  interface on without all its saved addresses writes its entry as failed. A
+  change that changes nothing writes no entry, and saving a scheduled task unchanged or deleting one that
   is not there no longer rewrites the tasks file. When the entry cannot be
   written, the change still answers and the supervisor's log has it.
 - Each audit entry carries the hash of the one before it. An entry edited in
@@ -108,8 +112,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   to be restored, and turning SMB on failed for the second account. A restored
   account no longer gets the SMB uid of a user deleted from this NAS, whose
   files on the pools keep it: UNOS records every uid it hands out with the
-  name it went to, also the uids of the host accounts that an uninstall kept,
-  and a restore keeps that record and gives a recorded uid only to that name;
+  name it went to, also the uids of the host accounts that an uninstall kept
+  and, at the first start, those of the accounts made before the record
+  existed. A restore keeps that record, adds the uids that the backup's own
+  record holds and this one lacks, and gives a recorded uid only to that name;
   another account must turn SMB on again and gets a new uid.
 - `smb.conf` and `/etc/exports` values are validated against directive
   injection, share and export paths must not pass through symlinks, and
@@ -748,6 +754,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- `POST /api/v1/containers/{id}/restart` restarted UNOS's own containers,
+  which stop and remove refuse; it now refuses them too (404).
 - Two-factor authentication set up in two tabs at once could be turned on
   with a secret that the user had not scanned, and so lock them out: a setup
   that stored its new secret while the other tab's code was being accepted,
@@ -972,7 +980,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   does not change.
 - Volumes: when the subvolume list failed right after a create with a quota,
   the request answered 500 without saying that the volume existed; it now
-  says `Volume '<name>' was created without its quota: ...`. When something
+  says `Volume '<name>' was created without its quota: ...`, also when btrfs
+  does not answer within 120 seconds. When something
   took the name between the check and the create, the request answered 500
   `Creating volume ... failed`; it now answers 409 and names what is there (a
   folder, a file, a symbolic link or a subvolume).
@@ -982,7 +991,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   volume's options, a folder of the pool bound elsewhere on the host, or a
   volume of a third-party driver. The folders are now resolved on the host
   (`realpath`) and compared by filesystem and folder in the host's mount
-  table.
+  table. `realpath` runs under the host's `timeout` and answers 500, with
+  nothing changed, after 10 seconds on a network or FUSE mount that does not
+  answer.
 - Disks whose names have more than four letters, such as `sdaaa` (the 703rd
   SCSI disk), `xvdaa` or `dasda`, were listed on the Storage and Health pages,
   but creating a pool on one, its SMART data and self-tests and SMART tasks
@@ -1088,11 +1099,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   supervisor stops in the middle of it, in a folder whose filesystem has no
   unnamed files (a vfat or exfat disk mounted there by hand, for example),
   was found only by looking for it. The supervisor now looks for such files
-  in every folder below the pools 10 minutes after each start, and when
+  in every folder below the pools, down to 64 folders deep, 10 minutes after
+  each start, and when
   asked (`POST /api/v1/files/upload-leftovers/check`); the File Browser
   shows a notice with their number and size, and **Remove…** lists them and
   removes them for good once you confirm. A file that an upload is still
-  writing, or that changed in the last 10 minutes, is never removed.
+  writing, or that changed in the last 10 minutes, is never removed; when one
+  is refused, the dialog lists the others.
 - Backup upload and restore answered HTTP 500 for some malformed archives (a
   member size of 2^63 bytes or more, broken GNU sparse data, a long chain of
   extended headers), such as "cannot fit 'int' into an offset-sized

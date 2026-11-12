@@ -11,6 +11,7 @@ UPLOAD_LEFTOVER_AGE seconds.
 """
 
 import asyncio
+import errno
 import importlib
 import logging
 import os
@@ -18,6 +19,7 @@ import socket
 import subprocess
 import sys
 import threading
+import tracemalloc
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,7 @@ from fastapi.testclient import TestClient
 from src.auth.utils import verify_token
 from src.main import app
 
+from .test_files_security import _MountTable
 from .test_upload_streaming import END, MIB, SUPERVISOR, _connect, _part_head, _wait_for
 
 files_router = importlib.import_module("src.files.router")
@@ -45,6 +48,7 @@ NOTHING_CHECKED = {"files": [], "checked": None, "checking": False, "problems": 
 def env(tmp_path, monkeypatch):
     """A pools directory with the pool data, a folder outside it, and an administrator's client.
 
+    The mount table (a stand-in for /proc/self/mountinfo) has the pool's mount.
     The check starts with nothing found, and the clock stands at NOW.
     """
     root = tmp_path.resolve()
@@ -53,12 +57,16 @@ def env(tmp_path, monkeypatch):
     pool.mkdir(parents=True)
     outside = root / "outside"
     outside.mkdir()
+    mounts = _MountTable(root / "proc" / "mountinfo", pool)
     monkeypatch.setattr(files_router, "BASE_PATH", str(base))
+    monkeypatch.setattr(files_router, "MOUNTINFO", str(mounts.path))
     monkeypatch.setattr(files_router, "_now", lambda: NOW)
     monkeypatch.setattr(files_router, "_leftovers", files_router._LeftoverCheck())
     app.dependency_overrides[verify_token] = lambda: ADMIN
     try:
-        yield SimpleNamespace(root=root, base=base, pool=pool, outside=outside, client=TestClient(app))
+        yield SimpleNamespace(
+            root=root, base=base, pool=pool, outside=outside, mounts=mounts, client=TestClient(app)
+        )
     finally:
         app.dependency_overrides.pop(verify_token, None)
 
@@ -171,15 +179,142 @@ def test_a_folder_that_cannot_be_read_is_reported_and_the_others_are_checked(env
     assert answer["problems"] == [f"{locked} could not be read: Permission denied"]
 
 
-def test_a_file_removed_since_the_check_is_no_longer_listed(env):
+def _bind_mount(env, monkeypatch, mount_point: Path, folder: Path) -> None:
+    """Make ``mount_point`` a bind mount of the pool's ``folder``, as far as the check can tell.
+
+    It is in the mount table, and it has the st_dev and st_ino of ``folder``,
+    as the root of a bind mount has on Linux. What it holds stays its own: the
+    test puts in it what ``folder`` holds.
+    """
+    env.mounts.mount(mount_point, f"/{folder.relative_to(env.pool)}")
+    real_stat, real_fstat = os.stat, os.fstat
+    source, root = real_stat(folder), real_stat(mount_point)
+
+    def seen_as_source(st):
+        return source if (st.st_dev, st.st_ino) == (root.st_dev, root.st_ino) else st
+
+    monkeypatch.setattr(os, "stat", lambda *args, **kwargs: seen_as_source(real_stat(*args, **kwargs)))
+    monkeypatch.setattr(os, "fstat", lambda fd: seen_as_source(real_fstat(fd)))
+
+
+def test_a_folder_that_a_bind_mount_shows_again_is_walked_once(env, monkeypatch):
+    photos = env.pool / "photos"
+    photos.mkdir()
+    again = env.pool / "backup" / "photos"
+    again.mkdir(parents=True)
+    for folder in (photos, again):
+        _hidden(folder)
+    _bind_mount(env, monkeypatch, again, photos)
+
+    # backup comes before photos: the walk meets the folder first through the bind mount.
+    assert _paths(_check(env)) == [str(again / ".unos-upload-0123456789abcdef")]
+
+
+def _folders(top: Path, width: int, levels: int) -> None:
+    """``width`` folders in ``top``, and as many in each of them, ``levels`` deep."""
+    if levels == 0:
+        return
+    for i in range(width):
+        folder = top / f"f{i:02}"
+        folder.mkdir()
+        _folders(folder, width, levels - 1)
+
+
+def _peak_memory_of_a_check() -> int:
+    tracemalloc.start()
+    try:
+        files_router._find_upload_leftovers(NOW)
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def test_the_check_remembers_only_the_roots_of_mounts_not_every_folder(env):
+    """Its memory does not grow with the number of folders.
+
+    Remembering every folder walked, to walk none twice, took about 120 MiB
+    per million folders (on a board with 1 GB of memory). Only a folder that
+    is the root of a mount can be met twice (a bind mount shows its folder
+    again), so only those are remembered.
+    """
+    _folders(env.pool, 15, 2)
+    before = _peak_memory_of_a_check()
+    # 15 times as many folders, one level deeper.
+    for top in env.pool.iterdir():
+        for folder in top.iterdir():
+            _folders(folder, 15, 1)
+
+    grown = _peak_memory_of_a_check() - before
+
+    assert grown < 64 * 1024, f"the check of 3,375 more folders took {grown} more bytes"
+
+
+def test_folders_too_deep_are_not_entered_and_are_reported(env):
+    """The walk keeps a descriptor open for each folder on its way down: 64 at most."""
+    chain = [env.pool]  # chain[i] is i + 1 folders below the pools directory
+    for _ in range(69):
+        chain.append(chain[-1] / "d")
+    chain[-1].mkdir(parents=True)
+    deepest = _hidden(chain[63])
+    _hidden(chain[64], "fedcba9876543210")
+
+    answer = _check(env)
+
+    assert _paths(answer) == [str(deepest)]
+    assert answer["problems"] == [
+        f"The folders in {chain[63]} are too deep to check: more than 64 folders below {env.base}"
+    ]
+
+
+def test_the_list_answers_what_the_check_found_without_looking_at_the_disks(env, monkeypatch):
+    """A mount that hangs holds no worker thread for each visit to the File Browser."""
+    usb = env.pool / "usb"
+    usb.mkdir()
+    found = [_hidden(env.pool, size=5), _hidden(usb, "fedcba9876543210", size=7)]
+    answer = _check(env)
+    assert _paths(answer) == [str(path) for path in found]
+    calls = []
+
+    def hangs(*args, **kwargs):
+        calls.append(args)
+        threading.Event().wait(2)  # as a folder on a network mount that does not answer
+        raise OSError(errno.EIO, os.strerror(errno.EIO))
+
+    # Every way to look at a file or a folder below the pools directory again.
+    for name in ("_open_dir", "_lstat_at", "_open_parent_or_none"):
+        monkeypatch.setattr(files_router, name, hangs)
+
+    assert env.client.get(API).json() == answer
+    assert calls == []
+
+
+def test_a_removal_drops_from_the_list_what_is_gone_or_changed_since_the_check(env):
     gone = _hidden(env.pool, "0123456789abcdef")
-    kept = _hidden(env.pool, "fedcba9876543210")
-    assert _paths(_check(env)) == [str(gone), str(kept)]
+    written = _hidden(env.pool, "1111111111111111")
+    other = _hidden(env.pool, "fedcba9876543210")
+    answer = _check(env)
+    assert _paths(answer) == [str(gone), str(written), str(other)]
 
     gone.unlink()
-    # Changed meanwhile (written again): no longer old enough to be a leftover.
-    os.utime(kept, (NOW.timestamp(), NOW.timestamp()))
+    # Written again meanwhile: no longer old enough to be a leftover.
+    os.utime(written, (NOW.timestamp(), NOW.timestamp()))
+    # The list answers what the check found, until a removal looks at the files again.
+    assert env.client.get(API).json() == answer
 
+    response = _remove(env, [gone, written, other])
+
+    assert (response.status_code, response.json()) == (
+        409,
+        {
+            "detail": f"Nothing was removed: {written} changed less than 10 minutes ago, so an upload may "
+            "still be writing it."
+        },
+    )
+    assert written.exists() and other.exists()
+    # The file that is gone and the one written again are no longer listed, so that the
+    # removal of the rest is not refused again.
+    assert _paths(env.client.get(API).json()) == [str(other)]
+    assert _remove(env, [other]).json() == {"removed": [str(other)]}
     assert env.client.get(API).json()["files"] == []
 
 
@@ -341,6 +476,40 @@ def test_remove_skips_a_file_that_is_already_gone(env):
     gone = env.pool / ".unos-upload-0123456789abcdef"
     response = _remove(env, [gone])
     assert (response.status_code, response.json()) == (200, {"removed": []})
+
+
+@pytest.mark.parametrize("change", ["replaced", "written"])
+def test_remove_leaves_a_file_that_changed_after_it_was_checked(env, monkeypatch, change):
+    """Each file is looked at again right before it is unlinked, in the folder that was checked."""
+    removed = _hidden(env.pool, "0123456789abcdef")
+    changed = _hidden(env.pool, "fedcba9876543210")
+    _check(env)
+    real_lstat_at = files_router._lstat_at
+    checks = []
+
+    def change_after_the_check(dir_fd, name):
+        st = real_lstat_at(dir_fd, name)
+        if name == changed.name and not checks:
+            checks.append(name)
+            if change == "replaced":  # another file, renamed over it
+                new = env.pool / "new"
+                new.write_bytes(b"new")
+                os.utime(new, (HOUR_AGO, HOUR_AGO))
+                os.replace(new, changed)
+            else:  # the same file, written again by someone else
+                with changed.open("ab") as file:
+                    file.write(b"more")
+                os.utime(changed, (HOUR_AGO - 60, HOUR_AGO - 60))
+        return st
+
+    monkeypatch.setattr(files_router, "_lstat_at", change_after_the_check)
+
+    response = _remove(env, [removed, changed])
+
+    assert (response.status_code, response.json()) == (200, {"removed": [str(removed)]})
+    assert checks and changed.read_bytes() == {"replaced": b"new", "written": b"xxxmore"}[change]
+    assert not removed.exists()
+    assert env.client.get(API).json()["files"] == []
 
 
 @pytest.mark.parametrize(

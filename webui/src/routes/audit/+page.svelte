@@ -437,9 +437,9 @@
 											</div>
 										{/if}
 										{#if resourceOf(entry)}
-											<div class="flex gap-1">
+											<div class="flex min-w-0 gap-1">
 												<dt class="text-content-muted">{$t('audit.field.resource')}</dt>
-												<dd class="text-content-secondary">{resourceOf(entry)}</dd>
+												<dd class="break-all text-content-secondary">{resourceOf(entry)}</dd>
 											</div>
 										{/if}
 										{#if entry.user_agent}

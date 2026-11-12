@@ -1514,7 +1514,8 @@ async def _has_access_rows(db: AsyncSession, user_id: int) -> bool:
 
 async def begin_user_removal(db: AsyncSession, user: User, row: models.SmbAccount | None) -> UserRemoval | None:
     """Before the user is deleted: revoke, then delete the access and account rows
-    in the caller's transaction. None when the user had neither an account row nor access.
+    in the caller's transaction, which records the row's uid in smb_uids when it lacks it.
+    None when the user had neither an account row nor access.
 
     The caller deletes the user and commits inside revocation_guard(), which covers
     every write after the revoke step."""
@@ -1537,6 +1538,10 @@ async def begin_user_removal(db: AsyncSession, user: User, row: models.SmbAccoun
         if had_access:
             await service.delete_access_of_user(db, removal.user_id)
         if row is not None:
+            # Its files on the pools keep the uid: smb_uids keeps it under the row's name, when a row
+            # from before the table existed left it unrecorded (ADR-0353).
+            if _valid_uid(row.uid) and constants.is_valid_linux_name(row.linux_name):
+                await _record_uids(db, [(row.uid, row.linux_name)])  # type: ignore[list-item]
             await db.delete(row)
     return removal
 
@@ -1820,8 +1825,9 @@ async def _uid_floor(db: AsyncSession, uids: Iterable[object]) -> str | None:
 
 
 async def _record_uids(db: AsyncSession, pairs: list[tuple[int, str]]) -> bool:
-    """Step 5' of reconcile_accounts (ADR-0353): smb_uids gets each (uid, name) whose uid it lacks,
-    the first name for a uid; a uid it has keeps its name. True when a row was written."""
+    """smb_uids gets each (uid, name) whose uid it lacks, the first name for a uid; a uid it has
+    keeps its name (ADR-0353). Step 5' of reconcile_accounts and a user's deletion call it, in the
+    caller's transaction. True when a row was written."""
     if not pairs:
         return False
     table = models.SmbUid.__table__
@@ -1999,15 +2005,18 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
         db_changed = True
         result.changes.append(floor)
 
-    # 5'. A stale marked host account, which step 6 removes, keeps its uid in smb_uids under its
-    # name: its files on the pools keep that uid (ADR-0353). Committed with the rules above, before
-    # the account is gone; also for one that step 6 finds busy.
+    # 5'. smb_uids gets the uids it lacks (ADR-0353). First each stale marked host account, which
+    # step 6 removes: its files on the pools keep its uid, so its name comes first for that uid.
+    # Then each row with a valid name and uid: a row from before the table existed is recorded at
+    # the first start, and a later start finds them all and writes nothing. Committed with the
+    # rules above, before an account is gone; also for one that step 6 finds busy.
     row_keys = _row_keys(rows)
     stale = [
         (account.uid, account.name) for account in sorted(accounts.values(), key=lambda a: a.name)
         if account.ours and (account.name, account.uid) not in row_keys and constants.is_valid_linux_name(account.name)
     ]
-    if await _record_uids(db, stale):
+    held = [(row.uid, row.linux_name) for row in rows if (row.linux_name, row.uid) in row_keys]
+    if await _record_uids(db, stale + held):  # type: ignore[arg-type]
         db_changed = True
 
     # The database rules are stored before the host actions, so that no write
@@ -2259,8 +2268,15 @@ def prepare_restored_accounts(
     # smb_uids is this NAS's record (ADR-0353): the backup's table goes, whatever its layout, and
     # the model's table holds the live rows, the uids of the live accounts (this restore may delete
     # them) and those of the restored rows after the rules above, which are this NAS's from now on.
+    # Last come the backup's own rows that it can read, for the uids still missing: the old
+    # installation's backup, restored after a reinstall, brings the uids of its deleted users. They
+    # can only reserve more uids; a uid named above keeps that name.
     restored = conn.execute("SELECT uid, linux_name FROM smb_accounts").fetchall()
-    for uid, name in [(p.uid, p.linux_name) for p in snapshot.accounts] + restored:
+    try:
+        backup_record = conn.execute("SELECT uid, linux_name FROM smb_uids").fetchall()
+    except sqlite3.Error:
+        backup_record = []  # no table, or another layout
+    for uid, name in [(p.uid, p.linux_name) for p in snapshot.accounts] + restored + backup_record:
         if _valid_uid(uid) and constants.is_valid_linux_name(name):
             handed_out.setdefault(uid, name)
     conn.execute("DROP TABLE IF EXISTS smb_uids")

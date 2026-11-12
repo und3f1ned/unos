@@ -4,10 +4,10 @@ from typing import Any
 
 from docker.errors import APIError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import verify_token
-from ..storage.router import audit_change
 from .schemas import ContainerInfo, ContainerCreate, ContainerLogs, ImageInfo
 from . import docker as docker_ops
 
@@ -128,7 +128,8 @@ async def start_container(container_id: str, request: Request, user: User = Depe
         raise HTTPException(status_code=500, detail=str(e))
     if started:
         await audit_change(
-            request, user, AuditAction.CONTAINER_STARTED, resource_type="container", resource_id=info.name,
+            AuditAction.CONTAINER_STARTED, request, user.username, resource_type="container",
+            resource_id=info.name,
             details=f"Started the container {info.name}",
         )
     return info
@@ -147,7 +148,8 @@ async def stop_container(container_id: str, request: Request, user: User = Depen
         raise HTTPException(status_code=500, detail=str(e))
     if stopped:
         await audit_change(
-            request, user, AuditAction.CONTAINER_STOPPED, resource_type="container", resource_id=info.name,
+            AuditAction.CONTAINER_STOPPED, request, user.username, resource_type="container",
+            resource_id=info.name,
             details=f"Stopped the container {info.name}",
         )
     return info
@@ -157,7 +159,8 @@ async def stop_container(container_id: str, request: Request, user: User = Depen
 async def restart_container(container_id: str, request: Request, user: User = Depends(verify_token)):
     """Restart a container (409 for a UNOS app whose data folders are not usable).
 
-    It starts the container again: the audit log gets container_started (ADR-0350).
+    A system container is refused as a stop or a removal of it is (404). It starts the
+    container again: the audit log gets container_started (ADR-0350).
     """
     try:
         info = await _docker(docker_ops.restart_container, container_id)
@@ -168,7 +171,7 @@ async def restart_container(container_id: str, request: Request, user: User = De
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     await audit_change(
-        request, user, AuditAction.CONTAINER_STARTED, resource_type="container", resource_id=info.name,
+        AuditAction.CONTAINER_STARTED, request, user.username, resource_type="container", resource_id=info.name,
         details=f"Restarted the container {info.name}",
     )
     return info
@@ -188,7 +191,7 @@ async def remove_container(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     await audit_change(
-        request, user, AuditAction.CONTAINER_REMOVED, resource_type="container", resource_id=name,
+        AuditAction.CONTAINER_REMOVED, request, user.username, resource_type="container", resource_id=name,
         details=f"Removed the container {name}" + (" (forced)" if force else ""),
         severity=AuditSeverity.WARNING,
     )

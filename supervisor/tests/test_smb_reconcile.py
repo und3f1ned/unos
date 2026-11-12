@@ -885,12 +885,27 @@ class TestNextUid:
             release.set()
             thread.join(10)
 
-        assert during == [{70007: "dave", 70100: "old"}]
+        assert during == [{70000: "alice", 70001: "bob", 70007: "dave", 70100: "old"}]
         assert "dave" not in world.fake.passwd and world.fake.passwd["old"].uid == 70100
         assert commits["n"] == 1
         assert "Removed the stale host account old (uid 70100)" in reconcile(world).changes  # no longer busy
         assert commits["n"] == 1  # already recorded: nothing to write
-        assert recorded(world.path) == {70007: "dave", 70100: "old"}
+        assert recorded(world.path) == {70000: "alice", 70001: "bob", 70007: "dave", 70100: "old"}
+
+    def test_the_rows_are_recorded_once(self, world, commits):
+        """ADR-0353: rows from before smb_uids existed (the dev device) have uids that no record
+        names. The first start records each row's uid under its name, silently and in one commit;
+        a later start finds them all and writes nothing (ADR-0082, ADR-0214)."""
+        consistent(world)
+        raw(world, "DELETE FROM smb_uids")
+
+        first = reconcile(world)
+        second = reconcile(world)
+
+        assert first == second == interfaces.ReconcileResult()
+        assert recorded(world.path) == {70000: "alice", 70001: "bob"}
+        assert commits["n"] == 1
+        assert world.fake.mutating_calls() == []
 
     def test_a_missing_state_row(self, world):
         world.make_active("alice", 70000, ALICE_PW)

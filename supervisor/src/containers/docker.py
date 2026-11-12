@@ -272,10 +272,15 @@ def stop_container(container_id: str) -> tuple[ContainerInfo, bool]:
 
 
 def restart_container(container_id: str) -> ContainerInfo:
-    """Restart a container; a UNOS app only if its data folders are usable."""
+    """Restart a container; a UNOS app only if its data folders are usable. Not a system container."""
     client = get_client()
     try:
         container = client.containers.get(container_id)
+
+        # As stop and remove: UNOS's own containers are not restarted from the Containers page.
+        if is_system_container(container.name):
+            raise ValueError("Cannot restart system container")
+
         _check_app_start(container)
         container.restart()
         container.reload()

@@ -957,6 +957,40 @@ class TestCreateRaces:
         assert host.subvols.limits == {}
         assert _btrfs_calls(host, "subvolume", "delete") == []
 
+    @pytest.mark.parametrize("command", ["list", "check"])
+    def test_btrfs_that_does_not_answer_after_the_create_says_that_the_volume_exists_without_its_quota(
+        self, api, host, command
+    ):
+        # It answered 500 with the text of subprocess.TimeoutExpired, and the volume stayed
+        # without a word about it.
+        host.subvols.quotas.add(DATA_UUID)
+
+        def hangs(cmd):
+            if command == "list" and cmd[1:3] == ["subvolume", "list"]:
+                raise subprocess.TimeoutExpired(cmd, pools.VOLUME_TIMEOUT)
+
+        self.after_the_create(host, hangs)
+        if command == "check":
+            original = host._dispatch
+
+            def dispatch(cmd, input):
+                if cmd[3:4] == ["unos-volume-paths"]:
+                    raise subprocess.TimeoutExpired(cmd, pools.VOLUME_TIMEOUT)
+                return original(cmd, input)
+
+            host._dispatch = dispatch
+
+        response = api.post(f"{API}/data/volumes", json={"name": "documents", "quota": GIB})
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == (
+            "Volume 'documents' was created without its quota: btrfs did not answer within "
+            f"{pools.VOLUME_TIMEOUT} seconds. Delete it and create it again."
+        )
+        assert host.subvols.paths(DATA_UUID) == ["documents"]
+        assert host.subvols.limits == {}
+        assert _btrfs_calls(host, "subvolume", "delete") == []
+
     @pytest.mark.parametrize(
         "made,named",
         [("folder", "a folder"), ("file", "a file"), ("link", "a symbolic link"), ("subvolume", "a subvolume")],
@@ -1737,6 +1771,34 @@ class TestVolumeInUse:
         assert response.status_code == 409, response.text
         assert response.json()["detail"] == (
             "Volume 'documents' is used by running containers (paperless). Stop or remove them and try again."
+        )
+        self.assert_kept(documents)
+
+    # storage.edge-cases, step 4: realpath runs on the host over every folder that a container
+    # mounts. On a network or FUSE mount that hangs it did not return: subprocess.TimeoutExpired
+    # answered 500 with its own text, and a realpath stuck on the host was left behind.
+    @pytest.mark.parametrize("hang", ["killed by timeout", "no answer"])
+    def test_a_realpath_that_does_not_answer_keeps_the_volume(self, api, documents, monkeypatch, hang):
+        host = documents
+        host.docker.add("paperless", sources=["/srv/nfs/paperless"])
+        if hang == "killed by timeout":
+            host.fail[("timeout", "--signal=KILL", "10", "realpath")] = (137, "")
+        else:
+            real = host_module.run_on_host
+
+            def hangs(cmd, **kwargs):
+                if "realpath" in cmd:
+                    raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+                return real(cmd, **kwargs)
+
+            monkeypatch.setattr(host_module, "run_on_host", hangs)
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == (
+            "Volume 'documents' was not deleted: realpath did not resolve the folders that containers "
+            "mount within 10 seconds: a network or FUSE mount of the host may not answer"
         )
         self.assert_kept(documents)
 

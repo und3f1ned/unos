@@ -1460,6 +1460,63 @@ test.describe('File Browser operations', () => {
     expect(existsSync(young)).toBe(true);
   });
 
+  // files.upload-edge-cases (ADR-0354): a file written again after the check is refused, and
+  // Remove for good is not refused again for it.
+  test('after a refusal, the dialog lists the leftovers that are still to remove', async ({
+    authenticatedPage: page,
+  }) => {
+    test.skip(!process.env.E2E_STANDIN_STATE, ONLY_THE_STAND_IN_FOLDERS);
+    const dir = scratch!.path;
+    const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const leftover = () => {
+      const path = join(dir, `.unos-upload-${randomBytes(8).toString('hex')}`);
+      writeFileSync(path, randomBytes(1024));
+      utimesSync(path, anHourAgo, anHourAgo);
+      return path;
+    };
+    const check = async () => {
+      const checked = await page.request.post('/api/v1/files/upload-leftovers/check', { headers: auth() });
+      expect(checked.ok(), `check: HTTP ${checked.status()}`).toBeTruthy();
+    };
+    const refusal = (path: string) =>
+      `Nothing was removed: ${path} changed less than 10 minutes ago, so an upload may still be writing it.`;
+    const [written, other] = [leftover(), leftover()].sort();
+    await check();
+
+    await page.goto('/files');
+    const notice = page.getByRole('region', { name: 'Leftovers of interrupted uploads' });
+    const dialog = page.getByRole('dialog');
+    await notice.getByRole('button', { name: 'Remove…', exact: true }).click();
+    await expect(dialog).toHaveAccessibleName('Remove 2 leftovers of uploads');
+    // Written again while the dialog is open: an upload may be writing it.
+    utimesSync(written, new Date(), new Date());
+    await dialog.getByRole('button', { name: 'Remove for good', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toContainText(refusal(written));
+    await expect(dialog).toHaveAccessibleName('Remove 1 leftover of an upload');
+    await expect(dialog.getByRole('listitem')).toHaveCount(1);
+    await expect(dialog.getByRole('listitem')).toContainText(other);
+    expect(existsSync(other) && existsSync(written)).toBe(true);
+
+    await dialog.getByRole('button', { name: 'Remove for good', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(notice).toHaveCount(0);
+    expect(existsSync(other)).toBe(false);
+    expect(existsSync(written)).toBe(true);
+
+    // With none left after a refusal, the dialog closes and the reason stays above the list.
+    const last = leftover();
+    await check();
+    await page.reload();
+    await notice.getByRole('button', { name: 'Remove…', exact: true }).click();
+    await expect(dialog).toHaveAccessibleName('Remove 1 leftover of an upload');
+    utimesSync(last, new Date(), new Date());
+    await dialog.getByRole('button', { name: 'Remove for good', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole('alert')).toContainText(`Could not remove: ${refusal(last)}`);
+    await expect(notice).toHaveCount(0);
+    expect(existsSync(last)).toBe(true);
+  });
+
   test('an upload with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {
     await openScratch(page);
     const sent: string[] = [];

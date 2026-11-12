@@ -21,7 +21,8 @@ translation), as for ADR-0340.
 
 - After the change was made, each of these writes its action with the user as `username`, the
   client address and browser of the request and the resource (`audit_change` of
-  `supervisor/src/storage/router.py`, which the snapshots, containers and apps routers use):
+  `supervisor/src/audit/changes.py`, which the storage, snapshots, containers and apps routers
+  use, as do those of ADR-0351):
 
   | Request | Action | Resource | Details | Severity |
   | --- | --- | --- | --- | --- |
@@ -40,35 +41,55 @@ translation), as for ADR-0340.
   | `POST /apps/installed/{id}/start`, `.../restart`, `.../stop` | `container_started`, `container_stopped` | `container` name | "Started", "Restarted" or "Stopped the app jellyfin" | info |
 
   A snapshot's path is `<subvolume>/.snapshots/<name>`. A restart starts the container again
-  and writes `container_started`; no action of its own is added. The Audit Log page names the
+  and writes `container_started`; no action of its own is added. UNOS's own containers
+  (`is_system_container` of `supervisor/src/containers/docker.py`) are refused for a restart as
+  for a stop and a removal, with 404, and write nothing. The Audit Log page names the
   new resource types `pool`, `volume`, `snapshot`, `container` and `app` (`RESOURCE_TYPES` of
   `webui/src/routes/audit/+page.svelte`, ADR-0298).
-- Real changes only (ADR-0320): a refused or failed request writes nothing. A removal of a pool
-  writes its entry only when it unmounted the pool, dropped its fstab entry or removed its
-  mountpoint (`delete_pool` of `supervisor/src/storage/pools.py` says whether); a name that is
-  no pool answers 200 as before and writes nothing. Docker starts a running container and stops
-  one that does not run without an error and without a change, and docker-py does not pass on
-  its 304: a start writes its entry only when the container was not running before it
-  (`RUNNING_STATES` of `supervisor/src/containers/docker.py`: running, restarting, paused), a
-  stop only when it was.
+- Real changes only (ADR-0320): a refused request, and a failed one that changed nothing,
+  write nothing. A removal of a pool writes its entry only when it unmounted the pool, dropped
+  its fstab entry or removed its mountpoint (`delete_pool` of `supervisor/src/storage/pools.py`
+  says whether); a name that is no pool answers 200 as before and writes nothing. Docker
+  starts a running container and stops one that does not run without an error and without a
+  change, and docker-py does not pass on its 304: a start writes its entry only when the
+  container was not running before it (`RUNNING_STATES` of
+  `supervisor/src/containers/docker.py`: running, restarting, paused), a stop only when it was.
+- A request that made part of its change and then failed writes its action with success false
+  (**Failed** on the Audit Log page), the action's severity, and details that say what was done
+  and then the error that the request answers:
+
+  | Request | Action | Details |
+  | --- | --- | --- |
+  | Create Pool, when a step after `mkfs.btrfs` fails (`PoolFormattedError`) | `pool_created` | "Formatted /dev/sdb for the pool tank (single); then: Mounting /mnt/pools/tank failed: ..." |
+  | Remove Pool, when a step fails after the pool was unmounted or its fstab entry dropped (`PoolPartlyRemovedError`) | `pool_deleted` | "Unmounted the pool tank; then: ...", "Unmounted the pool tank and dropped its fstab entry; then: ...", "Dropped the fstab entry of the pool tank; then: ..." |
+  | Uninstall, when it stopped the running app and could not remove it | `container_stopped` | "Stopped the app jellyfin; then: Failed to remove: ..." |
+
+  A Create Pool that fails after `mkfs.btrfs` answers 500 with the error of the step that
+  failed, also where that step alone would answer 409: the disks are formatted. A Remove Pool
+  answers as its failed step does: 409 when the pool, unmounted, is still in use elsewhere and
+  mounting it again failed, 500 otherwise.
 - An entry that cannot be written, such as on a full `/data`, is in the supervisor's log
   (`log_action`, ADR-0251) and the request answers what it did: the change is made, and a 500
   would tell the administrator it was not. This extends ADR-0343's rule to these requests;
   ADR-0251's consequence that other audited actions answer 500 when their entry cannot be
   written holds for the rest.
-- Tests: `supervisor/tests/test_audit_storage_and_apps.py`.
+- Tests: `supervisor/tests/test_audit_storage_and_apps.py`; what `delete_pool` answers in
+  `test_pool_persistence.py`.
 
 ## Consequences
 
 - The audit log shows who changed the storage, the snapshots, the containers and the apps,
   from where, and the **Action** filter of the Audit Log page finds these entries.
 - Each such change appends a line of a few hundred bytes to the audit log on the system disk
-  (ADR-0214, ADR-0224); a start or stop that changed nothing appends none.
+  (ADR-0214, ADR-0224); a start or stop that changed nothing appends none. A change that failed
+  part way is in the log as failed, so that formatted disks or an unmounted pool have an entry.
 - Two starts (or stops) of one container at the same moment can both find it stopped (or
   running) and both write an entry, though Docker made only one change. Mounting, unmounting
   and importing a pool, creating a container on the Containers page and pulling or removing an
-  image have no action and are not audited; scheduled snapshots, the startup of apps on a mounted
-  pool and other changes the supervisor makes on its own are not audited either.
+  image have no action and are not audited; the snapshots that scheduled tasks take and clean
+  up, the apps started when a pool is mounted and other changes the supervisor makes on its own
+  are not audited either. An install whose container does not start writes no entry: the
+  container is removed again, but the image it pulled and the folders it made on the pool stay.
 
 ## Considered options
 

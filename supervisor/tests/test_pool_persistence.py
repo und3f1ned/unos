@@ -1259,7 +1259,7 @@ class TestUnmountAndDelete:
         assert mounted.changes.count(["umount", "/mnt/pools/data"]) == 2
 
     def test_delete_forgets_the_pool_but_keeps_the_data(self, mounted):
-        pools.delete_pool("data")
+        assert pools.delete_pool("data") is True
 
         assert mounted.changes == [
             ["umount", "/mnt/pools/data"],
@@ -1291,6 +1291,23 @@ class TestUnmountAndDelete:
         with pytest.raises(pools.PoolBusyError):
             pools.delete_pool("data")
         assert mounted.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+
+    # delete_pool says whether it changed anything: the endpoint writes pool_deleted only then
+    # (ADR-0350).
+    @pytest.mark.parametrize("left", ["fstab entry", "mountpoint"])
+    def test_delete_of_a_pool_that_is_not_mounted_says_that_it_removed_what_was_left(self, fake_host, left):
+        if left == "fstab entry":
+            fake_host.files["/etc/fstab"] = BASE_FSTAB + marker("gone") + entry("gone", GONE_UUID)
+        else:
+            fake_host.dirs.add("/mnt/pools/gone")
+
+        assert pools.delete_pool("gone") is True
+        assert fake_host.fstab == BASE_FSTAB
+        assert "/mnt/pools/gone" not in fake_host.dirs
+
+    def test_delete_of_a_name_that_is_no_pool_says_that_it_changed_nothing(self, fake_host):
+        assert pools.delete_pool("gone") is False
+        assert fake_host.changes == []
 
     def test_delete_cleans_up_a_pool_whose_disks_are_gone(self, fake_host):
         fake_host.files["/etc/fstab"] = BASE_FSTAB + marker("gone") + entry("gone", GONE_UUID)
@@ -1351,6 +1368,33 @@ class TestUnmountAndDelete:
             mounted.add_mount("/srv/sync", "/dev/sda[/sync]", "btrfs", DATA_UUID)
             mounted.docker.add("syncthing", sources=["/srv/sync"])
         with pytest.raises(pools.PoolBusyError, match=r"running containers \(syncthing\)"):
+            operation("data")
+        assert mounted.changes == []
+        self.assert_still_mounted_and_persistent(mounted)
+
+    # storage.edge-cases, step 4: realpath runs on the host over every folder that a running
+    # container mounts. On a network or FUSE mount that hangs it did not return: the pools' lock
+    # stayed held until subprocess.TimeoutExpired, which answered with its own text.
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    @pytest.mark.parametrize("hang", ["killed by timeout", "no answer"])
+    def test_a_realpath_that_does_not_answer_leaves_the_pool_mounted(self, mounted, monkeypatch, operation, hang):
+        mounted.docker.add("syncthing", sources=["/srv/nfs/sync"])
+        if hang == "killed by timeout":
+            mounted.fail[("timeout", "--signal=KILL", "10", "realpath")] = (137, "")
+        else:
+            real = host_module.run_on_host
+
+            def hangs(cmd, **kwargs):
+                if "realpath" in cmd:
+                    raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+                return real(cmd, **kwargs)
+
+            monkeypatch.setattr(host_module, "run_on_host", hangs)
+
+        with pytest.raises(RuntimeError, match=re.escape(
+            "Pool 'data' was left mounted: realpath did not resolve the folders that containers mount "
+            "within 10 seconds: a network or FUSE mount of the host may not answer"
+        )):
             operation("data")
         assert mounted.changes == []
         self.assert_still_mounted_and_persistent(mounted)

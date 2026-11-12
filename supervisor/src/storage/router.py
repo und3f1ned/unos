@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from ..audit.router import log_action
+from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import verify_token
@@ -41,6 +41,8 @@ router = APIRouter(prefix="/storage", tags=["storage"])
 
 def _http_error(exc: Exception) -> HTTPException:
     """Map storage errors to HTTP errors (404 / 409 / 400 / 503 / 500)."""
+    if isinstance(exc, pools.PoolPartlyRemovedError):
+        return _http_error(exc.cause)
     if isinstance(exc, pools.PoolNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, pools.PoolConflictError):
@@ -50,35 +52,6 @@ def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
     return HTTPException(status_code=500, detail=sanitize_error_message(exc))
-
-
-async def audit_change(
-    request: Request,
-    user: User,
-    action: AuditAction,
-    *,
-    resource_type: str,
-    resource_id: str,
-    details: str,
-    severity: AuditSeverity = AuditSeverity.INFO,
-) -> None:
-    """The audit entry of a change of a pool, volume, snapshot, container or app, after the change
-    was made (ADR-0350): by the user, from the client address and browser of the request, about
-    the resource. Call it for a real change only (ADR-0320). One that cannot be written, such as
-    on a full /data, is in the supervisor's log (log_action), and the request still answers what
-    it did: the change is made, and a 500 would say it was not (ADR-0251, ADR-0343)."""
-    try:
-        await log_action(
-            action,
-            request=request,
-            username=user.username,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            details=details,
-            severity=severity,
-        )
-    except OSError:
-        pass  # log_action reported the entry
 
 
 async def _call(func: Callable[..., T], *args: Any) -> T:
@@ -148,15 +121,26 @@ async def create_pool_endpoint(request: Request, pool: PoolCreate, user: User = 
     ``confirm_name != name`` and ``force`` without a ``device_identities``
     entry for every selected device. Then smb.conf is applied again: SMB
     shares that a forgotten pool of this name kept are served (ADR-0248).
-    The audit log gets pool_created (ADR-0350).
+    The audit log gets pool_created; as failed, with the formatted devices,
+    when a step after mkfs fails, which answers 500 (ADR-0350).
     """
     validate_pool_name(pool.name)
     if pool.confirm_name != pool.name:
         raise HTTPException(status_code=400, detail="confirm_name must match the pool name")
 
-    info = await _change_pools(pools.create_pool, pool)
+    try:
+        info = await _change_pools(pools.create_pool, pool)
+    except HTTPException as exc:
+        if isinstance(exc.__cause__, pools.PoolFormattedError):
+            await audit_change(
+                AuditAction.POOL_CREATED, request, user.username, resource_type="pool", resource_id=pool.name,
+                details=f"Formatted {', '.join(pool.devices)} for the pool {pool.name} ({pool.raid_level}); "
+                f"then: {exc.detail}",
+                success=False,
+            )
+        raise
     await audit_change(
-        request, user, AuditAction.POOL_CREATED, resource_type="pool", resource_id=info.name,
+        AuditAction.POOL_CREATED, request, user.username, resource_type="pool", resource_id=info.name,
         details=f"Created the pool {info.name} ({pool.raid_level}) on {', '.join(pool.devices)}",
     )
     return info
@@ -179,14 +163,26 @@ async def delete_pool_endpoint(request: Request, name: str, user: User = Depends
     The disks are not wiped; the filesystem is listed again as an unmounted
     pool and can be mounted later. Refused with 409 or 503 as an unmount is. As
     after an unmount, its SMB shares stop being served (ADR-0248). The audit log
-    gets pool_deleted when there was something to remove (ADR-0350).
+    gets pool_deleted when there was something to remove; as failed, with what
+    was done, when a step fails after the pool was unmounted or its fstab
+    entry dropped (ADR-0350).
     """
     # Validate pool name
     validated_name = validate_pool_name(name)
 
-    if await _change_pools(pools.delete_pool, validated_name):
+    try:
+        changed = await _change_pools(pools.delete_pool, validated_name)
+    except HTTPException as exc:
+        if isinstance(exc.__cause__, pools.PoolPartlyRemovedError):
+            await audit_change(
+                AuditAction.POOL_DELETED, request, user.username, resource_type="pool",
+                resource_id=validated_name, details=f"{exc.__cause__.done}; then: {exc.detail}",
+                severity=AuditSeverity.WARNING, success=False,
+            )
+        raise
+    if changed:
         await audit_change(
-            request, user, AuditAction.POOL_DELETED, resource_type="pool", resource_id=validated_name,
+            AuditAction.POOL_DELETED, request, user.username, resource_type="pool", resource_id=validated_name,
             details=f"Removed the pool {validated_name}; its disks and their data were kept",
             severity=AuditSeverity.WARNING,
         )
@@ -307,7 +303,8 @@ async def create_volume_endpoint(
     info = await _call(pools.create_volume, validated_pool, volume)
     quota = "" if info.quota is None else f", with a quota of {info.quota} bytes"
     await audit_change(
-        request, user, AuditAction.VOLUME_CREATED, resource_type="volume", resource_id=f"{info.pool}/{info.name}",
+        AuditAction.VOLUME_CREATED, request, user.username, resource_type="volume",
+        resource_id=f"{info.pool}/{info.name}",
         details=f"Created the volume {info.name} in the pool {info.pool}{quota}",
     )
     return info
@@ -331,7 +328,7 @@ async def delete_volume_endpoint(
 
     await _call(pools.delete_volume, validated_pool, validated_volume)
     await audit_change(
-        request, user, AuditAction.VOLUME_DELETED, resource_type="volume",
+        AuditAction.VOLUME_DELETED, request, user.username, resource_type="volume",
         resource_id=f"{validated_pool}/{validated_volume}",
         details=f"Deleted the volume {validated_volume} of the pool {validated_pool} with everything in it",
         severity=AuditSeverity.WARNING,

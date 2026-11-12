@@ -306,9 +306,13 @@ For each pool, you can:
   on the pool, which UNOS does not do itself: run
   `btrfs quota enable /mnt/pools/<pool>` on the host. Without them the volume
   is not created, the dialog says so, and you can create it without a quota.
-  When the quota cannot be set, the new volume is removed again; when UNOS
-  cannot tell which subvolume is the new one, it keeps it and the message
-  says that it was created without its quota: delete it and create it again.
+  When the quota cannot be set, the new volume is removed again. When UNOS
+  cannot tell which subvolume is the new one, or btrfs does not answer, it
+  keeps it and the message says that it was created without its quota:
+  delete it and create it again. When an app or a user renames or replaces
+  the new volume right after it is created, UNOS sets no quota and removes
+  nothing: the message says that the new volume was not removed, and it
+  stays, without its quota, under the name it has now.
   When an app or a user gives something else the volume's name while it is
   created, nothing is created and the message names what is there.
   Snapshots of the pool, manual or scheduled, do not include the files in its
@@ -318,7 +322,9 @@ For each pool, you can:
   Deleting is refused while a running app or container, an SMB share or an
   NFS export uses the volume or a folder in it (a container also through a
   symbolic link or another mount on the host), and while the volume holds
-  snapshots or other subvolumes, which must be deleted first. A pool mounted
+  snapshots or other subvolumes, which must be deleted first. When a folder
+  that a running container mounts is on a network or FUSE mount that does
+  not answer, the delete stops after 10 seconds and says so. A pool mounted
   read-only lists its volumes but cannot create or delete them.
 - **Balance** - Redistribute data across devices
 - **Remove pool** (the trash button) - After **Continue**, type the pool's
@@ -832,18 +838,20 @@ mounted there by hand without unnamed files) had received when UNOS stopped
 in the middle of it. It holds only part of the file, and nothing uses it.
 
 - UNOS looks for such files in every folder of the pools and of the disks
-  mounted in them, 10 minutes after each start; it leaves out the trash and
-  the snapshots. Scripts can ask for a check at once with
-  `POST /api/v1/files/upload-leftovers/check`, for example after mounting a
-  disk.
+  mounted in them, down to 64 folders deep, 10 minutes after each start; it
+  leaves out the trash and the snapshots. Scripts can ask for a check at once
+  with `POST /api/v1/files/upload-leftovers/check`, for example after
+  mounting a disk.
 - While it found any, the File Browser shows **Leftovers of interrupted
-  uploads** above the list, with their number and the space they take.
-  **Remove…** lists each file with its folder, size and the time it was last
-  written, and **Remove for good** deletes them at once, without the trash;
-  that cannot be undone, so Cancel has the keyboard focus. Nothing removes
-  them otherwise.
+  uploads** above the list, with their number and the space they take, as
+  the check found them. **Remove…** lists each file with its folder, size
+  and the time it was last written, and **Remove for good** deletes them at
+  once, without the trash; that cannot be undone, so Cancel has the keyboard
+  focus. Nothing removes them otherwise.
 - A file that an upload is still writing, or that changed in the last 10
-  minutes, is never listed or removed.
+  minutes, is never listed or removed. If one of the listed files changed
+  since the check, **Remove for good** removes nothing and says why; the
+  dialog then lists the other files, and **Remove for good** removes them.
 
 ### Trash
 
@@ -1342,34 +1350,42 @@ regular users have no access to it.
   turning two-factor authentication on or off (off as a **Warning**), each
   by that user, users created, changed and deleted, pools created and
   removed, volumes created and deleted, snapshots created, deleted and
-  restored, containers started, restarted (as **Container started**), stopped
-  and removed on the **Containers** and the **Apps** page, apps installed and
-  uninstalled (removals and deletions as a **Warning**), the
-  SMB access of users, shares created, changed, deleted and repaired, NFS
-  exports created and deleted, shares imported from smb.conf, the corrections
-  of the SMB check at startup and the SMB state after a restore (by the user
-  `system`), API tokens created and deleted, new recovery codes, the
-  reset of an administrator on the NAS's command line (`password_change` and
-  `totp_disabled` by the user `root`, see
+  restored, containers started, restarted, stopped and removed on the
+  **Containers** page, apps started, restarted and stopped on the **Apps**
+  page (a restart as **Container started**), apps installed and uninstalled
+  (removals and deletions as a **Warning**), the SMB access of users, shares
+  created, changed, deleted and repaired, NFS exports created and deleted,
+  shares imported from smb.conf, the corrections of the SMB check at startup
+  and the SMB state after a restore (by the user `system`), API tokens
+  created and deleted, new recovery codes, the reset of an administrator on
+  the NAS's command line (`password_change` and `totp_disabled` by the user
+  `root`, see
   [Recovery](RECOVERY.md#reset-an-administrators-password-and-two-factor-authentication)),
   and the clearing of the log. Backups created, uploaded, restored (a
   **Warning**, with what it restored) and deleted; a reboot or shutdown
   (a **Warning**, recorded as soon as it is scheduled, a minute before the
   host goes down) and its cancel; scheduled tasks created, changed (with the
-  fields that changed, never their values), enabled, disabled, deleted and
-  run with **Run now** (**Task run**); a network interface disabled, its
+  names of the fields that changed and, for a rename, the old name; never
+  the command or the passphrase), enabled, disabled, deleted and run with
+  **Run now** (**Task run**); a network interface disabled, its
   disable kept, and enabled; Wake-on-LAN turned on or off; and a new host
   name or time zone (**Settings changed**, from the old value to the new).
   Only a change that was made writes an entry: a refused or failed one, or
   one that changes nothing (the same host name, a task saved unchanged,
   removing a pool that is not there, starting a running container or
-  stopping a stopped one), writes none. A refused change of your own
-  account, such as a wrong current password or two-factor code, writes no
-  entry either. Mounting, unmounting and importing pools, creating
-  containers and pulling or removing images on the **Containers** page,
-  suspend, the off-device copy, notifications, the firewall and the TLS
-  certificate write no entries yet, although **Action** lists some such
-  actions (feature-list entry `security.audit-admin-actions`).
+  stopping a stopped one), writes none. A change that failed part way
+  writes its entry as **Failed**, with what was done and then the error: a
+  pool create that formatted the disks, a pool removal that unmounted the
+  pool or dropped its fstab entry, an uninstall that stopped the app
+  (**Container stopped**), and an enable of a network interface that turned
+  it on without all its saved addresses and routes. A refused change of your
+  own account, such as a wrong current password or two-factor code, writes
+  no entry either. Mounting, unmounting and importing pools, creating
+  containers and pulling or removing images on the **Containers** page, the
+  snapshots that scheduled tasks take and clean up, the apps started when a
+  pool is mounted, suspend, the off-device copy, notifications, the firewall
+  and the TLS certificate write no entries yet, although **Action** lists
+  some such actions (feature-list entry `security.audit-admin-actions`).
 
 The same filters work in the API, for administrators: `GET /api/v1/audit/logs`
 (with `limit` from 1 and `offset` from 0), `GET /api/v1/audit/logs/count` and
@@ -1728,6 +1744,8 @@ SMB after a restore:
   this NAS: files on the pools keep the user id of their owner, so UNOS never
   gives it to anyone else. Such a user gets a new SMB user id. A user deleted
   after the backup was made comes back with their own SMB user id, and so with
+  their files. UNOS also keeps the SMB user ids that the backup's own NAS gave
+  to users it deleted, so a backup restored after a reinstall still protects
   their files. A backup whose database gives one SMB user id to two
   accounts is refused, and nothing is restored.
 

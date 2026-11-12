@@ -107,9 +107,13 @@
     leftoversButtonSlot?.querySelector("button")?.focus();
   }
 
-  // The server checks every file before it removes any: a refusal keeps the dialog open with its reason.
+  // The server checks every file before it removes any: a refusal keeps the dialog open with its
+  // reason, about the files still listed. The server drops from its list the file it refused and
+  // those that are gone, so Remove for good does not meet the same refusal again; with none left,
+  // the dialog closes and the reason stays above the list.
   async function handleRemoveLeftovers() {
     if (!removingLeftovers || leftoversSending) return;
+    error = "";
     leftoversError = "";
     leftoversSending = true;
     try {
@@ -122,6 +126,14 @@
       leftoversSending = false;
     }
     await loadLeftovers();
+    if (removingLeftovers !== null) {
+      if (leftovers.length > 0) {
+        removingLeftovers = leftovers;
+      } else {
+        removingLeftovers = null;
+        error = `${$t("files.leftovers.failed")}: ${leftoversError}`;
+      }
+    }
     // The open folder may have listed them.
     await refresh();
   }

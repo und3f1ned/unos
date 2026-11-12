@@ -17,6 +17,7 @@ from urllib3.exceptions import HTTPError as Urllib3Error
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import require_admin, verify_token
@@ -28,7 +29,6 @@ from ..security.validators import open_dir_nofollow, pools_base, validate_pools_
 from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
-from ..storage.router import audit_change
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
 from .schemas import (
     POOL_PLACEHOLDER,
@@ -952,33 +952,57 @@ async def install_app(
     template = get_app_by_id(req.template_id)
     pool = "" if installed.pool is None else f", with its data on the pool {installed.pool}"
     await audit_change(
-        request, user, AuditAction.APP_INSTALLED, resource_type="app", resource_id=installed.name,
+        AuditAction.APP_INSTALLED, request, user.username, resource_type="app", resource_id=installed.name,
         details=f"Installed {template.name} from the catalog as {installed.name}{pool}",
     )
     return installed
 
 
+class _StoppedNotRemoved(HTTPException):
+    """An uninstall stopped the app, which ran, and then could not remove it (HTTP 500, ADR-0350)."""
+
+    def __init__(self, name: str, detail: str) -> None:
+        super().__init__(500, detail)
+        self.name = name
+
+
 def _uninstall_app(container_id: str) -> str:
-    """Stop and remove the app's container; its data folders stay where they are. Returns its name."""
+    """Stop and remove the app's container; its data folders stay where they are. Returns its name.
+
+    _StoppedNotRemoved when it stopped the running app and the removal failed.
+    """
     container = _get_app(container_id)
+    ran = container.status in RUNNING_STATES
     try:
         container.stop()
+    except _DOCKER_ERRORS as e:
+        raise HTTPException(500, f"Failed to remove: {e}")
+    try:
         # Without v=True: Docker keeps the container's volumes, and bind
         # folders on the pools are never touched.
         container.remove()
     except _DOCKER_ERRORS as e:
+        if ran:
+            raise _StoppedNotRemoved(container.name, f"Failed to remove: {e}") from e
         raise HTTPException(500, f"Failed to remove: {e}")
     return container.name
 
 
 @router.delete("/installed/{container_id}")
 async def uninstall_app(container_id: str, request: Request, user: User = Depends(verify_token)):
-    """Uninstall an app: remove its container and keep its data; the audit log gets app_uninstalled
-    (ADR-0350)."""
+    """Uninstall an app: remove its container and keep its data; the audit log gets app_uninstalled,
+    or container_stopped as failed when it stopped the app and could not remove it (ADR-0350)."""
     # A stop waits up to 10 s for the app to exit: keep it off the event loop.
-    name = await asyncio.to_thread(_uninstall_app, container_id)
+    try:
+        name = await asyncio.to_thread(_uninstall_app, container_id)
+    except _StoppedNotRemoved as exc:
+        await audit_change(
+            AuditAction.CONTAINER_STOPPED, request, user.username, resource_type="container",
+            resource_id=exc.name, details=f"Stopped the app {exc.name}; then: {exc.detail}", success=False,
+        )
+        raise
     await audit_change(
-        request, user, AuditAction.APP_UNINSTALLED, resource_type="app", resource_id=name,
+        AuditAction.APP_UNINSTALLED, request, user.username, resource_type="app", resource_id=name,
         details=f"Uninstalled the app {name}; its data folders were kept", severity=AuditSeverity.WARNING,
     )
     return {"status": "removed", "id": container_id}
@@ -1097,7 +1121,8 @@ async def _start_app(container_id: str, request: Request, user: User, *, restart
     container, started = await asyncio.to_thread(_start_installed_app, container_id, restart=restart)
     if started:
         await audit_change(
-            request, user, AuditAction.CONTAINER_STARTED, resource_type="container", resource_id=container.name,
+            AuditAction.CONTAINER_STARTED, request, user.username, resource_type="container",
+            resource_id=container.name,
             details=f"{'Restarted' if restart else 'Started'} the app {container.name}",
         )
     return {"status": container.status, "id": container_id}
@@ -1132,7 +1157,8 @@ async def stop_app(container_id: str, request: Request, user: User = Depends(ver
     container, stopped = await asyncio.to_thread(_stop_installed_app, container_id)
     if stopped:
         await audit_change(
-            request, user, AuditAction.CONTAINER_STOPPED, resource_type="container", resource_id=container.name,
+            AuditAction.CONTAINER_STOPPED, request, user.username, resource_type="container",
+            resource_id=container.name,
             details=f"Stopped the app {container.name}",
         )
     return {"status": container.status, "id": container_id}

@@ -4,9 +4,10 @@ New tables only: init_db() runs create_all, which creates missing tables in
 existing databases (there is no migration framework, and columns are never
 added to existing tables). A restore checks the first four in the extracted
 backup database and refuses one that lacks them (ADR-0319); smb_uids it
-replaces with the live database's (ADR-0353). SQLite does
-not enforce foreign keys here (no PRAGMA foreign_keys): code that deletes a
-user or a share deletes the dependent rows itself, in the same transaction
+makes anew from the live database's, adding the backup's rows that it can
+read only for uids still missing (ADR-0353). SQLite does not enforce
+foreign keys here (no PRAGMA foreign_keys): code that deletes a user or a
+share deletes the dependent rows itself, in the same transaction
 (SQLite reuses the highest rowid, so an orphan row would attach to the next
 user; access rows also keep the username they were written for). Restored
 databases come from uploaded archives and may lack every constraint: values
@@ -129,9 +130,10 @@ class SmbUid(Base):
 
     Files on the pools keep their owner's uid after the account is gone, so a row outlives its
     account and is never deleted: an activation writes it with the row's uid, the reconcile for a
-    stale marked host account before removing it, and a restore replaces the backup's rows with the
-    live ones plus the uids it restores. A restored account keeps a uid recorded here only under
-    the name recorded with it, and no activation hands one out again.
+    stale marked host account before removing it and for a row it lacks, a user's deletion for the
+    row it deletes, and a restore makes the table anew: the live rows, the uids it restores, then
+    the backup's rows for uids still missing. A restored account keeps a uid recorded here only
+    under the name recorded with it, and no activation hands one out again.
     """
 
     __tablename__ = "smb_uids"

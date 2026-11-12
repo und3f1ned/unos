@@ -267,13 +267,21 @@ class World:
     def make_allowed(self, name: str) -> None:
         self.set_row(name, enabled=True, password_state="needed")
 
+    def record_uid(self, uid: int, name: str) -> None:
+        """The smb_uids row that the activation which handed out ``uid`` wrote (ADR-0353)."""
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("INSERT OR IGNORE INTO smb_uids (uid, linux_name) VALUES (?, ?)", (uid, name))
+            conn.commit()
+
     def make_active(self, name: str, uid: int, password: str) -> None:
-        """An active account: the row, the marked host account, the group and the passdb entry."""
+        """An active account: the row and its smb_uids row, the marked host account, the group and
+        the passdb entry."""
         if "unos-smb" not in self.fake.groups:
             self.fake.add_smb_group()
         self.fake.add_account(name, uid)
         self.fake.add_passdb(name, password)
         self.set_row(name, enabled=True, password_state="set", uid=uid, password_set_at=datetime(2026, 11, 1, 9, 0))
+        self.record_uid(uid, name)
         if (self.next_uid() or 0) <= uid:
             self.set_next_uid(uid + 1)
 
@@ -283,6 +291,7 @@ class World:
             self.fake.add_smb_group()
         self.fake.add_account(name, uid)
         self.set_row(name, enabled=True, password_state="needed", uid=uid)
+        self.record_uid(uid, name)
         if (self.next_uid() or 0) <= uid:
             self.set_next_uid(uid + 1)
 
@@ -1374,6 +1383,24 @@ class TestCollisions:
         assert at_useradd == [{70000: "alice"}]
         assert world.delete_user("alice").status_code == 200
         assert recorded(world.path) == {70000: "alice"}
+
+    @pytest.mark.parametrize("before, after", [
+        pytest.param({}, {70000: "alice"}, id="missing"),
+        pytest.param({70000: "zed"}, {70000: "zed"}, id="recorded-under-another-name"),
+    ])
+    def test_a_deletion_records_the_uid_the_record_lacks(self, world, before, after):
+        """ADR-0353: a row from before smb_uids existed (the dev device) has a uid that no record
+        names. Its user's deletion records it, in the transaction that deletes the user; a recorded
+        uid keeps its name."""
+        world.make_active("alice", 70000, ALICE_PW)
+        with closing(sqlite3.connect(world.path)) as conn:
+            conn.execute("DELETE FROM smb_uids")
+            conn.executemany("INSERT INTO smb_uids (uid, linux_name) VALUES (?, ?)", before.items())
+            conn.commit()
+
+        assert world.delete_user("alice").status_code == 200
+
+        assert recorded(world.path) == after
 
     def test_a_recorded_uid_is_never_handed_out_again(self, world):
         """ADR-0353: also when next_uid lies below it (a hand edit): the record is what was handed out."""
