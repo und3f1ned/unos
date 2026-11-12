@@ -71,6 +71,7 @@ HOST_TOOLS: dict[str, str] = {
     "groupadd": "passwd",
     "useradd": "passwd",
     "userdel": "passwd",
+    "usermod": "passwd",
     "smbpasswd": "samba-common-bin",
     "pdbedit": "samba",
     "smbstatus": "samba",

@@ -323,6 +323,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- Administrators rename users in the **Users** page's edit dialog
+  (`PUT /api/v1/auth/users/{id}` with `new_username` and the current
+  `username`): the user signs in with the new name, the old one is refused,
+  and the user's sessions end. A name that breaks the name rule, or that
+  another user has in any letter case, is refused with the reason. A user with
+  SMB on needs a new password: the open SMB connections end, Samba's account
+  of the old name is removed, the host account takes the new name with its
+  uid (`usermod -l`, a new host tool of the package passwd), Samba gets an
+  account of the new name with the new password, and the share access and
+  smb.conf follow the new name.
 - The Snapshots page lists the copies that **Restore** made right in the pool
   or volume chosen, `restore_<date>_<time>`, apart from the snapshots, with
   their folder and time, and deletes them by their subvolume id after the

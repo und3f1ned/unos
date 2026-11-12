@@ -1393,6 +1393,28 @@ async def delete_access_of_user(db: AsyncSession, user_id: int) -> int:
     return len(rows)
 
 
+async def rename_access_of_user(db: AsyncSession, user_id: int, old: str, new: str) -> None:
+    """A user's rename (ADR-0363): their access rows, written for ``old``, name ``new`` (ADR-0133);
+    a row of the id written for another name is stale (ADR-0137) and is deleted, so that it never
+    becomes access of the new name. The shares of these rows get version + 1 (flushed, not
+    committed). The caller holds smb_lock()."""
+    rows = (
+        await db.execute(
+            select(models.SmbShareAccess)
+            .where(models.SmbShareAccess.user_id == user_id)
+            .execution_options(**_FRESH)
+        )
+    ).scalars().all()
+    if not rows:
+        return
+    stale = [row.id for row in rows if row.username != old]
+    for row in rows:
+        if row.username == old:
+            row.username = new
+    await db.flush()
+    await _delete_access_rows(db, stale, {row.share_id for row in rows})
+
+
 async def purge_orphans(db: AsyncSession) -> int:
     """Delete stale access rows (ADR-0137), flushed in the caller's transaction.
 

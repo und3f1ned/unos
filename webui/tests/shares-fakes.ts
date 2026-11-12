@@ -38,6 +38,14 @@ export const SMB_CONF_REPLACED =
 // constants.COMMON_PASSWORD_RULE); supervisor/tests/test_smb_accounts.py checks it against the server.
 export const COMMON_PASSWORD_RULE =
   'SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first';
+// The name rule of new and renamed users (constants.LINUX_NAME_PATTERN and NAME_RULE), and the
+// refusal of a rename without a password while SMB is on (ADR-0363); supervisor/tests/test_smb_accounts.py
+// checks them against the server.
+const USERNAME_RULE = /^[a-z][a-z0-9_-]{0,31}$/;
+export const NAME_RULE_TEXT =
+  "Use 1 to 32 characters: lowercase letters, digits, '_' and '-', starting with a letter";
+export const renameNeedsPassword = (name: string) =>
+  `A new password is needed to rename ${name}: SMB is on for ${name}, and Samba's account of the new name is made with it`;
 
 // The answers of supervisor/src/shares/nfs.py (ADR-0292, ADR-0293), word for word;
 // supervisor/tests/test_nfs.py checks them against the server.
@@ -649,7 +657,35 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         return ok({ status: 'ok', message: 'User deleted', warnings: [...fake.userWarnings] });
       }
       if (method === 'PUT' && !userPath[2]) {
+        if (data.new_username !== undefined && data.username === undefined) return missing('body', 'username');
         if (data.username !== undefined && data.username !== user.username) return stale();
+        const newName = typeof data.new_username === 'string' ? data.new_username : user.username;
+        if (newName !== user.username) {
+          // A rename (ADR-0363), with the server's refusals of src/auth/router.py and accounts.py.
+          if (!USERNAME_RULE.test(newName)) return detail(400, `Invalid username. ${NAME_RULE_TEXT}`);
+          const taken = fake.users.find((u) => u !== user && u.username.toLowerCase() === newName.toLowerCase());
+          if (taken) {
+            return detail(
+              400,
+              taken.username === newName
+                ? 'Username already exists'
+                : `Username already exists as '${taken.username}': names that differ only in letter case are one account for Samba`,
+            );
+          }
+          if (data.is_admin !== undefined && data.is_admin !== user.is_admin) {
+            return detail(400, 'Change the name and the role one at a time');
+          }
+          if (user.smb.state === 'active' && typeof data.password !== 'string') {
+            return detail(400, renameNeedsPassword(user.username));
+          }
+          const old = user.username;
+          user.username = newName;
+          if (user.smb.allowed) user.smb = { ...user.smb, linux_name: newName };
+          for (const share of fake.shares) {
+            share.access = share.access.map((a) => (a.user_id === user.id && a.username === old ? { ...a, username: newName } : a));
+          }
+          return ok({ ...user, warnings: [...fake.userWarnings] });
+        }
         if (data.is_admin === true && !user.is_admin) {
           user.is_admin = true;
           user.smb = smbStatus('unavailable', user.username);

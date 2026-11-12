@@ -7,7 +7,7 @@ the FakeHost pattern of test_pool_persistence.py: every command is recorded in
 and a command it does not know fails the test.
 
 It emulates the account commands of shares/accounts.py (getent, groupadd, useradd,
-userdel, smbpasswd, pdbedit -L, -x and the account policy of -P, smbstatus,
+userdel, usermod -l, smbpasswd, pdbedit -L, -x and the account policy of -P, smbstatus,
 smbcontrol <pid> shutdown, sync), the
 smb.conf commands of an apply (mkdir /run/samba, testparm, smbcontrol
 reload-config and close-share, systemctl reload smbd), ``cat -- /etc/fstab``
@@ -227,6 +227,8 @@ class FakeSambaHost:
             return self._useradd(argv)
         if prog == "userdel":
             return self._userdel(argv)
+        if prog == "usermod":
+            return self._usermod(argv)
         if prog == "smbpasswd":
             return self._smbpasswd(argv, input)
         if prog == "pdbedit":
@@ -320,6 +322,24 @@ class FakeSambaHost:
             self.busy[name] -= 1
             return self._result(8, stderr=f"userdel: user {name} is currently used by process 4242")
         del self.passwd[name]  # the entry only: never a group
+        return self._result()
+
+    def _usermod(self, argv):
+        """``usermod -l NEW OLD`` (a rename, ADR-0363): the account keeps its uid, groups and GECOS; busy
+        (8) while ``busy`` counts down, as usermod refuses a rename while a process of the user runs."""
+        assert argv[:2] == ["usermod", "-l"] and len(argv) == 4, f"usermod with other arguments than -l: {argv}"
+        new, old = argv[2], argv[3]
+        assert not new.startswith("-") and not old.startswith("-"), argv
+        self._mutation(argv)
+        if old not in self.passwd:
+            return self._result(6, stderr=f"usermod: user '{old}' does not exist")
+        if self.busy.get(old, 0) > 0:
+            self.busy[old] -= 1
+            return self._result(8, stderr=f"usermod: user {old} is currently used by process 4242")
+        if new in self.passwd:
+            return self._result(9, stderr=f"usermod: user '{new}' already exists")
+        account = self.passwd.pop(old)
+        self.passwd[new] = HostAccount(new, account.uid, account.gid, account.gecos, account.home, account.shell)
         return self._result()
 
     def _smbpasswd(self, argv, input):

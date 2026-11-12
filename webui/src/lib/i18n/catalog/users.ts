@@ -70,6 +70,14 @@ export const en = {
 	'users.edit.close': 'Close',
 	'users.edit.save': 'Save',
 	'users.edit.done': 'User "{name}" updated',
+	// A rename (ADR-0363).
+	'users.edit.nameTitle': 'Name',
+	'users.edit.renameHint': 'The user signs in with the new name; their sessions end',
+	'users.edit.renameSelf': 'You are renaming yourself: sign in again with the new name',
+	'users.edit.renameSmb':
+		'SMB is on for {name}: a rename needs a new password, which becomes the UNOS and SMB password of the new name',
+	'users.edit.renameAndRole': 'Change the name and the role one at a time',
+	'users.edit.renamed': 'User "{old}" renamed to "{name}"',
 
 	// The confirmation of Turn off SMB: before and after the user's name.
 	'users.smbOff.title': 'Turn off SMB',
@@ -165,6 +173,13 @@ export const ru: Translation<typeof en> = {
 	'users.edit.close': 'Закрыть',
 	'users.edit.save': 'Сохранить',
 	'users.edit.done': 'Пользователь «{name}» изменён',
+	'users.edit.nameTitle': 'Имя',
+	'users.edit.renameHint': 'Пользователь входит под новым именем; его сеансы завершаются',
+	'users.edit.renameSelf': 'Вы переименовываете себя: войдите снова под новым именем',
+	'users.edit.renameSmb':
+		'SMB включён для {name}: для переименования нужен новый пароль, он станет паролем UNOS и SMB под новым именем',
+	'users.edit.renameAndRole': 'Измените имя и роль по отдельности',
+	'users.edit.renamed': 'Пользователь «{old}» переименован в «{name}»',
 
 	'users.smbOff.title': 'Выключение SMB',
 	'users.smbOff.before': 'Выключить SMB для',
