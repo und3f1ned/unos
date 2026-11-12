@@ -899,7 +899,7 @@ def _database_of(env, size: int) -> bytes:
 
 
 def test_a_database_cut_short_or_refused_after_it_leaves_nothing_in_tmp(env, monkeypatch):
-    """unos.db is extracted as the archive is read (ADR-0363): its data cut short is a corrupt archive,
+    """unos.db is extracted as the archive is read (ADR-0364): its data cut short is a corrupt archive,
     as a member refused after it refuses the backup, and the restore leaves nothing in /tmp."""
     tmp = env.tmp / "tmp"
     tmp.mkdir()
@@ -921,7 +921,7 @@ def test_a_database_cut_short_or_refused_after_it_leaves_nothing_in_tmp(env, mon
 @pytest.mark.parametrize("encrypted", [False, True], ids=["plain", "encrypted"])
 def test_a_restore_holds_at_most_half_as_much_in_tmp_as_before(env, peak_of_tmp, encrypted):
     """The restore checks the archive and extracts unos.db from it in one pass over its gzip
-    stream (ADR-0363): /tmp holds the database, without the decompressed archive beside it."""
+    stream (ADR-0364): /tmp holds the database, without the decompressed archive beside it."""
     db = _database_of(env, 4 * 1024 * 1024)
     archive = _tar_gz([_file("manifest.json", MANIFEST), _file("unos.db", db)])
     # What a restore held in /tmp at once before: the decompressed archive and the files extracted from it.

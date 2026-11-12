@@ -1,12 +1,14 @@
-"""WebSocket authentication handshake (first-message auth, 4401/4403 close codes), and the problems
-(ADR-0332) and the repair of a share's permissions (ADR-0363) that the events socket sends
-administrators only."""
+"""WebSocket authentication handshake (first-message auth, 4401/4403 close codes), the problems and
+the scrubs that the events socket sends administrators only (ADR-0332, ADR-0367), and the journal
+socket of System > Logs (ADR-0366); the repair of a share's permissions that the events socket sends
+administrators only (ADR-0363)."""
 import asyncio
 import gc
 import importlib
 import json
 import logging
 import queue
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -32,11 +34,16 @@ from src.auth.utils import create_access_token, generate_api_token
 from src.config import get_settings
 from src.database import Base
 from src.health import problems
+from src.host import HostResult
 from src.main import app
 from src.shares import repair, repair_router
+from src.storage import pools as storage_pools
+from src.storage import scrubs
+from src.storage.schemas import ScrubStatus
 from src.websocket import events
 
 from .test_alert_events import _found, _problem
+from .test_logs_sources import FIELDS, NEWEST_FIRST, PAM, install_fake_journal, journalctl
 from .test_api_token_last_use import FAILURES, START
 from .session_tokens import session_token
 from .test_containers import served_by_uvicorn
@@ -858,6 +865,133 @@ class TestTheProblemsOnTheEventsSocket:
 
 
 # ---------------------------------------------------------------------------
+# The scrubs on the events socket (webui.no-http-polling, ADR-0367)
+# ---------------------------------------------------------------------------
+
+
+def _scrub(status: str = "running", **fields) -> ScrubStatus:
+    return ScrubStatus(pool="data", status=status, total_bytes=4 * 1024**3, **fields)
+
+
+@pytest.fixture
+def btrfs(monkeypatch):
+    """pools.get_scrub_status as btrfs answers it: btrfs.answer (a status, or an exception it
+    raises), btrfs.reads counts the reads; READ_INTERVAL_SECONDS 0.05 s."""
+    btrfs = SimpleNamespace(answer=_scrub(bytes_scrubbed=1024**3), reads=0)
+
+    def get_scrub_status(pool):
+        assert pool == "data"
+        btrfs.reads += 1
+        if isinstance(btrfs.answer, Exception):
+            raise btrfs.answer
+        return btrfs.answer
+
+    monkeypatch.setattr(storage_pools, "get_scrub_status", get_scrub_status)
+    monkeypatch.setattr(scrubs, "READ_INTERVAL_SECONDS", 0.05)
+    return btrfs
+
+
+def _next_scrubs(ws, until=lambda data: True, timeout: float = 5.0) -> list:
+    """The data of the next scrubs message on ``ws`` that ``until`` accepts, skipping the others."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        message = ws.receive_json()
+        if message["type"] == "scrubs" and until(message["data"]):
+            return message["data"]
+    pytest.fail("no such scrubs message")
+
+
+class TestTheScrubsOnTheEventsSocket:
+    def test_nothing_is_sent_or_read_before_a_scrub_was_seen_running(self, client, admin_token, fast_recheck, btrfs):
+        scrubs.note("data", _scrub("finished"))  # a status read of a pool whose scrub was never seen running
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert [ws.receive_json()["type"] for _ in range(11)] == ["problems"] + ["stats"] * 10
+        assert btrfs.reads == 0
+
+    def test_an_administrator_follows_a_running_scrub_until_it_ends(self, client, admin_token, fast_recheck, btrfs):
+        scrubs.note("data", _scrub(bytes_scrubbed=0))  # Start Scrub answered running
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "problems"
+            # What the socket knew, then what btrfs reports while the scrub runs, as GET answers it.
+            assert ws.receive_json() == {"type": "scrubs", "data": [_scrub(bytes_scrubbed=0).model_dump()]}
+            assert _next_scrubs(ws) == [{
+                "pool": "data", "status": "running", "duration": None, "bytes_scrubbed": 1024**3,
+                "total_bytes": 4 * 1024**3, "rate": None, "errors": 0, "last_run": None,
+            }]
+
+            btrfs.answer = _scrub("finished", duration=256)
+            assert _next_scrubs(ws) == [_scrub("finished", duration=256).model_dump()]
+            # It no longer runs: nothing is read, and nothing more is sent.
+            reads = btrfs.reads
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+            assert btrfs.reads == reads
+
+        # A new socket gets the last status after auth_ok.
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert [ws.receive_json()["type"] for _ in range(2)] == ["auth_ok", "problems"]
+            assert ws.receive_json() == {"type": "scrubs", "data": [_scrub("finished", duration=256).model_dump()]}
+
+    def test_a_status_that_cannot_be_read_is_sent_with_its_reason_and_not_read_again(
+            self, client, admin_token, fast_recheck, btrfs):
+        scrubs.note("data", _scrub())
+        btrfs.answer = subprocess.TimeoutExpired(["btrfs", "scrub", "status", "/mnt/pools/data"], 60)
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, admin_token)
+            assert _next_scrubs(ws, until=lambda data: "error" in data[0]) == [{
+                "pool": "data",
+                "error": "btrfs scrub status did not answer within 60 seconds: pool data may not be responding",
+            }]
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+        assert btrfs.reads == 1
+
+    def test_a_regular_user_gets_none_and_nothing_is_read_for_them(self, client, user_token, fast_recheck, btrfs):
+        scrubs.note("data", _scrub())
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert [ws.receive_json()["type"] for _ in range(10)] == ["stats"] * 10
+        assert btrfs.reads == 0
+
+    def test_nothing_is_read_while_no_administrator_is_connected(self, btrfs):
+        async def wait():
+            scrubs.note("data", _scrub())
+            await asyncio.sleep(0.3)
+
+        asyncio.run(wait())
+        assert btrfs.reads == 0
+
+    def test_a_read_that_a_request_answered_meanwhile_is_dropped(self, monkeypatch):
+        """A Cancel Scrub that answers while a read runs: the read's running status is older."""
+        reading, release = threading.Event(), threading.Event()
+
+        def get_scrub_status(pool):
+            reading.set()
+            release.wait(5)
+            return _scrub(bytes_scrubbed=2 * 1024**3)
+
+        monkeypatch.setattr(storage_pools, "get_scrub_status", get_scrub_status)
+
+        async def cancel_during_a_read():
+            scrubs.note("data", _scrub())
+            scrubs.follow()
+            await asyncio.to_thread(reading.wait, 5)
+            scrubs.note("data", _scrub("aborted"))
+            release.set()
+            await scrubs._reading
+            scrubs.follow()  # it no longer runs: no read starts
+
+        asyncio.run(cancel_during_a_read())
+        assert scrubs.current() == [_scrub("aborted").model_dump()]
+
+
+
+
+# ---------------------------------------------------------------------------
 # The repair of a share's permissions on the events socket (shares.repair-in-background, ADR-0363)
 # ---------------------------------------------------------------------------
 
@@ -976,3 +1110,195 @@ class TestSocketCaps:
             _auth(ws, "not-a-token")
             _expect_close(ws, 4401)
         _wait_for(lambda: (events._open_sockets, events._sockets_before_auth) == (0, 0))
+
+
+# ---------------------------------------------------------------------------
+# The journal socket of System > Logs' Auto (ADR-0366)
+# ---------------------------------------------------------------------------
+#
+# The socket takes the values of GET /api/v1/logs/entries in its URL, sends the newest entries as
+# that request answers them, and then each new entry as ``journalctl --follow`` prints it on the
+# host, from the newest entry it sent (its cursor), or, when it sent none, from the time it read.
+# The journal is FakeJournal of test_logs_sources.py, whose follow starts through a patched
+# ``src.host.stream_on_host``: nothing runs on this machine.
+
+
+@pytest.fixture
+def journal(monkeypatch):
+    return install_fake_journal(monkeypatch)
+
+
+JOURNAL_URL = "/ws/v1/journal"
+FOLLOW = [
+    "journalctl", "--no-pager", "--quiet", "--all", "--output=json", f"--output-fields={FIELDS}",
+    "--follow", "--lines=all",
+]
+
+
+def _journal_signed_in(ws, token) -> list[dict]:
+    """Sign in; the newest entries that the socket sends first."""
+    _auth(ws, token)
+    assert ws.receive_json() == {"type": "auth_ok"}
+    first = ws.receive_json()
+    assert first["type"] == "entries", first
+    return first["data"]
+
+
+class TestTheJournalSocket:
+    def test_it_sends_the_newest_entries_then_each_new_one(self, client, admin_token, journal):
+        with client.websocket_connect(f"{JOURNAL_URL}?source=journal&limit=3") as ws:
+            newest = _journal_signed_in(ws, admin_token)
+            assert [entry["message"] for entry in newest] == NEWEST_FIRST[:3]
+            _wait_for(lambda: journal.followers)
+
+            journal.now = datetime(2026, 11, 12, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+            started = journal.add("Started Session 4 of User admin.", minutes_ago=0, identifier="systemd",
+                                  unit="init.scope", facility=3)
+            journal.add("Accepted publickey for admin from 192.0.2.10", minutes_ago=0, identifier="sshd",
+                        unit="ssh.service", facility=4)
+            first, second = ws.receive_json(), ws.receive_json()
+            # As GET /entries answers an entry.
+            assert first == {"type": "entry", "data": {
+                "timestamp": "2026-11-12T10:00:00+00:00", "facility": "3", "priority": "info",
+                "message": "Started Session 4 of User admin.", "source": "journal", "unit": "systemd",
+                "cursor": started["__CURSOR"],
+            }}
+            assert second["type"] == "entry"
+            assert second["data"]["message"] == "Accepted publickey for admin from 192.0.2.10"
+
+        # The newest entries as GET /entries reads them, then a follow after the newest of them.
+        snapshot, follow = journal.calls
+        assert snapshot == journalctl("journal", lines=3)
+        assert follow == [*FOLLOW, f"--after-cursor={newest[0]['cursor']}"]
+        _wait_for(lambda: journal.followers[0].stopped)
+
+    def test_the_source_level_and_search_choose_the_new_entries_too(self, client, admin_token, journal):
+        with client.websocket_connect(f"{JOURNAL_URL}?source=auth&priority=notice&search=FAIL&limit=50") as ws:
+            newest = _journal_signed_in(ws, admin_token)
+            assert [entry["message"] for entry in newest] == [PAM]
+            _wait_for(lambda: journal.followers)
+
+            journal.now = time.time()
+            journal.add("Failed password for bob from 192.0.2.20 port 4000 ssh2", minutes_ago=0,
+                        priority=6, identifier="sshd", facility=4)  # info: not this level
+            journal.add("Failed to start backup.service", minutes_ago=0, priority=3, identifier="systemd",
+                        facility=3)  # not of the auth facilities
+            journal.add("pam_unix(sudo:auth): conversation failed", minutes_ago=0, priority=5,
+                        identifier="sudo", facility=10)
+            message = ws.receive_json()
+            assert (message["type"], message["data"]["message"]) == ("entry", "pam_unix(sudo:auth): conversation failed")
+
+        assert journal.calls[1] == [
+            *FOLLOW, f"--after-cursor={newest[0]['cursor']}", "--priority=notice", "--grep=FAIL",
+            "--case-sensitive=false", "SYSLOG_FACILITY=4", "SYSLOG_FACILITY=10",
+        ]
+
+    def test_without_an_entry_to_follow_on_after_it_follows_from_when_it_read(self, client, admin_token, journal):
+        before = int(time.time())
+        with client.websocket_connect(f"{JOURNAL_URL}?source=cron&search=backup.sh&limit=200") as ws:
+            assert _journal_signed_in(ws, admin_token) == []
+            _wait_for(lambda: journal.followers)
+            journal.now = time.time()
+            journal.add("(root) CMD (/usr/local/bin/backup.sh)", minutes_ago=0, identifier="CRON",
+                        unit="cron.service", facility=9)
+            message = ws.receive_json()
+            assert (message["type"], message["data"]["message"]) == ("entry", "(root) CMD (/usr/local/bin/backup.sh)")
+
+        follow = journal.calls[1]
+        since = int(follow[len(FOLLOW)].removeprefix("--since=@"))
+        assert before <= since <= time.time()
+        assert follow == [*FOLLOW, f"--since=@{since}", "--grep=backup\\.sh", "--case-sensitive=false",
+                          "--unit=cron.service"]
+
+    def test_the_follow_ends_when_the_client_leaves(self, client, admin_token, journal):
+        with client.websocket_connect(f"{JOURNAL_URL}?limit=1") as ws:
+            _journal_signed_in(ws, admin_token)
+            _wait_for(lambda: journal.followers)
+        _wait_for(lambda: journal.followers[0].stopped)
+
+
+class TestTheJournalSocketsErrors:
+    """An error closes the socket with 1000 after {"type": "error"} with its reason; the tab then
+    shows the reason as it shows the error of GET /entries."""
+
+    @pytest.mark.parametrize("query, message", [
+        ("source=syslog", "Unknown log source: syslog"),
+        ("since=yesterday",
+         "Unknown time range: yesterday. Give it as <N> minutes ago, <N> hours ago or <N> days ago"),
+        ("search=tab%09here", "The search cannot contain control characters"),
+        ("search=" + "x" * 257, "search: String should have at most 256 characters"),
+        ("limit=0", "limit: Input should be greater than or equal to 1"),
+        ("limit=1001", "limit: Input should be less than or equal to 1000"),
+        ("priority=verbose",
+         "priority: Input should be 'emerg', 'alert', 'crit', 'err', 'warning', 'notice', 'info' or 'debug'"),
+    ])
+    def test_a_value_it_does_not_take_is_refused_before_the_host(self, client, admin_token, journal, query, message):
+        with client.websocket_connect(f"{JOURNAL_URL}?{query}") as ws:
+            _auth(ws, admin_token)
+            closed, received = _read_until_closed(ws)
+        assert received == [{"type": "auth_ok"}, {"type": "error", "message": message}]
+        assert closed.code == 1000
+        assert journal.calls == []
+
+    def test_a_journal_that_cannot_be_read_says_why(self, client, admin_token, journal):
+        journal.answer = HostResult(1, "", "Failed to get journal fields: Bad message")
+        with client.websocket_connect(f"{JOURNAL_URL}?limit=200") as ws:
+            _auth(ws, admin_token)
+            closed, received = _read_until_closed(ws)
+        assert received == [{"type": "auth_ok"}, {
+            "type": "error", "message": "Could not read the host's journal: Failed to get journal fields: Bad message",
+        }]
+        assert closed.code == 1000
+        assert journal.followers == []
+
+    def test_a_follow_that_cannot_start_says_why(self, client, admin_token, journal):
+        journal.cannot_follow = FileNotFoundError(2, "No such file or directory", "nsenter")
+        with client.websocket_connect(f"{JOURNAL_URL}?limit=200") as ws:
+            _journal_signed_in(ws, admin_token)
+            closed, received = _read_until_closed(ws)
+        assert received == [{
+            "type": "error",
+            "message": "Could not read the host's journal: [Errno 2] No such file or directory: 'nsenter'",
+        }]
+        assert closed.code == 1000
+
+    def test_a_follow_that_ends_by_itself_says_why(self, client, admin_token, journal):
+        with client.websocket_connect(f"{JOURNAL_URL}?limit=200") as ws:
+            _journal_signed_in(ws, admin_token)
+            _wait_for(lambda: journal.followers)
+            journal.followers[0].end(1, "Failed to iterate through journal: Bad message\n")
+            closed, received = _read_until_closed(ws)
+        assert received == [{
+            "type": "error", "message": "Could not read the host's journal: Failed to iterate through journal: Bad message",
+        }]
+        assert closed.code == 1000
+
+
+class TestTheJournalSocketsRoles:
+    """Only administrators read the logs (ADR-0030): the socket checks it before the host is reached,
+    and again while it is open (ADR-0031)."""
+
+    def test_a_regular_user_is_refused_before_the_host(self, client, user_token, journal):
+        with client.websocket_connect(f"{JOURNAL_URL}?limit=200") as ws:
+            _auth(ws, user_token)
+            assert _expect_close(ws, 4403).reason == "forbidden"
+        assert journal.calls == []
+
+    def test_no_token_and_a_token_in_the_url_are_refused_before_the_host(self, client, admin_token, journal):
+        with client.websocket_connect(JOURNAL_URL) as ws:
+            _auth(ws, "not-a-token")
+            _expect_close(ws, 4401)
+        with client.websocket_connect(f"{JOURNAL_URL}?token={admin_token}") as ws:
+            _expect_close(ws, 4401)
+        assert journal.calls == []
+
+    def test_an_administrator_who_is_no_longer_one_is_closed_out_and_the_follow_ends(
+            self, client, ws_db, admin_token, journal, fast_recheck):
+        with client.websocket_connect(f"{JOURNAL_URL}?limit=1") as ws:
+            _journal_signed_in(ws, admin_token)
+            _wait_for(lambda: journal.followers)
+            _set_user(ws_db, "ws_admin", is_admin=False)
+            closed, received = _read_until_closed(ws)
+        assert received == []
+        assert closed.code == 4403
+        _wait_for(lambda: journal.followers[0].stopped)

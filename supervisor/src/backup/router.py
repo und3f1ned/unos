@@ -598,7 +598,7 @@ def _read_archive(source: BinaryIO, dest: Path | None) -> tuple[dict, dict[str, 
     _scan_members checks each member as it comes, and manifest.json is kept
     in memory. The check of an upload (``dest`` None) writes nothing, in /tmp
     or anywhere. A restore (``dest`` its folder in /tmp) extracts unos.db
-    there as it comes, the one file it writes (ADR-0363); a member refused
+    there as it comes, the one file it writes (ADR-0364); a member refused
     after it refuses the backup as well, and the caller removes the folder.
 
     A member whose data would end past MAX_TAR_BYTES is refused by the
@@ -797,7 +797,7 @@ def _prepare_smb(db_file: Path, db_path: Path) -> list[str]:
     try:
         conn.execute("PRAGMA trusted_schema = OFF")
         # The rollback journal of this temporary copy stays in memory, not beside it in /tmp
-        # (ADR-0363); a crash loses the copy anyway.
+        # (ADR-0364); a crash loses the copy anyway.
         conn.execute("PRAGMA journal_mode = MEMORY")
         conn.execute("BEGIN IMMEDIATE")
         try:

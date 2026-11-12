@@ -300,8 +300,9 @@ For each pool, you can:
   again
 - **Add Devices** - Expand the pool
 - **Scrub** - (mounted pools) Check data integrity. While the scrub runs,
-  the pool shows its progress (bytes, percent, rate and duration), updated
-  every 2 seconds, and **Cancel Scrub** stops it. At the end it shows the
+  the pool shows its progress (bytes, percent, rate and duration), which UNOS
+  sends the open page as it changes, about every 2 seconds, also for a
+  scheduled scrub, and **Cancel Scrub** stops it. At the end it shows the
   result with the time the scrub started, as btrfs writes it (in English, such
   as `Fri Nov  6 10:00:00 2026`) or, when the interface is in another language,
   the same date and time in that language's format: **Last scrub: No errors**, the
@@ -1625,9 +1626,15 @@ that logged it and its message. The filters narrow the list:
   not matter. The matches are highlighted in the messages, also while you
   type; log messages are always shown as text.
 
-**Auto** reloads the list every 5 seconds. Auto and **Search** wait while an
-answer is still coming. When the journal cannot be read, the tab shows why
-instead of the list. A search through a large journal can take long: after
+**Auto** follows the journal: the tab lists the newest entries again and then
+adds each new entry of the chosen source, level and search at the top as the
+journal gets it, keeping the newest entries of the limit, and says
+**Following new entries**. A filter or source changed while Auto is on is
+followed from then on; clicking Auto again stops it and keeps the list. When
+the connection to UNOS is lost, Auto stops with **Auto stopped: the
+connection to the server was lost** and the list stays. **Search** waits
+while an answer is still coming. When the journal cannot be read, the tab
+shows why instead of the list. A search through a large journal can take long: after
 30 seconds UNOS stops journalctl on the host and the tab reports that it did
 not answer; a shorter time range helps.
 

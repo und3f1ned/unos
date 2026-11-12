@@ -25,11 +25,12 @@ from src.security.validators import (
     validate_disk_name,
     validate_pool_name,
 )
-from src.storage import disks, pools
+from src.storage import disks, pools, scrubs
 from src.storage.schemas import (
     DiskInfo,
     PoolCreate,
     PoolInfo,
+    ScrubStatus,
     SmartData,
     VolumeCreate,
     VolumeInfo,
@@ -1048,6 +1049,77 @@ class TestScrubStatus:
 
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "finished"
+
+
+class TestScrubsForTheEventsSocket:
+    """The scrub API notes its answers, so that the events socket sends the Storage page each scrub
+    that runs until it ends, instead of the page asking every 2 seconds (ADR-0367)."""
+
+    @pytest.fixture(autouse=True)
+    def _mounted(self, monkeypatch):
+        monkeypatch.setattr(pools, "_btrfs_mounted_at", lambda path: True)
+
+    @pytest.fixture
+    def btrfs(self, monkeypatch):
+        """btrfs scrub status prints SCRUB_OUTPUT[btrfs.state], or btrfs.status_fails: its error."""
+        btrfs = SimpleNamespace(state="never", status_fails=None, start_fails=None)
+
+        def run(cmd, **kwargs):
+            if cmd[:3] == ["btrfs", "scrub", "status"]:
+                if btrfs.status_fails:
+                    return subprocess.CompletedProcess(cmd, 1, "", btrfs.status_fails)
+                return subprocess.CompletedProcess(cmd, 0, SCRUB_OUTPUT[btrfs.state], "")
+            if cmd[:3] == ["btrfs", "scrub", "start"] and btrfs.start_fails:
+                return subprocess.CompletedProcess(cmd, 1, "", btrfs.start_fails)
+            if cmd[:3] == ["btrfs", "replace", "status"]:
+                return subprocess.CompletedProcess(cmd, 0, "Never started\n", "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr(host, "run_in_container", run)
+        return btrfs
+
+    def test_a_pool_joins_when_its_scrub_runs_and_then_keeps_each_answer(self, btrfs):
+        with admin_client() as client:
+            assert client.get("/api/v1/storage/pools/data/scrub").json()["status"] == "idle"
+            assert scrubs.current() == []  # never seen running
+
+            started = client.post("/api/v1/storage/pools/data/scrub").json()
+            assert started["status"] == "running"
+            assert scrubs.current() == [started]
+
+            btrfs.state = "running"
+            read = client.get("/api/v1/storage/pools/data/scrub").json()
+            assert scrubs.current() == [read] and read["bytes_scrubbed"] == GIB
+
+            btrfs.state = "aborted"
+            cancelled = client.delete("/api/v1/storage/pools/data/scrub").json()
+            assert scrubs.current() == [cancelled] and cancelled["status"] == "aborted"
+
+    def test_a_scrub_found_running_by_a_status_read_joins(self, btrfs):
+        """One that the Scheduler, the host's command line or a run before a restart started."""
+        btrfs.state = "running"
+        with admin_client() as client:
+            read = client.get("/api/v1/storage/pools/data/scrub").json()
+        assert scrubs.current() == [read]
+
+    def test_a_status_that_cannot_be_read_is_noted_for_a_followed_scrub_only(self, btrfs):
+        btrfs.status_fails = "ERROR: cannot read the scrub status\n"
+        detail = "Scrub status failed: ERROR: cannot read the scrub status"
+        with admin_client() as client:
+            assert client.get("/api/v1/storage/pools/data/scrub").json() == {"detail": detail}
+            assert scrubs.current() == []
+
+            scrubs.note("data", ScrubStatus(pool="data", status="running"))
+            assert client.get("/api/v1/storage/pools/data/scrub").json() == {"detail": detail}
+        assert scrubs.current() == [{"pool": "data", "error": detail}]
+
+    def test_a_start_that_fails_is_the_pages_error_not_the_scrubs(self, btrfs):
+        btrfs.start_fails = "ERROR: scrub is already running\n"
+        scrubs.note("data", ScrubStatus(pool="data", status="running"))
+        with admin_client() as client:
+            response = client.post("/api/v1/storage/pools/data/scrub")
+        assert response.status_code == 500
+        assert scrubs.current() == [ScrubStatus(pool="data", status="running").model_dump()]
 
 
 # What a fake btrfs does. Without -B, btrfs-progs forks the process that runs

@@ -4,8 +4,11 @@ Every source is a part of the host's systemd journal. GET /entries reads it with
 one journalctl command on the host, through src/host.py (ADR-0020), off the
 event loop and with a timeout that ends journalctl on the host (ADR-0021),
 at most two reads at a time: ``--reverse`` prints the newest entries first, and
-the answer keeps that order. The log files of GET /files and GET /file/{filename}
-are still those of the supervisor container's /var/log.
+the answer keeps that order. The journal socket of System > Logs' Auto
+(``/ws/v1/journal`` in src/websocket/events.py, ADR-0366) reads the same entries
+with ``journal_query`` and ``read_journal`` and then follows the journal with
+``follow_journal``. The log files of GET /files and GET /file/{filename} are still
+those of the supervisor container's /var/log.
 """
 
 import asyncio
@@ -14,11 +17,12 @@ import json
 import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Literal, NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 
 from .. import host
 from ..auth.utils import verify_token
@@ -95,6 +99,8 @@ class LogEntry(BaseModel):
     source: str
     # The program that logged it: SYSLOG_IDENTIFIER, else _COMM, else _SYSTEMD_UNIT.
     unit: str | None = None
+    # The journal's cursor of the entry (__CURSOR): the journal socket follows on after it (ADR-0366).
+    cursor: str = ""
 
 
 class LogsResponse(BaseModel):
@@ -150,7 +156,7 @@ def _priority(value) -> str:
     return PRIORITY_LEVELS[level] if 0 <= level < len(PRIORITY_LEVELS) else "info"
 
 
-def _entry(line: str, source: str) -> Optional[LogEntry]:
+def journal_entry(line: str, source: str) -> Optional[LogEntry]:
     """One line of journalctl's JSON as an entry; None for a line that is not one."""
     try:
         fields = json.loads(line)
@@ -166,6 +172,7 @@ def _entry(line: str, source: str) -> Optional[LogEntry]:
         message=_text(fields.get("MESSAGE")),
         source=source,
         unit=next((program for program in programs if program), None),
+        cursor=_text(fields.get("__CURSOR")),
     )
 
 
@@ -173,6 +180,32 @@ def _why(result: host.HostResult) -> str:
     """What journalctl said about its failure."""
     text = result.stderr.strip() or f"journalctl exited with status {result.returncode}"
     return text if len(text) <= 300 else text[:300] + "..."
+
+
+def _journalctl(
+    source: str,
+    *,
+    start: tuple[str, ...],
+    priority: Optional[str] = None,
+    since: Optional[str] = None,
+    search: Optional[str] = None,
+) -> list[str]:
+    """journalctl with JSON output, the options ``start`` that say where it starts, the filters and
+    the source's matches."""
+    cmd = [
+        "journalctl", "--no-pager", "--quiet", "--all", "--output=json", f"--output-fields={OUTPUT_FIELDS}",
+        *start,
+    ]
+    if priority:
+        cmd.append(f"--priority={priority}")
+    if since:
+        cmd.append(f"--since={since}")
+    if search:
+        # journalctl matches a PCRE2 pattern against the message itself, so that the newest
+        # matches are found in the whole range, not only among the newest entries. re.escape
+        # puts a backslash before each of PCRE2's special characters: the text is taken literally.
+        cmd += [f"--grep={re.escape(search)}", "--case-sensitive=false"]
+    return cmd + list(LOG_SOURCES[source].matches)
 
 
 async def read_journal(
@@ -188,19 +221,10 @@ async def read_journal(
     message, in any case. The caller has checked the values."""
     cmd = [
         "timeout", f"--kill-after={KILL_AFTER}", str(JOURNAL_TIMEOUT),
-        "journalctl", "--no-pager", "--quiet", "--all", "--output=json", f"--output-fields={OUTPUT_FIELDS}",
-        "--reverse", f"--lines={limit}",
+        *_journalctl(
+            source, start=("--reverse", f"--lines={limit}"), priority=priority, since=since, search=search
+        ),
     ]
-    if priority:
-        cmd.append(f"--priority={priority}")
-    if since:
-        cmd.append(f"--since={since}")
-    if search:
-        # journalctl matches a PCRE2 pattern against the message itself, so that the newest
-        # matches are found in the whole range, not only among the newest entries. re.escape
-        # puts a backslash before each of PCRE2's special characters: the text is taken literally.
-        cmd += [f"--grep={re.escape(search)}", "--case-sensitive=false"]
-    cmd += LOG_SOURCES[source].matches
     read = functools.partial(host.run_on_host, cmd, timeout=JOURNAL_WAIT, errors="replace")
     try:
         result = await asyncio.get_running_loop().run_in_executor(_JOURNAL_READS, read)
@@ -217,8 +241,68 @@ async def read_journal(
         raise HTTPException(500, f"{CANNOT_READ}: {_why(result)}")
     # One entry per line, and a line ends at "\n" alone: journalctl escapes the control
     # characters, but prints U+2028 and U+2029 as they are, where str.splitlines() would cut.
-    entries = [entry for line in result.stdout.split("\n") if (entry := _entry(line, source)) is not None]
+    entries = [entry for line in result.stdout.split("\n") if (entry := journal_entry(line, source)) is not None]
     return LogsResponse(entries=entries, total=len(entries))
+
+
+class JournalQuery(BaseModel):
+    """What System > Logs reads: the values of GET /entries, also those of the journal socket."""
+
+    source: str = "journal"
+    limit: int = Field(100, ge=1, le=1000)
+    priority: Optional[Priority] = None
+    search: Optional[str] = Field(None, max_length=MAX_SEARCH_CHARS)
+    since: Optional[str] = None
+
+
+def _check_query(source: str, since: Optional[str], search: Optional[str]) -> None:
+    """400 for a value that journalctl must not get; the types and ranges are checked already."""
+    if source not in LOG_SOURCES:
+        raise HTTPException(400, f"Unknown log source: {source}")
+    if since and not SINCE.fullmatch(since):
+        raise HTTPException(
+            400, f"Unknown time range: {since}. Give it as <N> minutes ago, <N> hours ago or <N> days ago"
+        )
+    if search and any(ord(char) < 32 or ord(char) == 127 for char in search):
+        raise HTTPException(400, "The search cannot contain control characters")
+
+
+def journal_query(params: Mapping[str, str]) -> JournalQuery:
+    """The values of the journal socket's URL, checked as GET /entries checks them: 400 for one
+    that it does not take (the socket sends the detail as its error)."""
+    try:
+        query = JournalQuery.model_validate(dict(params))
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        where = ".".join(str(part) for part in error["loc"])
+        raise HTTPException(400, f"{where}: {error['msg']}")
+    _check_query(query.source, query.since, query.search)
+    return query
+
+
+async def follow_journal(query: JournalQuery, *, after: Optional[str], since: float) -> host.HostStream:
+    """``journalctl --follow`` on the host (ADR-0366): each entry of the query's source, level and
+    search after the entry whose cursor is ``after``, or, without one, since the time ``since``
+    (seconds since the epoch, before the read of the newest entries found none), and then each new
+    one as the journal gets it, one line of JSON each, oldest first. It runs until it is stopped:
+    no timeout(1). 500 when it cannot start."""
+    position = (f"--after-cursor={after}",) if after else ()
+    cmd = _journalctl(
+        query.source,
+        start=("--follow", "--lines=all", *position),
+        priority=query.priority,
+        since=None if after else f"@{int(since)}",
+        search=query.search or None,
+    )
+    try:
+        return await host.stream_on_host(cmd)
+    except OSError as exc:
+        raise HTTPException(500, f"{CANNOT_READ}: {exc}")
+
+
+def journal_ended(result: host.HostResult) -> str:
+    """Why a journalctl --follow ended by itself."""
+    return f"{CANNOT_READ}: {_why(result)}"
 
 
 @router.get("/sources")
@@ -269,15 +353,8 @@ async def get_log_entries(
     since: Optional[str] = Query(None, description="<N> minutes ago, <N> hours ago or <N> days ago"),
     _: dict = Depends(verify_token)
 ):
-    """The newest entries of a source of the host's journal, newest first (ADR-0257)."""
-    if source not in LOG_SOURCES:
-        raise HTTPException(400, f"Unknown log source: {source}")
-    if since and not SINCE.fullmatch(since):
-        raise HTTPException(
-            400, f"Unknown time range: {since}. Give it as <N> minutes ago, <N> hours ago or <N> days ago"
-        )
-    if search and any(ord(char) < 32 or ord(char) == 127 for char in search):
-        raise HTTPException(400, "The search cannot contain control characters")
+    """The newest entries of a source of the host's journal, newest first (ADR-0366)."""
+    _check_query(source, since, search)
     return await read_journal(source, limit=limit, priority=priority, since=since or None, search=search or None)
 
 

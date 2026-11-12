@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { getToken, handleUnauthorized } from '$lib/api/client';
 import { problems, type Problem } from '$lib/stores/problems';
+import { scrubs, type ScrubUpdate } from '$lib/stores/scrubs';
 import { repairJob } from '$lib/stores/repair';
 import type { RepairResult } from '$lib/api/shares';
 
@@ -193,6 +194,9 @@ export function connectWebSocket() {
     } else if (message.type === 'problems' && Array.isArray(message.data)) {
       // Administrators only: the problems that are still there (ADR-0332).
       problems.set(message.data as Problem[]);
+    } else if (message.type === 'scrubs' && Array.isArray(message.data)) {
+      // Administrators only: the scrubs that run, until they end (ADR-0367).
+      scrubs.set(message.data as ScrubUpdate[]);
     } else if (message.type === 'repair' && message.data) {
       // Administrators only: the running or last repair of a share's permissions (ADR-0363).
       repairJob.set(message.data as RepairResult);
@@ -230,6 +234,7 @@ export function disconnectWebSocket() {
   wsForbidden.set(false);
   stats.set(null);
   problems.set([]);
+  scrubs.set([]);
   repairJob.set(null);
 }
 

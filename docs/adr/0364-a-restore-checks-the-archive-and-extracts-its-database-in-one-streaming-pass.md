@@ -5,7 +5,7 @@ area: backup
 decided-by: agent
 ---
 
-# ADR-0363: A restore checks the archive and extracts its database in one streaming pass
+# ADR-0364: A restore checks the archive and extracts its database in one streaming pass
 
 ## Context
 

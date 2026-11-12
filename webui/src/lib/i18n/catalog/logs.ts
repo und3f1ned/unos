@@ -6,8 +6,8 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'logs.title': 'System Logs',
-	'logs.autoStart': 'Start auto-refresh (5s)',
-	'logs.autoStop': 'Stop auto-refresh',
+	'logs.autoStart': 'Follow new entries as the journal gets them',
+	'logs.autoStop': 'Stop following new entries',
 	'logs.auto': 'Auto',
 	'logs.filters': 'Filters',
 	'logs.searchPlaceholder': 'Search in logs... (press Enter)',
@@ -70,7 +70,9 @@ export const en = {
 		one: 'Showing {n} log entries, newest first',
 		other: 'Showing {n} log entries, newest first'
 	},
-	'logs.autoRefreshing': 'Auto-refreshing every 5s',
+	'logs.following': 'Following new entries',
+	'logs.autoLost': 'Auto stopped: the connection to the server was lost',
+	'logs.autoForbidden': 'Auto stopped: only administrators read the logs',
 	'logs.loadingEntries': 'Loading logs...',
 	'logs.empty': 'No logs found',
 	'logs.emptyFiltered': 'Try adjusting your filters or search terms',
@@ -83,8 +85,8 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'logs.title': 'Системные журналы',
-	'logs.autoStart': 'Включить автообновление (5 с)',
-	'logs.autoStop': 'Остановить автообновление',
+	'logs.autoStart': 'Показывать новые записи по мере их появления в журнале',
+	'logs.autoStop': 'Перестать показывать новые записи',
 	'logs.auto': 'Авто',
 	'logs.filters': 'Фильтры',
 	'logs.searchPlaceholder': 'Поиск в журналах... (нажмите Enter)',
@@ -145,7 +147,9 @@ export const ru: Translation<typeof en> = {
 		few: 'Показаны {n} записи, сначала новые',
 		many: 'Показано {n} записей, сначала новые'
 	},
-	'logs.autoRefreshing': 'Автообновление каждые 5 с',
+	'logs.following': 'Новые записи появляются по мере поступления',
+	'logs.autoLost': 'Авто остановлено: связь с сервером потеряна',
+	'logs.autoForbidden': 'Авто остановлено: журналы доступны только администраторам',
 	'logs.loadingEntries': 'Загрузка журналов...',
 	'logs.empty': 'Записей не найдено',
 	'logs.emptyFiltered': 'Измените фильтры или условия поиска',

@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-09
 area: storage
 decided-by: agent
+superseded-by: ADR-0367
 supersedes: [ADR-0272]
 ---
 
 # ADR-0313: A scrub runs from its start, before btrfs records it, and its result names how it ended
 
 ## Context
+
+Superseded by ADR-0367: the Storage page follows a running scrub over the events socket instead of asking every 2 seconds.
 
 ADR-0272 made the Storage page report a scrub as `btrfs scrub status` prints it, and idle when no
 scrub is recorded ("no stats available"). btrfs records a new scrub only when the process that

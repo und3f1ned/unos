@@ -311,6 +311,76 @@ def _wait_for_killed(process: subprocess.Popen[str], key: tuple[str, ...]) -> No
             _stuck.pop(key, None)
 
 
+# The longest line that a command of stream_on_host may print; a longer one is skipped.
+STREAM_LINE_LIMIT = 1024 * 1024
+# Seconds a stopped command of stream_on_host has for SIGTERM before its group gets SIGKILL.
+STREAM_STOP_WAIT = 5.0
+
+
+class HostStream:
+    """A command of :func:`stream_on_host` while it runs."""
+
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+
+    async def readline(self) -> str | None:
+        """The next line of the command's output, without its line break; None once its output
+        ended. Bytes that are not UTF-8 become U+FFFD. A line longer than STREAM_LINE_LIMIT is
+        dropped, or, when asyncio had not read it to its end, what follows of it comes as a line
+        of its own: the caller skips a line it cannot read."""
+        assert self._process.stdout is not None
+        while True:
+            try:
+                line = await self._process.stdout.readline()
+            except ValueError:  # over the limit: asyncio dropped what it had read of the line
+                continue
+            if not line:
+                return None
+            return line.decode("utf-8", errors="replace").rstrip("\n")
+
+    async def result(self) -> HostResult:
+        """Once the output ended: the exit status and the error output (the output is read)."""
+        assert self._process.stderr is not None
+        stderr = await self._process.stderr.read()
+        returncode = await self._process.wait()
+        return HostResult(returncode, "", stderr.decode("utf-8", errors="replace"))
+
+    async def stop(self) -> None:
+        """End the command: SIGTERM to its process group, SIGKILL after STREAM_STOP_WAIT seconds.
+
+        The group holds what nsenter forked for ``--pid`` too: nsenter does not pass a signal on
+        (ADR-0258), and the command would run on, on the host. The group's id is the pid of
+        nsenter, which no other process can take before nsenter is waited for.
+        """
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            if self._process.returncode is not None:
+                return
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self._process.pid, sig)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._process.wait(), STREAM_STOP_WAIT)
+
+
+async def stream_on_host(cmd: list[str]) -> HostStream:
+    """Start ``cmd`` in the host's namespaces for a caller that reads its output while it runs.
+
+    For a command that runs until it is stopped, such as ``journalctl --follow`` (ADR-0366):
+    no timeout ends it, :meth:`HostStream.stop` does. It runs in a session of its own, so that
+    stop ends its process group. OSError when it cannot start.
+    """
+    _validate_cmd(cmd)
+    process = await asyncio.create_subprocess_exec(
+        *_prefix(),
+        *cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        limit=STREAM_LINE_LIMIT,
+    )
+    return HostStream(process)
+
+
 def read_host_file(path: str, *, timeout: float = 10) -> str:
     """Return the contents of an absolute path on the host filesystem."""
     if not path.startswith("/"):

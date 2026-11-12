@@ -2883,7 +2883,7 @@ def _largest_tmp_use():
     one pass, as a stream (_inspect_archive).
 
     A restore (one at a time) reads the archive in one pass and extracts
-    only the database there (_read_archive, ADR-0363): at most MAX_DB_BYTES.
+    only the database there (_read_archive, ADR-0364): at most MAX_DB_BYTES.
     A backup made meanwhile (Create Backup or a scheduled backup task)
     collects its files there: a copy of the database and the small files
     (the manifest, and a backup task's scheduled tasks), within the limits of
