@@ -46,6 +46,7 @@ from src.shares.models import SmbShare
 
 # The package re-exports its APIRouter as ``router``; import the module.
 apps_router = importlib.import_module("src.apps.router")
+audit_router = importlib.import_module("src.audit.router")
 
 INSTALL = "/api/v1/apps/install"
 POOLS = "/api/v1/apps/pools"
@@ -473,13 +474,20 @@ class TestCatalogPaths:
 
 
 @pytest.fixture
-def mkdir_calls(monkeypatch) -> list[Path]:
-    """Record the path of every directory created with os.mkdir (os.makedirs uses it too)."""
+def mkdir_calls(monkeypatch, tmp_path_factory) -> list[Path]:
+    """Record the path of every directory created with os.mkdir (os.makedirs uses it too).
+
+    All but the folder of the audit log, which an install writes its entry to (ADR-0350): the
+    log is redirected to a folder of the test, outside the pools.
+    """
     calls: list[Path] = []
     real_mkdir = os.mkdir
+    audit_folder = tmp_path_factory.mktemp("audit")
+    monkeypatch.setattr(audit_router, "AUDIT_FILE", str(audit_folder / "audit.jsonl"))
 
     def spy(path, mode=0o777, *, dir_fd=None):
-        calls.append(_full_path(path, dir_fd))
+        if _full_path(path, dir_fd) != audit_folder:
+            calls.append(_full_path(path, dir_fd))
         return real_mkdir(path, mode, dir_fd=dir_fd)
 
     monkeypatch.setattr(os, "mkdir", spy)

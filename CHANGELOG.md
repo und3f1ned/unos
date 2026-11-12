@@ -36,6 +36,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   authentication on or off (off as a warning), with the user, the address
   and the browser; a refused attempt writes no entry. When the entry cannot
   be written, the change still answers and the supervisor's log has it.
+- The audit log records pools created and removed, volumes created and
+  deleted, snapshots created, deleted and restored, containers started,
+  restarted, stopped and removed (also on the **Apps** page), and apps
+  installed and uninstalled, with the administrator, the address, the browser
+  and the resource. A refused or failed change, and one that changed nothing
+  (a pool that was not there, a start of a running container, a stop of a
+  stopped one), writes no entry. When the entry cannot be written, the change
+  still answers and the supervisor's log has it.
 - Each audit entry carries the hash of the one before it. An entry edited in
   the log file, and the entry after one that was removed, are marked **Chain
   broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest

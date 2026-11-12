@@ -119,12 +119,17 @@
 	};
 	const RESOURCE_TYPES: Record<string, string> = {
 		user: 'audit.resource.user',
+		pool: 'audit.resource.pool',
+		volume: 'audit.resource.volume',
+		snapshot: 'audit.resource.snapshot',
 		share: 'audit.resource.share',
 		smb: 'audit.resource.smb',
 		smb_account: 'audit.resource.smbAccount',
 		nfs_export: 'audit.resource.nfsExport',
 		api_token: 'audit.resource.apiToken',
 		recovery_codes: 'audit.resource.recoveryCodes',
+		container: 'audit.resource.container',
+		app: 'audit.resource.app',
 		audit_log: 'audit.resource.auditLog'
 	};
 

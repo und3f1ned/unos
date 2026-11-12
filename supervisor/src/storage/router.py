@@ -7,6 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from ..audit.router import log_action
+from ..audit.schemas import AuditAction, AuditSeverity
+from ..auth.models import User
 from ..auth.utils import verify_token
 from ..security.validators import (
     sanitize_error_message,
@@ -47,6 +50,35 @@ def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
     return HTTPException(status_code=500, detail=sanitize_error_message(exc))
+
+
+async def audit_change(
+    request: Request,
+    user: User,
+    action: AuditAction,
+    *,
+    resource_type: str,
+    resource_id: str,
+    details: str,
+    severity: AuditSeverity = AuditSeverity.INFO,
+) -> None:
+    """The audit entry of a change of a pool, volume, snapshot, container or app, after the change
+    was made (ADR-0350): by the user, from the client address and browser of the request, about
+    the resource. Call it for a real change only (ADR-0320). One that cannot be written, such as
+    on a full /data, is in the supervisor's log (log_action), and the request still answers what
+    it did: the change is made, and a 500 would say it was not (ADR-0251, ADR-0343)."""
+    try:
+        await log_action(
+            action,
+            request=request,
+            username=user.username,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details,
+            severity=severity,
+        )
+    except OSError:
+        pass  # log_action reported the entry
 
 
 async def _call(func: Callable[..., T], *args: Any) -> T:
@@ -107,7 +139,7 @@ async def list_pools_endpoint(_=Depends(verify_token)):
 
 @router.post("/pools", response_model=PoolInfo)
 @limiter.limit("5/minute")  # Rate limit pool creation
-async def create_pool_endpoint(request: Request, pool: PoolCreate, _=Depends(verify_token)):
+async def create_pool_endpoint(request: Request, pool: PoolCreate, user: User = Depends(verify_token)):
     """Create a new storage pool, mounted on the host and persisted in its fstab.
 
     409 when a selected device is a system device, in use, holds data without
@@ -116,12 +148,18 @@ async def create_pool_endpoint(request: Request, pool: PoolCreate, _=Depends(ver
     ``confirm_name != name`` and ``force`` without a ``device_identities``
     entry for every selected device. Then smb.conf is applied again: SMB
     shares that a forgotten pool of this name kept are served (ADR-0248).
+    The audit log gets pool_created (ADR-0350).
     """
     validate_pool_name(pool.name)
     if pool.confirm_name != pool.name:
         raise HTTPException(status_code=400, detail="confirm_name must match the pool name")
 
-    return await _change_pools(pools.create_pool, pool)
+    info = await _change_pools(pools.create_pool, pool)
+    await audit_change(
+        request, user, AuditAction.POOL_CREATED, resource_type="pool", resource_id=info.name,
+        details=f"Created the pool {info.name} ({pool.raid_level}) on {', '.join(pool.devices)}",
+    )
+    return info
 
 
 @router.get("/pools/{name}", response_model=PoolInfo)
@@ -135,17 +173,23 @@ async def get_pool_endpoint(name: str, _=Depends(verify_token)):
 
 @router.delete("/pools/{name}")
 @limiter.limit("5/minute")  # Rate limit pool deletion
-async def delete_pool_endpoint(request: Request, name: str, _=Depends(verify_token)):
+async def delete_pool_endpoint(request: Request, name: str, user: User = Depends(verify_token)):
     """Forget a pool: unmount it on the host and drop its fstab entry and empty mountpoint.
 
     The disks are not wiped; the filesystem is listed again as an unmounted
     pool and can be mounted later. Refused with 409 or 503 as an unmount is. As
-    after an unmount, its SMB shares stop being served (ADR-0248).
+    after an unmount, its SMB shares stop being served (ADR-0248). The audit log
+    gets pool_deleted when there was something to remove (ADR-0350).
     """
     # Validate pool name
     validated_name = validate_pool_name(name)
 
-    await _change_pools(pools.delete_pool, validated_name)
+    if await _change_pools(pools.delete_pool, validated_name):
+        await audit_change(
+            request, user, AuditAction.POOL_DELETED, resource_type="pool", resource_id=validated_name,
+            details=f"Removed the pool {validated_name}; its disks and their data were kept",
+            severity=AuditSeverity.WARNING,
+        )
     return {"status": "deleted"}
 
 
@@ -243,7 +287,9 @@ async def list_volumes_endpoint(pool_name: str, _=Depends(verify_token)):
 
 @router.post("/pools/{pool_name}/volumes", response_model=VolumeInfo)
 @limiter.limit("10/minute")  # Rate limit volume creation
-async def create_volume_endpoint(request: Request, pool_name: str, volume: VolumeCreate, _=Depends(verify_token)):
+async def create_volume_endpoint(
+    request: Request, pool_name: str, volume: VolumeCreate, user: User = Depends(verify_token)
+):
     """Create a volume: a btrfs subvolume at <mountpoint>/<name> of the pool in the URL.
 
     The body is ``{"name": ..., "quota": bytes or null}``; the quota must be
@@ -253,16 +299,24 @@ async def create_volume_endpoint(request: Request, pool_name: str, volume: Volum
     is taken, or a quota is asked for and quotas are not enabled on the
     pool. 409 as well when the quota cannot be set: the new volume is
     removed again, unless the subvolume with its name by then existed
-    before it.
+    before it. The audit log gets volume_created (ADR-0350).
     """
     validated_pool = validate_pool_name(pool_name)
     validate_volume_name(volume.name)
 
-    return await _call(pools.create_volume, validated_pool, volume)
+    info = await _call(pools.create_volume, validated_pool, volume)
+    quota = "" if info.quota is None else f", with a quota of {info.quota} bytes"
+    await audit_change(
+        request, user, AuditAction.VOLUME_CREATED, resource_type="volume", resource_id=f"{info.pool}/{info.name}",
+        details=f"Created the volume {info.name} in the pool {info.pool}{quota}",
+    )
+    return info
 
 
 @router.delete("/pools/{pool_name}/volumes/{volume_name}")
-async def delete_volume_endpoint(pool_name: str, volume_name: str, _=Depends(verify_token)):
+async def delete_volume_endpoint(
+    request: Request, pool_name: str, volume_name: str, user: User = Depends(verify_token)
+):
     """Delete a volume with everything in it.
 
     404 for an unknown pool or volume; 409 when the pool is not mounted,
@@ -270,12 +324,18 @@ async def delete_volume_endpoint(pool_name: str, volume_name: str, _=Depends(ver
     running container (a bind mount, or a Docker volume that binds a folder
     of it), an SMB share or an NFS export, is busy, or holds snapshots; 503
     when Docker cannot be asked about the running containers and their
-    volumes. Nothing is deleted then.
+    volumes. Nothing is deleted then. The audit log gets volume_deleted (ADR-0350).
     """
     validated_pool = validate_pool_name(pool_name)
     validated_volume = validate_volume_name(volume_name)
 
     await _call(pools.delete_volume, validated_pool, validated_volume)
+    await audit_change(
+        request, user, AuditAction.VOLUME_DELETED, resource_type="volume",
+        resource_id=f"{validated_pool}/{validated_volume}",
+        details=f"Deleted the volume {validated_volume} of the pool {validated_pool} with everything in it",
+        severity=AuditSeverity.WARNING,
+    )
     return {"status": "deleted"}
 
 

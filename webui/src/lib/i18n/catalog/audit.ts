@@ -99,12 +99,17 @@ export const en = {
 
 	// The types of resource that the server records: in English as it records them.
 	'audit.resource.user': 'user',
+	'audit.resource.pool': 'pool',
+	'audit.resource.volume': 'volume',
+	'audit.resource.snapshot': 'snapshot',
 	'audit.resource.share': 'share',
 	'audit.resource.smb': 'smb',
 	'audit.resource.smbAccount': 'smb_account',
 	'audit.resource.nfsExport': 'nfs_export',
 	'audit.resource.apiToken': 'api_token',
 	'audit.resource.recoveryCodes': 'recovery_codes',
+	'audit.resource.container': 'container',
+	'audit.resource.app': 'app',
 	'audit.resource.auditLog': 'audit_log'
 };
 
@@ -198,11 +203,16 @@ export const ru: Translation<typeof en> = {
 	'audit.action.other': 'Другое',
 
 	'audit.resource.user': 'пользователь',
+	'audit.resource.pool': 'пул',
+	'audit.resource.volume': 'том',
+	'audit.resource.snapshot': 'снимок',
 	'audit.resource.share': 'общая папка',
 	'audit.resource.smb': 'SMB',
 	'audit.resource.smbAccount': 'учётная запись SMB',
 	'audit.resource.nfsExport': 'экспорт NFS',
 	'audit.resource.apiToken': 'API-токен',
 	'audit.resource.recoveryCodes': 'коды восстановления',
+	'audit.resource.container': 'контейнер',
+	'audit.resource.app': 'приложение',
 	'audit.resource.auditLog': 'журнал аудита'
 };
