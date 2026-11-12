@@ -129,7 +129,7 @@ and this index, and `make check-fast` runs it.
 | [0070](0070-pools-respect-docker-volumes-and-odd-names.md) | Pool unmount and delete respect Docker volumes, and odd names do not break storage | superseded by [0344](0344-pool-unmount-and-delete-are-refused-when-docker-cannot-be-asked.md) | 2026-11-06 |
 | [0071](0071-scrubs-return-once-started.md) | Scrubs return once started, and scheduled scrubs need a mounted pool | superseded by [0311](0311-a-scrub-starts-only-on-a-mounted-pool-through-one-helper.md) | 2026-11-06 |
 | [0072](0072-smart-only-on-whole-host-disks.md) | SMART runs only on whole host disks, the set the Storage page lists | accepted | 2026-11-06 |
-| [0073](0073-deferred-storage-edge-cases.md) | Fix the deferred storage and snapshot edge cases of slice 1 | proposed | 2026-11-06 |
+| [0073](0073-deferred-storage-edge-cases.md) | Fix the deferred storage and snapshot edge cases of slice 1 | superseded by [0350](0350-volume-reads-container-folders-disk-names-and-deletes-withstand-renames-odd-names-links-and-new-mounts.md) | 2026-11-06 |
 | [0235](0235-disk-health-shows-smart-data-and-replace-soon-marks.md) | Disk Health opens each disk's SMART data, and disks whose SMART trend scores 50 are marked replace soon | accepted | 2026-11-07 |
 | [0241](0241-snapshots-of-volumes-and-volume-quotas-in-the-web-ui.md) | The Snapshots page offers the volumes of mounted pools, and the Volumes dialog takes a quota in GiB | superseded by [0243](0243-the-snapshots-page-offers-mounted-pools-and-their-volumes.md) | 2026-11-07 |
 | [0242](0242-snapshot-commands-act-on-the-folders-that-were-opened.md) | Snapshots are made, restored and deleted through the folders that were opened, and deleted by subvolume id | accepted | 2026-11-07 |
@@ -146,6 +146,7 @@ and this index, and `make check-fast` runs it.
 | [0311](0311-a-scrub-starts-only-on-a-mounted-pool-through-one-helper.md) | A scrub starts only on a pool whose btrfs filesystem is mounted, through one helper | accepted | 2026-11-09 |
 | [0313](0313-a-scrub-runs-from-its-start-and-its-result-names-how-it-ended.md) | A scrub runs from its start, before btrfs records it, and its result names how it ended | accepted | 2026-11-09 |
 | [0344](0344-pool-unmount-and-delete-are-refused-when-docker-cannot-be-asked.md) | Pool unmount and delete are refused when Docker cannot be asked, respect Docker volumes, and odd names do not break storage | accepted | 2026-11-11 |
+| [0350](0350-volume-reads-container-folders-disk-names-and-deletes-withstand-renames-odd-names-links-and-new-mounts.md) | Volume reads, container folders, disk names and deletes withstand renames, odd names, links and new mounts | accepted | 2026-11-12 |
 
 ## Shares
 

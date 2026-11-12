@@ -284,6 +284,9 @@ class FakeHost:
         # The requests that curl was given, in order.
         self.http_requests: list[SimpleNamespace] = []
         self.docker = FakeDocker()
+        # Whether a directory of the host is the root of a btrfs subvolume (stat prints its inode
+        # number, 256): test_volumes.FakeSubvolumes knows them.
+        self.subvolume_root = lambda path: False
         # How often the storage endpoints applied smb.conf after a pool change (install_fake_host).
         self.smb_applies = 0
         self._minor = 0
@@ -420,6 +423,31 @@ class FakeHost:
         for child in node.get("children") or []:
             yield from self._walk(child)
 
+    def _resolve(self, path):
+        """``path`` (absolute) with the symbolic links of ``links`` resolved, as realpath -m does."""
+        assert path.startswith("/"), path
+        todo = [part for part in path.split("/") if part]
+        resolved: list[str] = []
+        hops = 0
+        while todo:
+            part = todo.pop(0)
+            if part == ".":
+                continue
+            if part == "..":
+                resolved = resolved[:-1]
+                continue
+            link = "/" + "/".join([*resolved, part])
+            if link in self.links:
+                hops += 1
+                assert hops < 40, f"a loop of symbolic links: {path}"
+                target = self.links[link]
+                todo = [p for p in target.split("/") if p] + todo
+                if target.startswith("/"):
+                    resolved = []
+                continue
+            resolved.append(part)
+        return "/" + "/".join(resolved)
+
     def _node_by_path(self, path):
         for top in self.tree:
             for node in self._walk(top):
@@ -513,6 +541,23 @@ class FakeHost:
                 return self._result(0 if active else 1)
             exists = path in self.dirs if flag == "-d" else (path in self.files or path in self.dirs)
             return self._result(0 if exists else 1)
+        if prog == "realpath":
+            # GNU realpath --canonicalize-missing --zero: each path with its symbolic links (links)
+            # resolved and the parts that do not exist kept, each ended by a NUL.
+            assert cmd[1:4] == ["--canonicalize-missing", "--zero", "--"] and len(cmd) > 4, cmd
+            return self._result(stdout="".join(f"{self._resolve(path)}\0" for path in cmd[4:]))
+        if prog == "stat":
+            # GNU stat without -L: the entry itself, a symbolic link too. "%i %F": its inode
+            # number (256 for the root of a btrfs subvolume) and its kind.
+            assert cmd[1:3] == ["--format=%i %F", "--"] and len(cmd) == 4, cmd
+            path = cmd[3]
+            if path in self.links:
+                return self._result(stdout="1001 symbolic link\n")
+            if path in self.files:
+                return self._result(stdout="1002 regular file\n")
+            if path in self.dirs:
+                return self._result(stdout=f"{256 if self.subvolume_root(path) else 1003} directory\n")
+            return self._result(1, stderr=f"stat: cannot statx '{path}': No such file or directory")
         if prog == "sync":
             return self._result()  # flushes only: recorded in calls, not in changes
         if prog == "find":
@@ -1287,6 +1332,25 @@ class TestUnmountAndDelete:
             mounted.docker.add_volume("paperless_db"),  # a plain named volume
         ])
         with pytest.raises(pools.PoolBusyError, match=r"running containers \(paperless\)"):
+            operation("data")
+        assert mounted.changes == []
+        self.assert_still_mounted_and_persistent(mounted)
+
+    # storage.edge-cases, step 4: Docker reports a bind mount's source as it was written. A
+    # symbolic link on the host, or a folder of the pool bound elsewhere on the host, led the
+    # lexical comparison past the container: the pool was unmounted while it used it.
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    @pytest.mark.parametrize("case", ["symbolic link", "folder bound on the host"])
+    def test_refuses_a_container_that_reaches_the_pool_through_a_link_or_another_mount(
+        self, mounted, operation, case
+    ):
+        if case == "symbolic link":
+            mounted.links["/srv/data"] = "/mnt/pools/data"
+            mounted.docker.add("syncthing", sources=["/srv/data/sync"])
+        else:
+            mounted.add_mount("/srv/sync", "/dev/sda[/sync]", "btrfs", DATA_UUID)
+            mounted.docker.add("syncthing", sources=["/srv/sync"])
+        with pytest.raises(pools.PoolBusyError, match=r"running containers \(syncthing\)"):
             operation("data")
         assert mounted.changes == []
         self.assert_still_mounted_and_persistent(mounted)

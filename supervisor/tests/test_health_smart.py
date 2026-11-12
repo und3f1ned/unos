@@ -228,6 +228,43 @@ def test_storage_smart_of_invalid_names_is_refused(api, host, name):
     assert host.lsblk_on_loop == []
 
 
+# Whole disks whose names have more letters than four: the 703rd SCSI disk, the 27th Xen disk,
+# an s390 DASD (storage.edge-cases, step 5). The Storage and Health pages list them; a request
+# that named them answered 400 "Invalid disk name format".
+LONG_DISK_NAMES = ["sdaaa", "xvdaa", "dasda", "dasdaa"]
+
+
+@pytest.mark.parametrize("name", LONG_DISK_NAMES)
+def test_whole_disks_with_longer_names_answer_wherever_they_are_listed(api, host, name):
+    host.add_disk(name, serial="LONG-1")
+
+    assert name in [disk["name"] for disk in api.get("/api/v1/storage/disks").json()]
+    assert f"/dev/{name}" in [disk["device"] for disk in api.get("/api/v1/health/disks").json()["disks"]]
+    host.smartctl.clear()
+
+    for response in (storage_smart(api, name), read_smart(api, name), read_smart(api, f"%2Fdev%2F{name}"),
+                     start_test(api, name)):
+        assert response.status_code == 200, response.text
+    assert host.smartctl == [
+        ["smartctl", "-j", "-a", f"/dev/{name}"],
+        ["smartctl", "-j", "-a", f"/dev/{name}"],
+        ["smartctl", "-j", "-a", f"/dev/{name}"],
+        ["smartctl", "-t", "short", f"/dev/{name}"],
+    ]
+
+
+@pytest.mark.parametrize("name", ["sdaaa1", "xvdaa1", "dasda1"])
+def test_partitions_of_disks_with_longer_names_are_still_no_disk_of_this_system(api, host, name):
+    host.add_disk(name[:-1])
+    host.add_partition(name[:-1], name, fstype="ext4")
+
+    response = storage_smart(api, name)
+
+    assert response.status_code == 400, response.text
+    assert "is not a disk of this system" in response.json()["detail"]
+    assert host.smartctl == []
+
+
 def test_storage_smart_runs_nothing_when_the_host_disks_cannot_be_listed(api, host):
     host.fail[("lsblk",)] = (1, "lsblk: failed to access sysfs directory: /sys/dev/block")
 

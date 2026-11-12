@@ -261,7 +261,8 @@ For each pool, you can:
   An unmounted pool shows **Not mounted**, its fstab entry is removed, and its
   empty mountpoint is write-protected, so that nothing lands on the system
   disk there. Unmounting is refused while a running app or container uses the
-  pool, also through a Docker volume that binds a folder in it, or while
+  pool, also through a Docker volume that binds a folder in it, a symbolic
+  link on the host or a folder of the pool mounted elsewhere on the host, or while
   files on it are open, for example by a computer that has one of its SMB
   shares open; the dialog names the containers or the reason. When Docker
   does not answer, so that UNOS cannot tell which containers use the pool,
@@ -301,12 +302,18 @@ For each pool, you can:
   on the pool, which UNOS does not do itself: run
   `btrfs quota enable /mnt/pools/<pool>` on the host. Without them the volume
   is not created, the dialog says so, and you can create it without a quota.
+  When the quota cannot be set, the new volume is removed again; when UNOS
+  cannot tell which subvolume is the new one, it keeps it and the message
+  says that it was created without its quota: delete it and create it again.
+  When an app or a user gives something else the volume's name while it is
+  created, nothing is created and the message names what is there.
   Snapshots of the pool, manual or scheduled, do not include the files in its
   volumes: take snapshots of each volume as well, on the **Snapshots** page
   (see [Snapshots](#snapshots)); scheduled snapshot tasks take pools only.
   Deleting a volume deletes its files and asks you to type its name.
   Deleting is refused while a running app or container, an SMB share or an
-  NFS export uses the volume or a folder in it, and while the volume holds
+  NFS export uses the volume or a folder in it (a container also through a
+  symbolic link or another mount on the host), and while the volume holds
   snapshots or other subvolumes, which must be deleted first. A pool mounted
   read-only lists its volumes but cannot create or delete them.
 - **Balance** - Redistribute data across devices
@@ -804,7 +811,9 @@ export or an app uses is not refused, but they keep using the old name, which
 no longer exists: rename the folder back to restore them.
 
 A folder that contains a subvolume (such as a snapshot) or a mounted
-filesystem cannot be deleted here, or moved to another pool or volume.
+filesystem cannot be deleted here, or moved to another pool or volume. When
+one appears below a folder while the folder is deleted for good, the delete
+stops there: what it deleted before stays deleted, and the message says so.
 
 ### Trash
 

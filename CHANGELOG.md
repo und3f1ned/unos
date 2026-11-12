@@ -148,8 +148,9 @@ manager, encrypted backup uploads, health checks, CI checks).
 - Deleting a volume could follow a symbolic link that an app or an SMB user
   had put in the pool under the volume's name, and delete another subvolume.
   Volumes are now deleted by the subvolume id from the pool's own subvolume
-  list, checked against the filesystem first (409 when they differ, for
-  example for a subvolume whose name holds a line break).
+  list, checked against the filesystem first: the subvolume's path must be
+  the volume's name byte for byte (409 when the list gives the name only the
+  ids of other subvolumes).
 - CI: the workflow's token can only read the repository
   (`permissions: contents: read`), and the checkouts no longer leave it in
   the git configuration (`persist-credentials: false`), where the build or
@@ -921,6 +922,41 @@ manager, encrypted backup uploads, health checks, CI checks).
   move failed), so such an item among several items moves none of them, and
   a move that stops part way says how many items moved before it. Any other
   file operation that the system refuses as busy answers 409 too.
+- File manager: deleting a folder for good (also **Empty trash**, the trash's
+  expiry, and a move to another pool or volume) went into a subvolume or a
+  mount, also a bind mount, that appeared below the folder while it was
+  deleted, and deleted its files. The delete now checks each folder's device
+  and mount before it deletes anything in it, and stops at such a folder with
+  409, which says that part of the folder was deleted before that.
+- Volumes: a subvolume whose name holds a line break, which an app can make in
+  a pool, made every later volume created with a quota answer 409 and stay
+  without its quota, and one named like a volume followed by a line break was
+  taken for that volume: listed, deleted or given the quota in its place. The
+  subvolume list is now read highest id first, so that a name cannot raise
+  the newest id, and each volume's id is confirmed by the subvolume's exact
+  path (`btrfs inspect-internal subvolid-resolve`, compared byte for byte).
+- Volumes: a subvolume that was being renamed while the quota guard of a new
+  volume read the subvolume list could be missed and then given the new
+  volume's name: it got the quota, or was deleted when the quota failed. The
+  guard now also reads the quota groups (`btrfs qgroup show`), which a rename
+  does not change.
+- Volumes: when the subvolume list failed right after a create with a quota,
+  the request answered 500 without saying that the volume existed; it now
+  says `Volume '<name>' was created without its quota: ...`. When something
+  took the name between the check and the create, the request answered 500
+  `Creating volume ... failed`; it now answers 409 and names what is there (a
+  folder, a file, a symbolic link or a subvolume).
+- Unmounting or removing a pool, deleting a volume and importing a pool under
+  an earlier pool's name did not count a container whose mount reached the
+  pool through a symbolic link on the host, a relative path in a Docker
+  volume's options, a folder of the pool bound elsewhere on the host, or a
+  volume of a third-party driver. The folders are now resolved on the host
+  (`realpath`) and compared by filesystem and folder in the host's mount
+  table.
+- Disks whose names have more than four letters, such as `sdaaa` (the 703rd
+  SCSI disk), `xvdaa` or `dasda`, were listed on the Storage and Health pages,
+  but creating a pool on one, its SMART data and self-tests and SMART tasks
+  answered 400 `Invalid disk name format`.
 - Names that are not valid UTF-8, which apps and SMB users can give to
   folders and subvolumes in a pool, broke storage operations: a subvolume
   with such a name made listing volumes fail (HTTP 500). Such names are now

@@ -36,7 +36,10 @@ FILESYSTEM_UUID_PATTERN = re.compile(
 )
 VOLUME_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}\Z')
 SHARE_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}\Z')
-DISK_NAME_PATTERN = re.compile(r'^[a-z]{2,4}[0-9]*\Z')  # sda, sdb1, nvme0n1, etc.
+# sda, sdb1, vda, md0; and, with as many letters as the kernel gives them, the disks of the
+# SCSI, virtio, Xen, IDE and s390 DASD drivers (sdaaa, xvdaa, dasda) and their partitions.
+# Whether a name is a disk of the host is lsblk's to say (storage.disks.whole_disk_device).
+DISK_NAME_PATTERN = re.compile(r'^(?:[a-z]{2,4}|(?:sd|vd|xvd|hd|dasd)[a-z]+)[0-9]*\Z')
 NVME_DISK_PATTERN = re.compile(r'^nvme[0-9]+n[0-9]+(p[0-9]+)?\Z')  # nvme0n1, nvme0n1p1
 # eth0, enp3s0, he-ipv6, and VLANs as the kernel names them (eth0.100). A leading
 # letter keeps out ".", ".." and option-like names.
