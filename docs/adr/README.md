@@ -297,6 +297,7 @@ and this index, and `make check-fast` runs it.
 | [0325](0325-backup-tasks-keep-their-keys-in-a-file-of-their-own-that-is-set-aside-when-damaged.md) | Backup tasks encrypt every backup with a key derived from their passphrase, stored in a file of its own that is set aside when damaged | accepted | 2026-11-10 |
 | [0337](0337-off-device-copies-go-to-one-restic-repository-on-a-disk-or-an-s3-store.md) | Off-device copies go to one restic repository on a disk or an S3 store, and each copy is checked and its restore tested | accepted | 2026-11-11 |
 | [0345](0345-backups-hold-neither-fstab-nor-netplan-and-an-encrypted-upload-that-is-gzip-data-is-refused.md) | Backups hold neither fstab nor netplan, and an encrypted upload that is gzip data is refused | accepted | 2026-11-11 |
+| [0350](0350-the-backup-api-has-no-include-options-and-a-manifest-names-no-options.md) | The backup API has no include_ options, and a backup's manifest names no options | accepted | 2026-11-12 |
 
 ## Files
 
