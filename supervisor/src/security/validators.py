@@ -464,7 +464,7 @@ def validate_username(name: str) -> str:
 
 def validate_new_username(name: str) -> str:
     """
-    Validate the name of a new UNOS user (first-run setup, user creation and a rename, ADR-0363).
+    Validate the name of a new UNOS user (first-run setup, user creation and a rename, ADR-0368).
 
     New users get names that SMB accounts can use (shares.constants): 1 to 32
     lowercase letters, digits, '_' and '-', starting with a letter, and not a

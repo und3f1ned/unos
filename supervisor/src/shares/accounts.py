@@ -567,7 +567,7 @@ def _remove_host_account(name: str, *, expected_uid: int | None = None) -> str:
 
 
 def _rename_host_account(old: str, new: str, uid: int) -> str:
-    """``usermod -l <new> <old>`` of the marked account ``old`` with ``uid`` (ADR-0363): "renamed",
+    """``usermod -l <new> <old>`` of the marked account ``old`` with ``uid`` (ADR-0368): "renamed",
     "missing" or "busy". The account keeps its uid, and so the files it owns on the pools.
 
     The account is read again right before: one that is not ours, or has another uid, is not
@@ -1615,7 +1615,7 @@ async def finish_user_removal(db: AsyncSession, removal: UserRemoval) -> list[st
 
 
 # --------------------------------------------------------------------------
-# Rename (ADR-0363)
+# Rename (ADR-0368)
 # --------------------------------------------------------------------------
 
 
@@ -1720,7 +1720,7 @@ def _rename_back(rename: Rename) -> str | None:
 async def rename_before_store(
     db: AsyncSession, user: User, row: models.SmbAccount | None, new: str, password: str | None
 ) -> Rename:
-    """Step 1 of a rename (ADR-0363): the host follows before the caller stores the new name.
+    """Step 1 of a rename (ADR-0368): the host follows before the caller stores the new name.
 
     An active account needs ``password`` (400 otherwise, or for one that SMB refuses): Samba keeps
     passwords by name, and the account of the new name is made with it after the commit

@@ -325,7 +325,7 @@ class FakeSambaHost:
         return self._result()
 
     def _usermod(self, argv):
-        """``usermod -l NEW OLD`` (a rename, ADR-0363): the account keeps its uid, groups and GECOS; busy
+        """``usermod -l NEW OLD`` (a rename, ADR-0368): the account keeps its uid, groups and GECOS; busy
         (8) while ``busy`` counts down, as usermod refuses a rename while a process of the user runs."""
         assert argv[:2] == ["usermod", "-l"] and len(argv) == 4, f"usermod with other arguments than -l: {argv}"
         new, old = argv[2], argv[3]

@@ -70,7 +70,7 @@ export const en = {
 	'users.edit.close': 'Close',
 	'users.edit.save': 'Save',
 	'users.edit.done': 'User "{name}" updated',
-	// A rename (ADR-0363).
+	// A rename (ADR-0368).
 	'users.edit.nameTitle': 'Name',
 	'users.edit.renameHint': 'The user signs in with the new name; their sessions end',
 	'users.edit.renameSelf': 'You are renaming yourself: sign in again with the new name',

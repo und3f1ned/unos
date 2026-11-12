@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0116]
 ---
 
-# ADR-0363: An administrator renames a user, and the user's SMB account moves to the new name with its uid
+# ADR-0368: An administrator renames a user, and the user's SMB account moves to the new name with its uid
 
 ## Context
 

@@ -39,7 +39,7 @@ export const SMB_CONF_REPLACED =
 export const COMMON_PASSWORD_RULE =
   'SMB passwords must not be common passwords: this one is on the list of passwords that attackers try first';
 // The name rule of new and renamed users (constants.LINUX_NAME_PATTERN and NAME_RULE), and the
-// refusal of a rename without a password while SMB is on (ADR-0363); supervisor/tests/test_smb_accounts.py
+// refusal of a rename without a password while SMB is on (ADR-0368); supervisor/tests/test_smb_accounts.py
 // checks them against the server.
 const USERNAME_RULE = /^[a-z][a-z0-9_-]{0,31}$/;
 export const NAME_RULE_TEXT =
@@ -721,7 +721,7 @@ export async function fakeSmbApi(page: Page, options: FakeSmbOptions = {}): Prom
         if (data.username !== undefined && data.username !== user.username) return stale();
         const newName = typeof data.new_username === 'string' ? data.new_username : user.username;
         if (newName !== user.username) {
-          // A rename (ADR-0363), with the server's refusals of src/auth/router.py and accounts.py.
+          // A rename (ADR-0368), with the server's refusals of src/auth/router.py and accounts.py.
           if (!USERNAME_RULE.test(newName)) return detail(400, `Invalid username. ${NAME_RULE_TEXT}`);
           const taken = fake.users.find((u) => u !== user && u.username.toLowerCase() === newName.toLowerCase());
           if (taken) {

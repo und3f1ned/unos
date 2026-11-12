@@ -1315,7 +1315,7 @@ class FakeNas:
         return {"status": "ok", "message": "User deleted", "warnings": []}
 
     def rename(self, uid: int, old: str, body: dict) -> None:
-        """PUT /auth/users/{id} with new_username (ADR-0363): the user's open SMB sessions end, its marked
+        """PUT /auth/users/{id} with new_username (ADR-0368): the user's open SMB sessions end, its marked
         host account keeps its uid under the new name, and so the files of the uid belong to the new
         name; Samba's account of the old name goes, and an active account gets one of the new name
         with the rename's password; the share access follows. The defects: rename-keeps-session,
@@ -1915,7 +1915,7 @@ def test_the_smb_check_covers_the_flows_of_slice_2(nas):
 
 
 def test_the_smb_check_renames_its_user_and_goes_on_under_the_new_name(nas):
-    """auth.user-rename (ADR-0363): the check's user takes a new name with a new password, which UNOS and
+    """auth.user-rename (ADR-0368): the check's user takes a new name with a new password, which UNOS and
     Samba sign in while they refuse the old one; the steps after it and the user's Delete use the new name."""
     status, output = run_check("smb", nas)
     assert status == 0, output
@@ -2688,7 +2688,7 @@ def test_the_smb_check_locks_its_account_last_and_deletes_it_locked(nas):
     lock = [int(line.split(".")[0].split()[1]) for line in step_lines(output)
             if "5 wrong passwords in a row lock the account" in line]
     assert lock and max(signed_in) == lock[0], output
-    assert deleted == [["unoscheck1a2b3cr"]]  # the user's name since its rename (ADR-0363)
+    assert deleted == [["unoscheck1a2b3cr"]]  # the user's name since its rename (ADR-0368)
 
 
 def test_the_smb_check_asks_for_a_samr_password_change_that_samba_refuses(nas):
@@ -2707,7 +2707,7 @@ def test_the_smb_check_asks_for_a_samr_password_change_that_samba_refuses(nas):
     nas.smb_change_password = changing
     status, output = run_check("smb", nas)
     assert status == 0, output
-    assert changes == [("unoscheck1a2b3cr", True, True, 0)]  # the user's name since its rename (ADR-0363)
+    assert changes == [("unoscheck1a2b3cr", True, True, 0)]  # the user's name since its rename (ADR-0368)
     steps = step_lines(output)
     samr = [n for n, line in enumerate(steps) if "through SAMR" in line]
     assert len(samr) == 1 and "NT_STATUS_PASSWORD_RESTRICTION" in steps[samr[0]], output

@@ -614,7 +614,7 @@ async def update_user(
     active SMB account) and deletes the user's share access. A new password of
     an active SMB account goes to Samba first and ends its open SMB sessions.
     A new name (``new_username``) renames the user and their SMB account
-    (ADR-0363, _rename_user).
+    (ADR-0368, _rename_user).
     """
     new_name = validate_new_username(data.new_username) if data.new_username is not None else None
     new_hash = await asyncio.to_thread(hash_password, data.password) if data.password else None
@@ -719,7 +719,7 @@ class _Renamed:
 async def _rename_user(
     db: AsyncSession, user: User, row: SmbAccount | None, new_name: str, password: str | None, new_hash: str | None
 ) -> _Renamed:
-    """Rename ``user`` to ``new_name`` (ADR-0363), under smb_lock, after the name rule.
+    """Rename ``user`` to ``new_name`` (ADR-0368), under smb_lock, after the name rule.
 
     A name that another user has, in any letter case, is refused (400): Samba and tdbsam take
     such names as one account. The host follows first (accounts.rename_before_store), then the

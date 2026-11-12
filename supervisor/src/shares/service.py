@@ -1394,7 +1394,7 @@ async def delete_access_of_user(db: AsyncSession, user_id: int) -> int:
 
 
 async def rename_access_of_user(db: AsyncSession, user_id: int, old: str, new: str) -> None:
-    """A user's rename (ADR-0363): their access rows, written for ``old``, name ``new`` (ADR-0133);
+    """A user's rename (ADR-0368): their access rows, written for ``old``, name ``new`` (ADR-0133);
     a row of the id written for another name is stale (ADR-0137) and is deleted, so that it never
     becomes access of the new name. The shares of these rows get version + 1 (flushed, not
     committed). The caller holds smb_lock()."""

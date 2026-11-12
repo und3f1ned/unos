@@ -265,7 +265,7 @@ def test_whole_cycle(cycle):
 
 
 def test_a_renamed_user_keeps_its_share_access_under_the_new_name_and_a_start_changes_nothing(cycle):
-    """auth.user-rename (ADR-0363): smb.conf, rendered from the database, names the new name where
+    """auth.user-rename (ADR-0368): smb.conf, rendered from the database, names the new name where
     the old one had access, and the startup reconcile finds the renamed account consistent."""
     c, fake, world = cycle, cycle.fake, cycle.world
     test_id = world.ids["test"]

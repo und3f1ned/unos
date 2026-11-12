@@ -174,7 +174,7 @@
 	let shareAccessRequest = 0;
 
 	$: editState = editing?.smb?.state;
-	// A new name (ADR-0363): the role changes in another save, and a user with SMB on needs a new
+	// A new name (ADR-0368): the role changes in another save, and a user with SMB on needs a new
 	// password, which Samba's account of the new name gets.
 	$: renaming = editing !== null && editUsername !== editing.username;
 	$: editUsernameError =

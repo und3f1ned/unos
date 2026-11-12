@@ -666,7 +666,7 @@ test.describe('Users page SMB (fake data)', () => {
   test('renaming a user with SMB on needs a new password, and the request names the user and the new name', async ({
     authenticatedPage: page,
   }) => {
-    // auth.user-rename (ADR-0363): Samba's account of the new name is made with the new password.
+    // auth.user-rename (ADR-0368): Samba's account of the new name is made with the new password.
     const fake = await fakeSmbApi(page, {
       users: fakeUsers(),
       shares: [fakeShare('media', { access: accessOf(fakeUsers(), [{ user_id: 2, username: 'alice', level: 'write' }]) })],
@@ -959,7 +959,7 @@ test.describe('SMB activation (stand-in)', () => {
   });
 });
 
-// ---- A rename on the real server (auth.user-rename, ADR-0363): a user without SMB, which needs no Samba ----
+// ---- A rename on the real server (auth.user-rename, ADR-0368): a user without SMB, which needs no Samba ----
 
 test.describe('Rename', () => {
   let token = '';

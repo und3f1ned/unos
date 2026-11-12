@@ -2372,7 +2372,7 @@ class TestSelfFlowErrors:
         built = re.findall(r"\b(\w+)\(\d{3}, f\"[^\"\n]*\{(?:_last_line\(|_clean\(str\(exc\)\))", source)
 
         # The two of Samba's account policies (ADR-0278, ADR-0334) reach only the reconcile's problems;
-        # usermod's reaches only an administrator's rename (ADR-0363).
+        # usermod's reaches only an administrator's rename (ADR-0368).
         assert built.count("SmbHostCommandFailed") == 12
         assert set(built) == {"SmbHostCommandFailed", "SmbConfNotUnos"}
 
@@ -2724,7 +2724,7 @@ class TestUsernamesInRequests:
 
 
 # ---------------------------------------------------------------------------
-# rename (auth.user-rename, ADR-0363)
+# rename (auth.user-rename, ADR-0368)
 # ---------------------------------------------------------------------------
 
 RENAME_NEEDS_PASSWORD = (

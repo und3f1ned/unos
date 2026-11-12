@@ -30,7 +30,7 @@ SD writes of each check (ADR-0214). The areas:
            Folder and Upload in the share's folder (2770 and 660 root:unos-smb) changed over SMB,
            the access lowered to read and then removed during open sessions, a comment saved with
            the expected version and a stale one refused, a rename of the user with a new password
-           (ADR-0363) that ends the open session and keeps the marked host account's uid, and so
+           (ADR-0368) that ends the open session and keeps the marked host account's uid, and so
            the user's files, under the new name, with a Samba account of the new name and none of
            the old, the share's access and smb.conf's section following the new name, which signs
            in to UNOS and to the share while the old one is refused (by Samba only where the device
@@ -1998,7 +1998,7 @@ def smb_check(c: Check) -> None:
     with c.step("the user gets read-write access again"):
         grant("write")
 
-    # auth.user-rename (ADR-0363): the user and its SMB account take a new name; the steps after these use it.
+    # auth.user-rename (ADR-0368): the user and its SMB account take a new name; the steps after these use it.
     renamed, renamed_password = f"{user}r", c.secret()
     with contextlib.ExitStack() as held:
         with c.step(f"renaming the user to {renamed} with a new password ends its open session; its marked host "

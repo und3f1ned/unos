@@ -82,7 +82,7 @@ class UserUpdate(BaseModel):
     # The username the request was built for: users.id is a plain rowid that
     # SQLite reuses after a deletion (409 when it is not the user's name).
     username: str | None = Field(default=None, max_length=64)
-    # A new name (ADR-0363); the name rule of new users runs in the handler, as for UserCreate.
+    # A new name (ADR-0368); the name rule of new users runs in the handler, as for UserCreate.
     new_username: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
