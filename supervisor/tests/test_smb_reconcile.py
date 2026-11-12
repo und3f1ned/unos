@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.host import HostResult
 from src.shares import accounts, interfaces
 
-from .test_smb_accounts import ALICE_PW, BOB_PW, World, hide_from_enumeration
+from .test_smb_accounts import ALICE_PW, BOB_PW, World, hide_from_enumeration, recorded
 
 USERADD = ["useradd", "-r", "-l", "-N", "-M"]
 
@@ -865,6 +865,32 @@ class TestNextUid:
         reconcile(world)
 
         assert world.next_uid() == 70101
+
+    def test_a_stale_marked_account_is_recorded_before_it_is_removed(self, world, commits):
+        """ADR-0350: its files on the pools keep its uid after the userdel, so the uid stays in smb_uids
+        under its name (the first start of a new installation, whose uninstall kept the accounts:
+        ADR-0109). Written once, in the commit before the host actions; a busy account too."""
+        consistent(world)
+        world.fake.add_account("dave", 70007)
+        world.fake.add_account("old", 70100)
+        world.fake.busy["old"] = 1
+        reached, release = world.fake.pause_at("userdel", "dave")
+        during: list[dict[int, str]] = []
+        thread = threading.Thread(target=lambda: reconcile(world))
+        thread.start()
+        try:
+            assert reached.wait(5)
+            during.append(recorded(world.path))
+        finally:
+            release.set()
+            thread.join(10)
+
+        assert during == [{70007: "dave", 70100: "old"}]
+        assert "dave" not in world.fake.passwd and world.fake.passwd["old"].uid == 70100
+        assert commits["n"] == 1
+        assert "Removed the stale host account old (uid 70100)" in reconcile(world).changes  # no longer busy
+        assert commits["n"] == 1  # already recorded: nothing to write
+        assert recorded(world.path) == {70007: "dave", 70100: "old"}
 
     def test_a_missing_state_row(self, world):
         world.make_active("alice", 70000, ALICE_PW)

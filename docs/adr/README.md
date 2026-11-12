@@ -269,6 +269,7 @@ and this index, and `make check-fast` runs it.
 | [0339](0339-the-guest-globals-follow-guest-shares-and-an-anonymous-share-list-names-no-share.md) | The guest-related globals follow whether any guest share exists, and an anonymous share list names no share | accepted | 2026-11-11 |
 | [0342](0342-samba-refuses-every-password-change-over-samr-so-smb-passwords-change-only-through-unos.md) | Samba refuses every password change over SAMR with a check password script that always fails, so SMB passwords change only through UNOS | accepted | 2026-11-11 |
 | [0349](0349-a-restore-refuses-a-backup-whose-database-gives-one-smb-uid-to-two-accounts.md) | A restore refuses a backup whose database gives one SMB uid to two accounts | accepted | 2026-11-11 |
+| [0350](0350-smb-uids-handed-out-are-recorded-and-a-restored-account-keeps-one-only-under-its-name.md) | SMB uids handed out are recorded for good, and a restored account keeps a recorded uid only under the name it went to | accepted | 2026-11-12 |
 
 ## Apps
 

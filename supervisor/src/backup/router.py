@@ -768,7 +768,8 @@ def _prepare_smb(db_file: Path, db_path: Path) -> list[str]:
     """The SMB rules of a restore (ADR-0139) on the extracted database, before it replaces the live one.
 
     The SMB tables are checked (BackupValidationError), the SMB
-    accounts of the live database are read, and then one transaction on the
+    accounts of the live database and its record of handed-out uids are
+    read (ADR-0350), and then one transaction on the
     extracted file applies the share rules (shares/service.py) and the
     account rules (shares/accounts.py). Any failure rolls it back and the
     restore fails: the live database never holds an unproven SMB state.

@@ -12,7 +12,9 @@ import asyncio
 import json
 import logging
 import re
+import sqlite3
 import subprocess
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -93,6 +95,13 @@ def _hash(password: str) -> str:
 def _cheap_hash(password: str) -> str:
     """auth.router.hash_password at bcrypt cost 4 (the tests do not need cost 12)."""
     return _hash(password)
+
+
+def recorded(path: Path) -> dict[int, str]:
+    """smb_uids of the database at ``path``: every uid handed out on that NAS and the name it went to
+    (ADR-0350), read with a connection of its own."""
+    with closing(sqlite3.connect(path)) as conn:
+        return dict(conn.execute("SELECT uid, linux_name FROM smb_uids ORDER BY uid"))
 
 
 class RecordingClient:
@@ -1347,6 +1356,39 @@ class TestCollisions:
         world.add_user("carol", "Carol-pass-2026")
         world.make_allowed("carol")
         assert world.self_enable("carol", "Carol-pass-2026").json()["account"]["uid"] == 70001
+
+    def test_an_activation_records_its_uid_before_useradd(self, world, monkeypatch):
+        """ADR-0350: the uid and the name it went to are committed with the row, before the host account
+        exists, and stay when the user is deleted: files on the pools keep that uid."""
+        world.make_allowed("alice")
+        at_useradd = []
+        real_useradd = world.fake._useradd
+
+        def useradd(argv):
+            at_useradd.append(recorded(world.path))
+            return real_useradd(argv)
+
+        monkeypatch.setattr(world.fake, "_useradd", useradd)
+
+        assert world.self_enable().json()["account"]["uid"] == 70000
+        assert at_useradd == [{70000: "alice"}]
+        assert world.delete_user("alice").status_code == 200
+        assert recorded(world.path) == {70000: "alice"}
+
+    def test_a_recorded_uid_is_never_handed_out_again(self, world):
+        """ADR-0350: also when next_uid lies below it (a hand edit): the record is what was handed out."""
+        with closing(sqlite3.connect(world.path)) as conn:
+            conn.executemany("INSERT INTO smb_uids (uid, linux_name) VALUES (?, ?)", [(70000, "dave"), (70001, "erin")])
+            conn.commit()
+        world.set_next_uid(70000)
+        world.make_allowed("alice")
+
+        response = world.self_enable()
+
+        assert response.status_code == 200, response.text
+        assert world.row("alice").uid == 70002
+        assert world.next_uid() == 70003
+        assert recorded(world.path) == {70000: "dave", 70001: "erin", 70002: "alice"}
 
     def test_a_uid_taken_on_the_host_is_skipped(self, world):
         world.make_allowed("alice")

@@ -2,8 +2,9 @@
 
 New tables only: init_db() runs create_all, which creates missing tables in
 existing databases (there is no migration framework, and columns are never
-added to existing tables). A restore checks them in the extracted backup
-database and refuses one that lacks them (ADR-0319). SQLite does
+added to existing tables). A restore checks the first four in the extracted
+backup database and refuses one that lacks them (ADR-0319); smb_uids it
+replaces with the live database's (ADR-0350). SQLite does
 not enforce foreign keys here (no PRAGMA foreign_keys): code that deletes a
 user or a share deletes the dependent rows itself, in the same transaction
 (SQLite reuses the highest rowid, so an orphan row would attach to the next
@@ -121,6 +122,25 @@ class SmbState(Base):
     # Set by a restore whose database is not authoritative for SMB (ADR-0319): the next
     # import reads the live file ('live'), never turns guest access on, and clears it.
     pending_import_source = Column(String(8), nullable=True)
+
+
+class SmbUid(Base):
+    """A uid that UNOS handed out on this NAS, and the host account name it went to (ADR-0350).
+
+    Files on the pools keep their owner's uid after the account is gone, so a row outlives its
+    account and is never deleted: an activation writes it with the row's uid, the reconcile for a
+    stale marked host account before removing it, and a restore replaces the backup's rows with the
+    live ones plus the uids it restores. A restored account keeps a uid recorded here only under
+    the name recorded with it, and no activation hands one out again.
+    """
+
+    __tablename__ = "smb_uids"
+    __table_args__ = (
+        CheckConstraint(f"uid BETWEEN {SMB_UID_MIN} AND {SMB_UID_MAX}", name="ck_smb_uids_uid_range"),
+    )
+
+    uid = Column(Integer, primary_key=True, autoincrement=False)
+    linux_name = Column(String(32), nullable=False)
 
 
 async def get_smb_state(db: AsyncSession) -> SmbState:

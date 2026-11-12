@@ -1669,7 +1669,11 @@ SMB after a restore:
   was made. Everyone else shows **Password needed** and must turn SMB on
   again (see [SMB Access](#smb-access)), and so must a user whose SMB user id
   belongs to another account on this NAS (for example in a backup of another
-  installation). A backup whose database gives one SMB user id to two
+  installation), or once went to a user of another name who was deleted from
+  this NAS: files on the pools keep the user id of their owner, so UNOS never
+  gives it to anyone else. Such a user gets a new SMB user id. A user deleted
+  after the backup was made comes back with their own SMB user id, and so with
+  their files. A backup whose database gives one SMB user id to two
   accounts is refused, and nothing is restored.
 
 Encrypted backups (`.tar.gz.enc`) are made by backup tasks (below), or
