@@ -72,6 +72,26 @@ def validate_common_name(value: str) -> str:
 # the subject CN.
 CertificateDomain = Annotated[str, AfterValidator(validate_common_name)]
 
+# X.509 limits a subject's organization to 64 characters (RFC 5280,
+# ub-organization-name) and its country to the two letters of ISO 3166.
+# openssl refuses others only after it has made the key.
+MAX_ORGANIZATION_LENGTH = 64
+_COUNTRY_CODE = re.compile(r"[A-Za-z]{2}")
+
+
+def validate_organization(value: str) -> str:
+    """The organization of a self-signed certificate: at most 64 characters."""
+    if len(value) > MAX_ORGANIZATION_LENGTH:
+        raise ValueError(f"the organization must be at most {MAX_ORGANIZATION_LENGTH} characters long")
+    return value
+
+
+def validate_country(value: str) -> str:
+    """The country of a self-signed certificate: two letters, such as DE."""
+    if not _COUNTRY_CODE.fullmatch(value):
+        raise ValueError("the country must be two letters, such as DE")
+    return value
+
 
 def _as_utc(value: datetime) -> datetime:
     """A time without a zone is UTC: SQLite's CURRENT_TIMESTAMP is (ADR-0262)."""
@@ -157,11 +177,17 @@ class FirewallRuleCreate(BaseModel):
 # SSL/TLS Certificate Schemas
 class CertificateType(str, Enum):
     SELF_SIGNED = "self_signed"
-    LETS_ENCRYPT = "lets_encrypt"
     CUSTOM = "custom"
 
 
+class ServedCertificate(str, Enum):
+    """What browsers get from https://<host>/: the certificate of Caddy's local CA (ADR-0025).
+    Nothing hands a stored certificate to the web UI's container yet (ADR-0356)."""
+    CADDY_LOCAL_CA = "caddy_local_ca"
+
+
 class Certificate(BaseModel):
+    """A certificate stored by an upload or a self-signed generation."""
     id: str
     type: CertificateType
     domain: str
@@ -169,13 +195,14 @@ class Certificate(BaseModel):
     valid_from: str | None = None
     valid_until: str | None = None
     is_valid: bool = True
-    auto_renew: bool = False
+    # Stored, not served: browsers get the certificate of served_by (ADR-0356).
+    served: bool = False
     fingerprint: str | None = None
 
 
 class CertificateListResponse(BaseModel):
     certificates: list[Certificate]
-    active_certificate: str | None
+    served_by: ServedCertificate = ServedCertificate.CADDY_LOCAL_CA
 
 
 class CertificateUpload(BaseModel):
@@ -187,20 +214,10 @@ class CertificateUpload(BaseModel):
 class SelfSignedCertRequest(BaseModel):
     domain: CertificateDomain
     validity_days: int = 365
-    organization: str | None = None
-    country: str | None = None
-
-
-class LetsEncryptRequest(BaseModel):
-    domain: str
-    email: str
-    staging: bool = False  # Use staging server for testing
+    organization: Annotated[str, AfterValidator(validate_organization)] | None = None
+    country: Annotated[str, AfterValidator(validate_country)] | None = None
 
 
 class CertificateStatus(BaseModel):
-    has_certificate: bool
-    type: CertificateType | None = None
-    domain: str | None = None
-    valid_until: str | None = None
-    is_valid: bool = False
-    auto_renew: bool = False
+    """What browsers get from https://<host>/ (ADR-0356)."""
+    served_by: ServedCertificate = ServedCertificate.CADDY_LOCAL_CA

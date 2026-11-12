@@ -1632,6 +1632,27 @@ twice at once can guard itself, for example with
 each run, as when it is saved: at most 4096 characters, without NUL
 characters.
 
+### HTTPS Certificates
+
+Under **SSL/TLS Certificates** on **System** → **Security** (administrators
+only), the badge names what browsers get over HTTPS: **Caddy's local CA**,
+the certificate that Caddy, the web server of UNOS, issues from its own
+certificate authority for the name in `UNOS_HOSTNAME` (see
+[HTTPS and the Certificate Warning](INSTALL.md#https-and-the-certificate-warning)).
+**Manage** says so again and lists the **Stored Certificates**, each with its
+type, issuer, end date, **VALID** or **EXPIRED** and **NOT SERVED**.
+
+UNOS stores certificates but does not serve them yet: browsers keep getting
+the local CA's certificate whatever is stored (feature-list entry
+`security.custom-certificates`). **Generate Self-Signed** stores a certificate
+for a host name or an IP address (a name of at most 64 characters), valid for
+the days you choose, with an optional organization (at most 64 characters)
+and an optional country (two letters, such as `DE`); the API's
+`POST /api/v1/security/certificates/upload` stores a certificate with its key
+and chain under the name of its subject. The trash button deletes a stored
+certificate. When the certificates cannot be loaded, the card says so with
+the reason.
+
 ---
 
 ## Backups & Snapshots

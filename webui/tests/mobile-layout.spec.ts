@@ -471,17 +471,14 @@ const SECURITY = {
         source: '2001:db8:1234:5678::/64', destination: null, enabled: true, comment: null },
     ],
   },
-  '/api/v1/security/certificates/status': {
-    has_certificate: true, type: 'self_signed', domain: 'nas-living-room.home.arpa',
-    valid_until: 'Nov  8 01:47:31 2027 GMT', is_valid: true, auto_renew: false,
-  },
+  '/api/v1/security/certificates/status': { served_by: 'caddy_local_ca' },
   '/api/v1/security/certificates': {
     certificates: [
-      { id: 'custom_nas', type: 'self_signed', domain: 'nas-living-room.home.arpa', issuer: 'nas-living-room.home.arpa',
-        valid_from: 'Nov  8 01:47:31 2026 GMT', valid_until: 'Nov  8 01:47:31 2027 GMT', is_valid: true,
-        auto_renew: false, fingerprint: null },
+      { id: 'custom_nas-living-room.home.arpa', type: 'self_signed', domain: 'nas-living-room.home.arpa',
+        issuer: 'nas-living-room.home.arpa', valid_from: 'Nov  8 01:47:31 2026 GMT',
+        valid_until: 'Nov  8 01:47:31 2027 GMT', is_valid: true, served: false, fingerprint: null },
     ],
-    active_certificate: 'custom_nas',
+    served_by: 'caddy_local_ca',
   },
 };
 

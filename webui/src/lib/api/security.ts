@@ -55,8 +55,13 @@ export interface FirewallRuleCreate {
 }
 
 // Certificate Types
-export type CertificateType = "self_signed" | "lets_encrypt" | "custom";
+export type CertificateType = "self_signed" | "custom";
 
+// What browsers get from https://<host>/: Caddy's local CA. Stored certificates are not served
+// (ADR-0356).
+export type ServedCertificate = "caddy_local_ca";
+
+// A certificate stored by an upload or a self-signed generation.
 export interface Certificate {
   id: string;
   type: CertificateType;
@@ -65,22 +70,17 @@ export interface Certificate {
   valid_from: string | null;
   valid_until: string | null;
   is_valid: boolean;
-  auto_renew: boolean;
+  served: boolean;
   fingerprint: string | null;
 }
 
 export interface CertificateListResponse {
   certificates: Certificate[];
-  active_certificate: string | null;
+  served_by: ServedCertificate;
 }
 
 export interface CertificateStatus {
-  has_certificate: boolean;
-  type: CertificateType | null;
-  domain: string | null;
-  valid_until: string | null;
-  is_valid: boolean;
-  auto_renew: boolean;
+  served_by: ServedCertificate;
 }
 
 export interface CertificateUpload {
