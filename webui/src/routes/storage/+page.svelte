@@ -57,6 +57,7 @@
 		Select
 	} from '$lib/components/ui';
 	import { intlLocale, locale, t } from '$lib/i18n';
+	import { stats, type WebSocketStats } from '$lib/stores/stats';
 
 	type BadgeVariant = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'orange';
 
@@ -112,7 +113,43 @@
 
 	onMount(async () => {
 		await loadData();
+		reloadForDevices();
 	});
+
+	// A disk attached or removed while the page is open (ADR-0360). The stats stream names every
+	// block device the kernel has, every 2 seconds (disk_io.disks of /ws/v1/events): the page
+	// loads its lists again when those names changed and then stayed the same for one message,
+	// so that udev has read the new devices before lsblk reports them. Not while a dialog is
+	// open, where the lists stay as the user saw them, but once it closes; nor while the lists
+	// load, but once they are loaded.
+	let devicesSeen: string | null = null; // the devices of the last message
+	let devicesHeld: string | null = null; // the last devices that stayed for a message
+	let devicesLoaded: string | null = null; // devicesHeld when the lists were last loaded
+	let followingDevices = false;
+	$: dialogOpen =
+		showCreateModal || poolAction !== null || importTarget !== null || showDeleteModal || volumesPool !== null;
+	$: followBlockDevices($stats);
+	$: if (!dialogOpen) reloadForDevices();
+
+	function followBlockDevices(message: WebSocketStats | null) {
+		const names = message?.disk_io?.disks?.map((disk) => disk.name);
+		if (!names) return;
+		const devices = [...names].sort().join();
+		// The first message names the devices of the lists that the page loads when it opens.
+		if (devicesHeld === null || devices === devicesSeen) devicesHeld = devices;
+		if (devicesLoaded === null) devicesLoaded = devices;
+		devicesSeen = devices;
+		reloadForDevices();
+	}
+
+	function reloadForDevices() {
+		if (devicesHeld === devicesLoaded || loading || followingDevices || dialogOpen) return;
+		followingDevices = true;
+		loadData(false).finally(() => {
+			followingDevices = false;
+			reloadForDevices();
+		});
+	}
 
 	onDestroy(() => {
 		Object.values(scrubPollingIntervals).forEach((interval) => clearInterval(interval));
@@ -125,6 +162,7 @@
 	async function loadData(showSpinner = true) {
 		if (showSpinner) loading = true;
 		error = '';
+		if (devicesHeld !== null) devicesLoaded = devicesHeld;
 		// Each list on its own: one that cannot be loaded says why in its card instead
 		// of looking empty, and the other ones are still shown (ADR-0271). The filesystems
 		// found on the disks have their own error as well (loadImportable).

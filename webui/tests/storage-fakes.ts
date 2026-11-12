@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page, type WebSocketRoute } from '@playwright/test';
 
 // Canned /api/v1/storage responses for UI tests that must never format,
 // mount or unmount a real disk. fakeStorageApi() answers every storage request
@@ -295,6 +295,29 @@ function unmountedPool(pool: FakePool): FakePool {
   return {
     ...pool, mounted: false, persistent: false, mountpoint: null, raid_level: null, health: 'unmounted',
     device_errors: 0, read_only: false, forced_read_only: false,
+  };
+}
+
+/**
+ * Stand in for the stats stream /ws/v1/events (supervisor/src/websocket/events.py) with the
+ * block devices of the fake host: the stand-in's own stream names the devices of this machine.
+ * The fake answers the page's auth message with auth_ok; the function returned sends one stats
+ * message whose disk_io.disks names ``devices``, as the server does every 2 seconds with each
+ * device of /proc/diskstats (disks and partitions, without loop and RAM devices).
+ */
+export async function fakeBlockDevices(page: Page): Promise<(devices: string[]) => Promise<void>> {
+  let socket: WebSocketRoute | null = null;
+  await page.routeWebSocket('**/ws/v1/events', (ws) => {
+    ws.onMessage((message) => {
+      if (JSON.parse(String(message)).type !== 'auth') return;
+      ws.send(JSON.stringify({ type: 'auth_ok' }));
+      socket = ws;
+    });
+  });
+  return async (devices) => {
+    await expect.poll(() => socket !== null, { message: 'the page signed in to the stats stream' }).toBe(true);
+    const disks = devices.map((name) => ({ name, read_bytes: 0, write_bytes: 0, read_count: 0, write_count: 0 }));
+    socket!.send(JSON.stringify({ type: 'stats', data: { disk_io: { disks } } }));
   };
 }
 
