@@ -412,10 +412,13 @@ class FakeNas:
         self.offsite_pending: tuple[str, dict] | None = None
         self.offsite_count = 0
         # The shares check: the last Repair permissions of each share, kept in the supervisor's
-        # memory; whose token a call carries (FakeUserApi), the users' tokens that the relay keeps
-        # and those deleted; the calls answered 422 (their bodies the API's models refuse); and a
-        # device without setfacl.
+        # memory, and the run of a share that a GET has yet to find still running (its end); whose
+        # token a call carries (FakeUserApi), the users' tokens that the relay keeps and those
+        # deleted; the calls answered 422 (their bodies the API's models refuse); and a device
+        # without setfacl.
         self.repairs: dict[str, dict] = {}
+        self.repair_running: tuple[str, dict] | None = None
+        self.repair_count = 0
         self.identity: str | None = None
         self.tokens: set[str] = set()
         self.forgotten: list[str] = []
@@ -1171,23 +1174,42 @@ class FakeNas:
         return {"status": "deleted", "warnings": []}
 
     def api_repair(self, method, name):
-        """Repair permissions of a share (src/shares/repair_router.py, ADR-0155): its last result since
-        the start, or a new run, refused with 409 for a share that is not served or below a folder that
-        others can change."""
+        """Repair permissions of a share (src/shares/repair_router.py, ADR-0363): its last finished run
+        since the start, or a new run in the background, answered at once (202) running, refused with
+        409 for a share that is not served or below a folder that others can change, or while another
+        runs. The first GET after the start still finds the run before it (or none): the new one runs
+        until then."""
         if method == "GET":
-            if name not in self.repairs:
+            last = self.repairs.get(name)
+            if (self.repair_running is not None and self.repair_running[0] == name
+                    and "repair-never-ends" not in self.bugs):
+                self.repairs[name] = self.repair_running[1]
+                self.repair_running = None
+            if last is None:
                 raise Refused(404, "No repair has run for this share since UNOS started")
-            return copy.deepcopy(self.repairs[name])
+            return copy.deepcopy(last)
         path = self.shares[name]["path"]
         problem = self.path_problem(path)
         if problem and "repair-unserved" not in self.bugs:
             raise Refused(409, f"Share {name} is not served: {problem}; change its folder first")
         if (refusal := self.unsafe_text(path, "refusal")):
             raise Refused(409, refusal)
-        self.repairs[name] = {"share": name, "state": "done", "started_at": "2026-11-11T10:00:00Z",
-                              "finished_at": "2026-11-11T10:00:01Z", **self.repair_walk(path),
-                              "skipped_paths": [], "errors": 0, "error_samples": [], "message": "Permissions repaired."}
-        return copy.deepcopy(self.repairs[name])
+        if self.repair_running is not None:
+            raise Refused(409, "A permissions repair is already running")
+        self.repair_count += 1
+        started = f"2026-11-11T10:00:{self.repair_count:02d}Z"
+        zeros = dict.fromkeys(("other_filesystem", "snapshots", "symlink", "special", "hardlink", "private",
+                               "too_deep", "raced"), 0)
+        self.repair_running = (name, {
+            "share": name, "state": "done", "started_at": started, "finished_at": "2026-11-11T10:01:00Z",
+            **self.repair_walk(path), "skipped_paths": [], "errors": 0, "error_samples": [],
+            "message": "Permissions repaired."})
+        if "repair-answers-its-end" in self.bugs:  # the request waits for the walk, as before ADR-0363
+            name, self.repairs[name] = self.repair_running
+            self.repair_running = None
+            return copy.deepcopy(self.repairs[name])
+        return 202, {"share": name, "state": "running", "started_at": started, "finished_at": None, "visited": 0,
+                     "changed": 0, "skipped": zeros, "skipped_paths": [], "errors": 0, "error_samples": [], "message": ""}
 
     def repair_walk(self, path: str) -> dict:
         """repair_tree (ADR-0156) on the fake: folders 2770, files 660 or 770, the group unos-smb;
@@ -1777,11 +1799,14 @@ def nas():
 
 
 @pytest.fixture(autouse=True)
-def _scrubs_without_pauses(monkeypatch):
-    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds: the fake's
-    scrubs are recorded and end after a few requests."""
+def _checks_without_pauses(monkeypatch):
+    """The scrub check asks btrfs every SCRUB_POLL seconds, for up to SCRUB_WAIT seconds, and the
+    shares check asks for the end of a repair every REPAIR_POLL seconds, for up to REPAIR_WAIT
+    seconds: the fake's scrubs are recorded and end after a few requests, its repairs after one."""
     monkeypatch.setattr(scenario, "SCRUB_POLL", 0)
     monkeypatch.setattr(scenario, "SCRUB_WAIT", 2)
+    monkeypatch.setattr(scenario, "REPAIR_POLL", 0)
+    monkeypatch.setattr(scenario, "REPAIR_WAIT", 2)
 
 
 def run_check(area: str, nas: FakeNas, **kw) -> tuple[int, str]:
@@ -1939,6 +1964,7 @@ def test_the_shares_check_covers_the_sticky_parent_repair_permissions_the_user_s
                   f"{ROOT}/unoscheck1a2b3c-sticky/theirs can be changed by other accounts (owner uid 65534, mode 1777)",
                   "the share folder belongs to uid 65534", "2770 root:unos-smb", "keeps their owners", "symbolic link",
                   "the ACL entry stays", "mask::rw-", "visited 9, changed 5, skipped symlink 1, private 2, errors 0",
+                  "Permissions repaired. (GET named it after 1 earlier answer(s))",
                   "Share path must not contain symbolic links", "7 characters", scenario.SMB_TOO_SHORT,
                   scenario.SMB_CONTROL, "over 72 bytes (422)", "off, allowed False", "password_needed, allowed True",
                   "without a two-factor code", "signed session", "turns SMB off again", "NT_STATUS_LOGON_FAILURE",
@@ -2428,6 +2454,8 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("shares", "repair-opens-private", "it leaves the private file and folder"),
     ("shares", "repair-drops-acl", "the ACL entry stays"),
     ("shares", "repair-unserved", "Repair permissions refuses it with 409"),
+    ("shares", "repair-answers-its-end", "Repair permissions answers at once (202) that it runs"),
+    ("shares", "repair-never-ends", "Repair permissions answers at once (202) that it runs"),
     ("shares", "smb-takes-short-password", "SMB refuses the user's password of 7 characters"),
     ("shares", "self-off-keeps-samba", "the user turns SMB off again"),
     ("shares", "no-guest-warning", "guest access turned on for the share: the answer warns"),

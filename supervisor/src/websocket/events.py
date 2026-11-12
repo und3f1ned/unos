@@ -32,6 +32,12 @@ the problems of the NAS that are still there (``health.problems``), right after
 auth_ok and whenever the list changes; regular users never get it, and a
 socket whose user is no longer an administrator at a re-check gets an empty
 list once and no more (ADR-0332).
+
+It also sends administrators ``{"type": "repair", "data": {...}}``, the running
+repair of a share's permissions with its counts so far, or the last one that
+ended (``shares.repair_router.current_job``), right after auth_ok when a repair
+has run since the start and whenever it changes; regular users never get it
+(ADR-0363).
 """
 import asyncio
 import functools
@@ -51,6 +57,7 @@ from ..auth.utils import authenticate_token
 from ..config import get_settings
 from ..database import async_session
 from ..health import problems
+from ..shares import repair, repair_router
 from ..system.sensors import cpu_temperature
 
 router = APIRouter()
@@ -413,6 +420,19 @@ async def _send_problems(websocket: WebSocket, is_admin: bool, sent: int | None)
     return version
 
 
+async def _send_repair(
+    websocket: WebSocket, is_admin: bool, sent: repair.RepairResult | None
+) -> repair.RepairResult | None:
+    """Send an administrator the repair job when it is another than ``sent`` (each change of the
+    job is a new object); returns what an administrator has seen, None for anyone else."""
+    if not is_admin:
+        return None
+    job = repair_router.current_job()
+    if job is not None and job is not sent:
+        await websocket.send_json({"type": "repair", "data": job.model_dump(mode="json")})
+    return job
+
+
 @router.websocket("/ws/v1/events")
 async def websocket_endpoint(websocket: WebSocket):
     signed_in = await authenticate_websocket(websocket)
@@ -430,10 +450,12 @@ async def websocket_endpoint(websocket: WebSocket):
     disconnected = asyncio.ensure_future(_wait_for_disconnect(websocket))
     revoked = asyncio.ensure_future(_watch_credential(token, on_user=note_role))
     sent_problems: int | None = None
+    sent_repair: repair.RepairResult | None = None
     try:
         # Start sending stats
         while not (disconnected.done() or revoked.done()):
             sent_problems = await _send_problems(websocket, role["admin"], sent_problems)
+            sent_repair = await _send_repair(websocket, role["admin"], sent_repair)
             stats = get_system_stats()
             await websocket.send_json(stats)
             await asyncio.wait(

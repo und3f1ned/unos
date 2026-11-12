@@ -1,6 +1,8 @@
 import { writable } from 'svelte/store';
 import { getToken, handleUnauthorized } from '$lib/api/client';
 import { problems, type Problem } from '$lib/stores/problems';
+import { repairJob } from '$lib/stores/repair';
+import type { RepairResult } from '$lib/api/shares';
 
 // The parts of the stats message of /ws/v1/events (supervisor/src/websocket/events.py)
 export interface CpuStats {
@@ -191,6 +193,9 @@ export function connectWebSocket() {
     } else if (message.type === 'problems' && Array.isArray(message.data)) {
       // Administrators only: the problems that are still there (ADR-0332).
       problems.set(message.data as Problem[]);
+    } else if (message.type === 'repair' && message.data) {
+      // Administrators only: the running or last repair of a share's permissions (ADR-0363).
+      repairJob.set(message.data as RepairResult);
     }
   };
 
@@ -225,6 +230,7 @@ export function disconnectWebSocket() {
   wsForbidden.set(false);
   stats.set(null);
   problems.set([]);
+  repairJob.set(null);
 }
 
 export function formatBytes(bytes: number): string {

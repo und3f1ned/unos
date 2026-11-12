@@ -1913,12 +1913,20 @@
         "Shares shows the job's progress and its end over the WebSocket, without polling",
         "One repair runs at a time: a second start while one runs is refused"
       ],
+      "verified_by": [
+        "supervisor/tests/test_share_repair_job.py",
+        "supervisor/tests/test_ws_auth.py",
+        "supervisor/tests/test_share_repair.py",
+        "webui/tests/shares.spec.ts",
+        "supervisor/tests/test_dev_scenarios.py"
+      ],
       "passes": false,
       "adr": [
         "ADR-0155",
-        "ADR-0006"
+        "ADR-0006",
+        "ADR-0363"
       ],
-      "notes": "Today one request repairs for at most 240 s and 5 million entries; then the state is incomplete, and a new run continues (ADR-0155)."
+      "notes": "Built 2026-11-12 (ADR-0363, which supersedes ADR-0155 and ADR-0006): POST .../repair-permissions answers 202 at once with the job running and walks in a daemon thread of its own until the share is done, stopped (DELETE on the same path, 202; 409 when no repair of that share runs) or 24 hours have passed (repair.TIME_LIMIT_SECONDS; no entry limit); a second start of any share while one runs answers 409 \"A permissions repair is already running\". The walk reports its counts about once a second, and /ws/v1/events sends administrators {\"type\": \"repair\"} with the running job and then its end, which GET then answers as the share's last run; the Repair dialog shows the counts and Stop repair, the share's card says Repairing permissions, and the page reads the shares again at the end, without polling. Backend tests: test_share_repair_job.py, test_ws_auth.py (TestTheRepairOnTheEventsSocket); the walk's stop and progress and the endpoints on real folders are Linux-only tests of test_share_repair.py, not run on macOS. E2E: webui/tests/shares.spec.ts on the stand-in. Host-level (it changes files on the pools): done only after the device check and a reboot check (ADR-0018). Open on the dev device: scripts/dev/scenario.sh shares, whose Repair step now expects the 202 answer running and waits until GET names the run's end, with each step's SD MiB; a second start and the stop cannot be shown there, since the check's share is repaired in moments; a repair of a large share, followed on the Shares page and stopped there, is a check by hand."
     },
     {
       "id": "shares.nfs-exports-parser",

@@ -1,16 +1,23 @@
-"""Repair permissions endpoints (ADR-0155).
+"""Repair permissions endpoints (ADR-0363).
 
-POST repairs the permissions of a share's folder (repair.repair_tree) in a
-worker thread and answers when the repair has finished, after at most about
-4 minutes; one repair runs at a time. GET answers the last result of a share
-since UNOS started (kept in memory only).
+POST starts a repair of a share's folder (repair.repair_tree) as a background
+job in a thread of its own and answers at once (202) with the job running; one
+repair runs at a time. The job, while it runs and once it ended, is
+``current_job()``, which the events socket sends to administrators
+(websocket/events.py). DELETE asks the running repair of a share to stop. GET
+answers the last finished result of a share since UNOS started. The job and
+the results are kept in memory only: a restart of the supervisor ends a
+running repair without a result.
 
 main.py includes this router in the administrator-only routers; the endpoints
 also require an administrator themselves.
 """
 
 import asyncio
+import logging
 import threading
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -27,28 +34,50 @@ from ..database import get_db
 from ..security.validators import pools_base, sanitize_error_message
 from . import accounts, constants, models, repair, service
 
+logger = logging.getLogger(__name__)
+
 # Rate limiter for the repair endpoint
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/shares", tags=["shares"])
 
-# One repair at a time. The worker thread that walks takes it without blocking
-# and releases it, so that a request that is cancelled cannot release it while
-# its walk still runs.
-_repair_lock = threading.Lock()
+
+@dataclass
+class _Running:
+    """The repair that runs: its share and how to stop it."""
+
+    share_id: int
+    stop: threading.Event = field(default_factory=threading.Event)
+    stopped_by: str | None = None  # the administrator who asked it to stop
+
+
+# The repair that runs, or None: one at a time. Set and checked on the event
+# loop when a repair starts; its thread clears it once the walk has ended.
+_running: _Running | None = None
+# The running repair, or the last one since UNOS started, of any share; None
+# before the first. Each change is a new object, which the events socket sends.
+_job: repair.RepairResult | None = None
 # The last result of each share since UNOS started, by the share's name in lower case.
 _last_results: dict[str, repair.RepairResult] = {}
-# Repairs in progress: their tasks finish (result kept, audit entry written)
-# even when the request that started them has gone.
-_tasks: set[asyncio.Task] = set()
 
 SHARE_NOT_FOUND = "Share not found"
 NO_RESULT = "No repair has run for this share since UNOS started"
 ALREADY_RUNNING = "A permissions repair is already running"
+NOT_RUNNING = "No permissions repair of this share is running"
 SHARE_CHANGED = "The share was changed meanwhile; reload"
 
 
-@router.post("/smb/{name}/repair-permissions", response_model=repair.RepairResult)
+def current_job() -> repair.RepairResult | None:
+    """The running repair (state "running", the counts so far), or else the last one that ended."""
+    return _job
+
+
+def _publish(job: repair.RepairResult | None) -> None:
+    global _job
+    _job = job
+
+
+@router.post("/smb/{name}/repair-permissions", response_model=repair.RepairResult, status_code=202)
 @limiter.limit("6/minute")
 async def repair_share_permissions(
     request: Request,
@@ -56,7 +85,7 @@ async def repair_share_permissions(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ) -> repair.RepairResult:
-    """Repair the permissions of a share's folder and answer the result (ADR-0155).
+    """Start a repair of the permissions of a share's folder; answers it running (ADR-0363).
 
     Every file and folder of the share gets the group unos-smb and group
     read/write (folders 2770, files 0660 or 0770); other accounts lose access.
@@ -67,9 +96,11 @@ async def repair_share_permissions(
     folder breaks a rule of ADR-0145), its pool is not mounted or is mounted
     read-only, a folder above the share's folder can be changed by other
     accounts, another host group has the SMB group's gid, or another repair
-    is running. 503 when the pool list cannot be read. A repair stops after
-    4 minutes with the state "incomplete": run it again to continue.
+    is running. 503 when the pool list cannot be read. The repair runs on in
+    the background until the share is done, stopped (DELETE) or 24 hours
+    have passed (the state "incomplete": run it again to continue).
     """
+    global _running
     username = admin.username
     share = await _find_share(db, name)
     try:
@@ -137,15 +168,55 @@ async def repair_share_permissions(
     if problem is not None:
         raise HTTPException(status_code=409, detail=problem)
 
-    # Its own task, awaited through shield: a request that is cancelled while
-    # the walk runs does not lose the result or the audit entry.
-    task = asyncio.create_task(_repair_and_record(request, username, share.name, share.path))
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
-    result = await asyncio.shield(task)
-    if result is None:
+    # No await from the check to the start: two starts cannot both pass it.
+    if _running is not None:
         raise HTTPException(status_code=409, detail=ALREADY_RUNNING)
-    return result
+    running = _Running(share_id=share.id)
+    started = repair.RepairResult(
+        share=share.name, state="running", started_at=datetime.now(timezone.utc), finished_at=None, visited=0,
+        changed=0, skipped=dict.fromkeys(repair.SKIP_REASONS, 0), skipped_paths=[], errors=0, error_samples=[],
+        message="",
+    )
+    before = _job
+    _running = running
+    _publish(started)
+    # A thread of its own, not one of the event loop's pool, which a long walk
+    # would hold for hours; a daemon thread, so that a stop of the supervisor
+    # does not wait for the walk.
+    try:
+        threading.Thread(
+            target=_repair_and_record,
+            args=(running, started, request, username, share.path),
+            name="share-repair",
+            daemon=True,
+        ).start()
+    except RuntimeError as exc:  # no thread could be started: nothing runs
+        _running = None
+        _publish(before)
+        raise HTTPException(status_code=500, detail=f"The repair could not be started: {exc}") from exc
+    return started
+
+
+@router.delete("/smb/{name}/repair-permissions", response_model=repair.RepairResult, status_code=202)
+async def stop_repair(
+    name: str,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> repair.RepairResult:
+    """Ask the running repair of a share to stop; answers the job as it is now (ADR-0363).
+
+    The walk stops before its next entry and ends "incomplete": what it
+    changed stays changed, and a new run continues quickly. 404 for an
+    unknown share; 409 when no repair of this share runs.
+    """
+    share = await _find_share(db, name)
+    running = _running
+    if running is None or running.share_id != share.id:
+        raise HTTPException(status_code=409, detail=NOT_RUNNING)
+    if running.stopped_by is None:
+        running.stopped_by = admin.username
+    running.stop.set()
+    return _job
 
 
 @router.get("/smb/{name}/repair-permissions", response_model=repair.RepairResult)
@@ -197,36 +268,50 @@ def _pool_of(path: object) -> str | None:
     return parts[0] if parts else None
 
 
-async def _repair_and_record(
-    request: Request, username: str, share_name: str, path: str
-) -> repair.RepairResult | None:
-    """Repair unless another repair is running (None); keep and audit the result."""
-    result = await asyncio.to_thread(_repair_unless_running, path)
-    if result is None:
-        return None
-    result = result.model_copy(update={"share": share_name})
-    _last_results[share_name.lower()] = result
-    skipped = sum(result.skipped.values())
-    await log_action(
-        action=AuditAction.SHARE_PERMISSIONS_REPAIRED,
-        request=request,
-        username=username,
-        resource_type="share",
-        resource_id=share_name,
-        details=(
-            f"Repaired permissions: {result.changed} changed, {skipped} skipped, "
-            f"{result.errors} errors ({result.state})"
-        ),
-        success=result.state != "failed",
-    )
-    return result
+def _repair_and_record(
+    running: _Running, started: repair.RepairResult, request: Request, username: str, path: str
+) -> None:
+    """The job (its own thread): walk, publishing the progress, then keep, audit and publish the end.
 
-
-def _repair_unless_running(path: str) -> repair.RepairResult | None:
-    """The walk (worker thread); None when another repair holds the lock."""
-    if not _repair_lock.acquire(blocking=False):
-        return None
+    Progress and end carry the share's name and the time of the start, as
+    the start answered them. The end is published, and another repair may
+    start, only after the audit entry was written.
+    """
+    global _running
+    mark = {"share": started.share, "started_at": started.started_at}
     try:
-        return repair.repair_tree(path, gid=constants.SMB_GROUP_GID)
+        result = repair.repair_tree(
+            path,
+            gid=constants.SMB_GROUP_GID,
+            progress=lambda progress: _publish(progress.model_copy(update=mark)),
+            stop=running.stop,
+        )
+    except Exception as exc:  # a bug in the walk must still end the job
+        logger.exception("Repair permissions of share %s stopped on an unexpected error", started.share)
+        result = started.model_copy(update={
+            "state": "failed",
+            "finished_at": datetime.now(timezone.utc),
+            "message": f"The repair stopped on an unexpected error: {sanitize_error_message(exc)}",
+        })
+    result = result.model_copy(update=mark)
+    _last_results[started.share.lower()] = result
+    skipped = sum(result.skipped.values())
+    details = f"Repaired permissions: {result.changed} changed, {skipped} skipped, {result.errors} errors ({result.state})"
+    if running.stopped_by is not None and result.state == "incomplete":
+        details += f", stopped by {running.stopped_by}"
+    try:
+        # log_action is a coroutine; this thread has no event loop of its own.
+        asyncio.run(log_action(
+            action=AuditAction.SHARE_PERMISSIONS_REPAIRED,
+            request=request,
+            username=username,
+            resource_type="share",
+            resource_id=started.share,
+            details=details,
+            success=result.state != "failed",
+        ))
+    except OSError:
+        pass  # log_action has written the entry to the supervisor's log
     finally:
-        _repair_lock.release()
+        _publish(result)
+        _running = None

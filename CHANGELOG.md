@@ -521,7 +521,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   exists.
 - Repair permissions (Shares page): gives the existing files and folders of a
   share the group `unos-smb` and group read and write access
-  (`POST /api/v1/shares/smb/{name}/repair-permissions`). It does not change
+  (`POST /api/v1/shares/smb/{name}/repair-permissions`). It runs in the
+  background, one repair at a time, until the share is done: the start
+  answers at once (202), the Shares page shows its progress and its end,
+  which `/ws/v1/events` sends administrators (`{"type": "repair"}`), and
+  **Stop repair** (`DELETE` on the same path) ends it early; it stops by
+  itself after 24 hours. `GET` on the same path answers the share's last
+  finished run. It does not change
   ACL entries (`setfacl`): on a file or folder that has them, the group
   permissions it sets are the ACL's mask, so the users and groups named there
   keep their access and can get more, and `unos-smb` gets only what the ACL's
