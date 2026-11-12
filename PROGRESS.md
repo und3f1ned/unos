@@ -38,6 +38,11 @@ significant step. Features and their state live in `feature-list.json`, decision
   the dashboard shows the CPU's temperature, a stalled upload is cut off after 120 seconds, and the
   file manager refuses bind mounts before a move. `main` is 405d318 and runs on the dev device;
   `scenario.sh all` runs 148 steps.
+- On 2026-11-12 in the morning (Log): a second batch, ADR-0350 to ADR-0355: the audit log
+  records storage, snapshots, containers and apps, backups, power, scheduled tasks and the
+  host's settings; the rest of `storage.edge-cases`; recorded SMB uids for restores; leftovers
+  of interrupted uploads found and removed on request; and the backup API without its unused
+  options. `main` is 641f2a5 and runs on the dev device.
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -74,15 +79,16 @@ significant step. Features and their state live in `feature-list.json`, decision
      `shares.read-only-guest-share`, `shares.self-activation`,
      `shares.restore-keeps-smb-with-proof` and `backup.no-old-backup-import` on the checks around
      the reboot of 19:26 UTC, and `storage.commands-time-out-cleanly`, `system.temperatures`,
-     `files.delete-to-trash` and `backup.edge-cases` on the checks around the reboot of 23:22 UTC
-     (Log); `shares.repair-permissions` waits for setfacl on the device
+     `files.delete-to-trash` and `backup.edge-cases` on the checks around the reboot of 23:22 UTC,
+     and on 2026-11-12 `files.upload-edge-cases` and `backup.drop-unused-include-options` on the
+     checks around the reboot of 04:35 UTC (Log); `shares.repair-permissions` waits for setfacl on the device
      (the package acl, an owner action) and `shares.acl-aware-parent-check` for the owner's word
      on ADR-0193; the others need a device check first or, as `storage.pool-health`, a step the
      re-check could not show.
 
 ## Dev device
 
-State on 2026-11-11, 23:50 UTC. A UGREEN NAS board with an RK3588,
+State on 2026-11-12, 04:55 UTC. A UGREEN NAS board with an RK3588,
 running Armbian; its address and logins are in `dev.env` (ADR-0212).
 
 - Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
@@ -90,7 +96,12 @@ running Armbian; its address and logins are in `dev.env` (ADR-0212).
   wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs main 405d318 (the batch of ADR-0342 to ADR-0349), deployed at 23:44 UTC (SD MiB sync
+- Runs main 641f2a5 (the second batch, ADR-0350 to ADR-0355), deployed on 2026-11-12 at 04:27
+  UTC (SD MiB sync 3.898, build-supervisor 13.688, build-webui 18.734, up 6.281, check.sh
+  0.016), and rebooted from the API at 04:35:30 UTC (the boot of 04:36:49; both containers
+  healthy by 04:37:17; 8.7 MiB on the SD card from the boot to check.sh): `scenario.sh all`
+  (147 steps passed, 1 skipped) and the checks by hand of the batch OK before and after.
+- Before it, main 405d318 (the batch of ADR-0342 to ADR-0349), deployed at 23:44 UTC (SD MiB sync
   1.000, build-supervisor 12.754, build-webui 19.102, up 5.977, check.sh 0.016); after it
   `scenario.sh files` OK (1.148 MiB) and the upload and audit checks by hand. Before it, the
   integration branch's tree 8ea5a08, deployed at 23:06 UTC (sync 4.035, build-supervisor 13.840,
@@ -288,6 +299,45 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-12: A second batch of six, reviewed, merged and checked on the device across a reboot
+
+- Six entries' steps, each test-first by an agent of its own, merged into one integration branch
+  with their ADRs renumbered in merge order: the audit of pools, volumes, snapshots, containers
+  and apps (`security.audit-admin-actions` steps 1 and 2, ADR-0350) and of backups, power,
+  scheduled tasks and the host's settings (step 3, ADR-0351, with the new action task_run);
+  steps 1, 2, 4, 5, 6 and 8 of `storage.edge-cases` (ADR-0352); step 2 of
+  `shares.restore-uid-guards`, a record of every SMB uid handed out (ADR-0353); step 2 of
+  `files.upload-edge-cases`, leftovers of interrupted uploads found 10 minutes after each start
+  and removed on request (ADR-0354, which supersedes ADR-0167); and
+  `backup.drop-unused-include-options` (ADR-0355). The two audit merges conflicted in their
+  docs, the audit page's names and the entry's notes; both sides were kept.
+- Fresh-context review, one reviewer per branch and a skeptic per pair: no blocker; the
+  confirmed findings were fixed, among them a failed part-way change that wrote no entry (a pool
+  create after mkfs, a removal after the unmount, an uninstall that stopped the app), a restart
+  of UNOS's own containers, a hung realpath on a network mount, the rows from before the uid
+  record, the leftovers walk's threads, memory and depth, and a stale list after a refusal. A
+  second reviewer on the fixes found three more, fixed too: a leftover whose folder was replaced
+  blocked every later removal, realpath killed by timeout reaches the supervisor as -9, and a
+  quota limit that does not answer. Three paths that keep a new volume after a 409 or a failed
+  removal still write no audit entry (ADR-0350, Consequences). `make check` passed (7049 tests
+  on the last fixes) and 367 E2E tests of the pages touched on the stand-in. Merged as
+  main 641f2a5.
+- Device check of main 641f2a5 around the reboot from the API at 04:35:30 UTC: `scenario.sh all`
+  OK before and after, 147 steps passed and 1 skipped (SD MiB files 0.715 and 0.207, volumes
+  0.449 and 0.484, smart 0.035 and 0.020, backups 0.441 and 0.391, smb 2.969 and 3.031, smbconf
+  2.277 and 2.371, shares 3.027 and 3.203, scrub 0.516 and 0.449, offsite 0.480 and 0.555,
+  restore 7.645 and 7.652). The checks by hand (1.138 and 1.222 MiB): the audit entries of a
+  volume, its snapshot, a scrub task (created, changed, run, deleted), the time zone there and
+  back and a backup, and nothing for refused or unchanged requests; the reboot's system_reboot
+  entry in the log after the boot, the chain intact; a subvolume whose name forges list lines
+  shows no phantom volume; the smb_uids table; a leftover found, listed with its size, the
+  refusals of a plain and a fresh file, and its removal; a backup's manifest without options.
+- Passing now: `files.upload-edge-cases` and `backup.drop-unused-include-options`. Open:
+  `security.audit-admin-actions` (step 5, and pools, containers, apps and network interfaces
+  on the device), `storage.edge-cases` (step 7 with a real bind mount on the device),
+  `shares.restore-uid-guards` (its crafted cases rest on the tests; no marked SMB account on the
+  device now).
 
 ### 2026-11-12: Six MVP fixes, reviewed, merged and checked on the device across a reboot
 
