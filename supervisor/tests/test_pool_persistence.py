@@ -2868,7 +2868,7 @@ class TestRaidMonitorHealth:
         assert health_router.parse_btrfs_device_stats("/nowhere") is None
 
     async def test_only_btrfs_pools_are_monitored(self, data_pool):
-        # App data an older version kept in a plain directory on the SD card.
+        # A folder under the pools base that holds files but is not a pool.
         data_pool.dirs.add("/mnt/pools/default")
         data_pool.contents["/mnt/pools/default"] = ["transmission"]
         assert [info.pool for info in await health_router.check_raid_health()] == ["data"]
