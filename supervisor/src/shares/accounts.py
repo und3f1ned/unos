@@ -45,6 +45,7 @@ from fastapi import HTTPException
 from sqlalchemy import DateTime, delete, insert, select, update
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.schema import CreateTable
 
 from .. import host
 from ..auth.models import User
@@ -1067,13 +1068,16 @@ def _activation_changes(name: str, uid: int, password: str, plan: _ActivationPla
     return warnings
 
 
-async def _allocate_uid(db: AsyncSession, host_uids: set[int]) -> int:
-    """A fresh uid (ADR-0109), never one of a row or of a host account; next_uid only increases."""
+async def _allocate_uid(db: AsyncSession, host_uids: set[int], name: str) -> int:
+    """A fresh uid (ADR-0109) for ``name``, never one of a row, of a host account or of smb_uids;
+    next_uid only increases. The uid goes into smb_uids under ``name`` in the caller's transaction,
+    which commits it with the row before useradd runs (ADR-0353)."""
     state = await models.get_smb_state(db)
     stored = state.next_uid if _valid_next_uid(state.next_uid) else constants.SMB_UID_MIN
-    row_uids = {uid for (uid,) in (await db.execute(select(models.SmbAccount.uid))).all() if _valid_uid(uid)}
-    candidate = max(stored, constants.SMB_UID_MIN, max(row_uids, default=constants.SMB_UID_MIN - 1) + 1)
-    while candidate in host_uids or candidate in row_uids:
+    used = {uid for (uid,) in (await db.execute(select(models.SmbAccount.uid))).all() if _valid_uid(uid)}
+    used |= {uid for (uid,) in (await db.execute(select(models.SmbUid.uid))).all() if _valid_uid(uid)}
+    candidate = max(stored, constants.SMB_UID_MIN, max(used, default=constants.SMB_UID_MIN - 1) + 1)
+    while candidate in host_uids or candidate in used:
         candidate += 1
     if candidate > constants.SMB_UID_MAX:
         raise HTTPException(
@@ -1081,6 +1085,7 @@ async def _allocate_uid(db: AsyncSession, host_uids: set[int]) -> int:
             detail=f"No SMB user ids left ({constants.SMB_UID_MIN}-{constants.SMB_UID_MAX})",
         )
     state.next_uid = max(stored, candidate + 1)
+    db.add(models.SmbUid(uid=candidate, linux_name=name))
     return candidate
 
 
@@ -1129,7 +1134,7 @@ async def activate(
         elif row.linux_name != name:
             _reset_mismatched_row(row, user)
         if own_uid is None:
-            row.uid = await _allocate_uid(db, {account.uid for account in plan.accounts.values()})
+            row.uid = await _allocate_uid(db, {account.uid for account in plan.accounts.values()}, name)
         row.linux_name = name
     except BaseException:
         await _rollback(db)
@@ -1509,7 +1514,8 @@ async def _has_access_rows(db: AsyncSession, user_id: int) -> bool:
 
 async def begin_user_removal(db: AsyncSession, user: User, row: models.SmbAccount | None) -> UserRemoval | None:
     """Before the user is deleted: revoke, then delete the access and account rows
-    in the caller's transaction. None when the user had neither an account row nor access.
+    in the caller's transaction, which records the row's uid in smb_uids when it lacks it.
+    None when the user had neither an account row nor access.
 
     The caller deletes the user and commits inside revocation_guard(), which covers
     every write after the revoke step."""
@@ -1532,6 +1538,10 @@ async def begin_user_removal(db: AsyncSession, user: User, row: models.SmbAccoun
         if had_access:
             await service.delete_access_of_user(db, removal.user_id)
         if row is not None:
+            # Its files on the pools keep the uid: smb_uids keeps it under the row's name, when a row
+            # from before the table existed left it unrecorded (ADR-0353).
+            if _valid_uid(row.uid) and constants.is_valid_linux_name(row.linux_name):
+                await _record_uids(db, [(row.uid, row.linux_name)])  # type: ignore[list-item]
             await db.delete(row)
     return removal
 
@@ -1814,6 +1824,23 @@ async def _uid_floor(db: AsyncSession, uids: Iterable[object]) -> str | None:
     return f"The next SMB user id is now {new} (it was {_shown(stored)})"
 
 
+async def _record_uids(db: AsyncSession, pairs: list[tuple[int, str]]) -> bool:
+    """smb_uids gets each (uid, name) whose uid it lacks, the first name for a uid; a uid it has
+    keeps its name (ADR-0353). Step 5' of reconcile_accounts and a user's deletion call it, in the
+    caller's transaction. True when a row was written."""
+    if not pairs:
+        return False
+    table = models.SmbUid.__table__
+    known = {uid for (uid,) in (await db.execute(select(table.c.uid))).all()}
+    new: dict[int, str] = {}
+    for uid, name in pairs:
+        if uid not in known:
+            new.setdefault(uid, name)
+    if new:
+        await db.execute(insert(table), [{"uid": uid, "linux_name": name} for uid, name in sorted(new.items())])
+    return bool(new)
+
+
 async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
     """Make the host match the rows. The caller holds smb_lock() and applies afterwards.
 
@@ -1978,6 +2005,20 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
         db_changed = True
         result.changes.append(floor)
 
+    # 5'. smb_uids gets the uids it lacks (ADR-0353). First each stale marked host account, which
+    # step 6 removes: its files on the pools keep its uid, so its name comes first for that uid.
+    # Then each row with a valid name and uid: a row from before the table existed is recorded at
+    # the first start, and a later start finds them all and writes nothing. Committed with the
+    # rules above, before an account is gone; also for one that step 6 finds busy.
+    row_keys = _row_keys(rows)
+    stale = [
+        (account.uid, account.name) for account in sorted(accounts.values(), key=lambda a: a.name)
+        if account.ours and (account.name, account.uid) not in row_keys and constants.is_valid_linux_name(account.name)
+    ]
+    held = [(row.uid, row.linux_name) for row in rows if (row.linux_name, row.uid) in row_keys]
+    if await _record_uids(db, stale + held):  # type: ignore[arg-type]
+        db_changed = True
+
     # The database rules are stored before the host actions, so that no write
     # lock is held while they run; step 7 commits what step 6 changes.
     if db_changed:
@@ -1995,7 +2036,7 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
         by_name=by_name,
         by_gid=by_gid,
         passdb=passdb,
-        row_keys=_row_keys(rows),
+        row_keys=row_keys,
         active=active,  # type: ignore[arg-type]
         inactive={
             row.linux_name for row in rows
@@ -2025,6 +2066,8 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
 
 _SQLITE = sqlite_dialect.dialect()
 _DATETIME = DateTime().dialect_impl(_SQLITE).result_processor(_SQLITE, None)
+# The model's smb_uids table, which a restore makes anew in the extracted database (ADR-0353).
+_SMB_UIDS_DDL = str(CreateTable(models.SmbUid.__table__).compile(dialect=_SQLITE)).strip()
 
 
 def _loads_as_datetime(value: object) -> bool:
@@ -2049,7 +2092,8 @@ def _as_bool(value: object) -> bool | None:
 
 
 def snapshot_for_restore(db_path: pathlib.Path | None) -> interfaces.RestoreSnapshot:
-    """The SMB accounts of the live database before a restore replaces it (sync, worker thread)."""
+    """The SMB accounts, next_uid and smb_uids (ADR-0353) of the live database before a restore
+    replaces it (sync, worker thread)."""
     if db_path is None:
         return interfaces.RestoreSnapshot()
     try:
@@ -2090,9 +2134,16 @@ def snapshot_for_restore(db_path: pathlib.Path | None) -> interfaces.RestoreSnap
             stored = None
         if stored is not None and _valid_next_uid(stored[0]):
             next_uid = stored[0]
+        try:
+            handed_out = tuple(
+                (uid, name) for uid, name in conn.execute("SELECT uid, linux_name FROM smb_uids ORDER BY uid")
+                if _valid_uid(uid) and isinstance(name, str)
+            )
+        except sqlite3.Error:
+            handed_out = ()
     finally:
         conn.close()
-    return interfaces.RestoreSnapshot(accounts=tuple(accounts), next_uid=next_uid)
+    return interfaces.RestoreSnapshot(accounts=tuple(accounts), next_uid=next_uid, handed_out=handed_out)
 
 
 def _proven(prev: interfaces.PrevAccount | None, username: object, hashed: object, is_admin: bool,
@@ -2126,6 +2177,10 @@ def prepare_restored_accounts(
     # account of another name (a backup of another installation allocated from the
     # same range): that account owns its files on the pools under this uid.
     live_uids = {p.uid: (p.username, p.linux_name) for p in snapshot.accounts if _valid_uid(p.uid)}
+    # Every uid handed out on this NAS and the name it went to (ADR-0353). A uid that no live
+    # account holds may still own the files of a deleted user on the pools: a restored row of
+    # another name never takes it.
+    handed_out = dict(snapshot.handed_out)
     users = {
         user_id: (username, hashed, bool(is_admin))
         for user_id, username, hashed, is_admin in conn.execute(
@@ -2144,6 +2199,8 @@ def prepare_restored_accounts(
         username, hashed, is_admin = user if user is not None else (None, None, True)
         holder = live_uids.get(uid) if _valid_uid(uid) else None
         taken = holder is not None and holder != (username, linux_name)
+        if holder is None and _valid_uid(uid):
+            taken = handed_out.get(uid, linux_name) != linux_name
         keep = not taken and password_state == "set" and _proven(
             previous.get(username) if isinstance(username, str) else None,
             username, hashed, is_admin, linux_name, uid,
@@ -2208,9 +2265,27 @@ def prepare_restored_accounts(
             if prev.active and not proven:
                 say(f"SMB must be turned on again for {_shown(prev.username)}")
 
-    # uid floor: never below the restored value, the live value or any uid seen.
-    restored_uids = [uid for (uid,) in conn.execute("SELECT uid FROM smb_accounts") if _valid_uid(uid)]
-    seen = restored_uids + [p.uid for p in snapshot.accounts if _valid_uid(p.uid)]
+    # smb_uids is this NAS's record (ADR-0353): the backup's table goes, whatever its layout, and
+    # the model's table holds the live rows, the uids of the live accounts (this restore may delete
+    # them) and those of the restored rows after the rules above, which are this NAS's from now on.
+    # Last come the backup's own rows that it can read, for the uids still missing: the old
+    # installation's backup, restored after a reinstall, brings the uids of its deleted users. They
+    # can only reserve more uids; a uid named above keeps that name.
+    restored = conn.execute("SELECT uid, linux_name FROM smb_accounts").fetchall()
+    try:
+        backup_record = conn.execute("SELECT uid, linux_name FROM smb_uids").fetchall()
+    except sqlite3.Error:
+        backup_record = []  # no table, or another layout
+    for uid, name in [(p.uid, p.linux_name) for p in snapshot.accounts] + restored + backup_record:
+        if _valid_uid(uid) and constants.is_valid_linux_name(name):
+            handed_out.setdefault(uid, name)
+    conn.execute("DROP TABLE IF EXISTS smb_uids")
+    conn.execute(_SMB_UIDS_DDL)
+    conn.executemany("INSERT INTO smb_uids (uid, linux_name) VALUES (?, ?)", sorted(handed_out.items()))
+
+    # uid floor: never below the restored value, the live value or any uid seen or handed out.
+    restored_uids = [uid for uid, _ in restored if _valid_uid(uid)]
+    seen = restored_uids + [p.uid for p in snapshot.accounts if _valid_uid(p.uid)] + list(handed_out)
     found_state = conn.execute("SELECT next_uid FROM smb_state WHERE id = 1").fetchone()
     restored_next = found_state[0] if found_state is not None else None
     floor = max(

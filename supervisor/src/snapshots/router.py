@@ -37,8 +37,11 @@ import subprocess
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction, AuditSeverity
+from ..auth.models import User
 from ..auth.utils import verify_token
 from ..security.validators import (
     open_dir_nofollow,
@@ -418,12 +421,19 @@ async def list_snapshots(subvolume: str, _: dict = Depends(verify_token)):
 
 
 @router.post("/", response_model=SnapshotInfo)
-async def create_snapshot(req: SnapshotCreate, _: dict = Depends(verify_token)):
-    """Create a new read-only snapshot; without a name, ``snap_<date>_<time>`` in UTC."""
+async def create_snapshot(req: SnapshotCreate, request: Request, user: User = Depends(verify_token)):
+    """Create a new read-only snapshot; without a name, ``snap_<date>_<time>`` in UTC.
+
+    The audit log gets snapshot_created (ADR-0350).
+    """
     subvol_path = _validate_subvolume(req.subvolume)
     name = validate_snapshot_name(req.name) if req.name else f"{SNAPSHOT_PREFIX}{utc_stamp()}"
 
     snap_path = await asyncio.to_thread(make_snapshot, subvol_path, name)
+    await audit_change(
+        AuditAction.SNAPSHOT_CREATED, request, user.username, resource_type="snapshot", resource_id=str(snap_path),
+        details=f"Created the read-only snapshot {name} of {subvol_path}",
+    )
 
     return SnapshotInfo(
         id=name,
@@ -436,12 +446,19 @@ async def create_snapshot(req: SnapshotCreate, _: dict = Depends(verify_token)):
 
 
 @router.delete("/{snapshot_id}")
-async def delete_snapshot(snapshot_id: str, subvolume: str, _: dict = Depends(verify_token)):
-    """Delete a snapshot, by its subvolume id (ADR-0242)."""
+async def delete_snapshot(
+    snapshot_id: str, subvolume: str, request: Request, user: User = Depends(verify_token)
+):
+    """Delete a snapshot, by its subvolume id (ADR-0242); the audit log gets snapshot_deleted (ADR-0350)."""
     subvol_path = _validate_subvolume(subvolume)
     name = validate_path_component(snapshot_id, what="Snapshot name")
 
     await asyncio.to_thread(delete_snapshot_by_id, subvol_path, name, snapshot_id)
+    await audit_change(
+        AuditAction.SNAPSHOT_DELETED, request, user.username, resource_type="snapshot",
+        resource_id=str(subvol_path / SNAPSHOT_DIR_NAME / name),
+        details=f"Deleted the snapshot {name} of {subvol_path}", severity=AuditSeverity.WARNING,
+    )
 
     return {"status": "deleted", "id": snapshot_id}
 
@@ -489,7 +506,16 @@ def _restore(subvolume: Path, name: str, shown: str, target_path: str | None) ->
 
 
 @router.post("/restore")
-async def restore_snapshot(req: SnapshotRestore, _: dict = Depends(verify_token)):
-    """Restore from a snapshot by creating a writable copy next to it (or in target_path)."""
+async def restore_snapshot(req: SnapshotRestore, request: Request, user: User = Depends(verify_token)):
+    """Restore from a snapshot by creating a writable copy next to it (or in target_path).
+
+    The audit log gets snapshot_restored (ADR-0350).
+    """
     subvolume, name = _validate_snapshot_path(req.snapshot_path)
-    return await asyncio.to_thread(_restore, subvolume, name, req.snapshot_path, req.target_path)
+    restored = await asyncio.to_thread(_restore, subvolume, name, req.snapshot_path, req.target_path)
+    await audit_change(
+        AuditAction.SNAPSHOT_RESTORED, request, user.username, resource_type="snapshot",
+        resource_id=restored["source"],
+        details=f"Restored the snapshot as the writable copy {restored['target']}",
+    )
+    return restored

@@ -36,6 +36,29 @@ manager, encrypted backup uploads, health checks, CI checks).
   authentication on or off (off as a warning), with the user, the address
   and the browser; a refused attempt writes no entry. When the entry cannot
   be written, the change still answers and the supervisor's log has it.
+- The audit log records pools created and removed, volumes created and
+  deleted, snapshots created, deleted and restored, containers started,
+  restarted, stopped and removed (also on the **Apps** page), and apps
+  installed and uninstalled, with the administrator, the address, the browser
+  and the resource. A refused or failed change, and one that changed nothing
+  (a pool that was not there, a start of a running container, a stop of a
+  stopped one), writes no entry. A change that failed part way writes its
+  entry as failed, with what was done: a pool create that formatted the
+  disks, a removal that unmounted the pool or dropped its fstab entry, a
+  volume create that kept the volume without its quota, an uninstall that
+  stopped the app. When the entry cannot be written, the
+  change still answers and the supervisor's log has it.
+- The audit log records backups created, uploaded, restored and deleted,
+  reboots and shutdowns scheduled (as a warning, before the host goes down)
+  and cancelled, scheduled tasks created, changed (naming the changed
+  fields and, for a rename, the old name), enabled, disabled, deleted and run by hand (the new action
+  **Task run**), network interfaces disabled, kept disabled and enabled,
+  Wake-on-LAN turned on or off, and a new host name or time zone, with the
+  administrator, the address and the browser. An enable that turned an
+  interface on without all its saved addresses writes its entry as failed. A
+  change that changes nothing writes no entry, and saving a scheduled task unchanged or deleting one that
+  is not there no longer rewrites the tasks file. When the entry cannot be
+  written, the change still answers and the supervisor's log has it.
 - Each audit entry carries the hash of the one before it. An entry edited in
   the log file, and the entry after one that was removed, are marked **Chain
   broken** on the Audit page and in `GET /api/v1/audit/logs`; when the newest
@@ -87,7 +110,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   and regenerates `smb.conf` from validated shares instead of installing the
   archived file. A database that gives one SMB uid to two accounts, which only
   a crafted backup can hold, is refused (400) before anything changes; it used
-  to be restored, and turning SMB on failed for the second account.
+  to be restored, and turning SMB on failed for the second account. A restored
+  account no longer gets the SMB uid of a user deleted from this NAS, whose
+  files on the pools keep it: UNOS records every uid it hands out with the
+  name it went to, also the uids of the host accounts that an uninstall kept
+  and, at the first start, those of the accounts made before the record
+  existed. A restore keeps that record, adds the uids that the backup's own
+  record holds and this one lacks, and gives a recorded uid only to that name;
+  another account must turn SMB on again and gets a new uid.
 - `smb.conf` and `/etc/exports` values are validated against directive
   injection, share and export paths must not pass through symlinks, and
   `smb.conf` is replaced atomically after `testparm` accepts it (without that
@@ -148,8 +178,9 @@ manager, encrypted backup uploads, health checks, CI checks).
 - Deleting a volume could follow a symbolic link that an app or an SMB user
   had put in the pool under the volume's name, and delete another subvolume.
   Volumes are now deleted by the subvolume id from the pool's own subvolume
-  list, checked against the filesystem first (409 when they differ, for
-  example for a subvolume whose name holds a line break).
+  list, checked against the filesystem first: the subvolume's path must be
+  the volume's name byte for byte (409 when the list gives the name only the
+  ids of other subvolumes).
 - CI: the workflow's token can only read the repository
   (`permissions: contents: read`), and the checkouts no longer leave it in
   the git configuration (`persist-credentials: false`), where the build or
@@ -468,6 +499,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   `include_network` of `POST /api/v1/backup/create`, which added them, are
   gone. A restore ignores such files in a backup that holds them, and no
   longer warns that `fstab` is not restored.
+- `POST /api/v1/backup/create` takes only `encrypt` and `passphrase`: the
+  options `include_users`, `include_apps`, `include_scheduler` and
+  `include_notifications`, which selected nothing, are gone, and a request
+  that still sends them makes the same backup. The manifest of a backup made
+  by hand, through the API or for an off-device copy no longer has a `config`
+  with them, only its version, date, hostname and whether it is encrypted.
+  Older backups whose manifest names them still restore.
 - The supervisor's access log keeps only the requests that were refused or
   failed (answers of 400 and above): an HTTP request that succeeds, a health
   check included, no longer writes a line to the system disk through
@@ -689,8 +727,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   restart, an update, a crash), nothing of it stays and its space is freed.
   Only in a folder on a disk mounted there by hand whose filesystem cannot
   do this (vfat or exfat, for example; the pools can), the file arrives as a
-  hidden `.unos-upload-...` file, which such a stop leaves behind: delete it
-  in the file manager.
+  hidden `.unos-upload-...` file, which such a stop leaves behind: the File
+  Browser offers to remove it.
 - The headers of each part of an upload form are limited to 8 KiB in total
   (HTTP 400 above that); browsers send a few hundred bytes.
 - `install.sh` writes the smb.conf that UNOS generates while there is no
@@ -717,6 +755,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- `POST /api/v1/containers/{id}/restart` restarted UNOS's own containers,
+  which stop and remove refuse; it now refuses them too (404).
 - Two-factor authentication set up in two tabs at once could be turned on
   with a secret that the user had not scanned, and so lock them out: a setup
   that stored its new secret while the other tab's code was being accepted,
@@ -921,6 +961,45 @@ manager, encrypted backup uploads, health checks, CI checks).
   move failed), so such an item among several items moves none of them, and
   a move that stops part way says how many items moved before it. Any other
   file operation that the system refuses as busy answers 409 too.
+- File manager: deleting a folder for good (also **Empty trash**, the trash's
+  expiry, and a move to another pool or volume) went into a subvolume or a
+  mount, also a bind mount, that appeared below the folder while it was
+  deleted, and deleted its files. The delete now checks each folder's device
+  and mount before it deletes anything in it, and stops at such a folder with
+  409, which says that part of the folder was deleted before that.
+- Volumes: a subvolume whose name holds a line break, which an app can make in
+  a pool, made every later volume created with a quota answer 409 and stay
+  without its quota, and one named like a volume followed by a line break was
+  taken for that volume: listed, deleted or given the quota in its place. The
+  subvolume list is now read highest id first, so that a name cannot raise
+  the newest id, and each volume's id is confirmed by the subvolume's exact
+  path (`btrfs inspect-internal subvolid-resolve`, compared byte for byte).
+- Volumes: a subvolume that was being renamed while the quota guard of a new
+  volume read the subvolume list could be missed and then given the new
+  volume's name: it got the quota, or was deleted when the quota failed. The
+  guard now also reads the quota groups (`btrfs qgroup show`), which a rename
+  does not change.
+- Volumes: when the subvolume list failed right after a create with a quota,
+  the request answered 500 without saying that the volume existed; it now
+  says `Volume '<name>' was created without its quota: ...`, also when btrfs
+  does not answer within 120 seconds; when setting the quota does not
+  answer, it says that the volume was created but may have no quota. When something
+  took the name between the check and the create, the request answered 500
+  `Creating volume ... failed`; it now answers 409 and names what is there (a
+  folder, a file, a symbolic link or a subvolume).
+- Unmounting or removing a pool, deleting a volume and importing a pool under
+  an earlier pool's name did not count a container whose mount reached the
+  pool through a symbolic link on the host, a relative path in a Docker
+  volume's options, a folder of the pool bound elsewhere on the host, or a
+  volume of a third-party driver. The folders are now resolved on the host
+  (`realpath`) and compared by filesystem and folder in the host's mount
+  table. `realpath` runs under the host's `timeout` and answers 500, with
+  nothing changed, after 10 seconds on a network or FUSE mount that does not
+  answer.
+- Disks whose names have more than four letters, such as `sdaaa` (the 703rd
+  SCSI disk), `xvdaa` or `dasda`, were listed on the Storage and Health pages,
+  but creating a pool on one, its SMART data and self-tests and SMART tasks
+  answered 400 `Invalid disk name format`.
 - Names that are not valid UTF-8, which apps and SMB users can give to
   folders and subvolumes in a pool, broke storage operations: a subvolume
   with such a name made listing volumes fail (HTTP 500). Such names are now
@@ -1018,6 +1097,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   data for 2 minutes now fails with HTTP 408 ("The upload timed out: the
   client sent nothing for 120 seconds"), and nothing of it is kept; one
   that keeps sending, however slowly, goes on.
+- The hidden `.unos-upload-...` file that an upload leaves when the
+  supervisor stops in the middle of it, in a folder whose filesystem has no
+  unnamed files (a vfat or exfat disk mounted there by hand, for example),
+  was found only by looking for it. The supervisor now looks for such files
+  in every folder below the pools, down to 64 folders deep, 10 minutes after
+  each start, and when
+  asked (`POST /api/v1/files/upload-leftovers/check`); the File Browser
+  shows a notice with their number and size, and **Remove…** lists them and
+  removes them for good once you confirm. A file that an upload is still
+  writing, or that changed in the last 10 minutes, is never removed; when one
+  is refused, the dialog lists the others.
 - Backup upload and restore answered HTTP 500 for some malformed archives (a
   member size of 2^63 bytes or more, broken GNU sparse data, a long chain of
   extended headers), such as "cannot fit 'int' into an offset-sized

@@ -196,22 +196,24 @@ class TestDockerModule:
         """Test starting a container."""
         mock_docker_client.containers.get.return_value = mock_container
         
+        mock_container.status = "exited"
+
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
-            result = docker_module.start_container("abc123")
+            result, started = docker_module.start_container("abc123")
 
         mock_container.start.assert_called_once()
         mock_container.reload.assert_called_once()
-        assert (result.id, result.name) == ("abc123", "test_container")
+        assert (result.id, result.name, started) == ("abc123", "test_container", True)
 
     def test_stop_container(self, mock_docker_client, mock_container):
         """Test stopping a container."""
         mock_docker_client.containers.get.return_value = mock_container
         
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
-            result = docker_module.stop_container("abc123")
+            result, stopped = docker_module.stop_container("abc123")
 
         mock_container.stop.assert_called_once()
-        assert (result.id, result.name) == ("abc123", "test_container")
+        assert (result.id, result.name, stopped) == ("abc123", "test_container", True)
 
     def test_restart_container(self, mock_docker_client, mock_container):
         """Test restarting a container."""
@@ -228,7 +230,7 @@ class TestDockerModule:
         mock_docker_client.containers.get.return_value = mock_container
         
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
-            docker_module.remove_container("abc123")
+            assert docker_module.remove_container("abc123") == "test_container"
         
         mock_container.remove.assert_called_once_with(force=False)
 

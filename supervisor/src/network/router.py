@@ -2,17 +2,20 @@
 
 Every command runs on the host through src/host.py (ADR-0020). Disable and
 Enable are in links.py: a Disable comes back on by itself unless it is kept
-(ADR-0244).
+(ADR-0244). A Disable, Keep or Enable that changed an interface, and a new host
+name, are audited (ADR-0351).
 """
 
 import asyncio
 import json
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from . import links
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction
 from ..auth.utils import verify_token
 from ..security.validators import validate_interface_name
 
@@ -142,25 +145,47 @@ async def get_interface(name: str, _=Depends(verify_token)):
     return await _interface(entries[0])
 
 
+async def _audit_interface(request: Request, user, name: str, details: str, *, success: bool = True) -> None:
+    await audit_change(AuditAction.NETWORK_CONFIG_CHANGED, request, user.username,
+                       resource_type="network_interface", resource_id=name, details=details, success=success)
+
+
 @router.post("/interfaces/{name}/down")
-async def bring_interface_down(name: str, _=Depends(verify_token)):
+async def bring_interface_down(request: Request, name: str, user=Depends(verify_token)):
     """Disable an interface. It comes back on by itself after revert_in seconds unless the
     change is kept with POST .../down/confirm (ADR-0244)."""
     revert_in = await links.disable(name)
+    await _audit_interface(
+        request, user, name, f"Disabled; it comes back on by itself in {revert_in} seconds unless the disable is kept"
+    )
     return {"status": "success", "interface": name, "state": "down", "revert_in": revert_in}
 
 
 @router.post("/interfaces/{name}/down/confirm")
-async def keep_interface_down(name: str, _=Depends(verify_token)):
+async def keep_interface_down(request: Request, name: str, user=Depends(verify_token)):
     """Keep a disable that waits to be kept; 409 when none waits (it was turned back on)."""
     await links.keep(name)
+    await _audit_interface(request, user, name, "Disable kept: it stays off")
     return {"status": "success", "interface": name, "state": "down"}
 
 
 @router.post("/interfaces/{name}/up")
-async def bring_interface_up(name: str, _=Depends(verify_token)):
-    """Enable an interface, with the addresses and routes its disable saved."""
-    await links.enable(name)
+async def bring_interface_up(request: Request, name: str, user=Depends(verify_token)):
+    """Enable an interface, with the addresses and routes its disable saved.
+
+    An Enable that turned it on is audited; as failed when not all of them could be restored,
+    which answers 500 (ADR-0351).
+    """
+    try:
+        enabled = await links.enable(name)
+    except links.PartlyEnabled as exc:
+        await _audit_interface(
+            request, user, name,
+            f"Enabled, but its saved addresses and routes could not all be restored: {exc.reason}", success=False,
+        )
+        raise
+    if enabled:
+        await _audit_interface(request, user, name, "Enabled")
     return {"status": "success", "interface": name, "state": "up"}
 
 
@@ -250,13 +275,21 @@ async def get_hostname(_=Depends(verify_token)):
 
 
 @router.put("/hostname")
-async def set_hostname(config: HostnameConfig, _=Depends(verify_token)):
-    """Set the host's name with hostnamectl, which also writes /etc/hostname: it lasts (ADR-0331)."""
+async def set_hostname(request: Request, config: HostnameConfig, user=Depends(verify_token)):
+    """Set the host's name with hostnamectl, which also writes /etc/hostname: it lasts (ADR-0331).
+    A name other than the one `hostname` printed before is audited (ADR-0351)."""
     if not re.fullmatch(r"[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", config.hostname):
         raise HTTPException(400, "Invalid hostname format")
+    before = await links.run(["hostname"])
+    old = before.stdout.strip() if before.ok else ""
     result = await links.run(["hostnamectl", "set-hostname", config.hostname])
     if not result.ok:
         raise HTTPException(500, f"Failed to set hostname: {links.reason(result)}")
+    if old != config.hostname:
+        await audit_change(
+            AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="host",
+            details=f"Host name changed from {old} to {config.hostname}" if old else f"Host name set to {config.hostname}",
+        )
     return {"status": "success", "hostname": config.hostname}
 
 

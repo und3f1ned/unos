@@ -1709,7 +1709,8 @@ def test_a_supervisor_killed_in_the_middle_of_an_upload_leaves_nothing_in_the_fo
 
     The unnamed file goes with the process. Where there cannot be one (macOS,
     filesystems without O_TMPFILE), the hidden temporary file stays with what
-    had arrived, and nothing removes it: the test checks that, and is marked
+    had arrived until an administrator removes it (ADR-0354,
+    test_upload_leftovers.py): the test checks that it stays, and is marked
     xfail there.
     """
     base = tmp_path.resolve() / "pools"

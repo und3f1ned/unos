@@ -66,6 +66,8 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import database
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import CallerSession, caller_session, forget_unstored_sessions, verify_token
 from ..config import get_settings
 from ..database import init_db
@@ -168,10 +170,9 @@ class BackupInfo(BaseModel):
 
 
 class BackupConfig(BaseModel):
-    include_users: bool = True
-    include_apps: bool = True
-    include_scheduler: bool = True
-    include_notifications: bool = True
+    """The body of POST /backup/create. Every backup holds the same files (_collect_backup_content):
+    there are no options of what it holds (ADR-0345, ADR-0355)."""
+
     encrypt: bool = False
     passphrase: Optional[str] = None  # Required if encrypt=True
 
@@ -768,7 +769,8 @@ def _prepare_smb(db_file: Path, db_path: Path) -> list[str]:
     """The SMB rules of a restore (ADR-0139) on the extracted database, before it replaces the live one.
 
     The SMB tables are checked (BackupValidationError), the SMB
-    accounts of the live database are read, and then one transaction on the
+    accounts of the live database and its record of handed-out uids are
+    read (ADR-0353), and then one transaction on the
     extracted file applies the share rules (shares/service.py) and the
     account rules (shares/accounts.py). Any failure rolls it back and the
     restore fails: the live database never holds an unproven SMB state.
@@ -940,9 +942,11 @@ def _keep_caller_session(caller: CallerSession) -> None:
         logger.warning("Could not keep the session of the restore's administrator", exc_info=True)
 
 
-async def _restore_and_reconcile(backup_path: Path, passphrase: str | None,
+async def _restore_and_reconcile(backup_path: Path, passphrase: str | None, request: Request, username: str,
                                  caller: CallerSession | None = None) -> dict:
-    """The restore and its post-restore step, holding smb_lock (a restore is an SMB state change)."""
+    """The restore and its post-restore step, holding smb_lock (a restore is an SMB state change),
+    and the audit entry of a restore that restored something (ADR-0351): written here, in the
+    restore's own task, so that a request cancelled meanwhile does not lose it."""
     global _restore_running
     try:
         async with service.smb_lock():
@@ -951,7 +955,13 @@ async def _restore_and_reconcile(backup_path: Path, passphrase: str | None,
                 await _after_database_restore(result)
                 if caller is not None:
                     await asyncio.to_thread(_keep_caller_session, caller)
-            return result
+        if result["restored"]:
+            await audit_change(
+                AuditAction.BACKUP_RESTORED, request, username,
+                resource_type="backup", resource_id=backup_path.name,
+                details=f"Restored {', '.join(result['restored'])}", severity=AuditSeverity.WARNING,
+            )
+        return result
     finally:
         _restore_running = False
 
@@ -1026,22 +1036,19 @@ async def list_backups(_: dict = Depends(verify_token)):
     return {"backups": await asyncio.to_thread(_list_backups)}
 
 
-def _collect_backup_content(config: BackupConfig, content: Path) -> None:
+def _collect_backup_content(content: Path, *, encrypted: bool) -> None:
     """Put the files the backup contains into the directory ``content``: the manifest and the database.
 
     Nothing of /etc: the container's fstab and netplan files describe nothing of
     the host, whose fstab (with the pool entries) is not mounted into the
-    container (ADR-0345).
+    container (ADR-0345). The manifest says whether the backup is ``encrypted``,
+    and names no options (ADR-0355).
     """
-    # Create manifest (don't include passphrase)
-    manifest_config = config.model_dump()
-    manifest_config.pop("passphrase", None)
     manifest = {
         "version": BACKUP_VERSION,
         "created": datetime.now().isoformat(),
         "hostname": os.uname().nodename,
-        "encrypted": config.encrypt,
-        "config": manifest_config
+        "encrypted": encrypted,
     }
 
     with open(content / "manifest.json", "w") as f:
@@ -1070,7 +1077,7 @@ def configuration_archive() -> bytes:
     with tempfile.TemporaryDirectory() as tmpdir:
         content = Path(tmpdir) / "content"
         content.mkdir()
-        _collect_backup_content(BackupConfig(), content)
+        _collect_backup_content(content, encrypted=False)
         out = io.BytesIO()
         _write_archive(content, out)
     return out.getvalue()
@@ -1116,7 +1123,7 @@ def _create_backup(config: BackupConfig) -> dict:
         with tempfile.TemporaryDirectory() as tmpdir:
             content = Path(tmpdir) / "content"
             content.mkdir()
-            _collect_backup_content(config, content)
+            _collect_backup_content(content, encrypted=config.encrypt)
             with open(tmp, "xb") as out:
                 if config.encrypt:
                     plain = io.BytesIO()
@@ -1143,8 +1150,9 @@ def _create_backup(config: BackupConfig) -> dict:
 
 @router.post("/create")
 async def create_backup(
+    request: Request,
     config: BackupConfig = BackupConfig(),
-    _: dict = Depends(verify_token)
+    user=Depends(verify_token),
 ):
     """Create a new backup of UNOS configuration. Optionally encrypted with AES-256."""
     # Validate encryption config
@@ -1152,9 +1160,15 @@ async def create_backup(
         raise HTTPException(400, "Passphrase required for encrypted backup")
 
     try:
-        return await asyncio.to_thread(_create_backup, config)
+        result = await asyncio.to_thread(_create_backup, config)
     except Exception as e:
         raise HTTPException(500, f"Failed to create backup: {e}") from e
+    await audit_change(
+        AuditAction.BACKUP_CREATED, request, user.username, resource_type="backup",
+        resource_id=result["backup"].filename,
+        details="Encrypted backup created" if config.encrypt else "Backup created",
+    )
+    return result
 
 
 @router.get("/download/{filename}")
@@ -1173,7 +1187,7 @@ async def download_backup(filename: str, _: dict = Depends(verify_token)):
 
 
 @router.post("/upload", openapi_extra=UPLOAD_OPENAPI)
-async def upload_backup(request: Request, _: dict = Depends(verify_token)):
+async def upload_backup(request: Request, user=Depends(verify_token)):
     """Upload a backup file (form field "file"). It is validated like a restore, but not applied.
 
     Encrypted backups (.tar.gz.enc) cannot be read without their passphrase:
@@ -1197,6 +1211,10 @@ async def upload_backup(request: Request, _: dict = Depends(verify_token)):
     except Exception as e:
         raise HTTPException(500, f"Failed to upload backup: {e}") from e
 
+    await audit_change(
+        AuditAction.BACKUP_CREATED, request, user.username, resource_type="backup", resource_id=safe_name,
+        details="Encrypted backup uploaded" if upload.encrypted else "Backup uploaded",
+    )
     return {
         "status": "success",
         "backup": BackupInfo(
@@ -1240,8 +1258,8 @@ async def restore_backup(
     _restore_running = True
     try:
         caller = caller_session(request, user)
-        task = asyncio.ensure_future(
-            _restore_and_reconcile(backup_path, passphrase if is_encrypted else None, caller))
+        task = asyncio.ensure_future(_restore_and_reconcile(
+            backup_path, passphrase if is_encrypted else None, request, user.username, caller))
     except BaseException:
         _restore_running = False
         raise
@@ -1263,7 +1281,7 @@ async def restore_backup(
 
 
 @router.delete("/{filename}")
-async def delete_backup(filename: str, _: dict = Depends(verify_token)):
+async def delete_backup(request: Request, filename: str, user=Depends(verify_token)):
     """Delete a backup file."""
     ensure_backup_dir()
     backup_path = _backup_path(filename)
@@ -1272,6 +1290,8 @@ async def delete_backup(filename: str, _: dict = Depends(verify_token)):
 
     try:
         backup_path.unlink()
-        return {"status": "deleted", "filename": filename}
     except Exception as e:
         raise HTTPException(500, f"Failed to delete backup: {e}") from e
+    await audit_change(AuditAction.BACKUP_DELETED, request, user.username, resource_type="backup",
+                       resource_id=filename)
+    return {"status": "deleted", "filename": filename}

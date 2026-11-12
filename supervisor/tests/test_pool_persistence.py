@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import signal
 import stat
 import subprocess
 import threading
@@ -284,6 +285,9 @@ class FakeHost:
         # The requests that curl was given, in order.
         self.http_requests: list[SimpleNamespace] = []
         self.docker = FakeDocker()
+        # Whether a directory of the host is the root of a btrfs subvolume (stat prints its inode
+        # number, 256): test_volumes.FakeSubvolumes knows them.
+        self.subvolume_root = lambda path: False
         # How often the storage endpoints applied smb.conf after a pool change (install_fake_host).
         self.smb_applies = 0
         self._minor = 0
@@ -420,6 +424,31 @@ class FakeHost:
         for child in node.get("children") or []:
             yield from self._walk(child)
 
+    def _resolve(self, path):
+        """``path`` (absolute) with the symbolic links of ``links`` resolved, as realpath -m does."""
+        assert path.startswith("/"), path
+        todo = [part for part in path.split("/") if part]
+        resolved: list[str] = []
+        hops = 0
+        while todo:
+            part = todo.pop(0)
+            if part == ".":
+                continue
+            if part == "..":
+                resolved = resolved[:-1]
+                continue
+            link = "/" + "/".join([*resolved, part])
+            if link in self.links:
+                hops += 1
+                assert hops < 40, f"a loop of symbolic links: {path}"
+                target = self.links[link]
+                todo = [p for p in target.split("/") if p] + todo
+                if target.startswith("/"):
+                    resolved = []
+                continue
+            resolved.append(part)
+        return "/" + "/".join(resolved)
+
     def _node_by_path(self, path):
         for top in self.tree:
             for node in self._walk(top):
@@ -513,6 +542,23 @@ class FakeHost:
                 return self._result(0 if active else 1)
             exists = path in self.dirs if flag == "-d" else (path in self.files or path in self.dirs)
             return self._result(0 if exists else 1)
+        if prog == "realpath":
+            # GNU realpath --canonicalize-missing --zero: each path with its symbolic links (links)
+            # resolved and the parts that do not exist kept, each ended by a NUL.
+            assert cmd[1:4] == ["--canonicalize-missing", "--zero", "--"] and len(cmd) > 4, cmd
+            return self._result(stdout="".join(f"{self._resolve(path)}\0" for path in cmd[4:]))
+        if prog == "stat":
+            # GNU stat without -L: the entry itself, a symbolic link too. "%i %F": its inode
+            # number (256 for the root of a btrfs subvolume) and its kind.
+            assert cmd[1:3] == ["--format=%i %F", "--"] and len(cmd) == 4, cmd
+            path = cmd[3]
+            if path in self.links:
+                return self._result(stdout="1001 symbolic link\n")
+            if path in self.files:
+                return self._result(stdout="1002 regular file\n")
+            if path in self.dirs:
+                return self._result(stdout=f"{256 if self.subvolume_root(path) else 1003} directory\n")
+            return self._result(1, stderr=f"stat: cannot statx '{path}': No such file or directory")
         if prog == "sync":
             return self._result()  # flushes only: recorded in calls, not in changes
         if prog == "find":
@@ -1214,7 +1260,7 @@ class TestUnmountAndDelete:
         assert mounted.changes.count(["umount", "/mnt/pools/data"]) == 2
 
     def test_delete_forgets_the_pool_but_keeps_the_data(self, mounted):
-        pools.delete_pool("data")
+        assert pools.delete_pool("data") is True
 
         assert mounted.changes == [
             ["umount", "/mnt/pools/data"],
@@ -1246,6 +1292,23 @@ class TestUnmountAndDelete:
         with pytest.raises(pools.PoolBusyError):
             pools.delete_pool("data")
         assert mounted.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+
+    # delete_pool says whether it changed anything: the endpoint writes pool_deleted only then
+    # (ADR-0350).
+    @pytest.mark.parametrize("left", ["fstab entry", "mountpoint"])
+    def test_delete_of_a_pool_that_is_not_mounted_says_that_it_removed_what_was_left(self, fake_host, left):
+        if left == "fstab entry":
+            fake_host.files["/etc/fstab"] = BASE_FSTAB + marker("gone") + entry("gone", GONE_UUID)
+        else:
+            fake_host.dirs.add("/mnt/pools/gone")
+
+        assert pools.delete_pool("gone") is True
+        assert fake_host.fstab == BASE_FSTAB
+        assert "/mnt/pools/gone" not in fake_host.dirs
+
+    def test_delete_of_a_name_that_is_no_pool_says_that_it_changed_nothing(self, fake_host):
+        assert pools.delete_pool("gone") is False
+        assert fake_host.changes == []
 
     def test_delete_cleans_up_a_pool_whose_disks_are_gone(self, fake_host):
         fake_host.files["/etc/fstab"] = BASE_FSTAB + marker("gone") + entry("gone", GONE_UUID)
@@ -1287,6 +1350,54 @@ class TestUnmountAndDelete:
             mounted.docker.add_volume("paperless_db"),  # a plain named volume
         ])
         with pytest.raises(pools.PoolBusyError, match=r"running containers \(paperless\)"):
+            operation("data")
+        assert mounted.changes == []
+        self.assert_still_mounted_and_persistent(mounted)
+
+    # storage.edge-cases, step 4: Docker reports a bind mount's source as it was written. A
+    # symbolic link on the host, or a folder of the pool bound elsewhere on the host, led the
+    # lexical comparison past the container: the pool was unmounted while it used it.
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    @pytest.mark.parametrize("case", ["symbolic link", "folder bound on the host"])
+    def test_refuses_a_container_that_reaches_the_pool_through_a_link_or_another_mount(
+        self, mounted, operation, case
+    ):
+        if case == "symbolic link":
+            mounted.links["/srv/data"] = "/mnt/pools/data"
+            mounted.docker.add("syncthing", sources=["/srv/data/sync"])
+        else:
+            mounted.add_mount("/srv/sync", "/dev/sda[/sync]", "btrfs", DATA_UUID)
+            mounted.docker.add("syncthing", sources=["/srv/sync"])
+        with pytest.raises(pools.PoolBusyError, match=r"running containers \(syncthing\)"):
+            operation("data")
+        assert mounted.changes == []
+        self.assert_still_mounted_and_persistent(mounted)
+
+    # storage.edge-cases, step 4: realpath runs on the host over every folder that a running
+    # container mounts. On a network or FUSE mount that hangs it did not return: the pools' lock
+    # stayed held until subprocess.TimeoutExpired, which answered with its own text.
+    # With --signal=KILL, timeout(1) kills its whole process group, itself too: nsenter passes the
+    # signal on, and the supervisor sees the return code -9 (it took only 124 and 137 for a hang).
+    @pytest.mark.parametrize("operation", [pools.unmount_pool, pools.delete_pool])
+    @pytest.mark.parametrize("hang", ["killed by timeout", "no answer"])
+    def test_a_realpath_that_does_not_answer_leaves_the_pool_mounted(self, mounted, monkeypatch, operation, hang):
+        mounted.docker.add("syncthing", sources=["/srv/nfs/sync"])
+        if hang == "killed by timeout":
+            mounted.fail[("timeout", "--signal=KILL", "10", "realpath")] = (-signal.SIGKILL, "")
+        else:
+            real = host_module.run_on_host
+
+            def hangs(cmd, **kwargs):
+                if "realpath" in cmd:
+                    raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+                return real(cmd, **kwargs)
+
+            monkeypatch.setattr(host_module, "run_on_host", hangs)
+
+        with pytest.raises(RuntimeError, match=re.escape(
+            "Pool 'data' was left mounted: realpath did not resolve the folders that containers mount "
+            "within 10 seconds: a network or FUSE mount of the host may not answer"
+        )):
             operation("data")
         assert mounted.changes == []
         self.assert_still_mounted_and_persistent(mounted)

@@ -58,6 +58,27 @@ export const en = {
 	'files.deleteForGood': 'Delete for good',
 	'files.moveToTrash': 'Move to trash',
 
+	// The hidden files that uploads left when the supervisor stopped (ADR-0354): the notice and its dialog.
+	'files.leftovers.title': 'Leftovers of interrupted uploads',
+	'files.leftovers.found': {
+		one: '{n} hidden file that an upload left when the supervisor stopped in the middle of it takes {size}.',
+		other: '{n} hidden files that uploads left when the supervisor stopped in the middle of them take {size}.'
+	},
+	'files.leftovers.hint':
+		'They hold the part of a file that had arrived, and nothing uses them: upload those files again.',
+	'files.leftovers.remove': 'Remove…',
+	'files.leftovers.dialogTitle': {
+		one: 'Remove {n} leftover of an upload',
+		other: 'Remove {n} leftovers of uploads'
+	},
+	'files.leftovers.confirm': {
+		one: 'Remove this file for good? This cannot be undone.',
+		other: 'Remove these {n} files for good? This cannot be undone.'
+	},
+	'files.leftovers.file': '{size}, last written {time}',
+	'files.leftovers.removeForGood': 'Remove for good',
+	'files.leftovers.failed': 'Could not remove',
+
 	// The units of a size, from bytes up (ADR-0297).
 	'files.unit.b': 'B',
 	'files.unit.kb': 'KB',
@@ -165,6 +186,29 @@ export const ru: Translation<typeof en> = {
 		'«Удалить навсегда» удаляет их сразу, минуя корзину, и освобождает занятое ими место. Это нельзя отменить.',
 	'files.deleteForGood': 'Удалить навсегда',
 	'files.moveToTrash': 'Переместить в корзину',
+
+	'files.leftovers.title': 'Остатки прерванных загрузок',
+	'files.leftovers.found': {
+		one: 'Скрытые файлы, которые оставили загрузки, прерванные остановкой супервизора: {n} файл, {size}.',
+		few: 'Скрытые файлы, которые оставили загрузки, прерванные остановкой супервизора: {n} файла, {size}.',
+		many: 'Скрытые файлы, которые оставили загрузки, прерванные остановкой супервизора: {n} файлов, {size}.'
+	},
+	'files.leftovers.hint':
+		'В них часть файла, которая успела прийти, и они ничему не нужны: загрузите эти файлы снова.',
+	'files.leftovers.remove': 'Удалить…',
+	'files.leftovers.dialogTitle': {
+		one: 'Удалить {n} остаток загрузки',
+		few: 'Удалить {n} остатка загрузок',
+		many: 'Удалить {n} остатков загрузок'
+	},
+	'files.leftovers.confirm': {
+		one: 'Удалить {n} файл навсегда? Это нельзя отменить.',
+		few: 'Удалить {n} файла навсегда? Это нельзя отменить.',
+		many: 'Удалить {n} файлов навсегда? Это нельзя отменить.'
+	},
+	'files.leftovers.file': '{size}, последняя запись {time}',
+	'files.leftovers.removeForGood': 'Удалить навсегда',
+	'files.leftovers.failed': 'Не удалось удалить',
 
 	'files.unit.b': 'Б',
 	'files.unit.kb': 'КБ',

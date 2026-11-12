@@ -596,6 +596,18 @@ class TestCreatePoolEndpoint:
         assert (result["mounted"], result["persistent"], result["health"]) == (True, True, "healthy")
         assert result["missing_devices"] == 0 and result["device_errors"] == 0
 
+    # Whole disks whose names have more letters than four (storage.edge-cases, step 5): the
+    # Storage page lists them, and creating a pool on one answered 400 "Invalid device name format".
+    @pytest.mark.parametrize("name", ["sdaaa", "xvdaa", "dasda", "dasdaa"])
+    def test_creates_a_pool_on_a_disk_with_a_longer_name(self, api, nas, name):
+        nas.add_disk(name, serial="LONG-1")
+        assert name in [disk["name"] for disk in api.get("/api/v1/storage/disks").json()]
+
+        response = api.post("/api/v1/storage/pools", json=body([f"/dev/{name}"]))
+
+        assert response.status_code == 200, response.text
+        assert [cmd for cmd in nas.changes if cmd[0] == "mkfs.btrfs"][0][-1] == f"/dev/{name}"
+
     def test_system_disk_is_409(self, api, nvme_root):
         response = api.post(
             "/api/v1/storage/pools",

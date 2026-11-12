@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -53,7 +54,9 @@ class FakeSubvolumes:
     """Subvolumes and quota groups of the FakeHost's mounted btrfs filesystems.
 
     Answers ``btrfs subvolume list|create|delete|show``, ``btrfs qgroup
-    show|limit`` and ``btrfs inspect-internal rootid`` like btrfs-progs; every
+    show|limit`` and ``btrfs inspect-internal rootid|subvolid-resolve`` like
+    btrfs-progs, and the shell script with which the host compares the paths
+    of subvolumes with volume names (pools._VOLUME_PATHS_SCRIPT); every
     other btrfs command still goes to FakeHost. Created and deleted
     subvolumes appear in and disappear from ``FakeHost.dirs``, and the
     commands that change the host are recorded in ``FakeHost.changes``.
@@ -80,6 +83,15 @@ class FakeSubvolumes:
             return other_btrfs_commands(cmd)
 
         fake._btrfs = btrfs
+        fake.subvolume_root = lambda path: self._subvolume_at(path) is not None
+        other_commands = fake._dispatch
+
+        def dispatch(cmd, input):
+            if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-volume-paths"]:
+                return self._volume_paths(cmd)
+            return other_commands(cmd, input)
+
+        fake._dispatch = dispatch
 
     def add(self, uuid: str, path: str, parent: int = TOP_LEVEL, snapshot_of: int | None = None) -> int:
         """An existing subvolume at ``path`` (relative to the top level); returns its id.
@@ -115,6 +127,24 @@ class FakeSubvolumes:
         ("subvolume", "delete"): "ERROR: Could not destroy subvolume/snapshot",
         ("qgroup", "limit"): "ERROR: unable to limit requested quota group",
     }
+
+    def _volume_paths(self, cmd: list[str]) -> HostResult:
+        """pools._VOLUME_PATHS_SCRIPT: btrfs resolves each id, and the shell compares the path with the name.
+
+        Through FakeHost.run, as the shell runs btrfs: recorded in ``calls``, and ``fail`` applies.
+        """
+        assert cmd[2] == pools._VOLUME_PATHS_SCRIPT and len(cmd) % 2 == 1, cmd
+        target, pairs = cmd[4], cmd[5:]
+        out, err = [], []
+        for subvol_id, name in zip(pairs[0::2], pairs[1::2]):
+            result = self.fake.run(["btrfs", "inspect-internal", "subvolid-resolve", subvol_id, target],
+                                   errors="replace")
+            if not result.ok:
+                out.append(f"{subvol_id} failed\n")
+                err.append(result.stderr)
+            else:
+                out.append(f"{subvol_id} {'same' if result.stdout == name + chr(10) else 'other'}\n")
+        return HostResult(0, "".join(out), "".join(err))
 
     def _subvolume_at(self, path: str) -> tuple[str, int] | None:
         """(filesystem uuid, id) of the subvolume at ``path``, as it is named now, or None.
@@ -170,13 +200,15 @@ class FakeSubvolumes:
             if self._read_only(written):
                 return HostResult(1, "", f"{failure}: Read-only file system")
         if action == ["subvolume", "list"]:
-            assert len(cmd) == 4, cmd
-            uuid = self._mounted_at(cmd[3])
+            # By id, lowest first; highest first with --sort=-rootid.
+            assert len(cmd) == 4 or (len(cmd) == 5 and cmd[3] == "--sort=-rootid"), cmd
+            uuid = self._mounted_at(cmd[-1])
             if uuid is None:
-                return HostResult(1, "", f"ERROR: not a btrfs filesystem: {cmd[3]}")
+                return HostResult(1, "", f"ERROR: not a btrfs filesystem: {cmd[-1]}")
             lines = [
                 f"ID {subvol_id} gen 12 top level {parent} path {path}\n"
-                for subvol_id, (parent, path) in sorted(self.subvolumes.get(uuid, {}).items())
+                for subvol_id, (parent, path) in sorted(self.subvolumes.get(uuid, {}).items(),
+                                                        reverse=len(cmd) == 5)
             ]
             return HostResult(0, "".join(lines), "")
         if action == ["subvolume", "create"]:
@@ -240,23 +272,36 @@ class FakeSubvolumes:
                 + "".join(snapshots)
             ), "")
         if action == ["qgroup", "show"]:
-            assert len(cmd) == 4, cmd
-            uuid = self._mounted_at(cmd[3])
+            # By quota group, lowest first; highest first with --sort=-qgroupid. A subvolume
+            # has its group while it exists.
+            assert len(cmd) == 4 or (len(cmd) == 5 and cmd[3] == "--sort=-qgroupid"), cmd
+            uuid = self._mounted_at(cmd[-1])
             if uuid is None:
-                return HostResult(1, "", f"ERROR: not a btrfs filesystem: {cmd[3]}")
+                return HostResult(1, "", f"ERROR: not a btrfs filesystem: {cmd[-1]}")
             if uuid not in self.quotas:
                 return HostResult(1, "", QGROUPS_NOT_ENABLED)
             # btrfs-progs 6 adds the subvolume paths.
+            groups = [(TOP_LEVEL, "<toplevel>"), *((subvol_id, path) for subvol_id, (_, path)
+                                                 in self.subvolumes.get(uuid, {}).items())]
             lines = ["Qgroupid    Referenced    Exclusive   Path \n",
-                     "--------    ----------    ---------   ---- \n",
-                     "0/5           16.00KiB     16.00KiB   <toplevel>\n"]
+                     "--------    ----------    ---------   ---- \n"]
             lines += [
                 f"0/{subvol_id:<10}    16.00KiB     16.00KiB   {path}\n"
-                for subvol_id, (_, path) in sorted(self.subvolumes.get(uuid, {}).items())
+                for subvol_id, path in sorted(groups, reverse=len(cmd) == 5)
             ]
             return HostResult(0, "".join(lines), "")
         if action == ["qgroup", "limit"]:
             return self._qgroup_limit(cmd)
+        if action == ["inspect-internal", "subvolid-resolve"]:
+            # The path from the top level, as it is named now.
+            assert len(cmd) == 5, cmd
+            subvol_id, target = int(cmd[3]), cmd[4]
+            uuid = self._mounted_at(target)
+            if uuid is None:
+                return HostResult(1, "", f"ERROR: cannot open {target}: Not a btrfs filesystem")
+            if subvol_id not in self.subvolumes.get(uuid, {}):
+                return HostResult(1, "", f"ERROR: resolving subvolid {subvol_id} error -2")
+            return HostResult(0, f"{self.subvolumes[uuid][subvol_id][1]}\n", "")
         if action == ["inspect-internal", "rootid"]:
             assert len(cmd) == 4, cmd
             target = cmd[3]
@@ -480,9 +525,10 @@ class TestCreate:
         assert host.subvols.limits == {documents: 1073741824}
         # Quotas are checked, and the newest subvolume id read, before the create;
         # the new subvolume's id is read and checked after it.
-        assert [cmd[1:3] for cmd in host.calls if cmd[:2] in (["btrfs", "qgroup"], ["btrfs", "subvolume"])] == [
+        assert [cmd[1:3] for cmd in host.calls if cmd[1:2] in (["qgroup"], ["subvolume"])
+                or cmd[1:3] == ["inspect-internal", "subvolid-resolve"]] == [
             ["qgroup", "show"], ["subvolume", "list"], ["subvolume", "create"],
-            ["subvolume", "list"], ["subvolume", "show"], ["qgroup", "limit"],
+            ["subvolume", "list"], ["inspect-internal", "subvolid-resolve"], ["qgroup", "limit"],
         ]
 
     def test_largest_quota_btrfs_can_store(self, api, host):
@@ -506,7 +552,7 @@ class TestCreate:
             "volume without a quota."
         )
         assert host.changes == []
-        assert ["btrfs", "qgroup", "show", "/mnt/pools/data"] in host.calls
+        assert ["btrfs", "qgroup", "show", "--sort=-qgroupid", "/mnt/pools/data"] in host.calls
         assert _btrfs_calls(host, "subvolume", "create") == []
         assert host.subvols.paths(DATA_UUID) == []
 
@@ -637,14 +683,79 @@ class TestQuotaRollback:
 
     @pytest.mark.parametrize("prefix", [b"\r", b"\n", b"\v", b"\xc2\x85", b"\xe2\x80\xa8", b"\xff"])
     def test_every_line_of_a_real_listing_counts(self, host, monkeypatch, prefix):
-        """Through the real run_on_host: subprocess turns "\\r" into "\\n" and replaces bad bytes."""
+        """Through the real run_on_host: subprocess turns "\\r" into "\\n" and replaces bad bytes.
+
+        Highest id first, as `btrfs subvolume list --sort=-rootid` prints it.
+        """
+        assert host.subvols.add(DATA_UUID, "archive") == 256
         list_with_a_real_command(monkeypatch, (
-            b"ID 256 gen 7 top level 5 path archive\n"
             b"ID 300 gen 9 top level 5 path " + prefix + b"documents\n"
+            b"ID 256 gen 7 top level 5 path archive\n"
         ))
 
         assert pools._newest_subvolume_id("/mnt/pools/data") == 300
         assert pools._pool_volumes("/mnt/pools/data") == {"archive": 256}
+
+    # storage.edge-cases, step 1: btrfs takes a subvolume out of `btrfs subvolume list` while it
+    # renames it (its reference is removed and added again). The guard's list before the create
+    # missed "documents", the newest subvolume, while it was being renamed; then "documents" got
+    # the new volume's name. It was taken for the new volume: it got the quota, or was deleted.
+    @pytest.mark.parametrize("swap", ["after the create", "when the quota fails"])
+    def test_a_subvolume_renamed_while_the_guard_reads_is_never_taken_for_the_new_volume(self, api, host, swap):
+        host.subvols.quotas.add(DATA_UUID)
+        host.subvols.add(DATA_UUID, "archive")
+        documents = host.subvols.add(DATA_UUID, "documents")
+        original = host.subvols._run
+        created = []
+
+        def take_the_name():
+            subvolumes = host.subvols.subvolumes[DATA_UUID]
+            new = next(i for i, (_, path) in subvolumes.items() if path == "photos")
+            subvolumes[new] = (TOP_LEVEL, "photos.mine")
+            subvolumes[documents] = (TOP_LEVEL, "photos")
+
+        def run(cmd):
+            if cmd[1:3] == ["subvolume", "list"] and not created:
+                listing = original(cmd).stdout.splitlines(keepends=True)
+                return HostResult(0, "".join(line for line in listing if f"ID {documents} " not in line), "")
+            if cmd[1:3] == ["qgroup", "limit"] and swap == "when the quota fails":
+                take_the_name()
+                return HostResult(1, "", INVALID)
+            result = original(cmd)
+            if cmd[1:3] == ["subvolume", "create"]:
+                created.append(cmd)
+                if swap == "after the create":
+                    take_the_name()
+            return result
+
+        host.subvols._run = run
+
+        response = api.post(f"{API}/data/volumes", json={"name": "photos", "quota": GIB})
+
+        assert response.status_code == 409, response.text
+        reason = "it was renamed or replaced right after it was created" if swap == "after the create" else INVALID
+        assert response.json()["detail"] == (
+            f"Could not set the quota of volume 'photos': {reason}. The new volume was not removed: "
+            f"the subvolume named 'photos' now (id {documents}) existed before it was created."
+        )
+        assert documents not in host.subvols.limits
+        assert _btrfs_calls(host, "subvolume", "delete") == []
+        assert host.subvols.subvolumes[DATA_UUID][documents] == (TOP_LEVEL, "photos")
+
+    # storage.edge-cases, step 2: a name with a line break added a line to the lists that the
+    # guard read, with a higher id than any subvolume has. Every later create with a quota then
+    # answered 409 and left its new volume without the quota.
+    def test_a_name_that_forges_a_higher_id_costs_later_volumes_nothing(self, api, host):
+        host.subvols.quotas.add(DATA_UUID)
+        host.subvols.add(
+            DATA_UUID,
+            "apps/evil\nID 99999 gen 1 top level 5 path x\n0/99999       16.00KiB     16.00KiB   x",
+        )
+
+        response = api.post(f"{API}/data/volumes", json={"name": "photos", "quota": GIB})
+
+        assert response.status_code == 200, response.text
+        assert host.subvols.limits == {_subvolume_id(host, "photos"): GIB}
 
     def test_the_top_level_is_older_than_any_new_volume(self, api, host):
         # An empty pool: the newest subvolume is the top level (5).
@@ -763,9 +874,11 @@ class TestQuotaOfTheNewVolume:
         assert host.subvols.limits == {_subvolume_id(host, "photos.mine"): GIB}
         assert host.subvols.subvolumes[DATA_UUID][documents] == (TOP_LEVEL, "photos")
 
-    def test_a_forged_list_line_gets_no_quota(self, api, host):
+    def test_a_forged_list_line_does_not_move_the_quota(self, api, host):
         # Right after the create, a subvolume whose name forges a line of the
-        # list that gives "photos" its own, newer id.
+        # list that gives "photos" its own, newer id. The filesystem says which
+        # subvolume is "photos" (storage.edge-cases, step 2): before, the new
+        # volume stayed without its quota (409).
         host.subvols.quotas.add(DATA_UUID)
         original = host.subvols._run
         forged = []
@@ -783,16 +896,11 @@ class TestQuotaOfTheNewVolume:
 
         response = api.post(f"{API}/data/volumes", json={"name": "photos", "quota": GIB})
 
-        assert response.status_code == 409, response.text
-        assert response.json()["detail"] == (
-            f"Volume 'photos' was created without its quota: the subvolume list of pool 'data' "
-            f"gives it the id {forged[0]}, which belongs to another subvolume. A subvolume whose "
-            "name contains a line break can cause this."
-        )
-        assert host.subvols.limits == {}
-        assert _btrfs_calls(host, "qgroup", "limit") == []
+        assert response.status_code == 200, response.text
+        photos = _subvolume_id(host, "photos")
+        assert forged[0] != photos
+        assert host.subvols.limits == {photos: GIB}
         assert _btrfs_calls(host, "subvolume", "delete") == []
-        assert "photos" in host.subvols.paths(DATA_UUID)
 
     def test_the_limit_names_a_quota_group_of_the_pool(self, api, host):
         # btrfs-progs: btrfs qgroup limit [options] <size>|none [<qgroupid>] <path>
@@ -807,6 +915,186 @@ class TestQuotaOfTheNewVolume:
             ["btrfs", "qgroup", "limit", str(GIB), f"0/{photos}", "/mnt/pools/data"]
         ]
         assert host.subvols.limits == {photos: GIB}
+
+
+class TestCreateRaces:
+    """What a create answers when the pool changes under it (storage.edge-cases, step 6)."""
+
+    @staticmethod
+    def after_the_create(host, change):
+        """``change(cmd)`` runs for every btrfs command after the create, before the command itself."""
+        original = host.subvols._run
+        created = []
+
+        def run(cmd):
+            if created:
+                result = change(cmd)
+                if result is not None:
+                    return result
+            result = original(cmd)
+            if cmd[1:3] == ["subvolume", "create"] and result.ok:
+                created.append(cmd)
+            return result
+
+        host.subvols._run = run
+
+    def test_a_failing_list_after_the_create_says_that_the_volume_exists_without_its_quota(self, api, host):
+        # It answered 500 "Listing the subvolumes of /mnt/pools/data failed: ...", and the
+        # volume stayed without a word about it.
+        host.subvols.quotas.add(DATA_UUID)
+        error = "ERROR: can't perform the search: Input/output error"
+        self.after_the_create(
+            host, lambda cmd: HostResult(1, "", error) if cmd[1:3] == ["subvolume", "list"] else None
+        )
+
+        response = api.post(f"{API}/data/volumes", json={"name": "documents", "quota": GIB})
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == (
+            "Volume 'documents' was created without its quota: Listing the subvolumes of "
+            f"/mnt/pools/data failed: {error}. Delete it and create it again."
+        )
+        assert host.subvols.paths(DATA_UUID) == ["documents"]
+        assert host.subvols.limits == {}
+        assert _btrfs_calls(host, "subvolume", "delete") == []
+
+    @pytest.mark.parametrize("command", ["list", "check"])
+    def test_btrfs_that_does_not_answer_after_the_create_says_that_the_volume_exists_without_its_quota(
+        self, api, host, command
+    ):
+        # It answered 500 with the text of subprocess.TimeoutExpired, and the volume stayed
+        # without a word about it.
+        host.subvols.quotas.add(DATA_UUID)
+
+        def hangs(cmd):
+            if command == "list" and cmd[1:3] == ["subvolume", "list"]:
+                raise subprocess.TimeoutExpired(cmd, pools.VOLUME_TIMEOUT)
+
+        self.after_the_create(host, hangs)
+        if command == "check":
+            original = host._dispatch
+
+            def dispatch(cmd, input):
+                if cmd[3:4] == ["unos-volume-paths"]:
+                    raise subprocess.TimeoutExpired(cmd, pools.VOLUME_TIMEOUT)
+                return original(cmd, input)
+
+            host._dispatch = dispatch
+
+        response = api.post(f"{API}/data/volumes", json={"name": "documents", "quota": GIB})
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == (
+            "Volume 'documents' was created without its quota: btrfs did not answer within "
+            f"{pools.VOLUME_TIMEOUT} seconds. Delete it and create it again."
+        )
+        assert host.subvols.paths(DATA_UUID) == ["documents"]
+        assert host.subvols.limits == {}
+        assert _btrfs_calls(host, "subvolume", "delete") == []
+
+    def test_a_quota_limit_that_does_not_answer_says_that_the_volume_may_have_no_quota(self, api, host):
+        # It answered 500 with the text of subprocess.TimeoutExpired, and the volume stayed
+        # without a word about it.
+        host.subvols.quotas.add(DATA_UUID)
+
+        def hangs(cmd):
+            if cmd[1:3] == ["qgroup", "limit"]:
+                raise subprocess.TimeoutExpired(cmd, pools.VOLUME_TIMEOUT)
+
+        self.after_the_create(host, hangs)
+
+        response = api.post(f"{API}/data/volumes", json={"name": "documents", "quota": GIB})
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == (
+            f"Volume 'documents' was created, but btrfs did not answer within {pools.VOLUME_TIMEOUT} "
+            "seconds while its quota was set: it may have no quota. Delete it and create it again."
+        )
+        assert host.subvols.paths(DATA_UUID) == ["documents"]
+        assert _btrfs_calls(host, "subvolume", "delete") == []
+
+    @pytest.mark.parametrize(
+        "made,named",
+        [("folder", "a folder"), ("file", "a file"), ("link", "a symbolic link"), ("subvolume", "a subvolume")],
+    )
+    def test_a_name_taken_after_the_check_is_a_conflict_that_names_what_is_there(self, api, host, made, named):
+        # Something takes the name between the check and the create: btrfs refuses the create.
+        # It answered 500 "Creating volume 'documents' failed: ERROR: target path already exists: ...".
+        path = "/mnt/pools/data/documents"
+        original = host.subvols._run
+
+        def run(cmd):
+            if cmd[1:3] == ["subvolume", "create"]:
+                if made == "file":
+                    host.files[path] = "a file"
+                elif made == "link":
+                    host.links[path] = "/mnt/pools/data/photos"
+                    host.files[path] = "a symbolic link"
+                else:
+                    host.dirs.add(path)
+                    if made == "subvolume":
+                        host.subvols.add(DATA_UUID, "documents")
+            return original(cmd)
+
+        host.subvols._run = run
+
+        response = api.post(f"{API}/data/volumes", json={"name": "documents"})
+
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == (
+            f"'documents' already exists in pool 'data': {named} took the name while the volume was "
+            "being created. Nothing was created."
+        )
+        assert host.changes == []
+
+    def test_a_create_that_fails_for_another_reason_is_still_an_error(self, api, host):
+        host.fail[("btrfs", "subvolume", "create")] = (1, "ERROR: cannot create subvolume: No space left on device")
+
+        response = api.post(f"{API}/data/volumes", json={"name": "documents"})
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == (
+            "Creating volume 'documents' failed: ERROR: cannot create subvolume: No space left on device"
+        )
+
+
+class TestVolumePathsScript:
+    """pools._VOLUME_PATHS_SCRIPT in a real shell, with a btrfs that prints what btrfs-progs would.
+
+    The shell compares the bytes: a path that ends in a carriage return, which
+    Python's text mode turns into a line break, or that holds a line break,
+    is not the volume's (storage.edge-cases, step 2).
+    """
+
+    def test_only_the_exact_path_is_the_volume(self, tmp_path, monkeypatch):
+        btrfs = tmp_path / "bin" / "btrfs"
+        btrfs.parent.mkdir()
+        # btrfs inspect-internal subvolid-resolve <id> <path>
+        btrfs.write_bytes(
+            b"#!/bin/sh\n"
+            b'case "$3" in\n'
+            b"  256) printf 'photos\\n' ;;\n"
+            b"  257) printf 'photos\\r\\n' ;;\n"
+            b"  258) printf 'photos\\nold\\n' ;;\n"
+            b"  259) printf 'apps/photos\\n' ;;\n"
+            b"  260) printf 'photos \\n' ;;\n"
+            b'  *) echo "ERROR: resolving subvolid $3 error -2" >&2; exit 1 ;;\n'
+            b"esac\n"
+        )
+        btrfs.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{btrfs.parent}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+        monkeypatch.setattr(subprocess, "run", REAL_SUBPROCESS_RUN)
+        monkeypatch.setattr(host_module, "run_on_host", REAL_RUN_ON_HOST)
+
+        found, verdicts, stderr = pools._volume_ids("/mnt/pools/data", {"photos": [256, 257, 258, 259, 260, 261]})
+
+        assert found == {"photos": 256}
+        assert verdicts == {
+            (256, "photos"): "same", (257, "photos"): "other", (258, "photos"): "other",
+            (259, "photos"): "other", (260, "photos"): "other", (261, "photos"): "failed",
+        }
+        assert stderr == "ERROR: resolving subvolid 261 error -2"
 
 
 class TestFakeQuotaLimit:
@@ -933,9 +1221,9 @@ class TestDelete:
     # holds a line break and a forged line of the list.
     def test_forged_list_line_cannot_redirect_the_delete(self, api, host):
         documents = host.subvols.add(DATA_UUID, "documents")
-        # A phantom volume "trash" with the id of "documents".
+        # A phantom volume "trash" with the id of "documents": no longer listed (storage.edge-cases, step 2).
         host.subvols.add(DATA_UUID, f"apps/evil\nID {documents} gen 1 top level {TOP_LEVEL} path trash")
-        assert _volume("trash") in api.get(f"{API}/data/volumes").json()
+        assert api.get(f"{API}/data/volumes").json() == [_volume("documents")]
 
         response = api.delete(f"{API}/data/volumes/trash")
 
@@ -944,20 +1232,48 @@ class TestDelete:
         assert "documents" in host.subvols.paths(DATA_UUID)
 
     def test_forged_list_line_cannot_swap_volumes(self, api, host):
-        host.subvols.add(DATA_UUID, "documents")
+        documents = host.subvols.add(DATA_UUID, "documents")
         photos = host.subvols.add(DATA_UUID, "photos")
-        # Listed after the real "documents": gives "documents" the id of "photos".
+        # Listed after the real "documents": gives "documents" the id of "photos". The filesystem
+        # says which is "documents" (storage.edge-cases, step 2): before, the delete was refused (409).
         host.subvols.add(DATA_UUID, f"apps/evil\nID {photos} gen 1 top level {TOP_LEVEL} path documents")
 
         response = api.delete(f"{API}/data/volumes/documents")
 
-        assert response.status_code == 409, response.text
-        assert host.changes == []
-        assert {"documents", "photos"} <= set(host.subvols.paths(DATA_UUID))
+        assert response.status_code == 200, response.text
+        assert host.changes == [["btrfs", "subvolume", "delete", "--subvolid", str(documents), "/mnt/pools/data"]]
+        assert "photos" in host.subvols.paths(DATA_UUID)
 
     # btrfs-progs ends its lines with "\n" only. str.splitlines() also splits at
     # these: the newer subvolume became a phantom "documents" that took the
     # volume's id in the list, and deleting the volume was refused (409).
+    # storage.edge-cases, step 2: a subvolume whose name is a volume's name, a line break and
+    # more has a line of the list that names the volume. It was taken for the volume: a newer
+    # one shadowed the volume itself, which was listed once while the other was deleted.
+    def test_a_name_that_starts_with_a_volume_name_and_a_line_break_is_another_subvolume(self, api, host):
+        photos = host.subvols.add(DATA_UUID, "photos")
+        host.subvols.add(DATA_UUID, "photos\nold")
+
+        assert api.get(f"{API}/data/volumes").json() == [_volume("photos")]
+        response = api.delete(f"{API}/data/volumes/photos")
+
+        assert response.status_code == 200, response.text
+        assert host.changes == [["btrfs", "subvolume", "delete", "--subvolid", str(photos), "/mnt/pools/data"]]
+        assert host.subvols.paths(DATA_UUID) == ["photos\nold"]
+
+    def test_such_a_name_alone_is_no_volume(self, api, host):
+        other = host.subvols.add(DATA_UUID, "photos\nold")
+
+        assert api.get(f"{API}/data/volumes").json() == []
+        response = api.delete(f"{API}/data/volumes/photos")
+
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == (
+            f"Volume 'photos' was not deleted: the subvolume list of pool 'data' gives it the id {other}, "
+            "which belongs to another subvolume. A subvolume whose name contains a line break can cause this."
+        )
+        assert host.changes == []
+
     @pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\x85", "\v", "\f", "\x1c", "\x1d", "\x1e"])
     def test_a_name_with_another_line_separator_is_one_name(self, api, host, separator):
         documents = host.subvols.add(DATA_UUID, "documents")
@@ -971,7 +1287,9 @@ class TestDelete:
 
     def test_volume_that_cannot_be_checked_is_kept(self, api, host):
         host.subvols.add(DATA_UUID, "documents")
-        host.fail[("btrfs", "subvolume", "show")] = (1, "ERROR: Failed to get subvol info: Operation not permitted")
+        host.fail[("btrfs", "inspect-internal", "subvolid-resolve")] = (
+            1, "ERROR: resolving subvolid 256 error -1: Operation not permitted"
+        )
 
         response = api.delete(f"{API}/data/volumes/documents")
 
@@ -1076,7 +1394,7 @@ class TestNamesThatAreNotUtf8:
         assert host.changes == [["btrfs", "subvolume", "delete", "--subvolid", str(documents), "/mnt/pools/data"]]
 
     def test_delete_a_volume_with_such_a_snapshot(self, api, host):
-        # `btrfs subvolume show` lists the snapshots of the volume by path.
+        # `btrfs subvolume list` lists the snapshot by path.
         documents = host.subvols.add(DATA_UUID, "documents")
         host.subvols.add(DATA_UUID, f".snapshots/{NOT_UTF8}", snapshot_of=documents)
 
@@ -1359,7 +1677,7 @@ class TestVolumeInUse:
         assert locked
         # After the volume's id was checked; in between, only the rest of the check ran on the
         # host: the NFS export files are read there (ADR-0292).
-        assert documents.calls[calls_before - 1][:4] == ["btrfs", "subvolume", "show", "-r"]
+        assert documents.calls[calls_before - 1][:3] == ["btrfs", "inspect-internal", "subvolid-resolve"]
         assert documents.calls[calls_before] == [
             "/bin/sh", "-c", nfs._FILES_SCRIPT, "unos-nfs-files", "/etc/exports", "/etc/exports.d"]
         assert documents.calls[calls_before + 1][:3] == ["btrfs", "subvolume", "delete"]
@@ -1428,6 +1746,90 @@ class TestVolumeInUse:
         documents.docker.add("stopped", running=False, mounts=[
             documents.docker.add_volume("stopped_data", options={"type": "none", "o": "bind", "device": DOCUMENTS})
         ])
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 200, response.text
+        assert documents.subvols.paths(DATA_UUID) == []
+
+    # storage.edge-cases, step 4: Docker reports the source of a bind mount, and the folder that a
+    # volume of the local driver binds (its device), as they were written: through a symbolic
+    # link of the host, or relative to dockerd's folder (/). A volume of a third-party driver is
+    # mounted below the driver's own folder, and a folder can be bound elsewhere on the host.
+    # Compared lexically, all of them let the volume be deleted under the container.
+    @pytest.mark.parametrize(
+        "case",
+        ["symbolic link", "relative link", "relative device", "device through a link",
+         "folder bound on the host", "third-party driver"],
+    )
+    def test_a_container_that_reaches_the_volume_another_way_keeps_it(self, api, documents, case):
+        host = documents
+        bind = {"type": "none", "o": "bind"}
+        if case == "symbolic link":
+            host.links["/srv/paperless"] = f"{DOCUMENTS}/paperless"
+            host.docker.add("paperless", sources=["/srv/paperless/media"])
+        elif case == "relative link":
+            host.links["/srv/docs"] = "../mnt/pools/data/documents"
+            host.docker.add("paperless", sources=["/srv/docs"])
+        elif case == "relative device":
+            volume = host.docker.add_volume("media", options={**bind, "device": "mnt/pools/data/documents/media"})
+            host.docker.add("paperless", mounts=[volume])
+        elif case == "device through a link":
+            host.links["/srv/docs"] = DOCUMENTS
+            volume = host.docker.add_volume("media", options={**bind, "device": "/srv/docs/media"})
+            host.docker.add("paperless", mounts=[volume])
+        elif case == "folder bound on the host":
+            host.add_mount("/srv/media", "/dev/sda[/documents/media]", "btrfs", DATA_UUID)
+            host.docker.add("paperless", sources=["/srv/media"])
+        else:
+            volume = host.docker.add_volume("media", driver="local-persist", options={"mountpoint": "media"})
+            source = "/var/lib/docker/plugins/4f9a0c/propagated-mount/media"
+            volume["Source"] = host.docker.volumes["media"]["Mountpoint"] = source
+            host.add_mount(source, "/dev/sda[/documents/media]", "btrfs", DATA_UUID)
+            host.docker.add("paperless", mounts=[volume])
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == (
+            "Volume 'documents' is used by running containers (paperless). Stop or remove them and try again."
+        )
+        self.assert_kept(documents)
+
+    # storage.edge-cases, step 4: realpath runs on the host over every folder that a container
+    # mounts. On a network or FUSE mount that hangs it did not return: subprocess.TimeoutExpired
+    # answered 500 with its own text, and a realpath stuck on the host was left behind.
+    # timeout(1) kills itself with its SIGKILL, so nsenter and then the supervisor end by it: -9
+    # (only 124 and 137 were taken for a hang). 124 is timeout's own status for other signals.
+    @pytest.mark.parametrize("hang", ["killed by timeout", "timeout's status 124", "no answer"])
+    def test_a_realpath_that_does_not_answer_keeps_the_volume(self, api, documents, monkeypatch, hang):
+        host = documents
+        host.docker.add("paperless", sources=["/srv/nfs/paperless"])
+        if hang in ("killed by timeout", "timeout's status 124"):
+            code = -signal.SIGKILL if hang == "killed by timeout" else 124
+            host.fail[("timeout", "--signal=KILL", "10", "realpath")] = (code, "")
+        else:
+            real = host_module.run_on_host
+
+            def hangs(cmd, **kwargs):
+                if "realpath" in cmd:
+                    raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+                return real(cmd, **kwargs)
+
+            monkeypatch.setattr(host_module, "run_on_host", hangs)
+
+        response = api.delete(f"{API}/data/volumes/documents")
+
+        assert response.status_code == 500, response.text
+        assert response.json()["detail"] == (
+            "Volume 'documents' was not deleted: realpath did not resolve the folders that containers "
+            "mount within 10 seconds: a network or FUSE mount of the host may not answer"
+        )
+        self.assert_kept(documents)
+
+    def test_a_link_that_leads_elsewhere_does_not_count(self, api, documents):
+        documents.links["/srv/docs"] = f"{DOCUMENTS}-old"
+        documents.docker.add("paperless", sources=["/srv/docs"])
 
         response = api.delete(f"{API}/data/volumes/documents")
 

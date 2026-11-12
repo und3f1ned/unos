@@ -1,5 +1,6 @@
 ---
-status: proposed
+status: superseded
+superseded-by: ADR-0352
 date: 2026-11-06
 area: storage
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0073: Fix the deferred storage and snapshot edge cases of slice 1
 
 ## Context
+
+Superseded by ADR-0352: what was built for the cases below, and the restored copies of a volume's snapshots, which stay open.
 
 The reviews of Phase 1 slice 1 found storage and snapshot cases of low severity, most of them theoretical races or cases that fail safe. They are recorded here so that a later slice fixes them instead of finding them again.
 

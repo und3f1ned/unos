@@ -49,6 +49,19 @@ NOTHING_TO_KEEP = (
 REVERT_NOT_ARMED = "{name} stays enabled: the automatic revert could not be set up ({reason})"
 NOT_ENABLED = "{name} could not be enabled: {reason}"
 
+
+class PartlyEnabled(HTTPException):
+    """The link is on, but its saved addresses and routes could not all be restored (HTTP 500).
+
+    The router writes the Enable to the audit log as failed, with ``reason`` (ADR-0351).
+    """
+
+    def __init__(self, name: str, reason: str) -> None:
+        super().__init__(
+            500, f"{name} is enabled, but its saved addresses and routes could not all be restored: {reason}"
+        )
+        self.reason = reason
+
 # The host scripts. They run with /bin/sh (dash on Debian and Ubuntu): $0 names
 # the script, $1 is the interface (validated), $2 is STATE_DIR. REVERT_SCRIPT is
 # the command of a transient systemd unit, and systemd expands "${NAME}" and "$$"
@@ -350,8 +363,10 @@ async def _answer_a_failed_keep(name: str, failed: host.HostResult) -> None:
     # Kept: its timer, should it still be armed, finds no disable to undo.
 
 
-async def enable(name: str) -> None:
-    """Enable ``name`` and bring back the addresses and routes its disable saved.
+async def enable(name: str) -> bool:
+    """Enable ``name`` and bring back the addresses and routes its disable saved; whether it
+    turned the link on (False for an interface that was enabled already). PartlyEnabled when the
+    link came on without all of them.
 
     A disable that waits to be kept is called off once the link is on. Until
     then its timer stays armed: when the restore cannot turn the link on, or
@@ -364,19 +379,16 @@ async def enable(name: str) -> None:
         if is_enabled(link):
             # Turned on outside UNOS: a disable of it has nothing left to undo.
             await run(_script("unos-network-forget", name))
-            return
+            return False
         result = await run(_script("unos-network-restore", name), timeout=RESTORE_TIMEOUT)
         if result.ok or result.returncode == 2:
             # The link is on: the disable is undone now, not by its timer.
             await run(_script("unos-network-cancel", name))
         if result.returncode == 2:
-            raise HTTPException(
-                500,
-                f"{name} is enabled, but its saved addresses and routes could not all be restored: "
-                f"{reason(result)}",
-            )
+            raise PartlyEnabled(name, reason(result))
         if not result.ok:
             raise HTTPException(500, NOT_ENABLED.format(name=name, reason=reason(result)))
+        return True
 
 
 async def revert_in(name: str) -> int | None:

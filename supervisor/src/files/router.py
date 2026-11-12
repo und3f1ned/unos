@@ -48,6 +48,7 @@ import secrets
 import shutil
 import stat
 import sys
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -70,6 +71,8 @@ from .schemas import (
     RenameRequest,
     TrashItem,
     TrashListing,
+    UploadLeftover,
+    UploadLeftovers,
 )
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -81,6 +84,8 @@ settings = get_settings()
 BASE_PATH = settings.pools_base_path
 # The mount table of the supervisor's mount namespace. Module level so tests can move it.
 MOUNTINFO = "/proc/self/mountinfo"
+# /proc/self/fdinfo/<fd> names the mount that an open descriptor is on (mnt_id).
+FDINFO = "/proc/self/fdinfo"
 
 _CHUNK_SIZE = 1024 * 1024
 _NAME_MAX_BYTES = 255
@@ -352,10 +357,11 @@ def _refuse_nested_filesystems(
 ) -> None:
     """Refuse when a subvolume, snapshot or mount point lies at or below the directory ``parts``.
 
-    ``dir_fd`` is the directory that contains it. shutil.rmtree, and the
-    copy and delete of a move to another filesystem, go into subvolumes and
-    mounted filesystems below a folder: deleting it would delete their
-    files too. A subvolume or another filesystem has another st_dev than
+    ``dir_fd`` is the directory that contains it. The copy of a move to
+    another filesystem goes into subvolumes and mounted filesystems below a
+    folder, and a delete of the folder would stop at them part way
+    (_remove_tree): the folder is refused before anything is changed. A
+    subvolume or another filesystem has another st_dev than
     the folder; a bind mount from the same filesystem does not, so the mount
     table is checked as well. ``mount_points`` is a table read before
     (_mount_points); by default it is read now.
@@ -618,6 +624,14 @@ def _upload_temp_name() -> str:
     return f".unos-upload-{secrets.token_hex(8)}"
 
 
+# The hidden names (_upload_temp_name) of this supervisor's uploads in progress, from before their
+# file is created until it has its own name or is removed (_FileUpload.discard): the check of
+# leftovers never lists or removes a file of such a name (ADR-0354). O_EXCL keeps a new upload
+# from taking the name of a file that exists, so a leftover never becomes an upload's file.
+_uploads_in_progress: set[str] = set()
+_uploads_lock = threading.Lock()
+
+
 def _linkable(fd: int) -> bool:
     """Whether the unnamed file ``fd`` can be linked through _PROC_FD (/proc is mounted, and is ours)."""
     try:
@@ -659,7 +673,9 @@ class _FileUpload(UploadSink):
     following it, a folder there is refused, and an upload that fails before
     its file has its name leaves nothing behind: discard closes the unnamed
     file (the kernel frees it with its last descriptor), or removes the
-    temporary file.
+    temporary file. Every hidden name it takes is in _uploads_in_progress
+    from before it is used until discard, so that the check of leftovers
+    leaves that file alone (ADR-0354).
 
     In a share folder (_share_folder) the file gets the mode of the files of
     SMB users, 0660, through its descriptor as soon as it exists: before any
@@ -677,6 +693,8 @@ class _FileUpload(UploadSink):
         self.unnamed_fd: int | None = None
         # A temporary name in the folder, once this upload has created it.
         self.tmp_name: str | None = None
+        # The hidden names this upload took, in _uploads_in_progress until discard().
+        self.hidden_names: list[str] = []
 
     def prepare(self) -> None:
         """Before the body is read: the folder is inside a pool, and exists."""
@@ -693,7 +711,7 @@ class _FileUpload(UploadSink):
         share = _share_folder(self.dir_fd)
         fd = self._open_unnamed()
         if fd is None:
-            tmp_name = _upload_temp_name()
+            tmp_name = self._hidden_name()
             fd = os.open(tmp_name, _CREATE_FLAGS, 0o666, dir_fd=self.dir_fd)
             self.tmp_name = tmp_name
         if share:
@@ -703,6 +721,14 @@ class _FileUpload(UploadSink):
                 os.close(fd)  # discard() frees the unnamed file, or removes the hidden one
                 raise
         return fd
+
+    def _hidden_name(self) -> str:
+        """A new hidden name for this upload's file, known as an upload's in progress before it is used."""
+        name = _upload_temp_name()
+        with _uploads_lock:
+            _uploads_in_progress.add(name)
+        self.hidden_names.append(name)
+        return name
 
     def _open_unnamed(self) -> int | None:
         """A new unnamed file in the folder (a descriptor for receive_upload); None where there cannot be one."""
@@ -758,7 +784,7 @@ class _FileUpload(UploadSink):
             try:
                 os.link(source, self.name, dst_dir_fd=self.dir_fd, follow_symlinks=True)
             except FileExistsError:
-                tmp_name = _upload_temp_name()
+                tmp_name = self._hidden_name()
                 os.link(source, tmp_name, dst_dir_fd=self.dir_fd, follow_symlinks=True)
                 self.tmp_name = tmp_name
             self._close_unnamed()
@@ -769,6 +795,14 @@ class _FileUpload(UploadSink):
         return get_file_info(self.name, _display_path([*self.parts, self.name]), st)
 
     def discard(self) -> None:
+        try:
+            self._discard()
+        finally:
+            # Only now: the file has its own name, or is gone.
+            with _uploads_lock:
+                _uploads_in_progress.difference_update(self.hidden_names)
+
+    def _discard(self) -> None:
         # The kernel frees an unnamed file with its last descriptor
         # (receive_upload has closed the other one).
         try:
@@ -1037,10 +1071,108 @@ def _remove_entry(dir_fd: int, parts: list[str], action: str, expected: os.stat_
     name = parts[-1]
     st = _recheck_entry(dir_fd, parts, action, expected)
     if stat.S_ISDIR(st.st_mode):
-        # rmtree with dir_fd uses the fd-based, symlink-attack-safe walk.
-        shutil.rmtree(name, dir_fd=dir_fd)
+        _remove_tree(dir_fd, parts, action, st)
     else:
         os.unlink(name, dir_fd=dir_fd)
+
+
+def _mount_id(fd: int) -> int | None:
+    """The ID of the mount that the open descriptor ``fd`` is on: the mnt_id of FDINFO/<fd>.
+
+    A bind mount from the same filesystem has the st_dev of the folder it is
+    in; its mount ID differs. None where the kernel has no FDINFO (not
+    Linux: the tests on macOS). OSError when it cannot be read otherwise.
+    """
+    try:
+        with open(f"{FDINFO}/{fd}", "rb") as info:
+            lines = info.read().split(b"\n")
+    except FileNotFoundError:
+        if not os.path.isdir(FDINFO):
+            return None
+        raise
+    for line in lines:
+        if line.startswith(b"mnt_id:") and line[len(b"mnt_id:"):].strip().isdigit():
+            return int(line[len(b"mnt_id:"):].strip())
+    raise OSError(errno.EINVAL, f"{FDINFO}/{fd} has no mount ID")
+
+
+def _remove_tree(dir_fd: int, parts: list[str], action: str, expected: os.stat_result) -> None:
+    """Delete the directory ``parts[-1]`` in ``dir_fd``, with everything in it, without following symlinks.
+
+    ``expected`` is its lstat() from the checks right before (_recheck_entry).
+    A walk on descriptors, one per level of depth: each directory is opened
+    without following a symlink and must be on the device and the mount of
+    the folder before anything in it is deleted. A subvolume or a mount, a
+    bind mount from the same filesystem too, that appears below the folder
+    after the checks stops the delete with 409 (storage.edge-cases, step
+    8): shutil.rmtree went into it and deleted its files. What was deleted
+    before stays deleted, and the answer says so.
+    """
+    name = parts[-1]
+    # Per level: its descriptor, its name in the level above, its path below the folder, the subdirectories left.
+    stack: list[tuple[int, str, str, list[str]]] = []
+
+    def enter(fd: int, entry: str, path: str) -> None:
+        """Check the directory ``fd``, put it on the stack and delete what in it is not a directory."""
+        try:
+            if os.fstat(fd).st_dev != expected.st_dev or _mount_id(fd) != mount:
+                raise HTTPException(
+                    409,
+                    f"'{_shown(name)}' contains '{_shown(path)}', a separate subvolume or filesystem (such "
+                    f"as a snapshot or a mount point), and cannot be {action} in the file manager. It "
+                    f"appeared during the delete, which stopped there: part of '{_shown(name)}' was "
+                    "deleted before that.",
+                )
+            with os.scandir(fd) as entries:
+                listed = [(item.name, item.is_dir(follow_symlinks=False)) for item in entries]
+        except BaseException:
+            os.close(fd)
+            raise
+        stack.append((fd, entry, path, sorted((child for child, is_dir in listed if is_dir), reverse=True)))
+        for child, is_dir in listed:
+            if not is_dir:
+                _unlink_if_there(child, fd)
+
+    top_fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    try:
+        if not os.path.samestat(os.fstat(top_fd), expected):
+            raise HTTPException(409, f"'{_shown(name)}' was replaced in the meantime, so it was not {action}.")
+        mount = _mount_id(top_fd)
+    except BaseException:
+        os.close(top_fd)
+        raise
+    try:
+        enter(top_fd, name, "")
+        while stack:
+            fd, entry, path, names = stack[-1]
+            if not names:
+                stack.pop()
+                os.close(fd)
+                if stack:
+                    os.rmdir(entry, dir_fd=stack[-1][0])
+                continue
+            child = names.pop()
+            try:
+                child_fd = os.open(child, _DIR_FLAGS, dir_fd=fd)
+            except OSError as exc:
+                if exc.errno in (errno.ENOTDIR, errno.ELOOP):  # a file or a symlink took its place since
+                    _unlink_if_there(child, fd)
+                elif exc.errno != errno.ENOENT:
+                    raise
+                continue
+            enter(child_fd, child, f"{path}/{child}" if path else child)
+    finally:
+        for fd, _, _, _ in stack:
+            os.close(fd)
+    os.rmdir(name, dir_fd=dir_fd)
+
+
+def _unlink_if_there(name: str, dir_fd: int) -> None:
+    """Delete the entry ``name`` (not a directory) in ``dir_fd``; one that is gone already is no error."""
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        pass
 
 
 def _plan_transfer(sources: list[str], destination: str, *, moving: bool) -> tuple[list[str], list[list[str]]]:
@@ -1930,6 +2062,323 @@ async def stop_trash_expiry() -> None:
         await asyncio.gather(task, return_exceptions=True)
 
 
+# --- leftovers of uploads (ADR-0354) -------------------------------------------------
+#
+# Where the file of an upload cannot be unnamed (_FileUpload), it arrives under a hidden name,
+# which a stop of the supervisor in the middle of the upload (a restart, an update, a crash, a
+# power loss) leaves behind with what had arrived. The check looks for such files in every folder
+# below the pools directory, UPLOAD_LEFTOVER_AGE seconds after the start and when an administrator
+# asks; they are removed only when an administrator asks, never on their own.
+
+# The hidden name of the file of an upload (_upload_temp_name).
+_UPLOAD_TEMP_NAME = re.compile(r"\.unos-upload-[0-9a-f]{16}")
+# Seconds that a hidden upload file must have been unchanged to count as a leftover, and after the
+# start of the supervisor at which the first check runs: by then every file that the stop before
+# it left is that old. The files of this supervisor's uploads are known by their names
+# (_uploads_in_progress), however long ago they were written: receive_upload writes only once it
+# holds about 768 KiB, so the file of a slow upload can stay unchanged for long. This rule is for
+# a writer that the set cannot know, a supervisor process that has not ended yet: a file that it
+# wrote in the last 10 minutes is left alone.
+UPLOAD_LEFTOVER_AGE = 10 * 60
+# The folder of the snapshots of a pool or a volume (ADR-0011), which the check does not enter:
+# a snapshot is a read-only copy, and walking each would read the tree once per snapshot.
+_SNAPSHOTS = ".snapshots"
+# How many folders below the pools directory the check goes down. It keeps a descriptor open for
+# each folder on its way, so a deeper tree could use up the descriptors of the whole supervisor;
+# the folders below are not entered and are named among the problems, as Repair permissions does.
+_LEFTOVER_MAX_DEPTH = 64
+
+
+class _FoundLeftover:
+    """A leftover as the check found it: GET answers this without looking at the disk again."""
+
+    __slots__ = ("parts", "size", "mtime")
+
+    def __init__(self, parts: list[str], st: os.stat_result) -> None:
+        self.parts = parts  # its components below the pools directory
+        self.size = st.st_size
+        self.mtime = st.st_mtime
+
+
+class _LeftoverCheck:
+    """What the last check of leftovers found, and the check that runs."""
+
+    def __init__(self) -> None:
+        self.found: list[_FoundLeftover] = []  # by path
+        self.problems: list[str] = []  # the folders it could not read
+        self.checked: datetime | None = None  # when it ended
+        self.task: asyncio.Task | None = None
+
+
+_leftovers = _LeftoverCheck()
+
+
+def _not_a_leftover(name: str, st: os.stat_result, now: datetime) -> str | None:
+    """Why the entry ``name`` with the lstat() ``st`` is not a leftover of an upload; None when it is one."""
+    if not stat.S_ISREG(st.st_mode):
+        return "is not a file"
+    with _uploads_lock:
+        writing = name in _uploads_in_progress
+    if writing:
+        return "is the file of an upload in progress"
+    if now.timestamp() - st.st_mtime < UPLOAD_LEFTOVER_AGE:
+        return f"changed less than {UPLOAD_LEFTOVER_AGE // 60} minutes ago, so an upload may still be writing it"
+    return None
+
+
+def _mount_roots() -> set[tuple[int, int]] | None:
+    """The st_dev and st_ino of the root of every mount at or below the pools directory; None without the mount table.
+
+    Only such a folder can be met twice in a walk: the root of a bind mount
+    is the folder it shows again (it has that folder's st_dev and st_ino),
+    and a filesystem mounted twice has one root.
+    """
+    try:
+        points = _read_mount_points()
+    except OSError:
+        return None
+    base = os.fsencode(_base_dir())
+    roots = set()
+    for point in points:
+        if point != base and not point.startswith(base.rstrip(b"/") + b"/"):
+            continue
+        try:
+            st = os.stat(point, follow_symlinks=False)
+        except OSError:  # gone since the table was read
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            roots.add((st.st_dev, st.st_ino))
+    return roots
+
+
+def _find_upload_leftovers(now: datetime) -> tuple[list[_FoundLeftover], list[str]]:
+    """The leftovers of uploads below the pools directory, by path, and the folders that could not be read.
+
+    It walks every folder from the pools directory down, also on the
+    filesystems mounted there (where most leftovers are), one component at a
+    time without following symbolic links, at most _LEFTOVER_MAX_DEPTH
+    folders down. Each folder is walked once: a bind mount that shows a
+    folder again is not walked twice. For that it remembers only the roots
+    of mounts that it walked (_mount_roots), so its memory does not grow
+    with the number of folders; every folder only when the mount table
+    cannot be read. The trash and the snapshots are left out. It only reads.
+    """
+    found: list[_FoundLeftover] = []
+    problems: list[str] = []
+    roots = _mount_roots()
+    seen: set[tuple[int, int]] = set()
+    # The open folders from the pools directory down to the one walked, each with the subfolders left to walk.
+    stack: list[tuple[list[str], int, Iterator[str]]] = []
+
+    def enter(parts: list[str], fd: int) -> None:
+        """Note the leftovers of the open folder ``parts`` and put it on the stack; ``fd`` goes with it."""
+        subfolders = []
+        try:
+            st = os.fstat(fd)
+            folder = (st.st_dev, st.st_ino)
+            if roots is None or folder in roots:
+                if folder in seen:
+                    os.close(fd)
+                    return
+                seen.add(folder)
+            with os.scandir(fd) as entries:
+                for entry in entries:
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name not in (TRASH, _SNAPSHOTS):
+                            subfolders.append(entry.name)
+                    elif _UPLOAD_TEMP_NAME.fullmatch(entry.name):
+                        try:
+                            entry_st = entry.stat(follow_symlinks=False)
+                        except FileNotFoundError:
+                            continue
+                        if _not_a_leftover(entry.name, entry_st, now) is None:
+                            found.append(_FoundLeftover([*parts, entry.name], entry_st))
+        except OSError as exc:
+            os.close(fd)
+            problems.append(_unreadable(parts, exc))
+            return
+        if subfolders and len(parts) >= _LEFTOVER_MAX_DEPTH:
+            problems.append(
+                f"The folders in {_shown(_display_path(parts))} are too deep to check: "
+                f"more than {_LEFTOVER_MAX_DEPTH} folders below {_shown(_base_dir())}"
+            )
+            subfolders = []
+        stack.append((parts, fd, iter(sorted(subfolders))))
+
+    try:
+        enter([], _open_dir([]))
+        while stack:
+            parts, fd, names = stack[-1]
+            name = next(names, None)
+            if name is None:
+                stack.pop()
+                os.close(fd)
+                continue
+            try:
+                child = os.open(name, _DIR_FLAGS, dir_fd=fd)
+            except OSError as exc:
+                if exc.errno not in _GONE:
+                    problems.append(_unreadable([*parts, name], exc))
+                continue
+            enter([*parts, name], child)
+    finally:
+        for _, fd, _ in stack:
+            os.close(fd)
+    found.sort(key=lambda leftover: _display_path(leftover.parts))
+    return found, problems
+
+
+async def _run_upload_leftover_check() -> None:
+    try:
+        found, problems = await asyncio.to_thread(_find_upload_leftovers, _now())
+    except OSError as exc:  # the pools directory cannot be read
+        found, problems = [], [_unreadable([], exc)]
+    _leftovers.found, _leftovers.problems, _leftovers.checked = found, problems, _now()
+
+
+async def check_upload_leftovers() -> None:
+    """Look for leftovers of uploads below the pools directory, in a worker thread.
+
+    A check that runs is waited for, not started again. It has no timeout:
+    a mount that hangs holds its thread, and the checks after it wait.
+    """
+    task = _leftovers.task
+    if task is None or task.done():
+        task = asyncio.create_task(_run_upload_leftover_check(), name="unos-upload-leftover-check")
+        _leftovers.task = task
+    await asyncio.shield(task)
+
+
+def _list_upload_leftovers(checking: bool) -> UploadLeftovers:
+    """What GET /files/upload-leftovers answers: what the last check found, as it found it.
+
+    It does not look at the disks: a mount that hangs would hold a worker
+    thread for each visit to the File Browser. A removal looks at each file
+    again, and drops from this list the ones that are gone or changed.
+    """
+    files = []
+    problems = list(_leftovers.problems)
+    for leftover in _leftovers.found:
+        path = _display_path(leftover.parts)
+        if _shown(path) != path:
+            # JSON cannot carry it, and a path shown otherwise would not lead back to the file.
+            problems.append(f"{_shown(path)} is not listed: its path is not UTF-8")
+            continue
+        modified = datetime.fromtimestamp(leftover.mtime, timezone.utc).isoformat()
+        files.append(UploadLeftover(path=path, size=leftover.size, modified=modified))
+    checked = _leftovers.checked
+    return UploadLeftovers(
+        files=files, checked=checked.isoformat() if checked else None, checking=checking, problems=problems
+    )
+
+
+def _same_file(a: os.stat_result, b: os.stat_result) -> bool:
+    """Whether the lstat() results ``a`` and ``b`` are of one file that was not written in between."""
+    return (a.st_dev, a.st_ino, a.st_mtime_ns) == (b.st_dev, b.st_ino, b.st_mtime_ns)
+
+
+def _remove_upload_leftovers(paths: list[str]) -> list[str]:
+    """Remove the leftovers ``paths`` for good; answers the ones it removed.
+
+    Every path is checked before any file is removed: it names a leftover
+    (_not_a_leftover), or nothing any more. Each file is looked at again
+    right before its unlink, through the descriptor of the folder that was
+    checked: one replaced or written since is left alone. A file that is
+    gone (also when a folder on its path was replaced by a file or a
+    symbolic link) or is not a leftover any more leaves the list of the
+    last check, also when the request is refused for it.
+    """
+    now = _now()
+    folders: dict[tuple[str, ...], int] = {}  # the descriptors of the folders checked
+    dropped: list[list[str]] = []  # what leaves the list of the last check
+    try:
+        targets = []
+        for path in paths:
+            parts = _split(path)
+            if not parts or not _UPLOAD_TEMP_NAME.fullmatch(parts[-1]):
+                raise HTTPException(400, f"Not the hidden file of an upload: {_shown(path)}")
+            dir_fd = folders.get(tuple(parts[:-1]))
+            if dir_fd is None:
+                try:
+                    dir_fd = _open_dir(parts[:-1])
+                except OSError as exc:
+                    # Gone, or replaced by a file or a symbolic link since the check: it holds
+                    # no leftover now. Refusing would block every removal, since the page sends
+                    # every listed path.
+                    if exc.errno not in _GONE:
+                        raise
+                    dropped.append(parts)
+                    continue
+                folders[tuple(parts[:-1])] = dir_fd
+            st = _lstat_at(dir_fd, parts[-1])
+            if st is None:
+                dropped.append(parts)
+                continue
+            problem = _not_a_leftover(parts[-1], st, now)
+            if problem is not None:
+                dropped.append(parts)
+                raise HTTPException(409, f"Nothing was removed: {_shown(path)} {problem}.")
+            targets.append((path, parts, dir_fd, st))
+
+        removed = []
+        for path, parts, dir_fd, st in targets:
+            try:
+                current = _lstat_at(dir_fd, parts[-1])
+                if current is not None and _same_file(current, st):
+                    os.unlink(parts[-1], dir_fd=dir_fd)
+                    removed.append(path)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                if not removed:
+                    raise
+                raise _done_before(exc, len(removed), len(paths), "removed") from exc
+            dropped.append(parts)
+        return removed
+    finally:
+        for fd in folders.values():
+            os.close(fd)
+        if dropped:
+            _leftovers.found = [leftover for leftover in _leftovers.found if leftover.parts not in dropped]
+
+
+_upload_leftover_task: asyncio.Task | None = None
+
+
+async def first_upload_leftover_check() -> None:
+    """Look for leftovers of uploads once, UPLOAD_LEFTOVER_AGE seconds after the start.
+
+    Leftovers come only from a stop, so the check after each start finds
+    them; later ones run when an administrator asks. It logs what it found
+    and the folders it could not read, and nothing when it found nothing
+    (ADR-0214).
+    """
+    await asyncio.sleep(UPLOAD_LEFTOVER_AGE)
+    await check_upload_leftovers()
+    if _leftovers.found:
+        logger.warning(
+            "Found %d hidden file(s) that uploads left when the supervisor stopped; "
+            "the File Browser offers to remove them",
+            len(_leftovers.found),
+        )
+    if _leftovers.problems:
+        logger.warning("Some folders could not be checked for leftovers of uploads: %s", "; ".join(_leftovers.problems))
+
+
+async def start_upload_leftover_check() -> None:
+    """Start the first check of leftovers of uploads (main.py's lifespan, ADR-0043)."""
+    global _upload_leftover_task
+    _upload_leftover_task = asyncio.create_task(first_upload_leftover_check(), name="unos-upload-leftovers")
+
+
+async def stop_upload_leftover_check() -> None:
+    """Stop it, and the check that runs, at shutdown; a walk that runs ends in its worker thread."""
+    tasks = [task for task in (_upload_leftover_task, _leftovers.task) if task is not None and not task.done()]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 # --- endpoints -------------------------------------------------------------
 
 
@@ -1971,8 +2420,9 @@ async def upload_file(path: str, request: Request, _: dict = Depends(verify_toke
     until then: nothing of it can be seen in the folder, and if the
     supervisor stops in the middle, nothing of it stays. Elsewhere, and on
     filesystems without unnamed files, it is a hidden temporary file, which
-    a stop in the middle leaves behind. In a share folder the file gets the
-    mode 0660, which lets the share's SMB users change it (ADR-0273).
+    a stop in the middle leaves behind until an administrator removes it
+    (GET /files/upload-leftovers, ADR-0354). In a share folder the file gets
+    the mode 0660, which lets the share's SMB users change it (ADR-0273).
     """
     try:
         return await receive_upload(request, _FileUpload(path))
@@ -2058,3 +2508,34 @@ async def delete_from_trash(paths: list[str], _: dict = Depends(verify_token)):
 async def empty_trash(_: dict = Depends(verify_token)):
     """Delete everything in the trash of every pool and volume for good; answers how many items."""
     return {"deleted": await _run(_empty_trash)}
+
+
+@router.get("/upload-leftovers", response_model=UploadLeftovers)
+async def list_upload_leftovers(_: dict = Depends(verify_token)):
+    """The hidden files that uploads left when the supervisor stopped, as the last check found them (ADR-0354).
+
+    Without looking at the disks again: a removal does, and drops from the
+    list the files that are gone or changed since.
+    """
+    task = _leftovers.task
+    return _list_upload_leftovers(task is not None and not task.done())
+
+
+@router.post("/upload-leftovers/check", response_model=UploadLeftovers)
+async def check_for_upload_leftovers(_: dict = Depends(verify_token)):
+    """Look for them in every folder below the pools directory now, then answer as GET does."""
+    await check_upload_leftovers()
+    return await list_upload_leftovers(_)
+
+
+@router.delete("/upload-leftovers")
+async def remove_upload_leftovers(paths: list[str], _: dict = Depends(verify_token)):
+    """Remove such files for good (their paths as GET lists them); answers the ones that were there.
+
+    Every path is checked before any file is removed: a path that is not of
+    a hidden upload file answers 400, and a file that is not a leftover
+    (not a regular file, an upload's in progress, or changed in the last
+    10 minutes) 409. A file replaced or written between that check and its
+    unlink is left alone, and not among the removed.
+    """
+    return {"removed": await _run(_remove_upload_leftovers, paths)}

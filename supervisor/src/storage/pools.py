@@ -52,6 +52,7 @@ import asyncio
 import logging
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import threading
@@ -163,6 +164,33 @@ class DeviceSafetyError(PoolConflictError):
 
 class PoolBusyError(PoolConflictError):
     """The pool cannot be unmounted because it is in use (HTTP 409)."""
+
+
+class PoolLeftUnmountedError(PoolBusyError):
+    """The host unmounted the pool, it is still in use elsewhere, and mounting it again failed (HTTP 409)."""
+
+
+class PoolFormattedError(RuntimeError):
+    """A step of Create Pool after mkfs.btrfs failed: the new pool's devices are formatted (HTTP 500).
+
+    The message is that of ``cause``; the endpoint writes pool_created as failed (ADR-0350).
+    """
+
+    def __init__(self, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+class PoolPartlyRemovedError(Exception):
+    """Remove Pool failed after it changed part of the host; ``done`` says what (ADR-0350).
+
+    Answered as ``cause`` is; the endpoint writes pool_deleted as failed.
+    """
+
+    def __init__(self, done: str, cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.done = done
+        self.cause = cause
 
 
 # --------------------------------------------------------------------------
@@ -323,10 +351,11 @@ def _write_fstab(new_text: str, old_text: str) -> bool:
     return True
 
 
-def _forget_fstab_entry(name: str) -> None:
+def _forget_fstab_entry(name: str) -> bool:
+    """Drop the pool's managed fstab entry; returns whether there was one to drop."""
     text = _read_fstab()
     new_text = remove_managed_fstab_entry(text, name)
-    _write_fstab(new_text, text)
+    changed = _write_fstab(new_text, text)
     leftovers = unmanaged_fstab_entries(new_text, pool_mountpoint(name))
     if leftovers:
         logger.warning(
@@ -334,6 +363,7 @@ def _forget_fstab_entry(name: str) -> None:
             pool_mountpoint(name),
             leftovers[0],
         )
+    return changed
 
 
 def _managed_entries_or_none() -> dict[str, ManagedFstabEntry] | None:
@@ -747,19 +777,21 @@ def _ensure_mountpoint_dir(target: str) -> None:
     guard_mountpoint(target)
 
 
-def _remove_mountpoint_dir(target: str) -> None:
-    """Remove the guard and the empty mountpoint directory of a deleted pool."""
+def _remove_mountpoint_dir(target: str) -> bool:
+    """Remove the guard and the empty mountpoint directory of a deleted pool; returns whether it
+    was removed."""
     if not host.run_on_host(["test", "-d", target], timeout=15).ok:
-        return
+        return False
     if _target_mounted(target):
-        return
+        return False
     host.run_on_host(["chattr", "-i", target], timeout=15)  # fails harmlessly if unset
     result = host.run_on_host(["rmdir", target], timeout=15)
     if not result.ok:
         logger.warning("Kept %s: %s", target, result.stderr.strip())
         guard_mountpoint(target)
-        return
+        return False
     host.sync_host_path(os.path.dirname(target))
+    return True
 
 
 def _mountpoint_entries(target: str) -> list[str]:
@@ -889,14 +921,17 @@ def _path_within(path: str, base: str) -> bool:
     return path == base or path.startswith(base + "/")
 
 
-def _containers_using(name: str, target: str) -> list[str]:
+def _containers_using(name: str, target: str, mounts: list[disks.HostMount]) -> list[str]:
     """Running containers that keep data on the pool, by name.
 
     A container uses the pool when one of its mounts comes from the pool's
     mountpoint (or below it), also through a Docker volume that binds a
-    folder there (_mount_uses), or when the app installer labelled it with
-    the pool. DockerUnavailableError (HTTP 503) when Docker cannot be asked
-    about the containers or their volumes (ADR-0344).
+    folder there, a symbolic link or another mount of the host
+    (_containers_on, with ``mounts``, the host's mount table), or when the
+    app installer labelled it with the pool. DockerUnavailableError (HTTP
+    503) when Docker cannot be asked about the containers or their volumes
+    (ADR-0344); RuntimeError (HTTP 500) when their folders cannot be
+    resolved on the host. Either before anything changes.
     """
     try:
         with _docker_api() as api:
@@ -907,13 +942,15 @@ def _containers_using(name: str, target: str) -> list[str]:
             f"Pool '{name}' was left mounted: Docker did not answer, so it is not known whether a "
             f"running container keeps data on it. Try again when Docker is running ({exc})."
         ) from exc
-    users = []
-    for container in running:
-        labels = container.get("Labels") or {}
-        if labels.get(APP_POOL_LABEL) == name or any(
-            _mount_uses(mount, bound, target) for mount in container.get("Mounts") or []
-        ):
-            users.append(_container_name(container))
+    try:
+        users = _containers_on(target, running, bound, mounts)
+    except RuntimeError as exc:
+        raise RuntimeError(f"Pool '{name}' was left mounted: {exc}") from exc
+    users.update(
+        _container_name(container)
+        for container in running
+        if (container.get("Labels") or {}).get(APP_POOL_LABEL) == name
+    )
     return sorted(users)
 
 
@@ -1239,7 +1276,7 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
         raise PoolBusyError(
             f"Pool '{name}' is used by the off-device copy: {copying}. Wait for it to end and try again."
         )
-    users = _containers_using(name, target)
+    users = _containers_using(name, target, mounts)
     if users:
         raise PoolBusyError(
             f"Pool '{name}' is used by running containers ({', '.join(users)}). "
@@ -1263,7 +1300,7 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
     try:
         _mount_by_uuid(uuid, target)
     except Exception as exc:
-        raise PoolBusyError(
+        raise PoolLeftUnmountedError(
             f"{target} was unmounted on the host, but the filesystem is still in use "
             f"elsewhere ({reason}), and mounting it again failed: {exc}. Stop the apps "
             "and containers that use the pool before removing its disks."
@@ -1437,21 +1474,46 @@ def unmount_pool(name: str) -> PoolInfo:
         return get_pool(name)
 
 
-def delete_pool(name: str) -> None:
+def delete_pool(name: str) -> bool:
     """Forget a pool: unmount it, drop its fstab entry and its empty mountpoint.
 
     The disks are not touched. The filesystem keeps its label and is listed
     again as an unmounted pool that can be mounted later. PoolBusyError
     (HTTP 409) while host processes or containers use the pool, and
     DockerUnavailableError (HTTP 503) when it is mounted and Docker cannot be
-    asked about the containers: nothing is changed then.
+    asked about the containers: nothing is changed then. Returns whether it
+    changed anything: False when the pool was neither mounted nor in the
+    fstab and had no mountpoint left, the case of a name that is no pool
+    (its audit entry is written for a real change only, ADR-0320). A step
+    that fails after the pool was unmounted or its fstab entry dropped
+    raises PoolPartlyRemovedError, which says what was done (ADR-0350).
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
     with _lock:
-        _unmount_pool_target(name, target, disks.host_mounts())
-        _forget_fstab_entry(name)
-        _remove_mountpoint_dir(target)
+        mounts = disks.host_mounts()
+        mounted = any(m.target == target for m in mounts)
+        unmounted = forgotten = False
+        try:
+            try:
+                _unmount_pool_target(name, target, mounts)
+            except PoolLeftUnmountedError:
+                unmounted = True
+                raise
+            unmounted = mounted
+            forgotten = _forget_fstab_entry(name)
+            removed = _remove_mountpoint_dir(target)
+        except Exception as exc:
+            if unmounted and forgotten:
+                raise PoolPartlyRemovedError(
+                    f"Unmounted the pool {name} and dropped its fstab entry", exc
+                ) from exc
+            if unmounted:
+                raise PoolPartlyRemovedError(f"Unmounted the pool {name}", exc) from exc
+            if forgotten:
+                raise PoolPartlyRemovedError(f"Dropped the fstab entry of the pool {name}", exc) from exc
+            raise
+        return mounted or forgotten or removed
 
 
 # --------------------------------------------------------------------------
@@ -1535,7 +1597,8 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
 
     Devices are checked against the host's current state (system disk,
     mounted, member of a mounted pool, existing data) and checked again right
-    before mkfs runs.
+    before mkfs runs. A step after mkfs that fails raises PoolFormattedError
+    (HTTP 500), with the step's message.
     """
     name = validate_pool_name(pool.name)
     if pool.confirm_name != name:
@@ -1591,9 +1654,13 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
             raise RuntimeError(f"mkfs.btrfs failed: {result.stderr.strip()}")
         logger.info("Created btrfs pool '%s' on %s", name, ", ".join(validated_devices))
 
-        uuid = _new_filesystem_uuid(result.stdout, validated_devices[0])
-        _mount_and_persist(name, uuid, already_mounted=False)
-        return get_pool(name)
+        try:
+            uuid = _new_filesystem_uuid(result.stdout, validated_devices[0])
+            _mount_and_persist(name, uuid, already_mounted=False)
+            return get_pool(name)
+        except Exception as exc:
+            # The devices are formatted: the audit log records that (ADR-0350).
+            raise PoolFormattedError(exc) from exc
 
 
 # --------------------------------------------------------------------------
@@ -1659,17 +1726,30 @@ def _containers_of_pool(name: str, target: str) -> list[str]:
     """Every container, running or not, that keeps data on a pool named ``name``, by name.
 
     The app installer labelled it with the pool (APP_POOL_LABEL), or one of
-    its mounts comes from the pool's mountpoint or below (_mount_uses).
-    Docker errors are raised.
+    its mounts comes from the pool's mountpoint or below, also through a
+    symbolic link or another mount of the host (_containers_on).
+    DockerUnavailableError (HTTP 503) when Docker cannot be asked;
+    RuntimeError (HTTP 500) when the folders cannot be resolved on the host.
     """
-    with _docker_api() as api:
-        containers, bound = _running_containers(api, stopped=True)
-    return sorted(
+    try:
+        with _docker_api() as api:
+            containers, bound = _running_containers(api, stopped=True)
+    except Exception as exc:
+        logger.warning("Could not list the containers or their volumes: %s", exc)
+        raise DockerUnavailableError(
+            f"Pool '{name}' was not imported: Docker did not answer, so it is not known whether "
+            f"apps keep data on a pool named '{name}'. Try again when Docker is running ({exc})."
+        ) from exc
+    try:
+        users = _containers_on(target, containers, bound, None)
+    except Exception as exc:
+        raise RuntimeError(f"Pool '{name}' was not imported: {exc}") from exc
+    users.update(
         _container_name(container)
         for container in containers
         if (container.get("Labels") or {}).get(APP_POOL_LABEL) == name
-        or any(_mount_uses(mount, bound, target) for mount in container.get("Mounts") or [])
     )
+    return sorted(users)
 
 
 def _refuse_users_of_an_earlier_pool(name: str) -> None:
@@ -1693,14 +1773,7 @@ def _refuse_users_of_an_earlier_pool(name: str) -> None:
         raise RuntimeError(
             f"Pool '{name}' was not imported: the SMB shares and NFS exports could not be read ({exc})"
         ) from exc
-    try:
-        containers = _containers_of_pool(name, target)
-    except Exception as exc:
-        logger.warning("Could not list the containers or their volumes: %s", exc)
-        raise DockerUnavailableError(
-            f"Pool '{name}' was not imported: Docker did not answer, so it is not known whether "
-            f"apps keep data on a pool named '{name}'. Try again when Docker is running ({exc})."
-        ) from exc
+    containers = _containers_of_pool(name, target)
     users = [
         f"{kind} ({', '.join(names)})"
         for kind, names in (("SMB shares", shares), ("NFS exports", exports), ("containers", containers))
@@ -1981,6 +2054,8 @@ async def reconcile_pools_on_startup() -> list[dict[str, str]]:
 
 # Seconds a btrfs subvolume or quota group command may take.
 VOLUME_TIMEOUT = 120
+# Seconds realpath may take on the host to resolve the folders that containers mount (_host_paths).
+HOST_PATHS_TIMEOUT = 10
 # Id of the top-level subvolume of every btrfs filesystem (BTRFS_FS_TREE_OBJECTID).
 _TOP_LEVEL_SUBVOLUME = 5
 # A line of `btrfs subvolume list`; the path is relative to the top level
@@ -1988,12 +2063,35 @@ _TOP_LEVEL_SUBVOLUME = 5
 _SUBVOLUME_LINE_RE = re.compile(
     r"ID (?P<id>\d+) gen \d+ top level (?P<parent>\d+) path (?P<path>.*)"
 )
-# Lines of `btrfs subvolume show` ("\tSubvolume ID: \t\t257").
-_SHOW_FIELD_RE = re.compile(r"\s*(?P<key>Subvolume ID|Parent ID):\s*(?P<value>\d+)\s*")
+# The start of a line of `btrfs qgroup show` for a quota group of level 0: a subvolume's, 0/<id>.
+_QGROUP_LINE_RE = re.compile(r"0/(?P<id>[0-9]+)(?:\s|$)")
+# For each pair of a subvolume id and a volume name after the mountpoint: "<id> same" when the
+# path of that subvolume from the top level is exactly the name, "<id> other" when it is not,
+# "<id> failed" when btrfs cannot resolve the id (its message goes to stderr). The shell
+# compares the bytes: Python's text mode would turn a carriage return at the end of a name into
+# a line break, and a name can hold line breaks (storage.edge-cases, step 2).
+_VOLUME_PATHS_SCRIPT = (
+    'target=$1; shift\n'
+    'while [ "$#" -ge 2 ]; do\n'
+    '  if path=$(btrfs inspect-internal subvolid-resolve "$1" "$target" && echo .); then\n'
+    '    if [ "$path" = "$2\n." ]; then echo "$1 same"; else echo "$1 other"; fi\n'
+    '  else\n'
+    '    echo "$1 failed"\n'
+    '  fi\n'
+    '  shift 2\n'
+    'done\n'
+)
 
 
 class VolumeNotFoundError(PoolNotFoundError):
     """The pool has no volume with this name (HTTP 404)."""
+
+
+class VolumeKeptWithoutQuotaError(RuntimeError):
+    """A create made the volume and keeps it, but without (or perhaps without) its quota (HTTP 500).
+
+    The endpoint writes volume_created as failed (ADR-0350).
+    """
 
 
 class DockerUnavailableError(RuntimeError):
@@ -2061,20 +2159,24 @@ def _mounted_pool_target(name: str, *, write: bool = False) -> str:
     return target
 
 
-def _list_subvolumes(target: str) -> list[tuple[int, int, str]]:
+def _list_subvolumes(target: str, *, newest_first: bool = False) -> list[tuple[int, int, str]]:
     """Every subvolume of the filesystem mounted at ``target``: (id, parent id, path).
 
     The paths are relative to the top level. Whatever can write in the pool
     (an app's container, an SMB user) chooses names, and they are bytes:
     bytes that are not UTF-8 become U+FFFD, which no volume name contains.
-    A name with a line break can add lines, but it cannot hide its own
-    (_newest_subvolume_id relies on that): lines are split at "\\n" only,
-    where btrfs-progs ends them (str.splitlines() also splits at "\\v",
-    "\\x85", "\\u2028" and others), and a line whose name starts with a line
-    break is kept, with an empty path.
+    A name with a line break can add lines, with any id and name, but only
+    after the line of its own subvolume, which it cannot hide: lines are
+    split at "\\n" only, where btrfs-progs ends them (str.splitlines() also
+    splits at "\\v", "\\x85", "\\u2028" and others), and a line whose name
+    starts with a line break is kept, with an empty path. With
+    ``newest_first``, sorted by id, highest first: the first line is then
+    the newest subvolume's own (_newest_subvolume_id). The ids and names of
+    the other lines are claims that _volume_ids checks.
     """
+    sort = ["--sort=-rootid"] if newest_first else []
     result = host.run_on_host(
-        ["btrfs", "subvolume", "list", target], timeout=VOLUME_TIMEOUT, errors="replace"
+        ["btrfs", "subvolume", "list", *sort, target], timeout=VOLUME_TIMEOUT, errors="replace"
     )
     if not result.ok:
         raise RuntimeError(
@@ -2083,7 +2185,10 @@ def _list_subvolumes(target: str) -> list[tuple[int, int, str]]:
         )
     subvolumes = []
     # subprocess turns a "\r" in a name into "\n" as well.
-    for line in result.stdout.split("\n"):
+    lines = result.stdout.split("\n")
+    if newest_first and lines[0] and not _SUBVOLUME_LINE_RE.fullmatch(lines[0]):
+        raise RuntimeError(f"The subvolume list of {target} does not start with a subvolume's line")
+    for line in lines:
         match = _SUBVOLUME_LINE_RE.fullmatch(line)
         if match:
             subvolumes.append(
@@ -2092,77 +2197,114 @@ def _list_subvolumes(target: str) -> list[tuple[int, int, str]]:
     return subvolumes
 
 
-def _pool_volumes(target: str) -> dict[str, int]:
-    """The volumes of the pool mounted at ``target``: name -> subvolume id.
+def _volume_candidates(target: str) -> dict[str, list[int]]:
+    """What the subvolume list of the pool mounted at ``target`` gives each volume name: ids.
 
     A volume is a subvolume in the pool's top directory whose name is a
-    valid volume name. Only pools whose top level is mounted get here (see
-    _mounted_pool_target), so these are the subvolumes whose parent is the
-    top level and whose path is a single component. Snapshots (below
-    ``.snapshots``) and subvolumes nested deeper are not volumes.
+    valid volume name (ADR-0069). Only pools whose top level is mounted get
+    here (see _mounted_pool_target), so these are the lines whose parent is
+    the top level and whose path is a single component. Snapshots (below
+    ``.snapshots``) and subvolumes nested deeper are not volumes. A line
+    that a name with a line break forged can give a name a further id, or a
+    name of its own (_list_subvolumes): _volume_ids checks them.
     """
-    return {
-        path: subvol_id
-        for subvol_id, parent, path in _list_subvolumes(target)
-        if parent == _TOP_LEVEL_SUBVOLUME and VOLUME_NAME_PATTERN.fullmatch(path)
-    }
+    candidates: dict[str, list[int]] = {}
+    for subvol_id, parent, path in _list_subvolumes(target):
+        if parent == _TOP_LEVEL_SUBVOLUME and VOLUME_NAME_PATTERN.fullmatch(path):
+            ids = candidates.setdefault(path, [])
+            if subvol_id not in ids:
+                ids.append(subvol_id)
+    return candidates
+
+
+def _volume_ids(
+    target: str, candidates: dict[str, list[int]]
+) -> tuple[dict[str, int], dict[tuple[int, str], str], str]:
+    """Which of the ``candidates`` (name -> ids, _volume_candidates) the filesystem confirms.
+
+    ``btrfs inspect-internal subvolid-resolve`` prints the path of a
+    subvolume from the top level, which the host's shell compares with the
+    name byte for byte (_VOLUME_PATHS_SCRIPT): a subvolume whose name is a
+    volume name, a line break and more, or a forged line that gives a name
+    the id of another subvolume, is not taken for that volume
+    (storage.edge-cases, step 2). Returns the names whose path is exactly
+    theirs (name -> id), the verdict for each id and name ("same", "other"
+    or "failed"; a forged line can give one id to several names), and what
+    btrfs printed on stderr. RuntimeError (HTTP 500) when the check does not
+    run.
+    """
+    pairs = [(subvol_id, name) for name, ids in candidates.items() for subvol_id in ids]
+    if not pairs:
+        return {}, {}, ""
+    result = host.run_on_host(
+        ["/bin/sh", "-c", _VOLUME_PATHS_SCRIPT, "unos-volume-paths", target,
+         *(part for subvol_id, name in pairs for part in (str(subvol_id), name))],
+        timeout=VOLUME_TIMEOUT,
+        errors="replace",
+    )
+    # One line per pair, in their order.
+    lines = [line.split(" ") for line in result.stdout.split("\n") if line]
+    if not result.ok or len(lines) != len(pairs) or any(
+        line[:1] != [str(subvol_id)] or line[1:] not in (["same"], ["other"], ["failed"])
+        for line, (subvol_id, _) in zip(lines, pairs)
+    ):
+        raise RuntimeError(
+            f"Checking the subvolumes of {target} failed: "
+            f"{result.stderr.strip() or f'exit status {result.returncode}'}"
+        )
+    verdicts = {pair: line[1] for pair, line in zip(pairs, lines)}
+    found = {}
+    for name, ids in candidates.items():
+        same = [subvol_id for subvol_id in ids if verdicts[(subvol_id, name)] == "same"]
+        if len(same) == 1:
+            found[name] = same[0]
+    return found, verdicts, result.stderr.strip()
+
+
+def _pool_volumes(target: str) -> dict[str, int]:
+    """The volumes of the pool mounted at ``target``: name -> subvolume id, as the filesystem confirms them."""
+    return _volume_ids(target, _volume_candidates(target))[0]
+
+
+def _volume_id(pool: str, target: str, name: str, *, outcome: str = "was not deleted") -> int | None:
+    """The id of the subvolume that is the volume ``name`` of the pool mounted at ``target``; None when none is listed.
+
+    btrfs-progs resolves a path argument, so a volume is addressed by its
+    id, which comes from the pool's own subvolume list, checked against the
+    filesystem (_volume_ids). PoolConflictError (HTTP 409) when the list
+    gives the name only ids of other subvolumes; its message starts with
+    "Volume '<name>' <outcome>". RuntimeError (HTTP 500) when btrfs cannot
+    resolve an id the name was given.
+    """
+    ids = _volume_candidates(target).get(name)
+    if not ids:
+        return None
+    found, verdicts, stderr = _volume_ids(target, {name: ids})
+    if name in found:
+        return found[name]
+    failed = [subvol_id for subvol_id in ids if verdicts[(subvol_id, name)] == "failed"]
+    if failed:
+        raise RuntimeError(f"Checking subvolume {failed[-1]} of {target} failed: {stderr or 'no answer'}")
+    raise PoolConflictError(
+        f"Volume '{name}' {outcome}: the subvolume list of pool '{pool}' gives it "
+        f"the id {ids[-1]}, which belongs to another subvolume. A subvolume whose "
+        "name contains a line break can cause this."
+    )
 
 
 def _newest_subvolume_id(target: str) -> int:
-    """The highest subvolume id of the filesystem mounted at ``target`` (5 if it has none).
+    """An id as high as that of every subvolume of the filesystem mounted at ``target`` (5 if it has none).
 
-    btrfs gives a new subvolume a higher id than every existing one. A line
-    forged in a name can only raise the result: create_volume then sets no
-    quota and keeps the new volume, instead of limiting or removing one that
-    existed before.
+    btrfs gives a new subvolume a higher id than every existing one. This is
+    the first line of the subvolume list sorted by id, highest first: a line
+    that a name forged comes after that of its own subvolume, so it cannot
+    raise the result, which made every later create with a quota fail
+    (storage.edge-cases, step 2). The list leaves out a subvolume while it
+    is being renamed: the caller also takes the quota groups
+    (_newest_quota_group). RuntimeError (HTTP 500) when it cannot be read.
     """
-    return max(
-        (subvol_id for subvol_id, _, _ in _list_subvolumes(target)),
-        default=_TOP_LEVEL_SUBVOLUME,
-    )
-
-
-def _check_volume_id(
-    pool: str, target: str, name: str, subvol_id: int, *, outcome: str = "was not deleted"
-) -> None:
-    """Make sure that subvolume ``subvol_id`` is the volume ``name`` itself.
-
-    ``btrfs subvolume list`` prints names as they are. Whatever can write in
-    the pool (an app's container, for one) can create a subvolume whose name
-    holds a line break and a forged list line, which gives a volume name (or
-    a phantom one) the id of any other subvolume. ``btrfs subvolume show -r``
-    prints what the filesystem has for the id: first its path from the top
-    level, which must be the volume name, then its id and parent.
-    PoolConflictError (HTTP 409) when they differ; its message starts with
-    "Volume '<name>' <outcome>".
-    """
-    result = host.run_on_host(
-        ["btrfs", "subvolume", "show", "-r", str(subvol_id), target],
-        timeout=VOLUME_TIMEOUT,
-        # Its path and the paths of its snapshots: names anyone can choose (_list_subvolumes).
-        errors="replace",
-    )
-    if not result.ok:
-        raise RuntimeError(
-            f"Checking subvolume {subvol_id} of {target} failed: "
-            f"{result.stderr.strip() or f'exit status {result.returncode}'}"
-        )
-    path, *lines = result.stdout.split("\n")
-    facts: dict[str, str] = {}
-    for line in lines:
-        match = _SHOW_FIELD_RE.fullmatch(line)
-        if match:
-            facts.setdefault(match.group("key"), match.group("value"))
-    if (path, facts.get("Subvolume ID"), facts.get("Parent ID")) != (
-        name,
-        str(subvol_id),
-        str(_TOP_LEVEL_SUBVOLUME),
-    ):
-        raise PoolConflictError(
-            f"Volume '{name}' {outcome}: the subvolume list of pool '{pool}' gives it "
-            f"the id {subvol_id}, which belongs to another subvolume. A subvolume whose "
-            "name contains a line break can cause this."
-        )
+    subvolumes = _list_subvolumes(target, newest_first=True)
+    return subvolumes[0][0] if subvolumes else _TOP_LEVEL_SUBVOLUME
 
 
 def _points_into(path: object, volume_path: str) -> bool:
@@ -2210,27 +2352,133 @@ def _running_containers(api: Any, *, stopped: bool = False) -> tuple[list[dict[s
     return running, bound
 
 
-def _mount_uses(mount: dict[str, Any], bound: dict[str, object], path: str) -> bool:
-    """Whether a container's mount is ``path`` or a folder in it.
+def _host_paths(paths: set[str]) -> dict[str, str]:
+    """Each of ``paths`` as the host resolves it: absolute, with its symbolic links resolved.
+
+    Docker reports the source of a bind mount, and the folder that a volume
+    of the local driver binds (its device option), as they were written: a
+    relative one is resolved from /, the folder in which dockerd runs, and
+    ``realpath`` on the host resolves the symbolic links and keeps the parts
+    that do not exist. A network or FUSE mount that hangs would hold it,
+    and the pools' lock with it: it runs under the host's ``timeout``, which
+    kills it after HOST_PATHS_TIMEOUT seconds (ADR-0258). RuntimeError when it
+    fails or does not answer; the callers say what was not done.
+    """
+    def absolute(path: str) -> str:
+        return path if path.startswith("/") else f"/{path}"
+
+    given = sorted({absolute(path) for path in paths})
+    hung = RuntimeError(
+        f"realpath did not resolve the folders that containers mount within {HOST_PATHS_TIMEOUT} "
+        "seconds: a network or FUSE mount of the host may not answer"
+    )
+    try:
+        result = host.run_on_host(
+            ["timeout", "--signal=KILL", str(HOST_PATHS_TIMEOUT),
+             "realpath", "--canonicalize-missing", "--zero", "--", *given],
+            timeout=HOST_PATHS_TIMEOUT + 5,
+            errors="surrogateescape",
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise hung from exc
+    # Ended by timeout(1). Its SIGKILL goes to its whole process group, itself included: nsenter
+    # ends by the signal of its child, and so the supervisor sees -9 (137 through a shell).
+    if result.returncode in (124, 137, -signal.SIGKILL):
+        raise hung
+    resolved = result.stdout.split("\0")
+    if not result.ok or len(resolved) != len(given) + 1 or resolved[-1]:
+        raise RuntimeError(
+            "the folders that containers mount could not be resolved on the host: "
+            f"{result.stderr.strip() or f'exit status {result.returncode}'}"
+        )
+    by_given = dict(zip(given, resolved))
+    return {path: by_given[absolute(path)] for path in paths}
+
+
+def _folder_on_host(path: str, mounts: list[disks.HostMount]) -> tuple[str, str] | None:
+    """The filesystem (MAJ:MIN) and its folder that the absolute host ``path``, resolved, is in.
+
+    The mount that holds it is the last one in the table (``mounts``) at
+    the deepest mountpoint above it: a later mount covers the earlier ones
+    there. Its FSROOT is the folder of the filesystem that it shows, a btrfs
+    subvolume or the folder of a bind mount. None without such a mount.
+    """
+    holder = None
+    for mount in mounts:
+        if mount.majmin and _path_within(path, mount.target) and (
+            holder is None or len(mount.target.rstrip("/")) >= len(holder.target.rstrip("/"))
+        ):
+            holder = mount
+    if holder is None:
+        return None
+    rest = path.rstrip("/")[len(holder.target.rstrip("/")):]
+    return holder.majmin, ((holder.fsroot or "/").rstrip("/") + rest) or "/"
+
+
+def _container_paths(container: dict[str, Any], bound: dict[str, object]) -> list[str]:
+    """The host paths that a container's mounts come from (_running_containers gives ``bound``).
 
     Docker reports the host path of a bind mount as the mount's Source; for
-    a Docker volume of the local driver that binds a folder, the Source is
-    the volume's own folder below /var/lib/docker/volumes, and the folder
-    comes from ``bound`` (_running_containers).
+    a Docker volume, the Source is the folder where its driver mounted it on
+    the host (below /var/lib/docker/volumes for the local driver), and the
+    folder that a volume of the local driver binds is in ``bound``.
     """
-    local = _local_volume(mount)
-    return _points_into(mount.get("Source"), path) or (
-        local is not None and _points_into(bound.get(local), path)
-    )
+    paths: list[object] = []
+    for mount in container.get("Mounts") or []:
+        paths.append(mount.get("Source"))
+        local = _local_volume(mount)
+        if local is not None:
+            paths.append(bound.get(local))
+    return [path for path in paths if isinstance(path, str) and path]
+
+
+def _containers_on(
+    path: str,
+    containers: list[dict[str, Any]],
+    bound: dict[str, object],
+    mounts: list[disks.HostMount] | None,
+) -> set[str]:
+    """The ``containers`` with a mount from ``path`` or a folder in it, by name.
+
+    A host path of a container's mount (_container_paths) counts when it
+    is ``path`` or below it as written (_points_into), or when it leads
+    there on the host (storage.edge-cases, step 4): resolved
+    (_host_paths), it lies in the folder of the filesystem that ``path`` is
+    (_folder_on_host). That also finds a folder bound elsewhere on the host,
+    and the mount of a volume of a third-party driver below the driver's
+    own folder. A parent folder of ``path`` does not count. ``mounts`` is
+    the host's mount table, read now when None. RuntimeError when it or the
+    paths cannot be read.
+    """
+    reached = {found for container in containers for found in _container_paths(container, bound)}
+    if not reached:
+        return set()
+    if mounts is None:
+        mounts = disks.host_mounts()
+    resolved = _host_paths(reached)
+    where = _folder_on_host(path, mounts)
+
+    def leads_there(found: str) -> bool:
+        if _points_into(found, path):
+            return True
+        there = _folder_on_host(resolved[found], mounts)
+        return where is not None and there is not None and there[0] == where[0] and _path_within(there[1], where[1])
+
+    return {
+        _container_name(container)
+        for container in containers
+        if any(leads_there(found) for found in _container_paths(container, bound))
+    }
 
 
 def _refuse_used_volume(name: str, volume_path: str) -> None:
     """Refuse to delete the volume at ``volume_path`` while something uses it.
 
     Users are running containers with a mount from the volume or from a
-    folder in it, also through a Docker volume that binds such a folder
-    (_mount_uses), and SMB shares and NFS exports of the volume or of a
-    folder in it. Deleting the subvolume would leave them with a dead
+    folder in it, also through a Docker volume that binds such a folder, a
+    symbolic link or another mount of the host (_containers_on), and SMB
+    shares and NFS exports of the volume or of a folder in it. Deleting the
+    subvolume would leave them with a dead
     directory. A container, share or export of a parent folder (the whole
     pool, say) does not count: it keeps working without the volume. The app
     label (APP_POOL_LABEL) is not used either: it names a pool, so it would
@@ -2239,7 +2487,7 @@ def _refuse_used_volume(name: str, volume_path: str) -> None:
     PoolConflictError (HTTP 409) that names the users. DockerUnavailableError
     (HTTP 503) when Docker cannot be asked about the containers or their
     volumes, as for an unmount of the pool (_containers_using). RuntimeError (HTTP 500)
-    when the shares cannot be read. A copy or a restore of the off-device copy whose folders are the
+    when the containers' folders cannot be resolved on the host or the shares cannot be read. A copy or a restore of the off-device copy whose folders are the
     volume or lie in it is refused first, as for an unmount of its pool (ADR-0337).
     """
     from ..offsite import service as offsite  # it imports this module
@@ -2258,11 +2506,10 @@ def _refuse_used_volume(name: str, volume_path: str) -> None:
             f"Volume '{name}' was not deleted: Docker did not answer, so it is not known whether "
             f"a running container uses it. Try again when Docker is running ({exc})."
         ) from exc
-    containers = sorted(
-        _container_name(container)
-        for container in running
-        if any(_mount_uses(mount, bound, volume_path) for mount in container.get("Mounts") or [])
-    )
+    try:
+        containers = sorted(_containers_on(volume_path, running, bound, None))
+    except RuntimeError as exc:
+        raise RuntimeError(f"Volume '{name}' was not deleted: {exc}") from exc
     try:
         shares = sorted(s.name for s in smb.list_shares() if _points_into(s.path, volume_path))
         exports = sorted({e.path for e in nfs.list_exports() if _points_into(e.path, volume_path)})
@@ -2305,13 +2552,13 @@ def _delete_volume(
     would follow a symbolic link that SMB users or apps planted in the pool
     under the volume's name to any other subvolume. The id comes from the
     pool's own subvolume list instead, checked against the filesystem
-    (:func:`_check_volume_id`). Unless ``refuse_if_used`` is False, the
+    (:func:`_volume_id`). Unless ``refuse_if_used`` is False, the
     volume's users are checked right before the delete
     (:func:`_refuse_used_volume`). With ``created_after`` (a subvolume id
     from before a new volume was created), only a subvolume with a higher id
     is deleted: NewVolumeReplacedError otherwise.
     """
-    subvol_id = _pool_volumes(target).get(name)
+    subvol_id = _volume_id(pool, target, name)
     if subvol_id is None:
         raise VolumeNotFoundError(f"Volume '{name}' not found in pool '{pool}'")
     # btrfs gives a new subvolume a higher id than every existing one.
@@ -2320,7 +2567,6 @@ def _delete_volume(
             f"The new volume was not removed: the subvolume named '{name}' now (id "
             f"{subvol_id}) existed before it was created."
         )
-    _check_volume_id(pool, target, name, subvol_id)
     from ..offsite import service as offsite  # it imports this module
 
     # Under the lock with which a copy of the off-device copy names and opens its folders: either the
@@ -2356,24 +2602,37 @@ def _quotas_not_enabled(reason: str) -> bool:
     return "not connected" in reason or "not enabled" in reason
 
 
-def _quotas_enabled(target: str) -> bool:
-    """Whether quotas are enabled on the btrfs filesystem mounted at ``target``.
+def _newest_quota_group(target: str) -> int | None:
+    """The highest subvolume id among the quota groups of the filesystem mounted at ``target``.
 
-    Without them, ``btrfs qgroup show`` exits with status 1 and prints
-    "ERROR: can't list qgroups: quotas not enabled" (btrfs-progs 4.20 to
-    6.14). RuntimeError (HTTP 500) when it fails for another reason.
+    None when quotas are not enabled: ``btrfs qgroup show`` then exits with
+    status 1 and prints "ERROR: can't list qgroups: quotas not enabled"
+    (btrfs-progs 4.20 to 6.14). While they are, every subvolume has its
+    quota group 0/<id> (btrfs makes them for the existing ones when quotas
+    are enabled), which a rename leaves alone: `btrfs subvolume list` leaves
+    out a subvolume while it is renamed (storage.edge-cases, step 1). Sorted
+    by id, highest first, the first line of a group of level 0 is that
+    group's own: btrfs-progs 6 prints the subvolume's path at the end of
+    the line, and a name with a line break adds lines only after it; the
+    groups of higher levels, which come first, have no path. A group can
+    outlive its subvolume, which only raises the result. RuntimeError (HTTP
+    500) when it fails for another reason or prints no such line.
     """
     result = host.run_on_host(
-        ["btrfs", "qgroup", "show", target],
+        ["btrfs", "qgroup", "show", "--sort=-qgroupid", target],
         timeout=VOLUME_TIMEOUT,
         # btrfs-progs 6 lists the subvolume paths: names anyone can choose (_list_subvolumes).
         errors="replace",
     )
     if result.ok:
-        return True
+        for line in result.stdout.split("\n"):
+            match = _QGROUP_LINE_RE.match(line)
+            if match:
+                return int(match.group("id"))
+        raise RuntimeError(f"The quota groups of {target} list no subvolume")
     reason = result.stderr.strip() or f"exit status {result.returncode}"
     if result.returncode == 1 and "quotas not enabled" in reason:
-        return False
+        return None
     raise RuntimeError(f"Could not find out whether quotas are enabled on {target}: {reason}")
 
 
@@ -2391,18 +2650,59 @@ def _limit_new_volume(pool: str, target: str, name: str, quota: int, newest: int
 
     Returns None when the quota is set, otherwise why not (the caller then
     removes the new volume again). PoolConflictError (HTTP 409) when the
-    subvolume list gives the name the id of another subvolume.
+    subvolume list gives the name only ids of other subvolumes, and
+    VolumeKeptWithoutQuotaError (HTTP 500) when it cannot be read or
+    checked, or btrfs does not answer within VOLUME_TIMEOUT: either says
+    that the volume was created without its quota (storage.edge-cases,
+    step 6). VolumeKeptWithoutQuotaError as well when the limit does not
+    answer within VOLUME_TIMEOUT: the volume may have no quota.
     """
-    new_id = _pool_volumes(target).get(name)
+    outcome = "was created without its quota"
+    try:
+        new_id = _volume_id(pool, target, name, outcome=outcome)
+    except PoolConflictError:
+        raise
+    except RuntimeError as exc:
+        raise VolumeKeptWithoutQuotaError(
+            f"Volume '{name}' {outcome}: {exc}. Delete it and create it again."
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise VolumeKeptWithoutQuotaError(
+            f"Volume '{name}' {outcome}: btrfs did not answer within {VOLUME_TIMEOUT} seconds. "
+            "Delete it and create it again."
+        ) from exc
     if new_id is None or new_id <= newest:
         return "it was renamed or replaced right after it was created"
-    _check_volume_id(pool, target, name, new_id, outcome="was created without its quota")
-    result = host.run_on_host(
-        ["btrfs", "qgroup", "limit", str(quota), f"0/{new_id}", target], timeout=VOLUME_TIMEOUT
-    )
+    try:
+        result = host.run_on_host(
+            ["btrfs", "qgroup", "limit", str(quota), f"0/{new_id}", target], timeout=VOLUME_TIMEOUT
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VolumeKeptWithoutQuotaError(
+            f"Volume '{name}' was created, but btrfs did not answer within {VOLUME_TIMEOUT} seconds "
+            "while its quota was set: it may have no quota. Delete it and create it again."
+        ) from exc
     if result.ok:
         return None
     return result.stderr.strip() or f"exit status {result.returncode}"
+
+
+def _entry_at(path: str) -> str | None:
+    """What is at ``path`` on the host, for a message ("a folder", "a subvolume", ...); None when nothing is.
+
+    stat does not follow a symbolic link there, and prints the kind of the
+    entry and its inode number, not its name: btrfs gives the root of every
+    subvolume the inode number 256.
+    """
+    result = host.run_on_host(["stat", "--format=%i %F", "--", path], timeout=15, errors="replace")
+    if not result.ok:
+        return None
+    number, _, kind = result.stdout.strip().partition(" ")
+    if kind == "directory":
+        return "a subvolume" if number == "256" else "a folder"
+    return {"symbolic link": "a symbolic link", "regular file": "a file", "regular empty file": "a file"}.get(
+        kind, f"a {kind or 'file'}"
+    )
 
 
 def create_volume(pool_name: str, volume: VolumeCreate) -> VolumeInfo:
@@ -2418,7 +2718,11 @@ def create_volume(pool_name: str, volume: VolumeCreate) -> VolumeInfo:
     only if the subvolume with its name is still the new one, not one that
     existed before (whatever can rename entries in the pool's top directory
     could have given it that name). The new volume stays without its quota
-    (409) when the subvolume list gives its name the id of another subvolume.
+    when the subvolume list gives its name only ids of other subvolumes
+    (409), or cannot be read or checked in time, and perhaps without it
+    when the limit does not answer in time (500, VolumeKeptWithoutQuotaError). When something took
+    the name between the check and the create, btrfs refuses the create: PoolConflictError
+    (HTTP 409) that says what is there (_entry_at).
     """
     pool = validate_pool_name(pool_name)
     name = validate_volume_name(volume.name)
@@ -2430,17 +2734,24 @@ def create_volume(pool_name: str, volume: VolumeCreate) -> VolumeInfo:
             raise PoolConflictError(f"'{name}' already exists in pool '{pool}'")
         newest = None
         if volume.quota is not None:
-            if not _quotas_enabled(target):
+            newest = _newest_quota_group(target)
+            if newest is None:
                 raise PoolConflictError(
                     f"Volume '{name}' was not created: quotas are not enabled on pool '{pool}'. "
                     f"Enable them with 'btrfs quota enable {target}' on the host and try "
                     "again, or create the volume without a quota."
                 )
             # The quota and the rollback below go only to a subvolume newer
-            # than every one here now.
-            newest = _newest_subvolume_id(target)
+            # than every one here now: by its quota group or its line in the list.
+            newest = max(newest, _newest_subvolume_id(target))
         result = host.run_on_host(["btrfs", "subvolume", "create", path], timeout=VOLUME_TIMEOUT)
         if not result.ok:
+            there = _entry_at(path)
+            if there is not None:
+                raise PoolConflictError(
+                    f"'{name}' already exists in pool '{pool}': {there} took the name while the "
+                    "volume was being created. Nothing was created."
+                )
             raise RuntimeError(
                 f"Creating volume '{name}' failed: "
                 f"{result.stderr.strip() or f'exit status {result.returncode}'}"

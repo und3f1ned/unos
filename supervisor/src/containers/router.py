@@ -3,7 +3,10 @@ from collections.abc import Callable
 from typing import Any
 
 from docker.errors import APIError
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction, AuditSeverity
+from ..auth.models import User
 from ..auth.utils import verify_token
 from .schemas import ContainerInfo, ContainerCreate, ContainerLogs, ImageInfo
 from . import docker as docker_ops
@@ -109,59 +112,90 @@ async def get_container(container_id: str, _=Depends(verify_token)):
 
 
 @router.post("/{container_id}/start", response_model=ContainerInfo)
-async def start_container(container_id: str, _=Depends(verify_token)):
-    """Start a container (409 for a UNOS app whose data folders are not usable)."""
+async def start_container(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Start a container (409 for a UNOS app whose data folders are not usable).
+
+    The audit log gets container_started when it did not run (ADR-0350).
+    """
     try:
         # The app checks read the pools (statvfs can hang), in the same worker thread.
-        return await _docker(docker_ops.start_container, container_id)
+        info, started = await _docker(docker_ops.start_container, container_id)
     except HTTPException:
         raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    if started:
+        await audit_change(
+            AuditAction.CONTAINER_STARTED, request, user.username, resource_type="container",
+            resource_id=info.name,
+            details=f"Started the container {info.name}",
+        )
+    return info
 
 
 @router.post("/{container_id}/stop", response_model=ContainerInfo)
-async def stop_container(container_id: str, _=Depends(verify_token)):
-    """Stop a container."""
+async def stop_container(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Stop a container; the audit log gets container_stopped when it ran (ADR-0350)."""
     try:
-        return await _docker(docker_ops.stop_container, container_id)
+        info, stopped = await _docker(docker_ops.stop_container, container_id)
     except HTTPException:
         raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    if stopped:
+        await audit_change(
+            AuditAction.CONTAINER_STOPPED, request, user.username, resource_type="container",
+            resource_id=info.name,
+            details=f"Stopped the container {info.name}",
+        )
+    return info
 
 
 @router.post("/{container_id}/restart", response_model=ContainerInfo)
-async def restart_container(container_id: str, _=Depends(verify_token)):
-    """Restart a container (409 for a UNOS app whose data folders are not usable)."""
+async def restart_container(container_id: str, request: Request, user: User = Depends(verify_token)):
+    """Restart a container (409 for a UNOS app whose data folders are not usable).
+
+    A system container is refused as a stop or a removal of it is (404). It starts the
+    container again: the audit log gets container_started (ADR-0350).
+    """
     try:
-        return await _docker(docker_ops.restart_container, container_id)
+        info = await _docker(docker_ops.restart_container, container_id)
     except HTTPException:
         raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    await audit_change(
+        AuditAction.CONTAINER_STARTED, request, user.username, resource_type="container", resource_id=info.name,
+        details=f"Restarted the container {info.name}",
+    )
+    return info
 
 
 @router.delete("/{container_id}")
 async def remove_container(
-    container_id: str, force: bool = Query(False), _=Depends(verify_token)
+    container_id: str, request: Request, force: bool = Query(False), user: User = Depends(verify_token)
 ):
-    """Remove a container."""
+    """Remove a container; the audit log gets container_removed (ADR-0350)."""
     try:
-        await _docker(docker_ops.remove_container, container_id, force=force)
-        return {"status": "removed"}
+        name = await _docker(docker_ops.remove_container, container_id, force=force)
     except HTTPException:
         raise
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    await audit_change(
+        AuditAction.CONTAINER_REMOVED, request, user.username, resource_type="container", resource_id=name,
+        details=f"Removed the container {name}" + (" (forced)" if force else ""),
+        severity=AuditSeverity.WARNING,
+    )
+    return {"status": "removed"}
 
 
 @router.get("/{container_id}/logs", response_model=ContainerLogs)

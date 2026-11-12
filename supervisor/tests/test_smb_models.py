@@ -148,12 +148,13 @@ class TestTablesOnAnOldDatabase:
 
         await _init_db_on(old_db, monkeypatch)
 
-        # And the sessions' table (ADR-0329), new beside them.
-        assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions"}
+        # And the sessions' table (ADR-0329) and the record of handed-out uids (ADR-0353), new beside them.
+        assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions", "smb_uids"}
         assert _rows(old_db, "users") == users
         assert _schema(old_db, "users") == users_schema  # no column added to users
         # Nothing is written into the new tables: the SmbState row is made on first use.
-        assert {table: _rows(old_db, table) for table in SMB_TABLES} == {table: [] for table in SMB_TABLES}
+        assert {table: _rows(old_db, table) for table in SMB_TABLES | {"smb_uids"}} == {
+            table: [] for table in SMB_TABLES | {"smb_uids"}}
 
     async def test_init_db_again_keeps_the_smb_rows(self, old_db, monkeypatch):
         await _init_db_on(old_db, monkeypatch)

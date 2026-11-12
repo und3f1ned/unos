@@ -9,11 +9,8 @@ export interface BackupInfo {
   encrypted: boolean;
 }
 
+/** The body of POST /backup/create: every backup holds the same files, so there are no options of what it holds. */
 export interface BackupConfig {
-  include_users: boolean;
-  include_apps: boolean;
-  include_scheduler: boolean;
-  include_notifications: boolean;
   encrypt: boolean;
   /** Required when encrypt is true. */
   passphrase: string;

@@ -2,9 +2,11 @@ import platform
 import subprocess
 import json
 import psutil
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from .. import host
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction
 from ..auth.utils import require_admin, verify_token
 from ..host import HostResult
 from ..security.validators import validate_timezone, validate_interface_name
@@ -205,13 +207,18 @@ async def _timedatectl(*args: str) -> HostResult | None:
     return None if result.returncode == 124 else result
 
 
-@router.get("/timezone")
-async def get_timezone(_=Depends(verify_token)):
+async def _host_zone() -> str:
     """The host's time zone; "Unknown" when timedatectl cannot tell."""
     result = await _timedatectl("show", "--property=Timezone", "--value")
     if result is not None and result.returncode == 0 and result.stdout.strip():
-        return {"timezone": result.stdout.strip()}
-    return {"timezone": "Unknown"}
+        return result.stdout.strip()
+    return "Unknown"
+
+
+@router.get("/timezone")
+async def get_timezone(_=Depends(verify_token)):
+    """The host's time zone; "Unknown" when timedatectl cannot tell."""
+    return {"timezone": await _host_zone()}
 
 
 async def _zones() -> list[str]:
@@ -228,14 +235,22 @@ async def list_timezones(_=Depends(verify_token)):
 
 
 @router.put("/timezone")
-async def set_timezone(data: TimezoneUpdate, _=Depends(require_admin)):
-    """Set the host's time zone; the Scheduler follows it (ADR-0264)."""
+async def set_timezone(request: Request, data: TimezoneUpdate, user=Depends(require_admin)):
+    """Set the host's time zone; the Scheduler follows it (ADR-0264). A zone other than the
+    one the host had is audited (ADR-0351)."""
     zones = set(await _zones())
     validated_tz = validate_timezone(data.timezone, zones or None)
+    old = await _host_zone()
     result = await _timedatectl("set-timezone", validated_tz)
     if result is None or result.returncode != 0:
         reason = "no answer in time" if result is None else (result.stderr.strip() or f"exit status {result.returncode}")
         raise HTTPException(500, detail=f"Failed to set the time zone: {reason}")
+    if old != validated_tz:
+        await audit_change(
+            AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="host",
+            details=f"Time zone set to {validated_tz}" if old == "Unknown"
+            else f"Time zone changed from {old} to {validated_tz}",
+        )
     return {"status": "ok", "timezone": validated_tz}
 
 

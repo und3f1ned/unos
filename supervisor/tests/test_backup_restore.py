@@ -1048,6 +1048,8 @@ from src.shares import models as smb_models  # noqa: E402,F401
 from src.storage import pools as storage_pools  # noqa: E402
 
 REAL_AFTER_RESTORE = service.after_database_restore_locked
+REAL_SNAPSHOT = accounts.snapshot_for_restore
+REAL_PREPARE = accounts.prepare_restored_accounts
 HASH = "$2b$12$" + "y" * 53
 # Users of the backups below: id, name, administrator.
 BACKUP_USERS = ((1, "admin2", True), (2, "alice", False), (3, "bob", False))
@@ -1282,6 +1284,27 @@ class TestAccountStep:
         assert response.status_code == 500
         _assert_untouched(env)
 
+    def test_the_uid_of_a_deleted_user_goes_to_no_restored_account(self, smb_env, monkeypatch):
+        """shares.restore-uid-guards step 2 (ADR-0353): dave had 70005 on this NAS and was deleted, so
+        only smb_uids knows it. A backup that gives 70005 to alice restores her without it, and the
+        live database keeps this NAS's record; the backup's own record adds only the uids it lacks."""
+        env = smb_env
+        monkeypatch.setattr(accounts, "snapshot_for_restore", REAL_SNAPSHOT)
+        monkeypatch.setattr(accounts, "prepare_restored_accounts", REAL_PREPARE)
+        with closing(sqlite3.connect(env.db_path)) as conn:
+            conn.execute("INSERT INTO smb_uids (uid, linux_name) VALUES (70005, 'dave')")
+            conn.commit()
+        db = _smb_db(env.tmp / "b.db", smb_accounts=[(2, "alice", 70005, 1, "set")],
+                     sql=["INSERT INTO smb_uids (uid, linux_name) VALUES (70005, 'alice'), (70006, 'zed')"])
+
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        assert "SMB must be turned on again for alice" in response.json()["warnings"]
+        assert _db_rows(env, "SELECT linux_name, uid, password_state FROM smb_accounts") == [("alice", None, "needed")]
+        assert _db_rows(env, "SELECT uid, linux_name FROM smb_uids") == [(70005, "dave"), (70006, "zed")]
+        assert _db_rows(env, "SELECT next_uid FROM smb_state") == [(70010,)]
+
 
 class TestAuthoritative:
     def test_rows_are_kept_and_the_file_comes_from_them(self, smb_env):
@@ -1296,9 +1319,12 @@ class TestAuthoritative:
         assert _db_rows(env, "SELECT name FROM smb_shares") == [("docs",)]
         assert _db_rows(env, "SELECT pending_import_source FROM smb_state") == [(None,)]
         env.reconcile.assert_awaited_once()
-        (entry,) = audit_entries(env.audit)
+        # The SMB state's entry, then the restore's own (ADR-0351).
+        entry, restored = audit_entries(env.audit)
         assert (entry["action"], entry["username"], entry["resource_type"], entry["severity"]) == (
             "smb_restored", "system", "smb", "info")
+        assert (restored["action"], restored["username"], restored["resource_type"]) == (
+            "backup_restored", "admin", "backup")
         assert entry["details"].startswith("SMB state after restore: the shares of the restored database were kept")
 
     def test_an_smb_conf_that_cannot_be_installed_is_not_reported_as_restored(self, smb_env, monkeypatch):
@@ -1333,7 +1359,8 @@ class TestAuthoritative:
                "without a password." in response.json()["warnings"]
         assert _db_rows(env, "SELECT guest_ok FROM smb_shares") == [(1,)]
         assert "   map to guest = Bad User\n" in env.smb_conf.read_text()
-        (entry,) = audit_entries(env.audit)
+        entry, restored = audit_entries(env.audit)
+        assert restored["action"] == "backup_restored"
         assert entry["severity"] == "warning"
         assert "shares served with guest access: public" in entry["details"]
 

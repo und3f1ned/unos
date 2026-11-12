@@ -49,7 +49,12 @@ from .shares.repair_router import router as shares_repair_router
 from .containers.router import router as containers_router
 from .apps.router import router as apps_router
 from .files.router import router as files_router
-from .files.router import start_trash_expiry, stop_trash_expiry
+from .files.router import (
+    start_trash_expiry,
+    start_upload_leftover_check,
+    stop_trash_expiry,
+    stop_upload_leftover_check,
+)
 from .snapshots.router import router as snapshots_router
 from .notifications.router import router as notifications_router
 from .scheduler.router import router as scheduler_router
@@ -156,10 +161,13 @@ async def lifespan(app: FastAPI):
         await start_ups_monitor()
         # Deletes for good what has been in the trash for 30 days (ADR-0259).
         await start_trash_expiry()
+        # Looks once for the hidden files that uploads left when the supervisor stopped (ADR-0354).
+        await start_upload_leftover_check()
     try:
         yield
     finally:
         if run_background:
+            await stop_upload_leftover_check()
             await stop_trash_expiry()
             await stop_ups_monitor()
             await stop_health_monitors()

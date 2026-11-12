@@ -34,6 +34,8 @@ LOOPS = {
     "ups_monitor": (power, "ups_monitor_loop", "_ups_monitor_task"),
     # Deletes for good what has been in the trash for 30 days (ADR-0259).
     "trash_expiry": (files, "trash_expiry_loop", "_trash_expiry_task"),
+    # Looks for the hidden files that uploads left when the supervisor stopped (ADR-0354).
+    "upload_leftovers": (files, "first_upload_leftover_check", "_upload_leftover_task"),
 }
 
 
