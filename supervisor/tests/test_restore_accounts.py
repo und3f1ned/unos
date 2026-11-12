@@ -23,6 +23,7 @@ from src.shares.models import SmbAccount, SmbState
 
 from .test_smb_accounts import ALICE_PW, BOB_PW, World
 
+DAVE_PW = "Dave-pass-2026x"
 HASH_A = "$2b$04$" + "a" * 53  # bcrypt-shaped placeholders; the proof compares the strings
 HASH_B = "$2b$04$" + "b" * 53
 SET_AT = datetime(2026, 11, 1, 9, 0)
@@ -296,6 +297,71 @@ class TestLiveUids:
         assert rows(restored)[8] == ("erin", 70001, 1, "needed", None)
 
 
+def record(path: Path, *pairs: tuple[int, str]) -> None:
+    """smb_uids rows (uid, name), as the activations of that installation write them (ADR-0353)."""
+    raw(path, *(f"INSERT INTO smb_uids (uid, linux_name) VALUES ({uid}, '{name}')" for uid, name in pairs))
+
+
+class TestHandedOutUids:
+    """ADR-0353 (shares.restore-uid-guards, step 2): smb_uids records every uid handed out on this NAS
+    and the name it went to. The files of a deleted user keep its uid on the pools while its row and
+    host account are gone, so the live accounts (ADR-0112) cannot protect that uid: a restored row
+    keeps a recorded uid only under the name it was handed out to."""
+
+    def test_the_snapshot_reads_the_record(self, live):
+        record(live, (70001, "dave"), (70005, "erin"))
+        raw(live, "INSERT INTO smb_uids (uid, linux_name) VALUES (90000, 'zed'), (70006, X'00')")  # no uid, no name
+
+        assert accounts.snapshot_for_restore(live).handed_out == ((70001, "dave"), (70005, "erin"))
+
+    @pytest.mark.parametrize("authoritative", [True, False])
+    def test_a_uid_of_a_deleted_user_goes_to_no_other_name(self, live, tmp_path, authoritative):
+        # dave had 70001 here and was deleted: no row, no host account, only the record.
+        record(live, (70001, "dave"))
+        restored = make_db(tmp_path / "restored.db", users=[(8, "erin", HASH_B, False)],
+                           rows=[account(8, "erin", 70001)], next_uid=70002, imported=authoritative)
+
+        messages = prepare(restored, accounts.snapshot_for_restore(live), authoritative=authoritative)
+
+        assert rows(restored)[8] == ("erin", None, 1, "needed", None)
+        assert messages == ["SMB must be turned on again for erin"]
+        assert next_uid(restored) == 70003
+
+    def test_the_name_it_was_handed_out_to_keeps_it(self, live, tmp_path):
+        """A backup made before dave was deleted brings him back with his uid, and so with his files."""
+        record(live, (70001, "dave"))
+        restored = make_db(tmp_path / "restored.db", users=[(8, "dave", HASH_B, False)],
+                           rows=[account(8, "dave", 70001, password_state="needed", password_set_at=None)])
+
+        assert prepare(restored, accounts.snapshot_for_restore(live), authoritative=True) == []
+        assert rows(restored)[8] == ("dave", 70001, 1, "needed", None)
+
+    @pytest.mark.parametrize("backup_table", [
+        pytest.param(("DELETE FROM smb_uids", "INSERT INTO smb_uids VALUES (70001, 'mallory'), (70040, 'erin'), "
+                      "(70050, 'zed')"), id="the-backup's-own-record"),
+        pytest.param(("DROP TABLE smb_uids",), id="no-record"),
+        pytest.param(("DROP TABLE smb_uids", "CREATE TABLE smb_uids (uid TEXT, owner TEXT NOT NULL)",
+                      "INSERT INTO smb_uids VALUES ('70002', 'zed')"), id="another-layout"),
+    ])
+    def test_the_restored_database_gets_the_record_of_this_nas(self, live, tmp_path, backup_table):
+        """The live record, never the backup's, plus the uids of the live accounts (a user deleted by this
+        restore) and of the restored rows, which are this NAS's from now on; one more than the highest
+        is the floor."""
+        record(live, (70001, "dave"), (70060, "frank"))
+        restored = make_db(tmp_path / "restored.db",
+                           users=[(2, "alice", HASH_A, False), (8, "erin", HASH_B, False)],
+                           rows=[account(2, "alice", 70000), account(8, "erin", 70040)], next_uid=70041)
+        raw(restored, *backup_table)
+
+        prepare(restored, accounts.snapshot_for_restore(live), authoritative=True)
+
+        with closing(sqlite3.connect(restored)) as conn:
+            assert dict(conn.execute("SELECT uid, linux_name FROM smb_uids")) == {
+                70000: "alice", 70001: "dave", 70002: "carol", 70040: "erin", 70060: "frank"}
+            assert [column[1] for column in conn.execute("PRAGMA table_info(smb_uids)")] == ["uid", "linux_name"]
+        assert next_uid(restored) == 70061
+
+
 class TestCarryOver:
     def test_accounts_are_carried_over_by_username(self, live, tmp_path):
         # A database whose shares were never imported: not authoritative (ADR-0141).
@@ -400,9 +466,9 @@ class TestNextUid:
 
     @pytest.mark.parametrize("authoritative", [True, False])
     def test_the_live_next_uid_is_a_floor(self, tmp_path, authoritative):
-        """ADR-0109: the live next_uid is the only record of the uids of accounts deleted after
-        the backup (their rows and host accounts are gone). It decides even when it is above
-        every uid that the restored rows and the snapshot list."""
+        """ADR-0109: the live next_uid lies above the uids of accounts deleted after the backup
+        (their rows and host accounts are gone; smb_uids names them, ADR-0353). It decides even when
+        it is above every uid that the restored rows and the snapshot list."""
         restored = make_db(tmp_path / "restored.db", users=[(2, "alice", HASH_A, False)],
                            rows=[account(2, "alice", 70000)], next_uid=70001, imported=authoritative)
 
@@ -535,3 +601,52 @@ class TestWholePath:
         assert enabled.status_code == 200, enabled.text
         assert enabled.json()["account"]["uid"] == 70001
         assert useradd_uids(world) == [("70001", "bob")]
+
+    @pytest.mark.parametrize("name, password, messages, uid", [
+        ("bob", BOB_PW, ["SMB must be turned on again for bob"], 70001),
+        ("dave", DAVE_PW, [], 70000),
+    ])
+    def test_the_uid_of_a_deleted_user(self, world, tmp_path, name, password, messages, uid):
+        """shares.restore-uid-guards step 2 (ADR-0353): dave turned SMB on here (70000) and was deleted;
+        his files on the pools keep 70000. A backup of another installation gives 70000 to bob: bob
+        gets a fresh uid. A backup of this NAS made before the deletion brings dave back with his own."""
+        world.add_user("dave", DAVE_PW)
+        users = archive_users(world, "admin", "alice", "bob", "dave")  # taken before the deletion
+        world.make_allowed("dave")
+        assert world.self_enable("dave", DAVE_PW).json()["account"]["uid"] == 70000
+        assert world.delete_user("dave").status_code == 200
+        assert "dave" not in world.fake.passwd
+        snapshot = accounts.snapshot_for_restore(world.path)
+        restored = make_db(
+            tmp_path / "restored.db", users=users,
+            rows=[account(world.ids[name], name, 70000, password_state="needed", password_set_at=None)],
+            next_uid=70001,
+        )
+
+        assert prepare(restored, snapshot, authoritative=True) == messages
+        swap_in(world, restored)
+        reconcile(world)
+        enabled = world.self_enable(name, password)
+        assert enabled.status_code == 200, enabled.text
+        assert enabled.json()["account"]["uid"] == uid
+        assert useradd_uids(world)[-1] == (str(uid), name)
+
+    def test_a_reinstall_records_the_kept_accounts(self, world, tmp_path):
+        """uninstall.sh keeps the marked host accounts (ADR-0109): the first start of the new
+        installation records alice's 70000 before it removes her account (ADR-0353). A backup of
+        another installation that gives 70000 to bob restores him without it; a backup of the old
+        installation brings alice back with it."""
+        world.fake.add_smb_group()
+        world.fake.add_account("alice", 70000)  # the new database has no row for her
+        reconcile(world)
+        assert "alice" not in world.fake.passwd
+        snapshot = accounts.snapshot_for_restore(world.path)
+        foreign = make_db(tmp_path / "foreign.db", users=archive_users(world, "admin", "bob"),
+                          rows=[account(world.ids["bob"], "bob", 70000)])
+        old = make_db(tmp_path / "old.db", users=archive_users(world, "admin", "alice"),
+                      rows=[account(world.ids["alice"], "alice", 70000, password_state="needed", password_set_at=None)])
+
+        assert prepare(foreign, snapshot, authoritative=True) == ["SMB must be turned on again for bob"]
+        assert prepare(old, snapshot, authoritative=True) == []
+        assert rows(foreign)[world.ids["bob"]][1] is None
+        assert rows(old)[world.ids["alice"]][1] == 70000

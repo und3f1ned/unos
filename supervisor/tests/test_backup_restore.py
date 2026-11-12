@@ -1048,6 +1048,8 @@ from src.shares import models as smb_models  # noqa: E402,F401
 from src.storage import pools as storage_pools  # noqa: E402
 
 REAL_AFTER_RESTORE = service.after_database_restore_locked
+REAL_SNAPSHOT = accounts.snapshot_for_restore
+REAL_PREPARE = accounts.prepare_restored_accounts
 HASH = "$2b$12$" + "y" * 53
 # Users of the backups below: id, name, administrator.
 BACKUP_USERS = ((1, "admin2", True), (2, "alice", False), (3, "bob", False))
@@ -1281,6 +1283,27 @@ class TestAccountStep:
         response = _restore_smb(env, _smb_db(env.tmp / "b.db"))
         assert response.status_code == 500
         _assert_untouched(env)
+
+    def test_the_uid_of_a_deleted_user_goes_to_no_restored_account(self, smb_env, monkeypatch):
+        """shares.restore-uid-guards step 2 (ADR-0353): dave had 70005 on this NAS and was deleted, so
+        only smb_uids knows it. A backup that gives 70005 to alice restores her without it, and the
+        live database keeps this NAS's record, not the backup's."""
+        env = smb_env
+        monkeypatch.setattr(accounts, "snapshot_for_restore", REAL_SNAPSHOT)
+        monkeypatch.setattr(accounts, "prepare_restored_accounts", REAL_PREPARE)
+        with closing(sqlite3.connect(env.db_path)) as conn:
+            conn.execute("INSERT INTO smb_uids (uid, linux_name) VALUES (70005, 'dave')")
+            conn.commit()
+        db = _smb_db(env.tmp / "b.db", smb_accounts=[(2, "alice", 70005, 1, "set")],
+                     sql=["INSERT INTO smb_uids (uid, linux_name) VALUES (70005, 'alice'), (70006, 'zed')"])
+
+        response = _restore_smb(env, db)
+
+        assert response.status_code == 200, response.text
+        assert "SMB must be turned on again for alice" in response.json()["warnings"]
+        assert _db_rows(env, "SELECT linux_name, uid, password_state FROM smb_accounts") == [("alice", None, "needed")]
+        assert _db_rows(env, "SELECT uid, linux_name FROM smb_uids") == [(70005, "dave")]
+        assert _db_rows(env, "SELECT next_uid FROM smb_state") == [(70010,)]
 
 
 class TestAuthoritative:

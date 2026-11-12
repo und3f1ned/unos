@@ -105,7 +105,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   and regenerates `smb.conf` from validated shares instead of installing the
   archived file. A database that gives one SMB uid to two accounts, which only
   a crafted backup can hold, is refused (400) before anything changes; it used
-  to be restored, and turning SMB on failed for the second account.
+  to be restored, and turning SMB on failed for the second account. A restored
+  account no longer gets the SMB uid of a user deleted from this NAS, whose
+  files on the pools keep it: UNOS records every uid it hands out with the
+  name it went to, also the uids of the host accounts that an uninstall kept,
+  and a restore keeps that record and gives a recorded uid only to that name;
+  another account must turn SMB on again and gets a new uid.
 - `smb.conf` and `/etc/exports` values are validated against directive
   injection, share and export paths must not pass through symlinks, and
   `smb.conf` is replaced atomically after `testparm` accepts it (without that
