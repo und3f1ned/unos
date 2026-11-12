@@ -1253,18 +1253,9 @@ def test_scheduled_backup_passes_restore_validation(backup_env):
     assert backup_router._inspect_archive(plain)["type"] == "scheduled"
     extracted = env.tmp / "extracted"
     extracted.mkdir()
-    with backup_router._open_tar(_gunzip(plain, env.tmp / "a.tar")) as tar:
-        backup_router._extract(tar, backup_router._scan_members(tar), extracted)
+    with open(plain, "rb") as source:
+        backup_router._read_archive(source, extracted)
     backup_router._verify_database(extracted / "unos.db")
-
-
-def _gunzip(src, dest):
-    import gzip
-    import shutil
-
-    with gzip.open(src, "rb") as fin, open(dest, "wb") as fout:
-        shutil.copyfileobj(fin, fout)
-    return dest
 
 
 async def test_custom_command_runs_with_a_shell_off_the_event_loop(env):

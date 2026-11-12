@@ -76,8 +76,8 @@ is not enough; the script then stops before it changes anything.
 
 The supervisor keeps its temporary files in RAM instead of on the system disk:
 at most 2 GiB, and only while a backup is made or restored, or `update.sh`
-saves the database before an update. A restore needs about twice the size of
-the database, a backup and `update.sh` about its size. Uploads need none:
+saves the database before an update. A restore, a backup and `update.sh` each
+need about the size of the database. Uploads need none:
 files go straight to their folder, and an uploaded backup is checked in one
 pass that writes nothing.
 
