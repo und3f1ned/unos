@@ -3335,6 +3335,20 @@ class TestContinuousIntegration:
         assert setup_node == builder
         assert engines == {"node": f">={builder[0]}"}
 
+    def test_the_builder_runs_vite_without_maglev_on_riscv64(self):
+        # Node.js 22's optimizing compiler Maglev stops the build on a SpacemiT K1 with "Fatal
+        # error ... unreachable code" (SIGTRAP), while a QEMU riscv64 build passes; vite runs
+        # without Maglev on riscv64, and elsewhere as package.json's build script (ADR-0371).
+        dockerfile = (REPO_ROOT / "webui" / "Dockerfile").read_text()
+        builds = [line.strip() for line in dockerfile.splitlines() if line.strip().startswith("RUN") and "build" in line]
+        scripts = json.loads((REPO_ROOT / "webui" / "package.json").read_text())["scripts"]
+
+        assert builds == [
+            'RUN if [ "$(uname -m)" = riscv64 ]; then node --no-maglev node_modules/vite/bin/vite.js build; '
+            "else npm run build; fi"
+        ]
+        assert scripts["build"] == "vite build"
+
     def test_dependabot_keeps_the_alpine_release_of_the_builder(self):
         # A new Alpine release can bring another major version of Node.js: Dependabot proposes
         # new digests of alpine:3.22 only (ADR-0370).

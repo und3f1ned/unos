@@ -403,6 +403,7 @@ and this index, and `make check-fast` runs it.
 | [0338](0338-health-checks-ordered-start-and-an-access-log-of-refused-and-failed-requests.md) | Both containers have health checks, the web UI waits for a healthy supervisor, and the access log keeps only refused and failed requests | accepted | 2026-11-11 |
 | [0369](0369-unos-runs-on-the-banana-pi-bpi-f3-with-images-built-on-the-host-and-no-nvme-power-saving-or-trim-on-the-k1.md) | UNOS runs on the Banana Pi BPI-F3 with both images built on the host, and its SpacemiT K1 keeps NVMe drives without power saving or TRIM | superseded by [0370](0370-on-the-spacemit-k1-only-nvme-drives-go-without-power-saving-and-trim-and-sata-is-the-recommended-storage.md) | 2026-11-13 |
 | [0370](0370-on-the-spacemit-k1-only-nvme-drives-go-without-power-saving-and-trim-and-sata-is-the-recommended-storage.md) | UNOS runs on the Banana Pi BPI-F3 with both images built on the host, and on its SpacemiT K1 only NVMe drives go without power saving and TRIM | proposed | 2026-11-13 |
+| [0371](0371-on-riscv64-the-web-ui-builder-runs-vite-without-the-maglev-compiler.md) | On riscv64 the web UI's builder runs vite without Node.js's Maglev compiler | proposed | 2026-11-13 |
 
 ## Device
 
