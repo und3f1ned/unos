@@ -367,6 +367,8 @@ Open owner actions:
   as a volume (it was `docker`); the steps of `docs/INSTALL.md` for a fresh K1 (a first run of
   `install.sh` before the image, `scp` and `docker load -i` instead of a pipe into sudo, QEMU's
   binfmt, the manual build and upgrade).
+- `install.sh` of 6007166, run again on the board at 17:37 MSK, went to its end on the K1 path: the
+  supervisor from the build cache, no web UI build beside the loaded image, UNOS and its unit up.
 - Not done: the administrator account of UNOS and the board's dev.env (passwords, the owner's),
   so `scripts/dev/scenario.sh` did not run and `deploy.riscv64-bpi-f3` does not pass yet. The USB
   disk keeps the checked copy of the old data. The board's sshd allows root to sign in with a
