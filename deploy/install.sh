@@ -4,7 +4,8 @@
 # https://github.com/und3f1ned/unos
 #
 # This script installs UNOS on a fresh Debian/Ubuntu system
-# Supports: Debian 11+, Ubuntu 22.04+, ARM64 and AMD64
+# Supports: Debian 11+, Ubuntu 22.04+, ARM64 and AMD64; on RISCV64 Debian 13+
+# and Ubuntu 24.04+
 #
 
 set -e
@@ -87,6 +88,9 @@ detect_system() {
         armv7l)
             ARCH="armv7"
             ;;
+        riscv64)
+            ARCH="riscv64"
+            ;;
         *)
             log_error "Unsupported architecture: $ARCH"
             exit 1
@@ -149,7 +153,21 @@ install_docker() {
     fi
     
     log_info "Installing Docker..."
-    
+
+    # Docker's repository has no packages for riscv64: Debian 13 and Ubuntu
+    # 24.04 build Docker Engine, Compose v2 (the compose plugin; Debian's
+    # package is docker-compose, Ubuntu's docker-compose-v2) and buildx for it
+    # (ADR-0369).
+    if [ "$ARCH" = riscv64 ]; then
+        local compose=docker-compose
+        [ "$OS" = ubuntu ] && compose=docker-compose-v2
+        apt-get install -y -qq docker.io "$compose" docker-buildx >/dev/null 2>&1
+        systemctl enable docker
+        systemctl start docker
+        log_success "Docker installed from the distribution and started"
+        return
+    fi
+
     # Add Docker's official GPG key
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/$OS/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -215,6 +233,66 @@ check_compose_wait() {
             log_warn "Docker Compose ${version:-(version unknown)} has no \`up --wait-timeout\`: \`docker compose up\`, here and in the unos service, runs without it and waits until Docker reports the supervisor healthy or unhealthy. Compose 2.30 or later limits that wait; run install.sh again after updating Docker Compose."
             ;;
     esac
+}
+
+# The SpacemiT K1 (Banana Pi BPI-F3), as its device tree names it: under the
+# vendor's kernel "spacemit,k1-x", under the mainline one "spacemit,k1".
+is_spacemit_k1() {
+    [ -r /proc/device-tree/compatible ] &&
+        tr '\0' '\n' < /proc/device-tree/compatible | grep -qxE 'spacemit,k1(-x)?'
+}
+
+# The NVMe controller of the SpacemiT K1 hangs under load ("QID 0 timeout,
+# disable controller") unless the drive's power saving (APST) and the ASPM L1
+# of its PCIe link are off, and the kernel parameters that would turn them off
+# (pcie_aspm=off, nvme_core.default_ps_max_latency_us=0) keep the BPI-F3 from
+# booting. The K1 may enumerate PCIe late in the boot, so udev turns them off
+# as each drive appears: ASPM L1 when its PCIe function appears, and APST once
+# its disk appears, since the driver adds the controller's APST setting only
+# after it has identified the drive. udev applies the rule to the drives there
+# are now. A TRIM of the whole device hangs the controller as well, so the
+# weekly fstrim.timer goes off; the supervisor makes and mounts pools without
+# TRIM there (ADR-0369). Elsewhere this does nothing. uninstall.sh keeps both:
+# the pools stay.
+configure_spacemit_k1() {
+    is_spacemit_k1 || return 0
+    log_info "Configuring NVMe for the SpacemiT K1..."
+
+    mkdir -p /usr/local/sbin /etc/udev/rules.d
+    cat > /usr/local/sbin/unos-k1-nvme << 'EOF'
+#!/bin/sh
+# UNOS (install.sh): turns off the power saving of each NVMe drive of this
+# SpacemiT K1 and of its PCIe link (ADR-0369); 60-unos-k1-nvme.rules runs it.
+# 0 in pm_qos_latency_tolerance_us makes the driver turn APST off; 0 in
+# l1_aspm turns ASPM L1 off.
+for controller in /sys/class/nvme/nvme*; do
+    [ -e "$controller" ] || continue
+    if [ -w "$controller/power/pm_qos_latency_tolerance_us" ]; then
+        echo 0 > "$controller/power/pm_qos_latency_tolerance_us"
+    fi
+    link=$(readlink -f "$controller/device")/link
+    if [ -w "$link/l1_aspm" ]; then
+        echo 0 > "$link/l1_aspm"
+    fi
+done
+exit 0
+EOF
+    chmod 755 /usr/local/sbin/unos-k1-nvme
+    cat > /etc/udev/rules.d/60-unos-k1-nvme.rules << 'EOF'
+# UNOS (install.sh): NVMe power saving off on the SpacemiT K1 (ADR-0369).
+# ASPM L1 of an NVMe drive's PCIe link goes off when the function appears;
+# APST once the drive's disk appears, after the driver has identified it.
+ACTION=="add|change", SUBSYSTEM=="pci", ATTR{class}=="0x010802", ATTR{link/l1_aspm}="0"
+ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="nvme*", ENV{DEVTYPE}=="disk", RUN+="/usr/local/sbin/unos-k1-nvme"
+EOF
+    udevadm control --reload
+    udevadm trigger --action=change --subsystem-match=pci --attr-match=class=0x010802
+    udevadm trigger --action=change --subsystem-match=block --sysname-match='nvme*'
+    if systemctl cat fstrim.timer >/dev/null 2>&1; then
+        systemctl disable --now fstrim.timer
+    fi
+
+    log_success "SpacemiT K1: NVMe power saving off whenever a drive appears, no weekly TRIM"
 }
 
 # Create UNOS user and directories
@@ -570,6 +648,7 @@ main() {
     require_compose "The system packages are installed; UNOS is not."
     # Sets the `docker compose up` arguments of start_unos and the unit.
     check_compose_wait
+    configure_spacemit_k1
     setup_directories
     download_unos
     generate_secrets

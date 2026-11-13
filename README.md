@@ -21,6 +21,7 @@
   <img src="https://img.shields.io/badge/BTRFS-FF6600?style=flat-square&logo=linux&logoColor=white" alt="BTRFS">
   <img src="https://img.shields.io/badge/ARM64-supported-green?style=flat-square" alt="ARM64">
   <img src="https://img.shields.io/badge/AMD64-supported-green?style=flat-square" alt="AMD64">
+  <img src="https://img.shields.io/badge/RISCV64-BPI--F3-yellow?style=flat-square" alt="RISCV64">
 </p>
 
 <p align="center">
@@ -147,7 +148,7 @@ anyone who can reach the page can create it.
 ## System Requirements
 
 ### Minimum
-- **CPU:** 1 GHz dual-core (ARM64 or AMD64)
+- **CPU:** 1 GHz dual-core (ARM64, AMD64 or RISCV64)
 - **RAM:** 1 GB
 - **Storage:** 8 GB for system
 - **OS:** Debian 11+ or Ubuntu 22.04+
@@ -160,6 +161,8 @@ anyone who can reach the page can create it.
 ### Supported Platforms
 - x86_64 (AMD64)
 - ARM64 (AArch64)
+- RISCV64 on Debian 13 or Ubuntu 24.04, made for the Banana Pi BPI-F3
+  (SpacemiT K1): see [its notes](docs/INSTALL.md#banana-pi-bpi-f3-spacemit-k1-riscv64)
 
 ## Architecture
 

@@ -781,7 +781,8 @@ class FakeHost:
 
     def _mount(self, cmd):
         if cmd[1] == "-t":
-            assert cmd[:5] == ["mount", "-t", "btrfs", "-o", "noatime"], cmd
+            # nodiscard on the SoCs of pools.NO_TRIM_SOCS (ADR-0369).
+            assert cmd[:4] == ["mount", "-t", "btrfs", "-o"] and cmd[4] in ("noatime", "noatime,nodiscard"), cmd
             source, target = cmd[5], cmd[6]
         else:
             target = cmd[1]
@@ -1060,6 +1061,35 @@ class TestMountPool:
         assert info.mountpoint == "/mnt/pools/data"
         assert info.health == "healthy"
         assert info.raid_level == "single"
+
+    @pytest.mark.parametrize(
+        "compatible",
+        ["spacemit,k1-x\0", "bananapi,bpi-f3\0spacemit,k1\0"],
+        ids=["vendor-kernel", "mainline-kernel"],
+    )
+    def test_on_a_spacemit_k1_the_pool_mounts_without_discard(self, data_pool, compatible):
+        # The K1's NVMe controller hangs on a TRIM of a whole device, and kernels from 6.2 mount
+        # btrfs on an SSD with discard=async: on the K1 the pool mounts with nodiscard, now and at
+        # boot (ADR-0369). Its device tree names the SoC "spacemit,k1-x" under the vendor's kernel
+        # and "spacemit,k1" under the mainline one.
+        data_pool.files["/proc/device-tree/compatible"] = compatible
+
+        pools.mount_pool("data")
+
+        assert ["mount", "-t", "btrfs", "-o", "noatime,nodiscard", f"UUID={DATA_UUID}",
+                "/mnt/pools/data"] in data_pool.changes
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + (
+            f"UUID={DATA_UUID} /mnt/pools/data btrfs {OPTIONS},nodiscard 0 0\n"
+        )
+
+    def test_another_device_tree_keeps_the_default_discard(self, data_pool):
+        data_pool.files["/proc/device-tree/compatible"] = "rockchip,rk3588-evb1-v10\0rockchip,rk3588\0"
+
+        pools.mount_pool("data")
+
+        assert ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}",
+                "/mnt/pools/data"] in data_pool.changes
+        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
 
     def test_mount_is_idempotent(self, data_pool):
         pools.mount_pool("data")

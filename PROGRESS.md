@@ -53,6 +53,10 @@ significant step. Features and their state live in `feature-list.json`, decision
 - That evening (Log): a fifth batch, ADR-0363 to ADR-0368: Repair permissions as a background
   job, a restore in one streaming pass, no page polling the API, and renaming a user with its SMB
   account. `main` is 7827340 and its tree runs on the dev device.
+- On 2026-11-13 (Log), in the branch `deploy.riscv64-bpi-f3`, not merged: UNOS for the Banana Pi
+  BPI-F3 (SpacemiT K1, riscv64), ADR-0369 (proposed). Both images build for linux/riscv64; nothing
+  of it has run on the board yet. Once it is merged, the dev device's next supervisor build runs
+  its pip layer again: tell the owner first (`deploy/AGENTS.md`).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -332,6 +336,34 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-13: UNOS for the Banana Pi BPI-F3 (SpacemiT K1, riscv64), built but not yet on the board
+
+- At the owner's request, `deploy.riscv64-bpi-f3` (ADR-0369, proposed): `install.sh` accepts
+  riscv64 and takes Docker from the distribution there; the supervisor's pip layer installs pip
+  26.3 and on riscv64 compiles five packages with a Rust toolchain it removes again; the web UI's
+  builder runs Alpine 3.22's Node.js 22 everywhere, since the `node` image has no riscv64 build;
+  on a SpacemiT K1 a udev rule turns off the NVMe drives' APST and ASPM L1, `fstrim.timer` goes
+  off, and pools are made and mounted without TRIM; the dashboard shows the K1's
+  `cluster0_thermal`. The K1's VPU and NPU serve apps, not UNOS: they went into the new entry
+  `apps.spacemit-k1-hardware-acceleration`, and the App Store's platforms into
+  `apps.catalog-platforms`.
+- Checked on the workstation: both images built for linux/riscv64 under QEMU from the pinned
+  bases (whose indexes list riscv64), the supervisor's pip layer in about 25 minutes; the riscv64
+  supervisor answered `/api/v1/health` with 200, and the arm64 images built as well. The udev rule
+  passed `udevadm verify` (systemd 257). The board was only read over ssh. `make check` passed.
+- Review in a fresh context: the first version turned NVMe power saving off in a unit before
+  `local-fs-pre.target`, as the stack on the board does; the board's journal showed the drive
+  appearing 63 ms before that target, so it became a udev rule, and the reviewer then found that
+  the controller's APST setting appears only after identify, so the rule runs the script when the
+  drive's disk appears. Fixed as well: the docs, the ADR and the changelog that still named the
+  unit, a `udevadm settle` that could stop the installation, the trim decision read twice in one
+  Create, the ledger's notes, "tested" where nothing ran on the board, a wrong Dockerfile comment
+  and the Docker packages `uninstall.sh` names. Recorded in ADR-0369: a pool mounted before UNOS
+  took it over keeps its options until it is mounted again, and `nodejs~22` and `pip==26.3` are
+  not fixed by a digest.
+- Open: every step on the board (it runs another stack; making it a device for UNOS is the
+  owner's call), then the device and reboot checks (ADR-0018).
 
 ### 2026-11-12: A fifth batch: a repair job, a streaming restore, no polling, renamed users
 

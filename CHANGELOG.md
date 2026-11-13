@@ -323,6 +323,22 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- RISCV64 hosts on Debian 13 and Ubuntu 24.04, made for the Banana Pi BPI-F3
+  (SpacemiT K1): `install.sh` accepts `riscv64` and installs the
+  distribution's `docker.io`, `docker-buildx` and `docker-compose` (Debian) or
+  `docker-compose-v2` (Ubuntu), since Docker's repository has no RISCV64
+  packages. Both images build on the host as elsewhere: the supervisor's pip
+  layer installs pip 26.3 (the base's 24.0 ignores RISCV64 wheels) and, on
+  RISCV64 only, compiles cryptography, bcrypt, cffi, psutil and uvloop with a
+  Rust toolchain that it removes again; the web UI's builder runs Alpine 3.22's
+  Node.js 22 on every platform, since the `node` image has no RISCV64 build. On
+  a SpacemiT K1, `install.sh` adds the udev rule `60-unos-k1-nvme.rules`, which
+  turns off the NVMe drives' APST and their PCIe link's ASPM L1 whenever a drive
+  appears, and turns `fstrim.timer` off; pools there are made with `mkfs.btrfs --nodiscard` and
+  mounted with `nodiscard`, because the K1's NVMe controller hangs otherwise.
+  The dashboard shows the K1's CPU temperature (`cluster0_thermal`) instead of
+  the NVMe drive's. `uninstall.sh` names the distribution's Docker packages and
+  keeps the K1's rule (ADR-0369).
 - Administrators rename users in the **Users** page's edit dialog
   (`PUT /api/v1/auth/users/{id}` with `new_username` and the current
   `username`): the user signs in with the new name, the old one is refused,

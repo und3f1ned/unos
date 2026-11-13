@@ -31,7 +31,10 @@ This guide provides detailed instructions for installing UNOS on your system.
 | Armbian | Latest | ⚠️ Community Supported |
 
 Docker: `install.sh` installs Docker Engine with the Compose plugin from
-Docker's repository when Docker is missing. When Docker is already installed,
+Docker's repository when Docker is missing; on RISCV64, which Docker's
+repository does not serve, it installs the distribution's `docker.io`,
+`docker-buildx` and `docker-compose` (Debian 13) or `docker-compose-v2`
+(Ubuntu 24.04). When Docker is already installed,
 it needs Docker Compose v2 (`docker compose version`): the packages
 `docker-compose-plugin` from Docker's repository, `docker-compose-v2` on
 Ubuntu, or `docker-compose` on Debian 13. Debian 12's `docker-compose` (1.29)
@@ -41,7 +44,35 @@ is not enough; the script then stops before it changes anything.
 
 - **AMD64** (x86_64) - Intel/AMD processors
 - **ARM64** (AArch64) - Raspberry Pi 4/5, ARM SBCs
+- **RISCV64** - Debian 13 or Ubuntu 24.04 only; see
+  [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)
 - **ARMv7** - Limited support, may have performance issues
+
+### Banana Pi BPI-F3 (SpacemiT K1, RISCV64)
+
+Written for Armbian 26.8 (Debian 13) with its `current-spacemit` kernel 6.18 on
+a BPI-F3 with 4 GB of RAM, the system on a microSD card and an NVMe drive in the
+M.2 slot (ADR-0369). Both images were built for RISCV64, but an installation on
+the board itself has not been checked yet.
+
+- **Build time.** `install.sh` and `update.sh` build both images on the board,
+  as on every host. The first build of the supervisor compiles cryptography,
+  bcrypt, cffi, psutil and uvloop, which publish no RISCV64 wheel, with a Rust
+  toolchain that the image does not keep: expect the first installation to take
+  tens of minutes. Keep Docker's data on a disk other than a microSD card where
+  you can.
+- **NVMe.** The K1's NVMe controller hangs under load ("QID 0 timeout, disable
+  controller") while the drive's power saving (APST) and the ASPM L1 of its PCIe
+  link are on, and on a TRIM of the whole drive. On a K1, `install.sh` adds the
+  udev rule `60-unos-k1-nvme.rules`, which turns both off whenever a drive
+  appears, and turns `fstrim.timer` off; UNOS then makes its pools with
+  `mkfs.btrfs --nodiscard` and mounts them with `nodiscard`. Do not add
+  `pcie_aspm=off` or `nvme_core.default_ps_max_latency_us=0` to the kernel's
+  command line instead: the board does not boot with them.
+- **Apps.** Most images of the App Store publish no RISCV64 build, and their
+  installation fails when Docker pulls them.
+- **Temperature.** The dashboard shows the CPU's first cluster
+  (`cluster0_thermal`).
 
 ### Network Requirements
 
@@ -166,6 +197,22 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 # Start Docker
 sudo systemctl enable --now docker
 ```
+
+On RISCV64, install the distribution's packages instead: Docker's repository
+has none for it.
+
+```bash
+# Debian 13; on Ubuntu 24.04 docker-compose-v2 instead of docker-compose
+sudo apt install -y docker.io docker-compose docker-buildx
+sudo systemctl enable --now docker
+```
+
+On a SpacemiT K1 (Banana Pi BPI-F3) with an NVMe drive, also set up what
+`configure_spacemit_k1` of `deploy/install.sh` writes: the script
+`/usr/local/sbin/unos-k1-nvme` and the udev rule
+`/etc/udev/rules.d/60-unos-k1-nvme.rules`, then run its `udevadm` commands and
+`systemctl disable --now fstrim.timer`
+(see [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)).
 
 ### Step 3: Clone UNOS
 

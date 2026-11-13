@@ -1,10 +1,14 @@
 # Each base by tag and digest (ADR-0305): the digest decides what the build starts
 # from, and Dependabot follows the tag when it proposes a newer digest.
 #
-# A supported Node.js release, the same major version as the frontend job of
-# .github/workflows/test.yml and "engines" in package.json
+# The builder runs Alpine's Node.js, because the node image is built for no linux/riscv64 and
+# install.sh and update.sh build this image on the host (ADR-0369). Alpine's release fixes the
+# major version: Alpine 3.22 has Node.js 22 on every platform, the same major version as the
+# frontend job of .github/workflows/test.yml and "engines" in package.json
 # (supervisor/tests/test_deploy_scripts.py checks it).
-FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS builder
+FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS builder
+
+RUN apk add --no-cache nodejs~22 npm
 
 WORKDIR /app
 

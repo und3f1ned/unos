@@ -4126,6 +4126,63 @@
         "ADR-0283"
       ],
       "notes": "Built 2026-11-08 (ADR-0283, which superseded ADR-0282 after the fresh-context review). The pool of a name is the btrfs filesystem labelled with it, or of several with one label, the one mounted or managed under it: GET /api/v1/storage/pools lists those, and Mount imports a pool found on the disks (its dialog says the disks are not formatted). Any other btrfs filesystem that is neither the host's system filesystem nor mounted is listed by GET /api/v1/storage/filesystems/importable and under Found on the disks; POST /api/v1/storage/filesystems/{uuid}/import mounts it by UUID at /mnt/pools/<name>, checks that the mount shows the top level, sets the name as its label through the mount, has udev read its devices again and writes the managed fstab entry. Filesystems on boot or virtual devices (the SD card, the eMMC, loop and RAM disks) or on the system disk are neither offered nor listed, and Mount and Import refuse them; an import under a name that SMB shares, NFS exports or containers of an earlier pool still use is refused. A refused or failed import leaves no mountpoint, fstab line or label behind, and Mount, Import and Create undo a mount that shows another subvolume than the top level. Asserted on fakes: step 1 by test_pool_import.py (what is offered: labels, duplicates, boot, virtual and system devices) and storage.spec.ts (Pool import: the offer, the dialog, the refusals, two filesystems with one label, Mount of a found pool); step 2 by test_pool_import.py (the fstab entry by UUID, the mount from it after a reboot, the used bytes kept, no mkfs, the refusals and what an undo leaves), test_pool_persistence.py (TestMountPool) and test_smb_integration.py (an import under the name of a removed pool serves none of its shares). Open: the device check and the re-check after a reboot (ADR-0018), with the SD MiB of each step (ADR-0214); it needs a spare disk, which the dev device does not have. On it: (1) read only, first: GET /api/v1/storage/pools and GET /api/v1/storage/filesystems/importable list nothing on mmcblk0 (the eMMC) or mmcblk1 (the SD card); nothing is ever imported or mounted there (ADR-0225). (2) A btrfs filesystem without a label (mkfs.btrfs without -L) that holds a few files, not mounted: Storage lists it under Found on the disks with its UUID and size; Import as importtest mounts it at /mnt/pools/importtest by UUID (findmnt), /etc/fstab holds the marker and the UUID entry, btrfs filesystem show and lsblk show the label importtest, and the files are there; after a reboot it is mounted again with its files. (3) An SMB share on importtest, then Remove Pool: the files stay on the disk. Clear the label while it is unmounted (btrfs filesystem label <device> ''): Import as importtest answers 409 and names the share, and nothing changes; after the share is deleted, the import succeeds. (4) Remove Pool, then label the filesystem with a pool name: it is listed as Not mounted, and Mount imports it. (5) Remove Pool, clear the label, mount it by hand, run btrfs subvolume set-default with another subvolume and unmount it: Import as importtest answers 409 with the subvolume message, findmnt shows nothing at /mnt/pools/importtest, that directory does not exist, btrfs filesystem show prints no label, and /etc/fstab is unchanged; labelled with a pool name, Mount answers 409, it stays unmounted and /etc/fstab is unchanged."
+    },
+    {
+      "id": "deploy.riscv64-bpi-f3",
+      "category": "deploy",
+      "description": "UNOS installs and runs on a Banana Pi BPI-F3 (SpacemiT K1, linux/riscv64) with Debian 13, as on amd64 and arm64 hosts",
+      "steps": [
+        "install.sh on a riscv64 host with Debian 13 or Ubuntu 24.04 installs the distribution's Docker Engine, Compose v2 and buildx, without Docker's repository",
+        "Both images build on the board: the supervisor compiles the packages that publish no riscv64 wheel and keeps no Rust toolchain, and the web UI's builder runs Alpine's Node.js 22",
+        "On the K1 a udev rule turns off each NVMe drive's APST and its PCIe link's ASPM L1 whenever the drive appears, also late in the boot, and fstrim.timer is off",
+        "A pool created on the K1's NVMe drive is made with mkfs.btrfs --nodiscard and mounted with nodiscard, and is mounted again after a reboot",
+        "The dashboard shows the temperature of the K1's CPU (cluster0_thermal), not the NVMe drive's",
+        "scripts/dev/scenario.sh all passes on the board before and after a reboot"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_pool_persistence.py",
+        "supervisor/tests/test_disk_safety.py",
+        "supervisor/tests/test_system.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0018",
+        "ADR-0305",
+        "ADR-0369"
+      ],
+      "notes": "Built 2026-11-13 from a stack that ran on the owner's BPI-F3 (Armbian 26.8, Debian 13, kernel 6.18.45-current-spacemit, 4 GB, an NVMe drive in the M.2 slot). Checked off the board: on the workstation, docker buildx built both images for linux/riscv64 under QEMU from the pinned bases (the pip layer about 25 minutes: bcrypt, cryptography, psutil, cffi and uvloop compiled, cargo and rustc removed again in the same layer), and the riscv64 supervisor image imported src.main, round-tripped bcrypt and cryptography (OpenSSL 3.5) and answered GET /api/v1/health with 200 under uvicorn; the riscv64 web UI image ran npm ci and the build in the emulated builder and its Caddyfile validated; the arm64 images built as well. The udev rule passed udevadm verify of systemd 257, Debian 13's. Read on the board over ssh, without changing it: its device tree's compatible is spacemit,k1-x; its zones and hwmon groups are top_thermal, gpu_thermal, cluster0_thermal and cluster1_thermal after the NVMe drive's nvme group; Debian's docker.io 26.1.5, docker-compose 2.26.1 and docker-buildx 0.13.1; the NVMe drive's disk appears after the controller's identify, and in one boot 63 ms before local-fs-pre.target. Open: every step on the board itself (it runs another stack; making it a device for UNOS is the owner's call), and the device check and the reboot check of ADR-0018. The next supervisor build on the dev device runs its pip layer again (tell the owner first, deploy/AGENTS.md)."
+    },
+    {
+      "id": "apps.catalog-platforms",
+      "category": "apps",
+      "description": "The App Store shows which apps have an image for the host's platform and refuses the others before any pull",
+      "steps": [
+        "Every catalog template lists the platforms its image publishes, and a test fails for a template without them",
+        "On a host whose platform an app's image lacks, Apps marks the app as not available for that platform and disables Install",
+        "POST /api/v1/apps/install answers 409 for such an app without pulling an image",
+        "The weekly audit workflow compares the recorded platforms with the registries and fails when they differ"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0218",
+        "ADR-0369"
+      ],
+      "notes": "Found with deploy.riscv64-bpi-f3: on riscv64, 6 of the 70 catalog images publish a linux/riscv64 build (docs/research/riscv64-support-2026-11-07.md, area 6), and the install of any other fails at the pull with Docker's error as a 500."
+    },
+    {
+      "id": "apps.spacemit-k1-hardware-acceleration",
+      "category": "apps",
+      "description": "Apps use the SpacemiT K1's hardware: Frigate decodes camera streams on the VPU and detects objects on the NPU",
+      "steps": [
+        "Install Frigate on a BPI-F3: it decodes an H.264 camera stream on the VPU",
+        "Its object detection runs on the K1's NPU"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0369"
+      ],
+      "notes": "Like apps.rk3588-hardware-acceleration for the RK3588. Waits for riscv64 images of Frigate and of a detector: neither Frigate nor Home Assistant publishes one, and UNOS takes app images from their publishers. What such apps need, from the stack that runs Home Assistant and Frigate on the owner's BPI-F3 with Armbian's current-spacemit kernel 6.18, published as https://github.com/und3f1ned/bpi-f3-frigate-ha (November 2026): the VPU's firmware (Bianbu's package k1x-vpu-firmware 0.1.0) and its driver amvx, which does not load by itself (modules-load.d), with /dev/video0; for the decoders of Bianbu's ffmpeg (h264_stcodec, hevc_stcodec) the CMA heap /dev/dma_heap/linux,cma; for the NPU /dev/tcm and /dev/udma (spacemit-tcm); udev rules that give those devices to the group video; onnxruntime 1.24.2+spacemit with spacemit-ort 2.0.6 from SpacemiT's package index, imported before spacemit_ort, on cores 0 to 3, where YOLOv8n INT8 took about 10 ms; Frigate's zmq detector reaches it. stcodec hangs at the end of a stream (files loop through go2rtc), its -scale option corrupts frames, and the MPP library prints to stdout, which corrupts the raw frames ffmpeg writes there unless it is sent to stderr. The kernel's packages are held: the mainline kernel has neither the VPU nor the TCM driver."
     }
   ]
 }

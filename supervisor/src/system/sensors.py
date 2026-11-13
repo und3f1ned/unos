@@ -21,6 +21,10 @@ CPU_SENSORS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("cpu_thermal", ()),  # Raspberry Pi, Allwinner, Amlogic, RK3399 and other ARM boards
     ("soc_thermal", ()),  # RK3588 under Rockchip's kernel: the sensor of the whole chip
     ("package_thermal", ()),  # RK3588 under the mainline kernel: the same sensor
+    # SpacemiT K1 (Banana Pi BPI-F3) under the vendor's drivers (Armbian's current-spacemit
+    # kernel): the first of the CPU's two clusters; top_thermal and gpu_thermal are the rest of the
+    # chip (ADR-0369).
+    ("cluster0_thermal", ()),
 )
 
 

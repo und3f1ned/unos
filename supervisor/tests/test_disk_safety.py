@@ -303,6 +303,19 @@ class TestCreatePoolGuards:
         mkfs_index = next(i for i, call in enumerate(nas.calls) if call[0] == "mkfs.btrfs")
         assert sum(call[0] == "lsblk" for call in nas.calls[:mkfs_index]) == 2
 
+    def test_on_a_spacemit_k1_mkfs_runs_without_trim(self, nas):
+        # mkfs.btrfs first TRIMs every device that supports it, and a TRIM of a whole device
+        # hangs the K1's NVMe controller: there the pool is made with --nodiscard and mounted
+        # with nodiscard (ADR-0369).
+        nas.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
+
+        create(["/dev/nvme0n1"])
+
+        assert nas.changes[0] == [
+            "mkfs.btrfs", "-L", "tank", "-d", "single", "-m", "single", "--nodiscard", "/dev/nvme0n1"]
+        assert ["mount", "-t", "btrfs", "-o", "noatime,nodiscard", f"UUID={NEW_UUID}",
+                "/mnt/pools/tank"] in nas.changes
+
     def test_raid1_on_two_blank_disks(self, nas):
         nas.add_disk("sdd")
         create(["/dev/sdb", "/dev/sdd"], raid_level="raid1")
