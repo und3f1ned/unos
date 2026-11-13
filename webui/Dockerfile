@@ -2,7 +2,7 @@
 # from, and Dependabot follows the tag when it proposes a newer digest.
 #
 # The builder runs Alpine's Node.js, because the node image is built for no linux/riscv64 and
-# install.sh and update.sh build this image on the host (ADR-0369). Alpine's release fixes the
+# install.sh and update.sh build this image on the host (ADR-0370). Alpine's release fixes the
 # major version: Alpine 3.22 has Node.js 22 on every platform, the same major version as the
 # frontend job of .github/workflows/test.yml and "engines" in package.json
 # (supervisor/tests/test_deploy_scripts.py checks it).

@@ -781,7 +781,7 @@ class FakeHost:
 
     def _mount(self, cmd):
         if cmd[1] == "-t":
-            # nodiscard on the SoCs of pools.NO_TRIM_SOCS (ADR-0369).
+            # nodiscard for a pool with an NVMe drive on the SoCs of pools.NVME_NO_TRIM_SOCS (ADR-0370).
             assert cmd[:4] == ["mount", "-t", "btrfs", "-o"] and cmd[4] in ("noatime", "noatime,nodiscard"), cmd
             source, target = cmd[5], cmd[6]
         else:
@@ -944,6 +944,13 @@ def fake_host(monkeypatch):
     wait_for_app_starts()
 
 
+def _add_nvme_pool(host):
+    """A single-disk pool 'fast' on the NVMe drive nvme0n1, not mounted."""
+    host.add_disk("nvme0n1", rota=False, size=256_060_514_304, model="Patriot M.2 P300 256GB")
+    host.add_btrfs("fast", MEDIA_UUID, ["/dev/nvme0n1"])
+    host.dirs.add("/mnt/pools/fast")
+
+
 @pytest.fixture
 def data_pool(fake_host):
     """A single-disk pool 'data' on /dev/sda: created earlier, not mounted, no fstab entry.
@@ -1067,29 +1074,39 @@ class TestMountPool:
         ["spacemit,k1-x\0", "bananapi,bpi-f3\0spacemit,k1\0"],
         ids=["vendor-kernel", "mainline-kernel"],
     )
-    def test_on_a_spacemit_k1_the_pool_mounts_without_discard(self, data_pool, compatible):
+    def test_on_a_spacemit_k1_an_nvme_pool_mounts_without_discard_or_fstrim(self, data_pool, compatible):
         # The K1's NVMe controller hangs on a TRIM of a whole device, and kernels from 6.2 mount
-        # btrfs on an SSD with discard=async: on the K1 the pool mounts with nodiscard, now and at
-        # boot (ADR-0369). Its device tree names the SoC "spacemit,k1-x" under the vendor's kernel
-        # and "spacemit,k1" under the mainline one.
+        # btrfs on an SSD with discard=async: on the K1 a pool on an NVMe drive mounts with
+        # nodiscard, now and at boot, and the weekly fstrim of fstrim.timer skips it
+        # (X-fstrim.notrim). Its device tree names the SoC "spacemit,k1-x" under the vendor's
+        # kernel and "spacemit,k1" under the mainline one (ADR-0370).
         data_pool.files["/proc/device-tree/compatible"] = compatible
+        _add_nvme_pool(data_pool)
 
-        pools.mount_pool("data")
+        pools.mount_pool("fast")
 
-        assert ["mount", "-t", "btrfs", "-o", "noatime,nodiscard", f"UUID={DATA_UUID}",
-                "/mnt/pools/data"] in data_pool.changes
-        assert data_pool.fstab == BASE_FSTAB + marker("data") + (
-            f"UUID={DATA_UUID} /mnt/pools/data btrfs {OPTIONS},nodiscard 0 0\n"
+        assert ["mount", "-t", "btrfs", "-o", "noatime,nodiscard", f"UUID={MEDIA_UUID}",
+                "/mnt/pools/fast"] in data_pool.changes
+        assert data_pool.fstab == BASE_FSTAB + marker("fast") + (
+            f"UUID={MEDIA_UUID} /mnt/pools/fast btrfs {OPTIONS},nodiscard,X-fstrim.notrim 0 0\n"
         )
 
-    def test_another_device_tree_keeps_the_default_discard(self, data_pool):
-        data_pool.files["/proc/device-tree/compatible"] = "rockchip,rk3588-evb1-v10\0rockchip,rk3588\0"
+    @pytest.mark.parametrize(
+        ("compatible", "pool"),
+        [("spacemit,k1-x\0", "data"), ("rockchip,rk3588-evb1-v10\0rockchip,rk3588\0", "fast")],
+        ids=["k1-sata-pool", "rk3588-nvme-pool"],
+    )
+    def test_other_pools_keep_the_default_discard(self, data_pool, compatible, pool):
+        # Only NVMe drives hang on the K1: a SATA or USB disk there, and an NVMe drive on another
+        # SoC, keep btrfs's discard and the weekly fstrim (ADR-0370).
+        data_pool.files["/proc/device-tree/compatible"] = compatible
+        _add_nvme_pool(data_pool)
+        uuid = {"data": DATA_UUID, "fast": MEDIA_UUID}[pool]
 
-        pools.mount_pool("data")
+        pools.mount_pool(pool)
 
-        assert ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={DATA_UUID}",
-                "/mnt/pools/data"] in data_pool.changes
-        assert data_pool.fstab == BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+        assert ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={uuid}", f"/mnt/pools/{pool}"] in data_pool.changes
+        assert data_pool.fstab == BASE_FSTAB + marker(pool) + entry(pool, uuid)
 
     def test_mount_is_idempotent(self, data_pool):
         pools.mount_pool("data")
@@ -1475,6 +1492,36 @@ class TestUnmountAndDelete:
         ]
         self.assert_still_mounted_and_persistent(mounted)
         assert "/mnt/pools/data" in mounted.dirs
+
+    def test_on_a_spacemit_k1_an_nvme_pool_is_mounted_again_without_discard(self, data_pool):
+        # The mount after an unmount that left the filesystem in use takes the pool's own
+        # options (ADR-0370).
+        data_pool.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
+        _add_nvme_pool(data_pool)
+        pools.mount_pool("fast")
+        wait_for_app_starts()
+        data_pool.changes.clear()
+        data_pool.held.add(MEDIA_UUID)
+
+        with pytest.raises(pools.PoolBusyError, match="mounted again"):
+            pools.unmount_pool("fast")
+
+        assert data_pool.changes == [
+            ["umount", "/mnt/pools/fast"],
+            ["mount", "-t", "btrfs", "-o", "noatime,nodiscard", f"UUID={MEDIA_UUID}", "/mnt/pools/fast"],
+        ]
+
+    def test_the_mount_again_keeps_trim_off_on_a_k1_whose_devices_cannot_be_read(self, data_pool, monkeypatch):
+        # The mount again must not fail on reading the pool's devices: on a K1 a pool whose devices
+        # cannot be read mounts without discard, as one with an NVMe drive; elsewhere the devices
+        # are not read at all (ADR-0370).
+        def unreadable():
+            raise RuntimeError("btrfs filesystem show failed")
+
+        monkeypatch.setattr(pools, "btrfs_filesystems", unreadable)
+        assert pools._remount_is_trimmed(DATA_UUID) is True
+        data_pool.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
+        assert pools._remount_is_trimmed(DATA_UUID) is False
 
     def test_reports_when_mounting_again_fails(self, mounted):
         mounted.held.add(DATA_UUID)

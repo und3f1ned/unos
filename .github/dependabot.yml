@@ -77,7 +77,7 @@ updates:
     ignore:
       - dependency-name: python
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      # The Alpine release of the web UI's builder fixes its Node.js major version (ADR-0369).
+      # The Alpine release of the web UI's builder fixes its Node.js major version (ADR-0370).
       - dependency-name: alpine
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       # Dependabot names an image without its registry (mcr.microsoft.com/playwright).

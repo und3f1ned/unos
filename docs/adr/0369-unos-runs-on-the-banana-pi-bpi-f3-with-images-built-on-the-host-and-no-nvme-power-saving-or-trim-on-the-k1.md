@@ -1,13 +1,16 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-13
 area: deploy
 decided-by: agent
+superseded-by: ADR-0370
 ---
 
 # ADR-0369: UNOS runs on the Banana Pi BPI-F3 with both images built on the host, and its SpacemiT K1 keeps NVMe drives without power saving or TRIM
 
 ## Context
+
+Superseded by ADR-0370: only NVMe drives on the K1 go without power saving and TRIM, and SATA is the recommended storage.
 
 The owner asked to "build in everything needed to support the Banana Pi BPI-F3 board (SpacemiT
 K1, riscv64)", "the same way as the existing platforms are done" and without "a parallel

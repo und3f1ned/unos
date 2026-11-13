@@ -854,7 +854,7 @@ _LOGGER = '#!/bin/bash\necho "${0##*/} $*" >> "$STUB_DIR/calls"\n'
 DEBIAN_12_ARM64 = ("aarch64", "arm64", 'ID=debian\nVERSION_ID="12"\nVERSION_CODENAME=bookworm\n')
 DEBIAN_13_RISCV64 = ("riscv64", "riscv64", 'ID=debian\nVERSION_ID="13"\nVERSION_CODENAME=trixie\n')
 UBUNTU_2404_RISCV64 = ("riscv64", "riscv64", 'ID=ubuntu\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n')
-# The compatible of the device tree of a Banana Pi BPI-F3 under the vendor's kernel (ADR-0369).
+# The compatible of the device tree of a Banana Pi BPI-F3 under the vendor's kernel (ADR-0370).
 SPACEMIT_K1 = "spacemit,k1-x\0"
 
 
@@ -1458,7 +1458,7 @@ class TestInstallScript:
     def test_riscv64_takes_docker_from_the_distribution(self, tmp_path, system, compose):
         # Docker's repository has no packages for linux/riscv64. Debian 13 and Ubuntu 24.04
         # build Docker Engine, Compose v2 (the docker compose plugin) and buildx for it: Debian
-        # as docker-compose, Ubuntu as docker-compose-v2 (ADR-0369).
+        # as docker-compose, Ubuntu as docker-compose-v2 (ADR-0370).
         result, calls = _run_install_main(tmp_path, docker_installed=False, system=system)
 
         assert "(riscv64)" in self._text(result)
@@ -1482,8 +1482,9 @@ class TestInstallScript:
         # PCIe late in the boot, so udev turns them off as each drive appears: ASPM L1 with the
         # PCIe function, APST with the drive's disk, since the driver adds the controller's APST
         # setting only after it has identified the drive. udev applies the rule to the drives
-        # there are now. A TRIM of the whole device hangs the controller too, so the weekly
-        # fstrim.timer goes off (ADR-0369).
+        # there are now. The rule touches NVMe drives only, and fstrim.timer stays as it is:
+        # SATA and USB disks keep TRIM, and the fstab entries of the pools with an NVMe drive keep
+        # fstrim off those (ADR-0370).
         result, calls = _run_install_main(tmp_path, system=DEBIAN_13_RISCV64, compatible=SPACEMIT_K1)
 
         script = tmp_path / "usr-local-sbin" / "unos-k1-nvme"
@@ -1499,15 +1500,13 @@ class TestInstallScript:
             "udevadm control --reload",
             "udevadm trigger --action=change --subsystem-match=pci --attr-match=class=0x010802",
             "udevadm trigger --action=change --subsystem-match=block --sysname-match=nvme*",
-            "systemctl cat fstrim.timer",
-            "systemctl disable --now fstrim.timer",
         ]
         assert "SpacemiT K1" in self._text(result)
 
     def test_the_k1_nvme_script_turns_off_apst_and_aspm_l1_of_each_drive(self, tmp_path):
         """The script the rule runs, against a sysfs of two NVMe drives in tmp_path: 0 in a
         controller's pm_qos_latency_tolerance_us makes the driver turn APST off, and 0 in its PCIe
-        function's l1_aspm turns ASPM L1 off (ADR-0369)."""
+        function's l1_aspm turns ASPM L1 off (ADR-0370)."""
         _run_install_main(tmp_path / "install", system=DEBIAN_13_RISCV64, compatible=SPACEMIT_K1)
         sys = tmp_path / "sys"
         for n, pci in enumerate(["0001:01:00.0", "0002:01:00.0"]):
@@ -1974,7 +1973,7 @@ class TestUninstallScript:
 
     def test_the_completion_names_the_docker_packages_of_both_sources(self, tmp_path):
         # install.sh takes Docker from Docker's repository, and on riscv64 from the
-        # distribution (ADR-0369).
+        # distribution (ADR-0370).
         result, _, _ = self._run(tmp_path, "print_completion")
 
         assert result.returncode == 0, result.stdout + result.stderr
@@ -1983,8 +1982,8 @@ class TestUninstallScript:
         assert "SpacemiT K1" not in result.stdout
 
     def test_the_completion_names_the_kept_nvme_rule_of_a_spacemit_k1(self, tmp_path):
-        # The pools stay, so the udev rule that keeps the K1's NVMe controller from hanging
-        # stays, and so does fstrim.timer's being off (ADR-0369).
+        # The pools stay, so the udev rule that keeps the K1's NVMe drives from hanging stays
+        # (ADR-0370).
         rule = tmp_path / "60-unos-k1-nvme.rules"
         rule.write_text("# UNOS\n")
 
@@ -1993,7 +1992,7 @@ class TestUninstallScript:
         assert result.returncode == 0, result.stdout + result.stderr
         assert rule.exists() and calls == []
         assert f"SpacemiT K1: the udev rule {rule} keeps turning off the power saving" in self._text(result)
-        assert "  systemctl enable --now fstrim.timer\n" in result.stdout
+        assert "fstrim" not in result.stdout
 
     def test_the_completion_names_the_kept_accounts_and_how_to_remove_them(self, tmp_path):
         result, _, _ = self._run(tmp_path, "remove_samba_passwords; print_completion")
@@ -2683,7 +2682,7 @@ class TestBuildContexts:
         """The base's pip 24.0 takes no linux/riscv64 wheel, and five packages publish none for it:
         the pip layer first installs a pip of 24.1 or later, and on riscv64 installs what compiles
         them, builds them and removes it again in the same RUN, so that no layer of the image keeps
-        the Rust toolchain. Elsewhere it installs the requirements as before (ADR-0369)."""
+        the Rust toolchain. Elsewhere it installs the requirements as before (ADR-0370)."""
         lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
         layer = _instruction(lines, _pip_layer(lines))
         toolchain = "cargo rustc pkg-config libssl-dev libffi-dev make"
@@ -3318,7 +3317,7 @@ class TestContinuousIntegration:
     def test_node_is_supported_and_the_same_for_the_image_ci_and_npm(self):
         # The builder runs Alpine's Node.js, whose major version the Alpine release fixes; the
         # constraint nodejs~<major> makes apk fail the build on a release with another one
-        # (ADR-0369).
+        # (ADR-0370).
         dockerfile = (REPO_ROOT / "webui" / "Dockerfile").read_text()
         alpine = re.findall(r"^FROM alpine:(\d+\.\d+)@sha256:[0-9a-f]{64} AS builder$", dockerfile, re.M)
         builder = re.findall(r"^RUN apk add --no-cache nodejs~(\d+) npm$", dockerfile, re.M)
@@ -3338,7 +3337,7 @@ class TestContinuousIntegration:
 
     def test_dependabot_keeps_the_alpine_release_of_the_builder(self):
         # A new Alpine release can bring another major version of Node.js: Dependabot proposes
-        # new digests of alpine:3.22 only (ADR-0369).
+        # new digests of alpine:3.22 only (ADR-0370).
         config = yaml.safe_load((REPO_ROOT / ".github" / "dependabot.yml").read_text())
         docker = next(update for update in config["updates"] if update["package-ecosystem"] == "docker")
         ignored = {rule["dependency-name"]: rule.get("update-types") for rule in docker["ignore"]}

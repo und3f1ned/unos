@@ -23,7 +23,7 @@ CPU_SENSORS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("package_thermal", ()),  # RK3588 under the mainline kernel: the same sensor
     # SpacemiT K1 (Banana Pi BPI-F3) under the vendor's drivers (Armbian's current-spacemit
     # kernel): the first of the CPU's two clusters; top_thermal and gpu_thermal are the rest of the
-    # chip (ADR-0369).
+    # chip (ADR-0370).
     ("cluster0_thermal", ()),
 )
 

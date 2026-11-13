@@ -51,22 +51,35 @@ is not enough; the script then stops before it changes anything.
 ### Banana Pi BPI-F3 (SpacemiT K1, RISCV64)
 
 Written for Armbian 26.8 (Debian 13) with its `current-spacemit` kernel 6.18 on
-a BPI-F3 with 4 GB of RAM, the system on a microSD card and an NVMe drive in the
-M.2 slot (ADR-0369). Both images were built for RISCV64, but an installation on
-the board itself has not been checked yet.
+a BPI-F3 with 4 GB of RAM and the system on a microSD card (ADR-0370). Both
+images were built for RISCV64, but an installation on the board itself has not
+been checked yet.
 
 - **Build time.** `install.sh` and `update.sh` build both images on the board,
   as on every host. The first build of the supervisor compiles cryptography,
   bcrypt, cffi, psutil and uvloop, which publish no RISCV64 wheel, with a Rust
   toolchain that the image does not keep: expect the first installation to take
   tens of minutes. Keep Docker's data on a disk other than a microSD card where
-  you can.
-- **NVMe.** The K1's NVMe controller hangs under load ("QID 0 timeout, disable
-  controller") while the drive's power saving (APST) and the ASPM L1 of its PCIe
-  link are on, and on a TRIM of the whole drive. On a K1, `install.sh` adds the
-  udev rule `60-unos-k1-nvme.rules`, which turns both off whenever a drive
-  appears, and turns `fstrim.timer` off; UNOS then makes its pools with
-  `mkfs.btrfs --nodiscard` and mounts them with `nodiscard`. Do not add
+  you can, and make Docker wait for that disk: with a drop-in
+  `/etc/systemd/system/docker.service.d/data-root.conf` that says
+  `[Unit]` and `RequiresMountsFor=<the data root>`, a disk missing at boot keeps
+  Docker down instead of letting it start on an empty data root on the card.
+- **Disks for pools.** Use SATA disks behind an M.2-to-SATA adapter in the M.2
+  slot (a JMB582, which the kernel drives as AHCI, ran two SATA SSDs with TRIM),
+  or USB SSDs. They need nothing special: TRIM and the weekly `fstrim.timer`
+  work as on every host.
+- **NVMe is not recommended.** An NVMe drive in the M.2 slot hung under load
+  ("QID 0 timeout, disable controller") and on a TRIM of the whole drive, and
+  after a warm reboot its controller did not come back ("Device not ready;
+  aborting initialisation, CSTS=0x0"), even after 30 seconds without power; the
+  K1's PCIe driver does not switch the slot's power. For an NVMe drive used
+  anyway, `install.sh` adds the udev rule `60-unos-k1-nvme.rules`, which turns
+  off the drive's power saving (APST) and its PCIe link's ASPM L1 whenever it
+  appears, and UNOS makes a pool with an NVMe drive with `mkfs.btrfs --nodiscard`,
+  mounts it with `nodiscard` and keeps the weekly fstrim off it
+  (`X-fstrim.notrim`). That stopped the hangs under load, not the failure after a
+  reboot. Give an NVMe filesystem that UNOS does not manage the options
+  `nodiscard,X-fstrim.notrim` in `/etc/fstab` yourself. Do not add
   `pcie_aspm=off` or `nvme_core.default_ps_max_latency_us=0` to the kernel's
   command line instead: the board does not boot with them.
 - **Apps.** Most images of the App Store publish no RISCV64 build, and their
@@ -207,11 +220,10 @@ sudo apt install -y docker.io docker-compose docker-buildx
 sudo systemctl enable --now docker
 ```
 
-On a SpacemiT K1 (Banana Pi BPI-F3) with an NVMe drive, also set up what
+On a SpacemiT K1 (Banana Pi BPI-F3) that uses an NVMe drive, also set up what
 `configure_spacemit_k1` of `deploy/install.sh` writes: the script
 `/usr/local/sbin/unos-k1-nvme` and the udev rule
-`/etc/udev/rules.d/60-unos-k1-nvme.rules`, then run its `udevadm` commands and
-`systemctl disable --now fstrim.timer`
+`/etc/udev/rules.d/60-unos-k1-nvme.rules`, then run its `udevadm` commands
 (see [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)).
 
 ### Step 3: Clone UNOS

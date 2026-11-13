@@ -303,18 +303,30 @@ class TestCreatePoolGuards:
         mkfs_index = next(i for i, call in enumerate(nas.calls) if call[0] == "mkfs.btrfs")
         assert sum(call[0] == "lsblk" for call in nas.calls[:mkfs_index]) == 2
 
-    def test_on_a_spacemit_k1_mkfs_runs_without_trim(self, nas):
+    @pytest.mark.parametrize("devices", [["/dev/nvme0n1"], ["/dev/sdb", "/dev/nvme0n1"]], ids=["nvme", "sata-and-nvme"])
+    def test_on_a_spacemit_k1_a_pool_with_an_nvme_drive_is_made_without_trim(self, nas, devices):
         # mkfs.btrfs first TRIMs every device that supports it, and a TRIM of a whole device
-        # hangs the K1's NVMe controller: there the pool is made with --nodiscard and mounted
-        # with nodiscard (ADR-0369).
+        # hangs the K1's NVMe controller: a pool with an NVMe drive among its devices is made
+        # with --nodiscard and mounted with nodiscard there (ADR-0370).
         nas.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
+        profile = "single" if len(devices) == 1 else "raid1"
 
-        create(["/dev/nvme0n1"])
+        create(devices, raid_level=profile)
 
         assert nas.changes[0] == [
-            "mkfs.btrfs", "-L", "tank", "-d", "single", "-m", "single", "--nodiscard", "/dev/nvme0n1"]
+            "mkfs.btrfs", "-L", "tank", "-d", profile, "-m", profile, "--nodiscard", *devices]
         assert ["mount", "-t", "btrfs", "-o", "noatime,nodiscard", f"UUID={NEW_UUID}",
                 "/mnt/pools/tank"] in nas.changes
+
+    def test_on_a_spacemit_k1_a_sata_pool_is_made_with_trim(self, nas):
+        # SATA (through an M.2-to-SATA adapter) and USB disks are what the K1 should use: their
+        # pools are made and mounted as everywhere else (ADR-0370).
+        nas.files["/proc/device-tree/compatible"] = "spacemit,k1-x\0"
+
+        create(["/dev/sdb"])
+
+        assert nas.changes[0] == ["mkfs.btrfs", "-L", "tank", "-d", "single", "-m", "single", "/dev/sdb"]
+        assert ["mount", "-t", "btrfs", "-o", "noatime", f"UUID={NEW_UUID}", "/mnt/pools/tank"] in nas.changes
 
     def test_raid1_on_two_blank_disks(self, nas):
         nas.add_disk("sdd")

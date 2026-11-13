@@ -316,7 +316,7 @@ class TestDashboardTemperature:
             ),
             # The SpacemiT K1 of a Banana Pi BPI-F3 under Armbian's current-spacemit kernel, in the
             # order psutil lists them there: the NVMe drive's hwmon comes first, then the zones of
-            # the top of the chip, the GPU and the CPU's two clusters (ADR-0369).
+            # the top of the chip, the GPU and the CPU's two clusters (ADR-0370).
             pytest.param(
                 {"nvme": _NVME, "top_thermal": [_reading("", 65.0)], "gpu_thermal": [_reading("", 61.0)],
                  "cluster0_thermal": [_reading("", 71.0)], "cluster1_thermal": [_reading("", 70.0)]},

@@ -33,7 +33,7 @@ SMBD_RESTART_PENDING=""
 # /etc/exports.d are not UNOS's and stay.
 NFS_EXPORTS_FILE="/etc/exports.d/unos.exports"
 # The udev rule that install.sh writes on a SpacemiT K1, with the script it
-# runs (configure_spacemit_k1, ADR-0369). They stay, as the pools on NVMe do:
+# runs (configure_spacemit_k1, ADR-0370). They stay, as the pools on NVMe do:
 # print_completion names them.
 K1_NVME_RULE="/etc/udev/rules.d/60-unos-k1-nvme.rules"
 
@@ -436,10 +436,9 @@ print_completion() {
     echo ""
     if [ -f "$K1_NVME_RULE" ]; then
         echo "SpacemiT K1: the udev rule $K1_NVME_RULE keeps turning off the power"
-        echo "saving of the NVMe drives, and fstrim.timer stays off, because without that"
-        echo "the K1's NVMe controller hangs under load and on a TRIM. To undo both, run:"
+        echo "saving of NVMe drives, because without that an NVMe drive on the K1 can hang"
+        echo "under load. To remove it, run:"
         echo "  rm $K1_NVME_RULE /usr/local/sbin/unos-k1-nvme"
-        echo "  systemctl enable --now fstrim.timer"
         echo "and reboot."
         echo ""
     fi

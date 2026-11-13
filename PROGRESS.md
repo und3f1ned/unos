@@ -54,9 +54,11 @@ significant step. Features and their state live in `feature-list.json`, decision
   job, a restore in one streaming pass, no page polling the API, and renaming a user with its SMB
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), in the branch `deploy.riscv64-bpi-f3`, not merged: UNOS for the Banana Pi
-  BPI-F3 (SpacemiT K1, riscv64), ADR-0369 (proposed). Both images build for linux/riscv64; nothing
-  of it has run on the board yet. Once it is merged, the dev device's next supervisor build runs
-  its pip layer again: tell the owner first (`deploy/AGENTS.md`).
+  BPI-F3 (SpacemiT K1, riscv64), ADR-0370 (proposed; it superseded ADR-0369 that evening: on the
+  K1 only NVMe drives go without power saving and TRIM, and SATA is the recommended storage). Both
+  images build for linux/riscv64; nothing of it has run on the board yet. Once it is merged, the
+  dev device's next supervisor build runs its pip layer again: tell the owner first
+  (`deploy/AGENTS.md`).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -336,6 +338,32 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-13: On the K1 only NVMe drives go without power saving and TRIM (ADR-0370)
+
+- The owner's BPI-F3 showed that NVMe, not TRIM, is the K1's problem: its NVMe drive hung under
+  load and, after a warm reboot, never became ready again, and the slot's power is not switched by
+  the K1's PCIe driver. The board now runs two SATA SSDs in an md RAID1 behind a JMB582
+  M.2-to-SATA adapter, with TRIM and `fstrim.timer`. At the owner's request ADR-0370 supersedes
+  ADR-0369: `install.sh` no longer turns `fstrim.timer` off on a K1 (its udev rule touches NVMe
+  drives only), a pool is made with `--nodiscard` and mounted with `nodiscard` only when an NVMe
+  drive is among its devices, and its fstab entry then keeps fstrim off it with
+  `X-fstrim.notrim` (util-linux 2.41 on the board knows it); `docs/INSTALL.md` advises SATA
+  behind an M.2-to-SATA adapter or USB SSDs and advises against NVMe.
+- Checked as well: a pool's disk missing at boot leaves nothing on the system disk, since the
+  mountpoint of a pool that is not mounted is immutable and the supervisor mounts the pool at its
+  next start (ADR-0034); UNOS does not move Docker's data root, and `docs/INSTALL.md` now tells a
+  K1 host that moves it to make Docker require that mount, as the stack does with
+  `RequiresMountsFor=`. `install.sh` installs mdadm, which UNOS does not run, and Debian's mdadm
+  writes the arrays of old NAS disks into mdadm.conf: the new entry `deploy.no-unused-mdadm`.
+- Review in a fresh context: no blocker. Fixed: the ledger's steps, which wanted an NVMe pool to
+  survive a reboot on a board without one (the NVMe behaviour stays with the backend tests), the
+  mount again after a busy unmount, which now cannot fail on reading the pool's devices and keeps
+  TRIM off on a K1 whose devices it cannot read, the claim that the supervisor mounts a late disk
+  by itself, the advice to move Docker's data off the card without a guard, NVMe filesystems that
+  UNOS does not manage, and the tests of the import and of that mount again on a K1. Recorded in
+  ADR-0370: an NVMe drive below device mapper, or missing from a degraded pool, is not seen.
+- The board was only read over ssh. Open as before: every step on the board (ADR-0018).
 
 ### 2026-11-13: UNOS for the Banana Pi BPI-F3 (SpacemiT K1, riscv64), built but not yet on the board
 

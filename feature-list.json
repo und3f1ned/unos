@@ -4134,9 +4134,9 @@
       "steps": [
         "install.sh on a riscv64 host with Debian 13 or Ubuntu 24.04 installs the distribution's Docker Engine, Compose v2 and buildx, without Docker's repository",
         "Both images build on the board: the supervisor compiles the packages that publish no riscv64 wheel and keeps no Rust toolchain, and the web UI's builder runs Alpine's Node.js 22",
-        "On the K1 a udev rule turns off each NVMe drive's APST and its PCIe link's ASPM L1 whenever the drive appears, also late in the boot, and fstrim.timer is off",
-        "A pool created on the K1's NVMe drive is made with mkfs.btrfs --nodiscard and mounted with nodiscard, and is mounted again after a reboot",
-        "The dashboard shows the temperature of the K1's CPU (cluster0_thermal), not the NVMe drive's",
+        "On the K1 install.sh adds the udev rule that turns off the APST and ASPM L1 of NVMe drives as they appear, and leaves the power management of SATA and USB disks and fstrim.timer as they are",
+        "On the K1 a pool on SATA disks behind an M.2-to-SATA adapter is made and mounted with TRIM as on every host, fstrim.timer trims it, and it is mounted again after a reboot",
+        "The dashboard shows the temperature of the K1's CPU (cluster0_thermal), not that of the first sensor psutil lists",
         "scripts/dev/scenario.sh all passes on the board before and after a reboot"
       ],
       "verified_by": [
@@ -4149,9 +4149,9 @@
       "adr": [
         "ADR-0018",
         "ADR-0305",
-        "ADR-0369"
+        "ADR-0370"
       ],
-      "notes": "Built 2026-11-13 from a stack that ran on the owner's BPI-F3 (Armbian 26.8, Debian 13, kernel 6.18.45-current-spacemit, 4 GB, an NVMe drive in the M.2 slot). Checked off the board: on the workstation, docker buildx built both images for linux/riscv64 under QEMU from the pinned bases (the pip layer about 25 minutes: bcrypt, cryptography, psutil, cffi and uvloop compiled, cargo and rustc removed again in the same layer), and the riscv64 supervisor image imported src.main, round-tripped bcrypt and cryptography (OpenSSL 3.5) and answered GET /api/v1/health with 200 under uvicorn; the riscv64 web UI image ran npm ci and the build in the emulated builder and its Caddyfile validated; the arm64 images built as well. The udev rule passed udevadm verify of systemd 257, Debian 13's. Read on the board over ssh, without changing it: its device tree's compatible is spacemit,k1-x; its zones and hwmon groups are top_thermal, gpu_thermal, cluster0_thermal and cluster1_thermal after the NVMe drive's nvme group; Debian's docker.io 26.1.5, docker-compose 2.26.1 and docker-buildx 0.13.1; the NVMe drive's disk appears after the controller's identify, and in one boot 63 ms before local-fs-pre.target. Open: every step on the board itself (it runs another stack; making it a device for UNOS is the owner's call), and the device check and the reboot check of ADR-0018. The next supervisor build on the dev device runs its pip layer again (tell the owner first, deploy/AGENTS.md)."
+      "notes": "Built 2026-11-13 from the stack that runs on the owner's BPI-F3 (Armbian 26.8, Debian 13, kernel 6.18.45-current-spacemit, 4 GB), published as https://github.com/und3f1ned/bpi-f3-frigate-ha. That evening ADR-0370 superseded ADR-0369: the board's NVMe drive (Patriot P300, MAXIO MAP1202) hung under load and did not come back after a warm reboot (CSTS=0x0), so the owner moved it to two SATA SSDs in an md RAID1 behind a JMB582 M.2-to-SATA adapter (JMB585 197b:0585, AHCI), where TRIM works and fstrim.timer is on, and the K1's workarounds now apply to NVMe drives only. What UNOS does with an NVMe drive on a K1 (the udev rule's effect, mkfs.btrfs --nodiscard, nodiscard and X-fstrim.notrim for a pool with one) is shown by the backend tests only: the board has no NVMe drive any more, and the one it had did not come back after a reboot. Checked off the board: on the workstation, docker buildx built both images for linux/riscv64 under QEMU from the pinned bases (the pip layer about 25 minutes: bcrypt, cryptography, psutil, cffi and uvloop compiled, cargo and rustc removed again in the same layer), and the riscv64 supervisor image imported src.main, round-tripped bcrypt and cryptography (OpenSSL 3.5) and answered GET /api/v1/health with 200 under uvicorn; the riscv64 web UI image ran npm ci and the build in the emulated builder and its Caddyfile validated; the arm64 images built as well. The udev rule passed udevadm verify of systemd 257, Debian 13's. Read on the board over ssh, without changing it: its device tree's compatible is spacemit,k1-x; its zones and hwmon groups are top_thermal, gpu_thermal, cluster0_thermal and cluster1_thermal after the NVMe drive's nvme group; Debian's docker.io 26.1.5, docker-compose 2.26.1 and docker-buildx 0.13.1; the NVMe drive's disk appeared after the controller's identify, and in one boot 63 ms before local-fs-pre.target; util-linux 2.41's fstrim knows X-fstrim.notrim. Open: every step on the board itself (it runs another stack; making it a device for UNOS is the owner's call), and the device check and the reboot check of ADR-0018. The next supervisor build on the dev device runs its pip layer again (tell the owner first, deploy/AGENTS.md)."
     },
     {
       "id": "apps.catalog-platforms",
@@ -4166,7 +4166,7 @@
       "passes": false,
       "adr": [
         "ADR-0218",
-        "ADR-0369"
+        "ADR-0370"
       ],
       "notes": "Found with deploy.riscv64-bpi-f3: on riscv64, 6 of the 70 catalog images publish a linux/riscv64 build (docs/research/riscv64-support-2026-11-07.md, area 6), and the install of any other fails at the pull with Docker's error as a 500."
     },
@@ -4180,9 +4180,20 @@
       ],
       "passes": false,
       "adr": [
-        "ADR-0369"
+        "ADR-0370"
       ],
       "notes": "Like apps.rk3588-hardware-acceleration for the RK3588. Waits for riscv64 images of Frigate and of a detector: neither Frigate nor Home Assistant publishes one, and UNOS takes app images from their publishers. What such apps need, from the stack that runs Home Assistant and Frigate on the owner's BPI-F3 with Armbian's current-spacemit kernel 6.18, published as https://github.com/und3f1ned/bpi-f3-frigate-ha (November 2026): the VPU's firmware (Bianbu's package k1x-vpu-firmware 0.1.0) and its driver amvx, which does not load by itself (modules-load.d), with /dev/video0; for the decoders of Bianbu's ffmpeg (h264_stcodec, hevc_stcodec) the CMA heap /dev/dma_heap/linux,cma; for the NPU /dev/tcm and /dev/udma (spacemit-tcm); udev rules that give those devices to the group video; onnxruntime 1.24.2+spacemit with spacemit-ort 2.0.6 from SpacemiT's package index, imported before spacemit_ort, on cores 0 to 3, where YOLOv8n INT8 took about 10 ms; Frigate's zmq detector reaches it. stcodec hangs at the end of a stream (files loop through go2rtc), its -scale option corrupts frames, and the MPP library prints to stdout, which corrupts the raw frames ffmpeg writes there unless it is sent to stderr. The kernel's packages are held: the mainline kernel has neither the VPU nor the TCM driver."
+    },
+    {
+      "id": "deploy.no-unused-mdadm",
+      "category": "deploy",
+      "description": "install.sh installs no package that UNOS does not use, mdadm first, so that the disks of an old NAS are not assembled into md arrays",
+      "steps": [
+        "install.sh installs no mdadm, which no code of UNOS runs, or docs/INSTALL.md says what it is for",
+        "On a host whose disks carry the md superblocks of an old NAS, the installation adds no ARRAY line to /etc/mdadm/mdadm.conf and no array to the initramfs, and Storage lists those disks"
+      ],
+      "passes": false,
+      "notes": "Found with deploy.riscv64-bpi-f3 (ADR-0370) on 2026-11-13: install_dependencies of install.sh installs mdadm, which nothing in supervisor/src runs. On the owner's BPI-F3, installing Debian's mdadm wrote ARRAY lines for the arrays of old NAS disks into /etc/mdadm/mdadm.conf, which the initramfs carries; the stack there now removes them and rebuilds the initramfs. Not checked for UNOS: what Storage shows for such disks once their arrays are assembled."
     }
   ]
 }

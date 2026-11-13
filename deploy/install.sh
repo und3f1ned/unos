@@ -157,7 +157,7 @@ install_docker() {
     # Docker's repository has no packages for riscv64: Debian 13 and Ubuntu
     # 24.04 build Docker Engine, Compose v2 (the compose plugin; Debian's
     # package is docker-compose, Ubuntu's docker-compose-v2) and buildx for it
-    # (ADR-0369).
+    # (ADR-0370).
     if [ "$ARCH" = riscv64 ]; then
         local compose=docker-compose
         [ "$OS" = ubuntu ] && compose=docker-compose-v2
@@ -242,18 +242,19 @@ is_spacemit_k1() {
         tr '\0' '\n' < /proc/device-tree/compatible | grep -qxE 'spacemit,k1(-x)?'
 }
 
-# The NVMe controller of the SpacemiT K1 hangs under load ("QID 0 timeout,
-# disable controller") unless the drive's power saving (APST) and the ASPM L1
-# of its PCIe link are off, and the kernel parameters that would turn them off
-# (pcie_aspm=off, nvme_core.default_ps_max_latency_us=0) keep the BPI-F3 from
-# booting. The K1 may enumerate PCIe late in the boot, so udev turns them off
-# as each drive appears: ASPM L1 when its PCIe function appears, and APST once
-# its disk appears, since the driver adds the controller's APST setting only
-# after it has identified the drive. udev applies the rule to the drives there
-# are now. A TRIM of the whole device hangs the controller as well, so the
-# weekly fstrim.timer goes off; the supervisor makes and mounts pools without
-# TRIM there (ADR-0369). Elsewhere this does nothing. uninstall.sh keeps both:
-# the pools stay.
+# NVMe drives are not recommended on the SpacemiT K1 (docs/INSTALL.md): one hung
+# under load ("QID 0 timeout, disable controller") unless its power saving
+# (APST) and the ASPM L1 of its PCIe link were off, and the kernel parameters
+# that would turn them off (pcie_aspm=off, nvme_core.default_ps_max_latency_us=0)
+# keep the BPI-F3 from booting. For an NVMe drive that is used anyway, udev turns
+# them off as each drive appears, also when the K1 enumerates PCIe late in the
+# boot: ASPM L1 when its PCIe function appears, and APST once its disk appears,
+# since the driver adds the controller's APST setting only after it has
+# identified the drive. udev applies the rule to the drives there are now. It
+# touches NVMe drives only: SATA and USB disks keep their power management and
+# TRIM, and fstrim.timer stays as it is; the supervisor keeps TRIM off the pools
+# with an NVMe drive (ADR-0370). Elsewhere this does nothing. uninstall.sh keeps
+# the rule: the pools stay.
 configure_spacemit_k1() {
     is_spacemit_k1 || return 0
     log_info "Configuring NVMe for the SpacemiT K1..."
@@ -262,7 +263,7 @@ configure_spacemit_k1() {
     cat > /usr/local/sbin/unos-k1-nvme << 'EOF'
 #!/bin/sh
 # UNOS (install.sh): turns off the power saving of each NVMe drive of this
-# SpacemiT K1 and of its PCIe link (ADR-0369); 60-unos-k1-nvme.rules runs it.
+# SpacemiT K1 and of its PCIe link (ADR-0370); 60-unos-k1-nvme.rules runs it.
 # 0 in pm_qos_latency_tolerance_us makes the driver turn APST off; 0 in
 # l1_aspm turns ASPM L1 off.
 for controller in /sys/class/nvme/nvme*; do
@@ -279,7 +280,7 @@ exit 0
 EOF
     chmod 755 /usr/local/sbin/unos-k1-nvme
     cat > /etc/udev/rules.d/60-unos-k1-nvme.rules << 'EOF'
-# UNOS (install.sh): NVMe power saving off on the SpacemiT K1 (ADR-0369).
+# UNOS (install.sh): NVMe power saving off on the SpacemiT K1 (ADR-0370).
 # ASPM L1 of an NVMe drive's PCIe link goes off when the function appears;
 # APST once the drive's disk appears, after the driver has identified it.
 ACTION=="add|change", SUBSYSTEM=="pci", ATTR{class}=="0x010802", ATTR{link/l1_aspm}="0"
@@ -288,11 +289,8 @@ EOF
     udevadm control --reload
     udevadm trigger --action=change --subsystem-match=pci --attr-match=class=0x010802
     udevadm trigger --action=change --subsystem-match=block --sysname-match='nvme*'
-    if systemctl cat fstrim.timer >/dev/null 2>&1; then
-        systemctl disable --now fstrim.timer
-    fi
 
-    log_success "SpacemiT K1: NVMe power saving off whenever a drive appears, no weekly TRIM"
+    log_success "SpacemiT K1: NVMe power saving off whenever an NVMe drive appears"
 }
 
 # Create UNOS user and directories

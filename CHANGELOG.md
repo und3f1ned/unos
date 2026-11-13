@@ -332,13 +332,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   RISCV64 only, compiles cryptography, bcrypt, cffi, psutil and uvloop with a
   Rust toolchain that it removes again; the web UI's builder runs Alpine 3.22's
   Node.js 22 on every platform, since the `node` image has no RISCV64 build. On
-  a SpacemiT K1, `install.sh` adds the udev rule `60-unos-k1-nvme.rules`, which
-  turns off the NVMe drives' APST and their PCIe link's ASPM L1 whenever a drive
-  appears, and turns `fstrim.timer` off; pools there are made with `mkfs.btrfs --nodiscard` and
-  mounted with `nodiscard`, because the K1's NVMe controller hangs otherwise.
-  The dashboard shows the K1's CPU temperature (`cluster0_thermal`) instead of
-  the NVMe drive's. `uninstall.sh` names the distribution's Docker packages and
-  keeps the K1's rule (ADR-0369).
+  a K1, SATA disks behind an M.2-to-SATA adapter or USB SSDs are the recommended
+  storage and need nothing special; NVMe is not recommended. For an NVMe drive
+  used anyway, `install.sh` adds the udev rule `60-unos-k1-nvme.rules`, which
+  turns off the drive's APST and its PCIe link's ASPM L1 whenever it appears,
+  and a pool with an NVMe drive is made with `mkfs.btrfs --nodiscard`, mounted
+  with `nodiscard` and kept out of the weekly fstrim (`X-fstrim.notrim`): the
+  K1's NVMe drives hang otherwise. The dashboard shows the K1's CPU temperature
+  (`cluster0_thermal`) instead of the first sensor psutil lists. `uninstall.sh`
+  names the distribution's Docker packages and keeps the K1's rule (ADR-0370).
 - Administrators rename users in the **Users** page's edit dialog
   (`PUT /api/v1/auth/users/{id}` with `new_username` and the current
   `username`): the user signs in with the new name, the old one is refused,
