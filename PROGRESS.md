@@ -59,8 +59,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   root on the pool, and Home Assistant and Frigate beside UNOS, their data in `apps/` of the pool.
   The board has no administrator account of UNOS yet, so its first-run setup is open to the LAN:
   the owner makes the account, then a dev.env for the board, and the scenario checks run before
-  and after a reboot. Once the branch is merged, the dev device's next supervisor build runs its
-  pip layer again: tell the owner first (`deploy/AGENTS.md`).
+  and after a reboot. UNOS's idle load stays within the budget of ADR-0374 there: the supervisor
+  3.5% of a core with no dashboard open (ADR-0375). Once the branch is merged, the dev device's
+  next supervisor build runs its pip layer again: tell the owner first (`deploy/AGENTS.md`).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -340,6 +341,29 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-13: The idle load of UNOS within a budget on the BPI-F3 (ADR-0374, ADR-0375)
+
+- The owner found the board at about half its CPU and memory and 71 C without a fan, and asked
+  that such load never happen again. Most of it was a test video that Frigate decoded and searched
+  in a loop (its camera `test` is now off in the stack's config, on the pool), the rest UNOS's:
+  each open dashboard tab took a stats sample every two seconds in the event loop, 0.4 s of the
+  K1's CPU each (the list of 311 host processes), the walk for upload leftovers went through
+  Docker's data root on the pool, and the healthcheck started a Python every 10 seconds, 0.5 s of
+  CPU each. ADR-0374 (d76096a) shares one sample between the tabs, in a worker thread, with the
+  process list at most every 10 s, leaves Docker's data root out of the walk, and gives
+  `scripts/dev/check.sh` a section that fails for a container of UNOS above 15% of a core or a
+  thermal zone within 5 C of its first passive trip. ADR-0375 (07f9c47): the healthcheck asks
+  with bash over `/dev/tcp` (0.01 s) and the process list reads the ten it shows in full only
+  (0.41 s to 0.13 s).
+- Measured on the board with the cgroup's CPU counter, `install.sh` of 07f9c47: unos-supervisor
+  3.5% of a core with no dashboard open (its process 2.9%, spread over the event loop and four
+  worker threads; before, peaks of 40 to 46% every ten seconds), 5.6% with two simulated tabs
+  (two threads that call `shared_system_stats` every two seconds in the container; before, with
+  one real tab, 15.5% on average and peaks of 58.8%); unos-webui 0.3%; load average 0.2; the
+  thermal zones 45 to 47 C.
+- Review in a fresh context: no finding. Not done: the same measurement with two real tabs,
+  which needs the owner's sign-in, so `system.idle-load-budget` does not pass yet.
 
 ### 2026-11-13: UNOS deployed on the BPI-F3, with Home Assistant and Frigate on its pool
 

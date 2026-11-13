@@ -4235,7 +4235,7 @@
         "ADR-0374",
         "ADR-0375"
       ],
-      "notes": "Found on the owner's BPI-F3 on 2026-11-13 (deploy.riscv64-bpi-f3): an open dashboard cost the supervisor 25 to 64% of a core, one sample 0.4 s of the K1's CPU, and the walk for upload leftovers went through Docker's data root on the pool."
+      "notes": "Found on the owner's BPI-F3 on 2026-11-13 (deploy.riscv64-bpi-f3): an open dashboard cost the supervisor 25 to 64% of a core, one sample 0.4 s of the K1's CPU, and the walk for upload leftovers went through Docker's data root on the pool. After ADR-0375 (07f9c47) on the board: unos-supervisor 3.5% of a core with no dashboard open, 5.6% with two simulated tabs (threads calling shared_system_stats every 2 s); with two real tabs not yet measured (needs the owner's sign-in)."
     }
   ]
 }
