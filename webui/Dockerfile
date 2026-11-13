@@ -17,10 +17,9 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
-# Node.js 22's optimizing compiler Maglev stops this build on a SpacemiT K1 with "Fatal error ...
-# unreachable code" (SIGTRAP), though not under QEMU: on riscv64 vite runs without it, which takes
-# about 9 minutes on the K1. Elsewhere npm run build, which is vite build (ADR-0371).
-RUN if [ "$(uname -m)" = riscv64 ]; then node --no-maglev node_modules/vite/bin/vite.js build; else npm run build; fi
+# On a SpacemiT K1, Node.js crashes now and then in the middle of this build, so install.sh and
+# update.sh take the web UI's image of a K1 from another machine (ADR-0373).
+RUN npm run build
 
 FROM caddy:2-alpine@sha256:f2b257f20955d6be2229bed86bad24193eeb8c4dc962a4031a6eb42344ffa457
 

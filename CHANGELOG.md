@@ -327,11 +327,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   (SpacemiT K1): `install.sh` accepts `riscv64` and installs the
   distribution's `docker.io`, `docker-buildx` and `docker-compose` (Debian) or
   `docker-compose-v2` (Ubuntu), since Docker's repository has no RISCV64
-  packages. Both images build on the host as elsewhere: the supervisor's pip
-  layer installs pip 26.3 (the base's 24.0 ignores RISCV64 wheels) and, on
-  RISCV64 only, compiles cryptography, bcrypt, cffi, psutil and uvloop with a
-  Rust toolchain that it removes again; the web UI's builder runs Alpine 3.22's
-  Node.js 22 on every platform, since the `node` image has no RISCV64 build. On
+  packages. The supervisor's pip layer installs pip 26.3 (the base's 24.0
+  ignores RISCV64 wheels) and, on RISCV64 only, compiles cryptography, bcrypt,
+  cffi, psutil and uvloop with a Rust toolchain that it removes again; the web
+  UI's builder runs Alpine 3.22's Node.js 22 on every platform, since the `node`
+  image has no RISCV64 build. Node.js crashes on the K1 while it builds the web
+  UI, so there `install.sh` and `update.sh` build only the supervisor and start
+  the web UI from an image `deploy-webui:latest` made on another machine
+  (`docker buildx build --platform linux/riscv64`); `install.sh` stops with
+  those commands without one, and `update.sh` reminds to load the new one. On
   a K1, SATA disks behind an M.2-to-SATA adapter or USB SSDs are the recommended
   storage and need nothing special; NVMe is not recommended. For an NVMe drive
   used anyway, `install.sh` adds the udev rule `60-unos-k1-nvme.rules`, which
@@ -340,7 +344,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   with `nodiscard` and kept out of the weekly fstrim (`X-fstrim.notrim`): the
   K1's NVMe drives hang otherwise. The dashboard shows the K1's CPU temperature
   (`cluster0_thermal`) instead of the first sensor psutil lists. `uninstall.sh`
-  names the distribution's Docker packages and keeps the K1's rule (ADR-0370).
+  names the distribution's Docker packages and keeps the K1's rule (ADR-0370,
+  ADR-0373).
 - Administrators rename users in the **Users** page's edit dialog
   (`PUT /api/v1/auth/users/{id}` with `new_username` and the current
   `username`): the user signs in with the new name, the old one is refused,

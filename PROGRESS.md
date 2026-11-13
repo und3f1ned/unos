@@ -54,11 +54,13 @@ significant step. Features and their state live in `feature-list.json`, decision
   job, a restore in one streaming pass, no page polling the API, and renaming a user with its SMB
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), in the branch `deploy.riscv64-bpi-f3`, not merged: UNOS for the Banana Pi
-  BPI-F3 (SpacemiT K1, riscv64), ADR-0370 (proposed; it superseded ADR-0369 that evening: on the
-  K1 only NVMe drives go without power saving and TRIM, and SATA is the recommended storage). Both
-  images build for linux/riscv64; nothing of it has run on the board yet. Once it is merged, the
-  dev device's next supervisor build runs its pip layer again: tell the owner first
-  (`deploy/AGENTS.md`).
+  BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. It runs on the owner's BPI-F3
+  (10.1.1.56) from this branch, with the pool `data` (btrfs RAID1 on two SATA SSDs), Docker's data
+  root on the pool, and Home Assistant and Frigate beside UNOS, their data in `apps/` of the pool.
+  The board has no administrator account of UNOS yet, so its first-run setup is open to the LAN:
+  the owner makes the account, then a dev.env for the board, and the scenario checks run before
+  and after a reboot. Once the branch is merged, the dev device's next supervisor build runs its
+  pip layer again: tell the owner first (`deploy/AGENTS.md`).
 - On the device the NFS server runs (nfs-server, rpcbind.socket and rpcbind, enabled since
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
@@ -338,6 +340,37 @@ Open owner actions:
    `shares.rollback-era-safeguards` among them.
 
 ## Log
+
+### 2026-11-13: UNOS deployed on the BPI-F3, with Home Assistant and Frigate on its pool
+
+- At the owner's request ("deploy UNOS on the board, then the custom Home Assistant and Frigate
+  containers by the rules of UNOS; do everything yourself"), on the board that ran the stack of
+  github.com/und3f1ned/bpi-f3-frigate-ha. `install.sh` from a bundle of this branch set up the
+  host and built the supervisor on the board (about 35 minutes); the web UI's build crashed in
+  Node.js 22 twice, also with `--no-maglev` (nodejs/node#66845), so ADR-0373 superseded ADR-0371:
+  on a K1 the web UI's image comes from another machine, and `install.sh` and `update.sh` build
+  only the supervisor there. Its image was made from static files built on the workstation, and
+  `install.sh`'s own functions started UNOS and its unit.
+- Storage (ADR-0372, the owner's decisions): the stack's data (15 GB with Docker's) was copied to
+  a USB disk and checked with checksums, the md RAID1 of the two SATA SSDs was taken apart (fstab,
+  mdadm.conf and the initramfs follow; the old files are kept as `*.k1-before-unos`), UNOS's
+  `create_pool` made the pool `data` (btrfs RAID1, with TRIM), and Docker's data root (the
+  subvolume `.docker`) and the apps' data moved to it. The stack runs with a `compose.override.yaml` (data in `apps/<app>`, log
+  rotation). Downtime of the cameras: 15:44 to 16:04 and 16:26 to 16:40 MSK.
+- Checked on the board: Frigate's detector on the NPU about 24 ms, its camera at 5 fps; Home
+  Assistant answers; UNOS's health 200; the pool healthy; `fstrim` trimmed the pool;
+  `cpu_temperature` is cluster0's. After the reboot of 16:43 MSK everything came back by itself
+  (the pool 203 s into the boot, Docker at 220 s) with 3.2 MiB written to the microSD card.
+- Review in a fresh context: no blocker. Fixed: a rollback of `update.sh` on a K1 gives
+  `deploy-webui:latest` back to the previous image, so it now says to load the new one again; the
+  subvolume of Docker's data root is `.docker`, which the Storage page neither lists nor deletes
+  as a volume (it was `docker`); the steps of `docs/INSTALL.md` for a fresh K1 (a first run of
+  `install.sh` before the image, `scp` and `docker load -i` instead of a pipe into sudo, QEMU's
+  binfmt, the manual build and upgrade).
+- Not done: the administrator account of UNOS and the board's dev.env (passwords, the owner's),
+  so `scripts/dev/scenario.sh` did not run and `deploy.riscv64-bpi-f3` does not pass yet. The USB
+  disk keeps the checked copy of the old data. The board's sshd allows root to sign in with a
+  password (Armbian's setting); root's key login of `scripts/dev/` was added.
 
 ### 2026-11-13: On the K1 only NVMe drives go without power saving and TRIM (ADR-0370)
 

@@ -403,7 +403,8 @@ and this index, and `make check-fast` runs it.
 | [0338](0338-health-checks-ordered-start-and-an-access-log-of-refused-and-failed-requests.md) | Both containers have health checks, the web UI waits for a healthy supervisor, and the access log keeps only refused and failed requests | accepted | 2026-11-11 |
 | [0369](0369-unos-runs-on-the-banana-pi-bpi-f3-with-images-built-on-the-host-and-no-nvme-power-saving-or-trim-on-the-k1.md) | UNOS runs on the Banana Pi BPI-F3 with both images built on the host, and its SpacemiT K1 keeps NVMe drives without power saving or TRIM | superseded by [0370](0370-on-the-spacemit-k1-only-nvme-drives-go-without-power-saving-and-trim-and-sata-is-the-recommended-storage.md) | 2026-11-13 |
 | [0370](0370-on-the-spacemit-k1-only-nvme-drives-go-without-power-saving-and-trim-and-sata-is-the-recommended-storage.md) | UNOS runs on the Banana Pi BPI-F3 with both images built on the host, and on its SpacemiT K1 only NVMe drives go without power saving and TRIM | proposed | 2026-11-13 |
-| [0371](0371-on-riscv64-the-web-ui-builder-runs-vite-without-the-maglev-compiler.md) | On riscv64 the web UI's builder runs vite without Node.js's Maglev compiler | proposed | 2026-11-13 |
+| [0371](0371-on-riscv64-the-web-ui-builder-runs-vite-without-the-maglev-compiler.md) | On riscv64 the web UI's builder runs vite without Node.js's Maglev compiler | superseded by [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | 2026-11-13 |
+| [0373](0373-the-web-ui-image-of-a-spacemit-k1-is-built-on-another-machine.md) | The web UI's image of a SpacemiT K1 is built on another machine, and install.sh and update.sh build only the supervisor there | proposed | 2026-11-13 |
 
 ## Device
 
@@ -436,6 +437,7 @@ and this index, and `make check-fast` runs it.
 | [0314](0314-the-scrub-scenario-check-scrubs-the-pool-cancels-a-scrub-and-runs-a-scheduled-one.md) | The scrub scenario check scrubs the pool, cancels a scrub and runs a scheduled one | accepted | 2026-11-09 |
 | [0340](0340-the-shares-scenario-check-makes-a-guest-share-a-users-own-smb-activation-and-a-repair.md) | The shares scenario check makes a guest share, a user's own SMB activation and a repair | accepted | 2026-11-11 |
 | [0341](0341-the-restore-scenario-check-restores-a-backup-it-made-moments-before.md) | The restore scenario check restores a backup it made moments before | accepted | 2026-11-11 |
+| [0372](0372-the-bpi-f3-keeps-its-pool-docker-data-root-and-home-assistant-and-frigate-data-on-its-two-ssds.md) | The BPI-F3 keeps its pool, Docker's data root and the data of its Home Assistant and Frigate stack on its two SSDs | accepted | 2026-11-13 |
 
 ## Testing
 

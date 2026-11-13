@@ -76,6 +76,8 @@ DOCKER_STUB = textwrap.dedent(
       done
     }
     case "$1" in
+      # no-webui-image: no image deploy-webui:latest has been loaded.
+      image) if [ "$2" = inspect ] && has no-webui-image; then exit 1; fi ;;
       # stopped: the supervisor's container exists but does not run; its /data is $STUB_DIR/data.
       cp)
         if [ "$3" = - ]; then tar -C "$STUB_DIR" -cf - data; else cp "$STUB_DIR/${2#unos-supervisor:/}" "$3"; fi ;;
@@ -461,6 +463,26 @@ class TestUpdateScript:
         assert "UNOS is already up to date!" in result.stdout
         assert (sandbox / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v1.0.0"]
 
+    def test_on_a_spacemit_k1_only_the_supervisor_is_built(self, sandbox):
+        # The web UI's image of a K1 comes from another machine (ADR-0373): update.sh builds the
+        # supervisor alone, starts the web UI image that is there, and says so.
+        result, calls = _run_update(sandbox, overrides="is_spacemit_k1() { true; }")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [call for call in calls if call.startswith("docker compose build")] == [
+            "docker compose build --no-cache supervisor"
+        ]
+        assert "deploy-webui:latest" in result.stdout and "another machine" in result.stdout
+
+    def test_on_a_spacemit_k1_a_rollback_asks_to_load_the_web_ui_image_again(self, sandbox):
+        # The rollback tags deploy-webui:latest as the previous image again, so the image of the
+        # new version that was loaded for the update loses its tag (ADR-0373).
+        result, calls = _run_update(sandbox, "build-fails", overrides="is_spacemit_k1() { true; }")
+
+        assert result.returncode == 1
+        assert "docker image tag deploy-webui:previous deploy-webui" in calls
+        assert "load the web UI image of the new version again" in " ".join(result.stdout.split())
+
     def test_failed_build_leaves_the_running_version_alone(self, sandbox):
         before = _head(sandbox)
 
@@ -802,10 +824,11 @@ def _install_lib(tmp_path, paths):
     return lib
 
 
-def _start_install(tmp_path, *scenario):
+def _start_install(tmp_path, *scenario, prelude=""):
     """check_compose_wait, start_unos and create_systemd_service of install.sh
-    with the docker stub of the update sandbox. Returns the result, the docker
-    calls and the ExecStart lines of the unit (None without a unit)."""
+    with the docker stub of the update sandbox, after the shell code `prelude`.
+    Returns the result, the docker calls and the ExecStart lines of the unit
+    (None without a unit)."""
     (tmp_path / "install" / "deploy").mkdir(parents=True)
     (tmp_path / "etc-systemd-system").mkdir()
     bin_dir = tmp_path / "bin"
@@ -821,13 +844,14 @@ def _start_install(tmp_path, *scenario):
     lib = _install_lib(tmp_path, ["/etc/systemd/system", "/etc/unos"])
 
     result = subprocess.run(
-        ["bash", "-c", '. "$LIB"; check_compose_wait; start_unos; create_systemd_service'],
+        ["bash", "-c", '. "$LIB"; eval "$PRELUDE"; check_compose_wait; start_unos; create_systemd_service'],
         env={
             **os.environ,
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "LIB": str(lib),
             "STUB_DIR": str(stub_dir),
             "UNOS_INSTALL_DIR": str(tmp_path / "install"),
+            "PRELUDE": prelude,
         },
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -1527,6 +1551,39 @@ class TestInstallScript:
         for n, pci in enumerate(["0001:01:00.0", "0002:01:00.0"]):
             assert (sys / "class" / "nvme" / f"nvme{n}" / "power" / "pm_qos_latency_tolerance_us").read_text() == "0\n"
             assert (sys / "devices" / pci / "link" / "l1_aspm").read_text() == "0\n"
+
+    # On a SpacemiT K1 (is_spacemit_k1 replaced, as the device tree would answer).
+    K1 = "is_spacemit_k1() { true; }"
+
+    def test_on_a_spacemit_k1_only_the_supervisor_is_built_beside_a_loaded_web_ui_image(self, tmp_path):
+        # Node.js crashes on the K1 while it builds the web UI (nodejs/node#66845): its image comes
+        # from another machine, and install.sh builds the supervisor alone (ADR-0373).
+        result, calls, exec_start = _start_install(tmp_path, prelude=self.K1)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "docker image inspect deploy-webui:latest" in calls
+        assert [call for call in calls if call.startswith("docker compose build")] == ["docker compose build supervisor"]
+        assert any(call.startswith("docker compose up") for call in calls)
+        assert exec_start
+
+    def test_on_a_spacemit_k1_without_a_web_ui_image_it_stops_and_says_how_to_load_one(self, tmp_path):
+        result, calls, exec_start = _start_install(tmp_path, "no-webui-image", prelude=self.K1)
+        text = self._text(result)
+
+        assert result.returncode == 1
+        assert not [call for call in calls
+                    if call.startswith(("docker compose build", "docker compose up")) and "--help" not in call]
+        assert exec_start is None
+        assert "docker buildx build --platform linux/riscv64 -t deploy-webui:latest --load webui" in text
+        assert "docker save -o deploy-webui.tar deploy-webui:latest" in text
+        assert "sudo docker load -i deploy-webui.tar" in text
+
+    def test_elsewhere_both_images_are_built(self, tmp_path):
+        result, calls, _ = _start_install(tmp_path, "no-webui-image")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [call for call in calls if call.startswith("docker compose build")] == ["docker compose build"]
+        assert "docker image inspect deploy-webui:latest" not in calls
 
     @pytest.mark.parametrize(
         "compatible", [None, "rockchip,rk3588-evb1-v10\0rockchip,rk3588\0"], ids=["pc", "rk3588"],
@@ -3334,20 +3391,6 @@ class TestContinuousIntegration:
         assert int(builder[0]) >= 22
         assert setup_node == builder
         assert engines == {"node": f">={builder[0]}"}
-
-    def test_the_builder_runs_vite_without_maglev_on_riscv64(self):
-        # Node.js 22's optimizing compiler Maglev stops the build on a SpacemiT K1 with "Fatal
-        # error ... unreachable code" (SIGTRAP), while a QEMU riscv64 build passes; vite runs
-        # without Maglev on riscv64, and elsewhere as package.json's build script (ADR-0371).
-        dockerfile = (REPO_ROOT / "webui" / "Dockerfile").read_text()
-        builds = [line.strip() for line in dockerfile.splitlines() if line.strip().startswith("RUN") and "build" in line]
-        scripts = json.loads((REPO_ROOT / "webui" / "package.json").read_text())["scripts"]
-
-        assert builds == [
-            'RUN if [ "$(uname -m)" = riscv64 ]; then node --no-maglev node_modules/vite/bin/vite.js build; '
-            "else npm run build; fi"
-        ]
-        assert scripts["build"] == "vite build"
 
     def test_dependabot_keeps_the_alpine_release_of_the_builder(self):
         # A new Alpine release can bring another major version of Node.js: Dependabot proposes

@@ -1,13 +1,16 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-13
 area: deploy
 decided-by: agent
+superseded-by: ADR-0373
 ---
 
 # ADR-0371: On riscv64 the web UI's builder runs vite without Node.js's Maglev compiler
 
 ## Context
+
+Superseded by ADR-0373: the build crashed without Maglev as well, so the web UI's image of a SpacemiT K1 is built on another machine.
 
 The first `deploy/install.sh` on a Banana Pi BPI-F3 (SpacemiT K1) stopped in the web UI's builder
 (ADR-0370): Alpine 3.22's Node.js 22.23.5 ended `vite build` after about five minutes with "Fatal

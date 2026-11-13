@@ -50,20 +50,38 @@ is not enough; the script then stops before it changes anything.
 
 ### Banana Pi BPI-F3 (SpacemiT K1, RISCV64)
 
-Written for Armbian 26.8 (Debian 13) with its `current-spacemit` kernel 6.18 on
-a BPI-F3 with 4 GB of RAM and the system on a microSD card (ADR-0370). Both
-images were built for RISCV64, but an installation on the board itself has not
-been checked yet.
+Checked on Armbian 26.8 (Debian 13) with its `current-spacemit` kernel 6.18 on
+a BPI-F3 with 4 GB of RAM and the system on a microSD card (ADR-0370, ADR-0372,
+ADR-0373).
 
-- **Build time.** `install.sh` and `update.sh` build both images on the board,
-  as on every host. The first build of the supervisor compiles cryptography,
-  bcrypt, cffi, psutil and uvloop, which publish no RISCV64 wheel, with a Rust
-  toolchain that the image does not keep: expect the first installation to take
-  tens of minutes. Keep Docker's data on a disk other than a microSD card where
-  you can, and make Docker wait for that disk: with a drop-in
-  `/etc/systemd/system/docker.service.d/data-root.conf` that says
-  `[Unit]` and `RequiresMountsFor=<the data root>`, a disk missing at boot keeps
-  Docker down instead of letting it start on an empty data root on the card.
+- **The web UI's image comes from another machine.** Node.js crashes now and
+  then on the K1 in the middle of the web UI's build (nodejs/node#66845), so on
+  a K1 `install.sh` and `update.sh` build only the supervisor and start the web
+  UI from the image `deploy-webui:latest`. Make it for each version on a machine
+  with Docker that runs linux/riscv64 images (Docker Desktop does; elsewhere
+  `docker run --privileged --rm tonistiigi/binfmt --install riscv64`), in the
+  root of the same checkout, and load it on the board:
+
+  ```bash
+  docker buildx build --platform linux/riscv64 -t deploy-webui:latest --load webui
+  docker save -o deploy-webui.tar deploy-webui:latest
+  scp deploy-webui.tar <the board>:
+  ```
+
+  and on the board `sudo docker load -i deploy-webui.tar`. On a fresh board
+  Docker comes with `install.sh`: its first run sets up the host, then stops at
+  the build and prints these commands; load the image and run it again. Before
+  `update.sh`, load the image of the new version; when an update is rolled
+  back, load it again.
+- **Build time.** The supervisor is built on the board. Its build compiles
+  cryptography, bcrypt, cffi, psutil and uvloop, which publish no RISCV64 wheel,
+  with a Rust toolchain that the image does not keep: about 35 minutes, and
+  `update.sh` builds it again, without a cache, for each update. Keep Docker's data
+  on a disk other than a microSD card where you can, and make Docker wait for
+  that disk: with a drop-in `/etc/systemd/system/docker.service.d/data-root.conf`
+  that says `[Unit]` and `RequiresMountsFor=<the data root>`, a disk missing at
+  boot keeps Docker down instead of letting it start on an empty data root on
+  the card.
 - **Disks for pools.** Use SATA disks behind an M.2-to-SATA adapter in the M.2
   slot (a JMB582, which the kernel drives as AHCI, ran two SATA SSDs with TRIM),
   or USB SSDs. They need nothing special: TRIM and the weekly `fstrim.timer`
@@ -86,6 +104,57 @@ been checked yet.
   installation fails when Docker pulls them.
 - **Temperature.** The dashboard shows the CPU's first cluster
   (`cluster0_thermal`).
+
+#### Home Assistant and Frigate beside UNOS on a BPI-F3
+
+The App Store cannot install the K1 builds of Home Assistant and Frigate, whose
+images [bpi-f3-frigate-ha](https://github.com/und3f1ned/bpi-f3-frigate-ha)
+builds on the board. The owner's BPI-F3 runs them beside UNOS by UNOS's rules
+for apps (ADR-0372):
+
+- The pool `data`: a btrfs RAID1 that UNOS made on two SATA SSDs behind a
+  JMB582 M.2-to-SATA adapter.
+- Docker's data root on the pool: `{"data-root": "/mnt/pools/data/.docker"}` in
+  `/etc/docker/daemon.json`, a btrfs subvolume whose name starts with a dot, so
+  that the Storage page does not list it as a volume, and
+  `RequiresMountsFor=/mnt/pools/data/.docker` in a drop-in of `docker.service`.
+  Without the pool neither Docker nor UNOS's web UI starts; the microSD card
+  holds the system only.
+- The stack stays its own compose project. A `compose.override.yaml` beside its
+  `compose.yaml` puts the data of each app below `apps/<app>` of the pool, as
+  UNOS does for the apps it installs, and rotates the containers' logs at 10 MB,
+  3 files, as UNOS does for its own:
+
+  ```yaml
+  x-logging: &logging
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+  services:
+    k1det:
+      logging: *logging
+      volumes:
+        - /mnt/pools/data/apps/frigate/models:/models
+        - /mnt/pools/data/apps/k1det/run:/run/k1det
+    mosquitto:
+      logging: *logging
+      volumes:
+        - /mnt/pools/data/apps/mosquitto/data:/mosquitto/data
+    frigate:
+      logging: *logging
+      volumes:
+        - /mnt/pools/data/apps/frigate/config:/config
+        - /mnt/pools/data/apps/frigate/models:/config/model:ro
+        - /mnt/pools/data/apps/frigate/media:/media/frigate
+        - /mnt/pools/data/apps/k1det/run:/run/k1det
+    homeassistant:
+      logging: *logging
+      volumes:
+        - /mnt/pools/data/apps/homeassistant/config:/config
+        - /mnt/pools/data/apps/homeassistant/cache:/root/.cache
+  ```
+
+  UNOS lists these containers on its Containers page and keeps the pool
+  mounted while they use it.
 
 ### Network Requirements
 
@@ -334,6 +403,10 @@ cd /opt/unos/deploy
 sudo docker compose build
 sudo docker compose --env-file /etc/unos/secrets.env up -d
 ```
+
+On a SpacemiT K1, load the web UI's image first and build only the supervisor
+(`sudo docker compose build supervisor`): see
+[Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64).
 
 smbd takes the ports and the cache directory of the smb.conf that UNOS writes
 at its first start only when it restarts, not when it reloads the file. Once
@@ -767,7 +840,8 @@ running can hold its own `unos.db-wal`, which goes back together with
 cd /opt/unos
 sudo git pull --ff-only
 
-# Build while the current version keeps running
+# Build while the current version keeps running (on a SpacemiT K1: load the
+# web UI's image of the new version, then build only the supervisor)
 cd deploy
 sudo docker compose build --no-cache
 
