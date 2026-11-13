@@ -2989,12 +2989,14 @@ class TestHealthchecks:
     @pytest.mark.parametrize("status, exit_code", [(200, 0), (503, 1), (None, 1)])
     def test_supervisor_is_healthy_only_while_the_api_answers(self, status, exit_code):
         check = _compose_file("docker-compose.yml")["services"]["supervisor"]["healthcheck"]
-        # The image (python:3.11-slim) has neither curl nor wget.
-        assert check["test"][:3] == ["CMD", "python", "-c"]
-        code = check["test"][3]
+        # The image (python:3.11-slim) has neither curl nor wget, and a Python that only asked for
+        # the health cost a K1 0.5 s of CPU every interval; bash costs it 0.01 s (ADR-0375).
+        assert check["test"][:3] == ["CMD", "bash", "-c"]
+        # Compose reads $$ as $.
+        code = check["test"][3].replace("$$", "$")
         assert code.count(SUPERVISOR_HEALTH_URL) == 1
-        # The request gives up before Docker kills the check.
-        request_timeout = re.search(r"timeout=(\d+)", code)
+        # The check waits for the answer less long than Docker gives it.
+        request_timeout = re.search(r"read -r -t (\d+) ", code)
         assert request_timeout, code
         assert int(request_timeout.group(1)) < _seconds(check["timeout"])
 
@@ -3003,7 +3005,7 @@ class TestHealthchecks:
             # A proxy in the container's environment must not get the request.
             env["http_proxy"] = env["HTTP_PROXY"] = f"http://127.0.0.1:{proxy_port}"
             result = subprocess.run(
-                [sys.executable, "-c", code.replace(SUPERVISOR_HEALTH_URL, f"http://127.0.0.1:{port}/api/v1/health")],
+                ["bash", "-c", code.replace(SUPERVISOR_HEALTH_URL, f"http://127.0.0.1:{port}/api/v1/health")],
                 env=env,
                 capture_output=True,
                 text=True,

@@ -65,6 +65,37 @@ def test_the_process_list_is_taken_at_most_every_process_list_interval(monkeypat
     assert second["data"]["processes"] == first["data"]["processes"]
 
 
+def test_only_the_listed_processes_are_read_in_full(monkeypatch, clock):
+    """Name, memory, status and user of each of 311 processes cost a K1 0.41 s of CPU, the CPU
+    share alone 0.13 s: the listing reads the CPU share of every process and the rest for the ten
+    on the dashboard only (ADR-0375)."""
+    asked = []
+    real = psutil.process_iter
+
+    def recording(attrs=None, *args, **kwargs):
+        asked.append(attrs)
+        return real(attrs, *args, **kwargs)
+
+    users = []
+    real_username = psutil.Process.username
+
+    def username(self):
+        users.append(self.pid)
+        return real_username(self)
+
+    monkeypatch.setattr(events.psutil, "process_iter", recording)
+    monkeypatch.setattr(psutil.Process, "username", username)
+
+    processes = events.get_system_stats()["data"]["processes"]
+
+    assert asked == [["cpu_percent"]]
+    assert 0 < len(processes) <= 10
+    assert sorted(users) == sorted(proc["pid"] for proc in processes)
+    shares = [proc["cpu_percent"] for proc in processes]
+    assert shares == sorted(shares, reverse=True)
+    assert set(processes[0]) == {"pid", "name", "cpu_percent", "memory_percent", "memory_mb", "status", "username"}
+
+
 def test_the_stats_message_has_one_shape():
     """system.no-legacy-basic-stats (ADR-0207): the flat fields kept for backward compatibility
     (cpu_percent, memory_used and the others) are gone, as is the disk usage of the container's

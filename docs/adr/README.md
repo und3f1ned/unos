@@ -361,6 +361,7 @@ and this index, and `make check-fast` runs it.
 | [0356](0356-the-nut-password-is-write-only-and-upsc-runs-on-the-host.md) | The NUT password of the UPS settings is write-only, and upsc runs on the host, where its absence makes the UPS unavailable | accepted | 2026-11-12 |
 | [0366](0366-system-logs-follows-new-journal-entries-over-the-journal-socket.md) | System > Logs reads every source from the host's journal, newest first, and its Auto follows new entries over the journal socket | accepted | 2026-11-12 |
 | [0374](0374-unos-keeps-its-idle-load-within-a-budget-and-check-sh-reports-load-and-heat.md) | UNOS keeps its idle load within a budget, and check.sh reports load and heat | accepted | 2026-11-13 |
+| [0375](0375-the-supervisor-s-healthcheck-runs-bash-and-the-process-list-reads-ten-processes-in-full.md) | The supervisor's healthcheck runs bash, and the process list reads ten processes in full | accepted | 2026-11-13 |
 
 ## Web UI
 

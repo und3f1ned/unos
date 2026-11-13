@@ -883,6 +883,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   and listed every process of the host each time (0.4 s of CPU on a SpacemiT
   K1). One sample now serves every tab, taken in a worker thread, and the
   process list is taken at most every 10 seconds (ADR-0374).
+- The supervisor's healthcheck started a Python every 10 seconds, 0.5 s of CPU
+  each on a SpacemiT K1; it now asks with bash, 0.01 s. The dashboard's process
+  list reads name, memory, status and user of the ten processes it shows only
+  (ADR-0375).
 - The check for leftovers of uploads after a start no longer walks Docker's
   data root when a host keeps it on a pool, with its image layers and the root
   filesystems of the running containers (ADR-0374).

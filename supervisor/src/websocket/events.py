@@ -144,28 +144,34 @@ def shared_system_stats() -> dict:
 def _top_processes() -> list[dict]:
     """The ten processes of the host that use the most CPU, listed again only when the last list is
     PROCESS_LIST_INTERVAL_SECONDS old; psutil gives each process's CPU share since the listing
-    before."""
+    before. Only the CPU share is read for every process, the rest for the ten: on a K1, name,
+    memory, status and user of 311 processes took 0.41 s of CPU, their CPU shares 0.13 s
+    (ADR-0375)."""
     global _processes, _processes_at
     now = _clock()
     if _processes_at is not None and now - _processes_at < PROCESS_LIST_INTERVAL_SECONDS:
         return _processes
+    listed = sorted(
+        psutil.process_iter(["cpu_percent"]), key=lambda proc: proc.info["cpu_percent"] or 0, reverse=True
+    )
     processes = []
-    for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "memory_info", "status", "username"]):
+    for proc in listed:
+        if len(processes) == 10:
+            break
         try:
-            info = proc.info
-            processes.append({
-                "pid": info["pid"],
-                "name": info["name"] or "Unknown",
-                "cpu_percent": info["cpu_percent"] or 0,
-                "memory_percent": info["memory_percent"] or 0,
-                "memory_mb": (info["memory_info"].rss / 1024 / 1024) if info["memory_info"] else 0,
-                "status": info["status"] or "unknown",
-                "username": info["username"] or "unknown"
-            })
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    processes.sort(key=lambda x: x["cpu_percent"], reverse=True)
-    _processes, _processes_at = processes[:10], now
+            info = proc.as_dict(["name", "memory_percent", "memory_info", "status", "username"], ad_value=None)
+        except psutil.NoSuchProcess:
+            continue
+        processes.append({
+            "pid": proc.pid,
+            "name": info["name"] or "Unknown",
+            "cpu_percent": proc.info["cpu_percent"] or 0,
+            "memory_percent": info["memory_percent"] or 0,
+            "memory_mb": (info["memory_info"].rss / 1024 / 1024) if info["memory_info"] else 0,
+            "status": info["status"] or "unknown",
+            "username": info["username"] or "unknown"
+        })
+    _processes, _processes_at = processes, now
     return _processes
 
 
