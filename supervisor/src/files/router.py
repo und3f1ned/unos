@@ -2151,7 +2151,20 @@ def _mount_roots() -> set[tuple[int, int]] | None:
     return roots
 
 
-def _find_upload_leftovers(now: datetime) -> tuple[list[_FoundLeftover], list[str]]:
+def _docker_data_root() -> str | None:
+    """Docker's data root as Docker names it, or None when Docker does not answer. A host may keep
+    it on a pool (ADR-0372); _find_upload_leftovers leaves it out (ADR-0374)."""
+    from ..containers import docker as docker_ops
+
+    try:
+        return docker_ops.get_client().info().get("DockerRootDir") or None
+    except Exception:
+        return None
+
+
+def _find_upload_leftovers(
+    now: datetime, skipped: frozenset[str] = frozenset()
+) -> tuple[list[_FoundLeftover], list[str]]:
     """The leftovers of uploads below the pools directory, by path, and the folders that could not be read.
 
     It walks every folder from the pools directory down, also on the
@@ -2161,7 +2174,9 @@ def _find_upload_leftovers(now: datetime) -> tuple[list[_FoundLeftover], list[st
     folder again is not walked twice. For that it remembers only the roots
     of mounts that it walked (_mount_roots), so its memory does not grow
     with the number of folders; every folder only when the mount table
-    cannot be read. The trash and the snapshots are left out. It only reads.
+    cannot be read. The trash and the snapshots are left out, and so are the folders of
+    ``skipped`` (absolute paths): Docker's data root, whose image layers and mounted container
+    roots hold no upload and cost minutes of a slow board's CPU (ADR-0374). It only reads.
     """
     found: list[_FoundLeftover] = []
     problems: list[str] = []
@@ -2184,7 +2199,9 @@ def _find_upload_leftovers(now: datetime) -> tuple[list[_FoundLeftover], list[st
             with os.scandir(fd) as entries:
                 for entry in entries:
                     if entry.is_dir(follow_symlinks=False):
-                        if entry.name not in (TRASH, _SNAPSHOTS):
+                        if entry.name not in (TRASH, _SNAPSHOTS) and (
+                            not skipped or os.path.join(_base_dir(), *parts, entry.name) not in skipped
+                        ):
                             subfolders.append(entry.name)
                     elif _UPLOAD_TEMP_NAME.fullmatch(entry.name):
                         try:
@@ -2228,9 +2245,17 @@ def _find_upload_leftovers(now: datetime) -> tuple[list[_FoundLeftover], list[st
     return found, problems
 
 
+def _find_upload_leftovers_outside_docker(now: datetime) -> tuple[list[_FoundLeftover], list[str]]:
+    """_find_upload_leftovers without Docker's data root (ADR-0374)."""
+    root = _docker_data_root()
+    if root is None:
+        return _find_upload_leftovers(now)
+    return _find_upload_leftovers(now, frozenset({os.path.normpath(root)}))
+
+
 async def _run_upload_leftover_check() -> None:
     try:
-        found, problems = await asyncio.to_thread(_find_upload_leftovers, _now())
+        found, problems = await asyncio.to_thread(_find_upload_leftovers_outside_docker, _now())
     except OSError as exc:  # the pools directory cannot be read
         found, problems = [], [_unreadable([], exc)]
     _leftovers.found, _leftovers.problems, _leftovers.checked = found, problems, _now()

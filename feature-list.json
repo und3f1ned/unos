@@ -4212,6 +4212,27 @@
         "ADR-0373"
       ],
       "notes": "Proposed by docs/research/riscv64-support-2026-11-07.md. Found again with deploy.riscv64-bpi-f3: Node.js crashes on the K1 in the web UI's build, so a K1 cannot install or update UNOS alone (ADR-0373), and update.sh compiles the supervisor's Rust and C packages on the board for about 35 minutes each time."
+    },
+    {
+      "id": "system.idle-load-budget",
+      "category": "system",
+      "description": "UNOS keeps its idle load within a budget on a slow board, also with a dashboard open, and the device check reports load and heat",
+      "steps": [
+        "Every socket of /ws/v1/events gets the same stats sample, taken at most once per interval in a worker thread, and the process list in it at most every 10 seconds",
+        "The check for leftovers of uploads leaves out Docker's data root on a pool",
+        "scripts/dev/check.sh shows each container's CPU and the temperatures, and fails for a container of UNOS above 15% of a core or a thermal zone within 5 C of its first passive trip",
+        "On the BPI-F3, with a dashboard open in two tabs, unos-supervisor stays below 15% of a core on average"
+      ],
+      "verified_by": [
+        "supervisor/tests/test_ws_stats.py",
+        "supervisor/tests/test_upload_leftovers.py",
+        "supervisor/tests/test_dev_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0374"
+      ],
+      "notes": "Found on the owner's BPI-F3 on 2026-11-13 (deploy.riscv64-bpi-f3): an open dashboard cost the supervisor 25 to 64% of a core, one sample 0.4 s of the K1's CPU, and the walk for upload leftovers went through Docker's data root on the pool."
     }
   ]
 }

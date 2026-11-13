@@ -106,6 +106,29 @@ class TestEventsSocket:
             assert ws.receive_json() == {"type": "auth_ok"}
             assert ws.receive_json()["type"] == "stats"
 
+    def test_stats_are_sampled_outside_the_event_loop(self, client, user_token, monkeypatch):
+        """A sample in the event loop held every request of the API meanwhile (ADR-0374)."""
+        monkeypatch.setattr(events, "_sample", None)
+        monkeypatch.setattr(events, "_sample_at", None)
+        where = []
+
+        def sample():
+            try:
+                asyncio.get_running_loop()
+                where.append("event loop")
+            except RuntimeError:
+                where.append("worker thread")
+            return {"type": "stats", "data": {}}
+
+        monkeypatch.setattr(events, "get_system_stats", sample)
+
+        with client.websocket_connect("/ws/v1/events") as ws:
+            _auth(ws, user_token)
+            assert ws.receive_json() == {"type": "auth_ok"}
+            assert ws.receive_json()["type"] == "stats"
+
+        assert where and set(where) == {"worker thread"}
+
     def test_api_token_is_accepted(self, client, ws_db):
         full_token, token_hash = generate_api_token()
         with Session(ws_db.engine) as session:

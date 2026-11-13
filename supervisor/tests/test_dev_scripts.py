@@ -736,6 +736,8 @@ STUB_DOCKER = textwrap.dedent(
     elif args[0] == "images":
         if "-q" not in args:
             print("deploy-supervisor:latest  sha256:1  2 days ago  300MB")
+    elif args[0] == "stats" and args[1:] == ["--no-stream", "--format", "{{.Name}} {{.CPUPerc}}"]:
+        print(os.environ.get("FAKE_DOCKER_STATS", "unos-supervisor 2.00%\\nunos-webui 0.10%\\ntransmission 50.00%"))
     else:
         sys.exit(f"the docker stub does not know {args}")
     """
@@ -774,6 +776,7 @@ def test_check_sh_shows_every_containers_log_configuration(local_device):
     device.stub("nft", STUB_NFT_LIST)
     device.stub("python3", "#!/usr/bin/env bash\necho 200\n")  # the API's health check
     device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    device.stub("sleep", "#!/usr/bin/env bash\nexit 0\n")  # between the readings of docker stats
     host_name = "box-" + secrets.token_hex(4)
     device.stub("hostname", f"#!/usr/bin/env bash\necho {host_name}\n")
     result = device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable,
@@ -834,6 +837,7 @@ def test_check_sh_reports_a_missing_ipv6_filter_as_a_problem(local_device, unit,
     device.stub("nft", STUB_NFT_LIST)
     device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
     device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    device.stub("sleep", "#!/usr/bin/env bash\nexit 0\n")  # between the readings of docker stats
     result = device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable,
                         FAKE_UNIT=unit, FAKE_NFT_TABLE=table)
     out = result.stdout
@@ -860,9 +864,73 @@ def test_check_sh_reports_samba_and_network_discovery_problems(local_device, env
     device.stub("nft", STUB_NFT_LIST)
     device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
     device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    device.stub("sleep", "#!/usr/bin/env bash\nexit 0\n")  # between the readings of docker stats
     result = device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable, **env)
     out = result.stdout
     assert f"- {problem}" in out and "check: problems" in out and result.returncode == 1, out + result.stderr
+
+
+def _thermal_zones(folder: Path, zones: list[tuple[str, int, list[tuple[str, int]]]]) -> Path:
+    """A /sys/class/thermal in ``folder``: zones of (type, degrees, [(trip type, degrees), ...])."""
+    for n, (kind, degrees, trips) in enumerate(zones):
+        zone = folder / f"thermal_zone{n}"
+        zone.mkdir(parents=True)
+        (zone / "type").write_text(f"{kind}\n")
+        (zone / "temp").write_text(f"{degrees * 1000}\n")
+        for t, (trip, trip_degrees) in enumerate(trips):
+            (zone / f"trip_point_{t}_type").write_text(f"{trip}\n")
+            (zone / f"trip_point_{t}_temp").write_text(f"{trip_degrees * 1000}\n")
+    return folder
+
+
+# The thermal zones of a SpacemiT K1 (BPI-F3) under Armbian's current-spacemit kernel.
+K1_TRIPS = [("passive", 75), ("passive", 85), ("hot", 95), ("hot", 105), ("critical", 115)]
+
+
+def _run_check(device, tmp_path, zones, **env):
+    device.stub("docker", STUB_DOCKER)
+    device.stub("systemctl", STUB_SYSTEMCTL)
+    device.stub("nft", STUB_NFT_LIST)
+    device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
+    device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    device.stub("sleep", "#!/usr/bin/env bash\nexit 0\n")
+    thermal = _thermal_zones(tmp_path / "thermal", zones)
+    return device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable,
+                      UNOS_CHECK_THERMAL_DIR=str(thermal), **env)
+
+
+def test_check_sh_shows_the_containers_cpu_and_the_temperatures(local_device, tmp_path):
+    """Nobody saw a BPI-F3 run at 71 C without a fan, 4 degrees below the point where its kernel
+    slows the CPU down, nor UNOS's supervisor take half a core while a dashboard was open: check.sh
+    shows each container's CPU, averaged over five readings, and each thermal zone (ADR-0374)."""
+    zones = [("cluster0_thermal", 53, K1_TRIPS), ("gpu_thermal", 52, [("active", 40)])]
+    result = _run_check(local_device, tmp_path, zones)
+    out = result.stdout
+    section = out.split("== load and temperature", 1)[1].split("\n== ", 1)[0]
+    assert "transmission: 50.0% of a core" in section, out + result.stderr
+    assert "unos-supervisor: 2.0% of a core" in section and "unos-webui: 0.1% of a core" in section
+    assert "cluster0_thermal: 53 C, first passive trip 75 C" in section
+    assert "gpu_thermal: 52 C" in section
+    assert "check: OK" in out and result.returncode == 0, out + result.stderr
+
+
+def test_check_sh_reports_unos_over_its_cpu_budget(local_device, tmp_path):
+    """UNOS's containers stay within 15% of a core on average, also with a dashboard open
+    (ADR-0374); the supervisor took 25 to 64% before."""
+    stats = "unos-supervisor 64.00%\nunos-webui 0.10%\nfrigate 190.00%"
+    result = _run_check(local_device, tmp_path, [("cluster0_thermal", 53, K1_TRIPS)], FAKE_DOCKER_STATS=stats)
+    out = result.stdout
+    assert "- unos-supervisor used 64.0% of a core on average, more than its budget of 15% (ADR-0374)" in out, out
+    assert "frigate" not in out.split("check: problems", 1)[1]
+    assert result.returncode == 1
+
+
+def test_check_sh_reports_a_board_near_its_throttling_point(local_device, tmp_path):
+    result = _run_check(local_device, tmp_path, [("cluster0_thermal", 71, K1_TRIPS)])
+    out = result.stdout
+    assert ("- cluster0_thermal is at 71 C, within 5 C of its first passive trip (75 C), where the "
+            "kernel slows the CPU down: the board needs cooling or less load") in out, out + result.stderr
+    assert result.returncode == 1
 
 
 @pytest.mark.parametrize("enabled", ["none", "masked", "static"])
@@ -874,6 +942,7 @@ def test_check_sh_takes_an_nmbd_that_cannot_start(local_device, enabled):
     device.stub("nft", STUB_NFT_LIST)
     device.stub("python3", "#!/usr/bin/env bash\necho 200\n")
     device.stub("sync", "#!/usr/bin/env bash\nexit 0\n")
+    device.stub("sleep", "#!/usr/bin/env bash\nexit 0\n")  # between the readings of docker stats
     result = device.run(DEV / "check.sh", FAKE_SSH_MODE="local", UNOS_DEV_PYTHON=sys.executable, FAKE_NMBD_ENABLED=enabled)
     out = result.stdout
     shown = "unknown" if enabled == "none" else enabled

@@ -1,6 +1,68 @@
-"""The stats message of /ws/v1/events (ADR-0006)."""
+"""The stats message of /ws/v1/events (ADR-0006, ADR-0374)."""
+
+import psutil
+import pytest
 
 from src.websocket import events
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """A fresh sampler on a clock that the test moves: a list of one time in seconds."""
+    now = [1000.0]
+    monkeypatch.setattr(events, "_clock", lambda: now[0])
+    monkeypatch.setattr(events, "_sample", None)
+    monkeypatch.setattr(events, "_sample_at", None)
+    monkeypatch.setattr(events, "_processes", [])
+    monkeypatch.setattr(events, "_processes_at", None)
+    return now
+
+
+def test_one_sample_serves_every_socket_of_an_interval(monkeypatch, clock):
+    """Every open socket took a sample of its own every two seconds: on a SpacemiT K1 0.4 s of CPU
+    each, and as much again for every further tab (ADR-0374). One sample now serves every socket
+    until it is STATS_INTERVAL_SECONDS old."""
+    taken = []
+
+    def sample():
+        taken.append(clock[0])
+        return {"type": "stats", "data": {"sample": len(taken)}}
+
+    monkeypatch.setattr(events, "get_system_stats", sample)
+
+    first = [events.shared_system_stats() for _ in range(5)]
+    clock[0] += events.STATS_INTERVAL_SECONDS / 2
+    later = events.shared_system_stats()
+    clock[0] += events.STATS_INTERVAL_SECONDS
+    next_one = events.shared_system_stats()
+
+    assert taken == [1000.0, 1000.0 + events.STATS_INTERVAL_SECONDS * 1.5]
+    assert all(message is first[0] for message in [*first, later])
+    assert next_one["data"] == {"sample": 2}
+
+
+def test_the_process_list_is_taken_at_most_every_process_list_interval(monkeypatch, clock):
+    """The list of the host's processes was most of a sample's cost: 0.4 s of a K1's CPU for 315
+    processes. A sample reuses the last list until it is PROCESS_LIST_INTERVAL_SECONDS old
+    (ADR-0374)."""
+    listings = []
+    real = psutil.process_iter
+
+    def counting(*args, **kwargs):
+        listings.append(clock[0])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(events.psutil, "process_iter", counting)
+
+    first = events.get_system_stats()
+    clock[0] += events.STATS_INTERVAL_SECONDS
+    second = events.get_system_stats()
+    clock[0] += events.PROCESS_LIST_INTERVAL_SECONDS
+    events.get_system_stats()
+
+    assert events.PROCESS_LIST_INTERVAL_SECONDS >= 5 * events.STATS_INTERVAL_SECONDS
+    assert len(listings) == 2
+    assert second["data"]["processes"] == first["data"]["processes"]
 
 
 def test_the_stats_message_has_one_shape():

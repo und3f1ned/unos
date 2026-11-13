@@ -323,6 +323,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
+- `scripts/dev/check.sh` shows each container's CPU, the load average and the
+  temperatures, and reports a container of UNOS above 15% of a core or a
+  thermal zone within 5 C of its throttling point as a problem (ADR-0374).
 - RISCV64 hosts on Debian 13 and Ubuntu 24.04, made for the Banana Pi BPI-F3
   (SpacemiT K1): `install.sh` accepts `riscv64` and installs the
   distribution's `docker.io`, `docker-buildx` and `docker-compose` (Debian) or
@@ -875,6 +878,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   smb.conf as UNOS wrote it.
 
 ### Fixed
+- The dashboard's live stats cost a slow board a large share of a core: every
+  open tab took its own sample every two seconds, in the supervisor's event loop,
+  and listed every process of the host each time (0.4 s of CPU on a SpacemiT
+  K1). One sample now serves every tab, taken in a worker thread, and the
+  process list is taken at most every 10 seconds (ADR-0374).
+- The check for leftovers of uploads after a start no longer walks Docker's
+  data root when a host keeps it on a pool, with its image layers and the root
+  filesystems of the running containers (ADR-0374).
 - Escape closes only the dialog on top when one dialog opens over another:
   turning **Allow SMB access** off in a user's edit dialog now asks over that
   dialog, which stays open, and Escape closes the question first, then the
