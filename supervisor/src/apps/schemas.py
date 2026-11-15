@@ -98,6 +98,9 @@ class HardwareProfile(BaseModel):
     # and write, when the host has them. The container stays unprivileged: its root opens
     # them whatever their owner and mode, and the device cgroup allows these nodes only.
     devices: list[str]
+    # Those of the devices without which the app cannot use the hardware: the profile applies,
+    # and the catalog API names it, only on a host that has every one of them.
+    requires: list[str]
     # Paths that Docker masks in every unprivileged container and the app must read: the rest
     # of Docker's masks stay (hardware.DOCKER_MASKED_PATHS).
     unmasked_paths: list[str] = []
@@ -176,6 +179,8 @@ class InstalledApp(BaseModel):
     # The app runs in the group unos-smb: its container's PGID is 70000
     # (ADR-0274). Only such an app is given a share's folder.
     runs_in_unos_smb: bool = False
+    # The host's device nodes passed into the container (ADR-0377), as Docker keeps them.
+    devices: list[str] = []
 
 
 class AppPool(BaseModel):
@@ -212,3 +217,6 @@ class AppInstallResponse(BaseModel):
     # Pool holding the app's data (None if the app stores nothing on a pool).
     pool: str | None = None
     volumes: list[AppVolume] = []
+    # The host's device nodes passed into the container (ADR-0377): none where no hardware
+    # profile of the app applies, or where the host could not be read.
+    devices: list[str] = []

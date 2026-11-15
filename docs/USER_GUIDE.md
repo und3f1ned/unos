@@ -1023,22 +1023,28 @@ on a mounted pool.
 
 ### Hardware Acceleration
 
-On a NAS with a Rockchip RK3588 (such as the Banana Pi BPI-W3), Jellyfin's
+On a NAS with a Rockchip RK3588 (such as the Banana Pi BPI-W3) under
+Rockchip's kernel (5.10 or 6.1, such as Armbian's `vendor` kernel), Jellyfin's
 card shows **Hardware acceleration**, and its details say what it gets: UNOS
 installs it with the chip's video decoders and encoders (Rockchip MPP), its 2D
 engine (RGA) and its GPU, those of `/dev/dri`, `/dev/dma_heap`,
 `/dev/mpp_service`, `/dev/rga` and `/dev/mali0` that the NAS has, in a
 container without privileged mode. The container can read the NAS's device
 tree, which Rockchip MPP reads to know the chip, and runs without Docker's
-AppArmor profile, which forbids that. Rockchip MPP needs Rockchip's kernel
-(5.10 or 6.1), such as Armbian's `vendor` kernel; under another kernel the app
-gets only the nodes that exist, and transcodes in software.
+AppArmor profile, which forbids that. Only Rockchip's kernel has Rockchip
+MPP's `/dev/mpp_service`: under another kernel, such as the mainline kernel,
+the App Store says nothing about hardware and Jellyfin is installed as on any
+other NAS, and transcodes in software.
 
 UNOS does not change Jellyfin's settings: in Jellyfin, choose **Dashboard** >
 **Playback** > **Transcoding** > **Hardware acceleration**: **Rockchip MPP
-(RKMPP)**, and tick the codecs to decode in hardware. On any other NAS the App
-Store says nothing about hardware, and apps are installed as before. Immich
-from the App Store does not use the RK3588's NPU.
+(RKMPP)**, and tick the codecs to decode in hardware. The details of an
+installed Jellyfin say this only when its container has the hardware. One
+installed without it, as when UNOS could not look for the device nodes during
+the install, gets a warning there instead: uninstall it (its data folders are
+kept) and install it again on the same pool to give it the hardware. On any
+other NAS the App Store says nothing about hardware, and apps are installed as
+before. Immich from the App Store does not use the RK3588's NPU.
 
 ### Share Folders for Apps
 

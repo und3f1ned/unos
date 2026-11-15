@@ -98,14 +98,16 @@ export const en = {
 	'apps.detail.runsInUnosSmb':
 		'{name} runs in the group unos-smb (PUID {puid}, PGID {pgid}): it reads and changes the files of the share folders it was given.',
 	// The hardware of the host's SoC that an app gets (ADR-0377): the badge of its card, the hint's
-	// title, what a hardware profile gives (by its id; generic for one without a text of its own)
-	// and what to choose in the app (by the app's id). Jellyfin's menu is named as in its English
-	// interface.
+	// title, what a hardware profile gives (by its id; generic for one without a text of its own),
+	// what to choose in the app (by the app's id) and the warning for an installed app whose
+	// container did not get it. Jellyfin's menu is named as in its English interface.
 	'apps.hardware.badge': 'Hardware acceleration',
 	'apps.hardware.title': 'Hardware acceleration',
 	'apps.hardware.generic': 'UNOS installs {name} with the hardware of this NAS that the app uses.',
 	'apps.hardware.profile.rk3588Video':
-		"UNOS installs {name} with the video hardware of this NAS's Rockchip RK3588 that its kernel provides: the video decoders and encoders (MPP), the RGA and the GPU, in a container without privileged mode. Rockchip MPP needs Rockchip's kernel (5.10 or 6.1).",
+		"UNOS installs {name} with the video hardware of this NAS's Rockchip RK3588 that its kernel provides: the video decoders and encoders (MPP), the RGA and the GPU, in a container without privileged mode.",
+	'apps.hardware.missing':
+		'{name} was installed without the hardware of this NAS that it can use, so hardware acceleration does not work in it. To give it the hardware, uninstall {name} (its data folders are kept) and install it again on the same pool.',
 	'apps.hardware.setting.jellyfin':
 		'In Jellyfin, choose Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP), and the codecs to decode in hardware.',
 	'apps.detail.tabs.overview': 'Overview',
@@ -260,7 +262,9 @@ export const ru: Translation<typeof en> = {
 	'apps.hardware.title': 'Аппаратное ускорение',
 	'apps.hardware.generic': 'UNOS устанавливает {name} с оборудованием этого NAS, которое использует приложение.',
 	'apps.hardware.profile.rk3588Video':
-		'UNOS устанавливает {name} с видеооборудованием Rockchip RK3588 этого NAS, которое даёт его ядро: видеодекодерами и кодировщиками (MPP), RGA и GPU, в контейнере без привилегированного режима. Rockchip MPP работает только с ядром Rockchip (5.10 или 6.1).',
+		'UNOS устанавливает {name} с видеооборудованием Rockchip RK3588 этого NAS, которое даёт его ядро: видеодекодерами и кодировщиками (MPP), RGA и GPU, в контейнере без привилегированного режима.',
+	'apps.hardware.missing':
+		'Приложение {name} установлено без оборудования этого NAS, которое оно может использовать, поэтому аппаратное ускорение в нём не работает. Чтобы дать ему это оборудование, удалите {name} (папки с данными останутся) и установите его снова в тот же пул.',
 	'apps.hardware.setting.jellyfin':
 		'В Jellyfin выберите Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP) (так пункты названы в английском интерфейсе Jellyfin) и отметьте кодеки для аппаратного декодирования.',
 	'apps.detail.tabs.overview': 'Обзор',

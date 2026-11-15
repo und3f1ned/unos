@@ -323,15 +323,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   `ups_name`, `host` and `port` are checked before they reach `upsc`.
 
 ### Added
-- On a Rockchip RK3588 (such as the Banana Pi BPI-W3), Jellyfin from the App
-  Store is installed with the chip's video hardware for Rockchip MPP (RKMPP):
-  those of `/dev/dri`, `/dev/dma_heap`, `/dev/mpp_service`, `/dev/rga` and
-  `/dev/mali0` that the host has, Docker's masks without `/sys/firmware` (MPP
-  reads the SoC from the device tree) and no AppArmor profile, without
-  privileged mode. The App Store shows **Hardware acceleration** on its card
-  and says in its details to choose **Rockchip MPP (RKMPP)** in Jellyfin; the
-  catalog API answers an app's `hardware` profiles of the host's SoC only. On
-  other hosts nothing changes. `scripts/dev/scenario.sh hardware` checks what
+- On a Rockchip RK3588 (such as the Banana Pi BPI-W3) whose kernel has
+  Rockchip MPP's `/dev/mpp_service`, Jellyfin from the App Store is installed
+  with the chip's video hardware for Rockchip MPP (RKMPP): those of `/dev/dri`,
+  `/dev/dma_heap`, `/dev/mpp_service`, `/dev/rga` and `/dev/mali0` that the
+  host has, Docker's masks without `/sys/firmware` (MPP reads the SoC from the
+  device tree) and no AppArmor profile, without privileged mode. The App Store
+  shows **Hardware acceleration** on its card and says in its details to
+  choose **Rockchip MPP (RKMPP)** in Jellyfin, or, for an installed Jellyfin
+  whose container lacks the hardware, that reinstalling it gives it; the
+  catalog API answers an app's `hardware` profiles that apply on the host
+  only, and the install's answer and the installed apps list the `devices`
+  their containers got. On other hosts, an RK3588 under the mainline kernel
+  included, nothing changes. `scripts/dev/scenario.sh hardware` checks what
   the App Store offers on the dev device and the nodes the host has (ADR-0377).
 - `scripts/dev/check.sh` shows each container's CPU, the load average and the
   temperatures, and reports a container of UNOS above 15% of a core or a

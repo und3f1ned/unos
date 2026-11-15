@@ -50,6 +50,7 @@ from src.shares.models import SmbShare
 
 # The package re-exports its APIRouter as ``router``; import the module.
 apps_router = importlib.import_module("src.apps.router")
+hardware_module = importlib.import_module("src.apps.hardware")
 audit_router = importlib.import_module("src.audit.router")
 
 INSTALL = "/api/v1/apps/install"
@@ -200,9 +201,14 @@ def docker_client(monkeypatch):
     return client
 
 
-# What the host of the hardware reads answers (src/apps/hardware.py, ADR-0377).
+# What the host of the hardware reads answers (src/apps/hardware.py, ADR-0377). The device tree
+# is read by a shell that exits 3 where the host has none (NO_DEVICE_TREE).
 DEVICE_TREE = "/proc/device-tree/compatible"
-NO_DEVICE_TREE = HostResult(1, "", f"cat: {DEVICE_TREE}: No such file or directory")
+NO_DEVICE_TREE = HostResult(3, "", "")
+
+
+def _reads_device_tree(cmd: list[str]) -> bool:
+    return cmd[:2] == ["/bin/sh", "-c"] and cmd[3:] == ["unos-device-tree", DEVICE_TREE]
 
 
 @pytest.fixture(autouse=True)
@@ -210,14 +216,17 @@ def soc(monkeypatch):
     """The host for the reads of its SoC and device nodes: no device tree, as on a PC, until a
     test gives it a ``compatible`` (the bytes of /proc/device-tree/compatible) and ``devices``
     (the device nodes it has). ``commands`` records every host command; one that the fake does
-    not know fails the test."""
-    fake = SimpleNamespace(compatible=None, devices=set(), commands=[], fail=None)
+    not know fails the test. ``fail`` is raised by every command, ``answer`` (a HostResult) is
+    every command's answer, as when nsenter cannot enter the host."""
+    fake = SimpleNamespace(compatible=None, devices=set(), commands=[], fail=None, answer=None)
 
     def run(cmd, **kwargs):
         fake.commands.append(list(cmd))
         if fake.fail is not None:
             raise fake.fail
-        if cmd == ["cat", "--", DEVICE_TREE]:
+        if fake.answer is not None:
+            return fake.answer
+        if _reads_device_tree(cmd):
             return NO_DEVICE_TREE if fake.compatible is None else HostResult(0, fake.compatible, "")
         if cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-devices"]:
             return HostResult(0, "".join(f"{path}\n" for path in cmd[4:] if path in fake.devices), "")
@@ -984,7 +993,10 @@ def _container(
     error: str = "",
     policy: str = "unless-stopped",
     env: list[str] = (),
+    devices: list[str] | None = None,
 ) -> MagicMock:
+    """``devices``: the host's device nodes passed in, as Docker keeps them (it answers null for
+    a container that has none)."""
     labels = {}
     if template is not None:
         labels["unos.app"] = template
@@ -1005,7 +1017,12 @@ def _container(
             "Error": error,
         },
         "Config": {"Env": list(env)},
-        "HostConfig": {"RestartPolicy": {"Name": policy}},
+        "HostConfig": {
+            "RestartPolicy": {"Name": policy},
+            "Devices": None if devices is None else [
+                {"PathOnHost": path, "PathInContainer": path, "CgroupPermissions": "rwm"} for path in devices
+            ],
+        },
         "NetworkSettings": {"Ports": {}},
         "Mounts": list(mounts),
     }
@@ -2429,6 +2446,8 @@ class TestHardwareOfTheSoc:
         assert create["labels"]["unos.app.pool"] == "alpha"
         docker_client.containers.create.return_value.start.assert_called_once()
         assert response.json()["container_id"] == "c0ffee"
+        # The answer names the nodes the container got.
+        assert response.json()["devices"] == RK3588_VIDEO
 
     def test_only_the_nodes_that_the_host_has_are_passed_in(self, api, pools, docker_client, low_level, soc):
         # Under a kernel without Rockchip's Mali driver (panthor) there is no /dev/mali0, and
@@ -2457,8 +2476,9 @@ class TestHardwareOfTheSoc:
         kwargs = docker_client.containers.create.call_args.kwargs
         assert kwargs.get("devices") is None and kwargs.get("security_opt") is None
         assert kwargs["privileged"] is False and kwargs["cap_add"] is None
+        assert response.json()["devices"] == []
         # Only the device tree was read; no node was looked for.
-        assert soc.commands == [["cat", "--", DEVICE_TREE]]
+        assert len(soc.commands) == 1 and _reads_device_tree(soc.commands[0])
 
     def test_an_rk3588_without_any_of_the_nodes_installs_jellyfin_as_elsewhere(self, api, pools, docker_client, soc):
         soc.compatible = RK3588
@@ -2468,6 +2488,28 @@ class TestHardwareOfTheSoc:
         assert response.status_code == 200, response.text
         docker_client.api.create_container.assert_not_called()
         assert docker_client.containers.create.call_args.kwargs.get("devices") is None
+
+    @pytest.mark.parametrize("devices", [
+        # Under the mainline kernel: rockchip-drm and panthor make /dev/dri, the kernel the DMA heaps.
+        {"/dev/dri", "/dev/dma_heap"},
+        # Every node but Rockchip MPP's.
+        {"/dev/dri", "/dev/dma_heap", "/dev/rga", "/dev/mali0"},
+    ], ids=["mainline-kernel", "all-but-mpp"])
+    def test_an_rk3588_without_rockchip_mpp_installs_jellyfin_as_elsewhere(
+        self, api, pools, docker_client, soc, devices
+    ):
+        # Without /dev/mpp_service RKMPP cannot work: no node is passed in, no mask is lifted and
+        # Docker's AppArmor profile stays.
+        soc.compatible = RK3588
+        soc.devices = devices
+
+        response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        docker_client.api.create_container.assert_not_called()
+        kwargs = docker_client.containers.create.call_args.kwargs
+        assert kwargs.get("devices") is None and kwargs.get("security_opt") is None
+        assert response.json()["devices"] == []
 
     @pytest.mark.parametrize(
         "error", [subprocess.TimeoutExpired(["nsenter"], 15), FileNotFoundError(2, "nsenter")], ids=["timeout", "oserror"]
@@ -2482,6 +2524,39 @@ class TestHardwareOfTheSoc:
         assert response.status_code == 200, response.text
         docker_client.api.create_container.assert_not_called()
         assert docker_client.containers.create.call_args.kwargs.get("devices") is None
+        assert response.json()["devices"] == []
+
+    def test_a_device_tree_read_that_fails_is_logged(self, api, pools, docker_client, soc, caplog):
+        # nsenter exits non-zero when it cannot enter the host: the board counts as one without a
+        # device tree, and the log says why.
+        soc.answer = HostResult(1, "", "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted")
+
+        with caplog.at_level("WARNING", logger="src.apps.hardware"):
+            response = api.post(INSTALL, json={"template_id": "jellyfin"})
+
+        assert response.status_code == 200, response.text
+        assert docker_client.containers.create.call_args.kwargs.get("devices") is None
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.hardware"] == [
+            "Could not read the host's device tree (exit status 1): "
+            "nsenter: reassociate to namespace 'ns/mnt' failed: Operation not permitted"
+        ]
+
+    def test_a_host_without_a_device_tree_is_not_logged(self, api, soc, caplog):
+        with caplog.at_level("DEBUG", logger="src.apps.hardware"):
+            assert api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"] == []
+
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.hardware"] == []
+
+    def test_the_device_tree_script_tells_a_missing_device_tree_from_one_it_reads(self, tmp_path):
+        # The script as the host's sh runs it: exit 3 without the file, its bytes with it.
+        compatible = tmp_path / "compatible"
+        script = hardware_module.DEVICE_TREE_SCRIPT
+        missing = subprocess.run(["/bin/sh", "-c", script, "unos-device-tree", str(compatible)], capture_output=True)
+        compatible.write_bytes(RK3588.encode())
+        found = subprocess.run(["/bin/sh", "-c", script, "unos-device-tree", str(compatible)], capture_output=True)
+
+        assert (missing.returncode, missing.stdout, missing.stderr) == (3, b"", b"")
+        assert (found.returncode, found.stdout) == (0, RK3588.encode())
 
     def test_an_app_without_hardware_reads_nothing_of_the_host(self, api, pools, docker_client, soc):
         soc.compatible = RK3588
@@ -2528,6 +2603,7 @@ class TestHardwareOfTheSoc:
 
     def test_the_catalog_names_the_hardware_only_on_its_soc(self, api, soc):
         soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
 
         listed = {t["id"]: [p["id"] for p in t["hardware"]] for t in api.get("/api/v1/apps/catalog").json()}
         one = api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"]
@@ -2538,6 +2614,7 @@ class TestHardwareOfTheSoc:
             "id": "rk3588-video",
             "soc": "rockchip,rk3588",
             "devices": RK3588_VIDEO,
+            "requires": ["/dev/mpp_service"],
             "unmasked_paths": ["/sys/firmware"],
             "apparmor_unconfined": True,
         }]
@@ -2546,12 +2623,25 @@ class TestHardwareOfTheSoc:
     @pytest.mark.parametrize("compatible", [None, RK3568, SPACEMIT_K1], ids=["pc", "rk3568", "spacemit-k1"])
     def test_off_its_soc_the_catalog_names_no_hardware(self, api, soc, compatible):
         soc.compatible = compatible
+        soc.devices = set(RK3588_VIDEO)
 
         assert not [t["id"] for t in api.get("/api/v1/apps/catalog").json() if t["hardware"]]
         assert api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"] == []
         assert api.get("/api/v1/apps/catalog", params={"category": "media"}).json()[0]["hardware"] == []
+        # Off the SoC no node is looked for.
+        assert all(_reads_device_tree(cmd) for cmd in soc.commands)
 
-    def test_the_catalog_reads_the_device_tree_off_the_event_loop(self, api, soc, monkeypatch):
+    def test_on_an_rk3588_without_rockchip_mpp_the_catalog_names_no_hardware(self, api, soc):
+        # The App Store offers no hardware acceleration that RKMPP cannot give (the mainline kernel).
+        soc.compatible = RK3588
+        soc.devices = {"/dev/dri", "/dev/dma_heap", "/dev/rga", "/dev/mali0"}
+
+        assert not [t["id"] for t in api.get("/api/v1/apps/catalog").json() if t["hardware"]]
+        assert api.get("/api/v1/apps/catalog/jellyfin").json()["hardware"] == []
+
+    def test_the_catalog_reads_the_host_off_the_event_loop(self, api, soc, monkeypatch):
+        soc.compatible = RK3588
+        soc.devices = set(RK3588_VIDEO)
         seen: list[bool] = []
         real = host_module.run_on_host
 
@@ -2563,13 +2653,31 @@ class TestHardwareOfTheSoc:
 
         assert api.get("/api/v1/apps/catalog").status_code == 200
         assert api.get("/api/v1/apps/catalog/jellyfin").status_code == 200
-        assert seen == [False, False]
+        # The device tree and the nodes, for each request.
+        assert seen == [False, False, False, False]
+
+    def test_the_installed_list_names_the_nodes_each_container_got(self, api, pools, installed):
+        # The App Store tells a Jellyfin installed without the hardware from one that has it.
+        installed(_jellyfin(pools, devices=RK3588_VIDEO))
+        installed(_jellyfin(pools, name="jellyfin-plain"))
+        installed(_jellyfin(pools, name="jellyfin-none", devices=[]))
+
+        response = api.get(INSTALLED)
+
+        assert response.status_code == 200, response.text
+        assert {app_info["name"]: app_info["devices"] for app_info in response.json()} == {
+            "jellyfin": RK3588_VIDEO,
+            "jellyfin-plain": [],
+            "jellyfin-none": [],
+        }
 
     def test_every_profile_names_device_nodes_and_masks_of_docker(self):
         profiles = [p for t in APP_CATALOG for p in t.hardware]
         assert profiles
         for profile in profiles:
             assert all(path.startswith("/dev/") for path in profile.devices), profile.id
+            # A profile applies only with the nodes it requires, which the container gets.
+            assert profile.requires and set(profile.requires) <= set(profile.devices), profile.id
             assert set(profile.unmasked_paths) <= set(DOCKER_MASKED_PATHS), profile.id
         for template in APP_CATALOG:
             if template.hardware:

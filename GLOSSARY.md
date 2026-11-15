@@ -241,10 +241,11 @@ in the SMB group.
 one or more containers. Avoid: app.
 
 **Hardware profile**: The hardware of a SoC that an app gets when it is installed on a host whose
-device tree names that SoC: the device nodes that the host has of the profile's list, and the
-Docker masks and AppArmor profile the app cannot work under, as Jellyfin's `rk3588-video` on an
-RK3588; on any other host the app is installed as elsewhere, and the App Store says nothing of it
-(ADR-0377). Avoid: hardware acceleration (what the App Store calls it for the user), passthrough.
+device tree names that SoC and that has the nodes the profile requires: the device nodes that the
+host has of the profile's list, and the Docker masks and AppArmor profile the app cannot work
+under, as Jellyfin's `rk3588-video` on an RK3588 with Rockchip MPP's `/dev/mpp_service`; on any
+other host the app is installed as elsewhere, and the App Store says nothing of it (ADR-0377).
+Avoid: hardware acceleration (what the App Store calls it for the user), passthrough.
 
 **Backup**: An archive of the UNOS database, encrypted if wanted, without the pools' files
 (ADR-0040). Avoid: snapshot.

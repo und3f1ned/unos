@@ -123,10 +123,11 @@ SD writes of each check (ADR-0214). The areas:
            (ADR-0339), so the refused sign-ins of the second user are left out.
   hardware The hardware of the host's SoC that apps get (ADR-0377): the SoC that the host's device
            tree names; the App Store's catalog, which offers Jellyfin the RK3588's video hardware on
-           an RK3588 and nowhere else, and no app the hardware of another SoC; and the device nodes
-           that Jellyfin's container gets, with their modes, of which the host has Rockchip MPP's
-           (/dev/mpp_service, /dev/dma_heap, /dev/dri), a SKIP where no app gets hardware. It
-           only reads: it installs no app, whose image only the owner pulls (ADR-0211).
+           an RK3588 with Rockchip MPP's /dev/mpp_service and nowhere else, and no app the hardware
+           of another SoC; and on an RK3588 the device nodes of its video hardware, with their
+           modes, of which the host has Rockchip MPP's (/dev/mpp_service, /dev/dma_heap,
+           /dev/dri), a SKIP on another host. It only reads: it installs no app, whose image only
+           the owner pulls (ADR-0211).
 
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
 of an earlier check. It makes what it needs through the API, under names made of "unoscheck"
@@ -3474,10 +3475,13 @@ def restore_check(c: Check) -> None:
 
 DEVICE_TREE = "/proc/device-tree/compatible"
 RK3588 = "rockchip,rk3588"
+# Rockchip MPP's node, which only Rockchip's kernel has: the App Store offers the RK3588's video
+# hardware only with it (the profile's requires).
+MPP_SERVICE = "/dev/mpp_service"
 # The nodes without which Rockchip MPP decodes and encodes nothing in Jellyfin's container: the
 # codecs, the DMA heaps and the DRM nodes (Jellyfin's guide to RKMPP); the RGA and the Mali GPU
 # only scale and tone-map.
-RKMPP_NODES = ("/dev/mpp_service", "/dev/dma_heap", "/dev/dri")
+RKMPP_NODES = (MPP_SERVICE, "/dev/dma_heap", "/dev/dri")
 
 
 def hardware_check(c: Check) -> None:
@@ -3490,10 +3494,11 @@ def hardware_check(c: Check) -> None:
         socs = [name for name in (c.device.read(DEVICE_TREE) or "").split("\0") if name]
         s.text += ": " + (", ".join(socs) or "no device tree")
 
-    with c.step("the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588") as s:
+    with c.step("the App Store offers Jellyfin the RK3588's video hardware exactly on an RK3588 with Rockchip MPP") as s:
+        mpp = RK3588 in socs and c.device.stat([MPP_SERVICE]).get(MPP_SERVICE, "missing") != "missing"
         profiles = c.get("/apps/catalog/jellyfin")["hardware"]
         ids = [p["id"] for p in profiles]
-        want = ["rk3588-video"] if RK3588 in socs else []
+        want = ["rk3588-video"] if mpp else []
         c.expect(ids == want, f"it offers {', '.join(ids) or 'none'}, expected {', '.join(want) or 'none'}")
         s.text += ": " + (", ".join(ids) or "none")
 
@@ -3503,14 +3508,16 @@ def hardware_check(c: Check) -> None:
         c.expect(not other, "it offers " + "; ".join(f"{app} the hardware of {', '.join(names)}" for app, names in other.items()))
         s.text += ": " + (", ".join(sorted(offered)) or "none")
 
-    devices = [d for p in profiles for d in p["devices"]]
-    text = "the host has the device nodes that Jellyfin's container gets"
-    if not devices:
-        c.skip(text, "no app gets hardware of this SoC")
+    # On an RK3588 the nodes are checked whatever the App Store offers: the dev device is to
+    # transcode in hardware (apps.rk3588-hardware-acceleration).
+    text = "the host has the device nodes of the RK3588's video hardware"
+    if RK3588 not in socs:
+        c.skip(text, "the host is no RK3588")
         return
     with c.step(text) as s:
+        devices = [d for p in profiles for d in p["devices"]] or list(RKMPP_NODES)
         found = c.device.stat(devices)
-        missing = [node for node in RKMPP_NODES if node in devices and found.get(node, "missing") == "missing"]
+        missing = [node for node in RKMPP_NODES if found.get(node, "missing") == "missing"]
         c.expect(not missing, f"the host lacks {', '.join(missing)}, which Rockchip MPP needs (Rockchip's kernel 5.10 or 6.1)")
         s.text += ": " + ", ".join(f"{d} {found.get(d, 'missing')}" for d in devices)
 

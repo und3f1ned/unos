@@ -9,9 +9,47 @@ const RK3588_VIDEO = {
   id: 'rk3588-video',
   soc: 'rockchip,rk3588',
   devices: ['/dev/dri', '/dev/dma_heap', '/dev/mpp_service', '/dev/rga', '/dev/mali0'],
+  requires: ['/dev/mpp_service'],
   unmasked_paths: ['/sys/firmware'],
   apparmor_unconfined: true,
 };
+
+const WHAT_IT_GETS =
+  "UNOS installs Jellyfin with the video hardware of this NAS's Rockchip RK3588 that its kernel provides: " +
+  'the video decoders and encoders (MPP), the RGA and the GPU, in a container without privileged mode.';
+const WHAT_TO_CHOOSE =
+  'In Jellyfin, choose Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP), ' +
+  'and the codecs to decode in hardware.';
+const INSTALLED_WITHOUT =
+  'Jellyfin was installed without the hardware of this NAS that it can use, so hardware acceleration does not ' +
+  'work in it. To give it the hardware, uninstall Jellyfin (its data folders are kept) and install it again on ' +
+  'the same pool.';
+
+/**
+ * An installed Jellyfin whose container got ``devices``, as GET /api/v1/apps/installed lists it: the
+ * stand-in has no Docker, so the answer is faked.
+ */
+async function installedJellyfin(page: Page, devices: string[]) {
+  const config = '/mnt/pools/data/apps/jellyfin/config';
+  const jellyfin = {
+    id: 'e2e-jellyfin-id',
+    template_id: 'jellyfin',
+    name: 'jellyfin',
+    container_id: 'e2e-jellyfin-id',
+    status: 'running',
+    web_port: 8096,
+    created_at: '2026-11-15T10:00:00Z',
+    pool: 'data',
+    volumes: [{ host: config, container: '/config', readonly: false }],
+    data_outside_pools: [],
+    runs_in_unos_smb: false,
+    devices,
+  };
+  await page.route(
+    (url: URL) => url.pathname === '/api/v1/apps/installed',
+    (route: Route) => route.fulfill({ json: [jellyfin] }),
+  );
+}
 
 async function onAnRk3588(page: Page) {
   await page.route(
@@ -50,15 +88,42 @@ test.describe('Hardware acceleration of the host SoC', () => {
 
     const dialog = await details(page, 'Jellyfin');
     const hint = dialog.locator('.alert', { hasText: 'Hardware acceleration' });
-    await expect(hint).toContainText(
-      "UNOS installs Jellyfin with the video hardware of this NAS's Rockchip RK3588 that its kernel provides: " +
-        'the video decoders and encoders (MPP), the RGA and the GPU, in a container without privileged mode. ' +
-        "Rockchip MPP needs Rockchip's kernel (5.10 or 6.1).",
-    );
-    await expect(hint).toContainText(
-      'In Jellyfin, choose Dashboard > Playback > Transcoding > Hardware acceleration: Rockchip MPP (RKMPP), ' +
-        'and the codecs to decode in hardware.',
-    );
+    await expect(hint).toHaveCount(1);
+    await expect(hint).toContainText(WHAT_IT_GETS);
+    await expect(hint).toContainText(WHAT_TO_CHOOSE);
+    await expect(dialog.getByText(INSTALLED_WITHOUT)).toHaveCount(0);
+  });
+
+  test('on an RK3588 an installed Jellyfin that got the video hardware is told what to choose', async ({
+    authenticatedPage: page,
+  }) => {
+    await onAnRk3588(page);
+    await installedJellyfin(page, RK3588_VIDEO.devices);
+    await page.goto('/apps');
+
+    const dialog = await details(page, 'Jellyfin');
+    const hint = dialog.locator('.alert', { hasText: 'Hardware acceleration' });
+    await expect(hint).toHaveCount(1);
+    await expect(hint).toContainText(WHAT_IT_GETS);
+    await expect(hint).toContainText(WHAT_TO_CHOOSE);
+    await expect(dialog.getByText(INSTALLED_WITHOUT)).toHaveCount(0);
+  });
+
+  test('on an RK3588 an installed Jellyfin without the video hardware is told so, not to choose RKMPP', async ({
+    authenticatedPage: page,
+  }) => {
+    // As when UNOS could not look for the nodes during the install: the container got none.
+    await onAnRk3588(page);
+    await installedJellyfin(page, []);
+    await page.goto('/apps');
+
+    const dialog = await details(page, 'Jellyfin');
+    const hint = dialog.locator('.alert', { hasText: 'Hardware acceleration' });
+    await expect(hint).toHaveCount(1);
+    await expect(hint).toHaveClass(/alert-warning/);
+    await expect(hint).toContainText(INSTALLED_WITHOUT);
+    await expect(dialog.getByText(WHAT_IT_GETS)).toHaveCount(0);
+    await expect(dialog.getByText('Rockchip MPP (RKMPP)')).toHaveCount(0);
   });
 
   test('off an RK3588 the App Store says nothing about hardware', async ({ authenticatedPage: page }) => {

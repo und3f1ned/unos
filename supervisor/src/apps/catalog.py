@@ -43,9 +43,10 @@ Mark passwords, tokens and keys with secret=True and never ship a default
 value for them; required secrets must be set by the administrator.
 
 Hardware of a SoC that an app uses (a video engine, a GPU) is a HardwareProfile
-in the template's hardware: on a host whose device tree names that SoC, the
-container gets the profile's device nodes that the host has; elsewhere the app
-is installed as on every host (src/apps/hardware.py, ADR-0377).
+in the template's hardware: on a host whose device tree names that SoC and that
+has the nodes the profile requires, the container gets the profile's device
+nodes that the host has; elsewhere the app is installed as on every host
+(src/apps/hardware.py, ADR-0377).
 """
 
 from .schemas import (
@@ -65,12 +66,15 @@ POOL = POOL_PLACEHOLDER
 # The video hardware of the Rockchip RK3588 under Rockchip's kernel (the vendor kernels 5.10
 # and 6.1), as Jellyfin's guide to RKMPP passes it into a container: the DRM nodes, the DMA
 # heaps, the video codecs (MPP), the 2D engine (RGA) and the Mali GPU (OpenCL, for HDR tone
-# mapping). Rockchip's MPP names the SoC from /proc/device-tree/compatible, a link into
-# /sys/firmware, which Docker masks and its AppArmor profile denies (ADR-0377).
+# mapping). Only Rockchip's kernel has MPP's /dev/mpp_service: without it (the mainline kernel)
+# RKMPP cannot work, and the profile does not apply. Rockchip's MPP names the SoC from
+# /proc/device-tree/compatible, a link into /sys/firmware, which Docker masks and its AppArmor
+# profile denies (ADR-0377).
 RK3588_VIDEO = HardwareProfile(
     id="rk3588-video",
     soc="rockchip,rk3588",
     devices=["/dev/dri", "/dev/dma_heap", "/dev/mpp_service", "/dev/rga", "/dev/mali0"],
+    requires=["/dev/mpp_service"],
     unmasked_paths=["/sys/firmware"],
     apparmor_unconfined=True,
 )

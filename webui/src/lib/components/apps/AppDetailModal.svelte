@@ -444,7 +444,7 @@
 		{#if isInstalled && installedApp}
 			<AppStorageWarning app={installedApp} class="mb-4" />
 		{/if}
-		<AppHardwareHint {app} class="mb-4" />
+		<AppHardwareHint {app} installed={isInstalled ? installedApp : null} class="mb-4" />
 
 		<!-- Tabs: they wrap on a narrow screen (ADR-0302) -->
 		<div class="flex flex-wrap border-b border-border -mx-6 px-6 mb-4">

@@ -31,7 +31,7 @@ from ..shares.constants import SMB_APP_UID, SMB_GROUP_GID, SMB_GROUP_NAME
 from ..shares.models import SmbShare
 from ..snapshots.router import SNAPSHOT_DIR_NAME
 from .catalog import APP_CATALOG, get_app_by_id, get_apps_by_category, search_apps
-from .hardware import container_hardware, for_host, host_socs
+from .hardware import container_hardware, for_host, read_host_hardware
 from .schemas import (
     POOL_PLACEHOLDER,
     AppCategory,
@@ -118,12 +118,13 @@ async def get_app(app_id: str, _: dict = Depends(verify_token)):
 
 
 async def _for_this_host(apps: list[AppTemplate]) -> list[AppTemplate]:
-    """The templates with only the hardware profiles of the host's SoC; the device tree is read
-    on the host, in a worker thread, only when one of them has a profile."""
-    if not any(app.hardware for app in apps):
+    """The templates with only the hardware profiles that apply on this host; the host is read,
+    in a worker thread, only when one of them has a profile."""
+    profiles = [profile for app in apps for profile in app.hardware]
+    if not profiles:
         return apps
-    socs = await asyncio.to_thread(host_socs)
-    return [for_host(app, socs) for app in apps]
+    hardware = await asyncio.to_thread(read_host_hardware, profiles)
+    return [for_host(app, hardware) for app in apps]
 
 
 @router.get("/installed", response_model=list[InstalledApp])
@@ -175,9 +176,16 @@ def _list_installed() -> list[InstalledApp]:
                 if _is_data(b, bases) and _pool_containing(b.source, pools) is None
             ],
             runs_in_unos_smb=_runs_in_unos_smb(c),
+            devices=_devices(c),
         ))
 
     return result
+
+
+def _devices(container: Any) -> list[str]:
+    """The host's device nodes passed into the container, as Docker keeps them (ADR-0377)."""
+    devices = (container.attrs.get("HostConfig") or {}).get("Devices") or []
+    return [str(device.get("PathOnHost", "")) for device in devices]
 
 
 def _runs_in_unos_smb(container: Any) -> bool:
@@ -917,7 +925,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
             network_mode=template.network_mode,
             labels=labels,
             log_config=CAPPED_LOG,
-            devices=hardware.devices or None,
+            devices=[f"{node}:{node}:rwm" for node in hardware.devices] or None,
             security_opt=hardware.security_opt or None,
         )
     except _DOCKER_ERRORS as e:
@@ -950,6 +958,7 @@ def _install_app(req: AppInstallRequest, shares: list[_ShareFolder]) -> AppInsta
             AppVolume(host=str(m.source), container=m.target, readonly=m.readonly)
             for m in planned
         ],
+        devices=hardware.devices,
     )
 
 
